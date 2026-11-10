@@ -216,9 +216,6 @@ public final class AppModel {
     var settingsTab: SettingsTab = .banks
     /// macOS: the main window opens Settings when this is set.
     var groupSettingsRequested = false
-    /// The "Kontogruppen" settings pane is the active window: it presents
-    /// the group dialogs instead of the main window.
-    var groupSettingsActive = false
     /// The one group dialog on screen (new / rename / delete / move account).
     var groupDialog: GroupDialog?
     var expandedCategories: Set<Int64> = []

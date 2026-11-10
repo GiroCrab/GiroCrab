@@ -37,13 +37,14 @@ struct AccountsSectionHeader: View {
                     .foregroundStyle(Theme.secondary)
                 Spacer()
                 if model.accountView == .byGroup {
+                    // folder symbols: these act on groups, not on accounts
                     Button { model.groupDialog = .create() } label: {
-                        Image(systemName: "plus").frame(width: 22, height: 18).contentShape(Rectangle())
+                        Image(systemName: "folder.badge.plus").frame(width: 24, height: 18).contentShape(Rectangle())
                     }
                     .help("Neue Gruppe …")
                     .accessibilityLabel("Neue Gruppe")
                     Button { model.openGroupSettings() } label: {
-                        Image(systemName: "slider.horizontal.3").frame(width: 22, height: 18).contentShape(Rectangle())
+                        Image(systemName: "folder.badge.gearshape").frame(width: 24, height: 18).contentShape(Rectangle())
                     }
                     .help("Gruppen bearbeiten …")
                     .accessibilityLabel("Gruppen bearbeiten")
@@ -201,28 +202,26 @@ struct UserGroupMenu: View {
 
 // MARK: - Dialogs (one place for all group dialogs)
 
-/// Presents `model.groupDialog`. Attached to the main window and to the
-/// "Kontogruppen" settings pane; the pane presents while it is the active
-/// window, the main window otherwise – never both.
+/// Presents a group dialog (new / rename / delete / move account) from the
+/// given state. The main window passes `model.groupDialog`; the settings
+/// pane passes its own state, so each window shows its own dialogs.
 struct AccountGroupDialogs: ViewModifier {
     @Environment(AppModel.self) private var model
+    @Binding var dialog: GroupDialog?
     @State private var text = ""
-    var inSettings = false
-
-    private var hosts: Bool { model.groupSettingsActive == inSettings }
 
     /// Shown while the dialog is of this kind; dismissing clears it unless
     /// an action already switched to another dialog.
     private func presented(text wantsText: Bool) -> Binding<Bool> {
         Binding(
-            get: { hosts && model.groupDialog?.needsText == wantsText },
-            set: { if !$0, model.groupDialog?.needsText == wantsText { model.groupDialog = nil } }
+            get: { dialog?.needsText == wantsText },
+            set: { if !$0, dialog?.needsText == wantsText { dialog = nil } }
         )
     }
 
     func body(content: Content) -> some View {
         content
-            .alert(model.groupDialog?.title ?? Text(verbatim: ""), isPresented: presented(text: true), presenting: model.groupDialog) { d in
+            .alert(dialog?.title ?? Text(verbatim: ""), isPresented: presented(text: true), presenting: dialog) { d in
                 TextField("Name, z. B. „Privat“ oder „Geschäft“", text: $text)
                 Button(d.isRename ? "Umbenennen" : "Anlegen") { submit(d) }
                 Button("Abbrechen", role: .cancel) {}
@@ -232,10 +231,10 @@ struct AccountGroupDialogs: ViewModifier {
                 }
             }
             .confirmationDialog(
-                model.groupDialog?.title ?? Text(verbatim: ""),
+                dialog?.title ?? Text(verbatim: ""),
                 isPresented: presented(text: false),
                 titleVisibility: .visible,
-                presenting: model.groupDialog
+                presenting: dialog
             ) { d in
                 switch d {
                 case .delete(let g):
@@ -251,7 +250,7 @@ struct AccountGroupDialogs: ViewModifier {
                     }
                     Button("Neue Gruppe …") {
                         // after this dialog has closed
-                        DispatchQueue.main.async { model.groupDialog = .create(movingAccount: a.id) }
+                        DispatchQueue.main.async { dialog = .create(movingAccount: a.id) }
                     }
                 case .create, .rename:
                     EmptyView()
@@ -260,7 +259,7 @@ struct AccountGroupDialogs: ViewModifier {
             } message: { d in
                 if case .delete(let g) = d { Text(deleteMessage(g)) }
             }
-            .onChange(of: model.groupDialog?.initialText) { _, t in text = t ?? "" }
+            .onChange(of: dialog?.initialText) { _, t in text = t ?? "" }
     }
 
     private func submit(_ d: GroupDialog) {
@@ -275,7 +274,7 @@ struct AccountGroupDialogs: ViewModifier {
 }
 
 extension View {
-    func accountGroupDialogs(inSettings: Bool = false) -> some View { modifier(AccountGroupDialogs(inSettings: inSettings)) }
+    func accountGroupDialogs(_ dialog: Binding<GroupDialog?>) -> some View { modifier(AccountGroupDialogs(dialog: dialog)) }
 }
 
 /// Settings › "Kontogruppen": list of groups with +/− below it (macOS:
@@ -284,9 +283,8 @@ extension View {
 struct AccountGroupsSettings: View {
     @Environment(AppModel.self) private var model
     @State private var selection: String?
-    #if os(macOS)
-    @Environment(\.controlActiveState) private var windowState
-    #endif
+    /// This window's own group dialog (not the main window's).
+    @State private var dialog: GroupDialog?
 
     private var selectedGroup: UserGroup? {
         selection.flatMap { u in model.namedUserGroups.first { $0.uuid == u } }
@@ -296,12 +294,7 @@ struct AccountGroupsSettings: View {
         content
             .onAppear {
                 if selection == nil { selection = model.namedUserGroups.first?.uuid }
-                markActive(true)
             }
-            .onDisappear { markActive(false) }
-            #if os(macOS)
-            .onChange(of: windowState) { _, s in markActive(s == .key) }
-            #endif
             .onChange(of: model.namedUserGroups.map(\.uuid)) { old, new in
                 // select a group just created here; leave a deleted one
                 if let added = new.first(where: { !old.contains($0) }) {
@@ -310,15 +303,7 @@ struct AccountGroupsSettings: View {
                     selection = new.first
                 }
             }
-            .accountGroupDialogs(inSettings: true)
-    }
-
-    private func markActive(_ on: Bool) {
-        #if os(macOS)
-        model.groupSettingsActive = on && windowState == .key
-        #else
-        model.groupSettingsActive = on
-        #endif
+            .accountGroupDialogs($dialog)
     }
 
     private var footer: LocalizedStringKey {
@@ -343,13 +328,13 @@ struct AccountGroupsSettings: View {
                     Divider()
                     // add/remove square buttons beneath the list (HIG: Buttons › Square buttons)
                     HStack(spacing: 0) {
-                        Button { model.groupDialog = .create() } label: {
+                        Button { dialog = .create() } label: {
                             Image(systemName: "plus").frame(width: 26, height: 22).contentShape(Rectangle())
                         }
                         .help("Neue Gruppe …")
                         .accessibilityLabel("Neue Gruppe")
                         Divider().frame(height: 16)
-                        Button { if let g = selectedGroup { model.groupDialog = .delete(g) } } label: {
+                        Button { if let g = selectedGroup { dialog = .delete(g) } } label: {
                             Image(systemName: "minus").frame(width: 26, height: 22).contentShape(Rectangle())
                         }
                         .disabled(selectedGroup == nil)
@@ -371,7 +356,7 @@ struct AccountGroupsSettings: View {
             .frame(width: 240)
             Group {
                 if let uuid = selectedGroup?.uuid {
-                    GroupDetailEditor(uuid: uuid, onGone: { selection = nil })
+                    GroupDetailEditor(uuid: uuid, onDelete: { dialog = .delete($0) }, onGone: { selection = nil })
                         .id(uuid)
                 } else {
                     ContentUnavailableView {
@@ -393,15 +378,15 @@ struct AccountGroupsSettings: View {
                     NavigationLink(value: g.uuid) { GroupListRow(group: g) }
                 }
                 .onMove { model.moveUserGroups(from: $0, to: $1) }
-                .onDelete { idx in model.groupDialog = idx.first.map { .delete(model.namedUserGroups[$0]) } }
+                .onDelete { idx in dialog = idx.first.map { .delete(model.namedUserGroups[$0]) } }
             } footer: {
                 Text(footer)
             }
             Section {
-                Button("Neue Gruppe …", systemImage: "folder.badge.plus") { model.groupDialog = .create() }
+                Button("Neue Gruppe …", systemImage: "folder.badge.plus") { dialog = .create() }
             }
         }
-        .navigationDestination(for: String.self) { uuid in GroupDetailEditor(uuid: uuid) }
+        .navigationDestination(for: String.self) { uuid in GroupDetailEditor(uuid: uuid, onDelete: { dialog = .delete($0) }) }
         .toolbar { ToolbarItem(placement: .topBarTrailing) { EditButton() } }
     }
     #endif
@@ -450,6 +435,8 @@ struct GroupDetailEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let uuid: String
+    /// Asks for confirmation (the pane's dialog) before deleting.
+    var onDelete: (UserGroup) -> Void
     /// Called when the group disappears (deleted here or via sync);
     /// default: pop back (iOS navigation).
     var onGone: (() -> Void)?
@@ -523,7 +510,7 @@ struct GroupDetailEditor: View {
                 }
                 #if os(iOS)
                 Section {
-                    Button("Gruppe löschen …", role: .destructive) { model.groupDialog = .delete(g) }
+                    Button("Gruppe löschen …", role: .destructive) { onDelete(g) }
                 }
                 #endif
             }

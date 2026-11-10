@@ -193,7 +193,7 @@ struct MainSplitView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .quickLookPreview($model.quickLookURL)
-        .accountGroupDialogs()
+        .accountGroupDialogs($model.groupDialog)
         #if os(macOS)
         // "Gruppen bearbeiten …" → Settings › Kontogruppen
         .onChange(of: model.groupSettingsRequested) { _, requested in
