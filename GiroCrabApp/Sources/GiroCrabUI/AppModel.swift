@@ -7,6 +7,8 @@ import GiroCrabCore
 enum SidebarItem: Hashable {
     case allAccounts
     case group(Int64)
+    /// User-defined group ("Nach Gruppe"); empty uuid = "Ohne Gruppe".
+    case userGroup(String)
     case account(Int64)
     case category(Int64)
     case uncategorized
@@ -171,6 +173,8 @@ public final class AppModel {
 
     // Data
     var groups: [AccountGroup] = []
+    /// "Nach Gruppe" sidebar view (user groups, then "Ohne Gruppe").
+    var userGroups: [UserGroup] = []
     var categories: [GiroCrabCore.Category] = []
     var categoryTree: [CategoryNode] = []
     var bookings: [Booking] = []
@@ -195,7 +199,20 @@ public final class AppModel {
     var selectedBookingID: Booking.ID? { didSet { reloadMerchantStats() } }
     /// iPhone: set by a tap on a booking row, presents the detail sheet.
     var showBookingSheet = false
-    var collapsedGroups: Set<Int64> = []
+    var collapsedGroups: Set<Int64> = Set(UserDefaults.standard.array(forKey: "sidebar.collapsedKindGroups") as? [Int64] ?? []) {
+        didSet { UserDefaults.standard.set(Array(collapsedGroups), forKey: "sidebar.collapsedKindGroups") }
+    }
+    var collapsedUserGroups: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "sidebar.collapsedUserGroups") ?? []) {
+        didSet { UserDefaults.standard.set(Array(collapsedUserGroups), forKey: "sidebar.collapsedUserGroups") }
+    }
+    /// Explicit per-device choice; `nil` = "Nach Gruppe" once groups exist.
+    var accountViewChoice: AccountSidebarMode? = UserDefaults.standard.string(forKey: "sidebar.accountView").flatMap(AccountSidebarMode.init) {
+        didSet { UserDefaults.standard.set(accountViewChoice?.rawValue, forKey: "sidebar.accountView") }
+    }
+    /// "Gruppen bearbeiten…" sheet.
+    var showGroupEditor = false
+    /// The one group dialog on screen (new / rename / delete / move account).
+    var groupDialog: GroupDialog?
     var expandedCategories: Set<Int64> = []
     var showRuleEditor = false
     var ruleDraft: Rule?
@@ -502,7 +519,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
-        groups = []; bookings = []; categories = []; categoryTree = []; rules = []; connections = []; settings = []
+        groups = []; userGroups = []; bookings = []; categories = []; categoryTree = []; rules = []; connections = []; settings = []
         page = nil; dashboard = nil; merchantStats = nil; logoCache = [:]
         vaultState = .locked
     }
@@ -523,6 +540,7 @@ public final class AppModel {
         guard let vault else { return }
         run {
             groups = try vault.listAccountGroups()
+            userGroups = try vault.listUserGroups()
             connections = try vault.listBankConnections()
         }
     }
@@ -569,6 +587,7 @@ public final class AppModel {
         switch sidebarSelection {
         case .account(let id): accountIDs = [id]
         case .group(let gid): accountIDs = groups.first(where: { $0.id == gid })?.accounts.map(\.id) ?? []
+        case .userGroup(let uuid): accountIDs = userGroupAccountIDs(uuid)
         case .category(let id): category = id
         case .uncategorized: uncategorized = true
         case .allAccounts, .documents, .none: break
@@ -645,6 +664,7 @@ public final class AppModel {
         switch sidebarSelection {
         case .account(let id): ids = [id]
         case .group(let gid): ids = groups.first(where: { $0.id == gid })?.accounts.map(\.id) ?? []
+        case .userGroup(let uuid): ids = userGroupAccountIDs(uuid)
         default: ids = liquidAccounts.map(\.id)
         }
         if ids.isEmpty { ids = [-1] }
@@ -841,7 +861,8 @@ public final class AppModel {
     }
 
     var allAccounts: [Account] { groups.flatMap(\.accounts) }
-    var liquidAccounts: [Account] { allAccounts.filter { [.checking, .savings, .paymentService, .creditCard, .cash].contains($0.kind) } }
+    /// Everyday accounts counted in "Verfügbar" (skips groups excluded from the total).
+    var liquidAccounts: [Account] { allAccounts.filter { $0.inTotal && [.checking, .savings, .paymentService, .creditCard, .cash].contains($0.kind) } }
     var liquidBalance: Int64 { liquidAccounts.reduce(0) { $0 + $1.balanceCents } }
     var newCount: Int { allAccounts.reduce(0) { $0 + Int($1.newCount) } }
     var uncategorizedCount: Int { allAccounts.filter { $0.kind != .loan }.reduce(0) { $0 + Int($1.uncategorizedCount) } }
@@ -861,6 +882,7 @@ public final class AppModel {
         switch sidebarSelection {
         case .allAccounts, .none: return String(localized: "Übersicht")
         case .group(let id): return groups.first { $0.id == id }?.name ?? String(localized: "Gruppe")
+        case .userGroup(let uuid): return userGroups.first { $0.uuid == uuid }?.name ?? String(localized: "Gruppe")
         case .account(let id): return allAccounts.first { $0.id == id }?.name ?? String(localized: "Konto")
         case .category(let id): return categories.first { $0.id == id }?.path ?? String(localized: "Kategorie")
         case .uncategorized: return String(localized: "Ohne Kategorie")
@@ -872,6 +894,7 @@ public final class AppModel {
         switch sidebarSelection {
         case .account(let id): return allAccounts.first { $0.id == id }.map { (String(localized: "Kontostand"), $0.balanceCents) }
         case .group(let id): return groups.first { $0.id == id }.map { (String(localized: "Summe"), $0.balanceCents) }
+        case .userGroup(let uuid): return userGroups.first { $0.uuid == uuid }.map { (String(localized: "Summe"), $0.balanceCents) }
         case .allAccounts, .none: return (String(localized: "Verfügbar (Giro, Tagesgeld, Karten)"), liquidBalance)
         case .category(let id): return categories.first { $0.id == id }.map { (String(localized: "Summe im Zeitraum"), $0.totalCents) }
         case .uncategorized, .documents: return nil
