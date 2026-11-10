@@ -287,6 +287,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func accountMenu(_ account: Account) -> some View {
         AccountGroupMenu(account: account)
+        AccountColorMenu(account: account)
         Divider()
         if let cid = account.connectionId, let conn = model.connections.first(where: { $0.id == cid }) {
             Button("\(conn.displayName) abrufen", systemImage: "arrow.triangle.2.circlepath") { model.requestSync(conn) }

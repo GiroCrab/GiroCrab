@@ -125,6 +125,36 @@ struct AccountGroupMenu: View {
     }
 }
 
+/// "Farbe ▸" for an account: the core's palette as colour swatches.
+struct AccountColorMenu: View {
+    @Environment(AppModel.self) private var model
+    let account: Account
+
+    private static let palette = accountColorPalette()
+    private static let names: [String: LocalizedStringKey] = [
+        "#2563EB": "Blau", "#D97706": "Bernstein", "#059669": "Grün", "#DB2777": "Pink",
+        "#7C3AED": "Violett", "#0891B2": "Cyan", "#DC2626": "Rot", "#65A30D": "Limette",
+        "#C026D3": "Fuchsia", "#EA580C": "Orange", "#4F46E5": "Indigo", "#0D9488": "Petrol",
+    ]
+
+    var body: some View {
+        Menu("Farbe", systemImage: "paintpalette") {
+            Picker("Farbe", selection: Binding(
+                get: { account.colorHex.uppercased() },
+                set: { model.setAccountColor(account.id, hex: $0) }
+            )) {
+                ForEach(Self.palette, id: \.self) { hex in
+                    Label(Self.names[hex] ?? LocalizedStringKey(hex), systemImage: "circle.fill")
+                        .tint(Color.readable(hex: hex))
+                        .tag(hex)
+                }
+            }
+            .pickerStyle(.palette)
+            Button("Standardfarbe", systemImage: "arrow.uturn.backward") { model.setAccountColor(account.id, hex: nil) }
+        }
+    }
+}
+
 /// Context menu of a user group header.
 struct UserGroupMenu: View {
     @Environment(AppModel.self) private var model

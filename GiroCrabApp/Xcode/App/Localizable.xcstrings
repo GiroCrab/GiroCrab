@@ -1,6 +1,61 @@
 {
   "sourceLanguage" : "de",
   "strings" : {
+    "Bernstein" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amber"
+          }
+        }
+      }
+    },
+    "Blau" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blue"
+          }
+        }
+      }
+    },
+    "Cyan" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cyan"
+          }
+        }
+      }
+    },
+    "Farbe" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Colour"
+          }
+        }
+      }
+    },
+    "Fuchsia" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fuchsia"
+          }
+        }
+      }
+    },
     "GiroCrab — Cyan & Orange" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8,6 +63,83 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GiroCrab — Cyan & Orange"
+          }
+        }
+      }
+    },
+    "Grün" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Green"
+          }
+        }
+      }
+    },
+    "Indigo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Indigo"
+          }
+        }
+      }
+    },
+    "Konto: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account: %@"
+          }
+        }
+      }
+    },
+    "Limette" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lime"
+          }
+        }
+      }
+    },
+    "Orange" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orange"
+          }
+        }
+      }
+    },
+    "Petrol" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Teal"
+          }
+        }
+      }
+    },
+    "Pink" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pink"
           }
         }
       }
@@ -52,6 +184,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Instant transfer (SEPA Instant)"
+          }
+        }
+      }
+    },
+    "Rot" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Red"
+          }
+        }
+      }
+    },
+    "Standardfarbe" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default Colour"
           }
         }
       }
@@ -6170,6 +6324,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Purpose (raw)"
+          }
+        }
+      }
+    },
+    "Violett" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Violet"
           }
         }
       }

@@ -175,6 +175,9 @@ public final class AppModel {
     var groups: [AccountGroup] = []
     /// "Nach Gruppe" sidebar view (user groups, then "Ohne Gruppe").
     var userGroups: [UserGroup] = []
+    /// Lookups for booking rows (see `rebuildAccountIndex`).
+    private(set) var accountsByID: [Int64: Account] = [:]
+    private(set) var accountMarkers: [Int64: AccountMarker] = [:]
     var categories: [GiroCrabCore.Category] = []
     var categoryTree: [CategoryNode] = []
     var bookings: [Booking] = []
@@ -519,7 +522,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
-        groups = []; userGroups = []; bookings = []; categories = []; categoryTree = []; rules = []; connections = []; settings = []
+        groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; connections = []; settings = []
         page = nil; dashboard = nil; merchantStats = nil; logoCache = [:]
         vaultState = .locked
     }
@@ -541,6 +544,7 @@ public final class AppModel {
         run {
             groups = try vault.listAccountGroups()
             userGroups = try vault.listUserGroups()
+            rebuildAccountIndex()
             connections = try vault.listBankConnections()
         }
     }
@@ -911,36 +915,52 @@ public final class AppModel {
         return String(localized: "Aktualisiert \(relative)")
     }
 
-    func account(for id: Int64) -> Account? { allAccounts.first { $0.id == id } }
+    func account(for id: Int64) -> Account? { accountsByID[id] }
 
     // MARK: - Account markers (which account a booking belongs to)
 
-    /// Distinct, readable colours; assigned by account id so they stay put
-    /// when accounts move between sidebar sections.
-    private static let accountMarkerPalette = [
-        "#2563EB", "#D97706", "#059669", "#DB2777", "#7C3AED", "#0891B2",
-        "#DC2626", "#65A30D", "#C026D3", "#EA580C", "#4F46E5", "#0D9488",
-    ]
-
+    /// The account's colour (stored in the core: the user's choice, else a
+    /// default from its sync identity – the same on every device). Looked up
+    /// in `accountMarkers`, built once per account reload.
     func accountColor(_ accountId: Int64) -> Color {
-        let ids = allAccounts.map(\.id).sorted()
-        let i = ids.firstIndex(of: accountId) ?? Int(accountId)
-        return Color.readable(hex: Self.accountMarkerPalette[abs(i) % Self.accountMarkerPalette.count])
+        accountMarkers[accountId]?.color ?? Theme.tertiary
     }
 
-    /// Short account label for the booking list, e.g. "Girokonto ··3000".
+    /// Short account label for the booking list, e.g. "Girokonto" – with
+    /// "··3000" only when another account has the same name.
     func accountShortLabel(_ accountId: Int64) -> String {
-        guard let a = account(for: accountId) else { return "" }
-        var name = a.name.replacingOccurrences(of: " (MoneyMoney)", with: "")
-        let digits = String((a.iban.isEmpty ? a.accountNumber : a.iban).filter(\.isNumber).suffix(4))
-        if !digits.isEmpty && !name.contains(digits) { name += " ··\(digits)" }
-        return name
+        accountMarkers[accountId]?.label ?? ""
     }
 
-    /// Markers only where bookings of several accounts are mixed.
+    /// Markers only where the list mixes bookings of several accounts.
     var showsAccountMarkers: Bool {
-        if case .account = sidebarSelection { return false }
-        return allAccounts.count > 1
+        switch sidebarSelection {
+        case .account: false
+        case .group(let id): (groups.first { $0.id == id }?.accounts.count ?? 0) > 1
+        case .userGroup(let uuid): (userGroups.first { $0.uuid == uuid }?.accounts.count ?? 0) > 1
+        default: accountMarkers.count > 1
+        }
+    }
+
+    func setAccountColor(_ accountId: Int64, hex: String?) {
+        guard let vault else { return }
+        run { try vault.setAccountColor(accountId: accountId, colorHex: hex) }
+        reloadAccounts()
+    }
+
+    fileprivate func rebuildAccountIndex() {
+        let accounts = allAccounts
+        accountsByID = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        func base(_ a: Account) -> String { a.name.replacingOccurrences(of: " (MoneyMoney)", with: "") }
+        let nameCount = Dictionary(accounts.map { (base($0).lowercased(), 1) }, uniquingKeysWith: +)
+        accountMarkers = Dictionary(accounts.map { a in
+            var label = base(a)
+            if nameCount[label.lowercased(), default: 0] > 1 {
+                let digits = String((a.iban.isEmpty ? a.accountNumber : a.iban).filter(\.isNumber).suffix(4))
+                if !digits.isEmpty && !label.contains(digits) { label += " ··\(digits)" }
+            }
+            return (a.id, AccountMarker(label: label, color: Color.readable(hex: a.colorHex)))
+        }, uniquingKeysWith: { a, _ in a })
     }
 
     // MARK: - Keyboard navigation
@@ -1678,4 +1698,10 @@ func formatIBAN(_ iban: String) -> String {
         out.append(ch)
     }
     return out
+}
+
+/// How a booking row marks its account: short name and colour.
+struct AccountMarker {
+    let label: String
+    let color: Color
 }
