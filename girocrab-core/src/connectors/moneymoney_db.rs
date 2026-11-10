@@ -1347,11 +1347,19 @@ fn import_category_rules(
         let usable = crate::search_expr::SearchExpr::parse(expr)
             .is_ok_and(|e| e.unsupported_fields().is_empty());
         let enabled = usable && !restricted;
+        let leaf = path.last().cloned().unwrap_or_default();
+        // GiroCrab can't map the restriction to accounts yet: say so in the
+        // name, so nobody switches the rule on for all accounts unawares.
+        let name = if *restricted {
+            trf("{0} (nur für bestimmte Konten)", &[&leaf])
+        } else {
+            leaf
+        };
         conn.execute(
             "INSERT INTO rules(name, category_id, field, match_kind, pattern, priority, enabled)
              VALUES (?1, ?2, 'any', 'expression', ?3, ?4, ?5)",
             params![
-                path.last().cloned().unwrap_or_default(),
+                name,
                 category_id,
                 expr,
                 IMPORTED_RULE_PRIORITY + i as i32,

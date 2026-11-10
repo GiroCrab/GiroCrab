@@ -4,11 +4,14 @@
 //! Matching ignores case and folds umlauts (ä → ae, ß → ss). A word matches a
 //! whole whitespace-separated word of the text; punctuation doesn't split.
 
+use std::cell::OnceCell;
+
 use regex::{Regex, RegexBuilder};
 
 use crate::i18n::{tr, trf};
 
 /// The booking fields an expression can look at.
+#[derive(Clone, Copy)]
 pub struct ExprInput<'a> {
     pub amount_cents: i64,
     pub name: &'a str,
@@ -61,6 +64,20 @@ impl Field {
             Field::Currency => t.currency,
             Field::Unsupported(_) => "",
         }
+    }
+
+    /// Slot in [`Prepared`]'s word cache; `None` for unsupported fields.
+    fn index(self) -> Option<usize> {
+        Some(match self {
+            Field::Name => 0,
+            Field::Purpose => 1,
+            Field::BookingText => 2,
+            Field::RemoteAccount => 3,
+            Field::LocalAccount => 4,
+            Field::Comment => 5,
+            Field::Currency => 6,
+            Field::Unsupported(_) => return None,
+        })
     }
 
     /// Account numbers are compared without their spaces, as one word.
@@ -131,6 +148,12 @@ impl SearchExpr {
     }
 
     pub fn matches(&self, t: &ExprInput) -> bool {
+        self.matches_prepared(&Prepared::new(*t))
+    }
+
+    /// Like [`matches`](Self::matches), reusing the booking's folded words
+    /// across all expressions evaluated against the same `Prepared`.
+    pub fn matches_prepared(&self, t: &Prepared) -> bool {
         eval(&self.root, t)
     }
 
@@ -140,6 +163,49 @@ impl SearchExpr {
     }
 }
 
+/// A booking's text fields, folded and split into words on first use, so
+/// every term of every rule evaluated against it shares that work.
+pub struct Prepared<'a> {
+    input: ExprInput<'a>,
+    words: [OnceCell<Vec<String>>; 7],
+}
+
+impl<'a> Prepared<'a> {
+    pub fn new(input: ExprInput<'a>) -> Self {
+        Prepared {
+            input,
+            words: Default::default(),
+        }
+    }
+
+    fn words(&self, f: Field) -> &[String] {
+        let Some(i) = f.index() else {
+            return &[];
+        };
+        self.words[i].get_or_init(|| {
+            let text = f.text(&self.input);
+            let folded = if f.is_account() {
+                fold(&text.replace(' ', ""))
+            } else {
+                fold(text)
+            };
+            #[cfg(test)]
+            FOLDS.with(|c| c.set(c.get() + 1));
+            folded.split_whitespace().map(String::from).collect()
+        })
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static FOLDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How often a booking field has been folded on this thread (tests only).
+#[cfg(test)]
+fn fold_count() -> usize {
+    FOLDS.with(|c| c.get())
+}
 /// Lowercase plus ä → ae, ö → oe, ü → ue, ß → ss.
 fn fold(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -297,7 +363,13 @@ fn tokenize(src: &str, unsupported: &mut Vec<&'static str>) -> Result<Vec<Tok>, 
                 }
             }
             i += 1;
-            let pattern = if matches!(chars.get(i), Some('"') | Some('/')) {
+            let pattern = if field.is_account() && chars.get(i) == Some(&'"') {
+                // "DE89 3704 …" is one account number, not a phrase.
+                i += 1;
+                let s = delimited(&chars, &mut i, '"')
+                    .ok_or_else(|| tr("Anführungszeichen nicht geschlossen.").to_string())?;
+                words(&s.replace(' ', ""))?
+            } else if matches!(chars.get(i), Some('"') | Some('/')) {
                 quoted(&chars, &mut i)?
             } else {
                 let s = i;
@@ -430,13 +502,13 @@ impl Parser {
     }
 }
 
-fn eval(node: &Node, t: &ExprInput) -> bool {
+fn eval(node: &Node, t: &Prepared) -> bool {
     match node {
         Node::Not(n) => !eval(n, t),
         Node::And(a, b) => eval(a, t) && eval(b, t),
         Node::Or(a, b) => eval(a, t) || eval(b, t),
         Node::Amount(cmp, v) => {
-            let a = t.amount_cents;
+            let a = t.input.amount_cents;
             match cmp {
                 Cmp::Eq => a == *v,
                 Cmp::Ne => a != *v,
@@ -447,25 +519,17 @@ fn eval(node: &Node, t: &ExprInput) -> bool {
             }
         }
         Node::Text(Some(Field::Unsupported(_)), _) => false,
-        Node::Text(Some(f), p) => text_matches(p, f.text(t), f.is_account()),
-        Node::Text(None, p) => DEFAULT_FIELDS
-            .iter()
-            .any(|f| text_matches(p, f.text(t), false)),
+        Node::Text(Some(f), p) => text_matches(p, t, *f),
+        Node::Text(None, p) => DEFAULT_FIELDS.iter().any(|f| text_matches(p, t, *f)),
     }
 }
 
-fn text_matches(p: &Pattern, text: &str, account: bool) -> bool {
+fn text_matches(p: &Pattern, t: &Prepared, f: Field) -> bool {
     match p {
-        Pattern::Regex(re) => re.is_match(text),
+        Pattern::Regex(re) => re.is_match(f.text(&t.input)),
         Pattern::Words(pat) => {
-            let folded = if account {
-                fold(&text.replace(' ', ""))
-            } else {
-                fold(text)
-            };
-            let tokens: Vec<&str> = folded.split_whitespace().collect();
             !pat.is_empty()
-                && tokens
+                && t.words(f)
                     .windows(pat.len())
                     .any(|w| w.iter().zip(pat).all(|(tok, re)| re.is_match(tok)))
         }
@@ -600,5 +664,30 @@ mod tests {
         ] {
             assert!(SearchExpr::parse(bad).is_err(), "{bad}");
         }
+    }
+    #[test]
+    fn quoted_account_number_ignores_spaces() {
+        let mut t = inp("", "", -1);
+        t.remote_account = "DE89 3704 0044 0532 0130 00";
+        assert!(m("remote_account:\"DE89 3704 0044 0532 0130 00\"", &t));
+        assert!(m("remote_account:\"DE89370400440532013000\"", &t));
+    }
+
+    #[test]
+    fn a_booking_is_folded_once_per_field_for_all_rules() {
+        let rules: Vec<SearchExpr> = (0..20)
+            .map(|r| {
+                SearchExpr::parse(&format!(
+                    "Shop{r}a* OR Shop{r}b OR purpose:x{r} OR comment:y{r}"
+                ))
+                .unwrap()
+            })
+            .collect();
+        let t = inp("Kaufhaus Nord", "Einkauf vom Montag", -100);
+        let prepared = Prepared::new(t);
+        let before = fold_count();
+        assert!(!rules.iter().any(|e| e.matches_prepared(&prepared)));
+        // name, purpose, booking_text, comment – each folded once
+        assert_eq!(fold_count() - before, 4);
     }
 }

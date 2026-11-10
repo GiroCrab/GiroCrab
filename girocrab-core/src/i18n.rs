@@ -472,6 +472,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Das Suchmuster ist leer." => "The pattern is empty.",
         "Der Suchausdruck ist leer." => "The search expression is empty.",
         "Das Feld „{0}“ wird nicht unterstützt." => "The field “{0}” isn't supported.",
+        "{0} (nur für bestimmte Konten)" => "{0} (specific accounts only)",
         "Der Suchausdruck ist unvollständig." => "The search expression is incomplete.",
         "Unerwartete schließende Klammer." => "Unexpected closing parenthesis.",
         "Klammer nicht geschlossen." => "Parenthesis not closed.",

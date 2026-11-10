@@ -1168,7 +1168,10 @@ fn imports_category_rules() {
         "MoneyMoney order"
     );
     assert!(!by_name("Gehalt").enabled, "broken syntax");
-    assert!(!by_name("Steuern / Büro").enabled, "account restriction");
+    assert!(
+        !by_name("Steuern / Büro (nur für bestimmte Konten)").enabled,
+        "account restriction is named in the rule"
+    );
     assert!(!by_name("Spenden").enabled, "unsupported field");
     assert!(
         rules.iter().all(|r| r.name != "Sonstiges"),

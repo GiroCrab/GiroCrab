@@ -8,7 +8,7 @@ use regex::{Regex, RegexBuilder};
 
 use crate::error::{CoreError, CoreResult};
 use crate::models::{MatchKind, Rule, RuleField};
-use crate::search_expr::{ExprInput, SearchExpr};
+use crate::search_expr::{ExprInput, Prepared, SearchExpr};
 
 /// The text fields of a transaction a rule can look at.
 pub struct RuleInput<'a> {
@@ -74,6 +74,12 @@ impl CompiledRule {
     }
 
     pub fn matches(&self, t: &RuleInput) -> bool {
+        self.matches_in(t, &Prepared::new(expr_input(t)))
+    }
+
+    /// [`matches`](Self::matches) with the booking already prepared for
+    /// search expressions (shared by all rules of a [`RuleSet`]).
+    fn matches_in(&self, t: &RuleInput, prepared: &Prepared) -> bool {
         let r = &self.rule;
         if !r.enabled {
             return false;
@@ -94,18 +100,7 @@ impl CompiledRule {
             }
         }
         let matcher = match &self.matcher {
-            Matcher::Expr(expr) => {
-                return expr.matches(&ExprInput {
-                    amount_cents: t.amount_cents,
-                    name: t.counterparty,
-                    purpose: t.purpose,
-                    booking_text: t.booking_text,
-                    remote_account: t.counterparty_iban,
-                    local_account: t.account_iban,
-                    comment: t.note,
-                    currency: t.currency,
-                })
-            }
+            Matcher::Expr(expr) => return expr.matches_prepared(prepared),
             Matcher::Regex(re) => re,
         };
         match r.field {
@@ -129,6 +124,19 @@ impl CompiledRule {
     }
 }
 
+fn expr_input<'a>(t: &RuleInput<'a>) -> ExprInput<'a> {
+    ExprInput {
+        amount_cents: t.amount_cents,
+        name: t.counterparty,
+        purpose: t.purpose,
+        booking_text: t.booking_text,
+        remote_account: t.counterparty_iban,
+        local_account: t.account_iban,
+        comment: t.note,
+        currency: t.currency,
+    }
+}
+
 pub struct RuleSet {
     rules: Vec<CompiledRule>,
 }
@@ -145,9 +153,10 @@ impl RuleSet {
 
     /// Returns (rule id, category id) of the first matching rule.
     pub fn categorise(&self, t: &RuleInput) -> Option<(i64, i64)> {
+        let prepared = Prepared::new(expr_input(t));
         self.rules
             .iter()
-            .find(|r| r.matches(t))
+            .find(|r| r.matches_in(t, &prepared))
             .map(|r| (r.rule.id, r.rule.category_id))
     }
 }
