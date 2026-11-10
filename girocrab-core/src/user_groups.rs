@@ -11,6 +11,10 @@
 //! `accounts.name_ms`); when merging two vaults the newer edit wins. Deleted
 //! groups stay as tombstones (`deleted_ms`) so a merge can't bring them back.
 //! Automatic placements use timestamp 0, so any explicit user choice wins.
+//!
+//! Account colours (booking-list markers, sidebar dot) follow the same rule:
+//! without a user choice the colour is derived from the account's sync
+//! identity, so every device shows the same colour without storing it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,7 +43,94 @@ const ACCOUNT_COLUMNS: &[(&str, &str)] = &[
     ("user_sort_order", "INTEGER NOT NULL DEFAULT 0"),
     ("placement_ms", "INTEGER NOT NULL DEFAULT 0"),
     ("name_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("color_hex", "TEXT"),
+    ("color_ms", "INTEGER NOT NULL DEFAULT 0"),
 ];
+
+/// Account colours (the palette of GiroCrab/GiroCrab#26), readable in light
+/// and dark mode. Ordered by hue spread: the first [`DISTINCT`] (blue, amber,
+/// green, red, fuchsia, lime) are far apart and used first; the rest (pink,
+/// violet, cyan, orange, indigo, teal) each sit close to one of them – e.g.
+/// blue and violet both turn lavender in dark mode.
+pub const ACCOUNT_COLOR_PALETTE: [&str; 12] = [
+    "#2563EB", "#D97706", "#059669", "#DC2626", "#C026D3", "#65A30D", // distinct
+    "#DB2777", "#7C3AED", "#0891B2", "#EA580C", "#4F46E5", "#0D9488",
+];
+
+/// Hash of what the iCloud merge identifies an account by (bank login +
+/// external ref): the same on every device. FNV-1a, so it never changes
+/// with the Rust version.
+pub(crate) fn account_color_hash(
+    connector: &str,
+    bank_code: &str,
+    login: &str,
+    external_ref: &str,
+) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for part in [connector, bank_code, login, external_ref] {
+        for b in part.bytes().chain(std::iter::once(0x1f)) {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// Default colours for accounts without a chosen one (`hashes`: account id →
+/// [`account_color_hash`]). Chosen colours are reserved first; each other
+/// account starts at its hashed palette slot and takes the next free one –
+/// the six clearly distinct hues first, so a few accounts never get look-
+/// alikes like amber and orange. Up to 12 accounts get distinct colours,
+/// the same on every device with the same accounts; beyond 12 the
+/// least-used colours repeat.
+pub(crate) fn assign_default_colors(accounts: &mut [Account], hashes: &HashMap<i64, u64>) {
+    let n = ACCOUNT_COLOR_PALETTE.len();
+    let mut used = [0u32; ACCOUNT_COLOR_PALETTE.len()];
+    for a in accounts.iter().filter(|a| !hashes.contains_key(&a.id)) {
+        if let Some(i) = ACCOUNT_COLOR_PALETTE
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case(&a.color_hex))
+        {
+            used[i] += 1;
+        }
+    }
+    let mut order: Vec<(u64, i64)> = hashes.iter().map(|(id, h)| (*h, *id)).collect();
+    order.sort_unstable();
+    let mut chosen: HashMap<i64, usize> = HashMap::new();
+    for (h, id) in order {
+        // least-used colours, and among those the clearly distinct first six
+        let least = *used.iter().min().unwrap_or(&0);
+        let tier = (0..n)
+            .filter(|&i| used[i] == least)
+            .map(|i| i / DISTINCT)
+            .min()
+            .unwrap_or(0);
+        let start = (h % n as u64) as usize;
+        let slot = (0..n)
+            .map(|k| (start + k) % n)
+            .find(|&i| used[i] == least && i / DISTINCT == tier)
+            .unwrap_or(start);
+        used[slot] += 1;
+        chosen.insert(id, slot);
+    }
+    for a in accounts.iter_mut() {
+        if let Some(&slot) = chosen.get(&a.id) {
+            a.color_hex = ACCOUNT_COLOR_PALETTE[slot].to_string();
+        }
+    }
+}
+
+/// Number of clearly distinct palette colours handed out first.
+const DISTINCT: usize = 6;
+
+/// The palette offered in the colour picker.
+#[uniffi::export]
+pub fn account_color_palette() -> Vec<String> {
+    ACCOUNT_COLOR_PALETTE
+        .iter()
+        .map(|c| c.to_string())
+        .collect()
+}
 
 /// Idempotent schema setup (also for brand-new vaults).
 pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
@@ -189,11 +280,16 @@ pub(crate) fn merge_attached(
         [],
     )? as u32;
     #[allow(clippy::type_complexity)]
-    let rows: Vec<(i64, Option<String>, i64, i64, String, i64)> = tx
-        .prepare("SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms FROM other.accounts")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
+    let rows: Vec<(i64, Option<String>, i64, i64, String, i64, Option<String>, i64)> = tx
+        .prepare(
+            "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms
+             FROM other.accounts",
+        )?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))
+        })?
         .collect::<Result<_, _>>()?;
-    for (oid, uuid, order, placed, name, named) in rows {
+    for (oid, uuid, order, placed, name, named, color, colored) in rows {
         let Some(&id) = acc_map.get(&oid) else {
             continue;
         };
@@ -207,6 +303,10 @@ pub(crate) fn merge_attached(
             "UPDATE accounts SET name = ?2, name_ms = ?3 WHERE id = ?1 AND (?4 OR name_ms < ?3)",
             params![id, name, named, fresh],
         )?;
+        changed += tx.execute(
+            "UPDATE accounts SET color_hex = ?2, color_ms = ?3 WHERE id = ?1 AND (?4 OR color_ms < ?3)",
+            params![id, color, colored, fresh],
+        )? as u32;
     }
     // Placements pointing at a group deleted on either side → "Ohne Gruppe".
     tx.execute(
@@ -387,6 +487,39 @@ impl Vault {
         }
         renumber(&tx, &ids)?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Sets an account's colour (`#RRGGBB`); `None` = back to its default.
+    pub fn set_account_color(
+        &self,
+        account_id: i64,
+        color_hex: Option<String>,
+    ) -> Result<(), CoreError> {
+        let hex = match color_hex.map(|h| h.trim().to_uppercase()) {
+            Some(h)
+                if h.len() == 7
+                    && h.starts_with('#')
+                    && h[1..].chars().all(|c| c.is_ascii_hexdigit()) =>
+            {
+                Some(h)
+            }
+            Some(h) => {
+                return Err(CoreError::InvalidInput {
+                    message: trf("Ungültige Farbe: {0}", &[&h]),
+                })
+            }
+            None => None,
+        };
+        let n = self.db()?.execute(
+            "UPDATE accounts SET color_hex = ?2, color_ms = ?3 WHERE id = ?1",
+            params![account_id, hex, now_ms()],
+        )?;
+        if n == 0 {
+            return Err(CoreError::NotFound {
+                what: trf("Konto {0}", &[&account_id]),
+            });
+        }
         Ok(())
     }
 

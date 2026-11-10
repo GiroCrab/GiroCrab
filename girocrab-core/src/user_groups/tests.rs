@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -318,5 +319,140 @@ fn merge_brings_new_accounts_with_their_group() {
     let st = b.merge_other_vault(a.file_path(), key).unwrap();
     assert_eq!(st.accounts_added, 3);
     assert_eq!(names(&b)[0], ("Kinder".into(), s(&["Visa"])));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn colors(v: &Vault) -> Vec<(String, String)> {
+    let mut c: Vec<_> = v
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.name, a.color_hex))
+        .collect();
+    c.sort();
+    c
+}
+
+#[test]
+fn account_colors_default_stable_and_sync() {
+    let dir = temp_dir("colors");
+    let key = vec![7u8; 32];
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let bar = |v: &Vault| {
+        let db = v.db().unwrap();
+        db.execute(
+            "INSERT OR IGNORE INTO account_groups(name) VALUES ('H')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name) \
+             VALUES ((SELECT id FROM account_groups WHERE name = 'H'), 'unrelated', 'Bar')",
+            [],
+        )
+        .unwrap();
+    };
+    // the same accounts, created in a different order → different local ids
+    let ia = seed(&a);
+    bar(&a);
+    bar(&b);
+    seed(&b);
+
+    // same default colours on both devices, distinct, nothing stored
+    let ca = colors(&a);
+    assert_eq!(ca, colors(&b));
+    let distinct: std::collections::HashSet<_> = ca.iter().map(|(_, c)| c.clone()).collect();
+    assert_eq!(
+        distinct.len(),
+        ca.len(),
+        "no two accounts share a default colour"
+    );
+    assert!(
+        ca.iter()
+            .all(|(_, c)| super::ACCOUNT_COLOR_PALETTE[..super::DISTINCT].contains(&c.as_str())),
+        "a few accounts only get the clearly distinct hues"
+    );
+    assert!(ca
+        .iter()
+        .all(|(_, c)| super::ACCOUNT_COLOR_PALETTE.contains(&c.as_str())));
+    let stored: i64 = a
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM accounts WHERE color_hex IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, 0);
+
+    // a user choice syncs both ways; the newer one wins
+    assert!(a.set_account_color(ia[0], Some("blue".into())).is_err());
+    assert!(a.set_account_color(999, Some("#123456".into())).is_err());
+    a.set_account_color(ia[0], Some("#abcdef".into())).unwrap();
+    tick();
+    b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    let giro = |v: &Vault| {
+        v.list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|x| x.name == "Giro")
+            .unwrap()
+            .color_hex
+    };
+    assert_eq!(giro(&b), "#ABCDEF");
+    let gb = b
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|x| x.name == "Giro")
+        .unwrap()
+        .id;
+    b.set_account_color(gb, None).unwrap();
+    tick();
+    a.merge_other_vault(b.file_path(), key.clone()).unwrap();
+    assert_eq!(
+        giro(&a),
+        ca.iter().find(|(n, _)| n == "Giro").unwrap().1,
+        "reset to default syncs too"
+    );
+    assert_eq!(super::account_color_palette().len(), 12);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn default_colors_distinct_up_to_twelve_and_respect_choices() {
+    let dir = temp_dir("colors12");
+    let v = open(&dir, "a.db");
+    let ids = seed(&v);
+    let add = |n: usize| {
+        let db = v.db().unwrap();
+        for i in 0..n {
+            db.execute(
+                "INSERT INTO accounts(group_id, external_ref, name) VALUES (1, ?1, ?1)",
+                [format!("X{i}-{}", uuid::Uuid::new_v4())],
+            )
+            .unwrap();
+        }
+    };
+    let counts = |v: &Vault| {
+        let mut m: HashMap<String, usize> = HashMap::new();
+        for a in v.list_accounts().unwrap() {
+            *m.entry(a.color_hex).or_default() += 1;
+        }
+        m
+    };
+    // a chosen colour is reserved: no default account gets it
+    v.set_account_color(ids[0], Some(super::ACCOUNT_COLOR_PALETTE[3].into()))
+        .unwrap();
+    add(9); // 12 accounts
+    let c = counts(&v);
+    assert_eq!(c.len(), 12, "12 accounts → 12 different colours");
+    assert_eq!(c[super::ACCOUNT_COLOR_PALETTE[3]], 1);
+    add(1); // 13th account: colours repeat as evenly as possible
+    let c = counts(&v);
+    assert_eq!(c.len(), 12);
+    assert_eq!(c.values().max(), Some(&2));
     let _ = std::fs::remove_dir_all(dir);
 }

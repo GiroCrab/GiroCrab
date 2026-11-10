@@ -287,6 +287,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Konto {0}" => "account {0}",
         // ------------------------------------------------------ user_groups.rs
         "Gruppe {0}" => "group {0}",
+        "Ungültige Farbe: {0}" => "Invalid colour: {0}",
         "Ohne Gruppe" => "Ungrouped",
         "Alltag" => "Everyday",
         "Sparen & Vorsorge" => "Savings & retirement",

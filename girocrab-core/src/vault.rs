@@ -1335,11 +1335,13 @@ impl Vault {
                     (SELECT count(*) FROM transactions t WHERE t.account_id = a.id),
                     (SELECT count(*) FROM transactions t WHERE t.account_id = a.id AND t.category_id IS NULL),
                     (SELECT count(*) FROM transactions t WHERE t.account_id = a.id AND t.checked = 0),
-                    a.initial_balance_cents, g.uuid, IFNULL(g.include_in_total, 1)
+                    a.initial_balance_cents, g.uuid, IFNULL(g.include_in_total, 1),
+                    a.color_hex, IFNULL(c.connector, ''), IFNULL(c.bank_code, ''), IFNULL(c.login_name, ''), a.external_ref
              FROM accounts a LEFT JOIN bank_connections c ON c.id = a.connection_id
              LEFT JOIN user_groups g ON g.uuid = a.user_group_uuid AND g.deleted_ms IS NULL
              ORDER BY a.sort_order, a.id",
         )?;
+        let mut color_hashes: HashMap<i64, u64> = HashMap::new();
         let rows = stmt.query_map([], |r| {
             Ok(Account {
                 id: r.get(0)?,
@@ -1368,9 +1370,26 @@ impl Vault {
                     .filter(|c| *c > 0),
                 user_group_uuid: r.get(19)?,
                 in_total: r.get(20)?,
+                // filled in below for accounts without a chosen colour
+                color_hex: match r.get::<_, Option<String>>(21)? {
+                    Some(c) => c,
+                    None => {
+                        color_hashes.insert(
+                            r.get(0)?,
+                            crate::user_groups::account_color_hash(
+                                &r.get::<_, String>(22)?,
+                                &r.get::<_, String>(23)?,
+                                &r.get::<_, String>(24)?,
+                                &r.get::<_, String>(25)?,
+                            ),
+                        );
+                        String::new()
+                    }
+                },
             })
         })?;
         let mut accounts = rows.collect::<Result<Vec<_>, _>>()?;
+        crate::user_groups::assign_default_colors(&mut accounts, &color_hashes);
         // Credit cards stored with balance 0: derive the open amount from bookings.
         for a in accounts.iter_mut().filter(|a| {
             a.kind == AccountKind::CreditCard && a.balance_cents == 0 && a.transaction_count > 0

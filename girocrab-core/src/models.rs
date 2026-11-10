@@ -195,6 +195,9 @@ pub struct Account {
     pub user_group_uuid: Option<String>,
     /// Counts towards the overall total (false if its user group is excluded).
     pub in_total: bool,
+    /// Marker colour (`#RRGGBB`): the user's choice or a default derived
+    /// from the account's sync identity (same on every device).
+    pub color_hex: String,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
