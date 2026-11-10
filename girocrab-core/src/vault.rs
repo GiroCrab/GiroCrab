@@ -320,7 +320,11 @@ impl Vault {
     }
 
     pub(crate) fn rule_set(conn: &Connection) -> CoreResult<RuleSet> {
-        RuleSet::new(Self::load_rules(conn)?)
+        // Disabled rules never match; skipping them also keeps a switched-off
+        // rule with an invalid pattern (e.g. imported) from breaking the set.
+        let mut rules = Self::load_rules(conn)?;
+        rules.retain(|r| r.enabled);
+        RuleSet::new(rules)
     }
 
     fn load_rules(conn: &Connection) -> CoreResult<Vec<Rule>> {
