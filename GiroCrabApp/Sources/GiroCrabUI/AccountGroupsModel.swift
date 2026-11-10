@@ -174,6 +174,16 @@ extension AppModel {
         reorderUserGroups(list)
     }
 
+    /// "Gruppen bearbeiten …": Settings › Kontogruppen.
+    func openGroupSettings() {
+        settingsTab = .groups
+        #if os(macOS)
+        groupSettingsRequested = true
+        #else
+        showSettings = true
+        #endif
+    }
+
     func toggleCollapsed(_ g: UserGroup) {
         if collapsedUserGroups.contains(g.uuid) { collapsedUserGroups.remove(g.uuid) } else { collapsedUserGroups.insert(g.uuid) }
     }

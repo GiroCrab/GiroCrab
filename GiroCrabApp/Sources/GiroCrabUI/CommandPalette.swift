@@ -44,12 +44,12 @@ struct CommandPaletteView: View {
         #endif
         out.append(Item(title: String(localized: "Übersicht"), subtitle: String(localized: "Konten"), symbol: "square.grid.2x2") { model.sidebarSelection = .allAccounts })
         out.append(Item(title: String(localized: "Neue Kontogruppe"), subtitle: "\(action) · ⇧⌘N", symbol: "folder.badge.plus") { model.groupDialog = .create() })
-        out.append(Item(title: String(localized: "Kontogruppen bearbeiten"), subtitle: action, symbol: "slider.horizontal.3") { model.showGroupEditor = true })
+        out.append(Item(title: String(localized: "Kontogruppen bearbeiten"), subtitle: action, symbol: "slider.horizontal.3") { model.openGroupSettings() })
         for m in AccountSidebarMode.allCases where m != model.accountView {
             out.append(Item(title: m == .byGroup ? String(localized: "Konten nach Gruppe anzeigen") : String(localized: "Konten nach Kontoart anzeigen"), subtitle: String(localized: "Ansicht"), symbol: m.symbol) { model.accountView = m })
         }
         for g in model.namedUserGroups {
-            out.append(Item(title: g.name, subtitle: String(localized: "Gruppe · \(g.accounts.count) Konten"), symbol: g.sfSymbol) {
+            out.append(Item(title: g.name, subtitle: String(localized: "Gruppe · \(accountCountText(g.accounts.count))"), symbol: g.sfSymbol) {
                 model.accountView = .byGroup
                 model.sidebarSelection = .userGroup(g.uuid)
             })

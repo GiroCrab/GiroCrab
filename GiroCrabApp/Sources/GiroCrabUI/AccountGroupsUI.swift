@@ -21,37 +21,43 @@ enum GroupDrag {
 
 // MARK: - Sidebar pieces
 
-/// "Konten" title with the view switch and group actions.
+/// "Konten" title with visible group actions and the view switch.
+/// The switch is a segmented control (a choice of how the list is
+/// organised, not a filter); new group and editing are buttons, not
+/// hidden in a menu.
 struct AccountsSectionHeader: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
-        HStack(spacing: 6) {
-            Text("Konten")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Theme.secondary)
-            Spacer()
-            Menu {
-                Picker("Darstellung", selection: $model.accountView) {
-                    ForEach(AccountSidebarMode.allCases) { m in
-                        Label(m.title, systemImage: m.symbol).tag(m)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 2) {
+                Text("Konten")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.secondary)
+                Spacer()
+                if model.accountView == .byGroup {
+                    Button { model.groupDialog = .create() } label: {
+                        Image(systemName: "plus").frame(width: 22, height: 18).contentShape(Rectangle())
                     }
+                    .help("Neue Gruppe …")
+                    .accessibilityLabel("Neue Gruppe")
+                    Button { model.openGroupSettings() } label: {
+                        Image(systemName: "slider.horizontal.3").frame(width: 22, height: 18).contentShape(Rectangle())
+                    }
+                    .help("Gruppen bearbeiten …")
+                    .accessibilityLabel("Gruppen bearbeiten")
                 }
-                .pickerStyle(.inline)
-                Divider()
-                Button("Neue Gruppe …", systemImage: "folder.badge.plus") { model.groupDialog = .create() }
-                Button("Gruppen bearbeiten …", systemImage: "slider.horizontal.3") { model.showGroupEditor = true }
-            } label: {
-                Label(model.accountView == .byGroup ? "Nach Gruppe" : "Nach Kontoart", systemImage: "line.3.horizontal.decrease")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .buttonStyle(.borderless)
             .foregroundStyle(Theme.secondary)
-            .accessibilityLabel("Kontenansicht und Gruppen")
+            Picker("Konten anzeigen nach", selection: $model.accountView) {
+                Text("Gruppen").tag(AccountSidebarMode.byGroup)
+                Text("Kontoart").tag(AccountSidebarMode.byKind)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
         }
         .padding(.top, 12)
     }
@@ -185,7 +191,7 @@ struct UserGroupMenu: View {
         }
         Divider()
         Button("Neue Gruppe …", systemImage: "folder.badge.plus") { model.groupDialog = .create() }
-        Button("Gruppen bearbeiten …", systemImage: "slider.horizontal.3") { model.showGroupEditor = true }
+        Button("Gruppen bearbeiten …", systemImage: "slider.horizontal.3") { model.openGroupSettings() }
         if !group.isUngrouped {
             Divider()
             Button("Gruppe löschen …", systemImage: "trash", role: .destructive) { model.groupDialog = .delete(group) }
@@ -195,16 +201,15 @@ struct UserGroupMenu: View {
 
 // MARK: - Dialogs (one place for all group dialogs)
 
-/// Presents `model.groupDialog` and the editor sheet. Attached to the main
-/// window and inside the editor sheet; only one of them presents at a time.
+/// Presents `model.groupDialog`. Attached to the main window and to the
+/// "Kontogruppen" settings pane; the pane presents while it is the active
+/// window, the main window otherwise – never both.
 struct AccountGroupDialogs: ViewModifier {
     @Environment(AppModel.self) private var model
     @State private var text = ""
-    /// Attached inside the editor sheet: that one presents while the sheet
-    /// is up, the window's one otherwise.
-    var inEditor = false
+    var inSettings = false
 
-    private var hosts: Bool { model.showGroupEditor == inEditor }
+    private var hosts: Bool { model.groupSettingsActive == inSettings }
 
     /// Shown while the dialog is of this kind; dismissing clears it unless
     /// an action already switched to another dialog.
@@ -216,7 +221,6 @@ struct AccountGroupDialogs: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        @Bindable var model = model
         content
             .alert(model.groupDialog?.title ?? Text(verbatim: ""), isPresented: presented(text: true), presenting: model.groupDialog) { d in
                 TextField("Name, z. B. „Privat“ oder „Geschäft“", text: $text)
@@ -257,10 +261,6 @@ struct AccountGroupDialogs: ViewModifier {
                 if case .delete(let g) = d { Text(deleteMessage(g)) }
             }
             .onChange(of: model.groupDialog?.initialText) { _, t in text = t ?? "" }
-            .sheet(isPresented: inEditor ? .constant(false) : $model.showGroupEditor) {
-                GroupEditorView()
-                    .environment(model)
-            }
     }
 
     private func submit(_ d: GroupDialog) {
@@ -275,77 +275,174 @@ struct AccountGroupDialogs: ViewModifier {
 }
 
 extension View {
-    func accountGroupDialogs(inEditor: Bool = false) -> some View { modifier(AccountGroupDialogs(inEditor: inEditor)) }
+    func accountGroupDialogs(inSettings: Bool = false) -> some View { modifier(AccountGroupDialogs(inSettings: inSettings)) }
 }
 
-/// "Gruppen bearbeiten …": order, rename, symbol, total, members.
-struct GroupEditorView: View {
+/// Settings › "Kontogruppen": list of groups with +/− below it (macOS:
+/// details beside it; iOS: pushed). Changes apply immediately, like the
+/// rest of Settings – no Done/Cancel.
+struct AccountGroupsSettings: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var path: [String] = []
+    @State private var selection: String?
+    #if os(macOS)
+    @Environment(\.controlActiveState) private var windowState
+    #endif
+
+    private var selectedGroup: UserGroup? {
+        selection.flatMap { u in model.namedUserGroups.first { $0.uuid == u } }
+    }
 
     var body: some View {
-        NavigationStack(path: $path) {
-            List {
-                Section {
-                    ForEach(model.namedUserGroups) { g in
-                        NavigationLink(value: g.uuid) {
-                            HStack(spacing: 10) {
-                                Image(systemName: g.sfSymbol).foregroundStyle(Theme.accent).frame(width: 22)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(g.name)
-                                    Text(g.accounts.isEmpty ? String(localized: "Keine Konten") : String(localized: "\(g.accounts.count) Konten"))
-                                        .font(.caption).foregroundStyle(Theme.secondary)
-                                }
-                                Spacer()
-                                if !g.includeInTotal {
-                                    Image(systemName: "eye.slash").foregroundStyle(Theme.tertiary).help("Nicht in der Gesamtsumme")
-                                }
-                                Text(Money.format(g.balanceCents)).monospacedDigit().foregroundStyle(Theme.secondary)
-                            }
+        content
+            .onAppear {
+                if selection == nil { selection = model.namedUserGroups.first?.uuid }
+                markActive(true)
+            }
+            .onDisappear { markActive(false) }
+            #if os(macOS)
+            .onChange(of: windowState) { _, s in markActive(s == .key) }
+            #endif
+            .onChange(of: model.namedUserGroups.map(\.uuid)) { old, new in
+                // select a group just created here; leave a deleted one
+                if let added = new.first(where: { !old.contains($0) }) {
+                    selection = added
+                } else if let s = selection, !new.contains(s) {
+                    selection = new.first
+                }
+            }
+            .accountGroupDialogs(inSettings: true)
+    }
+
+    private func markActive(_ on: Bool) {
+        #if os(macOS)
+        model.groupSettingsActive = on && windowState == .key
+        #else
+        model.groupSettingsActive = on
+        #endif
+    }
+
+    private var footer: LocalizedStringKey {
+        model.hasUserGroups
+            ? "Reihenfolge per Ziehen ändern. Konten ohne Gruppe erscheinen unter „Ohne Gruppe“."
+            : "Mit Gruppen trennen Sie z. B. private und geschäftliche Konten oder die Konten von Familienmitgliedern."
+    }
+
+    #if os(macOS)
+    private var content: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(spacing: 0) {
+                    List(selection: $selection) {
+                        ForEach(model.namedUserGroups) { g in
+                            GroupListRow(group: g).tag(g.uuid)
                         }
-                        .contextMenu {
-                            Button("Gruppe löschen …", systemImage: "trash", role: .destructive) { model.groupDialog = .delete(g) }
-                        }
+                        .onMove { model.moveUserGroups(from: $0, to: $1) }
                     }
-                    .onMove { model.moveUserGroups(from: $0, to: $1) }
-                    .onDelete { idx in model.groupDialog = idx.first.map { .delete(model.namedUserGroups[$0]) } }
-                } header: {
-                    Text("Gruppen")
-                } footer: {
-                    Text(model.hasUserGroups
-                         ? "Reihenfolge per Ziehen ändern. Konten ohne Gruppe erscheinen unter „Ohne Gruppe“."
-                         : "Mit Gruppen trennen Sie z. B. private und geschäftliche Konten oder die Konten von Familienmitgliedern.")
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    Divider()
+                    // add/remove square buttons beneath the list (HIG: Buttons › Square buttons)
+                    HStack(spacing: 0) {
+                        Button { model.groupDialog = .create() } label: {
+                            Image(systemName: "plus").frame(width: 26, height: 22).contentShape(Rectangle())
+                        }
+                        .help("Neue Gruppe …")
+                        .accessibilityLabel("Neue Gruppe")
+                        Divider().frame(height: 16)
+                        Button { if let g = selectedGroup { model.groupDialog = .delete(g) } } label: {
+                            Image(systemName: "minus").frame(width: 26, height: 22).contentShape(Rectangle())
+                        }
+                        .disabled(selectedGroup == nil)
+                        .help("Gruppe löschen …")
+                        .accessibilityLabel("Gruppe löschen")
+                        Spacer()
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.horizontal, 2)
                 }
-                Section {
-                    Button("Neue Gruppe …", systemImage: "folder.badge.plus") { model.groupDialog = .create() }
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(width: 240)
+            Group {
+                if let uuid = selectedGroup?.uuid {
+                    GroupDetailEditor(uuid: uuid, onGone: { selection = nil })
+                        .id(uuid)
+                } else {
+                    ContentUnavailableView {
+                        Label(model.hasUserGroups ? "Keine Gruppe ausgewählt" : "Noch keine Gruppen", systemImage: "folder")
+                    } description: {
+                        Text(model.hasUserGroups ? "Wählen Sie links eine Gruppe aus." : "Mit + legen Sie die erste Gruppe an.")
+                    }
                 }
             }
-            .navigationTitle("Kontogruppen")
-            .navigationDestination(for: String.self) { uuid in
-                GroupDetailEditor(uuid: uuid)
-            }
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Fertig") { dismiss() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(20)
+    }
+    #else
+    private var content: some View {
+        List {
+            Section {
+                ForEach(model.namedUserGroups) { g in
+                    NavigationLink(value: g.uuid) { GroupListRow(group: g) }
                 }
-                #if os(iOS)
-                ToolbarItem(placement: .topBarLeading) { EditButton() }
-                #endif
+                .onMove { model.moveUserGroups(from: $0, to: $1) }
+                .onDelete { idx in model.groupDialog = idx.first.map { .delete(model.namedUserGroups[$0]) } }
+            } footer: {
+                Text(footer)
+            }
+            Section {
+                Button("Neue Gruppe …", systemImage: "folder.badge.plus") { model.groupDialog = .create() }
             }
         }
-        // group dialogs must also work while this sheet is up
-        .accountGroupDialogs(inEditor: true)
-        #if os(macOS)
-        .frame(minWidth: 480, minHeight: 540)
-        #endif
+        .navigationDestination(for: String.self) { uuid in GroupDetailEditor(uuid: uuid) }
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { EditButton() } }
+    }
+    #endif
+}
+
+/// A group in the settings list: symbol, name, account count, sum.
+struct GroupListRow: View {
+    let group: UserGroup
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: group.sfSymbol).foregroundStyle(Theme.accent).frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(group.name).lineLimit(1)
+                Text(accountCountText(group.accounts.count))
+                    .font(.caption).foregroundStyle(Theme.secondary)
+            }
+            Spacer(minLength: 4)
+            if !group.includeInTotal {
+                Image(systemName: "eye.slash").foregroundStyle(Theme.tertiary).help("Nicht in der Gesamtsumme")
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
 func deleteMessage(_ g: UserGroup) -> String {
-    g.accounts.isEmpty
-        ? String(localized: "Die Gruppe ist leer.")
-        : String(localized: "\(g.accounts.count) Konten werden nach „Ohne Gruppe“ verschoben. Es werden keine Konten oder Buchungen gelöscht.")
+    switch g.accounts.count {
+    case 0: String(localized: "Die Gruppe ist leer.")
+    case 1: String(localized: "Das Konto wird nach „Ohne Gruppe“ verschoben. Es werden keine Konten oder Buchungen gelöscht.")
+    case let n: String(localized: "\(n) Konten werden nach „Ohne Gruppe“ verschoben. Es werden keine Konten oder Buchungen gelöscht.")
+    }
+}
+
+/// "Keine Konten" / "1 Konto" / "3 Konten".
+func accountCountText(_ n: Int) -> String {
+    switch n {
+    case 0: String(localized: "Keine Konten")
+    case 1: String(localized: "1 Konto")
+    default: String(localized: "\(n) Konten")
+    }
 }
 
 /// One group: name, symbol, total switch and which accounts belong to it.
@@ -353,6 +450,9 @@ struct GroupDetailEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let uuid: String
+    /// Called when the group disappears (deleted here or via sync);
+    /// default: pop back (iOS navigation).
+    var onGone: (() -> Void)?
     @State private var name = ""
 
     private var group: UserGroup? { model.userGroups.first { $0.uuid == uuid } }
@@ -360,7 +460,7 @@ struct GroupDetailEditor: View {
     var body: some View {
         if let g = group {
             Form {
-                Section("Name") {
+                Section {
                     TextField("Name", text: $name)
                         .onSubmit { commitName() }
                 }
@@ -421,17 +521,21 @@ struct GroupDetailEditor: View {
                 } footer: {
                     Text("Ein Konto gehört zu höchstens einer Gruppe.")
                 }
+                #if os(iOS)
                 Section {
                     Button("Gruppe löschen …", role: .destructive) { model.groupDialog = .delete(g) }
                 }
+                #endif
             }
             .formStyle(.grouped)
+            #if os(iOS)
             .navigationTitle(g.name)
+            #endif
             .onAppear { name = g.name }
             .onDisappear { commitName() }
         } else {
             // deleted (here or via sync) → back to the list
-            Color.clear.onAppear { dismiss() }
+            Color.clear.onAppear { if let onGone { onGone() } else { dismiss() } }
         }
     }
 

@@ -276,6 +276,27 @@ final class AccountGroupsTests: XCTestCase {
         XCTAssertEqual(model.groups.map { $0.accounts.map(\.id) }, kindBefore.map(\.1), "'Nach Kontoart' never changes")
     }
 
+    // MARK: Settings › Kontogruppen
+
+    func testEditGroupsOpensSettingsPane() {
+        XCTAssertEqual(model.settingsTab, .banks)
+        model.openGroupSettings()
+        XCTAssertEqual(model.settingsTab, .groups)
+        #if os(macOS)
+        XCTAssertTrue(model.groupSettingsRequested, "the main window opens the Settings window")
+        #else
+        XCTAssertTrue(model.showSettings)
+        #endif
+    }
+
+    func testAccountCountAndDeleteTexts() throws {
+        XCTAssertEqual(accountCountText(0), String(localized: "Keine Konten"))
+        XCTAssertEqual(accountCountText(1), String(localized: "1 Konto"))
+        XCTAssertEqual(accountCountText(3), String(localized: "3 Konten"))
+        let single = try XCTUnwrap(groups.first { $0.accounts.count == 1 })
+        XCTAssertFalse(deleteMessage(single).contains("1 Konten"))
+    }
+
     // MARK: drag payloads
 
     func testDragPayloadsRoundTrip() {
