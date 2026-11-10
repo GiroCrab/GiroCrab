@@ -129,8 +129,9 @@ struct TransferDraft {
     var amountText = ""
     var purpose = ""
     var pin = ""
-    /// SEPA Instant ("Echtzeitüberweisung", FinTS only).
-    var instant = false
+    /// SEPA Instant (Echtzeitüberweisung); falls back to a regular transfer
+    /// if the bank does not offer or rejects it.
+    var instant = true
     /// Terminüberweisung: when on, `executionDate` is sent (FinTS only).
     var scheduled = false
     var executionDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
@@ -1597,6 +1598,8 @@ extension AppModel {
         do {
             let cents = try parseAmountToCents(text: transferDraft.amountText)
             let bic = transferDraft.bic.trimmingCharacters(in: .whitespaces)
+            // Instant and scheduled transfers are FinTS-only.
+            let offersInstant = account.connector?.offersInstantChoice ?? false
             let request = SepaTransferRequest(
                 accountId: accID,
                 recipientName: transferDraft.name,
@@ -1604,8 +1607,8 @@ extension AppModel {
                 recipientBic: bic.isEmpty ? nil : bic,
                 amountCents: cents,
                 purpose: transferDraft.purpose,
-                instant: transferDraft.instant,
-                executionDate: transferDraft.executionDateISO)
+                instant: transferDraft.instant && offersInstant,
+                executionDate: offersInstant ? transferDraft.executionDateISO : nil)
             let stored = connectionStatus(connection.id)?.hasPin ?? false
             if !isDemo && !stored && transferDraft.pin.isEmpty {
                 transferError = String(localized: "Bitte die Banking-PIN eingeben.")
@@ -1641,13 +1644,19 @@ extension AppModel {
                 activeChallenge?.busy = false
             }
             schedulePoll(connection: connection, interval: c.pollIntervalSeconds)
-        case .finished:
+        case .finished(let outcome):
             pollTask?.cancel()
             activeChallenge = nil
             activeTransfer = nil
             transferBusy = false
-            transferDraft = TransferDraft(accountID: transferDraft.accountID)
-            toast = String(localized: "Überweisung freigegeben und vorgemerkt")
+            transferDraft = TransferDraft(accountID: transferDraft.accountID, instant: transferDraft.instant)
+            if outcome.instant {
+                toast = String(localized: "Echtzeitüberweisung freigegeben und vorgemerkt")
+            } else if let reason = outcome.fallbackReason {
+                toast = String(localized: "Echtzeitüberweisung nicht möglich (\(reason)) – als normale Überweisung freigegeben und vorgemerkt")
+            } else {
+                toast = String(localized: "Überweisung freigegeben und vorgemerkt")
+            }
             reloadAll()
         }
     }

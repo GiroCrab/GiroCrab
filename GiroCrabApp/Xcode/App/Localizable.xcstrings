@@ -2568,6 +2568,39 @@
         }
       }
     },
+    "Echtzeitüberweisung (SEPA Instant)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instant transfer (SEPA Instant)"
+          }
+        }
+      }
+    },
+    "Echtzeitüberweisung freigegeben und vorgemerkt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instant transfer approved and recorded as pending"
+          }
+        }
+      }
+    },
+    "Echtzeitüberweisung nicht möglich (%@) – als normale Überweisung freigegeben und vorgemerkt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instant transfer not possible (%@) – approved as a regular transfer and recorded as pending"
+          }
+        }
+      }
+    },
     "Eigene Domain für das Logo eintragen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4049,6 +4082,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Preview"
+          }
+        }
+      }
+    },
+    "Kommt in Sekunden an. Bietet die Bank sie nicht an oder lehnt sie ab, wird sie als normale Überweisung gesendet (neue Freigabe nötig)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arrives within seconds. If the bank does not offer or rejects it, it is sent as a regular transfer (new approval needed)."
           }
         }
       }
@@ -5873,6 +5917,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Take Over Session"
+          }
+        }
+      }
+    },
+    "Sofort (Echtzeitüberweisung, sonst normale Überweisung)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Immediately (instant transfer, otherwise regular transfer)"
           }
         }
       }

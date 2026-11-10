@@ -16,6 +16,7 @@ pub struct DemoConnector {
     kind: ConnectorKind,
     polls: u32,
     challenge: Option<Challenge>,
+    outcome: super::TransferOutcome,
 }
 
 impl DemoConnector {
@@ -24,6 +25,7 @@ impl DemoConnector {
             kind,
             polls: 0,
             challenge: None,
+            outcome: super::TransferOutcome::default(),
         }
     }
 }
@@ -111,9 +113,23 @@ impl BankConnector for DemoConnector {
         job: &TransferJob,
     ) -> CoreResult<Phase> {
         self.polls = 0;
+        // Demo: instant transfers to recipients named "…langsam…" are
+        // "rejected" by the bank and sent as a regular transfer instead.
+        let falls_back = job.instant && job.recipient_name.to_lowercase().contains("langsam");
+        self.outcome = super::TransferOutcome {
+            instant: job.instant && !falls_back,
+            fallback_reason: falls_back.then(|| {
+                tr("Demo: Die Empfängerbank ist für Echtzeitüberweisungen gerade nicht erreichbar.")
+                    .to_string()
+            }),
+        };
         let c = Challenge {
             kind: ChallengeKind::DecoupledPush,
-            title: tr("Überweisung in der Banking-App freigeben").into(),
+            title: if falls_back {
+                tr("Echtzeitüberweisung nicht möglich – normale Überweisung freigeben").into()
+            } else {
+                tr("Überweisung in der Banking-App freigeben").into()
+            },
             message: trf(
                 "Demo: {0} an {1} wird nach wenigen Sekunden „freigegeben“.",
                 &[
@@ -129,6 +145,10 @@ impl BankConnector for DemoConnector {
         };
         self.challenge = Some(c.clone());
         Ok(Phase::Challenge(c))
+    }
+
+    fn transfer_outcome(&self) -> super::TransferOutcome {
+        self.outcome.clone()
     }
 
     async fn fetch(&mut self, _ctx: &ConnectContext) -> CoreResult<FetchResult> {

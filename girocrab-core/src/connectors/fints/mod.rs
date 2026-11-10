@@ -20,6 +20,10 @@
 //!      segments): always the highest version both sides support.
 //!   4. Any 9xxx return code is reported with the code and the offending
 //!      segment ("9050 [HKKAZ #3] Auftragsart wird nicht unterstützt").
+//!   5. Transfers: HKCCS (regular SEPA) or HKIPZ (SEPA Instant), each with
+//!      HKTAN process 4. An instant transfer the bank does not offer or rejects
+//!      (on submission or after the approval) is resent as HKCCS, which needs
+//!      a new approval. No fallback after PIN/TAN errors or a declined approval.
 //!
 //! The registration-bound product ID is never hardcoded; it comes from
 //! Settings (`fints.product_id`).
@@ -39,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use self::syntax::{escape, parse_response, Segment, SegmentBuilder};
 use super::{
     BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, FetchResult, Phase,
-    RemoteAccount, TransferJob,
+    RemoteAccount, TransferJob, TransferOutcome,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -250,11 +254,41 @@ pub struct FinTsConnector {
     product_version: String,
     /// Accounts from the user parameter data (HIUPD).
     upd: Vec<UpdAccount>,
-    /// A SEPA transfer (HKCCS) is awaiting its TAN.
+    /// A SEPA transfer (HKCCS/HKIPZ) is awaiting its TAN.
     transferring: bool,
     /// TAN medium name entered by the user (e.g. Postbank BestSign `SO:Gerät`);
     /// wins over the HKTAB lookup.
     tan_medium_override: String,
+    /// The transfer being sent (needed to resend it as HKCCS).
+    pending_job: Option<TransferJob>,
+    /// An HKIPZ order is awaiting its approval; a rejection falls back.
+    instant_in_flight: bool,
+    /// The bank closed the dialog on rejecting HKIPZ: after the new login,
+    /// send the regular transfer.
+    relogin_for_fallback: bool,
+    outcome: TransferOutcome,
+    /// The order being sent.
+    order: Option<PreparedOrder>,
+}
+
+/// A transfer order ready to send (segment number set at send time).
+#[derive(Clone)]
+struct PreparedOrder {
+    seg_id: &'static str,
+    kti: String,
+    descriptor: &'static str,
+    xml: String,
+    instant: bool,
+}
+
+/// Result of submitting a transfer order.
+enum Submit {
+    Sent(BankReply),
+    /// Instant transfer not possible; resend as a regular transfer.
+    Declined {
+        reason: String,
+        dialog_closed: bool,
+    },
 }
 
 impl FinTsConnector {
@@ -274,6 +308,11 @@ impl FinTsConnector {
             upd: Vec::new(),
             transferring: false,
             tan_medium_override: String::new(),
+            pending_job: None,
+            instant_in_flight: false,
+            relogin_for_fallback: false,
+            outcome: TransferOutcome::default(),
+            order: None,
         }
     }
 
@@ -518,18 +557,10 @@ impl FinTsConnector {
             ("HIIPZS", "HKIPZ"),
             ("HICSES", "HKCSE"),
         ] {
-            for s in reply.all(seg) {
-                for el in &s.elements {
-                    for v in el {
-                        let t = v.text();
-                        if t.contains("pain.001") {
-                            let list = self.st.pain_formats.entry(tx.to_string()).or_default();
-                            if !list.iter().any(|f| f == t) {
-                                list.push(t.to_string());
-                            }
-                        }
-                    }
-                }
+            if reply.first(seg).is_some() {
+                self.st
+                    .pain_formats
+                    .insert(tx.to_string(), pain_formats(reply, seg));
             }
         }
         let upds: Vec<UpdAccount> = reply.all("HIUPD").map(parse_upd).collect();
@@ -1147,24 +1178,32 @@ impl FinTsConnector {
         }
     }
 
-    /// Sends HKCCS (or HKIPZ for instant / HKCSE for scheduled transfers) + HKTAN
-    /// (process 4) and returns the bank's reply.
-    async fn submit_hkccs(
+    /// Sends HKCCS (regular), HKCSE (scheduled) or HKIPZ (instant) + HKTAN
+    /// process 4. A regular or scheduled order that the bank rejects is an error; an instant order the bank does
+    /// not offer or rejects comes back as `Submit::Declined` (→ fallback).
+    async fn submit_order(
         &mut self,
         ctx: &ConnectContext,
         job: &TransferJob,
-    ) -> CoreResult<BankReply> {
-        let code: &'static str = if job.instant {
+        instant: bool,
+    ) -> CoreResult<Submit> {
+        let seg_id: &'static str = if instant {
             "HKIPZ"
         } else if job.execution_date.is_some() {
             "HKCSE"
         } else {
             "HKCCS"
         };
+        let declined = |reason: &str| {
+            Ok(Submit::Declined {
+                reason: reason.to_string(),
+                dialog_closed: false,
+            })
+        };
         let not_allowed = || {
             CoreError::Bank {
-            code: code.into(),
-            message: match code {
+            code: seg_id.into(),
+            message: match seg_id {
                 "HKIPZ" => tr("Dieses Konto oder diese Bank erlaubt keine Echtzeitüberweisungen per FinTS (HKIPZ). Bitte in der Banking-App überweisen."),
                 "HKCSE" => tr("Dieses Konto oder diese Bank erlaubt keine Terminüberweisungen per FinTS (HKCSE). Bitte in der Banking-App überweisen."),
                 _ => tr("Dieses Konto oder diese Bank erlaubt keine SEPA-Überweisungen per FinTS (HKCCS). Bitte in der Banking-App überweisen."),
@@ -1172,7 +1211,12 @@ impl FinTsConnector {
             .into(),
         }
         };
-        if !self.bank_supports(code) {
+        if !self.bank_supports(seg_id) {
+            if instant {
+                return declined(tr(
+                    "Die Bank bietet per FinTS keine Echtzeitüberweisung (HKIPZ) an.",
+                ));
+            }
             return Err(not_allowed());
         }
         let sec = self.sec();
@@ -1202,10 +1246,23 @@ impl FinTsConnector {
                 ),
             })?;
         if let Some(u) = &upd {
-            if !u.allowed.is_empty() && !u.allowed.contains(code) {
+            if !u.allowed.is_empty() && !u.allowed.contains(seg_id) {
+                if instant {
+                    return declined(tr(
+                        "Für dieses Konto ist die Echtzeitüberweisung per FinTS nicht freigeschaltet.",
+                    ));
+                }
                 return Err(not_allowed());
             }
         }
+        let version = match self.pain_version(seg_id) {
+            Some(v) => v,
+            None => {
+                return declined(tr(
+                    "Die Bank erwartet für Echtzeitüberweisungen ein Datenformat, das GiroCrab nicht unterstützt.",
+                ))
+            }
+        };
         let (date, time) = Self::now();
         let created = format!(
             "{}-{}-{}T{}:{}:{}",
@@ -1226,7 +1283,6 @@ impl FinTsConnector {
         } else {
             job.source_owner.trim()
         };
-        let pain09 = self.use_pain09(code, job.instant);
         let xml = sepa::build_pain001(&sepa::Pain001 {
             message_id: &msg_id,
             created: &created,
@@ -1239,40 +1295,216 @@ impl FinTsConnector {
             creditor_bic: job.recipient_bic.as_deref(),
             amount_cents: job.amount_cents,
             purpose: &job.purpose,
-            instant: job.instant,
-            pain09,
+            version,
+            instant,
         })?;
-        let descriptor = if pain09 {
-            sepa::PAIN_DESCRIPTOR_INSTANT
-        } else {
-            sepa::PAIN_DESCRIPTOR
-        };
-        let hkccs = SegmentBuilder::new(code, 3, self.version(code))
-            .raw(&Self::kti(&acc))
-            .de(&[descriptor])
-            .binary(xml.as_bytes())
-            .build();
-        let payload = vec![hkccs, self.hktan_process4(4, code)];
-        let reply = self.send(ctx, payload, &sec, None).await?;
+        self.order = Some(PreparedOrder {
+            seg_id,
+            kti: Self::kti(&acc),
+            descriptor: version.descriptor(),
+            xml,
+            instant,
+        });
+        let reply = self.send_order(ctx).await?;
+        if let Some(d) = self.declined_instant(&reply) {
+            return Ok(d);
+        }
         reply.check_transfer()?;
-        Ok(reply)
+        Ok(Submit::Sent(reply))
+    }
+
+    /// Instant order rejected in a way a regular transfer may still work.
+    fn declined_instant(&self, reply: &BankReply) -> Option<Submit> {
+        if !self.order.as_ref().is_some_and(|o| o.instant) {
+            return None;
+        }
+        instant_rejection(reply).map(|reason| Submit::Declined {
+            reason,
+            dialog_closed: reply.has("9800"),
+        })
+    }
+
+    /// Sends order + HKTAN process 4.
+    async fn send_order(&mut self, ctx: &ConnectContext) -> CoreResult<BankReply> {
+        let order = self.order.clone().ok_or(CoreError::SessionClosed)?;
+        let payload = vec![
+            SegmentBuilder::new(order.seg_id, 3, self.version(order.seg_id))
+                .raw(&order.kti)
+                .de(&[order.descriptor])
+                .binary(order.xml.as_bytes())
+                .build(),
+            self.hktan_process4(4, order.seg_id),
+        ];
+        let sec = self.sec();
+        self.send(ctx, payload, &sec, None).await
+    }
+
+    /// Challenge for a submitted order, or `Ready` if none is needed.
+    fn after_submit(&mut self, reply: &BankReply) -> CoreResult<Phase> {
+        if let Some(p) = self.challenge_from(reply)? {
+            return Ok(self.label_fallback(p, false));
+        }
+        self.instant_in_flight = false;
+        Ok(Phase::Ready)
+    }
+
+    /// Sends the pending job as a regular SEPA transfer (HKCCS).
+    async fn send_regular(&mut self, ctx: &ConnectContext) -> CoreResult<Phase> {
+        let job = self.pending_job.clone().ok_or(CoreError::SessionClosed)?;
+        self.instant_in_flight = false;
+        self.outcome.instant = false;
+        match self.submit_order(ctx, &job, false).await? {
+            Submit::Sent(reply) => self.after_submit(&reply),
+            Submit::Declined { reason, .. } => Err(CoreError::Bank {
+                code: "HKCCS".into(),
+                message: reason,
+            }),
+        }
+    }
+
+    /// The instant order was not possible: resend it as a regular transfer.
+    /// If the bank ended the dialog, log in again first.
+    async fn fall_back(
+        &mut self,
+        ctx: &ConnectContext,
+        reason: String,
+        dialog_closed: bool,
+    ) -> CoreResult<Phase> {
+        self.instant_in_flight = false;
+        self.outcome = TransferOutcome {
+            instant: false,
+            fallback_reason: Some(reason),
+        };
+        self.task_reference = None;
+        if !dialog_closed {
+            return self.send_regular(ctx).await;
+        }
+        self.relogin_for_fallback = true;
+        match self.open_dialog(ctx).await? {
+            Phase::Ready => {
+                self.relogin_for_fallback = false;
+                self.send_regular(ctx).await
+            }
+            p => Ok(self.label_fallback(p, true)),
+        }
+    }
+
+    /// Tells the user why a new approval is needed after an instant transfer
+    /// was declined (`login` = approval of a new login, else of the transfer).
+    fn label_fallback(&mut self, phase: Phase, login: bool) -> Phase {
+        let Some(reason) = self.outcome.fallback_reason.clone() else {
+            return phase;
+        };
+        let relabel = |mut c: Challenge| {
+            c.title = if login {
+                tr("Echtzeitüberweisung abgelehnt – bitte erneut anmelden").into()
+            } else {
+                tr("Echtzeitüberweisung nicht möglich – normale Überweisung freigeben").into()
+            };
+            let note = trf(
+                "Die Echtzeitüberweisung wurde nicht ausgeführt ({0}). Sie wird jetzt als normale SEPA-Überweisung gesendet.",
+                &[&reason],
+            );
+            c.message = if c.message.trim().is_empty() {
+                note
+            } else {
+                format!("{note}\n\n{}", c.message)
+            };
+            c
+        };
+        let phase = match phase {
+            Phase::Challenge(c) => Phase::Challenge(relabel(c)),
+            Phase::Pending(c) => Phase::Pending(relabel(c)),
+            p => p,
+        };
+        if let Phase::Challenge(c) | Phase::Pending(c) = &phase {
+            self.challenge = Some(c.clone());
+        }
+        phase
+    }
+
+    async fn start_transfer(
+        &mut self,
+        ctx: &ConnectContext,
+        job: &TransferJob,
+    ) -> CoreResult<Phase> {
+        if job.instant {
+            match self.submit_order(ctx, job, true).await? {
+                Submit::Sent(reply) => {
+                    self.outcome.instant = true;
+                    self.instant_in_flight = true;
+                    return self.after_submit(&reply);
+                }
+                Submit::Declined {
+                    reason,
+                    dialog_closed,
+                } => return self.fall_back(ctx, reason, dialog_closed).await,
+            }
+        }
+        self.send_regular(ctx).await
+    }
+
+    /// Reply to an approved TAN / decoupled poll: an instant order rejected
+    /// at execution falls back; after a re-login for the fallback, the
+    /// regular transfer is sent.
+    async fn after_approval(
+        &mut self,
+        ctx: &ConnectContext,
+        reply: BankReply,
+    ) -> CoreResult<Phase> {
+        if self.instant_in_flight {
+            if let Some(reason) = instant_rejection(&reply) {
+                return self.fall_back(ctx, reason, reply.has("9800")).await;
+            }
+        }
+        self.check_reply(&reply)?;
+        if self.relogin_for_fallback {
+            self.relogin_for_fallback = false;
+            return self.send_regular(ctx).await;
+        }
+        self.instant_in_flight = false;
+        Ok(Phase::Ready)
+    }
+
+    /// Authenticated dialog (HKIDN/HKVVB + HKTAN process 4 for SCA).
+    async fn open_dialog(&mut self, ctx: &ConnectContext) -> CoreResult<Phase> {
+        // Authenticated dialog with strong customer authentication.
+        self.reset_dialog();
+        let sec = self.sec();
+        let mut payload = vec![self.hkidn(ctx, 3), self.hkvvb(4)];
+        if sec != "999" {
+            payload.push(self.hktan_process4(5, "HKIDN"));
+        }
+        let reply = self.send(ctx, payload, &sec, None).await?;
+        self.learn_bpd(&reply);
+        if let Err(e) = reply.check() {
+            // Stale system ID / TAN method -> force re-sync next time.
+            if reply.has("9931") || reply.has("9942") || reply.has("9010") {
+                self.st.system_id.clear();
+            }
+            return Err(e);
+        }
+        if let Some(p) = self.challenge_from(&reply)? {
+            return Ok(p);
+        }
+        Ok(Phase::Ready)
     }
 
     /// Whether the transfer document should be `pain.001.001.09` (true) or `.03` (false).
     /// Instant payments (HKIPZ) are always `.09`. Otherwise the BPD descriptors decide:
     /// `.03` if advertised, else `.09` if only that is advertised; nothing advertised
     /// (or only formats we cannot produce) falls back to `.03`.
-    fn use_pain09(&self, code: &str, instant: bool) -> bool {
-        if instant {
-            return true;
+    fn pain_version(&self, code: &str) -> Option<sepa::PainVersion> {
+        let formats = self.st.pain_formats.get(code);
+        if code == "HKIPZ" {
+            return sepa::PainVersion::pick(formats.map(Vec::as_slice).unwrap_or(&[]));
         }
-        let has = |suffix: &str| {
-            self.st
-                .pain_formats
-                .get(code)
-                .is_some_and(|l| l.iter().any(|f| f.ends_with(suffix)))
-        };
-        !has(".001.03") && has(".001.09")
+        let has = |suffix: &str| formats.is_some_and(|l| l.iter().any(|f| f.ends_with(suffix)));
+        Some(if !has(".001.03") && has(".001.09") {
+            sepa::PainVersion::V09
+        } else {
+            sepa::PainVersion::V03
+        })
     }
 
     fn sec(&self) -> String {
@@ -1318,6 +1550,54 @@ fn account_label(acc: &SepaAccount) -> String {
     } else {
         format!("{}-{}", acc.account_number, acc.sub_account)
     }
+}
+
+/// If the reply rejects an instant order in a way a regular transfer may
+/// still succeed, returns the bank's explanation. `None` = accepted, or an
+/// error where a fallback must not happen: PIN/TAN wrong, approval declined
+/// or expired (99xx), SCA missing (9075), product not registered (9078).
+fn instant_rejection(reply: &BankReply) -> Option<String> {
+    let errs = reply.errors();
+    if errs.is_empty()
+        || errs
+            .iter()
+            .any(|e| e.0.starts_with("99") || matches!(e.0.as_str(), "9075" | "9076" | "9078"))
+    {
+        return None;
+    }
+    let generic = |c: &str| matches!(c, "9010" | "9050" | "9800");
+    let specific: Vec<_> = errs.iter().filter(|e| !generic(&e.0)).collect();
+    let shown = if specific.is_empty() {
+        errs.iter().collect()
+    } else {
+        specific
+    };
+    Some(
+        shown
+            .iter()
+            .map(|e| format!("{} {}", e.0, e.2))
+            .collect::<Vec<_>>()
+            .join(" / "),
+    )
+}
+
+/// pain.001 descriptors from a BPD parameter segment (HICCSS / HIIPZS / HICSES).
+fn pain_formats(reply: &BankReply, seg_id: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for seg in reply.all(seg_id) {
+        for el in &seg.elements {
+            for v in el {
+                let t = v.text();
+                if t.starts_with("urn:iso:std:iso:20022:tech:xsd:pain.001")
+                    && !t.ends_with(".xsd")
+                    && !out.iter().any(|f| f == t)
+                {
+                    out.push(t.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Localised text for a bank return code (HIRMG/HIRMS) during a transfer.
@@ -1431,26 +1711,7 @@ impl BankConnector for FinTsConnector {
         if self.st.system_id.is_empty() || self.st.sec_func.is_empty() {
             self.sync_dialog(ctx).await?;
         }
-        // Authenticated dialog with strong customer authentication.
-        self.reset_dialog();
-        let sec = self.sec();
-        let mut payload = vec![self.hkidn(ctx, 3), self.hkvvb(4)];
-        if sec != "999" {
-            payload.push(self.hktan_process4(5, "HKIDN"));
-        }
-        let reply = self.send(ctx, payload, &sec, None).await?;
-        self.learn_bpd(&reply);
-        if let Err(e) = reply.check() {
-            // Stale system ID / TAN method -> force re-sync next time.
-            if reply.has("9931") || reply.has("9942") || reply.has("9010") {
-                self.st.system_id.clear();
-            }
-            return Err(e);
-        }
-        if let Some(p) = self.challenge_from(&reply)? {
-            return Ok(p);
-        }
-        Ok(Phase::Ready)
+        self.open_dialog(ctx).await
     }
 
     async fn respond(
@@ -1476,12 +1737,11 @@ impl BankConnector for FinTsConnector {
                     .raw("N")
                     .build();
                 let reply = self.send(ctx, vec![seg], &sec, None).await?;
-                self.check_reply(&reply)?;
-                if reply.has("3956") {
+                if reply.has("3956") && reply.errors().is_empty() {
                     let c = self.challenge.clone().ok_or(CoreError::SessionClosed)?;
                     return Ok(Phase::Pending(c));
                 }
-                Ok(Phase::Ready)
+                self.after_approval(ctx, reply).await
             }
             ChallengeResponse::Code(tan) => {
                 let seg = SegmentBuilder::new("HKTAN", 3, self.version("HKTAN"))
@@ -1494,8 +1754,7 @@ impl BankConnector for FinTsConnector {
                     .build();
                 self.tan_for_next = None;
                 let reply = self.send(ctx, vec![seg], &sec, Some(tan.expose())).await?;
-                self.check_reply(&reply)?;
-                Ok(Phase::Ready)
+                self.after_approval(ctx, reply).await
             }
         }
     }
@@ -1722,16 +1981,19 @@ impl BankConnector for FinTsConnector {
         job: &TransferJob,
     ) -> CoreResult<Phase> {
         self.transferring = true;
-        let reply = self.submit_hkccs(ctx, job).await;
-        if reply.is_err() {
+        self.outcome = TransferOutcome::default();
+        self.instant_in_flight = false;
+        self.relogin_for_fallback = false;
+        self.pending_job = Some(job.clone());
+        let r = self.start_transfer(ctx, job).await;
+        if r.is_err() {
             self.transferring = false;
         }
-        let reply = reply?;
-        if let Some(p) = self.challenge_from(&reply)? {
-            return Ok(p);
-        }
-        self.transferring = false;
-        Ok(Phase::Ready)
+        r
+    }
+
+    fn transfer_outcome(&self) -> TransferOutcome {
+        self.outcome.clone()
     }
 }
 
@@ -1840,6 +2102,58 @@ mod tests {
         let err = r.check().unwrap_err().to_string();
         assert!(err.contains("9050 [Nachricht]"), "{err}");
         assert!(err.contains("9010 [HKKAZ #3]"), "{err}");
+    }
+
+    #[test]
+    fn instant_rejection_falls_back_only_on_order_errors() {
+        // Order rejected (e.g. recipient bank not reachable) -> fallback, with
+        // the specific code rather than the generic 9050.
+        let r = reply(b"HIRMG:2:2+9050::Die Nachricht enth\xe4lt Fehler.'HIRMS:3:2:3+9210::Empf\xe4ngerbank nimmt nicht an SEPA Instant teil.'");
+        let why = instant_rejection(&r).unwrap();
+        assert!(why.starts_with("9210 "), "{why}");
+        assert!(!why.contains("9050"), "{why}");
+        // Limit exceeded -> fallback.
+        let r = reply(b"HIRMG:2:2+3060::Warnungen.'HIRMS:3:2:3+9380::Betrag \xfcbersteigt Limit.'");
+        assert!(instant_rejection(&r).is_some());
+        // Accepted -> no fallback.
+        let r = reply(b"HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+0030::Auftrag empfangen - TAN erforderlich.'");
+        assert!(instant_rejection(&r).is_none());
+        // Declined in the app, wrong TAN, wrong PIN -> no fallback.
+        for raw in [
+            &b"HIRMG:2:2+9800::Dialog abgebrochen.'HIRMS:3:2:3+9955::Auftrag abgelehnt.'"[..],
+            &b"HIRMG:2:2+9050::Fehler.'HIRMS:3:2:3+9941::TAN ung\xfcltig.'"[..],
+            &b"HIRMG:2:2+9942::PIN falsch.'"[..],
+        ] {
+            assert!(instant_rejection(&reply(raw)).is_none());
+        }
+    }
+
+    #[test]
+    fn reads_instant_formats_and_negotiates_hkipz() {
+        // HIIPZS as sent by Consorsbank (purpose codes empty) and comdirect.
+        let raw = b"HIIPZS:11:1:3+1+1+0+:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.001.001.09:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.001.001.03'";
+        let r = reply(raw);
+        assert_eq!(
+            pain_formats(&r, "HIIPZS"),
+            vec![
+                sepa::PAIN_09_DESCRIPTOR.to_string(),
+                sepa::PAIN_DESCRIPTOR.to_string()
+            ]
+        );
+        let raw = b"HIIPZS:20:1:3+999+1+0+BENE,BONU:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.001.001.09:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.001.001.09.xsd'";
+        assert_eq!(
+            pain_formats(&reply(raw), "HIIPZS"),
+            vec![sepa::PAIN_09_DESCRIPTOR.to_string()]
+        );
+
+        let mut c = FinTsConnector::new("76030080");
+        c.learn_bpd(&reply(raw));
+        assert!(c.bank_supports("HKIPZ"));
+        assert_eq!(c.version("HKIPZ"), 1);
+        assert_eq!(
+            c.st.pain_formats["HKIPZ"],
+            vec![sepa::PAIN_09_DESCRIPTOR.to_string()]
+        );
     }
 
     #[test]

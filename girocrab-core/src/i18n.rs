@@ -477,6 +477,28 @@ fn english(de: &str) -> Option<&'static str> {
         "Server Volksbank Kassel Göttingen (BLZ 52090000)" => "Server Volksbank Kassel Göttingen (bank code 52090000)",
         "FinTS-PIN/TAN-Adresse laut öffentlicher DK-Institutsliste." => "FinTS PIN/TAN address from the public DK institute list.",
         "Server 1822direkt (BLZ 50050201)" => "Server 1822direkt (bank code 50050201)",
+        // ------------------------------------------------------------ SEPA Instant
+        "Demo: Die Empfängerbank ist für Echtzeitüberweisungen gerade nicht erreichbar." => {
+            "Demo: The recipient's bank is currently not reachable for instant transfers."
+        }
+        "Echtzeitüberweisung nicht möglich – normale Überweisung freigeben" => {
+            "Instant transfer not possible – approve a regular transfer"
+        }
+        "Die Bank bietet per FinTS keine Echtzeitüberweisung (HKIPZ) an." => {
+            "The bank does not offer instant transfers (HKIPZ) via FinTS."
+        }
+        "Für dieses Konto ist die Echtzeitüberweisung per FinTS nicht freigeschaltet." => {
+            "Instant transfers via FinTS are not enabled for this account."
+        }
+        "Die Bank erwartet für Echtzeitüberweisungen ein Datenformat, das GiroCrab nicht unterstützt." => {
+            "The bank expects a data format for instant transfers that GiroCrab does not support."
+        }
+        "Echtzeitüberweisung abgelehnt – bitte erneut anmelden" => {
+            "Instant transfer rejected – please log in again"
+        }
+        "Die Echtzeitüberweisung wurde nicht ausgeführt ({0}). Sie wird jetzt als normale SEPA-Überweisung gesendet." => {
+            "The instant transfer was not executed ({0}). It is now being sent as a regular SEPA transfer."
+        }
         "comdirect Client-ID" => "comdirect client ID",
         "Aus dem comdirect-Entwicklerportal (Persönlicher Bereich › Einstellungen › API)." => "From the comdirect developer portal (Persönlicher Bereich › Einstellungen › API).",
         "comdirect Client-Secret" => "comdirect client secret",

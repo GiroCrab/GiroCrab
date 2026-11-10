@@ -104,7 +104,19 @@ pub enum TransferStep {
         challenge: Challenge,
     },
     /// Bank accepted the transfer; an optimistic booking was stored.
-    Finished,
+    Finished {
+        outcome: TransferOutcome,
+    },
+}
+
+/// How a transfer was finally sent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct TransferOutcome {
+    /// true = accepted as SEPA Instant, false = regular SEPA transfer.
+    pub instant: bool,
+    /// Set when an instant transfer was requested but sent as a regular one:
+    /// why the instant variant was not possible (bank text).
+    pub fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -407,6 +419,11 @@ pub trait BankConnector: Send {
             message: tr("Für diese Bank werden Überweisungen nicht unterstützt.").into(),
         })
     }
+    /// After `send_transfer` finished: instant or regular, and why a
+    /// requested instant transfer fell back. Default: regular, no fallback.
+    fn transfer_outcome(&self) -> TransferOutcome {
+        TransferOutcome::default()
+    }
 }
 
 /// Transfer request plus the source account data resolved from the vault.
@@ -419,6 +436,7 @@ pub struct TransferJob {
     pub recipient_bic: Option<String>,
     pub amount_cents: i64,
     pub purpose: String,
+    /// SEPA Instant requested (connector falls back to regular if rejected).
     pub instant: bool,
     pub execution_date: Option<String>,
 }
@@ -1201,8 +1219,10 @@ impl TransferSession {
                 Ok(Phase::Ready) => {
                     st.connector.finish(&st.ctx).await;
                     st.done = true;
-                    self.vault.record_pending_transfer(st.account_id, &st.job)?;
-                    return Ok(TransferStep::Finished);
+                    let outcome = st.connector.transfer_outcome();
+                    self.vault
+                        .record_pending_transfer(st.account_id, &st.job, outcome.instant)?;
+                    return Ok(TransferStep::Finished { outcome });
                 }
             }
         }
@@ -1454,12 +1474,18 @@ impl Vault {
         &self,
         account_id: i64,
         job: &TransferJob,
+        instant: bool,
     ) -> CoreResult<()> {
+        let booking_text = if instant {
+            "Echtzeitüberweisung (vorgemerkt)"
+        } else {
+            "Überweisung (vorgemerkt)"
+        };
         let db = self.db()?;
         db.execute(
             "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents, currency,
                      counterparty, counterparty_iban, purpose, booking_text)
-             VALUES (?1, ?2, ?3, ?3, ?4, 'EUR', ?5, ?6, ?7, 'Überweisung (vorgemerkt)')",
+             VALUES (?1, ?2, ?3, ?3, ?4, 'EUR', ?5, ?6, ?7, ?8)",
             params![
                 account_id,
                 format!("pending-{}", uuid::Uuid::new_v4()),
@@ -1467,7 +1493,8 @@ impl Vault {
                 -job.amount_cents,
                 job.recipient_name,
                 job.recipient_iban,
-                job.purpose
+                job.purpose,
+                booking_text
             ],
         )?;
         Vault::apply_rules_inner(&db, true)?;
@@ -1833,7 +1860,7 @@ mod tests {
             recipient_bic: None,
             amount_cents: amount,
             purpose: "Rechnung 42".into(),
-            instant: false,
+            instant: true,
             execution_date: None,
         };
         assert!(v
@@ -1858,6 +1885,15 @@ mod tests {
             step = s.poll().await.unwrap();
         }
         assert!(challenges >= 2, "login + transfer challenge");
+        assert!(matches!(
+            step,
+            TransferStep::Finished {
+                outcome: TransferOutcome {
+                    instant: true,
+                    fallback_reason: None
+                }
+            }
+        ));
         let page = v
             .list_transactions(BookingFilter {
                 account_ids: vec![acc.id],
@@ -1883,6 +1919,29 @@ mod tests {
         assert_eq!(sug.len(), 1);
         assert_eq!(sug[0].iban, "DE89370400440532013000");
         assert!(matches!(s.poll().await, Err(CoreError::SessionClosed)));
+
+        // Demo bank "rejects" instant for this recipient -> regular transfer.
+        let mut slow = req("DE89370400440532013000", 990);
+        slow.recipient_name = "Langsam AG".into();
+        let s = v.clone().begin_transfer(slow, "pin".into(), true).unwrap();
+        let mut step = s.start().await.unwrap();
+        let mut titles = Vec::new();
+        while let TransferStep::NeedsChallenge { challenge }
+        | TransferStep::StillWaiting { challenge } = &step
+        {
+            titles.push(challenge.title.clone());
+            step = s.poll().await.unwrap();
+        }
+        assert!(
+            titles.iter().any(|t| t.contains("normale Überweisung")),
+            "{titles:?}"
+        );
+        let TransferStep::Finished { outcome } = step else {
+            panic!()
+        };
+        assert!(!outcome.instant);
+        assert!(outcome.fallback_reason.is_some());
+
         let _ = std::fs::remove_file(path);
     }
 }
