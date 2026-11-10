@@ -36,6 +36,8 @@ pub fn fints_presets() -> Vec<FinTsPreset> {
           "BLZ Ihrer Volksbank/Raiffeisenbank eintragen."),
         p("vb-kassel", "Volksbank Kassel Göttingen", "52090000", ATRUVIA, ""),
         p("1822direkt", "1822direkt", "50050201", "https://banking-hs5.s-fints-pt-hs.de/fints30", ""),
+        p("consorsbank", "Consorsbank", "76030080", "https://brokerage-hbci.consorsbank.de/hbci",
+          "Anmeldung mit Kontonummer und Online-Banking-PIN. Freigabe in der Consorsbank-App. Umsätze nur 90 Tage rückwirkend."),
         p("dkb", "DKB", "12030000", "https://banking-dkb.s-fints-pt-dkb.de/fints30",
           "URL ggf. laut DK-Institutsliste prüfen."),
         p("custom", "Andere FinTS-Bank (BLZ + URL manuell)", "", "",
@@ -86,6 +88,11 @@ mod tests {
             }
         }
         assert!(fints_presets().iter().any(|p| p.blz == "12096597"));
+        assert!(known_fints_blz("76030080"));
+        assert_eq!(
+            ConnectorKind::from_str("fints:76030080"),
+            Some(ConnectorKind::FinTsGeneric)
+        );
         assert!(!is_valid_fints_url("http://bank.de/fints"));
         assert!(known_fints_blz("37010050") && known_fints_blz("70010080"));
         for b in POSTBANK_BLZ {
