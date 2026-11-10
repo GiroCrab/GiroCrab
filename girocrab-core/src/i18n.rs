@@ -471,6 +471,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Eine Kategorie kann nicht in sich selbst verschoben werden." => "A category can’t be moved into itself.",
         "Das Suchmuster ist leer." => "The pattern is empty.",
         "Der Suchausdruck ist leer." => "The search expression is empty.",
+        "Das Feld „{0}“ wird nicht unterstützt." => "The field “{0}” isn't supported.",
         "Der Suchausdruck ist unvollständig." => "The search expression is incomplete.",
         "Unerwartete schließende Klammer." => "Unexpected closing parenthesis.",
         "Klammer nicht geschlossen." => "Parenthesis not closed.",
