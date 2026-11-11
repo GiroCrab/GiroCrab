@@ -80,6 +80,20 @@ enum Period: String, CaseIterable, Identifiable {
     }
 }
 
+extension BookingDirection: @retroactive Identifiable {
+    public var id: Self { self }
+
+    static let ordered: [BookingDirection] = [.all, .income, .expense]
+
+    var title: String {
+        switch self {
+        case .all: return String(localized: "Einnahmen und Ausgaben")
+        case .income: return String(localized: "Nur Einnahmen")
+        case .expense: return String(localized: "Nur Ausgaben")
+        }
+    }
+}
+
 enum StatusFilter: String, CaseIterable, Identifiable {
     case all = "Alle"
     case new = "Neu"
@@ -275,6 +289,27 @@ public final class AppModel {
     /// Booking whose custom recurrence dates are being edited.
     var customRecurringBooking: Booking?
     var statusFilter: StatusFilter = .all
+
+    /// Label of the header filter menu: "Status: Alle" or the active filters.
+    var filterTitle: String {
+        guard directionFilter != .all else { return String(localized: "Status: \(statusFilter.title)") }
+        let kind = directionFilter == .income ? String(localized: "Einnahmen") : String(localized: "Ausgaben")
+        return statusFilter == .all ? kind : "\(statusFilter.title) · \(kind)"
+    }
+
+    /// Filled icon while any filter is active.
+    var filterSymbol: String {
+        statusFilter == .all && directionFilter == .all
+            ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
+    }
+    /// Income / expenses only (GitHub #53); filtered in the core, so totals and CSV follow.
+    var directionFilter: BookingDirection = .all {
+        didSet {
+            guard directionFilter != oldValue else { return }
+            listLimit = Self.defaultListLimit
+            reloadBookings()
+        }
+    }
     var searchText: String = "" { didSet { scheduleSearch() } }
     var selectedBookingID: Booking.ID? {
         didSet {
@@ -343,6 +378,8 @@ public final class AppModel {
     var showTransferSheet = false
     var csvExport = CSVFileDocument(data: Data())
     var showCSVExporter = false
+    /// Print dialog (GitHub #53).
+    var showPrintSheet = false
     var transferDraft = TransferDraft()
     var transferError: String?
     /// Instant was not possible and nothing was sent: why (shown in the
@@ -391,6 +428,11 @@ public final class AppModel {
                 sidebarSelection = .account(a.id)
                 selectedBookingID = bookings.first?.id
             }
+            switch options.demoFilter {
+            case "income": directionFilter = .income
+            case "expense", "expenses": directionFilter = .expense
+            default: break
+            }
             reloadBookings()
             if let q = options.pickBooking, let b = bookings.first(where: { $0.merchantName.lowercased().contains(q) || $0.counterparty.lowercased().contains(q) }) {
                 selectedBookingID = b.id
@@ -413,6 +455,10 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "print":
+            // Print dialog (GitHub #53) on last month's demo bookings.
+            period = .lastMonth
+            showPrintSheet = true
         case "transfer":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
             openTransfer()
@@ -860,7 +906,8 @@ public final class AppModel {
             limit: listLimit,
             offset: 0,
             scope: scope,
-            merchantKey: nil
+            merchantKey: nil,
+            direction: directionFilter
         )
     }
 
@@ -874,6 +921,55 @@ public final class AppModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Printing (GitHub #53)
+
+    /// Everything the list shows (account, period, search, scope, status) without the list limit.
+    func printSource() -> PrintReport? {
+        guard let vault else { return nil }
+        var filter = currentFilter
+        filter.limit = 0
+        do {
+            let all = try vault.listTransactions(filter: filter).transactions
+            let rows = all.filter { b in
+                switch statusFilter {
+                case .all: return true
+                case .new: return !b.checked
+                case .checked: return b.checked
+                }
+            }.map(PrintRow.init)
+            let accounts = allAccounts.map {
+                PrintAccount(id: $0.id, name: $0.name, iban: $0.iban, balanceCents: $0.balanceCents,
+                             balanceDate: $0.balanceDate, currency: $0.currency)
+            }
+            var report = PrintReport(title: title, periodLabel: periodTitle, rows: rows, accounts: accounts)
+            // The list's own income/expense filter is named in the printout header.
+            switch directionFilter {
+            case .all: break
+            case .income: report.filterNotes = [PrintDirection.income.title]
+            case .expense: report.filterNotes = [PrintDirection.expenses.title]
+            }
+            return report
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// End-of-day balances since `from` for each account (key = id) and combined (key 0).
+    func printDailyBalances(accountIds: [Int64], from: String) -> [Int64: [String: Int64]] {
+        guard let vault, !accountIds.isEmpty else { return [:] }
+        let today = Calendar.current.startOfDay(for: Date())
+        let start = DateText.date(from) ?? today
+        let days = UInt32(max(1, (Calendar.current.dateComponents([.day], from: start, to: today).day ?? 0) + 1))
+        func map(_ ids: [Int64]) -> [String: Int64] {
+            let points = (try? vault.balanceHistory(accountIds: ids, days: days)) ?? []
+            return Dictionary(points.map { ($0.date, $0.balanceCents) }, uniquingKeysWith: { _, b in b })
+        }
+        var out: [Int64: [String: Int64]] = [0: map(accountIds)]
+        for id in accountIds { out[id] = map([id]) }
+        return out
     }
 
     func reloadBookings() {
@@ -934,7 +1030,7 @@ public final class AppModel {
         let filter = BookingFilter(
             accountIds: currentFilter.accountIds, categoryId: nil, includeSubcategories: true, uncategorizedOnly: false,
             search: nil, dateFrom: from, dateTo: to, limit: 0, offset: 0,
-            scope: .all, merchantKey: nil
+            scope: .all, merchantKey: nil, direction: .all
         )
         run {
             let p = try vault.listTransactions(filter: filter)
@@ -1080,7 +1176,7 @@ public final class AppModel {
         guard let vault else { return nil }
         let f = BookingFilter(accountIds: [b.accountId], categoryId: nil, includeSubcategories: true, uncategorizedOnly: false,
                               search: nil, dateFrom: b.bookingDate, dateTo: b.bookingDate, limit: 0, offset: 0,
-                              scope: .all, merchantKey: nil)
+                              scope: .all, merchantKey: nil, direction: .all)
         return (try? vault.listTransactions(filter: f))?.transactions.first { $0.id == b.id }
     }
 
@@ -1201,6 +1297,7 @@ public final class AppModel {
         if !bookings.contains(where: { $0.id == id }) {
             sidebarSelection = .allAccounts
             period = .all
+            directionFilter = .all
             searchText = ""
         }
         // After a closing sheet / list reload, so the list can scroll to the row.
