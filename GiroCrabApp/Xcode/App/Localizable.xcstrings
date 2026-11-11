@@ -12157,6 +12157,17 @@
           }
         }
       }
+    },
+    "Tagessaldo (alle Konten)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daily Balance (All Accounts)"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

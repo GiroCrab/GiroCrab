@@ -119,6 +119,18 @@ final class PrintReportTests: XCTestCase {
         XCTAssertEqual(o.logo, .header)
     }
 
+    func testDailyBalanceHeaderSaysAllAccountsWhenCombined() {
+        var o = PrintOptions()
+        o.showDailyBalance = true
+        var r = report()
+        r.dailyBalances = [0: [:], 10: [:], 20: [:]]
+        XCTAssertTrue(PrintReportBuilder.html(r, options: o).contains("Tagessaldo (alle Konten)"))
+        o.groupByAccount = true
+        let grouped = PrintReportBuilder.html(r, options: o)
+        XCTAssertFalse(grouped.contains("Tagessaldo (alle Konten)"))
+        XCTAssertTrue(grouped.contains(">Tagessaldo<"))
+    }
+
     func testEmptySelection() {
         let html = PrintReportBuilder.html(report([]), options: PrintOptions())
         XCTAssertTrue(html.contains("Keine Buchungen ausgewählt."))

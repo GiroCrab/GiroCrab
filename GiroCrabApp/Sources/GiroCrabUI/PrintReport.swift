@@ -246,7 +246,9 @@ enum PrintReportBuilder {
                 h += "</h2>"
             }
             let balances = options.showDailyBalance ? report.dailyBalances[g.account ?? 0] : nil
-            h += table(g.rows, options: options, showAccount: showAccountColumn, balances: balances)
+            // Several accounts in one table: the balance is their sum, say so.
+            h += table(g.rows, options: options, showAccount: showAccountColumn, balances: balances,
+                       combinedBalance: showAccountColumn)
             if options.showTotals && options.groupByAccount && groups.count > 1 {
                 h += totalsBlock(totals(g.rows), currency: g.rows.first?.currency ?? currency, label: String(localized: "Summe Konto"))
             }
@@ -336,14 +338,18 @@ enum PrintReportBuilder {
         return h
     }
 
-    private static func table(_ rows: [PrintRow], options: PrintOptions, showAccount: Bool, balances: [String: Int64]?) -> String {
+    private static func table(_ rows: [PrintRow], options: PrintOptions, showAccount: Bool, balances: [String: Int64]?,
+                              combinedBalance: Bool = false) -> String {
         var h = "<table class=\"bookings\"><thead><tr>"
         h += "<th class=\"date\">\(esc(String(localized: "Datum")))</th>"
         if showAccount { h += "<th>\(esc(String(localized: "Konto")))</th>" }
         h += "<th>\(esc(String(localized: "Empfänger / Verwendungszweck")))</th>"
         if options.showCategory { h += "<th>\(esc(String(localized: "Kategorie")))</th>" }
         h += "<th class=\"amount\">\(esc(String(localized: "Betrag")))</th>"
-        if balances != nil { h += "<th class=\"amount\">\(esc(String(localized: "Tagessaldo")))</th>" }
+        if balances != nil {
+            let label = combinedBalance ? String(localized: "Tagessaldo (alle Konten)") : String(localized: "Tagessaldo")
+            h += "<th class=\"amount\">\(esc(label))</th>"
+        }
         h += "</tr></thead><tbody>"
         for (i, r) in rows.enumerated() {
             h += "<tr>"
