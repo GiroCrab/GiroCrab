@@ -9,8 +9,16 @@
 //! iCloud sync: groups are keyed by a random uuid. Every user edit stamps a
 //! millisecond timestamp (`user_groups.updated_ms`, `accounts.placement_ms`,
 //! `accounts.name_ms`); when merging two vaults the newer edit wins. Deleted
-//! groups stay as tombstones (`deleted_ms`) so a merge can't bring them back.
+//! groups stay as tombstones (`deleted_ms`): a merge never brings them back,
+//! even if another device edited them later (delete wins).
 //! Automatic placements use timestamp 0, so any explicit user choice wins.
+//!
+//! The name is a group's identity for the user, so live names are unique
+//! (case-insensitive) across devices too: if two devices each created
+//! "Privat", the merge combines them into the one with the lower uuid. A
+//! combined group is a tombstone with `merged_into`; accounts placed in it –
+//! also later, from a device that hasn't merged yet – follow that pointer.
+//! The user can combine groups the same way (`merge_user_groups`).
 //!
 //! Account colours (booking-list markers, sidebar dot) follow the same rule:
 //! without a user choice the colour is derived from the account's sync
@@ -34,7 +42,8 @@ CREATE TABLE IF NOT EXISTS user_groups (
     sort_order       INTEGER NOT NULL DEFAULT 0,
     include_in_total INTEGER NOT NULL DEFAULT 1,
     updated_ms       INTEGER NOT NULL DEFAULT 0,
-    deleted_ms       INTEGER                       -- tombstone, kept for sync
+    deleted_ms       INTEGER,                      -- tombstone, kept for sync
+    merged_into      TEXT                          -- tombstone of a combined group → survivor
 );";
 
 /// New `accounts` columns (name, definition).
@@ -144,6 +153,14 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
         if has == 0 {
             conn.execute_batch(&format!("ALTER TABLE accounts ADD COLUMN {col} {def};"))?;
         }
+    }
+    let has: i64 = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info('user_groups') WHERE name = 'merged_into'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has == 0 {
+        conn.execute_batch("ALTER TABLE user_groups ADD COLUMN merged_into TEXT;")?;
     }
     Ok(())
 }
@@ -268,15 +285,24 @@ pub(crate) fn merge_attached(
     acc_map: &HashMap<i64, i64>,
     inserted: &HashSet<i64>,
 ) -> CoreResult<u32> {
+    // Newest edit wins for the fields; tombstones only ever get set (delete
+    // wins). Both are symmetric, so A←B and B←A end up identical.
+    // (`merge_other_vault` migrates the other file first, so it has all columns.)
     let mut changed = tx.execute(
-        "INSERT INTO user_groups(uuid, name, sf_symbol, sort_order, include_in_total, updated_ms, deleted_ms)
-         SELECT uuid, name, sf_symbol, sort_order, include_in_total, updated_ms, deleted_ms
+        "INSERT INTO user_groups(uuid, name, sf_symbol, sort_order, include_in_total, updated_ms, deleted_ms, merged_into)
+         SELECT uuid, name, sf_symbol, sort_order, include_in_total, updated_ms, deleted_ms, merged_into
          FROM other.user_groups WHERE true
          ON CONFLICT(uuid) DO UPDATE SET
-            name = excluded.name, sf_symbol = excluded.sf_symbol, sort_order = excluded.sort_order,
-            include_in_total = excluded.include_in_total, updated_ms = excluded.updated_ms,
-            deleted_ms = excluded.deleted_ms
-         WHERE excluded.updated_ms > user_groups.updated_ms",
+            name             = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.name ELSE user_groups.name END,
+            sf_symbol        = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.sf_symbol ELSE user_groups.sf_symbol END,
+            sort_order       = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.sort_order ELSE user_groups.sort_order END,
+            include_in_total = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.include_in_total ELSE user_groups.include_in_total END,
+            updated_ms       = max(excluded.updated_ms, user_groups.updated_ms),
+            deleted_ms       = coalesce(min(user_groups.deleted_ms, excluded.deleted_ms), user_groups.deleted_ms, excluded.deleted_ms),
+            merged_into      = coalesce(min(user_groups.merged_into, excluded.merged_into), user_groups.merged_into, excluded.merged_into)
+         WHERE excluded.updated_ms > user_groups.updated_ms
+            OR (excluded.deleted_ms IS NOT NULL AND user_groups.deleted_ms IS NULL)
+            OR (excluded.merged_into IS NOT NULL AND user_groups.merged_into IS NOT excluded.merged_into)",
         [],
     )? as u32;
     #[allow(clippy::type_complexity)]
@@ -308,6 +334,8 @@ pub(crate) fn merge_attached(
             params![id, color, colored, fresh],
         )? as u32;
     }
+    changed += combine_same_names(tx)?;
+    changed += follow_merges(tx)?;
     // Placements pointing at a group deleted on either side → "Ohne Gruppe".
     tx.execute(
         "UPDATE accounts SET user_group_uuid = NULL
@@ -315,6 +343,107 @@ pub(crate) fn merge_attached(
         [],
     )?;
     Ok(changed)
+}
+
+/// Live groups with the same name (case-insensitive, e.g. "Privat" created on
+/// two devices) become one: the lower uuid survives – the same choice on every
+/// device – and takes name, symbol and total flag of the most recently edited
+/// one. The others become tombstones pointing at it. Nothing is stamped with
+/// the current time, so every device computes exactly the same result.
+fn combine_same_names(tx: &Connection) -> CoreResult<u32> {
+    let rows: Vec<(String, String, String, i64, bool, i64)> = tx
+        .prepare(
+            "SELECT lower(trim(name)), uuid, sf_symbol, sort_order, include_in_total, updated_ms
+             FROM user_groups g WHERE deleted_ms IS NULL AND EXISTS (
+                SELECT 1 FROM user_groups o WHERE o.deleted_ms IS NULL AND o.uuid != g.uuid
+                  AND lower(trim(o.name)) = lower(trim(g.name)))
+             ORDER BY 1, uuid",
+        )?
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut changed = 0;
+    for dups in rows.chunk_by(|a, b| a.0 == b.0) {
+        let survivor = &dups[0].1;
+        let newest = dups
+            .iter()
+            .max_by(|a, b| a.5.cmp(&b.5).then(b.1.cmp(&a.1)))
+            .expect("non-empty");
+        let stamp = newest.5;
+        let order = dups.iter().map(|d| d.3).min().unwrap_or(0);
+        tx.execute(
+            "UPDATE user_groups SET name = (SELECT name FROM user_groups WHERE uuid = ?2),
+                    sf_symbol = ?3, include_in_total = ?4, sort_order = ?5, updated_ms = ?6
+             WHERE uuid = ?1",
+            params![survivor, newest.1, newest.2, newest.4, order, stamp],
+        )?;
+        for d in &dups[1..] {
+            retire_into(tx, &d.1, survivor, stamp)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+/// Turns `from` into a tombstone that points at `into`.
+fn retire_into(tx: &Connection, from: &str, into: &str, stamp: i64) -> CoreResult<()> {
+    tx.execute(
+        "UPDATE user_groups SET deleted_ms = coalesce(deleted_ms, ?3),
+                updated_ms = max(updated_ms, ?3), merged_into = ?2
+         WHERE uuid = ?1",
+        params![from, into, stamp],
+    )?;
+    Ok(())
+}
+
+/// Moves the accounts of combined groups to the end of the group they were
+/// combined into (following chains). Placement stamps stay as they are: this
+/// is derived from the tombstones, not a new user edit.
+fn follow_merges(tx: &Connection) -> CoreResult<u32> {
+    let mut moved = 0;
+    for _ in 0..8 {
+        let pairs: Vec<(String, String)> = tx
+            .prepare(
+                "SELECT DISTINCT g.uuid, g.merged_into FROM accounts a
+                   JOIN user_groups g ON g.uuid = a.user_group_uuid
+                 WHERE g.merged_into IS NOT NULL ORDER BY g.uuid",
+            )?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        if pairs.is_empty() {
+            break;
+        }
+        for (from, into) in pairs {
+            let ids: Vec<i64> = tx
+                .prepare(
+                    "SELECT id FROM accounts WHERE user_group_uuid = ?1
+                     ORDER BY user_sort_order, name, id",
+                )?
+                .query_map([&from], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            let base: i64 = tx.query_row(
+                "SELECT IFNULL(MAX(user_sort_order), -1) + 1 FROM accounts WHERE user_group_uuid = ?1",
+                [&into],
+                |r| r.get(0),
+            )?;
+            for (i, id) in ids.iter().enumerate() {
+                tx.execute(
+                    "UPDATE accounts SET user_group_uuid = ?2, user_sort_order = ?3 WHERE id = ?1",
+                    params![id, into, base + i as i64],
+                )?;
+                moved += 1;
+            }
+        }
+    }
+    Ok(moved)
 }
 
 /// Order of kinds inside a group: Giro → Karten → Depots → Darlehen.
@@ -419,7 +548,16 @@ impl Vault {
         if !group_exists(&db, &uuid)? {
             return Err(not_found(&uuid));
         }
-        let name = valid_name(&db, &name, Some(&uuid))?;
+        let same: bool = db.query_row(
+            "SELECT lower(name) = lower(trim(?2)) FROM user_groups WHERE uuid = ?1",
+            params![uuid, name],
+            |r| r.get(0),
+        )?;
+        let name = if same && !name.trim().is_empty() {
+            name.trim().to_string()
+        } else {
+            valid_name(&db, &name, Some(&uuid))?
+        };
         db.execute(
             "UPDATE user_groups SET name = ?2, sf_symbol = ?3, include_in_total = ?4, updated_ms = ?5 WHERE uuid = ?1",
             params![uuid, name, sf_symbol, include_in_total, now_ms()],
@@ -448,6 +586,25 @@ impl Vault {
         for id in ids {
             assign(&tx, id, None, now)?;
         }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Combines two groups: the accounts of `from` move to the end of `into`
+    /// and `from` is removed. Other devices follow on their next sync.
+    pub fn merge_user_groups(&self, from_uuid: String, into_uuid: String) -> Result<(), CoreError> {
+        let db = self.db()?;
+        for u in [&from_uuid, &into_uuid] {
+            if !group_exists(&db, u)? {
+                return Err(not_found(u));
+            }
+        }
+        if from_uuid == into_uuid {
+            return Ok(());
+        }
+        let tx = db.unchecked_transaction()?;
+        retire_into(&tx, &from_uuid, &into_uuid, now_ms())?;
+        follow_merges(&tx)?;
         tx.commit()?;
         Ok(())
     }

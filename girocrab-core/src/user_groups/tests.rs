@@ -456,3 +456,154 @@ fn default_colors_distinct_up_to_twelve_and_respect_choices() {
     assert_eq!(c.values().max(), Some(&2));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Creates a group and gives it a fixed uuid, so a test knows which one
+/// survives when two same-name groups are combined (the lower uuid).
+fn group_with_uuid(v: &Vault, name: &str, uuid: &str) -> String {
+    let made = v.create_user_group(name.into(), "folder".into()).unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE user_groups SET uuid = ?2 WHERE uuid = ?1",
+            params![made, uuid],
+        )
+        .unwrap();
+    uuid.to_string()
+}
+
+fn live_groups(v: &Vault) -> Vec<(String, String)> {
+    v.list_user_groups()
+        .unwrap()
+        .into_iter()
+        .filter(|g| !g.is_ungrouped)
+        .map(|g| (g.uuid, g.name))
+        .collect()
+}
+
+#[test]
+fn same_name_groups_combine_on_sync() {
+    let dir = temp_dir("samename");
+    let key = vec![7u8; 32];
+    let (a, b, c) = (open(&dir, "a.db"), open(&dir, "b.db"), open(&dir, "c.db"));
+    let (ia, ib, ic) = (seed(&a), seed(&b), seed(&c));
+    let keep = "00000000-0000-4000-8000-000000000000";
+    let lose = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+
+    // both devices create "Privat" independently (different case even)
+    group_with_uuid(&a, "Privat", keep);
+    a.move_account_to_group(ia[0], Some(keep.into()), None)
+        .unwrap();
+    tick();
+    group_with_uuid(&b, "privat", lose);
+    b.update_user_group(lose.into(), "privat".into(), "person".into(), false)
+        .unwrap();
+    b.move_account_to_group(ib[2], Some(lose.into()), None)
+        .unwrap();
+    // C only knows B's group so far and puts Depot into it
+    c.merge_other_vault(b.file_path(), key.clone()).unwrap();
+    tick();
+    c.move_account_to_group(ic[1], Some(lose.into()), None)
+        .unwrap();
+    tick();
+
+    // A ← B, B ← A: one group, same uuid, newest settings, both accounts
+    a.merge_other_vault(b.file_path(), key.clone()).unwrap();
+    b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    for v in [&a, &b] {
+        assert_eq!(live_groups(v), vec![(keep.into(), "privat".into())]);
+        let g = &v.list_user_groups().unwrap()[0];
+        assert_eq!(g.sf_symbol, "person");
+        assert!(!g.include_in_total);
+        let mut accs: Vec<_> = g.accounts.iter().map(|x| x.name.clone()).collect();
+        accs.sort();
+        assert_eq!(accs, s(&["Giro", "Visa"]));
+    }
+    // C hasn't seen the combination yet: its later placement into the old
+    // group follows the pointer instead of dropping to "Ohne Gruppe"
+    c.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    a.merge_other_vault(c.file_path(), key.clone()).unwrap();
+    for v in [&a, &c] {
+        assert_eq!(live_groups(v), vec![(keep.into(), "privat".into())]);
+        assert_eq!(v.list_user_groups().unwrap()[0].accounts.len(), 3);
+    }
+    // the group is no longer stuck: saving it (same name) works, and so does
+    // a case-only rename
+    a.update_user_group(keep.into(), "privat".into(), "house".into(), true)
+        .unwrap();
+    a.update_user_group(keep.into(), "Privat".into(), "house".into(), true)
+        .unwrap();
+    assert_eq!(live_groups(&a), vec![(keep.into(), "Privat".into())]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn deleted_group_stays_deleted_after_later_rename() {
+    let dir = temp_dir("delwins");
+    let key = vec![7u8; 32];
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let (ia, ib) = (seed(&a), seed(&b));
+    let g = a.create_user_group("Haus".into(), "house".into()).unwrap();
+    a.move_account_to_group(ia[0], Some(g.clone()), None)
+        .unwrap();
+    b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    tick();
+
+    a.delete_user_group(g.clone()).unwrap();
+    tick();
+    // B, not synced yet, renames the group and moves another account in
+    b.update_user_group(g.clone(), "Wohnung".into(), "house".into(), true)
+        .unwrap();
+    b.move_account_to_group(ib[1], Some(g.clone()), None)
+        .unwrap();
+    tick();
+
+    a.merge_other_vault(b.file_path(), key.clone()).unwrap();
+    b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    for v in [&a, &b] {
+        let gs = v.list_user_groups().unwrap();
+        assert_eq!(gs.len(), 1, "deleted group came back");
+        assert!(gs[0].is_ungrouped);
+        assert_eq!(gs[0].accounts.len(), 3);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn user_merges_groups_and_other_devices_follow() {
+    let dir = temp_dir("usermerge");
+    let key = vec![7u8; 32];
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let ia = seed(&a);
+    seed(&b);
+    let privat = a
+        .create_user_group("Privat".into(), "person".into())
+        .unwrap();
+    let familie = a
+        .create_user_group("Familie".into(), "person.2".into())
+        .unwrap();
+    a.move_account_to_group(ia[0], Some(privat.clone()), None)
+        .unwrap();
+    a.move_account_to_group(ia[1], Some(familie.clone()), None)
+        .unwrap();
+    a.move_account_to_group(ia[2], Some(familie.clone()), None)
+        .unwrap();
+    b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    tick();
+
+    a.merge_user_groups(familie.clone(), privat.clone())
+        .unwrap();
+    assert_eq!(
+        names(&a),
+        vec![("Privat".into(), s(&["Giro", "Depot", "Visa"]))]
+    );
+    b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    a.merge_other_vault(b.file_path(), key.clone()).unwrap();
+    for v in [&a, &b] {
+        assert_eq!(
+            names(v),
+            vec![("Privat".into(), s(&["Giro", "Depot", "Visa"]))]
+        );
+    }
+    assert!(a.merge_user_groups(familie, privat).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
