@@ -8848,6 +8848,50 @@
           }
         }
       }
+    },
+    "Bei der Bank anmelden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in at your bank"
+          }
+        }
+      }
+    },
+    "Sie melden sich direkt bei Ihrer Bank an und erlauben den Zugriff. GiroCrab übernimmt das Ergebnis automatisch." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You sign in directly at your bank and allow access. GiroCrab picks up the result automatically."
+          }
+        }
+      }
+    },
+    "Bei der Bank anmelden und den Zugriff erlauben – das Fenster schließt sich danach von selbst." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in at your bank and allow access – this window then closes by itself."
+          }
+        }
+      }
+    },
+    "Stattdessen im eigenen Browser anmelden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with your own browser instead"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
