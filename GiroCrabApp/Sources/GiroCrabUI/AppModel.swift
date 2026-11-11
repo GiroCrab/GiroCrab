@@ -428,6 +428,11 @@ public final class AppModel {
                 sidebarSelection = .account(a.id)
                 selectedBookingID = bookings.first?.id
             }
+            switch options.demoFilter {
+            case "income": directionFilter = .income
+            case "expense", "expenses": directionFilter = .expense
+            default: break
+            }
             reloadBookings()
             if let q = options.pickBooking, let b = bookings.first(where: { $0.merchantName.lowercased().contains(q) || $0.counterparty.lowercased().contains(q) }) {
                 selectedBookingID = b.id

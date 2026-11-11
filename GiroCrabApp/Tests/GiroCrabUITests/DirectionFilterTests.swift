@@ -45,4 +45,10 @@ final class DirectionFilterTests: XCTestCase {
         model.revealBooking(expense.id)
         XCTAssertEqual(model.directionFilter, .all)
     }
+
+    func testDemoFilterLaunchOption() {
+        let m = AppModel(options: LaunchOptions(arguments: ["--demo-seed", "--select", "giro", "--demo-filter", "expense"], environment: [:]))
+        XCTAssertEqual(m.directionFilter, .expense)
+        XCTAssertTrue(m.bookings.allSatisfy { $0.amountCents < 0 })
+    }
 }
