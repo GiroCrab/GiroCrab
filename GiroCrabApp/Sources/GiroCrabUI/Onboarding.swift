@@ -81,6 +81,14 @@ struct EmptyVaultCard: View {
                 Button("Demo-Daten anzeigen") { model.showDemo() }
                     .buttonStyle(.borderless)
             }
+            if LanguagePreference.isAvailable {
+                HStack {
+                    Text("Sprache: \(AppLanguage.nativeName(LanguagePreference.runningLanguage))")
+                        .font(.caption).foregroundStyle(Theme.secondary)
+                    Button("Ändern …") { model.openGeneralSettings() }
+                        .buttonStyle(.borderless)
+                }
+            }
         }
         .card()
         .sheet(isPresented: $showAddBank) {

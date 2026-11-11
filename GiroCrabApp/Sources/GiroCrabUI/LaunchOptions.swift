@@ -17,6 +17,10 @@ import Foundation
 ///                         for README screenshots
 ///  --dark                 (macOS) force the Dark Aqua appearance (README screenshots)
 ///  --light                (macOS, `swift run`) force the light Aqua appearance
+///  --simulate-system-language <code>
+///                         (developer) pretend the system language is <code> (e.g. en);
+///                         the app's language choice is kept in the separate defaults
+///                         domain de.girocrab.app.language-simulation (#93)
 ///  --screenshot <file>    (macOS) render the main window, save a PNG, quit.
 ///                         Implies --demo-seed so the picture is reproducible.
 public struct LaunchOptions: Sendable {
@@ -34,6 +38,8 @@ public struct LaunchOptions: Sendable {
     public var pickBooking: String?
     /// (demo) "transfer", "moneymoney" or "moneymoney-db": open that sheet with fictional data
     public var demoSheet: String?
+    /// (developer) pretended system language, see `LanguagePreference.current`
+    public var simulateSystemLanguage: String?
 
     public init(arguments: [String] = CommandLine.arguments, environment: [String: String] = ProcessInfo.processInfo.environment) {
         var demo = arguments.contains("--demo-seed")
@@ -76,6 +82,11 @@ public struct LaunchOptions: Sendable {
         self.demoSeed = demo
         self.screenshotPath = shot
         self.dark = arguments.contains("--dark")
+        if let i = arguments.firstIndex(of: "--simulate-system-language"), i + 1 < arguments.count {
+            simulateSystemLanguage = arguments[i + 1]
+        } else {
+            simulateSystemLanguage = nil
+        }
     }
 
     public static let current = LaunchOptions()
