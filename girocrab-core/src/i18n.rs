@@ -403,6 +403,7 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ connectors/enable_banking.rs
         "Zustimmung beim Kartenherausgeber erteilen" => "Grant consent at the card issuer",
         "Zustimmung bei der Bank erteilen" => "Grant consent at your bank",
+        "Mit echtem Konto getestet: Girokonto, Gemeinschaftskonto und Tagesgeld-Pocket (auch ohne eigene IBAN); Abruf ohne TAN, Zustimmung 180 Tage." => "Tested with a real account: current account, joint account and savings Pocket (also without its own IBAN); syncs without a TAN, consent 180 days.",
         "Das ist eine Sandbox-Anwendung. Für echte Konten auf enablebanking.com eine Anwendung mit „Production“ registrieren." => "This is a sandbox application. For real accounts, register an application with “Production” on enablebanking.com.",
         "Die Anwendung ist noch nicht aktiv. Auf enablebanking.com bei der Anwendung „Activate by linking accounts“ wählen und alle gewünschten Konten verknüpfen." => "The application isn’t active yet. On enablebanking.com, choose “Activate by linking accounts” for the application and link every account you want.",
         "Die Redirect-URL „{0}“ ist in der Anwendung nicht eingetragen. Bitte auf enablebanking.com unter „Allowed redirect URLs“ ergänzen." => "The redirect URL “{0}” isn’t registered in the application. Please add it on enablebanking.com under “Allowed redirect URLs”.",

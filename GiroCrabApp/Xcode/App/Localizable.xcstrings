@@ -9079,6 +9079,17 @@
           }
         }
       }
+    },
+    "Sie melden sich in einem GiroCrab-Fenster direkt bei Ihrer Bank an. Dafür brauchen Sie eine kostenlose eigene Anwendung auf enablebanking.com – die Einrichtung führt Sie Schritt für Schritt hindurch." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You sign in directly at your bank in a GiroCrab window. For this you need your own free application on enablebanking.com – the setup guides you step by step."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
