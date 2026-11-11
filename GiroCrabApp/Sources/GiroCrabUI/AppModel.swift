@@ -938,7 +938,14 @@ public final class AppModel {
                 PrintAccount(id: $0.id, name: $0.name, iban: $0.iban, balanceCents: $0.balanceCents,
                              balanceDate: $0.balanceDate, currency: $0.currency)
             }
-            return PrintReport(title: title, periodLabel: periodTitle, rows: rows, accounts: accounts)
+            var report = PrintReport(title: title, periodLabel: periodTitle, rows: rows, accounts: accounts)
+            // The list's own income/expense filter is named in the printout header.
+            switch directionFilter {
+            case .all: break
+            case .income: report.filterNotes = [PrintDirection.income.title]
+            case .expense: report.filterNotes = [PrintDirection.expenses.title]
+            }
+            return report
         } catch {
             errorMessage = error.localizedDescription
             return nil

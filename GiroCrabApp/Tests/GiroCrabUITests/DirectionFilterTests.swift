@@ -33,6 +33,7 @@ final class DirectionFilterTests: XCTestCase {
         let source = try XCTUnwrap(model.printSource())
         XCTAssertFalse(source.rows.isEmpty)
         XCTAssertTrue(source.rows.allSatisfy { $0.amountCents > 0 })
+        XCTAssertEqual(source.filterNotes, [PrintDirection.income.title])
     }
 
     func testRevealingABookingOutsideTheListClearsTheFilter() throws {
