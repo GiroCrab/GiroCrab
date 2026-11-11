@@ -1233,6 +1233,16 @@ struct TransferState {
 
 /// One SEPA transfer. Created by `Vault::begin_transfer`; same two-phase
 /// challenge handling as `SyncSession` (login SCA, then transfer SCA).
+/// After the order was handed to the bank, only errors that prove it was
+/// refused (wrong credentials, invalid input) mean "not executed". Anything
+/// else (network, garbled reply, ...) leaves the result unknown.
+fn error_leaves_outcome_unknown(e: &CoreError) -> bool {
+    !matches!(
+        e,
+        CoreError::Authentication { .. } | CoreError::InvalidInput { .. }
+    )
+}
+
 #[derive(uniffi::Object)]
 pub struct TransferSession {
     vault: Arc<Vault>,
@@ -1254,7 +1264,7 @@ impl TransferSession {
                     // it may have been executed, so never report "failed".
                     let unknown = st.submitted
                         && st.connector.order_submitted()
-                        && matches!(e, CoreError::Network { .. });
+                        && error_leaves_outcome_unknown(&e);
                     st.connector.finish(&st.ctx).await;
                     if unknown {
                         return self.outcome_unknown(st, e.to_string());
@@ -1701,6 +1711,23 @@ pub(crate) fn open_card_balance(rows: &[(String, i64, String)]) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn errors_after_submit_leave_outcome_unknown() {
+        use super::{error_leaves_outcome_unknown as unknown, CoreError};
+        assert!(unknown(&CoreError::Network {
+            message: "x".into()
+        }));
+        assert!(unknown(&CoreError::Protocol {
+            message: "x".into()
+        }));
+        assert!(!unknown(&CoreError::Authentication {
+            message: "x".into()
+        }));
+        assert!(!unknown(&CoreError::InvalidInput {
+            message: "x".into()
+        }));
+    }
+
     #[test]
     fn store_fetch_matches_depot_holdings_without_iban() {
         let p = std::env::temp_dir().join(format!("girocrab-depot-{}.db", uuid::Uuid::new_v4()));

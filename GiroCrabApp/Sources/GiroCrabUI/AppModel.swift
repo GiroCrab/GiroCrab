@@ -1673,7 +1673,7 @@ extension AppModel {
             activeChallenge = nil
             activeTransfer = nil
             transferBusy = false
-            transferDraft = TransferDraft(accountID: transferDraft.accountID, instant: transferDraft.instant)
+            transferDraft = TransferDraft(accountID: transferDraft.accountID, instant: false)
             if outcome.instant {
                 toast = String(localized: "Echtzeitüberweisung freigegeben und vorgemerkt")
             } else {

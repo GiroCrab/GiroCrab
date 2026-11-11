@@ -22,8 +22,10 @@
 //!      segment ("9050 [HKKAZ #3] Auftragsart wird nicht unterstützt").
 //!   5. Transfers: HKCCS (regular SEPA) or HKIPZ (SEPA Instant), each with
 //!      HKTAN process 4. An instant transfer the bank does not offer or rejects
-//!      (on submission or after the approval) is resent as HKCCS, which needs
-//!      a new approval. No fallback after PIN/TAN errors or a declined approval.
+//!      (on submission or after the approval) is reported as declined; nothing
+//!      is resent automatically. The app may offer a regular transfer, which
+//!      is a new order with its own approval. Ambiguous replies and lost
+//!      connections after submission mean "outcome unknown".
 //!
 //! The registration-bound product ID is never hardcoded; it comes from
 //! Settings (`fints.product_id`).
@@ -1517,6 +1519,10 @@ fn classify_submit_reply(reply: &BankReply, instant: bool) -> OrderReply {
     if !instant || errs.iter().any(|e| is_auth_error(&e.0)) {
         return OrderReply::Rejected;
     }
+    // Dialog aborted: without SCA an instant order may already be executed.
+    if reply.has("9800") {
+        return OrderReply::Unknown(reason_text(reply));
+    }
     OrderReply::InstantDeclined(reason_text(reply))
 }
 
@@ -2087,6 +2093,12 @@ mod tests {
         // Wrong PIN -> not executed, no instant decline either.
         let r = reply(b"HIRMG:2:2+9942::PIN falsch.'");
         assert_eq!(classify_submit_reply(&r, true), OrderReply::Rejected);
+        // Dialog abort on an instant order: may have been executed.
+        let r = reply(b"HIRMG:2:2+9800::Dialog abgebrochen.'");
+        assert!(matches!(
+            classify_submit_reply(&r, true),
+            OrderReply::Unknown(_)
+        ));
         // Contradictory: order segment confirmed but errors present -> unknown.
         let r =
             reply(b"HIRMG:2:2+9800::Dialog abgebrochen.'HIRMS:3:2:3+0020::Auftrag ausgef\xfchrt.'");
