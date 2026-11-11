@@ -25,6 +25,7 @@ use crate::secret::SecretString;
 use crate::vault::Vault;
 
 pub mod bank_directory;
+mod bic_directory_data;
 pub mod bunq;
 pub mod comdirect;
 pub mod demo;
