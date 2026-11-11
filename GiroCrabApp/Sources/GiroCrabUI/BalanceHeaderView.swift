@@ -219,6 +219,10 @@ struct StreamHeaderCard: View {
                 filterContent.fixedSize(horizontal: true, vertical: false)
             }
         }
+        // Outside ViewThatFits: its candidates must not each carry the popover.
+        .popover(isPresented: $model.showCustomPeriod, arrowEdge: .bottom) {
+            CustomPeriodForm()
+        }
     }
 
     @ViewBuilder
@@ -229,18 +233,28 @@ struct StreamHeaderCard: View {
                 PeriodQuickPicker()
                 Menu {
                     Picker("Zeitraum", selection: $model.period) {
-                        ForEach(Period.allCases) { Text($0.title).tag($0) }
+                        ForEach(Period.presets) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.inline)
+                    Divider()
+                    Button {
+                        model.showCustomPeriod = true
+                    } label: {
+                        if model.period == .custom {
+                            Label("Benutzerdefiniert: \(model.periodTitle) …", systemImage: "checkmark")
+                        } else {
+                            Text("Benutzerdefiniert …")
+                        }
+                    }
                 } label: {
                     #if os(iOS)
                     if sizeClass == .compact {
-                        Image(systemName: "calendar").accessibilityLabel(model.period.title)
+                        Image(systemName: "calendar").accessibilityLabel(model.periodTitle)
                     } else {
-                        Label(model.period.title, systemImage: "calendar")
+                        Label(model.periodTitle, systemImage: "calendar")
                     }
                     #else
-                    Label(model.period.title, systemImage: "calendar")
+                    Label(model.periodTitle, systemImage: "calendar")
                     #endif
                 }
                 .menuStyle(.borderlessButton)
