@@ -466,6 +466,9 @@ pub struct FetchResult {
     /// external_id prefix of provisional bookings (card holds) this fetch
     /// lists completely: stored ones missing from it are removed.
     pub hold_prefix: Option<String>,
+    /// `(old, new)` account external refs to rewrite before storing (a
+    /// connector switched to a stable account key).
+    pub renamed_refs: Vec<(String, String)>,
 }
 
 #[async_trait]
@@ -661,6 +664,17 @@ pub(crate) fn store_fetch(
             t.counterparty = crate::text::clean_bank_text(&t.counterparty);
             t.purpose = crate::text::clean_bank_text(&t.purpose);
             t.booking_text = crate::text::clean_bank_text(&t.booking_text);
+        }
+        for (old, new) in &data.renamed_refs {
+            if old.is_empty() || new.is_empty() || old == new {
+                continue;
+            }
+            tx.execute(
+                "UPDATE accounts SET external_ref = ?3
+                 WHERE connection_id = ?1 AND external_ref = ?2
+                   AND NOT EXISTS (SELECT 1 FROM accounts WHERE connection_id = ?1 AND external_ref = ?3)",
+                params![connection_id, old, new],
+            )?;
         }
         let mut account_ids: HashMap<String, i64> = HashMap::new();
         // Archived accounts the bank still delivers: nothing is stored for
@@ -2044,6 +2058,74 @@ mod tests {
         // Hold 1 cleared (booked elsewhere), hold 2 still open.
         store_fetch(&v, ConnectorKind::Bunq, conn, fetch(vec![hold("2", -7_10)])).unwrap();
         assert_eq!(holds(), vec!["pending-hold-bunq-2"]);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn renamed_refs_keep_the_account() {
+        let (v, path) = demo_vault();
+        let conn = v
+            .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "C24".into())
+            .unwrap();
+        let acc = |r: &str| RemoteAccount {
+            external_ref: r.into(),
+            name: "Girokonto".into(),
+            owner: String::new(),
+            iban: "DE00100000000000000001".into(),
+            account_number: String::new(),
+            currency: "EUR".into(),
+            kind: AccountKind::Checking,
+            balance_cents: 100_00,
+            balance_date: "2026-11-10".into(),
+        };
+        let count = || -> i64 {
+            v.db()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM accounts WHERE connection_id = ?1",
+                    [conn],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let uid = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+        let stable = "DE00100000000000000001";
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc(uid)],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(count(), 1);
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc(stable)],
+                renamed_refs: vec![(uid.into(), stable.into())],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(count(), 1, "rename must not create a second account");
+        // applying the same rename again is harmless
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc(stable)],
+                renamed_refs: vec![(uid.into(), stable.into())],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(count(), 1);
         std::fs::remove_file(path).ok();
     }
 

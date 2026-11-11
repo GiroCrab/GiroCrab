@@ -401,6 +401,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Fehler-Frame: {0}" => "Error frame: {0}",
         // ------------------------------------------------------------ connectors/enable_banking.rs
         "Zustimmung beim Kartenherausgeber erteilen" => "Grant consent at the card issuer",
+        "Zustimmung bei der Bank erteilen" => "Grant consent at your bank",
+        "PSD2-Zustimmung abgelaufen oder widerrufen – bitte die Verbindung neu verbinden" => "PSD2 consent expired or revoked – please reconnect",
+        "Abruflimit der Bank für heute erreicht – bitte später erneut synchronisieren" => "The bank’s daily access limit is reached – please sync again later",
         "Seite öffnen, anmelden und Zugriff erlauben. Danach die Adresse einfügen, auf die der Browser weitergeleitet wurde." => "Open the page, sign in and allow access. Then paste the address the browser was redirected to.",
         "PSD2-Weiterleitung" => "PSD2 redirect",
         "Bitte die Weiterleitungsadresse einfügen" => "Please paste the redirect address",
