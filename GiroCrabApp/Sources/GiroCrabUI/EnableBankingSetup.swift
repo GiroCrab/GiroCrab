@@ -14,6 +14,12 @@ enum EnableBankingKeyFile {
         return String(name[r]).lowercased()
     }
 
+    /// Where enablebanking.com's download lands: start the file dialog there,
+    /// not in the folder macOS remembers from the last import.
+    static var downloadsFolder: URL? {
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+    }
+
     static func looksLikePrivateKey(_ text: String) -> Bool {
         text.contains("-----BEGIN") && text.contains("PRIVATE KEY-----")
     }
@@ -101,6 +107,7 @@ struct EnableBankingSetupSection: View {
                 keyNote = error.localizedDescription
             }
         }
+        .fileDialogDefaultDirectory(EnableBankingKeyFile.downloadsFolder)
         .onAppear {
             if (values[redirectKey] ?? "").isEmpty { values[redirectKey] = ConsentRedirect.defaultURL }
         }

@@ -318,6 +318,7 @@ struct ConnectionEditSheet: View {
                 }
             }
         }
+        .fileDialogDefaultDirectory(EnableBankingKeyFile.downloadsFolder)
     }
 
     private var sectionTitle: String {
