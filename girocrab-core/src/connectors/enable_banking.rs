@@ -125,13 +125,21 @@ fn de_accounts<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<EbAccount>, D::Err
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PsdState {
+    // Optional: "Neu verbinden" / "Sitzung löschen" remove both from the
+    // stored state; the account list must still be read (reconnect compare).
+    #[serde(default)]
     session_id: String,
+    #[serde(default)]
     valid_until: String,
     #[serde(default, deserialize_with = "de_accounts")]
     accounts: Vec<EbAccount>,
     /// `(old, new)` external refs still to be applied to the vault.
     #[serde(default)]
     renames: Vec<(String, String)>,
+    /// External refs of accounts no longer in the consent, still to be
+    /// marked as revoked in the vault.
+    #[serde(default)]
+    revoked: Vec<String>,
 }
 
 pub struct EnableBankingConnector {
@@ -219,6 +227,24 @@ fn carry_over(prev: &[EbAccount], new: &mut [EbAccount]) -> Vec<(String, String)
         }
     }
     renames
+}
+
+/// Same account in two sessions: by IBAN or identification hash.
+fn same_account(p: &EbAccount, n: &EbAccount) -> bool {
+    (!p.iban.is_empty() && p.iban.replace(' ', "") == n.iban.replace(' ', ""))
+        || (!p.identification_hash.is_empty() && p.identification_hash == n.identification_hash)
+}
+
+/// Accounts of the previous consent that the new one no longer includes
+/// (their vault refs). Uses the same matching as `carry_over`.
+fn dropped_refs(prev: &[EbAccount], new: &[EbAccount]) -> Vec<String> {
+    if prev.len() == 1 && new.len() == 1 {
+        return Vec::new();
+    }
+    prev.iter()
+        .filter(|p| !p.ext_ref.is_empty() && !new.iter().any(|n| same_account(p, n)))
+        .map(|p| p.ext_ref.clone())
+        .collect()
 }
 
 /// Non-IBAN account id of an `AccountResource`: `account_id.other`, else a
@@ -1034,6 +1060,9 @@ impl BankConnector for EnableBankingConnector {
             // New consent: keep the vault accounts of the previous session.
             let renames = carry_over(&self.st.accounts, &mut accounts);
             self.st.renames.extend(renames);
+            // Not in the new consent any more: mark, never delete.
+            let dropped = dropped_refs(&self.st.accounts, &accounts);
+            self.st.revoked.extend(dropped);
         }
         self.st.accounts = accounts;
         Ok(Phase::Ready)
@@ -1068,7 +1097,9 @@ impl BankConnector for EnableBankingConnector {
         }
         out.hold_prefix = Some(HOLD_PREFIX.into());
         out.renamed_refs = self.st.renames.clone();
+        out.revoked_refs = self.st.revoked.clone();
         let mut done: Vec<String> = Vec::new();
+        let mut stopped_early = false;
         for a in self.st.accounts.clone() {
             let res = if kind_of(&a) == AccountKind::CreditCard {
                 self.fetch_card(ctx, &mut out, &a).await
@@ -1077,12 +1108,16 @@ impl BankConnector for EnableBankingConnector {
             };
             match res {
                 Ok(()) => done.push(a.uid.clone()),
-                Err(e) if is_account_unavailable(&e) => crate::depot_debug::log(&format!(
-                    "enable_banking: account not accessible, skipped ({e})"
-                )),
+                Err(e) if is_account_unavailable(&e) => {
+                    crate::depot_debug::log(&format!(
+                        "enable_banking: account not accessible, marked as revoked ({e})"
+                    ));
+                    out.revoked_refs.push(a.ext_ref.clone());
+                }
                 // Bank's daily limit: keep what was fetched so far.
                 Err(e) if is_rate_limit(&e) && !out.accounts.is_empty() => {
                     crate::depot_debug::log("enable_banking: rate limit reached, partial sync");
+                    stopped_early = true;
                     break;
                 }
                 Err(e) => return Err(e),
@@ -1093,8 +1128,18 @@ impl BankConnector for EnableBankingConnector {
                 a.history_done = true;
             }
         }
+        // Every account of the consent was looked at: the vault may mark the
+        // connection's other accounts as no longer accessible.
+        out.accounts_complete = !stopped_early && !out.accounts.is_empty();
+        crate::depot_debug::log(&format!(
+            "enable_banking fetch: delivered={} complete={} revoked_refs={}",
+            out.accounts.len(),
+            out.accounts_complete,
+            out.revoked_refs.len()
+        ));
         // Renames travel with this result; the vault applies them.
         self.st.renames.clear();
+        self.st.revoked.clear();
         out.state = Some(serde_json::to_value(&self.st)?);
         Ok(out)
     }
@@ -1573,6 +1618,54 @@ mod tests {
         }))
         .unwrap();
         assert!(!st.accounts[0].details_done && st.accounts[0].account_number.is_empty());
+    }
+
+    #[test]
+    fn account_list_survives_a_deleted_session() {
+        // what "Neu verbinden" / clear_connection_session leaves behind
+        // (session_id and valid_until removed) – bug seen on 2026-11-11
+        let st: PsdState = serde_json::from_value(json!({
+            "accounts": [
+                {"uid": "u1", "ext_ref": "DE23", "iban": "DE23", "history_done": true},
+                {"uid": "u2", "ext_ref": "hs", "identification_hash": "hs", "history_done": true}
+            ]
+        }))
+        .unwrap();
+        assert!(st.session_id.is_empty() && st.valid_until.is_empty());
+        assert_eq!(st.accounts.len(), 2);
+        assert!(st.accounts.iter().all(|a| a.history_done));
+    }
+
+    #[test]
+    fn reconnect_reports_accounts_left_out_of_the_consent() {
+        let acc = |r: &str, iban: &str, hash: &str| EbAccount {
+            uid: format!("u-{r}"),
+            ext_ref: r.into(),
+            iban: iban.into(),
+            identification_hash: hash.into(),
+            ..Default::default()
+        };
+        // real C24 case: main account kept, savings + shared account unlinked
+        let prev = vec![
+            acc("DE23", "DE23", "h1"),
+            acc("hs", "", "hs"),
+            acc("DE48", "DE48", "h3"),
+        ];
+        let new = vec![acc("DE23", "DE23", "h1-new-session")];
+        assert_eq!(
+            dropped_refs(&prev, &new),
+            vec!["hs".to_string(), "DE48".to_string()]
+        );
+        // nothing dropped when all come back (matched by IBAN or hash)
+        let all = vec![
+            acc("DE23", "DE23", "x"),
+            acc("hs", "", "hs"),
+            acc("DE48", "DE48", "y"),
+        ];
+        assert!(dropped_refs(&prev, &all).is_empty());
+        // first consent / single account on both sides: nothing to report
+        assert!(dropped_refs(&[], &new).is_empty());
+        assert!(dropped_refs(&[acc("a", "", "")], &[acc("b", "", "")]).is_empty());
     }
 
     #[test]

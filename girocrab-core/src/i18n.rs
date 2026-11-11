@@ -402,6 +402,8 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ connectors/enable_banking.rs
         "Zustimmung beim Kartenherausgeber erteilen" => "Grant consent at the card issuer",
         "Zustimmung bei der Bank erteilen" => "Grant consent at your bank",
+        "Automatischer PSD2-Abruf (Stunden)" => "Automatic PSD2 sync (hours)",
+        "Solange GiroCrab läuft, werden PSD2-Bankzugänge (Enable Banking) alle N Stunden ohne TAN abgerufen, solange die Zustimmung gilt. Banken erlauben meist nur 4 Abrufe pro Tag. 0 = aus." => "While GiroCrab is running, PSD2 bank connections (Enable Banking) are synced every N hours without a TAN as long as the consent is valid. Banks usually allow only 4 syncs per day. 0 = off.",
         "PSD2-Zustimmung abgelaufen oder widerrufen – bitte die Verbindung neu verbinden" => "PSD2 consent expired or revoked – please reconnect",
         "Abruflimit der Bank für heute erreicht – bitte später erneut synchronisieren" => "The bank’s daily access limit is reached – please sync again later",
         "Seite öffnen, anmelden und Zugriff erlauben. Danach die Adresse einfügen, auf die der Browser weitergeleitet wurde." => "Open the page, sign in and allow access. Then paste the address the browser was redirected to.",

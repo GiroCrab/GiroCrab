@@ -80,6 +80,11 @@ pub struct SyncSummary {
     pub transactions_categorized: u32,
     /// New bookings the bank delivered for archived accounts (not stored).
     pub transactions_skipped_archived: u32,
+    /// Accounts this sync added to a connection that already had accounts
+    /// (e.g. included in a renewed PSD2 consent) – named in the sync notice.
+    pub new_accounts: Vec<String>,
+    /// Accounts the bank / consent no longer grants access to (newly marked).
+    pub revoked_accounts: Vec<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -469,6 +474,13 @@ pub struct FetchResult {
     /// `(old, new)` account external refs to rewrite before storing (a
     /// connector switched to a stable account key).
     pub renamed_refs: Vec<(String, String)>,
+    /// External refs of accounts the bank / consent no longer grants access
+    /// to: marked as revoked (kept with their bookings, never deleted).
+    pub revoked_refs: Vec<String>,
+    /// `accounts` is the complete list the bank grants access to (e.g. every
+    /// account of a PSD2 consent was fetched): the connection's other
+    /// accounts are marked as revoked.
+    pub accounts_complete: bool,
 }
 
 #[async_trait]
@@ -681,6 +693,12 @@ pub(crate) fn store_fetch(
         // them (no balance, bookings, positions or documents).
         let mut archived_ids: HashMap<String, i64> = HashMap::new();
         let mut accounts_updated = 0u32;
+        let had_accounts: i64 = tx.query_row(
+            "SELECT count(*) FROM accounts WHERE connection_id = ?1",
+            [connection_id],
+            |r| r.get(0),
+        )?;
+        let mut new_accounts: Vec<String> = Vec::new();
         for acc in &data.accounts {
             let existing: Option<i64> = tx
                 .query_row(
@@ -719,6 +737,7 @@ pub(crate) fn store_fetch(
                     continue;
                 }
             }
+            let is_new = existing.is_none();
             let id = match existing {
                 Some(id) => {
                     if !data.adjust_balances {
@@ -789,6 +808,47 @@ pub(crate) fn store_fetch(
             };
             accounts_updated += 1;
             account_ids.insert(acc.external_ref.clone(), id);
+            if is_new && had_accounts > 0 {
+                new_accounts.push(acc.name.clone());
+            }
+            // Delivered again: access is back (e.g. included in a new consent).
+            tx.execute(
+                "UPDATE accounts SET access_revoked = 0 WHERE id = ?1 AND access_revoked != 0",
+                [id],
+            )?;
+        }
+        let mut revoked_accounts: Vec<String> = Vec::new();
+        let mut revoked_refs = data.revoked_refs.clone();
+        if data.accounts_complete && !data.accounts.is_empty() {
+            let mut q = tx.prepare(
+                "SELECT external_ref FROM accounts WHERE connection_id = ?1 AND access_revoked = 0",
+            )?;
+            let stored: Vec<String> = q
+                .query_map([connection_id], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            drop(q);
+            revoked_refs.extend(stored.into_iter().filter(|r| !account_ids.contains_key(r)));
+        }
+        revoked_refs.sort();
+        revoked_refs.dedup();
+        for r in revoked_refs
+            .iter()
+            .filter(|r| !r.is_empty() && !account_ids.contains_key(*r))
+        {
+            let name: Option<String> = tx
+                .query_row(
+                    "SELECT name FROM accounts WHERE connection_id = ?1 AND external_ref = ?2 AND access_revoked = 0",
+                    params![connection_id, r],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(name) = name {
+                tx.execute(
+                    "UPDATE accounts SET access_revoked = 1 WHERE connection_id = ?1 AND external_ref = ?2",
+                    params![connection_id, r],
+                )?;
+                revoked_accounts.push(name);
+            }
         }
         // Credit cards without a connector balance: derive the open amount.
         if !data.adjust_balances {
@@ -1071,6 +1131,8 @@ pub(crate) fn store_fetch(
             transactions_imported: imported,
             transactions_categorized: categorized,
             transactions_skipped_archived: skipped_archived,
+            new_accounts,
+            revoked_accounts,
         })
     }
 }
@@ -2068,6 +2130,218 @@ mod tests {
         // Hold 1 cleared (booked elsewhere), hold 2 still open.
         store_fetch(&v, ConnectorKind::Bunq, conn, fetch(vec![hold("2", -7_10)])).unwrap();
         assert_eq!(holds(), vec!["pending-hold-bunq-2"]);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn revoked_accounts_are_marked_and_new_ones_named() {
+        let (v, path) = demo_vault();
+        let conn = v
+            .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "C24".into())
+            .unwrap();
+        let acc = |r: &str, name: &str| RemoteAccount {
+            external_ref: r.into(),
+            name: name.into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: String::new(),
+            currency: "EUR".into(),
+            kind: AccountKind::Checking,
+            balance_cents: 100_00,
+            balance_date: "2026-11-11".into(),
+        };
+        let revoked = || -> Vec<(String, bool)> {
+            let db = v.db().unwrap();
+            let mut q = db
+                .prepare("SELECT external_ref, access_revoked FROM accounts WHERE connection_id = ?1 ORDER BY external_ref")
+                .unwrap();
+            q.query_map([conn], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        // first sync: nothing is "new"
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![
+                    acc("A", "Girokonto"),
+                    acc("B", "Pocket"),
+                    acc("C", "Gemeinschaftskonto"),
+                ],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(s.new_accounts.is_empty() && s.revoked_accounts.is_empty());
+        // reconnect with only A: B and C marked, named once, bookings kept
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc("A", "Girokonto")],
+                revoked_refs: vec!["B".into(), "C".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.revoked_accounts, vec!["Pocket", "Gemeinschaftskonto"]);
+        assert_eq!(
+            revoked(),
+            vec![("A".into(), false), ("B".into(), true), ("C".into(), true)]
+        );
+        let st = v.connection_status(conn).unwrap();
+        assert_eq!((st.account_count, st.revoked_account_count), (3, 2));
+        // repeated report: no second notice
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc("A", "Girokonto")],
+                revoked_refs: vec!["B".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(s.revoked_accounts.is_empty());
+        // later consent includes B again plus a new account D
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![
+                    acc("A", "Girokonto"),
+                    acc("B", "Pocket"),
+                    acc("D", "GLS Giro"),
+                ],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.new_accounts, vec!["GLS Giro"]);
+        assert_eq!(
+            revoked(),
+            vec![
+                ("A".into(), false),
+                ("B".into(), false),
+                ("C".into(), true),
+                ("D".into(), false)
+            ]
+        );
+        let accs = v.list_accounts().unwrap();
+        assert!(accs
+            .iter()
+            .any(|a| a.name == "Gemeinschaftskonto" && a.access_revoked));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn complete_account_list_marks_the_missing_ones() {
+        let (v, path) = demo_vault();
+        let conn = v
+            .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "C24".into())
+            .unwrap();
+        let acc = |r: &str, name: &str| RemoteAccount {
+            external_ref: r.into(),
+            name: name.into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: String::new(),
+            currency: "EUR".into(),
+            kind: AccountKind::Checking,
+            balance_cents: 0,
+            balance_date: "2026-11-11".into(),
+        };
+        let three = || {
+            vec![
+                acc("DE23", "Girokonto"),
+                acc("hs", "PocketZINS"),
+                acc("DE48", "Gemeinschaftskonto"),
+            ]
+        };
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: three(),
+                accounts_complete: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // a partial sync (e.g. bank's daily limit) marks nothing
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc("DE23", "Girokonto")],
+                accounts_complete: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(s.revoked_accounts.is_empty());
+        // an empty "complete" list is never trusted
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts_complete: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(s.revoked_accounts.is_empty());
+        // the real case: new consent with only the main account
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc("DE23", "Girokonto")],
+                accounts_complete: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut names = s.revoked_accounts.clone();
+        names.sort();
+        assert_eq!(names, vec!["Gemeinschaftskonto", "PocketZINS"]);
+        assert_eq!(v.connection_status(conn).unwrap().revoked_account_count, 2);
+        // next sync: no repeated notice
+        let s = store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc("DE23", "Girokonto")],
+                accounts_complete: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(s.revoked_accounts.is_empty());
+        // all three granted again: marks cleared
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: three(),
+                accounts_complete: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(v.connection_status(conn).unwrap().revoked_account_count, 0);
         std::fs::remove_file(path).ok();
     }
 
