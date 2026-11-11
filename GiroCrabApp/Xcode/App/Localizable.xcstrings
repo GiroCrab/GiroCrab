@@ -9575,6 +9575,145 @@
           }
         }
       }
+    },
+    "%@ von %@ Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ von %2$@ Buchungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ of %2$@ transactions"
+          }
+        }
+      }
+    },
+    "%@ von %@ Dokumenten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ von %2$@ Dokumenten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ of %2$@ documents"
+          }
+        }
+      }
+    },
+    "Bankzugänge und Gruppen werden angelegt …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Creating bank logins and groups…"
+          }
+        }
+      }
+    },
+    "Bitte warten Sie, bis der Import fertig ist. „Import abbrechen“ verwirft alles – es wird dann nichts übernommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please wait until the import has finished. “Cancel Import” discards everything – nothing is imported then."
+          }
+        }
+      }
+    },
+    "Der Import wird abgebrochen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelling the import…"
+          }
+        }
+      }
+    },
+    "Import abbrechen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Import"
+          }
+        }
+      }
+    },
+    "Import abgebrochen – es wurde nichts übernommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import cancelled – nothing was imported."
+          }
+        }
+      }
+    },
+    "Import läuft …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importing…"
+          }
+        }
+      }
+    },
+    "Konto %u von %u · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Konto %1$u von %2$u · %3$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account %1$u of %2$u · %3$@"
+          }
+        }
+      }
+    },
+    "MoneyMoney-Datenbank wird gelesen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reading the MoneyMoney database…"
+          }
+        }
+      }
+    },
+    "Wird abgebrochen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelling…"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
