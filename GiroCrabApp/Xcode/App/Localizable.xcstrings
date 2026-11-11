@@ -12,6 +12,28 @@
         }
       }
     },
+    "Bankzugang entfernen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Bank Login…"
+          }
+        }
+      }
+    },
+    "Bankzugang entfernen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Bank Login?"
+          }
+        }
+      }
+    },
     "Bernstein" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -52,6 +74,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The account will be moved to “Ungrouped”. No accounts or transactions are deleted."
+          }
+        }
+      }
+    },
+    "Entfernen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove"
           }
         }
       }
@@ -144,6 +177,17 @@
         }
       }
     },
+    "Kategorie löschen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Category?"
+          }
+        }
+      }
+    },
     "Keine Gruppe ausgewählt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -162,6 +206,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Show Accounts By"
+          }
+        }
+      }
+    },
+    "Konto löschen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Account…"
+          }
+        }
+      }
+    },
+    "Konto löschen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Account?"
           }
         }
       }
@@ -7110,6 +7176,17 @@
         }
       }
     },
+    "„%@“ löschen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete “%@”…"
+          }
+        }
+      }
+    },
     "„%@“ nach „%@“ verschieben" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7139,6 +7216,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@” will be moved into the new group."
+          }
+        }
+      }
+    },
+    "„%@“ wird samt allen Buchungen und Belegen unwiderruflich gelöscht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@” will be permanently deleted, including all its transactions and documents."
           }
         }
       }
