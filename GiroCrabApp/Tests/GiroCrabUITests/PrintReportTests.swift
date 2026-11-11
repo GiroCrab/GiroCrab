@@ -74,6 +74,51 @@ final class PrintReportTests: XCTestCase {
         XCTAssertEqual(html.components(separatedBy: Money.format(777_701)).count - 1, 1)
     }
 
+    func testPurposeThatRepeatsThePayeeIsDropped() {
+        let r = PrintRow(id: 9, accountId: 10, accountName: "Giro", date: "2025-03-03", amountCents: -30_000,
+                         counterparty: "Tagesgeld Übertrag", purpose: "tagesgeld übertrag")
+        XCTAssertEqual(PrintReportBuilder.displayPurpose(r, firstLineOnly: false), "")
+        XCTAssertEqual(PrintReportBuilder.displayPurpose(rows[1], firstLineOnly: false), "Einkauf")
+    }
+
+    func testCreatedLineHasDateAndTime() {
+        let date = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 11, hour: 21, minute: 45))!
+        let line = PrintReportBuilder.createdLine(date)
+        XCTAssertTrue(line.contains(DateText.medium("2026-11-11")), line)
+        XCTAssertTrue(line.contains(date.formatted(date: .omitted, time: .shortened)), line)
+    }
+
+    func testPaginatorAndLogoPlacement() {
+        var r = report()
+        r.logoDataURI = "data:image/png;base64,AAAA"
+        var o = PrintOptions()
+        o.logo = .header
+        var html = PrintReportBuilder.html(r, options: o, paper: .init(widthMM: 216, heightMM: 279))
+        XCTAssertTrue(html.contains("class=\"logo\""))
+        XCTAssertFalse(html.contains("class=\"watermark\""))
+        XCTAssertTrue(html.contains("var W=216.0, H=279.0"))
+        o.logo = .watermark
+        html = PrintReportBuilder.html(r, options: o)
+        XCTAssertTrue(html.contains("class=\"watermark\""))
+        XCTAssertFalse(html.contains("class=\"logo\""))
+        o.logo = .off
+        XCTAssertFalse(PrintReportBuilder.html(r, options: o).contains("data:image/png"))
+    }
+
+    func testScriptStringsCannotCloseTheScript() {
+        XCTAssertFalse(PrintReportBuilder.jsString("Konto </script><b>").contains("</"))
+    }
+
+    func testOptionsSavedBeforeTheLogoOptionStillLoad() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PrintReportTestsLegacy"))
+        defaults.removePersistentDomain(forName: "PrintReportTestsLegacy")
+        defaults.set(Data(#"{"showNote":false,"direction":"income"}"#.utf8), forKey: "print.options")
+        let o = PrintOptions.load(defaults)
+        XCTAssertFalse(o.showNote)
+        XCTAssertEqual(o.direction, .income)
+        XCTAssertEqual(o.logo, .header)
+    }
+
     func testEmptySelection() {
         let html = PrintReportBuilder.html(report([]), options: PrintOptions())
         XCTAssertTrue(html.contains("Keine Buchungen ausgewählt."))

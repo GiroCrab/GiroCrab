@@ -30,6 +30,20 @@ enum PrintDirection: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// Where the GiroCrab logo appears on the printout.
+enum PrintLogo: String, CaseIterable, Identifiable, Codable {
+    case off, header, watermark
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return String(localized: "Kein Logo")
+        case .header: return String(localized: "In der Kopfzeile")
+        case .watermark: return String(localized: "Als Wasserzeichen")
+        }
+    }
+}
+
 /// User choices of the print dialog; remembered across launches.
 struct PrintOptions: Codable, Equatable {
     var showCategory = true
@@ -41,8 +55,28 @@ struct PrintOptions: Codable, Equatable {
     var firstLineOnly = false
     var direction: PrintDirection = .all
     var newestFirst = true
+    var logo: PrintLogo = .header
 
     private static let key = "print.options"
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = PrintOptions.defaults
+        showCategory = try c.decodeIfPresent(Bool.self, forKey: .showCategory) ?? d.showCategory
+        showNote = try c.decodeIfPresent(Bool.self, forKey: .showNote) ?? d.showNote
+        showTotals = try c.decodeIfPresent(Bool.self, forKey: .showTotals) ?? d.showTotals
+        groupByAccount = try c.decodeIfPresent(Bool.self, forKey: .groupByAccount) ?? d.groupByAccount
+        showCurrentBalance = try c.decodeIfPresent(Bool.self, forKey: .showCurrentBalance) ?? d.showCurrentBalance
+        showDailyBalance = try c.decodeIfPresent(Bool.self, forKey: .showDailyBalance) ?? d.showDailyBalance
+        firstLineOnly = try c.decodeIfPresent(Bool.self, forKey: .firstLineOnly) ?? d.firstLineOnly
+        direction = try c.decodeIfPresent(PrintDirection.self, forKey: .direction) ?? d.direction
+        newestFirst = try c.decodeIfPresent(Bool.self, forKey: .newestFirst) ?? d.newestFirst
+        logo = try c.decodeIfPresent(PrintLogo.self, forKey: .logo) ?? d.logo
+    }
+
+    private static let defaults = PrintOptions()
 
     static func load(_ defaults: UserDefaults = .standard) -> PrintOptions {
         guard let data = defaults.data(forKey: key),
@@ -105,6 +139,8 @@ struct PrintReport {
     /// End-of-day balances per account id; key 0 = all printed accounts combined.
     var dailyBalances: [Int64: [String: Int64]] = [:]
     var generatedAt = Date()
+    /// App icon as `data:image/png;base64,…`; nil = no logo available on this platform.
+    var logoDataURI: String?
 }
 
 enum PrintReportBuilder {
@@ -131,12 +167,33 @@ enum PrintReportBuilder {
         return t
     }
 
+    /// "Erstellt am 11.11.2026 um 21:45 Uhr" in the user's locale.
+    static func createdLine(_ date: Date) -> String {
+        let day = DateText.medium(DateText.iso(date))
+        let time = date.formatted(date: .omitted, time: .shortened)
+        return String(localized: "Erstellt am \(day) um \(time) Uhr")
+    }
+
+    /// Payment reference as printed; empty when it only repeats the payee.
+    static func displayPurpose(_ r: PrintRow, firstLineOnly: Bool) -> String {
+        let p = (firstLineOnly ? firstLine(r.purpose) : r.purpose).trimmingCharacters(in: .whitespacesAndNewlines)
+        let party = r.counterparty.trimmingCharacters(in: .whitespacesAndNewlines)
+        return p.compare(party, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame ? "" : p
+    }
+
     /// First line of the payment reference ("Verwendungszweck").
     static func firstLine(_ s: String) -> String {
         s.split(whereSeparator: \.isNewline).first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
     }
 
-    static func html(_ report: PrintReport, options: PrintOptions) -> String {
+    /// Paper size in millimetres (portrait); the paginator lays out pages of this size.
+    struct Paper: Equatable {
+        var widthMM: Double
+        var heightMM: Double
+        static let a4 = Paper(widthMM: 210, heightMM: 297)
+    }
+
+    static func html(_ report: PrintReport, options: PrintOptions, paper: Paper = .a4) -> String {
         let printed = rows(report.rows, options: options)
         let groups: [(account: Int64?, rows: [PrintRow])]
         if options.groupByAccount {
@@ -158,8 +215,20 @@ enum PrintReportBuilder {
         var h = """
         <!doctype html><html lang="\(esc(Locale.current.language.languageCode?.identifier ?? "de"))"><head><meta charset="utf-8">
         <title>\(esc(report.title))</title><style>\(css)</style></head><body>
-        <header><h1>\(esc(report.title))</h1>
-        <p class="meta">\(esc(report.periodLabel)) · \(esc(String(localized: "\(printed.count) Buchungen"))) · \(esc(String(localized: "Erstellt am \(DateText.medium(DateText.iso(report.generatedAt)))")))</p>
+        <div id="flow">
+        """
+        let logo = report.logoDataURI.map(esc)
+        if options.logo == .watermark, let logo {
+            h += "<img class=\"watermark\" src=\"\(logo)\" alt=\"\">"
+        }
+        h += "<header>"
+        if options.logo == .header, let logo {
+            h += "<img class=\"logo\" src=\"\(logo)\" alt=\"GiroCrab\">"
+        }
+        h += """
+        <h1>\(esc(report.title))</h1>
+        <p class="meta">\(esc(report.periodLabel)) · \(esc(String(localized: "\(printed.count) Buchungen")))</p>
+        <p class="meta">\(esc(createdLine(report.generatedAt)))</p>
         """
         h += accountSummary(report, groups: groups, options: options)
         h += "</header>"
@@ -186,8 +255,68 @@ enum PrintReportBuilder {
         if options.showTotals && !printed.isEmpty {
             h += totalsBlock(totals(printed), currency: currency, label: String(localized: "Summe"))
         }
+        h += "</div>"
+        h += "<script>\(paginator(report: report, paper: paper))</script>"
         h += "</body></html>"
         return h
+    }
+
+    /// Lays the flowing report out into fixed pages (WebKit neither repeats table
+    /// headers nor keeps table rows together when printing). Without script the
+    /// plain flowing document still prints.
+    private static func paginator(report: PrintReport, paper: Paper) -> String {
+        let footer = "\(report.title) · \(report.periodLabel)"
+        let pageOf = String(localized: "Seite \("{p}") von \("{n}")")
+        return """
+        (function(){
+        var W=\(paper.widthMM), H=\(paper.heightMM), FOOTER=\(jsString(footer)), PAGEOF=\(jsString(pageOf));
+        var flow=document.getElementById('flow'); if(!flow) return;
+        var st=document.createElement('style');
+        st.textContent='@page{size:'+W+'mm '+H+'mm;margin:0}.page{width:'+W+'mm;height:'+(H-1)+'mm}';
+        document.head.appendChild(st);
+        var blocks=[];
+        Array.prototype.slice.call(flow.children).forEach(function(el){
+          var t=el.tagName==='SECTION'?el.querySelector('table.bookings'):null;
+          if(t){
+            var h2=el.querySelector('h2');
+            blocks.push({h2:h2,table:t,rows:Array.prototype.slice.call(t.tBodies[0].rows),
+              after:Array.prototype.slice.call(el.children).filter(function(c){return c!==h2&&c!==t;})});
+          } else blocks.push({el:el});
+        });
+        var wm=flow.querySelector('img.watermark');
+        if(wm){wm.parentNode.removeChild(wm);blocks=blocks.filter(function(b){return b.el!==wm;});}
+        flow.parentNode.removeChild(flow);
+        document.body.className='paged';
+        var pages=[],body;
+        function newPage(){var p=document.createElement('div');p.className='page';if(wm)p.appendChild(wm.cloneNode(false));body=document.createElement('div');body.className='page-body';p.appendChild(body);var f=document.createElement('div');f.className='page-footer';p.appendChild(f);document.body.appendChild(p);pages.push(p);}
+        function fits(){return body.scrollHeight<=body.clientHeight+1;}
+        function place(el){body.appendChild(el);if(!fits()&&body.childNodes.length>1){body.removeChild(el);newPage();body.appendChild(el);}}
+        function emptyTable(t){var c=t.cloneNode(false);if(t.tHead)c.appendChild(t.tHead.cloneNode(true));c.appendChild(document.createElement('tbody'));return c;}
+        newPage();
+        blocks.forEach(function(b){
+          if(b.el){place(b.el);return;}
+          var t=emptyTable(b.table),lead=[];
+          if(b.h2){body.appendChild(b.h2);lead.push(b.h2);}
+          body.appendChild(t);lead.push(t);
+          if(b.rows.length)t.tBodies[0].appendChild(b.rows[0]);
+          if(!fits()&&body.childNodes.length>lead.length){lead.forEach(function(n){body.removeChild(n);});newPage();lead.forEach(function(n){body.appendChild(n);});}
+          for(var i=1;i<b.rows.length;i++){
+            var r=b.rows[i];t.tBodies[0].appendChild(r);
+            if(!fits()){t.tBodies[0].removeChild(r);newPage();t=emptyTable(b.table);body.appendChild(t);t.tBodies[0].appendChild(r);}
+          }
+          b.after.forEach(place);
+        });
+        pages.forEach(function(p,i){var f=p.lastChild,l=document.createElement('span'),r=document.createElement('span');
+          l.textContent=FOOTER;r.textContent=PAGEOF.replace('{p}',i+1).replace('{n}',pages.length);f.appendChild(l);f.appendChild(r);});
+        })();
+        """
+    }
+
+    /// JSON string literal that is safe inside a <script> element.
+    static func jsString(_ s: String) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data("[\"\"]".utf8)
+        let array = String(decoding: data, as: UTF8.self)
+        return String(array.dropFirst().dropLast()).replacingOccurrences(of: "</", with: "<\\/")
     }
 
     // MARK: - Pieces
@@ -220,7 +349,7 @@ enum PrintReportBuilder {
             h += "<tr>"
             h += "<td class=\"date\">\(esc(DateText.medium(r.date)))</td>"
             if showAccount { h += "<td>\(esc(r.accountName))</td>" }
-            let purpose = options.firstLineOnly ? firstLine(r.purpose) : r.purpose
+            let purpose = displayPurpose(r, firstLineOnly: options.firstLineOnly)
             h += "<td><div class=\"party\">\(esc(r.counterparty))</div>"
             if !purpose.isEmpty { h += "<div class=\"purpose\">\(esc(purpose).replacingOccurrences(of: "\n", with: "<br>"))</div>" }
             if options.showNote && !r.note.isEmpty { h += "<div class=\"note\">\(esc(r.note))</div>" }
@@ -272,7 +401,14 @@ enum PrintReportBuilder {
     body { font: 9.5pt -apple-system, "Helvetica Neue", Helvetica, sans-serif; color: #111; margin: 0; }
     h1 { font-size: 15pt; margin: 0 0 2pt; }
     h2 { font-size: 11pt; margin: 14pt 0 4pt; }
-    .meta { color: #555; margin: 0 0 8pt; }
+    .meta { color: #555; margin: 0 0 2pt; }
+    header { position: relative; margin-bottom: 8pt; }
+    header .logo { position: absolute; top: 0; right: 0; width: 15mm; height: 15mm; }
+    img.watermark { position: fixed; left: 50%; top: 50%; width: 110mm; height: 110mm;
+                    transform: translate(-50%, -50%); opacity: 0.07; z-index: -1; pointer-events: none; }
+    .page { position: relative; }
+    .page > img.watermark { position: absolute; }
+    .page-body, .page-footer { position: relative; z-index: 1; }
     .iban { font-weight: normal; color: #555; font-size: 9pt; }
     table { width: 100%; border-collapse: collapse; }
     thead { display: table-header-group; }
@@ -294,5 +430,13 @@ enum PrintReportBuilder {
     .totals td { border: none; padding: 1pt 0 1pt 16pt; }
     .totals .net td { border-top: 1pt solid #333; font-weight: 600; }
     .empty { color: #555; }
+    body.paged { margin: 0; }
+    .page { box-sizing: border-box; padding: 14mm 14mm 8mm; display: flex; flex-direction: column;
+            overflow: hidden; page-break-after: always; break-after: page; }
+    .page:last-child { page-break-after: auto; break-after: auto; }
+    .page-body { flex: 1; min-height: 0; overflow: hidden; }
+    .page-body > table.bookings + table.bookings { margin-top: 0; }
+    .page-footer { flex: none; height: 6mm; display: flex; justify-content: space-between; align-items: flex-end;
+                   font-size: 7.5pt; color: #777; }
     """
 }

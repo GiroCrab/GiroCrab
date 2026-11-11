@@ -12091,6 +12091,72 @@
           }
         }
       }
+    },
+    "Kein Logo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Logo"
+          }
+        }
+      }
+    },
+    "In der Kopfzeile" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In the Header"
+          }
+        }
+      }
+    },
+    "Als Wasserzeichen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "As Watermark"
+          }
+        }
+      }
+    },
+    "GiroCrab-Logo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab Logo"
+          }
+        }
+      }
+    },
+    "Erstellt am %@ um %@ Uhr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Created on %1$@ at %2$@"
+          }
+        }
+      }
+    },
+    "Seite %@ von %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Page %1$@ of %2$@"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

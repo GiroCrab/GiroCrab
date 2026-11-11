@@ -101,6 +101,11 @@ struct PrintSheet: View {
             Toggle("Nach Konto gruppieren", isOn: $options.groupByAccount)
             Toggle("Aktueller Kontostand", isOn: $options.showCurrentBalance)
             Toggle("Tagessaldo", isOn: $options.showDailyBalance)
+            if PrintLogoImage.available {
+                Picker("GiroCrab-Logo", selection: $options.logo) {
+                    ForEach(PrintLogo.allCases) { Text($0.title).tag($0) }
+                }
+            }
         } header: {
             Text("Inhalt")
         } footer: {
@@ -172,17 +177,20 @@ struct PrintSheet: View {
         guard var r = report else { return }
         r.rows = selectedRows
         r.generatedAt = Date()
+        r.logoDataURI = options.logo == .off ? nil : PrintLogoImage.dataURI
         if options.showDailyBalance, let earliest = r.rows.map(\.date).min() {
             let ids = Array(Set(r.rows.map(\.accountId))).sorted()
             r.dailyBalances = model.printDailyBalances(accountIds: ids, from: earliest)
         }
-        let html = PrintReportBuilder.html(r, options: options)
         let jobName = "GiroCrab – \(r.title) – \(r.periodLabel)"
         #if os(macOS)
+        let paper = HTMLPrinter.currentPaper
+        let html = PrintReportBuilder.html(r, options: options, paper: paper)
         // The print panel opens as a sheet on the main window; close ours first.
         dismiss()
-        DispatchQueue.main.async { HTMLPrinter.shared.print(html: html, jobName: jobName) }
+        DispatchQueue.main.async { HTMLPrinter.shared.print(html: html, jobName: jobName, paper: paper) }
         #else
+        let html = PrintReportBuilder.html(r, options: options)
         let controller = UIPrintInteractionController.shared
         let info = UIPrintInfo(dictionary: nil)
         info.jobName = jobName
@@ -194,6 +202,31 @@ struct PrintSheet: View {
     }
 }
 
+/// The app icon as an embeddable PNG for the printout (macOS only for now:
+/// iOS cannot read its own app icon at runtime).
+enum PrintLogoImage {
+    #if os(macOS)
+    static var available: Bool { true }
+    @MainActor static let dataURI: String? = {
+        let icon = NSApp.applicationIconImage ?? NSImage(named: NSImage.applicationIconName)
+        guard let icon else { return nil }
+        let side = 256
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
+        return "data:image/png;base64," + png.base64EncodedString()
+    }()
+    #else
+    static var available: Bool { false }
+    static let dataURI: String? = nil
+    #endif
+}
+
 #if os(macOS)
 /// Loads the report into an off-screen WKWebView and runs the system print panel.
 @MainActor
@@ -201,11 +234,20 @@ final class HTMLPrinter: NSObject, WKNavigationDelegate {
     static let shared = HTMLPrinter()
     private var webView: WKWebView?
     private var jobName = ""
+    private var paperSize = NSSize(width: 595, height: 842)
 
-    func print(html: String, jobName: String) {
+    /// Paper of the user's page setup (portrait), used to lay out the report pages.
+    static var currentPaper: PrintReportBuilder.Paper {
+        let size = NSPrintInfo.shared.paperSize
+        let w = min(size.width, size.height) * 25.4 / 72, h = max(size.width, size.height) * 25.4 / 72
+        return w > 50 && h > 50 ? .init(widthMM: w, heightMM: h) : .a4
+    }
+
+    func print(html: String, jobName: String, paper: PrintReportBuilder.Paper) {
         self.jobName = jobName
-        // A4 width at 72 dpi; WebKit paginates to the paper size chosen in the panel.
-        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 595, height: 842))
+        self.paperSize = NSSize(width: paper.widthMM * 72 / 25.4, height: paper.heightMM * 72 / 25.4)
+        // One page wide in CSS pixels (96 per inch), so the laid-out pages are not reflowed.
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: paper.widthMM * 96 / 25.4, height: paper.heightMM * 96 / 25.4))
         web.navigationDelegate = self
         webView = web
         web.loadHTMLString(html, baseURL: nil)
@@ -221,6 +263,8 @@ final class HTMLPrinter: NSObject, WKNavigationDelegate {
 
     private func runPrint(_ web: WKWebView) {
         let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+        info.paperSize = paperSize
+        info.orientation = .portrait
         info.horizontalPagination = .fit
         info.verticalPagination = .automatic
         info.isHorizontallyCentered = false
