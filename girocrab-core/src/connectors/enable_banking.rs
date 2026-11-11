@@ -81,6 +81,12 @@ struct EbAccount {
     product: String,
     #[serde(default)]
     usage: String,
+    /// Account holder(s) as returned in `name` (C24: the holder, not an
+    /// account name) and the account description set by PSU / bank.
+    #[serde(default)]
+    holder: String,
+    #[serde(default)]
+    details: String,
     /// Full `AccountResource` data was read (session object or `/details`).
     #[serde(default)]
     details_done: bool,
@@ -140,6 +146,9 @@ struct PsdState {
     /// marked as revoked in the vault.
     #[serde(default)]
     revoked: Vec<String>,
+    /// Bank name from the consent (`aspsp.name`), e.g. "C24".
+    #[serde(default)]
+    aspsp_name: String,
 }
 
 pub struct EnableBankingConnector {
@@ -227,6 +236,18 @@ fn carry_over(prev: &[EbAccount], new: &mut [EbAccount]) -> Vec<(String, String)
         }
     }
     renames
+}
+
+/// Name shown for a generic-mode account: the account description, else the
+/// bank's product ("C24 PocketZINS Smart"), else the holder. Enable Banking's
+/// `name` is the account holder, so on its own it can't tell accounts apart.
+fn display_name(a: &EbAccount) -> String {
+    [&a.details, &a.product, &a.holder, &a.name]
+        .into_iter()
+        .map(|s| s.trim())
+        .find(|s| !s.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Same account in two sessions: by IBAN or identification hash.
@@ -626,6 +647,8 @@ impl EnableBankingConnector {
             (&mut acc.account_number, other_account_id(a)),
             (&mut acc.product, s(&a["product"])),
             (&mut acc.usage, s(&a["usage"])),
+            (&mut acc.holder, s(&a["name"])),
+            (&mut acc.details, s(&a["details"])),
         ];
         for (dst, src) in fields {
             if !src.is_empty() {
@@ -749,8 +772,8 @@ impl EnableBankingConnector {
         ));
         out.accounts.push(RemoteAccount {
             external_ref: acc.ext_ref.clone(),
-            name: acc.name.clone(),
-            owner: String::new(),
+            name: display_name(acc),
+            owner: acc.holder.clone(),
             iban: acc.iban.clone(),
             account_number: acc.account_number.clone(),
             currency: acc.currency.clone(),
@@ -1065,6 +1088,9 @@ impl BankConnector for EnableBankingConnector {
             self.st.revoked.extend(dropped);
         }
         self.st.accounts = accounts;
+        if let Some(bank) = v["aspsp"]["name"].as_str().filter(|s| !s.is_empty()) {
+            self.st.aspsp_name = bank.to_string();
+        }
         Ok(Phase::Ready)
     }
 
@@ -1098,11 +1124,29 @@ impl BankConnector for EnableBankingConnector {
         out.hold_prefix = Some(HOLD_PREFIX.into());
         out.renamed_refs = self.st.renames.clone();
         out.revoked_refs = self.st.revoked.clone();
+        out.bank_name = Some(if self.st.aspsp_name.is_empty() {
+            self.aspsp_default.clone()
+        } else {
+            self.st.aspsp_name.clone()
+        });
+        // Accounts first stored under the old automatic name (the holder)
+        // get the new one – only if the user hasn't renamed them.
+        out.name_updates = self
+            .st
+            .accounts
+            .iter()
+            .filter(|a| !a.name.is_empty() && a.name != display_name(a))
+            .map(|a| (a.ext_ref.clone(), a.name.clone(), display_name(a)))
+            .collect();
         let mut done: Vec<String> = Vec::new();
         let mut stopped_early = false;
         for a in self.st.accounts.clone() {
             let res = if kind_of(&a) == AccountKind::CreditCard {
-                self.fetch_card(ctx, &mut out, &a).await
+                let named = EbAccount {
+                    name: display_name(&a),
+                    ..a.clone()
+                };
+                self.fetch_card(ctx, &mut out, &named).await
             } else {
                 self.fetch_bank_account(ctx, &a, &mut out).await
             };
@@ -1618,6 +1662,35 @@ mod tests {
         }))
         .unwrap();
         assert!(!st.accounts[0].details_done && st.accounts[0].account_number.is_empty());
+    }
+
+    #[test]
+    fn accounts_are_named_by_product_not_holder() {
+        // real C24 shape: `name` is the holder, `product` the account type
+        let v = json!({"accounts": [
+            {"uid": "g", "name": "Jay Licina", "product": "C24 Smartkonto",
+             "account_id": {"iban": "DE23500240240000000001"}, "currency": "EUR"},
+            {"uid": "p", "name": "Jay Licina", "product": "C24 PocketZINS Smart",
+             "details": "Urlaub", "currency": "EUR", "identification_hash": "hp"},
+            {"uid": "x", "name": "Jay Licina", "currency": "EUR", "identification_hash": "hx"}
+        ]});
+        let acc = generic().parse_accounts(&v);
+        let by = |u: &str| acc.iter().find(|a| a.uid == u).unwrap().clone();
+        assert_eq!(by("g").holder, "Jay Licina");
+        assert_eq!(display_name(&by("g")), "C24 Smartkonto");
+        // the PSU's own description wins over the product
+        assert_eq!(display_name(&by("p")), "Urlaub");
+        // nothing better known: the holder
+        assert_eq!(display_name(&by("x")), "Jay Licina");
+        // card mode keeps its old name field (Amex unchanged)
+        assert_eq!(amex().parse_accounts(&v)[0].name, "Jay Licina");
+        // state saved before holder/details existed: product still names it
+        let old = EbAccount {
+            name: "Jay Licina".into(),
+            product: "C24 Smartkonto".into(),
+            ..Default::default()
+        };
+        assert_eq!(display_name(&old), "C24 Smartkonto");
     }
 
     #[test]

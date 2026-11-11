@@ -481,6 +481,12 @@ pub struct FetchResult {
     /// account of a PSD2 consent was fetched): the connection's other
     /// accounts are marked as revoked.
     pub accounts_complete: bool,
+    /// Bank name for these accounts when it differs from the connector's
+    /// generic name (e.g. "C24" for an Enable Banking connection).
+    pub bank_name: Option<String>,
+    /// `(external_ref, old automatic name, new name)`: rename accounts that
+    /// still carry the old automatic name; names the user chose are kept.
+    pub name_updates: Vec<(String, String, String)>,
 }
 
 #[async_trait]
@@ -665,7 +671,12 @@ pub(crate) fn store_fetch(
     {
         let db = vault.db()?;
         let tx = db.unchecked_transaction()?;
-        let bank_name = descriptor(kind).name;
+        let generic_bank_name = descriptor(kind).name;
+        let bank_name = data
+            .bank_name
+            .clone()
+            .filter(|b| !b.trim().is_empty())
+            .unwrap_or_else(|| generic_bank_name.clone());
         let mut data = data;
         // safety net for every connector: repair UTF-8/Latin-1 mojibake
         for a in &mut data.accounts {
@@ -686,6 +697,15 @@ pub(crate) fn store_fetch(
                  WHERE connection_id = ?1 AND external_ref = ?2
                    AND NOT EXISTS (SELECT 1 FROM accounts WHERE connection_id = ?1 AND external_ref = ?3)",
                 params![connection_id, old, new],
+            )?;
+        }
+        for (r, old_name, new_name) in &data.name_updates {
+            if new_name.trim().is_empty() || old_name == new_name {
+                continue;
+            }
+            tx.execute(
+                "UPDATE accounts SET name = ?4 WHERE connection_id = ?1 AND external_ref = ?2 AND name = ?3",
+                params![connection_id, r, old_name, new_name],
             )?;
         }
         let mut account_ids: HashMap<String, i64> = HashMap::new();
@@ -760,6 +780,20 @@ pub(crate) fn store_fetch(
                                 params![acc.balance_cents, acc.balance_date, acc.currency, id],
                             )?;
                         }
+                    }
+                    // Bank name / owner learned later (e.g. "C24" instead of the
+                    // generic "Bank per PSD2"); never overwrite what is set.
+                    if bank_name != generic_bank_name {
+                        tx.execute(
+                            "UPDATE accounts SET bank_name = ?1 WHERE id = ?2 AND bank_name IN (?3, '')",
+                            params![bank_name, id, generic_bank_name],
+                        )?;
+                    }
+                    if !acc.owner.is_empty() {
+                        tx.execute(
+                            "UPDATE accounts SET owner = ?1 WHERE id = ?2 AND IFNULL(owner, '') = ''",
+                            params![acc.owner, id],
+                        )?;
                     }
                     // Fill in an account number learned later (e.g. a BBAN of a
                     // PSD2 account without IBAN); never overwrite a known one.
@@ -2237,6 +2271,96 @@ mod tests {
         assert!(accs
             .iter()
             .any(|a| a.name == "Gemeinschaftskonto" && a.access_revoked));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn automatic_names_and_bank_name_are_updated_user_names_kept() {
+        let (v, path) = demo_vault();
+        let conn = v
+            .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "C24".into())
+            .unwrap();
+        let acc = |r: &str, name: &str, owner: &str| RemoteAccount {
+            external_ref: r.into(),
+            name: name.into(),
+            owner: owner.into(),
+            iban: String::new(),
+            account_number: String::new(),
+            currency: "EUR".into(),
+            kind: AccountKind::Checking,
+            balance_cents: 0,
+            balance_date: "2026-11-11".into(),
+        };
+        // as stored by the earlier build: holder as name, generic bank name
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc("G", "Jay Licina", ""), acc("S", "Jay Licina", "")],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db_rename = |r: &str, n: &str| {
+            v.db()
+                .unwrap()
+                .execute(
+                    "UPDATE accounts SET name = ?1 WHERE external_ref = ?2",
+                    params![n, r],
+                )
+                .unwrap();
+        };
+        db_rename("S", "Mein Sparkonto"); // the user renamed this one
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![
+                    acc("G", "C24 Smartkonto", "Jay Licina"),
+                    acc("S", "C24 PocketZINS Smart", "Jay Licina"),
+                ],
+                bank_name: Some("C24".into()),
+                name_updates: vec![
+                    ("G".into(), "Jay Licina".into(), "C24 Smartkonto".into()),
+                    (
+                        "S".into(),
+                        "Jay Licina".into(),
+                        "C24 PocketZINS Smart".into(),
+                    ),
+                ],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rows: Vec<(String, String, String, String)> = {
+            let db = v.db().unwrap();
+            let mut q = db
+                .prepare("SELECT external_ref, name, bank_name, owner FROM accounts WHERE connection_id = ?1 ORDER BY external_ref")
+                .unwrap();
+            q.query_map([conn], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "G".into(),
+                    "C24 Smartkonto".into(),
+                    "C24".into(),
+                    "Jay Licina".into()
+                ),
+                (
+                    "S".into(),
+                    "Mein Sparkonto".into(),
+                    "C24".into(),
+                    "Jay Licina".into()
+                ),
+            ]
+        );
         std::fs::remove_file(path).ok();
     }
 
