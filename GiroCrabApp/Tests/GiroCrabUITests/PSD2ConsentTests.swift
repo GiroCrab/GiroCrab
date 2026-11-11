@@ -45,12 +45,12 @@ final class PSD2ConsentTests: XCTestCase {
     func testSyncNoticeNamesNewAndRevokedAccounts() {
         let model = AppModel()
         let conn = BankConnection(id: 1, connector: .enableBanking, displayName: "C24", loginName: "", bankCode: "",
-                                  sfSymbol: "", lastSyncUnix: nil)
-        let plain = model.syncNotice(conn, SyncSummary(accountsUpdated: 1, transactionsImported: 5, transactionsCategorized: 2,
+                                  sfSymbol: "", lastSyncUnix: nil, allAccountsArchived: false)
+        let plain = model.syncNotice(conn, SyncSummary(accountsUpdated: 1, transactionsImported: 5, transactionsCategorized: 2, transactionsSkippedArchived: 0,
                                                        newAccounts: [], revokedAccounts: []))
         XCTAssertTrue(plain.contains("C24"))
         XCTAssertFalse(plain.contains("·"))
-        let changed = model.syncNotice(conn, SyncSummary(accountsUpdated: 1, transactionsImported: 0, transactionsCategorized: 0,
+        let changed = model.syncNotice(conn, SyncSummary(accountsUpdated: 1, transactionsImported: 0, transactionsCategorized: 0, transactionsSkippedArchived: 0,
                                                          newAccounts: ["GLS Giro"], revokedAccounts: ["Pocket", "Gemeinschaftskonto"]))
         XCTAssertTrue(changed.contains("GLS Giro"))
         XCTAssertTrue(changed.contains("Pocket, Gemeinschaftskonto"))
