@@ -73,6 +73,17 @@ struct EbAccount {
     cash_account_type: String,
     #[serde(default)]
     identification_hash: String,
+    /// BBAN / other account id – for accounts without IBAN (e.g. C24 savings).
+    #[serde(default)]
+    account_number: String,
+    /// Bank's product label and PRIV/ORGA usage (used to recognise account kinds).
+    #[serde(default)]
+    product: String,
+    #[serde(default)]
+    usage: String,
+    /// Full `AccountResource` data was read (session object or `/details`).
+    #[serde(default)]
+    details_done: bool,
     /// The longest available history was fetched once (generic mode).
     #[serde(default)]
     history_done: bool,
@@ -150,6 +161,31 @@ fn stable_ref(a: &EbAccount, card_mode: bool) -> String {
 }
 
 /// GiroCrab account kind from the PSD2 `cash_account_type`.
+/// Product labels of savings accounts that banks report as `CACC` anyway
+/// (C24 "PocketZINS Smart" comes as CACC without IBAN).
+const SAVINGS_PRODUCT_WORDS: [&str; 7] = [
+    "tagesgeld",
+    "festgeld",
+    "sparkonto",
+    "sparbuch",
+    "savings",
+    "pocketzins",
+    "zinskonto",
+];
+
+/// Account kind of a generic-mode account: the type code, corrected by the
+/// product label for savings accounts reported as current/other accounts.
+fn kind_of(a: &EbAccount) -> AccountKind {
+    let kind = account_kind(&a.cash_account_type, false);
+    if kind == AccountKind::Checking {
+        let label = format!("{} {}", a.product, a.name).to_lowercase();
+        if SAVINGS_PRODUCT_WORDS.iter().any(|w| label.contains(w)) {
+            return AccountKind::Savings;
+        }
+    }
+    kind
+}
+
 fn account_kind(cash_account_type: &str, card_mode: bool) -> AccountKind {
     if card_mode {
         return AccountKind::CreditCard;
@@ -183,6 +219,35 @@ fn carry_over(prev: &[EbAccount], new: &mut [EbAccount]) -> Vec<(String, String)
         }
     }
     renames
+}
+
+/// Non-IBAN account id of an `AccountResource`: `account_id.other`, else a
+/// BBAN from `all_account_ids` (accounts without IBAN, e.g. C24 savings).
+fn other_account_id(a: &Value) -> String {
+    let clean = |v: &Value| {
+        v.as_str()
+            .unwrap_or_default()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    let iban = clean(&a["account_id"]["iban"]);
+    let direct = clean(&a["account_id"]["other"]["identification"]);
+    if !direct.is_empty() && direct != iban {
+        return direct;
+    }
+    a["all_account_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|x| {
+            x["scheme_name"]
+                .as_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case("BBAN"))
+        })
+        .map(|x| clean(&x["identification"]))
+        .find(|x| !x.is_empty() && *x != iban)
+        .unwrap_or_default()
 }
 
 /// Error code of an Enable Banking error body (`{"error": "EXPIRED_SESSION", …}`).
@@ -488,11 +553,15 @@ impl EnableBankingConnector {
                     (&mut e.currency, &parsed.currency),
                     (&mut e.cash_account_type, &parsed.cash_account_type),
                     (&mut e.identification_hash, &parsed.identification_hash),
+                    (&mut e.account_number, &parsed.account_number),
+                    (&mut e.product, &parsed.product),
+                    (&mut e.usage, &parsed.usage),
                 ] {
                     if !src.is_empty() {
                         *dst = src.clone();
                     }
                 }
+                e.details_done |= parsed.details_done;
             } else {
                 out.push(parsed);
             }
@@ -528,11 +597,18 @@ impl EnableBankingConnector {
             (&mut acc.currency, s(&a["currency"])),
             (&mut acc.cash_account_type, s(&a["cash_account_type"])),
             (&mut acc.identification_hash, s(&a["identification_hash"])),
+            (&mut acc.account_number, other_account_id(a)),
+            (&mut acc.product, s(&a["product"])),
+            (&mut acc.usage, s(&a["usage"])),
         ];
         for (dst, src) in fields {
             if !src.is_empty() {
                 *dst = src;
             }
+        }
+        // a full account object, not just {uid, identification_hash}
+        if a.get("cash_account_type").is_some() || a.get("account_id").is_some() {
+            acc.details_done = true;
         }
     }
 
@@ -630,9 +706,15 @@ impl EnableBankingConnector {
             }
         };
         let txs = split_transactions(&items, &acc.ext_ref);
+        // Bank labels only (no names / numbers): to learn how a bank types its accounts.
         crate::depot_debug::log(&format!(
-            "enable_banking account kind={:?} items={} kept={} pending={}",
-            account_kind(&acc.cash_account_type, false),
+            "enable_banking account kind={:?} cash_account_type={:?} product={:?} usage={:?} has_iban={} has_other_id={} items={} kept={} pending={}",
+            kind_of(acc),
+            acc.cash_account_type,
+            acc.product,
+            acc.usage,
+            !acc.iban.is_empty(),
+            !acc.account_number.is_empty(),
             items.len(),
             txs.len(),
             txs.iter()
@@ -644,9 +726,9 @@ impl EnableBankingConnector {
             name: acc.name.clone(),
             owner: String::new(),
             iban: acc.iban.clone(),
-            account_number: String::new(),
+            account_number: acc.account_number.clone(),
             currency: acc.currency.clone(),
-            kind: account_kind(&acc.cash_account_type, false),
+            kind: kind_of(acc),
             balance_cents,
             balance_date: ref_date.unwrap_or_else(super::today),
         });
@@ -654,8 +736,9 @@ impl EnableBankingConnector {
         Ok(())
     }
 
-    /// Generic mode: give accounts from an old (uid-keyed) state their stable
-    /// key, reading `/details` once; queues the vault renames.
+    /// Generic mode: read `/details` once for accounts whose full data is
+    /// missing (old uid-keyed state, or state saved before BBAN/product were
+    /// kept), give them their stable key and queue the vault renames.
     async fn upgrade_legacy_accounts(&mut self) {
         if self.card_mode() {
             for a in &mut self.st.accounts {
@@ -665,11 +748,12 @@ impl EnableBankingConnector {
             return;
         }
         for i in 0..self.st.accounts.len() {
-            if !self.st.accounts[i].legacy && !self.st.accounts[i].ext_ref.is_empty() {
+            let a = &self.st.accounts[i];
+            if !a.legacy && !a.ext_ref.is_empty() && a.details_done {
                 continue;
             }
-            let uid = self.st.accounts[i].uid.clone();
-            if self.st.accounts[i].legacy {
+            let uid = a.uid.clone();
+            if a.legacy || !a.details_done {
                 match self
                     .call(
                         reqwest::Method::GET,
@@ -682,17 +766,18 @@ impl EnableBankingConnector {
                         let mut acc = self.st.accounts[i].clone();
                         self.merge_account_json(&mut acc, &d);
                         acc.uid = uid.clone();
+                        acc.details_done = true;
                         self.st.accounts[i] = acc;
                     }
                     Err(e) => crate::depot_debug::log(&format!(
-                        "enable_banking legacy details failed: {e}"
+                        "enable_banking account details failed: {e}"
                     )),
                 }
             }
             let a = &mut self.st.accounts[i];
             let old = a.ext_ref.clone();
             a.ext_ref = stable_ref(a, false);
-            if a.legacy && !old.is_empty() && old != a.ext_ref {
+            if !old.is_empty() && old != a.ext_ref {
                 self.st.renames.push((old, a.ext_ref.clone()));
             }
             a.legacy = false;
@@ -985,7 +1070,7 @@ impl BankConnector for EnableBankingConnector {
         out.renamed_refs = self.st.renames.clone();
         let mut done: Vec<String> = Vec::new();
         for a in self.st.accounts.clone() {
-            let res = if account_kind(&a.cash_account_type, false) == AccountKind::CreditCard {
+            let res = if kind_of(&a) == AccountKind::CreditCard {
                 self.fetch_card(ctx, &mut out, &a).await
             } else {
                 self.fetch_bank_account(ctx, &a, &mut out).await
@@ -1380,6 +1465,40 @@ mod tests {
     }
 
     #[test]
+    fn savings_recognised_by_product_label() {
+        let acc = |t: &str, product: &str| EbAccount {
+            cash_account_type: t.into(),
+            product: product.into(),
+            ..Default::default()
+        };
+        // real C24 labels (sync log 2026-11-11)
+        assert_eq!(
+            kind_of(&acc("CACC", "C24 PocketZINS Smart")),
+            AccountKind::Savings
+        );
+        assert_eq!(
+            kind_of(&acc("CACC", "C24 Smartkonto")),
+            AccountKind::Checking
+        );
+        assert_eq!(
+            kind_of(&acc("OTHR", "Tagesgeldkonto")),
+            AccountKind::Savings
+        );
+        assert_eq!(kind_of(&acc("", "Sparkonto")), AccountKind::Savings);
+        // a bank name containing "Spar…" is not a savings product
+        assert_eq!(
+            kind_of(&acc("CACC", "Sparkasse Giro")),
+            AccountKind::Checking
+        );
+        // explicit type codes win
+        assert_eq!(
+            kind_of(&acc("CARD", "Tagesgeld Card")),
+            AccountKind::CreditCard
+        );
+        assert_eq!(kind_of(&acc("SVGS", "")), AccountKind::Savings);
+    }
+
+    #[test]
     fn account_kinds_from_cash_account_type() {
         assert_eq!(account_kind("CACC", false), AccountKind::Checking);
         assert_eq!(account_kind("svgs", false), AccountKind::Savings);
@@ -1414,6 +1533,46 @@ mod tests {
         // Amex keeps the uid
         let card = amex().parse_accounts(&v);
         assert!(card.iter().all(|a| a.ext_ref == a.uid));
+    }
+
+    #[test]
+    fn bban_and_product_are_kept() {
+        // savings account without IBAN, BBAN in account_id.other
+        let v = json!({"accounts": [
+            {"uid": "s1", "account_id": {"other": {"identification": "5002 4024 0000 0000 99", "scheme_name": "BBAN"}},
+             "cash_account_type": "CACC", "product": "Tagesgeld", "usage": "PRIV",
+             "currency": "EUR", "identification_hash": "hs"},
+            {"uid": "s2", "account_id": {"iban": "DE11500105170000000001"},
+             "all_account_ids": [{"identification": "DE11500105170000000001", "scheme_name": "IBAN"},
+                                 {"identification": "500105170000000001", "scheme_name": "BBAN"}],
+             "cash_account_type": "CACC", "currency": "EUR", "identification_hash": "hg"},
+            {"uid": "s3", "identification_hash": "h3"}
+        ]});
+        let acc = generic().parse_accounts(&v);
+        let by = |u: &str| acc.iter().find(|a| a.uid == u).unwrap().clone();
+        let s = by("s1");
+        assert_eq!(s.account_number, "500240240000000099");
+        assert_eq!(
+            (s.product.as_str(), s.usage.as_str()),
+            ("Tagesgeld", "PRIV")
+        );
+        assert_eq!(
+            s.ext_ref, "hs",
+            "key unchanged: no IBAN -> identification hash"
+        );
+        assert!(s.details_done);
+        // BBAN next to an IBAN is still read; the IBAN stays the key
+        assert_eq!(by("s2").account_number, "500105170000000001");
+        assert_eq!(by("s2").ext_ref, "DE11500105170000000001");
+        // summary-only entry: details still to be read
+        assert!(!by("s3").details_done);
+        // state saved before these fields existed
+        let st: PsdState = serde_json::from_value(json!({
+            "session_id": "x", "valid_until": "",
+            "accounts": [{"uid": "u", "ext_ref": "h", "identification_hash": "h"}]
+        }))
+        .unwrap();
+        assert!(!st.accounts[0].details_done && st.accounts[0].account_number.is_empty());
     }
 
     #[test]

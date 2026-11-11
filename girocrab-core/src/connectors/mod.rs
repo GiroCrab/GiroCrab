@@ -742,6 +742,14 @@ pub(crate) fn store_fetch(
                             )?;
                         }
                     }
+                    // Fill in an account number learned later (e.g. a BBAN of a
+                    // PSD2 account without IBAN); never overwrite a known one.
+                    if !acc.account_number.is_empty() {
+                        tx.execute(
+                            "UPDATE accounts SET account_number = ?1 WHERE id = ?2 AND IFNULL(account_number, '') = ''",
+                            params![acc.account_number, id],
+                        )?;
+                    }
                     // Trade Republic cash side is a clearing account, not a Girokonto.
                     if kind == ConnectorKind::TradeRepublic
                         && acc.kind != AccountKind::Brokerage
@@ -752,7 +760,9 @@ pub(crate) fn store_fetch(
                             params![acc.name, id],
                         )?;
                     }
-                    if acc.kind == AccountKind::Brokerage {
+                    // Brokerage: depots found later. Savings: PSD2 savings accounts
+                    // first stored as checking (e.g. C24 PocketZINS, typed by product).
+                    if acc.kind == AccountKind::Brokerage || acc.kind == AccountKind::Savings {
                         let (group, sym, order) = group_for(acc.kind);
                         let gid = Vault::ensure_group(&tx, group, sym, order)?;
                         tx.execute(
@@ -2125,6 +2135,34 @@ mod tests {
             },
         )
         .unwrap();
+        assert_eq!(count(), 1);
+        // a later sync recognises it as savings and learns its BBAN
+        let mut savings = acc(stable);
+        savings.kind = AccountKind::Savings;
+        savings.account_number = "500240240000000099".into();
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![savings],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (kind, number): (String, String) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT kind, IFNULL(account_number, '') FROM accounts WHERE connection_id = ?1",
+                [conn],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (kind.as_str(), number.as_str()),
+            ("savings", "500240240000000099")
+        );
         assert_eq!(count(), 1);
         std::fs::remove_file(path).ok();
     }

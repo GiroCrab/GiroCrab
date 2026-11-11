@@ -191,6 +191,11 @@ pub const KNOWN_SETTINGS: &[(&str, &str, &str, &str, bool, &str)] = &[
     ("enablebanking.country.amex", "Land American Express", "Zweistelliger Ländercode.", "Enable Banking (PSD2)", false, "DE"),
     ("enablebanking.aspsp.amazonvisa", "ASPSP-Name Amazon Visa", "Herausgeber in Deutschland: Open Bank S.A. (Marke Zinia). Je nach Listung „Open Bank“ oder „Zinia“ eintragen.", "Enable Banking (PSD2)", false, "Open Bank"),
     ("enablebanking.country.amazonvisa", "Land Amazon Visa", "Zweistelliger Ländercode.", "Enable Banking (PSD2)", false, "DE"),
+    // Opt-in per card: the Enable Banking credentials are shared with PSD2
+    // banks (C24, N26 …), so having them must not switch the cards away from
+    // the web login.
+    ("enablebanking.use.amex", "American Express per Enable Banking abrufen", "1 = PSD2-API statt Web-Login (eigene Enable-Banking-Anwendung nötig). Leer oder 0 = Web-Login.", "Enable Banking (PSD2)", false, ""),
+    ("enablebanking.use.amazonvisa", "Amazon Visa per Enable Banking abrufen", "1 = PSD2-API statt Web-Login (eigene Enable-Banking-Anwendung nötig). Leer oder 0 = Web-Login.", "Enable Banking (PSD2)", false, ""),
     ("merchants.online_logos", "Händler-Logos online laden", "Anbieter für Händler-Logos: off, duckduckgo oder google. Logos werden verschlüsselt zwischengespeichert; übertragen wird nur die Händler-Domain (z. B. lidl.de). Standard: off.", "Händler-Logos", false, "off"),
     ("sync.days_back", "Tage beim ersten Abruf", "Ältere Umsätze werden nur einmal abgefragt.", "Allgemein", false, "90"),
 ];

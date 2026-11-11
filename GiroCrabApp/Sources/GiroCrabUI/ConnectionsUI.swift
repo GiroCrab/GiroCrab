@@ -146,8 +146,8 @@ struct ConnectionEditSheet: View {
     /// Optional power-user PSD2 credentials (collapsed "Erweitert" section).
     private var advancedKeys: [String] {
         switch connection.connector {
-        case .americanExpress: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amex", "enablebanking.country.amex"]
-        case .amazonVisa: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amazonvisa", "enablebanking.country.amazonvisa"]
+        case .americanExpress: return ["enablebanking.use.amex", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amex", "enablebanking.country.amex"]
+        case .amazonVisa: return ["enablebanking.use.amazonvisa", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amazonvisa", "enablebanking.country.amazonvisa"]
         default: return []
         }
     }
