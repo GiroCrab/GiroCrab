@@ -371,6 +371,17 @@ pub enum BookingScope {
     Investments,
 }
 
+/// Income / expense filter of the booking list (GitHub #53).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, uniffi::Enum)]
+pub enum BookingDirection {
+    #[default]
+    All,
+    /// Inflows only (amount > 0).
+    Income,
+    /// Outflows only (amount < 0).
+    Expense,
+}
+
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct BookingFilter {
     /// Empty = all accounts.
@@ -386,6 +397,8 @@ pub struct BookingFilter {
     pub scope: BookingScope,
     /// Only bookings of this merchant key.
     pub merchant_key: Option<String>,
+    /// Income / expenses only; `All` keeps both.
+    pub direction: BookingDirection,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
