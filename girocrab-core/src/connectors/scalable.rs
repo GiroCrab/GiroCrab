@@ -141,6 +141,9 @@ fn local_date(v: &Value) -> String {
 }
 
 fn since_epoch(since: &str) -> Option<i64> {
+    if since <= "1970-01-01" {
+        return None;
+    }
     let d = chrono::NaiveDate::parse_from_str(since, "%Y-%m-%d").ok()?;
     let local = d
         .and_hms_opt(0, 0, 0)?
@@ -182,25 +185,74 @@ fn is_open_status(status: &str) -> bool {
     )
 }
 
-/// Transaction types that take money out of the cash account.
-fn is_outflow(typ: &str, side: &str) -> bool {
-    side == "BUY"
-        || matches!(
-            typ,
-            "BUY"
-                | "SAVINGS_PLAN"
-                | "WITHDRAWAL"
-                | "FEE"
-                | "TAX"
-                | "SWAP_OUT"
-                | "TRANSFER_OUT"
-                | "CASH_TRANSFER_OUT"
-                | "REINVESTMENT"
-        )
+/// Transaction kinds (type + subtypes) that take money out of the account.
+fn is_outflow(kinds: &[&str], side: &str) -> bool {
+    if side == "BUY" {
+        return true;
+    }
+    if side == "SELL" {
+        return false;
+    }
+    kinds.iter().any(|k| {
+        matches!(*k, "BUY" | "SAVINGS_PLAN" | "REINVESTMENT" | "FEE" | "TAX")
+            || k.contains("WITHDRAW")
+            || k.contains("PAYOUT")
+            || k.ends_with("_OUT")
+            || k.contains("_OUT_")
+            || k.contains("FEE")
+            || (k.starts_with("TAX") && !k.contains("RETURN") && !k.contains("REFUND"))
+    })
+}
+
+/// Human label for a transaction kind (German source text, translated via `tr`).
+fn kind_label(kinds: &[&str], side: &str) -> Option<&'static str> {
+    for k in kinds {
+        let label = match *k {
+            "DEPOSIT" | "TRANSFER_IN" | "CASH_TRANSFER_IN" | "INCOMING_TRANSFER" => {
+                tr("Einzahlung")
+            }
+            "WITHDRAWAL" | "TRANSFER_OUT" | "CASH_TRANSFER_OUT" | "OUTGOING_TRANSFER"
+            | "PAYOUT" => tr("Auszahlung"),
+            "INTEREST" | "INTEREST_PAYMENT" => tr("Zinsen"),
+            "DISTRIBUTION" | "DIVIDEND" | "REINVESTMENT_DISTRIBUTION" => tr("Ausschüttung"),
+            "BUY" => tr("Kauf"),
+            "SELL" => tr("Verkauf"),
+            "SAVINGS_PLAN" => tr("Sparplan"),
+            "FEE" => tr("Gebühr"),
+            "TAX" => tr("Steuer"),
+            "TAX_RETURN" | "TAX_REFUND" => tr("Steuererstattung"),
+            "SWAP_IN" | "SWAP_OUT" => tr("Tausch"),
+            "POCKET_MONEY" | "REINVESTMENT_POCKET_MONEY" => tr("Bonus"),
+            "REINVESTMENT" => tr("Wiederanlage"),
+            "CURRENCY_SWITCH_BUY" | "CURRENCY_SWITCH_SELL" => tr("Währungstausch"),
+            _ => continue,
+        };
+        return Some(label);
+    }
+    match side {
+        "BUY" => Some(tr("Kauf")),
+        "SELL" => Some(tr("Verkauf")),
+        _ => None,
+    }
+}
+
+/// `CASH_TRANSFER_OUT` -> `Cash transfer out` for kinds without a label.
+fn humanize(kind: &str) -> String {
+    let lower = kind.to_ascii_lowercase().replace('_', " ");
+    let mut c = lower.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
 }
 
 /// Maps one broker / overnight transaction summary to a booking.
-pub(crate) fn map_transaction(account_ref: &str, item: &Value) -> Option<RemoteTransaction> {
+/// `names`: ISIN -> security name from the holdings (fills empty descriptions).
+pub(crate) fn map_transaction(
+    account_ref: &str,
+    item: &Value,
+    names: &std::collections::HashMap<String, String>,
+) -> Option<RemoteTransaction> {
     let id = str_of(&item["id"]);
     if id.is_empty() {
         return None;
@@ -215,19 +267,24 @@ pub(crate) fn map_transaction(account_ref: &str, item: &Value) -> Option<RemoteT
     }
     let typ = str_of(&item["type"]);
     let side = str_of(&item["side"]);
-    let mut amount = json_number_to_cents(&item["amount"]).unwrap_or(0);
-    if amount > 0 && is_outflow(&typ, &side) {
-        amount = -amount;
-    }
-    let subtype = [
-        &item["securityTransactionType"],
+    let subtypes: Vec<String> = [
         &item["cashTransactionType"],
+        &item["securityTransactionType"],
         &item["nonTradeSecurityTransactionType"],
     ]
     .iter()
     .map(|v| str_of(v))
-    .find(|s| !s.is_empty())
-    .unwrap_or_default();
+    .filter(|s| !s.is_empty())
+    .collect();
+    // most specific first: subtypes, then the generic type
+    let mut kinds: Vec<&str> = subtypes.iter().map(String::as_str).collect();
+    if !typ.is_empty() {
+        kinds.push(typ.as_str());
+    }
+    let mut amount = json_number_to_cents(&item["amount"]).unwrap_or(0);
+    if amount > 0 && is_outflow(&kinds, &side) {
+        amount = -amount;
+    }
     let isin = str_of(&item["isin"]);
     let isin = if isin.is_empty() {
         str_of(&item["relatedIsin"])
@@ -246,15 +303,54 @@ pub(crate) fn map_transaction(account_ref: &str, item: &Value) -> Option<RemoteT
             purpose.push_str(&format!(" × {qty}"));
         }
     }
-    let booking_text = if subtype.is_empty() || subtype == typ {
-        typ.clone()
-    } else {
-        format!("{typ} {subtype}")
+    let label = kind_label(&kinds, &side)
+        .map(|l| l.to_string())
+        .or_else(|| kinds.first().map(|k| humanize(k)))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Scalable Capital".to_string());
+    let is_trade = !isin.is_empty() && !qty.is_empty();
+    let is_savings_plan = kinds.iter().any(|k| k.contains("SAVINGS_PLAN"));
+    let is_internal = {
+        let d = description.to_ascii_lowercase();
+        d.contains("internal transfer") || d.contains("umbuchung")
     };
-    let counterparty = if description.is_empty() {
-        "Scalable Capital".to_string()
+    // booking_text doubles as the classification hint for the merchant matcher
+    // (German keywords like the FinTS/Trade Republic connectors deliver them).
+    let booking_text = if is_savings_plan {
+        "Sparplan ausgeführt".to_string()
+    } else if is_trade && amount < 0 {
+        "Wertpapierkauf".to_string()
+    } else if is_trade && amount > 0 {
+        "Wertpapierverkauf".to_string()
+    } else if is_internal {
+        "Umbuchung".to_string()
+    } else if kinds
+        .iter()
+        .any(|k| k.contains("DEPOSIT") || k.ends_with("_IN"))
+    {
+        // money from the user's own reference account: a transfer, not income
+        "Einzahlung".to_string()
+    } else if kinds
+        .iter()
+        .any(|k| k.contains("WITHDRAW") || k.ends_with("_OUT"))
+    {
+        "Auszahlung Übertrag auf Referenzkonto".to_string()
     } else {
-        description
+        kinds.join(" ")
+    };
+    // Title line: trades show the security (like Trade Republic), everything
+    // else the booking kind ("Einzahlung", "Zinsen" …) like a bank statement.
+    let security_name = if description.is_empty() {
+        names.get(&isin).cloned().unwrap_or_default()
+    } else {
+        description.clone()
+    };
+    let (counterparty, purpose) = if is_trade && !security_name.is_empty() {
+        let mut p = label.clone();
+        p.push_str(&format!(" · {isin} × {qty}"));
+        (security_name, p)
+    } else {
+        (label, purpose)
     };
     Some(RemoteTransaction {
         account_ref: account_ref.to_string(),
@@ -277,6 +373,39 @@ pub(crate) fn map_transaction(account_ref: &str, item: &Value) -> Option<RemoteT
     })
 }
 
+/// Counts of (type/subtypes, sign) per fetch for the debug log – enum names only.
+pub(crate) fn kind_stats(items: &[Value]) -> String {
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    for item in items {
+        let typ = str_of(&item["type"]);
+        let sub = [
+            &item["cashTransactionType"],
+            &item["securityTransactionType"],
+            &item["nonTradeSecurityTransactionType"],
+        ]
+        .iter()
+        .map(|v| str_of(v))
+        .find(|s| !s.is_empty())
+        .unwrap_or_default();
+        let sign = match json_number_to_cents(&item["amount"]) {
+            Ok(a) if a < 0 => "-",
+            Ok(a) if a > 0 => "+",
+            _ => "0",
+        };
+        let key = format!(
+            "{typ}/{sub}/{}/{}{sign}",
+            str_of(&item["side"]),
+            str_of(&item["status"])
+        );
+        *counts.entry(key).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(k, n)| format!("{k}×{n}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// `BrokerHoldings` inventory items -> depot positions.
 pub(crate) fn map_holdings(inventory: &Value) -> Vec<Holding> {
     inventory["items"]
@@ -291,9 +420,12 @@ pub(crate) fn map_holdings(inventory: &Value) -> Vec<Holding> {
             }
             let pos = &it["inventory"]["position"];
             let quantity = f64_of(&pos["filled"]);
-            let price = json_number_to_cents(&it["quoteTick"]["midPrice"]).unwrap_or(0);
+            let mut price = json_number_to_cents(&it["quoteTick"]["midPrice"]).unwrap_or(0);
             let value = json_number_to_cents(&it["portfolioIsinPerformance"]["valuation"])
                 .unwrap_or_else(|_| ((price as f64) * quantity).round() as i64);
+            if price == 0 && quantity > 0.0 {
+                price = ((value as f64) / quantity).round() as i64;
+            }
             Some(Holding {
                 isin,
                 wkn: String::new(),
@@ -904,7 +1036,7 @@ impl ScalableConnector {
 
     async fn fetch_broker(
         &mut self,
-        ctx: &ConnectContext,
+        since: &str,
         account_id: &str,
         pid: &str,
         out: &mut FetchResult,
@@ -976,6 +1108,11 @@ impl ScalableConnector {
             balance_cents: depot_value,
             balance_date: today,
         });
+        let names: std::collections::HashMap<String, String> = holdings
+            .iter()
+            .filter(|h| !h.name.is_empty())
+            .map(|h| (h.isin.clone(), h.name.clone()))
+            .collect();
         for h in holdings {
             out.holdings.push(RemoteHolding {
                 account_ref: depot_ref.clone(),
@@ -984,7 +1121,7 @@ impl ScalableConnector {
         }
 
         // transactions, newest first, paged by cursor
-        let from_time = since_epoch(&ctx.since);
+        let from_time = since_epoch(since);
         let mut cursor: Option<String> = None;
         let mut pages = 0usize;
         let mut count = 0usize;
@@ -1009,16 +1146,19 @@ impl ScalableConnector {
                 .await?;
             let more = &v["account"]["brokerPortfolio"]["moreTransactions"];
             let items = more["transactions"].as_array().cloned().unwrap_or_default();
+            if pages == 0 {
+                log(&format!("broker tx kinds: {}", kind_stats(&items)));
+            }
             let mut all_older = !items.is_empty();
             for item in &items {
                 let date = local_date(&item["lastEventDateTime"]);
-                if date.as_str() >= ctx.since.as_str() {
+                if date.as_str() >= since {
                     all_older = false;
                 }
-                if date.as_str() < ctx.since.as_str() {
+                if date.as_str() < since {
                     continue;
                 }
-                if let Some(t) = map_transaction(&cash_ref, item) {
+                if let Some(t) = map_transaction(&cash_ref, item, &names) {
                     out.transactions.push(t);
                     count += 1;
                 }
@@ -1038,7 +1178,7 @@ impl ScalableConnector {
 
     async fn fetch_overnight(
         &mut self,
-        ctx: &ConnectContext,
+        since: &str,
         account_id: &str,
         out: &mut FetchResult,
     ) -> CoreResult<()> {
@@ -1054,7 +1194,7 @@ impl ScalableConnector {
             .cloned()
             .unwrap_or_default();
         log(&format!("overnight: {} savings account(s)", accounts.len()));
-        let from_time = since_epoch(&ctx.since);
+        let from_time = since_epoch(since);
         for acc in accounts {
             let id = str_of(&acc["id"]);
             if id.is_empty() {
@@ -1123,15 +1263,18 @@ impl ScalableConnector {
                     .await?;
                 let more = &v["account"]["savingsAccount"]["moreTransactions"];
                 let items = more["transactions"].as_array().cloned().unwrap_or_default();
+                if pages == 0 {
+                    log(&format!("overnight tx kinds: {}", kind_stats(&items)));
+                }
                 let mut all_older = !items.is_empty();
                 for item in &items {
                     let date = local_date(&item["lastEventDateTime"]);
-                    if date.as_str() >= ctx.since.as_str() {
+                    if date.as_str() >= since {
                         all_older = false;
                     } else {
                         continue;
                     }
-                    if let Some(t) = map_transaction(&ext, item) {
+                    if let Some(t) = map_transaction(&ext, item, &Default::default()) {
                         out.transactions.push(t);
                     }
                 }
@@ -1269,10 +1412,20 @@ impl BankConnector for ScalableConnector {
             })
             .unwrap_or_default();
         log(&format!("{} broker portfolio(s)", portfolios.len()));
+        // First sync of a connection: the whole history (the API has no range
+        // limit and a depot needs its full purchase history). Later syncs are
+        // incremental via the app-wide window in `ctx.since`.
+        let first_sync = ctx.state.get("login_at").is_none();
+        let since = if first_sync {
+            "1970-01-01"
+        } else {
+            ctx.since.as_str()
+        };
+        log(&format!("first_sync={first_sync}"));
         for pid in &portfolios {
-            self.fetch_broker(ctx, &account_id, pid, &mut out).await?;
+            self.fetch_broker(since, &account_id, pid, &mut out).await?;
         }
-        if let Err(e) = self.fetch_overnight(ctx, &account_id, &mut out).await {
+        if let Err(e) = self.fetch_overnight(since, &account_id, &mut out).await {
             log(&format!("overnight fetch failed: {e}"));
         }
         if let Err(e) = self.fetch_fixed_term(&account_id, &mut out).await {
@@ -1296,32 +1449,76 @@ mod tests {
             "description": "Vanguard FTSE All-World", "isin": "IE00BK5BQT80",
             "securityTransactionType": "BUY", "quantity": "1.5", "amount": "150.25", "side": "BUY"
         });
-        let t = map_transaction("sc:cash:p1", &item).unwrap();
+        let names = std::collections::HashMap::new();
+        let t = map_transaction("sc:cash:p1", &item, &names).unwrap();
         assert_eq!(t.amount_cents, -150_25);
         assert_eq!(t.external_id, "sc:tx-1");
         assert_eq!(t.booking_date, "2026-11-03");
-        assert!(t.purpose.contains("IE00BK5BQT80 × 1.5"));
         assert_eq!(t.counterparty, "Vanguard FTSE All-World");
+        assert_eq!(t.purpose, "Kauf · IE00BK5BQT80 × 1.5");
+        assert_eq!(t.booking_text, "Wertpapierkauf");
+        // savings plan without description: name from the holdings, classified as Sparplan
+        let mut sp = item.clone();
+        sp["description"] = json!("");
+        sp["type"] = json!("SAVINGS_PLAN");
+        let names: std::collections::HashMap<String, String> =
+            [("IE00BK5BQT80".to_string(), "Vanguard All-World".to_string())].into();
+        let t = map_transaction("x", &sp, &names).unwrap();
+        assert_eq!(t.counterparty, "Vanguard All-World");
+        assert_eq!(t.booking_text, "Sparplan ausgeführt");
+        assert_eq!(t.amount_cents, -150_25);
         // already-signed amounts are left alone
         let mut signed = item.clone();
         signed["amount"] = json!(-150.25);
-        assert_eq!(map_transaction("x", &signed).unwrap().amount_cents, -150_25);
+        assert_eq!(
+            map_transaction("x", &signed, &Default::default())
+                .unwrap()
+                .amount_cents,
+            -150_25
+        );
     }
 
     #[test]
     fn skips_open_and_cancelled() {
         let base = json!({"id": "a", "type": "DEPOSIT", "status": "PENDING",
             "lastEventDateTime": "2026-11-03T09:15:00Z", "amount": "10"});
-        assert!(map_transaction("x", &base).is_none());
+        let n = std::collections::HashMap::new();
+        assert!(map_transaction("x", &base, &n).is_none());
         let mut c = base.clone();
         c["status"] = json!("SETTLED");
         c["isCancellation"] = json!(true);
-        assert!(map_transaction("x", &c).is_none());
+        assert!(map_transaction("x", &c, &n).is_none());
         c["isCancellation"] = json!(false);
-        let t = map_transaction("x", &c).unwrap();
+        let t = map_transaction("x", &c, &n).unwrap();
         assert_eq!(t.amount_cents, 10_00);
-        assert_eq!(t.booking_text, "DEPOSIT");
-        assert_eq!(t.counterparty, "Scalable Capital");
+        assert_eq!(t.booking_text, "Einzahlung");
+        assert_eq!(t.counterparty, "Einzahlung");
+        let wd = json!({"id": "wd", "type": "WITHDRAWAL", "status": "SETTLED",
+            "lastEventDateTime": "2026-11-03T09:15:00Z", "amount": "10"});
+        let t = map_transaction("x", &wd, &n).unwrap();
+        assert_eq!(t.amount_cents, -10_00);
+        assert!(t.booking_text.contains("Übertrag"));
+        assert_eq!(t.counterparty, "Auszahlung");
+        // overnight withdrawal: generic type with a cash subtype, unsigned amount
+        let w = json!({"id": "w", "type": "CASH", "cashTransactionType": "WITHDRAWAL",
+            "status": "SETTLED", "lastEventDateTime": "2026-10-12T08:00:00Z",
+            "amount": "2000", "description": "Internal Transfer"});
+        let t = map_transaction("x", &w, &n).unwrap();
+        assert_eq!(t.amount_cents, -2000_00);
+        assert_eq!(t.counterparty, "Auszahlung");
+        assert_eq!(t.purpose, "Internal Transfer");
+        assert_eq!(t.booking_text, "Umbuchung");
+        let i = json!({"id": "i", "type": "INTEREST", "status": "SETTLED",
+            "lastEventDateTime": "2026-11-01T08:00:00Z", "amount": "81.10"});
+        let t = map_transaction("x", &i, &n).unwrap();
+        assert_eq!((t.amount_cents, t.counterparty.as_str()), (81_10, "Zinsen"));
+        let u = json!({"id": "u", "type": "SOMETHING_NEW_OUT", "status": "SETTLED",
+            "lastEventDateTime": "2026-11-01T08:00:00Z", "amount": "5"});
+        let t = map_transaction("x", &u, &n).unwrap();
+        assert_eq!(
+            (t.amount_cents, t.counterparty.as_str()),
+            (-5_00, "Something new out")
+        );
     }
 
     #[test]
@@ -1338,6 +1535,12 @@ mod tests {
         assert_eq!(h[0].value_cents, 1234_56);
         assert_eq!(h[0].current_price_cents, 98_76);
         assert_eq!(h[0].purchase_price_cents, 80_10);
+        // missing quote: price derived from valuation / quantity
+        let inv = json!({"items": [{"isin": "X", "name": "N",
+            "inventory": {"position": {"filled": 175}},
+            "portfolioIsinPerformance": {"valuation": "7982.45"}}]});
+        let h = map_holdings(&inv);
+        assert_eq!(h[0].current_price_cents, 45_61);
     }
 
     #[test]

@@ -392,8 +392,44 @@ First live run on 2026-11-11 (macOS, GiroCrab debug build):
   for the default 90-day window; `DiscoverOvernightAccounts` 1 account with
   `OvernightSummary.totalAmount`; `ListFixedTermAccounts` 0 accounts.
 - DPoP nonce challenges: none observed (no retry needed on any call).
-- Still open: Q1 (does `valuation` include cash), amount sign convention, status
-  values, `lastEventDateTime` semantics – to be confirmed against the Scalable app.
+- **Amounts are unsigned.** Overnight withdrawals ("Internal Transfer",
+  "Auszahlung" in MoneyMoney) arrived positive in the first import. The sign now
+  derives from *all* kind fields (`type`, `cashTransactionType`,
+  `securityTransactionType`, `nonTradeSecurityTransactionType`) with keyword rules
+  (`WITHDRAW`, `_OUT`, `FEE`, `TAX`, `BUY`, `SAVINGS_PLAN`, …). The exact enum
+  values are logged as counts (`broker tx kinds:` / `overnight tx kinds:`) and
+  will be pinned down in the next run.
+- **Titles**: the booking kind ("Einzahlung", "Auszahlung", "Zinsen", "Kauf" …) is
+  now the counterparty line, the API `description` ("Internal Transfer",
+  "Umbuchung Tagesgeld") the purpose – matching MoneyMoney's presentation.
+- Bookings are stored with `INSERT OR IGNORE`, so rows imported with a wrong sign
+  are not corrected by a re-sync: delete the connection and add it again.
+- Dates matched MoneyMoney for all visible rows (3.11., 1.11., 12.10., 10.10., 5.10.).
+- **Depot value**: the three holdings' `portfolioIsinPerformance.valuation` sum
+  exactly to the depot balance (`securitiesValuation`), so Q1 is answered for the
+  depot account: securities only. `quoteTick.midPrice` was missing for 2 of 3
+  positions; the price is now derived from valuation / quantity in that case.
+- **Classification**: buys arrived with an empty `description` for some rows, so
+  the merchant matcher could not recognise them as investments and the app counted
+  them as spending. Trades now carry the security name (looked up from the holdings
+  by ISIN when the description is empty) as title and `Wertpapierkauf` /
+  `Wertpapierverkauf` / `Sparplan ausgeführt` as booking text, which the matcher
+  classifies as investment; cash rows whose description says "Internal Transfer" or
+  "Umbuchung" get booking text `Umbuchung` and classify as transfers.
+- Note for users: "Investiert" on the Verrechnungskonto only sums bookings inside
+  the sync window (90 days on first sync); the depot balance is the market value of
+  all positions, so the two figures are not expected to match.
+- **History**: the first sync of a connection (no `login_at` in the stored state)
+  now loads the complete transaction history (no `fromTime`), because the app-wide
+  "Tage beim ersten Abruf" window (90 days) hides a depot's purchase history. Later
+  syncs stay incremental via `ctx.since`.
+- **Deposits/withdrawals are transfers**: the merchant matcher classifies on the
+  German keywords `einzahlung` / `umbuchung` / `übertrag` in counterparty +
+  purpose + booking text. With an English UI the translated title "Deposit" did not
+  match, so reference-account deposits counted as income. Booking text now always
+  carries `Einzahlung`, `Auszahlung Übertrag auf Referenzkonto` or `Umbuchung`
+  regardless of UI language, so the Income tile only shows interest/dividends.
+- Still open: status values seen.
 
 ## Change log
 
@@ -401,3 +437,7 @@ First live run on 2026-11-11 (macOS, GiroCrab debug build):
 - 2026-11-11 – Phases 1–5 implemented (DPoP signer, device-code login, refresh, 2FA-on-login, broker/Overnight/Fixed-Term fetch, holdings, Swift wiring). Unit tests green. Awaiting first live test.
 - 2026-11-11 – Scalable Capital added to the bank search directory (was not findable in "Add Bank").
 - 2026-11-11 – First live run succeeded end to end: login, 2FA, 1 portfolio, 12 bookings, 3 holdings, 1 Overnight account. See Live findings.
+- 2026-11-11 – Fix: unsigned API amounts; sign now derived from every kind field; booking kind as title, description as purpose; kind statistics logged.
+- 2026-11-11 – Fix: trades titled with the security name and classified as investment via German booking text; internal transfers classified as Umbuchung; holding price fallback when the quote is missing.
+- 2026-11-11 – First sync loads the full history instead of the 90-day window.
+- 2026-11-11 – Fix: deposits/withdrawals classified as transfers via language-independent booking text.
