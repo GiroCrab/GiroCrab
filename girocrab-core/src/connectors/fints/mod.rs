@@ -303,11 +303,22 @@ struct PreparedOrder {
     recipient_iban: String,
 }
 
+/// Longest wait between two name-check polls, and in total.
+const VOP_POLL_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(3);
+const VOP_POLL_TOTAL_MAX: std::time::Duration = std::time::Duration::from_secs(25);
+
 /// Name-check part of an order message.
 enum Vop {
     None,
-    /// HKVPP (with the polling ID when asking again).
-    Check(Option<Vec<u8>>),
+    /// HKVPP + order + HKTAN: the first name check request.
+    Check,
+    /// HKVPP only, with the polling ID (and the continuation point from
+    /// 3040): asks again while the result is pending. Never carries the
+    /// order or HKTAN, so polling cannot create a second order.
+    Poll {
+        polling_id: Vec<u8>,
+        touchdown: Option<String>,
+    },
     /// HKVPA with the VOP-ID.
     Execute,
 }
@@ -1356,12 +1367,19 @@ impl FinTsConnector {
             let reply = self.send_order(ctx, Vop::None).await?;
             return self.finish_submit(&reply);
         }
-        let reply = self.check_payee(ctx).await?;
+        let (reply, polled) = self.check_payee(ctx).await?;
         if let Some(early) = self.reject_or_stop(&reply)? {
             return Ok(early);
         }
         let Some(check) = self.evaluate_payee(&reply) else {
             // Match (or no result reported): on to the approval.
+            if polled && self.vop_id.is_some() {
+                // The last reply answered a bare HKVPP poll and carries no
+                // challenge: authorise with HKVPA + order + HKTAN now.
+                self.vop_with_tan = false;
+                let reply = self.send_order(ctx, Vop::Execute).await?;
+                return self.finish_submit(&reply);
+            }
             return self.finish_submit(&reply);
         };
         // Anything but a clean match: nothing more is sent until the user
@@ -1378,21 +1396,35 @@ impl FinTsConnector {
         Phase::Ready
     }
 
-    /// Sends [HKVPP|HKVPA] + order + HKTAN process 4.
-    async fn send_order(&mut self, ctx: &ConnectContext, vop: Vop) -> CoreResult<BankReply> {
+    /// Segments of one order message: [HKVPP|HKVPA] + order + HKTAN
+    /// process 4, or HKVPP alone for a polling request.
+    fn order_payload(&mut self, vop: Vop) -> CoreResult<Vec<Vec<u8>>> {
         let order = self.order.clone().ok_or(CoreError::SessionClosed)?;
         let mut n = 3;
         let mut payload = Vec::new();
         match vop {
             Vop::None => {}
-            Vop::Check(polling_id) => {
-                let mut b = SegmentBuilder::new("HKVPP", n, self.version("HKVPP"))
-                    .de(&[&self.st.vop_format]);
-                if let Some(p) = polling_id {
-                    b = b.binary(&p);
-                }
-                payload.push(b.build());
+            Vop::Check => {
+                payload.push(
+                    SegmentBuilder::new("HKVPP", n, self.version("HKVPP"))
+                        .de(&[&self.st.vop_format])
+                        .build(),
+                );
                 n += 1;
+            }
+            Vop::Poll {
+                polling_id,
+                touchdown,
+            } => {
+                // Polling: HKVPP only (format, polling ID, max. entries,
+                // continuation point), no order and no HKTAN.
+                let mut b = SegmentBuilder::new("HKVPP", n, self.version("HKVPP"))
+                    .de(&[&self.st.vop_format])
+                    .binary(&polling_id);
+                if let Some(t) = touchdown {
+                    b = b.raw("").de(&[&t]);
+                }
+                return Ok(vec![b.build()]);
             }
             Vop::Execute => {
                 payload.push(self.hkvpa(n)?);
@@ -1408,21 +1440,37 @@ impl FinTsConnector {
                 .build(),
         );
         payload.push(self.hktan_process4(n + 1, order.seg_id));
+        Ok(payload)
+    }
+
+    /// Sends one order message. Marks the order as submitted first: once the
+    /// bytes may have left, the result can be "unknown".
+    async fn send_order(&mut self, ctx: &ConnectContext, vop: Vop) -> CoreResult<BankReply> {
+        let payload = self.order_payload(vop)?;
         let sec = self.sec();
         self.order_submitted = true;
         self.send(ctx, payload, &sec, None).await
     }
 
     fn hkvpa(&self, n: u32) -> CoreResult<Vec<u8>> {
-        let id = self.vop_id.as_deref().ok_or_else(|| CoreError::Protocol {
-            message: "name check: no VOP-ID from the bank".into(),
-        })?;
+        // No VOP-ID: nothing can be approved (and nothing was sent).
+        let id = self
+            .vop_id
+            .as_deref()
+            .ok_or_else(|| CoreError::InvalidInput {
+                message: "name check: no VOP-ID from the bank".into(),
+            })?;
         Ok(SegmentBuilder::new("HKVPA", n, 1).binary(id).build())
     }
 
-    /// HKVPP + order; asks again (polling ID) while the result is pending.
-    async fn check_payee(&mut self, ctx: &ConnectContext) -> CoreResult<BankReply> {
-        let mut reply = self.send_order(ctx, Vop::Check(None)).await?;
+    /// HKVPP + order; asks again (HKVPP only, with the polling ID) while the
+    /// result is pending. Waits at most `VOP_POLL_WAIT_MAX` per round and
+    /// `VOP_POLL_TOTAL_MAX` overall, so the session lock is never held long.
+    /// Returns the last reply and whether polling happened.
+    async fn check_payee(&mut self, ctx: &ConnectContext) -> CoreResult<(BankReply, bool)> {
+        let mut reply = self.send_order(ctx, Vop::Check).await?;
+        let mut polled = false;
+        let mut waited = std::time::Duration::ZERO;
         for _ in 0..10 {
             let Some(h) = reply.first("HIVPP") else { break };
             let code = vop_result_code(h);
@@ -1433,11 +1481,30 @@ impl FinTsConnector {
             {
                 break;
             }
-            let wait = h.get(8, 0).parse::<u64>().unwrap_or(2).clamp(1, 10);
-            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-            reply = self.send_order(ctx, Vop::Check(polling)).await?;
+            let wait = std::time::Duration::from_secs(
+                h.get(8, 0)
+                    .parse::<u64>()
+                    .unwrap_or(2)
+                    .clamp(1, VOP_POLL_WAIT_MAX.as_secs()),
+            );
+            if waited + wait > VOP_POLL_TOTAL_MAX {
+                break;
+            }
+            waited += wait;
+            tokio::time::sleep(wait).await;
+            let touchdown = reply.code("3040").and_then(|c| c.3.first().cloned());
+            polled = true;
+            reply = self
+                .send_order(
+                    ctx,
+                    Vop::Poll {
+                        polling_id: polling.unwrap_or_default(),
+                        touchdown,
+                    },
+                )
+                .await?;
         }
-        Ok(reply)
+        Ok((reply, polled))
     }
 
     /// Reads HIVPP. `None` = go on to the approval (match, or the bank did
@@ -1447,7 +1514,7 @@ impl FinTsConnector {
         self.vop_id = h.binary(1).map(|b| b.to_vec()).filter(|b| !b.is_empty());
         let code = vop_result_code(h);
         let order = self.order.as_ref()?;
-        let opt = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+        let opt = |s: &str, max: usize| Some(clean_bank_text(s, max)).filter(|s| !s.is_empty());
         let result = match code.as_str() {
             "RCVC" => PayeeMatch::Match,
             "RVMC" => PayeeMatch::CloseMatch,
@@ -1462,12 +1529,12 @@ impl FinTsConnector {
             result,
             entered_name: order.recipient_name.clone(),
             iban: order.recipient_iban.clone(),
-            bank_name: opt(h.get(6, 2)),
-            reason: opt(h.get(6, 5)).or_else(|| {
+            bank_name: opt(h.get(6, 2), VOP_NAME_MAX),
+            reason: opt(h.get(6, 5), VOP_TEXT_MAX).or_else(|| {
                 (code.is_empty() || code == "PDNG")
                     .then(|| tr("Die Empfängerbank hat kein Ergebnis geliefert.").to_string())
             }),
-            notice: opt(h.get(7, 0)),
+            notice: opt(h.get(7, 0), VOP_TEXT_MAX),
         })
     }
 
@@ -1738,22 +1805,43 @@ fn vop_parameters(seg: &Segment) -> (String, Vec<String>) {
     (format, orders)
 }
 
-/// VOP result code from HIVPP: the single-transaction result (EVPE), else
-/// the first code found in the payment status report.
+/// Max. length of an account holder name (SEPA) and of bank free texts.
+const VOP_NAME_MAX: usize = 70;
+const VOP_TEXT_MAX: usize = 500;
+
+/// Bank free text for display / the form: control characters dropped,
+/// whitespace collapsed, cut to `max` characters.
+fn clean_bank_text(s: &str, max: usize) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max)
+        .collect()
+}
+
+/// The worst result among all codes found: a match must never mask a
+/// mismatch. Worst first: RVNM, RVMC, RVNA, PDNG, RCVC.
+fn worst_vop_code(candidates: &[&str]) -> String {
+    ["RVNM", "RVMC", "RVNA", "PDNG", "RCVC"]
+        .iter()
+        .find(|c| candidates.iter().any(|t| t.contains(*c)))
+        .map(|c| c.to_string())
+        .unwrap_or_default()
+}
+
+/// VOP result code from HIVPP: the single-transaction result (EVPE) and the
+/// codes in the payment status report; the worst one wins.
 fn vop_result_code(h: &Segment) -> String {
-    let code = h.get(6, 4).trim();
-    if !code.is_empty() {
-        return code.to_string();
-    }
+    let evpe = h.get(6, 4).trim().to_string();
     let report = h
         .binary(5)
         .map(crate::text::decode_bank_bytes)
         .unwrap_or_default();
-    ["RCVC", "RVMC", "RVNM", "RVNA", "PDNG"]
-        .iter()
-        .find(|c| report.contains(*c))
-        .map(|c| c.to_string())
-        .unwrap_or_default()
+    worst_vop_code(&[&evpe, &report])
 }
 
 /// pain.001 descriptors from a BPD parameter segment (HICCSS / HIIPZS / HICSES).
@@ -1906,7 +1994,9 @@ impl BankConnector for FinTsConnector {
         let sec = self.sec();
         // Name matched: HKVPA (VOP-ID) goes along with the approval.
         let mut payload = Vec::new();
-        if self.vop_with_tan {
+        // Only with the first step after the name check, not with the
+        // following decoupled status polls.
+        if std::mem::take(&mut self.vop_with_tan) {
             payload.push(self.hkvpa(3)?);
         }
         let n = 3 + payload.len() as u32;
@@ -2460,6 +2550,40 @@ mod tests {
         // Consorsbank sends no HIVPPS: no name check.
         let c = FinTsConnector::new("76030080");
         assert!(c.st.vop_format.is_empty());
+    }
+
+    #[test]
+    fn polling_sends_only_hkvpp_without_order_or_hktan() {
+        let mut c = FinTsConnector::new("20041111");
+        order_for(&mut c);
+        c.st.vop_format = "urn:iso:std:iso:20022:tech:xsd:pain.002.001.14".into();
+        let text = |p: Vec<Vec<u8>>| String::from_utf8_lossy(&p.concat()).to_string();
+        let first = text(c.order_payload(Vop::Check).unwrap());
+        assert!(first.contains("HKVPP") && first.contains("HKCCS") && first.contains("HKTAN"));
+        let poll = text(
+            c.order_payload(Vop::Poll {
+                polling_id: b"POLL-1".to_vec(),
+                touchdown: Some("TD1".into()),
+            })
+            .unwrap(),
+        );
+        assert!(poll.contains("HKVPP") && poll.contains("@6@POLL-1") && poll.contains("TD1"));
+        for seg in ["HKCCS", "HKIPZ", "HKCSE", "HKTAN"] {
+            assert!(!poll.contains(seg), "{seg} in {poll}");
+        }
+    }
+
+    #[test]
+    fn worst_vop_result_wins_and_bank_texts_are_cleaned() {
+        assert_eq!(worst_vop_code(&["RCVC", "... RVNM ..."]), "RVNM");
+        assert_eq!(worst_vop_code(&["", "RCVC RVMC"]), "RVMC");
+        assert_eq!(worst_vop_code(&["RCVC", "PDNG"]), "PDNG");
+        assert_eq!(worst_vop_code(&["RCVC"]), "RCVC");
+        assert_eq!(worst_vop_code(&["", ""]), "");
+        let dirty = format!("Max\u{0}\n  Muster\u{7}{}", "x".repeat(100));
+        let clean = clean_bank_text(&dirty, VOP_NAME_MAX);
+        assert_eq!(clean.chars().count(), VOP_NAME_MAX);
+        assert!(clean.starts_with("Max Muster") && !clean.chars().any(|c| c.is_control()));
     }
 
     #[test]
