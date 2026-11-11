@@ -949,7 +949,6 @@ fn brand_banks_with_pseudo_bank_code_map_to_their_connector() {
 
 #[test]
 fn depot_balance_from_shown_balance_and_holdings() {
-fn import_takes_over_moneymoney_groups() {
     let v = vault();
     let path = fake_db();
     let p = v
@@ -1088,6 +1087,15 @@ fn shown_balance_also_wins_for_checking_accounts() {
     assert_eq!(acc.balance_cents, 123_456);
     // balance date = max(newest booking, balance timestamp)
     assert_eq!(acc.balance_date, "2026-03-08");
+}
+
+#[test]
+fn import_takes_over_moneymoney_groups() {
+    let v = vault();
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into())
+        .unwrap();
     let r = v
         .import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false, false))
         .unwrap();

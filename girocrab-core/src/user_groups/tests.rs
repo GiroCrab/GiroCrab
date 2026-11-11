@@ -518,6 +518,7 @@ fn same_name_groups_combine_on_sync() {
         accs.sort();
         assert_eq!(accs, s(&["Giro", "Visa"]));
     }
+    assert_eq!(synced_state(&a), synced_state(&b));
     // C hasn't seen the combination yet: its later placement into the old
     // group follows the pointer instead of dropping to "Ohne Gruppe"
     c.merge_other_vault(a.file_path(), key.clone()).unwrap();
@@ -559,6 +560,7 @@ fn deleted_group_stays_deleted_after_later_rename() {
 
     a.merge_other_vault(b.file_path(), key.clone()).unwrap();
     b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    assert_eq!(synced_state(&a), synced_state(&b));
     for v in [&a, &b] {
         let gs = v.list_user_groups().unwrap();
         assert_eq!(gs.len(), 1, "deleted group came back");
@@ -605,5 +607,331 @@ fn user_merges_groups_and_other_devices_follow() {
         );
     }
     assert!(a.merge_user_groups(familie, privat).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn user_version(v: &Vault) -> i64 {
+    v.db()
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap()
+}
+
+fn columns(v: &Vault, table: &str) -> Vec<String> {
+    let db = v.db().unwrap();
+    let mut st = db
+        .prepare("SELECT name FROM pragma_table_info(?1)")
+        .unwrap();
+    st.query_map([table], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+fn total(v: &Vault) -> i64 {
+    v.balance_history(vec![], 1)
+        .unwrap()
+        .last()
+        .unwrap()
+        .balance_cents
+}
+
+/// Takes the v7 additions out again, leaving the schema a v6 build (GiroCrab
+/// ≤ 0.5.x, `main` before this PR) writes: no `user_groups` table, none of
+/// the new `accounts` columns, `user_version` 6.
+fn downgrade_to_v6(v: &Vault) {
+    let db = v.db().unwrap();
+    db.execute_batch("DROP TABLE user_groups;").unwrap();
+    for (col, _) in super::ACCOUNT_COLUMNS {
+        db.execute_batch(&format!("ALTER TABLE accounts DROP COLUMN {col};"))
+            .unwrap();
+    }
+    db.execute_batch("PRAGMA user_version = 6;").unwrap();
+}
+
+/// (a) A vault written by a v6 build is migrated in place when the new build
+/// opens it: nothing is lost, all accounts land in "Ohne Gruppe" and count
+/// towards the total, and opening it again changes nothing.
+#[test]
+fn v6_vault_is_migrated_by_this_build() {
+    let dir = temp_dir("v6");
+    let v = open(&dir, "vault.db");
+    let ids = seed(&v);
+    downgrade_to_v6(&v);
+    assert_eq!(user_version(&v), 6);
+    assert!(!columns(&v, "accounts").contains(&"user_group_uuid".to_string()));
+    assert!(columns(&v, "user_groups").is_empty());
+    // what a v6 build shows as the total: all accounts
+    let before: i64 = v
+        .db()
+        .unwrap()
+        .query_row("SELECT sum(balance_cents) FROM accounts", [], |r| r.get(0))
+        .unwrap();
+    drop(v);
+
+    for round in 0..2 {
+        let v = open(&dir, "vault.db");
+        assert_eq!(user_version(&v), 7, "round {round}");
+        let cols = columns(&v, "accounts");
+        for (col, _) in super::ACCOUNT_COLUMNS {
+            assert!(cols.contains(&col.to_string()), "accounts.{col}");
+        }
+        assert!(columns(&v, "user_groups").contains(&"merged_into".to_string()));
+        assert_eq!(total(&v), before, "visible total unchanged");
+        let accs = v.list_accounts().unwrap();
+        assert_eq!(accs.len(), 3);
+        assert!(accs.iter().all(|a| a.in_total && !a.color_hex.is_empty()));
+        if round == 0 {
+            assert!(accs.iter().all(|a| a.user_group_uuid.is_none()));
+            assert_eq!(
+                names(&v),
+                vec![("Ohne Gruppe".into(), s(&["Giro", "Visa", "Depot"]))]
+            );
+            // usable right away
+            let g = v
+                .create_user_group("Privat".into(), "person".into())
+                .unwrap();
+            v.move_account_to_group(ids[0], Some(g), None).unwrap();
+        } else {
+            // opening again changes nothing
+            assert_eq!(names(&v)[0], ("Privat".into(), s(&["Giro"])));
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// (c) A v7 vault opened and written by a v6 build, then opened by this build
+/// again. A v6 build never lowers `user_version` (it only migrates when the
+/// version is below 6) and writes accounts with explicit column lists, so the
+/// v7 columns keep their values or defaults. Simulated here with the
+/// statements a v6 build runs: a rename (`rename_account` without `name_ms`)
+/// and a new account from a bank sync (no group placement).
+#[test]
+fn v7_vault_survives_a_round_trip_through_a_v6_build() {
+    let dir = temp_dir("roundtrip");
+    let v = open(&dir, "vault.db");
+    let ids = seed(&v);
+    let firma = v
+        .create_user_group("Firma".into(), "briefcase".into())
+        .unwrap();
+    v.move_account_to_group(ids[0], Some(firma.clone()), None)
+        .unwrap();
+    v.update_user_group(firma.clone(), "Firma".into(), "briefcase".into(), false)
+        .unwrap();
+    v.set_account_color(ids[0], Some("#DC2626".into())).unwrap();
+    drop(v);
+
+    // --- the v6 build ---
+    {
+        let v = open(&dir, "vault.db");
+        let db = v.db().unwrap();
+        db.execute(
+            "UPDATE accounts SET name = 'Geschäftskonto' WHERE id = ?1",
+            [ids[0]],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, kind, balance_cents)
+             SELECT connection_id, group_id, 'A4', 'Tagesgeld', 'savings', 1000_00 FROM accounts WHERE id = ?1",
+            [ids[0]],
+        )
+        .unwrap();
+    }
+
+    // --- back in this build ---
+    let v = open(&dir, "vault.db");
+    assert_eq!(user_version(&v), 7);
+    let gs = v.list_user_groups().unwrap();
+    assert_eq!(gs[0].uuid, firma);
+    assert!(!gs[0].include_in_total);
+    let mut listed = names(&v);
+    listed[1].1.sort();
+    assert_eq!(
+        listed,
+        vec![
+            ("Firma".into(), s(&["Geschäftskonto"])),
+            ("Ohne Gruppe".into(), s(&["Depot", "Tagesgeld", "Visa"]))
+        ]
+    );
+    let accs = v.list_accounts().unwrap();
+    let giro = accs.iter().find(|a| a.id == ids[0]).unwrap();
+    assert_eq!(giro.color_hex, "#DC2626");
+    // the account the v6 build added counts towards the total; Firma doesn't
+    assert_eq!(total(&v), 5_000_00 - 50_00 + 1000_00);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Known limit, pinned: a rename made by a v6 build carries no `name_ms`, so
+/// an older but stamped rename from a v7 device wins the next merge.
+#[test]
+fn v6_rename_loses_against_a_stamped_rename_on_merge() {
+    let dir = temp_dir("v6rename");
+    let key = vec![7u8; 32];
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let ia = seed(&a);
+    let ib = seed(&b);
+    b.rename_account(ib[0], "Giro (B)".into()).unwrap();
+    tick();
+    // later, a v6 build renames the same account on A without a stamp
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET name = 'Giro (A, v6)' WHERE id = ?1",
+            [ia[0]],
+        )
+        .unwrap();
+    a.merge_other_vault(b.file_path(), key).unwrap();
+    let name = |v: &Vault, id: i64| {
+        v.list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == id)
+            .unwrap()
+            .name
+    };
+    assert_eq!(name(&a, ia[0]), "Giro (B)");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Everything that syncs, keyed by synced identities only: both devices
+/// must end up byte-for-byte equal here after merging both ways.
+#[allow(clippy::type_complexity)]
+fn synced_state(
+    v: &Vault,
+) -> (
+    Vec<(
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        Option<i64>,
+        Option<String>,
+    )>,
+    Vec<(String, Option<String>, i64, i64, String)>,
+) {
+    let db = v.db().unwrap();
+    let groups = db
+        .prepare(
+            "SELECT uuid, name, sf_symbol, include_in_total, sort_order, deleted_ms, merged_into
+             FROM user_groups ORDER BY uuid",
+        )
+        .unwrap()
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let accounts = db
+        .prepare(
+            "SELECT external_ref, user_group_uuid, user_sort_order, placement_ms, name
+             FROM accounts ORDER BY external_ref",
+        )
+        .unwrap()
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    (groups, accounts)
+}
+
+fn sync_both_ways(a: &Vault, b: &Vault) {
+    let key = vec![7u8; 32];
+    a.merge_other_vault(b.file_path(), key.clone()).unwrap();
+    b.merge_other_vault(a.file_path(), key).unwrap();
+}
+
+/// Review point 3: edits of different fields on two devices both survive.
+#[test]
+fn concurrent_edits_of_different_fields_both_survive() {
+    let dir = temp_dir("fields");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    seed(&a);
+    seed(&b);
+    let g = a
+        .create_user_group("Privat".into(), "folder".into())
+        .unwrap();
+    let h = a
+        .create_user_group("Firma".into(), "folder".into())
+        .unwrap();
+    sync_both_ways(&a, &b);
+    tick();
+    // A renames and reorders; later B changes symbol and total flag
+    a.update_user_group(g.clone(), "Familie".into(), "folder".into(), true)
+        .unwrap();
+    a.reorder_user_groups(vec![h.clone(), g.clone()]).unwrap();
+    tick();
+    b.update_user_group(g.clone(), "Privat".into(), "house".into(), false)
+        .unwrap();
+    tick();
+    sync_both_ways(&a, &b);
+    for v in [&a, &b] {
+        let gs = live_groups(v);
+        assert_eq!(
+            gs,
+            vec![(h.clone(), "Firma".into()), (g.clone(), "Familie".into())]
+        );
+        let fam = v
+            .list_user_groups()
+            .unwrap()
+            .into_iter()
+            .find(|x| x.uuid == g)
+            .unwrap();
+        assert_eq!(fam.sf_symbol, "house");
+        assert!(!fam.include_in_total);
+    }
+    assert_eq!(synced_state(&a), synced_state(&b));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Review point 4: sort positions that collide after a merge still give
+/// the same order on every device (no local ids in the tie-break).
+#[test]
+fn order_inside_a_group_is_the_same_on_every_device() {
+    let dir = temp_dir("order");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let ia = seed(&a);
+    let ib = seed(&b);
+    // Giro and Visa of the same kind, and B's local ids in the other order
+    for v in [&a, &b] {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET kind = 'checking' WHERE external_ref = 'A3'",
+                [],
+            )
+            .unwrap();
+    }
+    b.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET id = id + 100 WHERE external_ref = 'A1'",
+            [],
+        )
+        .unwrap();
+    let ib = [ib[0] + 100, ib[1], ib[2]];
+    let g = a.create_user_group("Alle".into(), "folder".into()).unwrap();
+    sync_both_ways(&a, &b);
+    // each device puts a different account of that kind first → both at 0
+    a.move_account_to_group(ia[0], Some(g.clone()), Some(0))
+        .unwrap();
+    b.move_account_to_group(ib[2], Some(g.clone()), Some(0))
+        .unwrap();
+    sync_both_ways(&a, &b);
+    let ga = names(&a);
+    assert_eq!(ga[0].1.len(), 2, "both accounts in the group");
+    assert_eq!(ga, names(&b));
+    assert_eq!(synced_state(&a), synced_state(&b));
     let _ = std::fs::remove_dir_all(dir);
 }

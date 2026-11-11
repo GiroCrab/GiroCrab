@@ -7,8 +7,12 @@
 //! "Ohne Gruppe".
 //!
 //! iCloud sync: groups are keyed by a random uuid. Every user edit stamps a
-//! millisecond timestamp (`user_groups.updated_ms`, `accounts.placement_ms`,
-//! `accounts.name_ms`); when merging two vaults the newer edit wins. Deleted
+//! millisecond timestamp per field (`user_groups.name_ms` / `symbol_ms` /
+//! `total_ms` / `order_ms`, `accounts.placement_ms` / `name_ms` /
+//! `color_ms`); when merging two vaults the newer edit wins field by field, so
+//! renaming a group on one device and switching its total flag on another
+//! keeps both. Equal stamps with different values (rare) resolve to the larger
+//! value, so both sides still end up identical. Deleted
 //! groups stay as tombstones (`deleted_ms`): a merge never brings them back,
 //! even if another device edited them later (delete wins).
 //! Automatic placements use timestamp 0, so any explicit user choice wins.
@@ -19,6 +23,19 @@
 //! combined group is a tombstone with `merged_into`; accounts placed in it –
 //! also later, from a device that hasn't merged yet – follow that pointer.
 //! The user can combine groups the same way (`merge_user_groups`).
+//!
+//! Derived changes are not stamped: moving accounts out of a deleted or
+//! combined group keeps their `placement_ms`, because every device derives
+//! the same result from the same tombstones; stamping them with "now" would
+//! make the devices race. Tombstones are kept forever on purpose: they are a
+//! few tiny rows, and pruning one would let a device that was offline long
+//! enough bring the group back.
+//!
+//! Older builds (schema v6) ignore all of this. They keep `user_version` at 7
+//! and write accounts with explicit column lists, so groups, colours and
+//! placements survive a round trip. A rename made by such a build doesn't
+//! stamp `name_ms`, though, so a stamped rename from another device wins the
+//! next merge even if it is older.
 //!
 //! Account colours (booking-list markers, sidebar dot) follow the same rule:
 //! without a user choice the colour is derived from the account's sync
@@ -41,7 +58,11 @@ CREATE TABLE IF NOT EXISTS user_groups (
     sf_symbol        TEXT    NOT NULL DEFAULT 'folder',
     sort_order       INTEGER NOT NULL DEFAULT 0,
     include_in_total INTEGER NOT NULL DEFAULT 1,
-    updated_ms       INTEGER NOT NULL DEFAULT 0,
+    updated_ms       INTEGER NOT NULL DEFAULT 0,     -- last edit of any field
+    name_ms          INTEGER NOT NULL DEFAULT 0,
+    symbol_ms        INTEGER NOT NULL DEFAULT 0,
+    total_ms         INTEGER NOT NULL DEFAULT 0,
+    order_ms         INTEGER NOT NULL DEFAULT 0,
     deleted_ms       INTEGER,                      -- tombstone, kept for sync
     merged_into      TEXT                          -- tombstone of a combined group → survivor
 );";
@@ -54,6 +75,23 @@ const ACCOUNT_COLUMNS: &[(&str, &str)] = &[
     ("name_ms", "INTEGER NOT NULL DEFAULT 0"),
     ("color_hex", "TEXT"),
     ("color_ms", "INTEGER NOT NULL DEFAULT 0"),
+];
+
+/// `user_groups` columns added after the first v7 table (name, definition).
+const GROUP_COLUMNS: &[(&str, &str)] = &[
+    ("name_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("symbol_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("total_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("order_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("merged_into", "TEXT"),
+];
+
+/// Group fields that merge independently, each with its own stamp.
+const GROUP_FIELDS: &[(&str, &str)] = &[
+    ("name", "name_ms"),
+    ("sf_symbol", "symbol_ms"),
+    ("include_in_total", "total_ms"),
+    ("sort_order", "order_ms"),
 ];
 
 /// Account colours (the palette of GiroCrab/GiroCrab#26), readable in light
@@ -154,13 +192,19 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
             conn.execute_batch(&format!("ALTER TABLE accounts ADD COLUMN {col} {def};"))?;
         }
     }
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM pragma_table_info('user_groups') WHERE name = 'merged_into'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has == 0 {
-        conn.execute_batch("ALTER TABLE user_groups ADD COLUMN merged_into TEXT;")?;
+    // added during review, for vaults that already had the first v7 table
+    for (col, def) in GROUP_COLUMNS {
+        let has: i64 = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('user_groups') WHERE name = ?1",
+            [col],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            conn.execute_batch(&format!("ALTER TABLE user_groups ADD COLUMN {col} {def};"))?;
+            if col.ends_with("_ms") {
+                conn.execute_batch(&format!("UPDATE user_groups SET {col} = updated_ms;"))?;
+            }
+        }
     }
     Ok(())
 }
@@ -229,8 +273,8 @@ pub(crate) fn find_or_create(
     let name = valid_name(conn, name, None)?;
     let uuid = uuid::Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO user_groups(uuid, name, sf_symbol, sort_order, updated_ms)
-         VALUES (?1, ?2, ?3, (SELECT IFNULL(MAX(sort_order), -1) + 1 FROM user_groups WHERE deleted_ms IS NULL), ?4)",
+        "INSERT INTO user_groups(uuid, name, sf_symbol, sort_order, updated_ms, name_ms, symbol_ms, total_ms, order_ms)
+         VALUES (?1, ?2, ?3, (SELECT IFNULL(MAX(sort_order), -1) + 1 FROM user_groups WHERE deleted_ms IS NULL), ?4, ?4, ?4, ?4, ?4)",
         params![uuid, name, symbol, now_ms()],
     )?;
     Ok((uuid, true))
@@ -285,26 +329,11 @@ pub(crate) fn merge_attached(
     acc_map: &HashMap<i64, i64>,
     inserted: &HashSet<i64>,
 ) -> CoreResult<u32> {
-    // Newest edit wins for the fields; tombstones only ever get set (delete
-    // wins). Both are symmetric, so A←B and B←A end up identical.
+    // Field by field the newer edit wins (equal stamps: the larger value);
+    // tombstones only ever get set (delete wins). Both rules are symmetric, so
+    // A←B and B←A end up identical.
     // (`merge_other_vault` migrates the other file first, so it has all columns.)
-    let mut changed = tx.execute(
-        "INSERT INTO user_groups(uuid, name, sf_symbol, sort_order, include_in_total, updated_ms, deleted_ms, merged_into)
-         SELECT uuid, name, sf_symbol, sort_order, include_in_total, updated_ms, deleted_ms, merged_into
-         FROM other.user_groups WHERE true
-         ON CONFLICT(uuid) DO UPDATE SET
-            name             = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.name ELSE user_groups.name END,
-            sf_symbol        = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.sf_symbol ELSE user_groups.sf_symbol END,
-            sort_order       = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.sort_order ELSE user_groups.sort_order END,
-            include_in_total = CASE WHEN excluded.updated_ms > user_groups.updated_ms THEN excluded.include_in_total ELSE user_groups.include_in_total END,
-            updated_ms       = max(excluded.updated_ms, user_groups.updated_ms),
-            deleted_ms       = coalesce(min(user_groups.deleted_ms, excluded.deleted_ms), user_groups.deleted_ms, excluded.deleted_ms),
-            merged_into      = coalesce(min(user_groups.merged_into, excluded.merged_into), user_groups.merged_into, excluded.merged_into)
-         WHERE excluded.updated_ms > user_groups.updated_ms
-            OR (excluded.deleted_ms IS NOT NULL AND user_groups.deleted_ms IS NULL)
-            OR (excluded.merged_into IS NOT NULL AND user_groups.merged_into IS NOT excluded.merged_into)",
-        [],
-    )? as u32;
+    let mut changed = tx.execute(&group_upsert_sql(), [])? as u32;
     #[allow(clippy::type_complexity)]
     let rows: Vec<(i64, Option<String>, i64, i64, String, i64, Option<String>, i64)> = tx
         .prepare(
@@ -345,45 +374,82 @@ pub(crate) fn merge_attached(
     Ok(changed)
 }
 
+/// `INSERT … ON CONFLICT DO UPDATE` for all groups of the attached vault.
+fn group_upsert_sql() -> String {
+    let wins = |f: &str, ms: &str| {
+        format!(
+            "(excluded.{ms} > user_groups.{ms} OR (excluded.{ms} = user_groups.{ms} AND excluded.{f} > user_groups.{f}))"
+        )
+    };
+    let mut cols = vec!["uuid", "updated_ms", "deleted_ms", "merged_into"];
+    let mut sets = vec![
+        "updated_ms = max(excluded.updated_ms, user_groups.updated_ms)".to_string(),
+        "deleted_ms = coalesce(min(user_groups.deleted_ms, excluded.deleted_ms), user_groups.deleted_ms, excluded.deleted_ms)".into(),
+        "merged_into = coalesce(min(user_groups.merged_into, excluded.merged_into), user_groups.merged_into, excluded.merged_into)".into(),
+    ];
+    let mut when = vec![
+        "(excluded.deleted_ms IS NOT NULL AND user_groups.deleted_ms IS NULL)".to_string(),
+        "(excluded.merged_into IS NOT NULL AND user_groups.merged_into IS NOT excluded.merged_into)".into(),
+    ];
+    for (f, ms) in GROUP_FIELDS {
+        cols.extend([*f, *ms]);
+        let w = wins(f, ms);
+        sets.push(format!(
+            "{f} = CASE WHEN {w} THEN excluded.{f} ELSE user_groups.{f} END"
+        ));
+        sets.push(format!("{ms} = max(excluded.{ms}, user_groups.{ms})"));
+        when.push(w);
+    }
+    let cols = cols.join(", ");
+    format!(
+        "INSERT INTO user_groups({cols}) SELECT {cols} FROM other.user_groups WHERE true
+         ON CONFLICT(uuid) DO UPDATE SET {} WHERE {}",
+        sets.join(", "),
+        when.join(" OR ")
+    )
+}
+
 /// Live groups with the same name (case-insensitive, e.g. "Privat" created on
 /// two devices) become one: the lower uuid survives – the same choice on every
-/// device – and takes name, symbol and total flag of the most recently edited
-/// one. The others become tombstones pointing at it. Nothing is stamped with
-/// the current time, so every device computes exactly the same result.
+/// device – and takes each field from the duplicate that edited it last (the
+/// same rule as the merge). The others become tombstones pointing at it.
+/// Nothing is stamped with the current time, so every device computes exactly
+/// the same result.
 fn combine_same_names(tx: &Connection) -> CoreResult<u32> {
-    let rows: Vec<(String, String, String, i64, bool, i64)> = tx
+    let rows: Vec<(String, String)> = tx
         .prepare(
-            "SELECT lower(trim(name)), uuid, sf_symbol, sort_order, include_in_total, updated_ms
-             FROM user_groups g WHERE deleted_ms IS NULL AND EXISTS (
+            "SELECT lower(trim(name)), uuid FROM user_groups g
+             WHERE deleted_ms IS NULL AND EXISTS (
                 SELECT 1 FROM user_groups o WHERE o.deleted_ms IS NULL AND o.uuid != g.uuid
                   AND lower(trim(o.name)) = lower(trim(g.name)))
              ORDER BY 1, uuid",
         )?
-        .query_map([], |r| {
-            Ok((
-                r.get(0)?,
-                r.get(1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-                r.get(5)?,
-            ))
-        })?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<_, _>>()?;
     let mut changed = 0;
     for dups in rows.chunk_by(|a, b| a.0 == b.0) {
         let survivor = &dups[0].1;
-        let newest = dups
-            .iter()
-            .max_by(|a, b| a.5.cmp(&b.5).then(b.1.cmp(&a.1)))
-            .expect("non-empty");
-        let stamp = newest.5;
-        let order = dups.iter().map(|d| d.3).min().unwrap_or(0);
+        for (f, ms) in GROUP_FIELDS {
+            // the winning value among all duplicates, by (stamp, value)
+            tx.execute(
+                &format!(
+                    "UPDATE user_groups SET ({f}, {ms}) = (
+                        SELECT d.{f}, d.{ms} FROM user_groups d
+                        WHERE d.deleted_ms IS NULL AND lower(trim(d.name)) = ?2
+                        ORDER BY d.{ms} DESC, d.{f} DESC LIMIT 1)
+                     WHERE uuid = ?1"
+                ),
+                params![survivor, dups[0].0],
+            )?;
+        }
+        let stamp: i64 = tx.query_row(
+            "SELECT max(updated_ms) FROM user_groups WHERE deleted_ms IS NULL AND lower(trim(name)) = ?1",
+            [&dups[0].0],
+            |r| r.get(0),
+        )?;
         tx.execute(
-            "UPDATE user_groups SET name = (SELECT name FROM user_groups WHERE uuid = ?2),
-                    sf_symbol = ?3, include_in_total = ?4, sort_order = ?5, updated_ms = ?6
-             WHERE uuid = ?1",
-            params![survivor, newest.1, newest.2, newest.4, order, stamp],
+            "UPDATE user_groups SET updated_ms = ?2 WHERE uuid = ?1",
+            params![survivor, stamp],
         )?;
         for d in &dups[1..] {
             retire_into(tx, &d.1, survivor, stamp)?;
@@ -485,7 +551,10 @@ impl Vault {
                 (
                     order.get(&a.id).copied().unwrap_or(0),
                     kind_rank(a),
-                    a.sort_order,
+                    // then synced values only (local ids differ between devices)
+                    a.name.to_lowercase(),
+                    a.iban.clone(),
+                    a.account_number.clone(),
                     a.id,
                 )
             });
@@ -558,8 +627,17 @@ impl Vault {
         } else {
             valid_name(&db, &name, Some(&uuid))?
         };
+        // only fields that actually change get a new stamp, so a concurrent
+        // edit of another field on another device survives the merge
         db.execute(
-            "UPDATE user_groups SET name = ?2, sf_symbol = ?3, include_in_total = ?4, updated_ms = ?5 WHERE uuid = ?1",
+            "UPDATE user_groups SET
+                name_ms   = CASE WHEN name IS NOT ?2 THEN ?5 ELSE name_ms END,
+                symbol_ms = CASE WHEN sf_symbol IS NOT ?3 THEN ?5 ELSE symbol_ms END,
+                total_ms  = CASE WHEN include_in_total IS NOT ?4 THEN ?5 ELSE total_ms END,
+                updated_ms = CASE WHEN name IS NOT ?2 OR sf_symbol IS NOT ?3 OR include_in_total IS NOT ?4
+                                  THEN ?5 ELSE updated_ms END,
+                name = ?2, sf_symbol = ?3, include_in_total = ?4
+             WHERE uuid = ?1",
             params![uuid, name, sf_symbol, include_in_total, now_ms()],
         )?;
         Ok(())
@@ -687,7 +765,7 @@ impl Vault {
         let tx = db.unchecked_transaction()?;
         for (i, u) in uuids.iter().enumerate() {
             tx.execute(
-                "UPDATE user_groups SET sort_order = ?2, updated_ms = ?3
+                "UPDATE user_groups SET sort_order = ?2, order_ms = ?3, updated_ms = ?3
                  WHERE uuid = ?1 AND (sort_order != ?2)",
                 params![u, i as i64, now],
             )?;
