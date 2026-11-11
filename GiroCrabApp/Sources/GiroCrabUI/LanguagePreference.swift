@@ -15,7 +15,7 @@ import UIKit
 ///   after a restart, so one run never mixes languages.
 /// * No question at launch when the system language is one the app speaks:
 ///   the system already answered it, and people get to their content at once.
-///   The choice is offered in Settings › Allgemein and on the welcome card.
+///   The choice is offered in Settings › Allgemein.
 /// * A language screen before the vault opens only when the system language
 ///   is not supported, i.e. when the app would otherwise silently guess.
 /// * When the system language later changes away from an explicitly chosen
@@ -189,18 +189,6 @@ struct LanguagePreference {
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { _, _ in
             DispatchQueue.main.async { NSApp.terminate(nil) }
         }
-        #endif
-    }
-}
-
-extension AppModel {
-    /// Opens Settings › Allgemein (macOS settings window / iOS settings sheet).
-    func openGeneralSettings() {
-        settingsTab = .general
-        #if os(macOS)
-        groupSettingsRequested = true
-        #else
-        showSettings = true
         #endif
     }
 }

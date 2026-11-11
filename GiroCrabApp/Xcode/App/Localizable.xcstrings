@@ -11970,17 +11970,6 @@
           }
         }
       }
-    },
-    "Sprache: %@" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Language: %@"
-          }
-        }
-      }
     }
   },
   "version" : "1.0"
