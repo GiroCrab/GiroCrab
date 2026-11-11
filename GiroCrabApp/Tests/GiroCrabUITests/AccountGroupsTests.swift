@@ -105,6 +105,40 @@ final class AccountGroupsTests: XCTestCase {
         XCTAssertEqual(groups.count, 3)
     }
 
+    func testRenameToExistingNameAsksToMerge() throws {
+        let from = groups[2], into = groups[0], other = groups[1].uuid
+        let moved = Set(from.accounts.map(\.id)), kept = into.accounts.map(\.id)
+        model.sidebarSelection = .userGroup(from.uuid)
+        // a clash changes nothing yet, it asks
+        let ask = try XCTUnwrap(model.renameUserGroup(from, to: " \(into.name.uppercased()) "))
+        guard case .merge(let f, let i) = ask else { return XCTFail("expected .merge, got \(ask)") }
+        XCTAssertEqual([f.uuid, i.uuid], [from.uuid, into.uuid])
+        XCTAssertEqual(groups.count, 3)
+        XCTAssertNil(model.errorMessage)
+        // confirming combines them: accounts appended, selection follows
+        model.mergeUserGroups(f, into: i)
+        XCTAssertEqual(groups.map(\.uuid), [into.uuid, other])
+        let now = try members(into.uuid)
+        XCTAssertEqual(Array(now.prefix(kept.count)), kept)
+        XCTAssertEqual(Set(now.dropFirst(kept.count)), moved)
+        XCTAssertEqual(model.sidebarSelection, .userGroup(into.uuid))
+        // a rename without a clash just renames; saving the same name works
+        XCTAssertNil(model.renameUserGroup(try group(into.uuid), to: "Familie"))
+        model.updateUserGroup(try group(into.uuid), symbol: "house")
+        XCTAssertEqual(try group(into.uuid).name, "Familie")
+        XCTAssertEqual(try group(into.uuid).sfSymbol, "house")
+        assertConsistent()
+    }
+
+    func testSelectionOfAGroupGoneViaSyncFallsBack() throws {
+        let g = groups[1]
+        model.sidebarSelection = .userGroup(g.uuid)
+        // removed behind the model's back, as a sync would
+        try model.vault?.deleteUserGroup(uuid: g.uuid)
+        model.reloadAccounts()
+        XCTAssertEqual(model.sidebarSelection, .allAccounts)
+    }
+
     func testCreatingFirstGroupSwitchesToGroupView() throws {
         model.accountView = .byKind
         XCTAssertEqual(model.accountView, .byKind)

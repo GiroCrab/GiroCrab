@@ -546,6 +546,10 @@ public final class AppModel {
         run {
             groups = try vault.listAccountGroups()
             userGroups = try vault.listUserGroups()
+            // a group removed or combined (also via sync) can't stay selected
+            if case .userGroup(let u) = sidebarSelection, !userGroups.contains(where: { $0.uuid == u }) {
+                sidebarSelection = .allAccounts
+            }
             rebuildAccountIndex()
             connections = try vault.listBankConnections()
         }

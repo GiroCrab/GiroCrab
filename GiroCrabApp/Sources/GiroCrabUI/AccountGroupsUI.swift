@@ -252,12 +252,19 @@ struct AccountGroupDialogs: ViewModifier {
                         // after this dialog has closed
                         DispatchQueue.main.async { dialog = .create(movingAccount: a.id) }
                     }
+                case .merge(let from, let into):
+                    Button("Zusammenführen") { model.mergeUserGroups(from, into: into) }
                 case .create, .rename:
                     EmptyView()
                 }
                 Button("Abbrechen", role: .cancel) {}
             } message: { d in
-                if case .delete(let g) = d { Text(deleteMessage(g)) }
+                switch d {
+                case .delete(let g): Text(deleteMessage(g))
+                case .merge(let from, let into):
+                    Text("Die Konten aus „\(from.name)“ kommen nach „\(into.name)“. „\(from.name)“ wird entfernt.")
+                default: EmptyView()
+                }
             }
             .onChange(of: dialog?.initialText) { _, t in text = t ?? "" }
     }
@@ -267,8 +274,10 @@ struct AccountGroupDialogs: ViewModifier {
         guard !name.isEmpty else { return }
         switch d {
         case .create(let accountID): model.createUserGroup(name: name, moving: accountID)
-        case .rename(let g): model.updateUserGroup(g, name: name)
-        case .delete, .moveAccount: break
+        case .rename(let g):
+            // after the alert has closed
+            if let next = model.renameUserGroup(g, to: name) { DispatchQueue.main.async { dialog = next } }
+        case .delete, .moveAccount, .merge: break
         }
     }
 }
@@ -356,7 +365,7 @@ struct AccountGroupsSettings: View {
             .frame(width: 240)
             Group {
                 if let uuid = selectedGroup?.uuid {
-                    GroupDetailEditor(uuid: uuid, onDelete: { dialog = .delete($0) }, onGone: { selection = nil })
+                    GroupDetailEditor(uuid: uuid, ask: { dialog = $0 }, onGone: { selection = nil })
                         .id(uuid)
                 } else {
                     ContentUnavailableView {
@@ -386,7 +395,7 @@ struct AccountGroupsSettings: View {
                 Button("Neue Gruppe …", systemImage: "folder.badge.plus") { dialog = .create() }
             }
         }
-        .navigationDestination(for: String.self) { uuid in GroupDetailEditor(uuid: uuid, onDelete: { dialog = .delete($0) }) }
+        .navigationDestination(for: String.self) { uuid in GroupDetailEditor(uuid: uuid, ask: { dialog = $0 }) }
         .toolbar { ToolbarItem(placement: .topBarTrailing) { EditButton() } }
     }
     #endif
@@ -435,8 +444,8 @@ struct GroupDetailEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let uuid: String
-    /// Asks for confirmation (the pane's dialog) before deleting.
-    var onDelete: (UserGroup) -> Void
+    /// Shows a confirmation in the pane (delete, or merge on a name clash).
+    var ask: (GroupDialog) -> Void
     /// Called when the group disappears (deleted here or via sync);
     /// default: pop back (iOS navigation).
     var onGone: (() -> Void)?
@@ -510,7 +519,7 @@ struct GroupDetailEditor: View {
                 }
                 #if os(iOS)
                 Section {
-                    Button("Gruppe löschen …", role: .destructive) { onDelete(g) }
+                    Button("Gruppe löschen …", role: .destructive) { ask(.delete(g)) }
                 }
                 #endif
             }
@@ -530,6 +539,9 @@ struct GroupDetailEditor: View {
     private func commitName() {
         let n = name.trimmingCharacters(in: .whitespaces)
         guard let g = group, !n.isEmpty, n != g.name else { return }
-        model.updateUserGroup(g, name: n)
+        if let merge = model.renameUserGroup(g, to: n) {
+            name = g.name
+            ask(merge)
+        }
     }
 }

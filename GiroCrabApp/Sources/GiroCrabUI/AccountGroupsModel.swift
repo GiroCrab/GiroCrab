@@ -34,12 +34,14 @@ enum GroupDialog {
     case delete(UserGroup)
     /// iOS swipe "Gruppe …".
     case moveAccount(Account)
+    /// Renaming a group to the name of another one combines them.
+    case merge(from: UserGroup, into: UserGroup)
 
     /// Text-input alert vs. confirmation dialog.
     var needsText: Bool {
         switch self {
         case .create, .rename: true
-        case .delete, .moveAccount: false
+        case .delete, .moveAccount, .merge: false
         }
     }
 
@@ -49,6 +51,7 @@ enum GroupDialog {
         case .rename: Text("Gruppe umbenennen")
         case .delete(let g): Text("Gruppe „\(g.name)“ löschen?")
         case .moveAccount(let a): Text("„\(a.name)“ verschieben nach")
+        case .merge(_, let into): Text("Mit „\(into.name)“ zusammenführen?")
         }
     }
 
@@ -93,6 +96,34 @@ extension AppModel {
 
     func userGroup(of account: Account) -> UserGroup? {
         account.userGroupUuid.flatMap { u in userGroups.first { $0.uuid == u } }
+    }
+
+    /// Another group with this name (case-insensitive), if any.
+    func userGroup(named name: String, except uuid: String) -> UserGroup? {
+        let key = name.trimmingCharacters(in: .whitespaces).lowercased()
+        return namedUserGroups.first { $0.uuid != uuid && $0.name.lowercased() == key }
+    }
+
+    /// Renames a group. If another group already has that name, nothing is
+    /// changed and the merge question is returned instead.
+    func renameUserGroup(_ g: UserGroup, to name: String) -> GroupDialog? {
+        if let other = userGroup(named: name, except: g.uuid) { return .merge(from: g, into: other) }
+        updateUserGroup(g, name: name)
+        return nil
+    }
+
+    /// Combines `from` into `into`: its accounts move over, `from` is removed.
+    func mergeUserGroups(_ from: UserGroup, into: UserGroup) {
+        guard let vault, !from.isUngrouped, !into.isUngrouped else { return }
+        do {
+            try vault.mergeUserGroups(fromUuid: from.uuid, intoUuid: into.uuid)
+            if sidebarSelection == .userGroup(from.uuid) { sidebarSelection = .userGroup(into.uuid) }
+            collapsedUserGroups.remove(from.uuid)
+            afterGroupChange()
+            toast = String(localized: "„\(from.name)“ mit „\(into.name)“ zusammengeführt")
+        } catch {
+            errorMessage = describe(error)
+        }
     }
 
     private func afterGroupChange() {

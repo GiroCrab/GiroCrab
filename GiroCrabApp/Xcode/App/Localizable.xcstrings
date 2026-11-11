@@ -78,6 +78,17 @@
         }
       }
     },
+    "Die Konten aus „%@“ kommen nach „%@“. „%@“ wird entfernt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The accounts in “%1$@” move to “%2$@”. “%3$@” is removed."
+          }
+        }
+      }
+    },
     "Entfernen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -272,6 +283,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use + to create your first group."
+          }
+        }
+      }
+    },
+    "Mit „%@“ zusammenführen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merge with “%@”?"
           }
         }
       }
@@ -6713,6 +6735,17 @@
         }
       }
     },
+    "Zusammenführen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merge"
+          }
+        }
+      }
+    },
     "z. B. Sparkasse, ING, N26, Revolut, bunq – oder die 8-stellige BLZ / Ihre IBAN" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7183,6 +7216,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Delete “%@”…"
+          }
+        }
+      }
+    },
+    "„%@“ mit „%@“ zusammengeführt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%1$@” merged into “%2$@”"
           }
         }
       }
