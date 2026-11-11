@@ -924,7 +924,7 @@ fn sample(r: &MmRow, i: i64, account_id: i64) -> Booking {
         },
         rule_id: None,
         checked: true,
-        merchant: MerchantResolver::resolve("", ""),
+        merchant: MerchantResolver::placeholder(),
         merchant_name: String::new(),
         merchant_domain: None,
         merchant_svg_path: None,
@@ -1009,6 +1009,8 @@ impl Vault {
             preserve_notes,
         )?;
         tx.commit()?;
+        // Fold the import into the main file; best effort, it is committed.
+        let _ = db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
         Ok(MoneyMoneyImportResult {
             account_id: st.account_id,
             account_created: st.account_created,
