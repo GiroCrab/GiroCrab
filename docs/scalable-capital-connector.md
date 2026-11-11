@@ -11,12 +11,12 @@ layer. Nothing has been verified against the live Scalable backend yet.
 | Phase | Scope | State |
 | --- | --- | --- |
 | 0 | Feasibility study (this document) | ✅ done 2026-11-11 |
-| 1 | DPoP signing + device-code login against the real endpoints | ⬜ not started |
-| 2 | Session persistence, refresh, 2FA-on-login | ⬜ not started |
-| 3 | Account discovery (broker portfolio, Overnight, Fixed-Term) | ⬜ not started |
-| 4 | Transaction fetch + mapping, de-duplication | ⬜ not started |
-| 5 | Wiring: `ConnectorKind`, descriptor, Swift UI, demo data | ⬜ not started |
-| 6 | Tests, README/CONTRIBUTING update, release notes | ⬜ not started |
+| 1 | DPoP signing + device-code login against the real endpoints | ✅ verified live 2026-11-11 |
+| 2 | Session persistence, refresh, 2FA-on-login | ✅ login + 2FA verified live; refresh/7-day re-login not yet observed |
+| 3 | Account discovery (broker portfolio, Overnight, Fixed-Term) | ✅ verified live (1 portfolio, 1 Overnight, 0 Fixed-Term) |
+| 4 | Transaction fetch + mapping, de-duplication | 🟡 12 bookings + 3 holdings imported; amounts/signs/dates awaiting user check |
+| 5 | Wiring: `ConnectorKind`, descriptor, Swift UI, demo data | ✅ done 2026-11-11 (demo seed left unchanged, see below) |
+| 6 | Tests, README/CONTRIBUTING update, release notes | ⬜ unit tests done; docs pending live verification |
 
 Blocking dependency for phases 1–4: a Scalable Capital account with
 **Profile → Security → Agentic Investing** enabled, to validate the flow live.
@@ -320,11 +320,84 @@ Each step ends with `cargo check -q -p girocrab-core` (Rust) or `swift build -q`
 | Q1 | Does `BrokerOverview.valuation` include cash, or only securities? | Compare with `cash_balance` live; choose the figure that matches the app's "Gesamtwert". |
 | Q2 | Does `lastEventDateTime` reflect booking or execution time? | Compare with the Scalable app's transaction dates. |
 
+## Implementation notes (what the code does today)
+
+Files: `girocrab-core/src/connectors/dpop.rs` (signer, 3 unit tests),
+`girocrab-core/src/connectors/scalable.rs` (connector, 5 unit tests), wiring in
+`models.rs`, `connectors/mod.rs`, `connectors/demo.rs`, `i18n.rs`; Swift in
+`Formatting.swift`, `ConnectionsUI.swift`, `BankPicker.swift`, `TwoFactorSheet.swift`
+and `Xcode/App/Localizable.xcstrings`.
+
+Decisions that differ from the original plan:
+
+- **Account layout per broker portfolio**: two accounts like the Trade Republic
+  connector, `sc:cash:<pid>` "Verrechnungskonto" (Checking, balance =
+  `payments.buyingPower.cashBalance`) carrying all bookings, and `sc:depot:<pid>`
+  "Depot" (Brokerage, balance = `securitiesValuation + cryptoValuation`, falling
+  back to `valuation`) carrying the holdings from `BrokerHoldings`.
+- **User-Agent**: GiroCrab's own (`GiroCrab/<version>`), not the CLI's. Switch to
+  `scalable-cli/<version>` only if the live test shows the backend rejects it.
+- **Demo seed unchanged**: the curated demo (5 accounts, 50 bookings, asserted by a
+  test) does not get Scalable accounts. The demo connector only simulates the
+  browser login challenge for a Scalable connection added in demo mode.
+- **Session refresh**: `begin()` reuses a stored session when the access token is
+  still valid for more than a minute, otherwise refreshes; any OAuth error on refresh
+  (idle timeout, 7-day limit, revoked) falls back to a new device-code login instead
+  of failing. A 401 during fetch triggers one refresh and retry.
+- **2FA-on-login**: if the state query itself fails, the connector logs it and
+  continues to fetch rather than blocking (the fetch will surface a real auth problem).
+- **Amount sign**: positive amounts of outflow types (`BUY`, `SAVINGS_PLAN`,
+  `WITHDRAWAL`, `FEE`, `TAX`, `SWAP_OUT`, `TRANSFER_OUT`, `CASH_TRANSFER_OUT`,
+  `REINVESTMENT`, or `side = BUY`) are negated; already-signed amounts are kept.
+  Open statuses (`CREATED`, `REQUESTED`, `PENDING`, `PARTIAL_FILLED`, `CANCELLED`,
+  `CANCEL_REQUESTED`, `EXPIRED`, `REJECTED`) and `isCancellation` rows are skipped.
+- **Overnight accounts** with a `state` other than `ACTIVE` are skipped; Fixed-Term
+  accounts only in `PENDING` / `ACTIVE` / `CANCELLATION_REQUESTED`.
+- **Debug log**: every step logs to the depot debug log with the prefix `scalable:`;
+  tokens and codes are never logged.
+
+## Live test protocol (for the first run on a real account)
+
+1. On scalable.capital: Profile → Security → enable "Agentic Investing".
+2. GiroCrab (non-demo): add bank "Scalable Capital", any e-mail as label, "Abrufen".
+3. Expected: sheet "Bei Scalable Capital im Browser anmelden" with code and a
+   button "Im Browser anmelden". Complete the login in the browser; the sheet
+   should close by itself within the poll interval (5 s default).
+4. If 2FA-on-login is enabled, a second sheet asks for approval in the Scalable app.
+5. Expected result: accounts "Verrechnungskonto" + "Depot" per portfolio, plus
+   Overnight / Fixed-Term accounts if present, with bookings since the sync window.
+6. Record in **Live findings**: did the device-code call succeed (R1 cleared?),
+   DPoP nonce behaviour, the exact amount sign convention observed, whether
+   `valuation` includes cash (Q1), status values seen.
+
 ## Live findings
 
-_Empty until phase 1 runs against the real backend. Record sanitised request and
-response shapes here, including DPoP nonce behaviour and any UA/client checks._
+First live run on 2026-11-11 (macOS, GiroCrab debug build):
+
+- **R1 cleared**: the device-code request, token polling and all GraphQL
+  operations are accepted with GiroCrab's own User-Agent and the CLI's public
+  client ID. No client fingerprinting observed.
+- **"Agentic Investing" switch is mandatory**: with it off, the browser shows
+  "Activation denied – We are not able to activate your device" after the code is
+  confirmed. The device-code request itself still succeeds, so the connector cannot
+  detect this earlier; the descriptor note tells the user to enable it first.
+- **Device flow**: `interval` 5 s, `expires_in` 900 s.
+- **2FA-on-login**: `enabled=true, hasApprovedSession=false` on a fresh login.
+  `Start2faOnLogin` accepted `deviceName = "GiroCrab"`, `deviceType = "CLI"` (R5
+  cleared). `Validate2faOnLogin.status` went `PENDING` → `SUCCESS` (not `APPROVED`
+  as guessed; the connector accepts both).
+- **Fetch**: `ResolveBrokerIds` returned 1 portfolio; `BrokerOverview` delivered
+  `valuation` and `securitiesValuation`; `BrokerLimits` delivered `cashBalance`;
+  `BrokerHoldings` yielded 3 positions; `BrokerTransactions` 12 bookings in one page
+  for the default 90-day window; `DiscoverOvernightAccounts` 1 account with
+  `OvernightSummary.totalAmount`; `ListFixedTermAccounts` 0 accounts.
+- DPoP nonce challenges: none observed (no retry needed on any call).
+- Still open: Q1 (does `valuation` include cash), amount sign convention, status
+  values, `lastEventDateTime` semantics – to be confirmed against the Scalable app.
 
 ## Change log
 
 - 2026-11-11 – Initial feasibility study and plan written from scalable-cli v1.3.0 source.
+- 2026-11-11 – Phases 1–5 implemented (DPoP signer, device-code login, refresh, 2FA-on-login, broker/Overnight/Fixed-Term fetch, holdings, Swift wiring). Unit tests green. Awaiting first live test.
+- 2026-11-11 – Scalable Capital added to the bank search directory (was not findable in "Add Bank").
+- 2026-11-11 – First live run succeeded end to end: login, 2FA, 1 portfolio, 12 bookings, 3 holdings, 1 Overnight account. See Live findings.

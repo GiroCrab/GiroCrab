@@ -2964,6 +2964,17 @@
         }
       }
     },
+    "Im Browser anmelden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in in the browser"
+          }
+        }
+      }
+    },
     "Im Browser-Fenster anmelden" : {
       "extractionState" : "manual",
       "localizations" : {
