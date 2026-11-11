@@ -109,6 +109,27 @@ Enable Banking app in restricted mode and links their own accounts.
    in Settings (off / 6 h / 12 h / 24 h). The same mechanism could later serve
    bunq and other connections that need no TAN.
 4. Local notification when a consent expires within 7 days, or has expired.
+5. **Account changes are shown, never applied silently.**
+   - *Observed on a real C24 account (2026-11-11):* unlinking accounts in the
+     Enable Banking Control Panel does **not** affect an existing consent.
+     The unlinked savings and shared accounts were still delivered without
+     error. The account list only really changes on a new consent
+     (reconnect, or expiry and renewal) or when the bank refuses access.
+   - **On reconnect:** compare the previous accounts with the new session's
+     (`carry_over` already matches them by IBAN / identification hash).
+     Accounts that are new get named in the sync notice ("Neu: …"). Accounts
+     that are no longer included get the status "Zugriff entzogen" and a
+     notice, and are no longer fetched.
+   - **When the bank refuses an account** (`ASPSP_ACCOUNT_NOT_ACCESSIBLE` /
+     `ACCOUNT_DOES_NOT_EXIST`, currently only logged and skipped): same
+     status and notice.
+   - **Never delete automatically.** A marked account keeps its bookings and
+     balance; the user chooses to hide or remove it. If a later consent
+     includes it again, the status clears and syncing resumes under the same
+     account (same stable key).
+   - Needs: per-account status in the vault (e.g. `accounts.access_state`),
+     returned via `FetchResult` from the connector, exposed through UniFFI;
+     a badge on the account in the sidebar and a line in the sync toast.
 
 ### Phase 3: smoother setup
 1. **Redirect without pasting.** Check whether Enable Banking accepts a
