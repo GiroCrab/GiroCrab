@@ -35,6 +35,8 @@ public struct GiroCrabScenes: Scene {
                 Button("Neue Kontogruppe …") { model.groupDialog = .create() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(model.vault == nil)
+                Button("Neues Darlehen …") { model.openLoanEditor(.create) }
+                    .disabled(model.vault == nil)
                 Button("Aus MoneyMoney importieren…") { model.openMoneyMoneyImport() }
                     .disabled(model.vault == nil)
                 Button("Alle Konten abrufen") { model.requestSyncAll() }
@@ -70,6 +72,8 @@ public struct GiroCrabScenes: Scene {
                     Button(s.title) { model.scope = s }
                         .keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
                 }
+                Divider()
+                LoanAssignMenu(model: model, booking: model.selectedBooking)
             }
             CommandGroup(after: .appInfo) {
                 Button("Tresor sperren") { model.lock() }
@@ -111,6 +115,16 @@ public struct GiroCrabRootView: View {
 
     public var body: some View {
         switch model.vaultState {
+        case .starting:
+            VStack(spacing: 16) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 54))
+                    .foregroundStyle(Theme.accent)
+                ProgressView()
+                Text("GiroCrab wird vorbereitet …").foregroundStyle(Theme.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.canvas.ignoresSafeArea())
         case .open:
             MainSplitView()
         case .locked, .unlocking:
@@ -243,6 +257,7 @@ struct MainSplitView: View {
         .navigationSplitViewStyle(.balanced)
         .quickLookPreview($model.quickLookURL)
         .accountGroupDialogs($model.groupDialog)
+        .manualLoanSheets(model)
         #if os(macOS)
         // "Gruppen bearbeiten …" → Settings › Kontogruppen
         .onChange(of: model.groupSettingsRequested) { _, requested in

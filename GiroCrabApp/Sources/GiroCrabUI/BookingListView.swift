@@ -189,10 +189,10 @@ struct BookingStreamView: View {
                     Button { model.exportFilteredBookingsCSV() } label: { Label("CSV exportieren…", systemImage: "square.and.arrow.up") }
                     Button { model.openRuleEditor() } label: { Label("Regeln", systemImage: "wand.and.stars") }
                     Button { model.showSettings = true } label: { Label("Einstellungen", systemImage: "gearshape") }
-                    if model.demoActive && model.hasOwnVault {
-                        Button { model.showOwnVault() } label: { Label("Demo beenden", systemImage: "theatermasks") }
-                    } else if !model.demoActive && model.hasOwnVault && model.allAccounts.isEmpty {
-                        Button { model.showDemo() } label: { Label("Demo-Daten laden", systemImage: "theatermasks") }
+                    if model.demoActive && (model.hasOwnVault || AppModel.vaultMayHoldRealData) {
+                        Button { model.showOwnVault() } label: { Label("Zurück zum eigenen Tresor", systemImage: "lock.open") }
+                    } else if !model.demoActive {
+                        Button { model.showDemo() } label: { Label("Demo-Daten-Vorschau starten", systemImage: "theatermasks") }
                     }
                 } label: { Label("Mehr", systemImage: "ellipsis.circle") }
             }
@@ -388,6 +388,7 @@ struct DayCard: View {
         Button("Regel für diesen Händler erstellen …", systemImage: "wand.and.stars") { model.openRuleEditor(from: b) }
         Button("Notiz bearbeiten …", systemImage: "note.text") { model.editNote(for: b) }
         Button("Umsatz aufteilen (Splitbuchung) …", systemImage: "arrow.triangle.branch") { model.splitBooking = b }
+        LoanAssignMenu(model: model, booking: b, hidesWhenUnavailable: true)
         Divider()
         Button("Nach „\(b.counterparty.isEmpty ? b.merchantName : b.counterparty)“ suchen", systemImage: "magnifyingglass") {
             model.searchText = b.counterparty.isEmpty ? b.merchantName : b.counterparty
