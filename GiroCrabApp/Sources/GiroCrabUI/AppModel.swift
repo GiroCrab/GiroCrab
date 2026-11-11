@@ -129,9 +129,10 @@ struct TransferDraft {
     var amountText = ""
     var purpose = ""
     var pin = ""
-    /// SEPA Instant (Echtzeitüberweisung); falls back to a regular transfer
-    /// if the bank does not offer or rejects it.
-    var instant = true
+    /// SEPA Instant (Echtzeitüberweisung). Off by default. If the bank does
+    /// not offer or rejects it, nothing is sent automatically: the sheet
+    /// offers to send it as a regular transfer (new approval).
+    var instant = false
     /// Terminüberweisung: when on, `executionDate` is sent (FinTS only).
     var scheduled = false
     var executionDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
@@ -145,6 +146,13 @@ struct TransferDraft {
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: executionDate)
     }
+}
+
+/// A transfer whose result is unclear: it may have been executed.
+struct TransferUnknownNotice: Identifiable {
+    let id = UUID()
+    let reason: String
+    let endToEndId: String
 }
 
 struct PendingLogin: Identifiable {
@@ -255,6 +263,11 @@ public final class AppModel {
     var showCSVExporter = false
     var transferDraft = TransferDraft()
     var transferError: String?
+    /// Instant was not possible and nothing was sent: why (shown in the
+    /// transfer sheet with a "send as regular transfer" button).
+    var transferInstantDeclined: String?
+    /// The order reached the bank but its result is unclear.
+    var transferUnknown: TransferUnknownNotice?
     var splitBooking: Booking?
     var transferBusy = false
     private var syncQueue: [BankConnection] = []
@@ -1573,7 +1586,17 @@ extension AppModel {
             transferDraft.accountID = selected
         }
         transferError = nil
+        transferInstantDeclined = nil
         showTransferSheet = true
+    }
+
+    /// After an instant transfer was declined (nothing sent): send the same
+    /// draft as a regular SEPA transfer. A new order with its own approval,
+    /// only ever started by the user.
+    func sendAsRegularTransfer() {
+        transferInstantDeclined = nil
+        transferDraft.instant = false
+        startTransfer()
     }
 
     /// Context menu: new transfer pre-filled from a booking.
@@ -1616,6 +1639,7 @@ extension AppModel {
             }
             let session = try vault.beginTransfer(request: request, secret: isDemo ? "demo" : transferDraft.pin, demo: isDemo)
             transferError = nil
+            transferInstantDeclined = nil
             transferBusy = true
             showTransferSheet = false
             activeTransfer = session
@@ -1652,11 +1676,28 @@ extension AppModel {
             transferDraft = TransferDraft(accountID: transferDraft.accountID, instant: transferDraft.instant)
             if outcome.instant {
                 toast = String(localized: "Echtzeitüberweisung freigegeben und vorgemerkt")
-            } else if let reason = outcome.fallbackReason {
-                toast = String(localized: "Echtzeitüberweisung nicht möglich (\(reason)) – als normale Überweisung freigegeben und vorgemerkt")
             } else {
                 toast = String(localized: "Überweisung freigegeben und vorgemerkt")
             }
+            reloadAll()
+        case .instantDeclined(let reason):
+            // Nothing was sent. Keep the draft and let the user decide.
+            pollTask?.cancel()
+            activeChallenge = nil
+            activeTransfer = nil
+            transferBusy = false
+            transferError = nil
+            transferInstantDeclined = reason
+            showTransferSheet = true
+        case .outcomeUnknown(let reason, let endToEndId):
+            // May have been executed: no retry button, clear the draft so it
+            // cannot be resent with one click, and say so clearly.
+            pollTask?.cancel()
+            activeChallenge = nil
+            activeTransfer = nil
+            transferBusy = false
+            transferDraft = TransferDraft(accountID: transferDraft.accountID, instant: false)
+            transferUnknown = TransferUnknownNotice(reason: reason, endToEndId: endToEndId)
             reloadAll()
         }
     }

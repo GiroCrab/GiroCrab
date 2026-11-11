@@ -217,6 +217,8 @@ pub struct Pain001<'a> {
     pub amount_cents: i64,
     pub purpose: &'a str,
     pub version: PainVersion,
+    /// EndToEndId (stable per transfer; `NOTPROVIDED` when empty).
+    pub end_to_end_id: &'a str,
     /// SEPA Instant Credit Transfer (`<LclInstrm><Cd>INST</Cd></LclInstrm>`).
     pub instant: bool,
 }
@@ -288,11 +290,16 @@ pub fn build_pain001(p: &Pain001) -> CoreResult<String> {
 <PmtTpInf><SvcLvl><Cd>SEPA</Cd></SvcLvl>{local_instrument}</PmtTpInf><ReqdExctnDt>{exec}</ReqdExctnDt>\
 <Dbtr><Nm>{debtor}</Nm></Dbtr><DbtrAcct><Id><IBAN>{d_iban}</IBAN></Id></DbtrAcct>\
 <DbtrAgt><FinInstnId>{d_agent}</FinInstnId></DbtrAgt><ChrgBr>SLEV</ChrgBr>\
-<CdtTrfTxInf><PmtId><EndToEndId>NOTPROVIDED</EndToEndId></PmtId>\
+<CdtTrfTxInf><PmtId><EndToEndId>{e2e}</EndToEndId></PmtId>\
 <Amt><InstdAmt Ccy=\"EUR\">{amount}</InstdAmt></Amt>{c_agent}\
 <Cdtr><Nm>{creditor}</Nm></Cdtr><CdtrAcct><Id><IBAN>{c_iban}</IBAN></Id></CdtrAcct>{rmt}\
 </CdtTrfTxInf></PmtInf></CstmrCdtTrfInitn></Document>",
         created = xml_escape(p.created),
+        e2e = if p.end_to_end_id.trim().is_empty() {
+            "NOTPROVIDED".to_string()
+        } else {
+            xml_escape(&clip(p.end_to_end_id, 35))
+        },
     ))
 }
 
@@ -342,6 +349,7 @@ mod tests {
             amount_cents: 12_345,
             purpose,
             version: PainVersion::V03,
+            end_to_end_id: "",
             instant: false,
         }
     }
@@ -382,6 +390,11 @@ mod tests {
     #[test]
     fn regular_pain_03_is_unchanged() {
         let xml = build_pain001(&sample("Max Muster", "Miete")).unwrap();
+        assert!(xml.contains("<EndToEndId>NOTPROVIDED</EndToEndId>"));
+        let mut p = sample("Max Muster", "Miete");
+        p.end_to_end_id = "GC0123456789ABCDEF";
+        let xml2 = build_pain001(&p).unwrap();
+        assert!(xml2.contains("<EndToEndId>GC0123456789ABCDEF</EndToEndId>"));
         assert!(xml.contains("pain.001.001.03"));
         assert!(xml.contains("<ReqdExctnDt>2026-11-09</ReqdExctnDt>"));
         assert!(xml.contains("<BIC>BYLADEM1001</BIC>"));

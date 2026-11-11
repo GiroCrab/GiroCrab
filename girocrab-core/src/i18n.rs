@@ -481,9 +481,8 @@ fn english(de: &str) -> Option<&'static str> {
         "Demo: Die Empfängerbank ist für Echtzeitüberweisungen gerade nicht erreichbar." => {
             "Demo: The recipient's bank is currently not reachable for instant transfers."
         }
-        "Echtzeitüberweisung nicht möglich – normale Überweisung freigeben" => {
-            "Instant transfer not possible – approve a regular transfer"
-        }
+        "Demo: 9800 Dialog abgebrochen." => "Demo: 9800 dialog aborted.",
+        "Demo: Verbindung zur Bank unterbrochen." => "Demo: Connection to the bank lost.",
         "Die Bank bietet per FinTS keine Echtzeitüberweisung (HKIPZ) an." => {
             "The bank does not offer instant transfers (HKIPZ) via FinTS."
         }
@@ -492,12 +491,6 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Die Bank erwartet für Echtzeitüberweisungen ein Datenformat, das GiroCrab nicht unterstützt." => {
             "The bank expects a data format for instant transfers that GiroCrab does not support."
-        }
-        "Echtzeitüberweisung abgelehnt – bitte erneut anmelden" => {
-            "Instant transfer rejected – please log in again"
-        }
-        "Die Echtzeitüberweisung wurde nicht ausgeführt ({0}). Sie wird jetzt als normale SEPA-Überweisung gesendet." => {
-            "The instant transfer was not executed ({0}). It is now being sent as a regular SEPA transfer."
         }
         "comdirect Client-ID" => "comdirect client ID",
         "Aus dem comdirect-Entwicklerportal (Persönlicher Bereich › Einstellungen › API)." => "From the comdirect developer portal (Persönlicher Bereich › Einstellungen › API).",

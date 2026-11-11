@@ -57,6 +57,9 @@ struct TransferSheetView: View {
                     .foregroundStyle(.red).font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let reason = model.transferInstantDeclined {
+                instantDeclined(reason)
+            }
             buttons
         }
         .padding(24)
@@ -201,9 +204,14 @@ struct TransferSheetView: View {
                             .onChange(of: draft.wrappedValue.instant) { _, on in
                                 if on { model.transferDraft.scheduled = false }
                             }
-                        Text("Kommt in Sekunden an. Bietet die Bank sie nicht an oder lehnt sie ab, wird sie als normale Überweisung gesendet (neue Freigabe nötig).")
+                        Text("Kommt in Sekunden an und ist nicht rückholbar. Bietet die Bank sie nicht an, wird nichts gesendet; du kannst sie dann als normale Überweisung senden.")
                             .font(.caption).foregroundStyle(Theme.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if draft.wrappedValue.instant, let c = cents, c >= 10_000_000 {
+                            Label("Viele Banken begrenzen Echtzeitüberweisungen (oft auf 100.000 € oder ein eigenes Limit). Die Bank kann den Auftrag dann ablehnen.", systemImage: "exclamationmark.triangle")
+                                .font(.caption).foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         Toggle("Terminüberweisung", isOn: draft.scheduled)
                         #if os(macOS)
                             .toggleStyle(.checkbox)
@@ -248,7 +256,7 @@ struct TransferSheetView: View {
                 Divider()
                 summaryRow("Von", account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "–")
                 summaryRow("Ausführung", sendsInstant
-                    ? String(localized: "Sofort (Echtzeitüberweisung, sonst normale Überweisung)")
+                    ? String(localized: "Sofort (Echtzeitüberweisung)")
                     : d.executionDateISO.map { String(format: String(localized: "Am %@ (Terminüberweisung)"), $0) }
                         ?? String(localized: "Heute (SEPA-Überweisung)"))
             }
@@ -268,6 +276,25 @@ struct TransferSheetView: View {
             Text(v).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
+    }
+
+    /// Instant was not possible and nothing was sent: offer a regular
+    /// transfer, which needs its own approval.
+    private func instantDeclined(_ reason: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Echtzeitüberweisung nicht ausgeführt", systemImage: "bolt.slash.fill")
+                .font(.callout.bold())
+            Text(String(format: String(localized: "Es wurde kein Geld gesendet. Grund der Bank: %@"), reason))
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            Button("Als normale Überweisung senden") { model.sendAsRegularTransfer() }
+                .disabled(model.transferBusy)
+            Text("Kommt in der Regel am nächsten Bankarbeitstag an. Du gibst sie erneut frei.")
+                .font(.caption).foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: buttons

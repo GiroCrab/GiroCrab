@@ -107,16 +107,52 @@ pub enum TransferStep {
     Finished {
         outcome: TransferOutcome,
     },
+    /// SEPA Instant was not possible and nothing was approved or executed
+    /// (bank does not offer it, or rejected the order before any approval).
+    /// No second order is sent automatically: the app may offer to send it
+    /// as a regular transfer, which is a new order with its own approval.
+    InstantDeclined {
+        reason: String,
+    },
+    /// The order reached the bank but its result is unclear (ambiguous reply
+    /// after the approval, connection lost). It MAY have been executed. A
+    /// booking marked "Status unklar" was stored; the user has to check the
+    /// account before trying again. Never resend automatically.
+    OutcomeUnknown {
+        reason: String,
+        end_to_end_id: String,
+    },
 }
 
-/// How a transfer was finally sent.
-#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+/// How an executed transfer was sent.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct TransferOutcome {
     /// true = accepted as SEPA Instant, false = regular SEPA transfer.
     pub instant: bool,
-    /// Set when an instant transfer was requested but sent as a regular one:
-    /// why the instant variant was not possible (bank text).
-    pub fallback_reason: Option<String>,
+    /// EndToEndId of the order (shows up in the bank statement).
+    pub end_to_end_id: String,
+}
+
+/// Connector-side result of a transfer once it reached `Phase::Ready`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferResult {
+    Executed {
+        instant: bool,
+    },
+    /// Instant not possible, nothing approved or executed.
+    InstantDeclined {
+        reason: String,
+    },
+    /// Order sent, result unclear (may have been executed).
+    Unknown {
+        reason: String,
+    },
+}
+
+impl Default for TransferResult {
+    fn default() -> Self {
+        TransferResult::Executed { instant: false }
+    }
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -419,10 +455,16 @@ pub trait BankConnector: Send {
             message: tr("Für diese Bank werden Überweisungen nicht unterstützt.").into(),
         })
     }
-    /// After `send_transfer` finished: instant or regular, and why a
-    /// requested instant transfer fell back. Default: regular, no fallback.
-    fn transfer_outcome(&self) -> TransferOutcome {
-        TransferOutcome::default()
+    /// After `send_transfer` reached `Ready`: executed (instant or regular),
+    /// instant declined before any approval, or result unknown.
+    /// Default: executed as a regular transfer.
+    fn transfer_result(&self) -> TransferResult {
+        TransferResult::default()
+    }
+    /// true once the order itself was handed to the bank. A connection error
+    /// after that point means the result is unknown, not "not executed".
+    fn order_submitted(&self) -> bool {
+        false
     }
 }
 
@@ -436,9 +478,12 @@ pub struct TransferJob {
     pub recipient_bic: Option<String>,
     pub amount_cents: i64,
     pub purpose: String,
-    /// SEPA Instant requested (connector falls back to regular if rejected).
+    /// SEPA Instant requested. If the bank does not offer it, the connector
+    /// reports `TransferResult::InstantDeclined`; it never resends on its own.
     pub instant: bool,
     pub execution_date: Option<String>,
+    /// Stable per-transfer EndToEndId (max. 35 chars, `[A-Z0-9]`).
+    pub end_to_end_id: String,
 }
 
 pub fn make_connector(kind: ConnectorKind, demo: bool) -> Box<dyn BankConnector> {
@@ -1205,7 +1250,15 @@ impl TransferSession {
             match phase {
                 Err(e) => {
                     st.done = true;
+                    // A dropped connection after the order reached the bank:
+                    // it may have been executed, so never report "failed".
+                    let unknown = st.submitted
+                        && st.connector.order_submitted()
+                        && matches!(e, CoreError::Network { .. });
                     st.connector.finish(&st.ctx).await;
+                    if unknown {
+                        return self.outcome_unknown(st, e.to_string());
+                    }
                     return Err(e);
                 }
                 Ok(Phase::Challenge(c)) => {
@@ -1219,13 +1272,50 @@ impl TransferSession {
                 Ok(Phase::Ready) => {
                     st.connector.finish(&st.ctx).await;
                     st.done = true;
-                    let outcome = st.connector.transfer_outcome();
-                    self.vault
-                        .record_pending_transfer(st.account_id, &st.job, outcome.instant)?;
-                    return Ok(TransferStep::Finished { outcome });
+                    return match st.connector.transfer_result() {
+                        TransferResult::Executed { instant } => {
+                            self.vault.record_pending_transfer(
+                                st.account_id,
+                                &st.job,
+                                if instant {
+                                    "Echtzeitüberweisung (vorgemerkt)"
+                                } else {
+                                    "Überweisung (vorgemerkt)"
+                                },
+                            )?;
+                            Ok(TransferStep::Finished {
+                                outcome: TransferOutcome {
+                                    instant,
+                                    end_to_end_id: st.job.end_to_end_id.clone(),
+                                },
+                            })
+                        }
+                        TransferResult::InstantDeclined { reason } => {
+                            Ok(TransferStep::InstantDeclined { reason })
+                        }
+                        TransferResult::Unknown { reason } => self.outcome_unknown(st, reason),
+                    };
                 }
             }
         }
+    }
+
+    /// Stores a booking marked "Status unklar" so the possibly executed order
+    /// stays visible (until the bank's booking arrives or 14 days pass).
+    fn outcome_unknown(&self, st: &TransferState, reason: String) -> CoreResult<TransferStep> {
+        self.vault.record_pending_transfer(
+            st.account_id,
+            &st.job,
+            if st.job.instant {
+                "Echtzeitüberweisung (Status unklar)"
+            } else {
+                "Überweisung (Status unklar)"
+            },
+        )?;
+        Ok(TransferStep::OutcomeUnknown {
+            reason,
+            end_to_end_id: st.job.end_to_end_id.clone(),
+        })
     }
 }
 
@@ -1417,6 +1507,7 @@ impl Vault {
             purpose: request.purpose.trim().to_string(),
             instant: request.instant,
             execution_date: exec_date,
+            end_to_end_id: new_end_to_end_id(),
         };
         Ok(Arc::new(TransferSession {
             vault: self.clone(),
@@ -1474,13 +1565,8 @@ impl Vault {
         &self,
         account_id: i64,
         job: &TransferJob,
-        instant: bool,
+        booking_text: &str,
     ) -> CoreResult<()> {
-        let booking_text = if instant {
-            "Echtzeitüberweisung (vorgemerkt)"
-        } else {
-            "Überweisung (vorgemerkt)"
-        };
         let db = self.db()?;
         db.execute(
             "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents, currency,
@@ -1488,7 +1574,7 @@ impl Vault {
              VALUES (?1, ?2, ?3, ?3, ?4, 'EUR', ?5, ?6, ?7, ?8)",
             params![
                 account_id,
-                format!("pending-{}", uuid::Uuid::new_v4()),
+                format!("pending-{}", job.end_to_end_id),
                 today(),
                 -job.amount_cents,
                 job.recipient_name,
@@ -1500,6 +1586,15 @@ impl Vault {
         Vault::apply_rules_inner(&db, true)?;
         Ok(())
     }
+}
+
+/// "GC" + 30 hex digits: unique, within the 35-char SEPA limit and the
+/// restricted character set.
+fn new_end_to_end_id() -> String {
+    format!(
+        "GC{}",
+        &uuid::Uuid::new_v4().simple().to_string().to_uppercase()[..30]
+    )
 }
 
 /// ISO 13616 Mod-97 IBAN check (whitespace and case ignored).
@@ -1885,15 +1980,11 @@ mod tests {
             step = s.poll().await.unwrap();
         }
         assert!(challenges >= 2, "login + transfer challenge");
-        assert!(matches!(
-            step,
-            TransferStep::Finished {
-                outcome: TransferOutcome {
-                    instant: true,
-                    fallback_reason: None
-                }
-            }
-        ));
+        let TransferStep::Finished { outcome } = &step else {
+            panic!("{step:?}")
+        };
+        assert!(outcome.instant);
+        assert!(outcome.end_to_end_id.starts_with("GC") && outcome.end_to_end_id.len() == 32);
         let page = v
             .list_transactions(BookingFilter {
                 account_ids: vec![acc.id],
@@ -1920,27 +2011,99 @@ mod tests {
         assert_eq!(sug[0].iban, "DE89370400440532013000");
         assert!(matches!(s.poll().await, Err(CoreError::SessionClosed)));
 
-        // Demo bank "rejects" instant for this recipient -> regular transfer.
+        // Runs a transfer to the end, approving every challenge.
+        async fn run(s: &TransferSession) -> (TransferStep, Vec<String>) {
+            let mut step = s.start().await.unwrap();
+            let mut titles = Vec::new();
+            while let TransferStep::NeedsChallenge { challenge }
+            | TransferStep::StillWaiting { challenge } = &step
+            {
+                titles.push(challenge.title.clone());
+                step = s.poll().await.unwrap();
+            }
+            (step, titles)
+        }
+        let bookings = |name: &str| {
+            v.list_transactions(BookingFilter {
+                account_ids: vec![acc.id],
+                category_id: None,
+                include_subcategories: false,
+                uncategorized_only: false,
+                search: Some(name.into()),
+                date_from: None,
+                date_to: None,
+                limit: 10,
+                offset: 0,
+                scope: BookingScope::All,
+                merchant_key: None,
+            })
+            .unwrap()
+            .transactions
+        };
+
+        // Bank does not offer instant: declined, nothing sent, no booking,
+        // and no automatic regular transfer.
         let mut slow = req("DE89370400440532013000", 990);
         slow.recipient_name = "Langsam AG".into();
         let s = v.clone().begin_transfer(slow, "pin".into(), true).unwrap();
-        let mut step = s.start().await.unwrap();
-        let mut titles = Vec::new();
-        while let TransferStep::NeedsChallenge { challenge }
-        | TransferStep::StillWaiting { challenge } = &step
-        {
-            titles.push(challenge.title.clone());
-            step = s.poll().await.unwrap();
-        }
+        let (step, titles) = run(&s).await;
         assert!(
-            titles.iter().any(|t| t.contains("normale Überweisung")),
-            "{titles:?}"
+            matches!(step, TransferStep::InstantDeclined { .. }),
+            "{step:?}"
         );
-        let TransferStep::Finished { outcome } = step else {
-            panic!()
+        assert!(
+            !titles.iter().any(|t| t.contains("Überweisung")),
+            "only the login, no transfer approval: {titles:?}"
+        );
+        assert!(bookings("Langsam AG").is_empty());
+        assert!(matches!(s.poll().await, Err(CoreError::SessionClosed)));
+
+        // Ambiguous reply after the approval: unknown, booking marked as
+        // unclear, session over (nothing resent).
+        let mut unclear = req("DE89370400440532013000", 770);
+        unclear.recipient_name = "Unklar KG".into();
+        let s = v
+            .clone()
+            .begin_transfer(unclear, "pin".into(), true)
+            .unwrap();
+        let (step, _) = run(&s).await;
+        let TransferStep::OutcomeUnknown { end_to_end_id, .. } = &step else {
+            panic!("{step:?}")
+        };
+        assert!(end_to_end_id.starts_with("GC"));
+        let b = bookings("Unklar KG");
+        assert_eq!(b.len(), 1);
+        assert!(
+            b[0].booking_text.contains("Status unklar"),
+            "{}",
+            b[0].booking_text
+        );
+        assert!(matches!(s.poll().await, Err(CoreError::SessionClosed)));
+
+        // Connection lost after the approval: unknown as well, not an error.
+        let mut lost = req("DE89370400440532013000", 660);
+        lost.recipient_name = "Netzfehler GmbH".into();
+        let s = v.clone().begin_transfer(lost, "pin".into(), true).unwrap();
+        let (step, _) = run(&s).await;
+        assert!(
+            matches!(step, TransferStep::OutcomeUnknown { .. }),
+            "{step:?}"
+        );
+        assert_eq!(bookings("Netzfehler GmbH").len(), 1);
+
+        // Regular transfer: never a second order either.
+        let mut regular = req("DE89370400440532013000", 550);
+        regular.instant = false;
+        regular.recipient_name = "Regulär OHG".into();
+        let s = v
+            .clone()
+            .begin_transfer(regular, "pin".into(), true)
+            .unwrap();
+        let (step, _) = run(&s).await;
+        let TransferStep::Finished { outcome } = &step else {
+            panic!("{step:?}")
         };
         assert!(!outcome.instant);
-        assert!(outcome.fallback_reason.is_some());
 
         let _ = std::fs::remove_file(path);
     }
