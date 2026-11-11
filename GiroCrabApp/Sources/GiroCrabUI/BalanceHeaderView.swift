@@ -237,11 +237,11 @@ struct StreamHeaderCard: View {
                     }
                     .pickerStyle(.inline)
                     Divider()
-                    Button {
-                        model.showCustomPeriod = true
-                    } label: {
+                    // A Toggle gives the native menu checkmark while the custom range is active;
+                    // choosing it always opens the date dialog.
+                    Toggle(isOn: Binding(get: { model.period == .custom }, set: { _ in model.showCustomPeriod = true })) {
                         if model.period == .custom {
-                            Label("Benutzerdefiniert: \(model.periodTitle) …", systemImage: "checkmark")
+                            Text("Benutzerdefiniert: \(model.periodTitle) …")
                         } else {
                             Text("Benutzerdefiniert …")
                         }
