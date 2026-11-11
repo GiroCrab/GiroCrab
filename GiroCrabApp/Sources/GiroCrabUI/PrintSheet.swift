@@ -142,9 +142,9 @@ struct PrintSheet: View {
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             Spacer()
-            Button("Alle") { selected.formUnion(visibleRows.map(\.id)) }
+            Button("Alle auswählen") { selected.formUnion(visibleRows.map(\.id)) }
                 .disabled(selectedRows.count == visibleRows.count)
-            Button("Keine") { selected.subtract(visibleRows.map(\.id)) }
+            Button("Auswahl aufheben") { selected.subtract(visibleRows.map(\.id)) }
                 .disabled(selectedRows.isEmpty)
         }
     }
@@ -228,6 +228,20 @@ enum PrintLogoImage {
 }
 
 #if os(macOS)
+/// File ▸ Papierformat … (⇧⌘P): the paper the printout is laid out for.
+@MainActor
+enum PageSetup {
+    static func run() {
+        let layout = NSPageLayout()
+        let info = NSPrintInfo.shared
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            layout.beginSheet(using: info, on: window) { _ in }
+        } else {
+            layout.runModal(with: info)
+        }
+    }
+}
+
 /// Loads the report into an off-screen WKWebView and runs the system print panel.
 @MainActor
 final class HTMLPrinter: NSObject, WKNavigationDelegate {
@@ -274,7 +288,10 @@ final class HTMLPrinter: NSObject, WKNavigationDelegate {
         op.jobTitle = jobName
         op.showsPrintPanel = true
         op.showsProgressPanel = true
-        op.printPanel.options.formUnion([.showsPaperSize, .showsOrientation, .showsScaling, .showsPreview])
+        // Pages are laid out for the Page Setup paper in portrait, so paper size and
+        // orientation are chosen there ("Papierformat …"), not in the print panel.
+        op.printPanel.options.formUnion([.showsScaling, .showsPreview])
+        op.printPanel.options.subtract([.showsPaperSize, .showsOrientation])
         // WKWebView's print view needs a frame, or the output is blank.
         op.view?.frame = web.bounds
         if let window = NSApp.keyWindow ?? NSApp.mainWindow {
