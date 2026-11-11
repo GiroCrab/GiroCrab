@@ -1014,3 +1014,76 @@ fn balances_blob_parsing() {
     assert_eq!(parse_balances_blob(Value::Text(String::new())), None);
     assert_eq!(parse_balances_blob(Value::Null), None);
 }
+
+#[test]
+fn reimport_of_emptied_depot_removes_stale_holdings() {
+    let v = vault();
+    let p = v.preview_moneymoney_database(fake_db(), PW.into()).unwrap();
+    v.import_moneymoney_database(fake_db(), PW.into(), options_from(&p, false, false))
+        .unwrap();
+    let depot = account_by_name(&v, "Depot");
+    assert_eq!(v.list_holdings(depot.id).unwrap().len(), 2);
+
+    // MoneyMoney later: all positions sold, balance down to the cash remainder
+    let sold = fake_db_with(
+        false,
+        "UPDATE securities SET deleted = 1 WHERE account_key = 3;
+         UPDATE accounts SET balances = CAST('6:0.010000,3:EUR,' AS BLOB) WHERE rowid = 3;",
+    );
+    let p2 = v
+        .preview_moneymoney_database(sold.clone(), PW.into())
+        .unwrap();
+    let d2 = p2.accounts.iter().find(|a| a.name == "Depot").unwrap();
+    assert_eq!(d2.holding_count, 0);
+    assert_eq!(
+        d2.existing_account_id,
+        Some(depot.id),
+        "recognised by external ref"
+    );
+    let r = v
+        .import_moneymoney_database(sold, PW.into(), options_from(&p2, false, false))
+        .unwrap();
+    assert_eq!(r.holdings_imported, 0);
+    assert!(
+        v.list_holdings(depot.id).unwrap().is_empty(),
+        "stale positions removed"
+    );
+    assert_eq!(account_by_name(&v, "Depot").balance_cents, 1);
+}
+
+#[test]
+fn shown_balance_also_wins_for_checking_accounts() {
+    // MoneyMoney's displayed balance is authoritative for every account type:
+    // it is what the user sees in MoneyMoney, independent of how far back the
+    // booking history goes. The derived balance (initial balance + bookings)
+    // remains the fallback for databases without the blob.
+    let v = vault();
+    let path = fake_db_with(
+        false,
+        "UPDATE accounts SET balances = CAST('10:1234.560000,3:EUR,' AS BLOB), balance_tsp = 1772971200 WHERE rowid = 1;",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into())
+        .unwrap();
+    let giro = p.accounts.iter().find(|a| a.name == "Girokonto").unwrap();
+    assert_eq!(giro.computed_balance_cents, 123_456);
+    assert!(
+        giro.balance_source.contains("Saldo laut MoneyMoney"),
+        "{}",
+        giro.balance_source
+    );
+    // other accounts (no blob) keep the derived value and its source text
+    let visa = p.accounts.iter().find(|a| a.name == "Visa-Karte").unwrap();
+    assert!(
+        visa.balance_source.contains("Umsätze"),
+        "{}",
+        visa.balance_source
+    );
+
+    v.import_moneymoney_database(path, PW.into(), options_from(&p, false, false))
+        .unwrap();
+    let acc = account_by_name(&v, "Girokonto");
+    assert_eq!(acc.balance_cents, 123_456);
+    // balance date = max(newest booking, balance timestamp)
+    assert_eq!(acc.balance_date, "2026-03-08");
+}

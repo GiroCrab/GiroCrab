@@ -1403,8 +1403,10 @@ fn import(
             if kind == AccountKind::Loan {
                 Vault::derive_initial_balance(conn, account_id)?;
             }
+            // Positions are a snapshot: always replace, so a depot whose positions
+            // were all sold in MoneyMoney ends up empty here too.
+            conn.execute("DELETE FROM holdings WHERE account_id = ?1", [account_id])?;
             if let Some(list) = src.holdings.get(&a.id) {
-                conn.execute("DELETE FROM holdings WHERE account_id = ?1", [account_id])?;
                 for h in list {
                     conn.execute(
                         "INSERT INTO holdings(account_id, isin, wkn, name, quantity, current_price_cents, purchase_price_cents, value_cents)
