@@ -132,14 +132,29 @@ pub struct SearchExpr {
     unsupported: Vec<&'static str>,
 }
 
+/// Limits that keep the recursive parser/evaluator (and dropping the tree)
+/// far from the stack limit, whatever a synced or imported rule contains.
+const MAX_EXPR_CHARS: usize = 2000;
+const MAX_NESTING: usize = 32;
+
 impl SearchExpr {
     pub fn parse(src: &str) -> Result<SearchExpr, String> {
+        if src.chars().count() > MAX_EXPR_CHARS {
+            return Err(trf(
+                "Der Suchausdruck ist zu lang (höchstens {0} Zeichen).",
+                &[&MAX_EXPR_CHARS],
+            ));
+        }
         let mut unsupported = Vec::new();
         let toks = tokenize(src, &mut unsupported)?;
         if toks.is_empty() {
             return Err(tr("Der Suchausdruck ist leer.").into());
         }
-        let mut p = Parser { toks, pos: 0 };
+        let mut p = Parser {
+            toks,
+            pos: 0,
+            depth: 0,
+        };
         let root = p.or()?;
         if p.pos < p.toks.len() {
             return Err(tr("Unerwartete schließende Klammer.").into());
@@ -255,6 +270,22 @@ fn parse_cents(v: &str) -> Option<i64> {
     let (neg, digits) = match v.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, v.strip_prefix('+').unwrap_or(v)),
+    };
+    // German thousands dots before a decimal comma: 1.000,50 -> 1000,50.
+    // Only when a comma is present and every group has exactly three digits;
+    // a lone "1.000" is left alone (still rejected).
+    let normalized;
+    let digits = match digits.rsplit_once(',') {
+        Some((int, frac)) if int.contains('.') => {
+            let mut groups = int.split('.');
+            let first = groups.next().unwrap_or("");
+            if first.is_empty() || first.len() > 3 || groups.any(|g| g.len() != 3) {
+                return None;
+            }
+            normalized = format!("{},{frac}", int.replace('.', ""));
+            normalized.as_str()
+        }
+        _ => digits,
     };
     let (int, frac) = match digits.split_once([',', '.']) {
         Some((i, f)) => (i, f),
@@ -417,9 +448,19 @@ fn is_field_name(s: &str) -> bool {
 struct Parser {
     toks: Vec<Tok>,
     pos: usize,
+    /// Current nesting of parentheses and NOTs.
+    depth: usize,
 }
 
 impl Parser {
+    fn enter(&mut self) -> Result<(), String> {
+        self.depth += 1;
+        if self.depth > MAX_NESTING {
+            return Err(tr("Der Suchausdruck ist zu tief verschachtelt.").into());
+        }
+        Ok(())
+    }
+
     fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.pos)
     }
@@ -456,8 +497,10 @@ impl Parser {
     fn unary(&mut self) -> Result<Node, String> {
         if matches!(self.peek(), Some(Tok::Not)) {
             self.pos += 1;
-            let inner = self.operand("NOT", Parser::unary)?;
-            return Ok(Node::Not(Box::new(inner)));
+            self.enter()?;
+            let inner = self.operand("NOT", Parser::unary);
+            self.depth -= 1;
+            return Ok(Node::Not(Box::new(inner?)));
         }
         self.primary()
     }
@@ -479,7 +522,10 @@ impl Parser {
         match tok {
             Some(Tok::Open) => {
                 self.pos += 1;
-                let inner = self.or()?;
+                self.enter()?;
+                let inner = self.or();
+                self.depth -= 1;
+                let inner = inner?;
                 if !matches!(self.peek(), Some(Tok::Close)) {
                     return Err(tr("Klammer nicht geschlossen.").into());
                 }
@@ -609,6 +655,41 @@ mod tests {
         assert!(m("comment:Urlaub", &t));
         assert!(m("remote_account:DE89370400440532013000", &t));
         assert!(m("currency:eur", &t));
+    }
+
+    #[test]
+    fn german_thousands_separators_in_amounts() {
+        assert_eq!(parse_cents("1.000,00"), Some(100_000));
+        assert_eq!(parse_cents("-12.345.678,9"), Some(-1_234_567_890));
+        // Without a comma "1.000" stays ambiguous and is rejected, as before.
+        assert_eq!(parse_cents("1.000"), None);
+        assert_eq!(parse_cents("1,5"), Some(150));
+        for bad in ["1.00,00", ".000,00", "1.0000,00", "1.000,000", "1..000,00"] {
+            assert_eq!(parse_cents(bad), None, "{bad}");
+        }
+        let t = inp("x", "y", 150_000);
+        assert!(m("amount>1.000,00", &t));
+        assert!(!m("amount>2.000,00", &t));
+    }
+
+    #[test]
+    fn deep_or_huge_expressions_are_rejected_not_crashed() {
+        let n = 100_000;
+        assert!(SearchExpr::parse(&format!("{}a{}", "(".repeat(n), ")".repeat(n))).is_err());
+        assert!(SearchExpr::parse(&"a ".repeat(n)).is_err());
+        assert!(SearchExpr::parse(&format!("{}a", "NOT ".repeat(n))).is_err());
+        let deep = |d: usize| format!("{}a{}", "(".repeat(d), ")".repeat(d));
+        assert!(SearchExpr::parse(&deep(MAX_NESTING)).is_ok());
+        assert!(SearchExpr::parse(&deep(MAX_NESTING + 1)).is_err());
+        // Wildcard storms stay linear (regex crate, no backtracking).
+        let e = SearchExpr::parse(&format!("{}b", "a*".repeat(200))).unwrap();
+        let long = "a".repeat(5000);
+        let t = inp(&long, "", 0);
+        assert!(!e.matches(&t));
+        // Multi-byte text next to wildcards and operators does not panic.
+        let t = inp("Müller 🦀 Straße", "Café ñ", 0);
+        assert!(m("m*ller 🦀 stra*e OR amount>1", &t));
+        assert!(m("/Caf./ AND *ñ", &t));
     }
 
     #[test]

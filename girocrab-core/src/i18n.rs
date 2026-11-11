@@ -476,6 +476,8 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Suchausdruck ist unvollständig." => "The search expression is incomplete.",
         "Unerwartete schließende Klammer." => "Unexpected closing parenthesis.",
         "Klammer nicht geschlossen." => "Parenthesis not closed.",
+        "Der Suchausdruck ist zu lang (höchstens {0} Zeichen)." => "The search expression is too long (at most {0} characters).",
+        "Der Suchausdruck ist zu tief verschachtelt." => "The search expression is nested too deeply.",
         "Anführungszeichen nicht geschlossen." => "Quotation mark not closed.",
         "Regulärer Ausdruck nicht mit / geschlossen." => "Regular expression not closed with /.",
         "Ungültiger regulärer Ausdruck: {0}" => "Invalid regular expression: {0}",
