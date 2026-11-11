@@ -141,6 +141,8 @@ struct PrintReport {
     var generatedAt = Date()
     /// App icon as `data:image/png;base64,…`; nil = no logo available on this platform.
     var logoDataURI: String?
+    /// Active list filters to name in the header (e.g. "Nur Ausgaben").
+    var filterNotes: [String] = []
 }
 
 enum PrintReportBuilder {
@@ -165,6 +167,16 @@ enum PrintReportBuilder {
             if r.amountCents > 0 { t.incomeCents += r.amountCents } else { t.expenseCents += r.amountCents }
         }
         return t
+    }
+
+    /// "Letzter Monat · Nur Ausgaben · 25 Buchungen": a filtered printout says what it leaves out.
+    static func metaLine(_ report: PrintReport, options: PrintOptions, count: Int) -> String {
+        var parts = [report.periodLabel]
+        var notes = report.filterNotes
+        if options.direction != .all { notes.append(options.direction.title) }
+        for n in notes where !parts.contains(n) { parts.append(n) }
+        parts.append(String(localized: "\(count) Buchungen"))
+        return parts.joined(separator: " · ")
     }
 
     /// "Erstellt am 11.11.2026 um 21:45 Uhr" in the user's locale.
@@ -227,7 +239,7 @@ enum PrintReportBuilder {
         }
         h += """
         <h1>\(esc(report.title))</h1>
-        <p class="meta">\(esc(report.periodLabel)) · \(esc(String(localized: "\(printed.count) Buchungen")))</p>
+        <p class="meta">\(esc(metaLine(report, options: options, count: printed.count)))</p>
         <p class="meta">\(esc(createdLine(report.generatedAt)))</p>
         """
         h += accountSummary(report, groups: groups, options: options)

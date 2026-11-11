@@ -44,7 +44,7 @@ struct PrintSheet: View {
                 }
         }
         #if os(macOS)
-        .frame(minWidth: 820, idealWidth: 920, minHeight: 520, idealHeight: 640)
+        .frame(minWidth: 880, idealWidth: 960, minHeight: 520, idealHeight: 640)
         #endif
         .onAppear {
             report = model.printSource()
@@ -57,7 +57,7 @@ struct PrintSheet: View {
     private var content: some View {
         #if os(macOS)
         HStack(spacing: 0) {
-            optionsForm.frame(width: 300)
+            optionsForm.frame(width: 360)
             Divider()
             bookingList
         }
@@ -111,6 +111,8 @@ struct PrintSheet: View {
         } footer: {
             if options.showDailyBalance {
                 Text("Der Tagessaldo ist der Kontostand am Ende des Tages, unabhängig von der Auswahl.")
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

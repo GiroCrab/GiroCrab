@@ -415,6 +415,10 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "print":
+            // Print dialog (GitHub #53) on last month's demo bookings.
+            period = .lastMonth
+            showPrintSheet = true
         case "transfer":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
             openTransfer()

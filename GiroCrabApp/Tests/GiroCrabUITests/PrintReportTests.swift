@@ -131,6 +131,17 @@ final class PrintReportTests: XCTestCase {
         XCTAssertTrue(grouped.contains(">Tagessaldo<"))
     }
 
+    func testHeaderNamesTheDirectionFilter() {
+        var o = PrintOptions()
+        XCTAssertEqual(PrintReportBuilder.metaLine(report(), options: o, count: 3), "März 2025 · \(String(localized: "\(3) Buchungen"))")
+        o.direction = .expenses
+        XCTAssertTrue(PrintReportBuilder.metaLine(report(), options: o, count: 2).contains(PrintDirection.expenses.title))
+        var r = report()
+        r.filterNotes = [PrintDirection.expenses.title]
+        // named once, even when list filter and print option agree
+        XCTAssertEqual(PrintReportBuilder.metaLine(r, options: o, count: 2).components(separatedBy: PrintDirection.expenses.title).count, 2)
+    }
+
     func testEmptySelection() {
         let html = PrintReportBuilder.html(report([]), options: PrintOptions())
         XCTAssertTrue(html.contains("Keine Buchungen ausgewählt."))
