@@ -45,7 +45,9 @@ use zeroize::Zeroizing;
 
 use crate::connectors::fints::sepa;
 use crate::connectors::group_for;
-use crate::connectors::moneymoney_import::{find_or_create_category, merge_rows, MmRow, Stats};
+use crate::connectors::moneymoney_import::{
+    find_or_create_category, fingerprint, merge_rows, MmRow, Stats,
+};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::{AccountKind, ConnectorKind, Holding};
@@ -170,6 +172,39 @@ pub struct MoneyMoneyDbImportOptions {
     pub statements_dir: Option<String>,
 }
 
+/// Check of one imported account after the import: does GiroCrab now hold
+/// what MoneyMoney showed? Read back from the vault, independent of the
+/// import's own counting.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MoneyMoneyDbAccountCheck {
+    pub mm_id: i64,
+    pub account_id: i64,
+    pub name: String,
+    pub currency: String,
+    /// Booked bookings MoneyMoney has for the account (split parts instead
+    /// of their parents) – what the import had to bring over.
+    pub mm_bookings: u32,
+    /// Of those, found in the GiroCrab account.
+    pub found_bookings: u32,
+    /// Of those, found but deleted in GiroCrab earlier (they stay deleted).
+    pub deleted_bookings: u32,
+    /// Bookings in the GiroCrab account that MoneyMoney doesn't have (e.g.
+    /// fetched from the bank before) – informational.
+    pub other_bookings: u32,
+    /// Balance as MoneyMoney shows it (or computed, see `mm_balance_shown`).
+    pub mm_balance_cents: i64,
+    /// `mm_balance_cents` is MoneyMoney's own displayed balance; `false` =
+    /// computed from opening balance + bookings.
+    pub mm_balance_shown: bool,
+    pub girocrab_balance_cents: i64,
+    /// The account is synced with a bank in GiroCrab, which keeps the
+    /// bank's balance – a difference is expected then.
+    pub balance_from_bank: bool,
+    /// Every MoneyMoney booking is there and the balances agree (or the
+    /// balance comes from the bank).
+    pub ok: bool,
+}
+
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct MoneyMoneyDbImportResult {
     pub accounts_created: u32,
@@ -208,6 +243,8 @@ pub struct MoneyMoneyDbImportResult {
     /// Of those, switched off: unsupported fields, account restriction or
     /// invalid syntax.
     pub rules_disabled: u32,
+    /// One check per imported account, in import order.
+    pub account_checks: Vec<MoneyMoneyDbAccountCheck>,
 }
 
 /// Where a running import is, for a progress bar.
@@ -1420,6 +1457,8 @@ struct AccountRows {
     pending: u32,
     split_parts: u32,
     balance_cents: i64,
+    /// `balance_cents` is MoneyMoney's displayed balance (not computed).
+    balance_shown: bool,
     balance_source: String,
     balance_date: String,
 }
@@ -1584,6 +1623,7 @@ impl Source {
             pending: 0,
             split_parts: 0,
             balance_cents: 0,
+            balance_shown: false,
             balance_source: String::new(),
             balance_date: String::new(),
         };
@@ -1668,6 +1708,7 @@ impl Source {
             if cur.is_empty() || *cur == a.currency {
                 let d = a.balance_ts.and_then(unix_to_date).unwrap_or_default();
                 out.balance_cents = *cents;
+                out.balance_shown = true;
                 out.balance_source = if d.is_empty() {
                     tr("Saldo laut MoneyMoney").into()
                 } else {
@@ -2083,6 +2124,83 @@ fn import_category_rules(
     Ok(())
 }
 
+/// Reads an imported account back from the vault and compares it with
+/// MoneyMoney: every booking matched by its fingerprint (as a multiset, like
+/// the import itself), and the balance.
+fn check_account(
+    conn: &Connection,
+    a: &SrcAccount,
+    name: &str,
+    account_id: i64,
+    r: &AccountRows,
+    balance_from_bank: bool,
+) -> CoreResult<MoneyMoneyDbAccountCheck> {
+    // fingerprint -> deleted flags of the account's bookings
+    let mut have: HashMap<String, Vec<bool>> = HashMap::new();
+    {
+        let mut q = conn.prepare(
+            "SELECT booking_date, amount_cents, counterparty_iban, counterparty, purpose,
+                    import_fp, deleted_ms IS NOT NULL
+             FROM transactions WHERE account_id = ?1 ORDER BY id",
+        )?;
+        let rows = q.query_map([account_id], |row| {
+            let fp: String = row.get(5)?;
+            let fp = if fp.is_empty() {
+                fingerprint(
+                    &row.get::<_, String>(0)?,
+                    row.get(1)?,
+                    &row.get::<_, String>(2)?,
+                    &row.get::<_, String>(3)?,
+                    &row.get::<_, String>(4)?,
+                )
+            } else {
+                fp
+            };
+            Ok((fp, row.get::<_, bool>(6)?))
+        })?;
+        for row in rows {
+            let (fp, deleted) = row?;
+            have.entry(fp).or_default().push(deleted);
+        }
+    }
+    let live_total = have.values().flatten().filter(|d| !**d).count() as u32;
+    let (mut found, mut deleted) = (0u32, 0u32);
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for row in &r.rows {
+        let fp = row.fp();
+        let k = seen.entry(fp.clone()).or_insert(0);
+        match have.get(&fp).and_then(|v| v.get(*k)) {
+            Some(true) => deleted += 1,
+            Some(false) => found += 1,
+            None => {}
+        }
+        *k += 1;
+    }
+    let girocrab_balance_cents: i64 = conn.query_row(
+        "SELECT balance_cents FROM accounts WHERE id = ?1",
+        [account_id],
+        |row| row.get(0),
+    )?;
+    let mm_bookings = r.rows.len() as u32;
+    let complete = found + deleted == mm_bookings;
+    let balance_ok = balance_from_bank || girocrab_balance_cents == r.balance_cents;
+    Ok(MoneyMoneyDbAccountCheck {
+        mm_id: a.id,
+        account_id,
+        name: name.to_string(),
+        currency: a.currency.clone(),
+        mm_bookings,
+        found_bookings: found,
+        deleted_bookings: deleted,
+        other_bookings: live_total.saturating_sub(found),
+        mm_balance_cents: r.balance_cents,
+        mm_balance_shown: r.balance_shown,
+        girocrab_balance_cents,
+        balance_from_bank,
+        ok: complete && balance_ok,
+    })
+}
+
 fn import(
     conn: &Connection,
     src: &Source,
@@ -2292,6 +2410,14 @@ fn import(
                 report.emit()?;
             }
         }
+        res.account_checks.push(check_account(
+            conn,
+            a,
+            &src.account_name(a),
+            account_id,
+            &r,
+            !owned,
+        )?);
         if let (true, Some(bank)) = (owned, a.bank_key) {
             to_link.push((account_id, bank));
         }

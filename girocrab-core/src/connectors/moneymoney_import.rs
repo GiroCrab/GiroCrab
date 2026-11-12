@@ -84,7 +84,7 @@ impl MmRow {
         }
     }
 
-    fn fp(&self) -> String {
+    pub(crate) fn fp(&self) -> String {
         fingerprint(
             &self.booking_date,
             self.amount_cents,

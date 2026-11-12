@@ -2080,3 +2080,100 @@ fn reimport_revives_deleted_account_with_its_cascade_bookings_only() {
         "individually deleted booking stays deleted"
     );
 }
+
+#[test]
+fn account_checks_confirm_a_complete_import() {
+    let v = vault();
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let r = v
+        .import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false, false))
+        .unwrap();
+    assert_eq!(r.account_checks.len(), 4);
+    for c in &r.account_checks {
+        assert!(c.ok, "{c:?}");
+        assert_eq!(c.found_bookings, c.mm_bookings, "{c:?}");
+        assert_eq!((c.deleted_bookings, c.other_bookings), (0, 0), "{c:?}");
+        assert_eq!(c.girocrab_balance_cents, c.mm_balance_cents, "{c:?}");
+    }
+    let giro = r
+        .account_checks
+        .iter()
+        .find(|c| c.name == "Girokonto")
+        .unwrap();
+    assert_eq!(giro.mm_bookings, 5);
+    let total: u32 = r.account_checks.iter().map(|c| c.mm_bookings).sum();
+    assert_eq!(total, r.bookings_new);
+
+    // a booking deleted in GiroCrab stays deleted – and still counts as there
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET deleted_ms = 1 WHERE id = (SELECT min(id) FROM transactions WHERE account_id = ?1)",
+            [giro.account_id],
+        )
+        .unwrap();
+    let r = v
+        .import_moneymoney_database(path, PW.into(), options_from(&p, false, false))
+        .unwrap();
+    let giro = r
+        .account_checks
+        .iter()
+        .find(|c| c.name == "Girokonto")
+        .unwrap();
+    assert!(giro.ok, "{giro:?}");
+    assert_eq!((giro.found_bookings, giro.deleted_bookings), (4, 1));
+}
+
+#[test]
+fn account_check_flags_missing_bookings_and_a_wrong_balance() {
+    let v = vault();
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let r = v
+        .import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false, false))
+        .unwrap();
+    let giro = r
+        .account_checks
+        .iter()
+        .find(|c| c.name == "Girokonto")
+        .unwrap()
+        .clone();
+    // something went wrong behind the import's back: a booking vanished,
+    // the balance is off
+    {
+        let db = v.db().unwrap();
+        db.execute(
+            "DELETE FROM transactions WHERE id = (SELECT min(id) FROM transactions WHERE account_id = ?1)",
+            [giro.account_id],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE accounts SET balance_cents = balance_cents + 1 WHERE id = ?1",
+            [giro.account_id],
+        )
+        .unwrap();
+    }
+    let src = read_source(&path, &SecretString::new(PW.into()), false).unwrap();
+    let a = src.accounts.iter().find(|a| a.id == giro.mm_id).unwrap();
+    let db = v.db().unwrap();
+    let c = check_account(
+        &db,
+        a,
+        "Girokonto",
+        giro.account_id,
+        &src.rows_for(a),
+        false,
+    )
+    .unwrap();
+    assert!(!c.ok);
+    assert_eq!((c.mm_bookings, c.found_bookings), (5, 4));
+    assert_eq!(c.girocrab_balance_cents, c.mm_balance_cents + 1);
+    // a bank-synced account keeps the bank's balance: only the bookings count
+    let c = check_account(&db, a, "Girokonto", giro.account_id, &src.rows_for(a), true).unwrap();
+    assert!(!c.ok, "a missing booking is still flagged");
+}

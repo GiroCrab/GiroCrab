@@ -13687,6 +13687,149 @@
           }
         }
       }
+    },
+    "%lld Buchungen fehlen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld transactions missing"
+          }
+        }
+      }
+    },
+    "%lld von %lld Konten weichen von MoneyMoney ab" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld accounts differ from MoneyMoney"
+          }
+        }
+      }
+    },
+    "%u in GiroCrab gelöscht" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%u deleted in GiroCrab"
+          }
+        }
+      }
+    },
+    "%u weitere von der Bank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%u more from the bank"
+          }
+        }
+      }
+    },
+    "Alle %lld Konten stimmen mit MoneyMoney überein." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All %lld accounts match MoneyMoney."
+          }
+        }
+      }
+    },
+    "Bitte prüfen Sie diese Konten. Ein erneuter Import ergänzt fehlende Buchungen, ohne Duplikate anzulegen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please check these accounts. Importing again adds missing transactions without creating duplicates."
+          }
+        }
+      }
+    },
+    "Das Konto stimmt mit MoneyMoney überein." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The account matches MoneyMoney."
+          }
+        }
+      }
+    },
+    "MoneyMoney-Saldo berechnet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MoneyMoney balance computed"
+          }
+        }
+      }
+    },
+    "Saldo GiroCrab" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab balance"
+          }
+        }
+      }
+    },
+    "Saldo MoneyMoney" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MoneyMoney balance"
+          }
+        }
+      }
+    },
+    "Saldo von der Bank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "balance from the bank"
+          }
+        }
+      }
+    },
+    "Stimmt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Matches"
+          }
+        }
+      }
+    },
+    "Weicht ab" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Differs"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
