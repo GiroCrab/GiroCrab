@@ -44,13 +44,11 @@ struct MoneyMoneyImportSheet: View {
     }
 }
 
-/// Title row of the import assistants: symbol, step title and subtitle, and
-/// "Schritt n von m" on the right.
+/// Title row of the import assistants: symbol, step title and subtitle. No
+/// "Schritt n von m" – Apple's assistants name each step by its title.
 struct ImportAssistantHeader: View {
     let title: String
     let subtitle: String
-    /// (current, total); nil = no numbered step (running import, result).
-    var step: (Int, Int)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -64,10 +62,6 @@ struct ImportAssistantHeader: View {
                 }
             }
             Spacer(minLength: 12)
-            if let (n, total) = step {
-                Text("Schritt \(n) von \(total)")
-                    .font(.caption).foregroundStyle(Theme.tertiary)
-            }
         }
     }
 }
@@ -105,8 +99,7 @@ struct MoneyMoneyExportImportView: View {
         VStack(alignment: .leading, spacing: 16) {
             ImportAssistantHeader(
                 title: step == .file ? String(localized: "Aus MoneyMoney importieren") : String(localized: "Übernahme"),
-                subtitle: subtitle,
-                step: (step == .file ? 1 : 2, 2))
+                subtitle: subtitle)
             Group {
                 switch step {
                 case .file: fileStep
@@ -265,6 +258,7 @@ struct MoneyMoneyExportImportView: View {
             if importing { ProgressView().controlSize(.small) }
             if step == .options {
                 Button("Zurück") { error = nil; step = .file }
+                    .keyboardShortcut("[", modifiers: .command) // the system's "Back"
                     .disabled(importing)
             }
             Button(step == .file ? "Fortfahren" : (importing ? "Importiere …" : "Importieren")) {

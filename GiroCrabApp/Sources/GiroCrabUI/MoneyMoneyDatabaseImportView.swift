@@ -49,6 +49,8 @@ struct MoneyMoneyDatabaseImportView: View {
     @State private var choices: [Int64: Choice] = [:]
     /// Connection per MoneyMoney bank login: option key, "" = don't connect.
     @State private var bankChoice: [Int64: String] = [:]
+    /// Rows selected in the account table (Space toggles their import).
+    @State private var tableSelection = Set<Int64>()
     @State private var importCategories = true
     @State private var importNotes = true
     @State private var importGroups = true
@@ -106,10 +108,7 @@ struct MoneyMoneyDatabaseImportView: View {
     // MARK: - Header and footer
 
     private var header: some View {
-        ImportAssistantHeader(
-            title: stepTitle,
-            subtitle: stepSubtitle,
-            step: visibleSteps.firstIndex(of: step).map { ($0 + 1, visibleSteps.count) })
+        ImportAssistantHeader(title: stepTitle, subtitle: stepSubtitle)
     }
 
     private var stepTitle: String {
@@ -167,6 +166,12 @@ struct MoneyMoneyDatabaseImportView: View {
                 Button("Fertig") { dismiss() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
+                    // Esc / ⌘. close the finished import as well
+                    .background(
+                        Button("Schließen") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
+                            .opacity(0)
+                            .accessibilityHidden(true))
             default:
                 Button("Abbrechen") { password = ""; dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -174,6 +179,7 @@ struct MoneyMoneyDatabaseImportView: View {
                 if loading { ProgressView().controlSize(.small) }
                 if step != .source {
                     Button("Zurück") { back() }
+                        .keyboardShortcut("[", modifiers: .command) // the system's "Back"
                 }
                 if step == .enableBanking {
                     Button("Später einrichten") { runImport() }
@@ -247,7 +253,6 @@ struct MoneyMoneyDatabaseImportView: View {
                         }
                     }
                     SecureField("Datenbank-Passwort", text: $password, prompt: Text("Passwort aus MoneyMoney"))
-                        .onSubmit { if canContinue { next() } }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Wählen Sie den MoneyMoney-Ordner – dann kommen auch die Kontoauszüge mit. Eine einzelne Datei (MoneyMoney.sqlite) geht auch, etwa aus einem Backup.")
@@ -282,6 +287,13 @@ struct MoneyMoneyDatabaseImportView: View {
                 }
                 accountTable(p)
                     .frame(maxHeight: .infinity)
+                    // Space switches the selected accounts on or off, like a checkbox
+                    .onKeyPress(.space) {
+                        guard !tableSelection.isEmpty else { return .ignored }
+                        let on = !tableSelection.allSatisfy { choices[$0]?.selected ?? true }
+                        for id in tableSelection { choices[id]?.selected = on }
+                        return .handled
+                    }
             }
         }
     }
@@ -291,7 +303,7 @@ struct MoneyMoneyDatabaseImportView: View {
         let rows = p.accounts.map(AccountRow.init)
         // "Ziel" only when GiroCrab already has accounts to merge into
         if model.allAccounts.isEmpty {
-            Table(rows) {
+            Table(rows, selection: $tableSelection) {
                 TableColumn("") { r in selectCell(r.a) }.width(22)
                 TableColumn("Konto") { r in nameCell(r.a) }
                 TableColumn("Buchungen") { r in bookingsCell(r.a) }.width(80)
@@ -299,7 +311,7 @@ struct MoneyMoneyDatabaseImportView: View {
                 TableColumn("Kontoart") { r in kindCell(r.a) }.width(150)
             }
         } else {
-            Table(rows) {
+            Table(rows, selection: $tableSelection) {
                 TableColumn("") { r in selectCell(r.a) }.width(22)
                 TableColumn("Konto") { r in nameCell(r.a) }
                 TableColumn("Buchungen") { r in bookingsCell(r.a) }.width(80)
