@@ -94,7 +94,7 @@ struct TwoFactorSheet: View {
                         ConsentWebView(browser: consent)
                             // banks lay their consent pages out for a desktop
                             // browser: a narrower view cuts off the account list
-                            .frame(minWidth: 820, idealWidth: 880, minHeight: 560, idealHeight: 680)
+                            .frame(minWidth: 820, idealWidth: 880, minHeight: 420, idealHeight: 620, maxHeight: .infinity)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
                         Text("Bei der Bank anmelden und den Zugriff erlauben – das Fenster schließt sich danach von selbst.")
@@ -158,8 +158,10 @@ struct TwoFactorSheet: View {
             }
             .padding(24)
             // the sheet takes the height its content needs: never cut off the
-            // result line, the error or the buttons
-            .fixedSize(horizontal: false, vertical: true)
+            // result line, the error or the buttons. Not with the bank's page:
+            // that one shrinks to fit the window instead of pushing the sheet
+            // past it.
+            .fixedSize(horizontal: false, vertical: !showsConsentPage)
             // the bank's own page needs the room of a browser window
             .macFrame(minWidth: showsConsentPage ? 868 : 400, idealWidth: showsConsentPage ? 928 : 420)
         }
