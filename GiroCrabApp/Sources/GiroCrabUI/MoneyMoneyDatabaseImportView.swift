@@ -575,7 +575,7 @@ struct MoneyMoneyDatabaseImportView: View {
     /// catalogue suggestion, else a match in the live list (when loaded).
     private func psd2Bank(_ b: MoneyMoneyDbBank) -> Psd2Bank? {
         guard b.connector == nil else { return nil }
-        if let s = b.psd2Bank { return s }
+        if let s = b.connectionOptions.first(where: { $0.via == .enableBanking })?.psd2Bank { return s }
         guard !model.livePsd2Banks.isEmpty else { return nil }
         return matchPsd2BankByName(bankName: b.name, candidates: model.livePsd2Banks)
     }
@@ -678,7 +678,7 @@ struct MoneyMoneyDatabaseImportView: View {
                 accountChecks: preview.accounts.map { a in
                     MoneyMoneyDbAccountCheck(mmId: a.mmId, accountId: 0, name: a.name, currency: a.currency, mmBookings: a.bookingCount, foundBookings: a.bookingCount, deletedBookings: 0, otherBookings: 0, mmBalanceCents: a.computedBalanceCents, mmBalanceShown: true, girocrabBalanceCents: a.computedBalanceCents, balanceFromBank: false, ok: true)
                 },
-                psd2Connections: preview.banks.filter { $0.connector == nil && $0.psd2Bank != nil }.map { b in
+                psd2Connections: preview.banks.filter { $0.connector == nil && psd2Bank($0) != nil }.map { b in
                     MoneyMoneyDbPsd2Connection(connectionId: -b.mmId, bankName: b.name, created: true,
                         accounts: preview.accounts.filter { $0.bankName == b.name }.map {
                             MoneyMoneyDbPsd2Account(name: $0.name, iban: $0.iban, accountNumber: $0.accountNumber)
@@ -699,8 +699,11 @@ struct MoneyMoneyDatabaseImportView: View {
             importGroups: importGroups,
             importStatements: importStatements && preview.statementsFound > 0,
             statementsDir: statementsURL?.path,
-            psd2Banks: preview.banks.compactMap { b in
-                psd2Bank(b).map { MoneyMoneyDbPsd2Choice(mmBankId: b.mmId, aspsp: $0.aspsp, country: $0.country) }
+            bankChoices: preview.banks.compactMap { b in
+                guard b.connector == nil, let x = psd2Bank(b) else { return nil }
+                return MoneyMoneyDbBankChoice(mmBankId: b.mmId, connection: MoneyMoneyDbConnectionOption(
+                    via: .enableBanking, connector: .enableBanking,
+                    key: "enablebanking:\(x.country):\(x.aspsp)", psd2Bank: x))
             })
         let statements = statementsURL
         let pw = password
@@ -828,17 +831,20 @@ extension AppModel {
         ]
         let banks = [
             MoneyMoneyDbBank(mmId: 1, bankCode: "20041111", name: "comdirect", loginName: "12345678", customerId: "12345678",
-                             connector: .comdirect, hasSavedPin: true, existingConnectionId: nil, accountCount: 3, psd2Bank: nil),
+                             connector: .comdirect, hasSavedPin: true, existingConnectionId: nil, accountCount: 3, connectionOptions: []),
             MoneyMoneyDbBank(mmId: 2, bankCode: "50050201", name: "1822direkt", loginName: "max.mustermann", customerId: "",
-                             connector: .direkt1822, hasSavedPin: true, existingConnectionId: nil, accountCount: 1, psd2Bank: nil),
+                             connector: .direkt1822, hasSavedPin: true, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
             MoneyMoneyDbBank(mmId: 3, bankCode: "", name: "PayPal", loginName: "max@example.com", customerId: "",
-                             connector: .payPal, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, psd2Bank: nil),
+                             connector: .payPal, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
             MoneyMoneyDbBank(mmId: 4, bankCode: "12345678", name: "Musterbank", loginName: "mustermann", customerId: "",
-                             connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, psd2Bank: nil),
+                             connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
             // no own connector, but reachable through Enable Banking (PSD2)
             MoneyMoneyDbBank(mmId: 5, bankCode: "50024024", name: "C24 Bank", loginName: "max.mustermann", customerId: "",
                              connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1,
-                             psd2Bank: psd2Catalog().first { $0.aspsp == "C24" }),
+                             connectionOptions: psd2Catalog().filter { $0.aspsp == "C24" }.map {
+                                 MoneyMoneyDbConnectionOption(via: .enableBanking, connector: .enableBanking,
+                                                              key: "enablebanking:\($0.country):\($0.aspsp)", psd2Bank: $0)
+                             }),
         ]
         let categories = ["Gehalt", "Haushalt › Lebensmittel", "Haushalt › Drogerie", "Wohnen › Miete", "Wohnen › Nebenkosten › Strom",
                           "Mobilität › Tanken", "Mobilität › ÖPNV", "Freizeit › Restaurants", "Freizeit › Sport", "Versicherungen",

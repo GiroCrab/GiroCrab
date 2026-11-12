@@ -128,8 +128,19 @@ pub(crate) fn options_from(
         import_groups: true,
         import_statements: true,
         statements_dir: None,
-        psd2_banks: vec![],
+        bank_choices: vec![],
     }
+}
+
+/// The Enable Banking option the preview offers for a bank, if any.
+fn eb_option(p: &MoneyMoneyDbPreview, bank: i64) -> Option<MoneyMoneyDbConnectionOption> {
+    p.banks
+        .iter()
+        .find(|b| b.mm_id == bank)?
+        .connection_options
+        .iter()
+        .find(|o| o.via == MoneyMoneyDbConnectionVia::EnableBanking)
+        .cloned()
 }
 
 fn bookings(v: &Vault, account_id: i64) -> Vec<crate::models::Booking> {
@@ -2195,17 +2206,19 @@ fn banks_without_own_connector_are_set_up_through_enable_banking() {
         .unwrap();
     let c24 = p.banks.iter().find(|b| b.mm_id == 30).unwrap();
     assert_eq!(c24.connector, None);
-    let psd2 = c24.psd2_bank.clone().expect("C24 is in the PSD2 catalogue");
+    assert_eq!(c24.connection_options.len(), 1);
+    let eb = eb_option(&p, 30).expect("C24 is in the PSD2 catalogue");
+    let psd2 = eb.psd2_bank.clone().unwrap();
     assert_eq!((psd2.aspsp.as_str(), psd2.country.as_str()), ("C24", "DE"));
+    assert_eq!(eb.key, "enablebanking:DE:C24");
     // the Sparkasse stays unsupported: neither FinTS-known here nor PSD2
     let spk = p.banks.iter().find(|b| b.mm_id == 3).unwrap();
-    assert!(spk.psd2_bank.is_none());
+    assert!(spk.connection_options.is_empty());
 
     let mut o = options_from(&p, true, false);
-    o.psd2_banks = vec![MoneyMoneyDbPsd2Choice {
+    o.bank_choices = vec![MoneyMoneyDbBankChoice {
         mm_bank_id: 30,
-        aspsp: psd2.aspsp.clone(),
-        country: psd2.country.clone(),
+        connection: Some(eb),
     }];
     let r = v
         .import_moneymoney_database(path.clone(), PW.into(), o.clone())
@@ -2257,10 +2270,9 @@ fn psd2_choice_without_create_connections_does_nothing() {
         .preview_moneymoney_database(path.clone(), PW.into(), None)
         .unwrap();
     let mut o = options_from(&p, false, false);
-    o.psd2_banks = vec![MoneyMoneyDbPsd2Choice {
+    o.bank_choices = vec![MoneyMoneyDbBankChoice {
         mm_bank_id: 30,
-        aspsp: "C24".into(),
-        country: "DE".into(),
+        connection: eb_option(&p, 30),
     }];
     let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
     assert!(r.psd2_connections.is_empty());
@@ -2284,15 +2296,70 @@ fn connection_priority_fints_then_own_api_then_enable_banking() {
     // 1. FinTS wins: the bank code is FinTS-known, although the name is in
     //    the PSD2 catalogue too
     assert_eq!(bank(40).connector, Some(ConnectorKind::FinTsGeneric));
-    assert!(bank(40).psd2_bank.is_none());
+    let vias: Vec<_> = bank(40).connection_options.iter().map(|o| o.via).collect();
+    assert_eq!(
+        vias,
+        [
+            MoneyMoneyDbConnectionVia::FinTs,
+            MoneyMoneyDbConnectionVia::EnableBanking
+        ]
+    );
     // 2. own API: comdirect (no FinTS entry on purpose), PayPal
     assert_eq!(bank(1).connector, Some(ConnectorKind::Comdirect));
     assert_eq!(bank(42).connector, Some(ConnectorKind::PayPal));
-    assert!(bank(42).psd2_bank.is_none());
+    assert_eq!(
+        bank(42).connection_options[0].via,
+        MoneyMoneyDbConnectionVia::OwnApi
+    );
     // 3. Enable Banking only without either
     assert_eq!(bank(41).connector, None);
     assert_eq!(
-        bank(41).psd2_bank.as_ref().map(|b| b.aspsp.as_str()),
-        Some("C24")
+        eb_option(&p, 41).and_then(|o| o.psd2_bank).map(|b| b.aspsp),
+        Some("C24".to_string())
     );
+}
+
+#[test]
+fn a_bank_can_be_switched_to_enable_banking_or_left_out() {
+    let v = vault();
+    // Hanseatic Bank: FinTS-known code, but also in the PSD2 catalogue
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage) VALUES
+           (40, 'DE', '12030000', 'hb-login', '', 'X', 'Hanseatic Bank', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (40, 40, '1234567890', '12030000', 0, 'DE02 1203 0000 1234 5678 90', 'EUR', 'Hanseatic Giro', 'Max', 0, 0, 40, 0, 0, 'X');",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, true, false);
+    o.bank_choices = vec![
+        // FinTS bank → Enable Banking instead
+        MoneyMoneyDbBankChoice {
+            mm_bank_id: 40,
+            connection: eb_option(&p, 40),
+        },
+        // comdirect → not connected at all
+        MoneyMoneyDbBankChoice {
+            mm_bank_id: 1,
+            connection: None,
+        },
+    ];
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    let conns = v.list_bank_connections().unwrap();
+    assert!(conns
+        .iter()
+        .all(|c| c.connector != ConnectorKind::Comdirect));
+    assert!(conns.iter().all(
+        |c| c.connector != ConnectorKind::FinTsGeneric || !c.display_name.contains("Hanseatic")
+    ));
+    assert_eq!(r.psd2_connections.len(), 1);
+    assert_eq!(r.psd2_connections[0].bank_name, "Hanseatic Bank");
+    assert_eq!(r.psd2_connections[0].accounts.len(), 1);
+    // the comdirect accounts are still imported, just without a login
+    assert!(r
+        .account_checks
+        .iter()
+        .any(|c| c.name == "Girokonto" && c.ok));
 }

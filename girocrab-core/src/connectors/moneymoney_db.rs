@@ -113,10 +113,60 @@ pub struct MoneyMoneyDbBank {
     pub has_saved_pin: bool,
     pub existing_connection_id: Option<i64>,
     pub account_count: u32,
-    /// No own connector, but the bank is reachable through Enable Banking
-    /// (PSD2): the suggestion from GiroCrab's PSD2 catalogue. The app may
-    /// refine it with the live list (`match_psd2_bank_by_name`).
+    /// Every way GiroCrab can connect to this bank, best first: FinTS, then
+    /// the bank's own API, then Enable Banking (from the PSD2 catalogue; the
+    /// app may add one from the live list, `match_psd2_bank_by_name`). The
+    /// first entry is the default. Empty = not supported.
+    pub connection_options: Vec<MoneyMoneyDbConnectionOption>,
+}
+
+/// How a bank login is connected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum MoneyMoneyDbConnectionVia {
+    FinTs,
+    /// The bank's own API (comdirect, bunq, PayPal, Trade Republic, …).
+    OwnApi,
+    /// PSD2 through the user's Enable Banking application.
+    EnableBanking,
+}
+
+/// One way to connect a bank login.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MoneyMoneyDbConnectionOption {
+    pub via: MoneyMoneyDbConnectionVia,
+    pub connector: ConnectorKind,
+    /// Connector key as stored (`fints:<blz>`, `comdirect`,
+    /// `enablebanking:<CC>:<bank>`).
+    pub key: String,
+    /// The Enable Banking bank (only for `EnableBanking`).
     pub psd2_bank: Option<Psd2Bank>,
+}
+
+impl MoneyMoneyDbConnectionOption {
+    fn direct(kind: ConnectorKind, key: String) -> Self {
+        let via = match kind {
+            ConnectorKind::FinTsGeneric
+            | ConnectorKind::VolksbankKasselGoettingen
+            | ConnectorKind::Direkt1822 => MoneyMoneyDbConnectionVia::FinTs,
+            ConnectorKind::EnableBanking => MoneyMoneyDbConnectionVia::EnableBanking,
+            _ => MoneyMoneyDbConnectionVia::OwnApi,
+        };
+        Self {
+            via,
+            connector: kind,
+            key,
+            psd2_bank: None,
+        }
+    }
+
+    fn enable_banking(bank: Psd2Bank) -> Self {
+        Self {
+            via: MoneyMoneyDbConnectionVia::EnableBanking,
+            connector: ConnectorKind::EnableBanking,
+            key: ConnectorKind::enable_banking_key(&bank.country, &bank.aspsp),
+            psd2_bank: Some(bank),
+        }
+    }
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -175,18 +225,18 @@ pub struct MoneyMoneyDbImportOptions {
     /// Folder with the PDFs, for a database without MoneyMoney's folder
     /// around it (backup). `None` = `Statements` in the MoneyMoney folder.
     pub statements_dir: Option<String>,
-    /// Banks without own connector to connect through Enable Banking (only
-    /// with `create_connections`).
-    pub psd2_banks: Vec<MoneyMoneyDbPsd2Choice>,
+    /// How to connect each bank login (only with `create_connections`). A
+    /// bank without an entry gets its default (FinTS / own API; never
+    /// Enable Banking unasked).
+    pub bank_choices: Vec<MoneyMoneyDbBankChoice>,
 }
 
-/// A MoneyMoney bank login to set up as an Enable Banking (PSD2) connection.
+/// The connection chosen for one MoneyMoney bank login.
 #[derive(Debug, Clone, uniffi::Record)]
-pub struct MoneyMoneyDbPsd2Choice {
+pub struct MoneyMoneyDbBankChoice {
     pub mm_bank_id: i64,
-    /// Enable Banking ASPSP name and its country (ISO alpha-2).
-    pub aspsp: String,
-    pub country: String,
+    /// `None` = don't set up a connection for this login.
+    pub connection: Option<MoneyMoneyDbConnectionOption>,
 }
 
 /// An Enable Banking connection the import set up, with the accounts that
@@ -1925,6 +1975,24 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
     Ok(bookings == 0)
 }
 
+/// Every way to connect a MoneyMoney bank login, best first (FinTS, own
+/// API, Enable Banking – see `connector_for_inner`).
+fn connection_options(
+    src: &Source,
+    b: &SrcBank,
+    catalog: &[Psd2Bank],
+) -> Vec<MoneyMoneyDbConnectionOption> {
+    let mut out: Vec<MoneyMoneyDbConnectionOption> = src
+        .connector_key(b)
+        .map(|(kind, key)| MoneyMoneyDbConnectionOption::direct(kind, key))
+        .into_iter()
+        .collect();
+    if let Some(bank) = match_psd2_bank(&b.name, catalog) {
+        out.push(MoneyMoneyDbConnectionOption::enable_banking(bank));
+    }
+    out
+}
+
 fn preview(
     conn: &Connection,
     src: &Source,
@@ -2013,11 +2081,7 @@ fn preview(
                 .iter()
                 .filter(|a| a.bank_key == Some(b.id))
                 .count() as u32,
-            psd2_bank: if connector.is_none() {
-                match_psd2_bank(&b.name, &catalog)
-            } else {
-                None
-            },
+            connection_options: connection_options(src, b, &catalog),
         });
     }
     let known: HashSet<i64> = src.accounts.iter().map(|a| a.id).collect();
@@ -2511,30 +2575,40 @@ fn import(
     // Enable Banking connections set up here: (connection id, MoneyMoney bank)
     let mut psd2_created: Vec<(i64, &SrcBank, bool)> = Vec::new();
     for b in &src.banks {
-        let Some((kind, key)) = src.connector_key(b) else {
-            let choice = options
-                .psd2_banks
-                .iter()
-                .find(|c| c.mm_bank_id == b.id)
-                .filter(|_| options.create_connections);
-            match choice.and_then(|c| psd2_connection(conn, b, c).transpose()) {
-                Some(r) => {
-                    let (id, created) = r?;
-                    if created {
-                        res.connections_created += 1;
-                    } else {
-                        res.connections_existing += 1;
-                    }
-                    bank_connection.insert(b.id, id);
-                    psd2_created.push((id, b, created));
-                }
-                None => res.banks_skipped_unsupported += 1,
-            }
-            continue;
-        };
+        let default = src
+            .connector_key(b)
+            .map(|(kind, key)| MoneyMoneyDbConnectionOption::direct(kind, key));
+        if default.is_none() {
+            // counted unless the user connects it through Enable Banking below
+            res.banks_skipped_unsupported += 1;
+        }
         if !options.create_connections {
             continue;
         }
+        let chosen = match options.bank_choices.iter().find(|c| c.mm_bank_id == b.id) {
+            Some(c) => c.connection.clone(),
+            None => default,
+        };
+        let Some(chosen) = chosen else { continue };
+        if chosen.via == MoneyMoneyDbConnectionVia::EnableBanking {
+            let Some(bank) = chosen.psd2_bank.as_ref() else {
+                continue;
+            };
+            if let Some((id, created)) = psd2_connection(conn, b, &bank.aspsp, &bank.country)? {
+                if created {
+                    res.connections_created += 1;
+                } else {
+                    res.connections_existing += 1;
+                }
+                if src.connector_key(b).is_none() {
+                    res.banks_skipped_unsupported -= 1;
+                }
+                bank_connection.insert(b.id, id);
+                psd2_created.push((id, b, created));
+            }
+            continue;
+        }
+        let (kind, key) = (chosen.connector, chosen.key.clone());
         let id = match find_connection(conn, kind, &key, &b.username)? {
             Some(id) => {
                 res.connections_existing += 1;
@@ -2558,7 +2632,7 @@ fn import(
             }
         };
         bank_connection.insert(b.id, id);
-        if options.import_pins {
+        if options.import_pins && pin_usable(kind) {
             if let Some(pin) = src.pins.get(&b.id) {
                 let stored: bool = conn
                     .query_row(
@@ -2617,10 +2691,11 @@ fn import(
 fn psd2_connection(
     conn: &Connection,
     b: &SrcBank,
-    choice: &MoneyMoneyDbPsd2Choice,
+    aspsp: &str,
+    country: &str,
 ) -> CoreResult<Option<(i64, bool)>> {
-    let aspsp = choice.aspsp.trim();
-    let country = choice.country.trim().to_uppercase();
+    let aspsp = aspsp.trim();
+    let country = country.trim().to_uppercase();
     let key = ConnectorKind::enable_banking_key(&country, aspsp);
     if aspsp.is_empty() || ConnectorKind::enable_banking_target(&key).is_none() {
         return Ok(None);
