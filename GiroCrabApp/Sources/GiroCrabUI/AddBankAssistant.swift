@@ -23,15 +23,51 @@ struct AddBankSheet: View {
     @State private var ways: [BankSearchResult] = []
     @State private var setupValues: [String: String] = [:]
     @State private var submit = AddBankSubmit()
+    /// Shown while the search is empty (computed once, the directory is large).
+    @State private var popular: [BankSearchResult] = []
+    @FocusState private var listFocused: Bool
+    @State private var searchFocus = 0
 
-    private static let suggestions = ["Sparkasse", "Volksbank", "ING", "DKB", "Postbank", "N26", "Revolut", "C24", "bunq", "Trade Republic", "Scalable Capital", "PayPal"]
+    /// Well-known banks offered before typing. Sparkassen and Volksbanken are
+    /// hundreds of banks – they are found by name, place or BLZ instead.
+    private static let popularNames = ["ING", "DKB", "comdirect", "Postbank", "Consorsbank", "N26", "C24", "Revolut", "bunq", "Trade Republic", "Scalable Capital", "PayPal"]
     private static let manualFinTs = BankSearchResult(id: "fints:custom", name: "", mode: .finTs, country: "DE", blz: "", url: "", connector: nil, aspsp: "", tested: "")
 
     private var results: [BankSearchResult] {
         searchBanks(query: query, livePsd2: model.livePsd2Banks, perGroupLimit: 12)
     }
 
+    private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The rows the list shows right now, in display order.
+    private var candidates: [BankSearchResult] {
+        guard searching else { return popular }
+        let all = results
+        return [BankAccessMode.finTs, .ownApi, .psd2].flatMap { m in all.filter { $0.mode == m } }
+    }
+
+    /// Best entry per well-known bank: FinTS before the bank's own API before PSD2.
+    private func loadPopular() {
+        let live = model.livePsd2Banks
+        let order: [BankAccessMode] = [.finTs, .ownApi, .psd2]
+        func key(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+        popular = Self.popularNames.compactMap { name in
+            let k = key(name)
+            return searchBanks(query: name, livePsd2: live, perGroupLimit: 3)
+                .filter { key($0.name).hasPrefix(k) }
+                .min { order.firstIndex(of: $0.mode)! < order.firstIndex(of: $1.mode)! }
+        }
+    }
+
     var body: some View {
+        #if os(iOS)
+        NavigationStack { content }
+        #else
+        content
+        #endif
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 16) {
             ImportAssistantHeader(title: title, subtitle: subtitle, symbol: "building.columns")
             Group {
@@ -54,7 +90,11 @@ struct AddBankSheet: View {
         }
         .padding(20)
         .macFrame(width: 860)
-        .onAppear { model.loadLivePsd2Banks() }
+        .onAppear {
+            model.loadLivePsd2Banks()
+            loadPopular()
+        }
+        .onChange(of: model.livePsd2Banks.count) { _, _ in loadPopular() }
     }
 
     // MARK: - Header
@@ -108,7 +148,8 @@ struct AddBankSheet: View {
         switch step {
         case .bank:
             guard let s = selected else { return }
-            ways = Self.ways(to: s, in: results)
+            ways = s.id == Self.manualFinTs.id ? [s]
+                : Self.ways(to: s, in: searchBanks(query: s.name, livePsd2: model.livePsd2Banks, perGroupLimit: 12))
             step = .access
         case .access:
             if missingSettings.isEmpty { submit.action() } else { step = .setup }
@@ -149,18 +190,29 @@ struct AddBankSheet: View {
     // MARK: - 1. Bank
 
     /// A native single-selection list: the chosen bank is highlighted like
-    /// any selected row (HIG: checkmarks mean "toggle several"), arrow keys
-    /// move, double-click or Return continues.
+    /// any selected row (HIG: checkmarks mean "toggle several"). ↓ moves from
+    /// the search field into the list, ↑ on the first row back; double-click or
+    /// Return continues, Return in the search field takes a single hit.
     private var bankStep: some View {
         VStack(alignment: .leading, spacing: 10) {
-            searchField
+            #if os(macOS)
+            SystemSearchField(text: $query, prompt: String(localized: "Bank, BLZ oder IBAN suchen …"),
+                              onMoveDown: enterList, onSubmit: submitSearch, focusRequest: searchFocus)
+                .onChange(of: query) { _, _ in selectedID = nil }
+            #endif
             List(selection: $selectedID) {
-                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                if !searching {
                     Section {
-                        suggestionRow
+                        ForEach(popular, id: \.id) { r in bankRow(r) }
                     } header: {
-                        Text("Häufig gesucht")
+                        Text("Beliebte Banken")
+                    } footer: {
+                        Text("Sparkassen, Volksbanken und alle anderen Banken finden Sie über Name, Ort, Bankleitzahl oder IBAN.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
+                } else if results.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                        .listRowSeparator(.hidden)
                 } else {
                     resultSections
                 }
@@ -174,7 +226,12 @@ struct AddBankSheet: View {
             }
             #if os(macOS)
             .listStyle(.inset)
+            #else
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: Text("Bank, BLZ oder IBAN suchen …"))
+            .onChange(of: query) { _, _ in selectedID = nil }
             #endif
+            .focused($listFocused)
             .contextMenu(forSelectionType: String.self, menu: { _ in EmptyView() }, primaryAction: { ids in
                 guard let id = ids.first else { return }
                 selectedID = id
@@ -182,6 +239,14 @@ struct AddBankSheet: View {
                 next()
             })
             .onChange(of: selectedID) { _, id in choose(id) }
+            .onKeyPress(.upArrow) {
+                // ↑ on the first row: back into the search field
+                guard let first = candidates.first?.id, selectedID == first || selectedID == nil else { return .ignored }
+                selectedID = nil
+                listFocused = false
+                searchFocus += 1
+                return .handled
+            }
             HStack(spacing: 18) {
                 Button("Demo-Bank ausprobieren") {
                     model.addDemoBank()
@@ -195,75 +260,70 @@ struct AddBankSheet: View {
                 }
                 #endif
             }
+            #if os(macOS)
             .buttonStyle(.link)
+            #else
+            .buttonStyle(.borderless)
+            #endif
             .font(.callout)
+        }
+    }
+
+    /// ↓ in the search field: focus the list on its first row.
+    private func enterList() {
+        if selectedID == nil { selectedID = candidates.first?.id ?? Self.manualFinTs.id }
+        listFocused = true
+    }
+
+    /// Return in the search field: a single hit (or the chosen row) continues,
+    /// otherwise the list takes over.
+    private func submitSearch() {
+        if selectedID == nil, searching, candidates.count == 1 { selectedID = candidates[0].id }
+        if selectedID != nil {
+            choose(selectedID)
+            next()
+        } else {
+            enterList()
         }
     }
 
     private func choose(_ id: String?) {
         guard let id else { selected = nil; return }
-        selected = id == Self.manualFinTs.id ? Self.manualFinTs : results.first { $0.id == id }
-    }
-
-    private var searchField: some View {
-        #if os(macOS)
-        SystemSearchField(text: $query, prompt: String(localized: "Bank, BLZ oder IBAN suchen …"))
-            .onChange(of: query) { _, _ in selectedID = nil }
-        #else
-        TextField("Bank, BLZ oder IBAN suchen …", text: $query)
-            .textFieldStyle(.roundedBorder)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .onChange(of: query) { _, _ in selectedID = nil }
-        #endif
-    }
-
-    private var suggestionRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Self.suggestions, id: \.self) { s in
-                    Button(s) { query = s }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                }
-            }
-        }
+        selected = id == Self.manualFinTs.id ? Self.manualFinTs : candidates.first { $0.id == id }
     }
 
     @ViewBuilder private var resultSections: some View {
         let all = results
-        if all.isEmpty {
-            Section {
-                Text("Keine Bank gefunden. Prüfen Sie die Schreibweise oder geben Sie die Bankleitzahl ein.")
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            ForEach([BankAccessMode.finTs, .ownApi, .psd2], id: \.self) { mode in
-                let rows = all.filter { $0.mode == mode }
-                if !rows.isEmpty {
-                    Section {
-                        ForEach(rows, id: \.id) { r in
-                            row(symbol: Self.symbol(r), title: r.name, detail: Self.detailLine(r))
-                                .tag(r.id)
-                        }
-                    } header: {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(Self.groupTitle(mode))
-                            Text(Self.groupHint(mode)).font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
-                        }
+        ForEach([BankAccessMode.finTs, .ownApi, .psd2], id: \.self) { mode in
+            let rows = all.filter { $0.mode == mode }
+            if !rows.isEmpty {
+                Section {
+                    ForEach(rows, id: \.id) { r in bankRow(r) }
+                } header: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(Self.groupTitle(mode))
+                        Text(Self.groupHint(mode)).font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
     }
 
+    private func bankRow(_ r: BankSearchResult) -> some View {
+        row(symbol: Self.symbol(r), title: r.name, detail: Self.detailLine(r),
+            accessibility: [r.name, Self.accessibleDetail(r)].compactMap { $0 }.joined(separator: ", "))
+            .tag(r.id)
+    }
+
     /// One bank row. Hierarchical styles, so the text stays readable on the
     /// selection highlight.
-    private func row(symbol: String, title: String, detail: String?) -> some View {
+    private func row(symbol: String, title: String, detail: String?, accessibility: String? = nil) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
                 .frame(width: 22)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                 if let detail {
@@ -272,6 +332,8 @@ struct AddBankSheet: View {
             }
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibility ?? [title, detail].compactMap { $0 }.joined(separator: ", "))
     }
 
     // MARK: - 2. Access
@@ -403,8 +465,19 @@ struct AddBankSheet: View {
     static func detailLine(_ r: BankSearchResult) -> String? {
         switch r.mode {
         case .finTs: return String(localized: "BLZ \(r.blz)")
-        case .psd2: return r.country.isEmpty ? nil : r.country
+        case .psd2: return r.country.isEmpty ? nil : (Locale.current.localizedString(forRegionCode: r.country) ?? r.country)
         case .ownApi: return nil
         }
+    }
+
+    /// What VoiceOver reads after the name: how the bank is reached, and where.
+    static func accessibleDetail(_ r: BankSearchResult) -> String {
+        let way: String
+        switch r.mode {
+        case .finTs: way = String(localized: "über FinTS")
+        case .ownApi: way = String(localized: "über die eigene Schnittstelle der Bank")
+        case .psd2: way = String(localized: "über Enable Banking")
+        }
+        return [way, detailLine(r)].compactMap { $0 }.joined(separator: ", ")
     }
 }

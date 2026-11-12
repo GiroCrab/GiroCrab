@@ -88,7 +88,7 @@ struct Psd2AddForm: View {
         LabeledContent("Land", value: bank.country)
         LabeledContent("Verfahren", value: String(localized: "PSD2 über Enable Banking"))
         if model.demoActive { DemoHintBanner(style: .credentials) { label = "demo" } }
-        TextField("Bezeichnung (optional)", text: $label)
+        TextField("Bezeichnung", text: $label, prompt: Text("Optional"))
             .autocorrectionDisabled()
             .onAppear { submit?.update(true, commit) }
         if !bank.tested.isEmpty {
@@ -117,6 +117,12 @@ import AppKit
 struct SystemSearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
+    /// ↓ in the field: move into the results (like Spotlight).
+    var onMoveDown: () -> Void = {}
+    /// Return in the field.
+    var onSubmit: () -> Void = {}
+    /// Changing this value puts the focus back into the field.
+    var focusRequest = 0
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
@@ -130,15 +136,32 @@ struct SystemSearchField: NSViewRepresentable {
 
     func updateNSView(_ field: NSSearchField, context: Context) {
         if field.stringValue != text { field.stringValue = text }
+        let c = context.coordinator
+        c.onMoveDown = onMoveDown
+        c.onSubmit = onSubmit
+        if c.focusRequest != focusRequest {
+            c.focusRequest = focusRequest
+            DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var text: Binding<String>
+        var onMoveDown: () -> Void = {}
+        var onSubmit: () -> Void = {}
+        var focusRequest = 0
         init(text: Binding<String>) { self.text = text }
         func controlTextDidChange(_ note: Notification) {
             if let field = note.object as? NSSearchField { text.wrappedValue = field.stringValue }
+        }
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.moveDown(_:)): onMoveDown(); return true
+            case #selector(NSResponder.insertNewline(_:)): onSubmit(); return true
+            default: return false
+            }
         }
     }
 }

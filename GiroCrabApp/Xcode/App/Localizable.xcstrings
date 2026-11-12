@@ -1788,17 +1788,6 @@
         }
       }
     },
-    "Anmeldename / VR-NetKey / Kontonummer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Login name / VR-NetKey / account number"
-          }
-        }
-      }
-    },
     "Anmeldung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2306,17 +2295,6 @@
         }
       }
     },
-    "BLZ (8 Ziffern) oder IBAN" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bank code (8 digits) or IBAN"
-          }
-        }
-      }
-    },
     "BLZ nicht im Verzeichnis – bitte FinTS-URL selbst eintragen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2324,17 +2302,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bank code not in the directory – please enter the FinTS URL yourself."
-          }
-        }
-      }
-    },
-    "BLZ: genau 8 Ziffern · URL: muss mit https:// beginnen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bank code: exactly 8 digits · URL: must start with https://"
           }
         }
       }
@@ -2775,17 +2742,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter Amount"
-          }
-        }
-      }
-    },
-    "Bezeichnung (optional)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Label (optional)"
           }
         }
       }
@@ -4228,17 +4184,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "FinTS URL"
-          }
-        }
-      }
-    },
-    "FinTS-URL (https://…)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "FinTS URL (https://…)"
           }
         }
       }
@@ -8934,17 +8879,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "TAN / code"
-          }
-        }
-      }
-    },
-    "TAN-Medium / Gerätename (optional, z. B. bei Postbank BestSign)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "TAN medium / device name (optional, e.g. for Postbank BestSign)"
           }
         }
       }
@@ -15217,28 +15151,6 @@
         }
       }
     },
-    "Häufig gesucht" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Frequently Searched"
-          }
-        }
-      }
-    },
-    "Keine Bank gefunden. Prüfen Sie die Schreibweise oder geben Sie die Bankleitzahl ein." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No bank found. Check the spelling or enter the bank code."
-          }
-        }
-      }
-    },
     "Verbindung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15334,6 +15246,182 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No real bank: login “demo”, PIN 12345, any TAN"
+          }
+        }
+      }
+    },
+    "Beliebte Banken" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Popular Banks"
+          }
+        }
+      }
+    },
+    "Sparkassen, Volksbanken und alle anderen Banken finden Sie über Name, Ort, Bankleitzahl oder IBAN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find savings banks, cooperative banks and all other banks by name, town, bank code or IBAN."
+          }
+        }
+      }
+    },
+    "über FinTS" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "via FinTS"
+          }
+        }
+      }
+    },
+    "über die eigene Schnittstelle der Bank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "via the bank’s own interface"
+          }
+        }
+      }
+    },
+    "über Enable Banking" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "via Enable Banking"
+          }
+        }
+      }
+    },
+    "Erweitert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advanced"
+          }
+        }
+      }
+    },
+    "Bankleitzahl" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank Code"
+          }
+        }
+      }
+    },
+    "8 Ziffern oder IBAN" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "8 digits or IBAN"
+          }
+        }
+      }
+    },
+    "FinTS-Adresse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FinTS Address"
+          }
+        }
+      }
+    },
+    "https://…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "https://…"
+          }
+        }
+      }
+    },
+    "z. B. VR-NetKey oder Kontonummer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. VR-NetKey or account number"
+          }
+        }
+      }
+    },
+    "TAN-Medium" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "TAN Medium"
+          }
+        }
+      }
+    },
+    "Optional" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Optional"
+          }
+        }
+      }
+    },
+    "Das TAN-Medium brauchen Sie nur, wenn die Bank danach fragt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You only need the TAN medium if the bank asks for it."
+          }
+        }
+      }
+    },
+    "Bezeichnung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name"
+          }
+        }
+      }
+    },
+    "Bankleitzahl: genau 8 Ziffern · FinTS-Adresse: beginnt mit https://" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank code: exactly 8 digits · FinTS address: starts with https://"
           }
         }
       }

@@ -53,7 +53,7 @@ struct FinTsAddForm: View {
         .onAppear { apply(prefill) }
         .onChange(of: prefill?.id) { _, _ in apply(prefill) }
         .onChange(of: canAdd, initial: true) { _, ok in submit?.update(ok, commit) }
-        TextField("BLZ (8 Ziffern) oder IBAN", text: $blz)
+        TextField("Bankleitzahl", text: $blz, prompt: Text("8 Ziffern oder IBAN"))
             .autocorrectionDisabled()
             .onChange(of: blz) { _, _ in
                 // a pasted German IBAN becomes its BLZ (characters 5–12)
@@ -67,12 +67,16 @@ struct FinTsAddForm: View {
             Label("BLZ nicht im Verzeichnis – bitte FinTS-URL selbst eintragen.", systemImage: "questionmark.circle")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        TextField("FinTS-URL (https://…)", text: $url)
-            .autocorrectionDisabled()
-            .onChange(of: url) { _, new in if new != autoURL { urlEdited = true } }
+        // known bank: the address comes from the directory – shown on demand only
+        if found != nil, !urlEdited {
+            DisclosureGroup("Erweitert") { urlField }
+        } else {
+            urlField
+        }
         if model.demoActive || blz == "99999999" { DemoHintBanner(style: .credentials) { login = "demo" } }
-        TextField("Anmeldename / VR-NetKey / Kontonummer", text: $login).autocorrectionDisabled()
-        TextField("TAN-Medium / Gerätename (optional, z. B. bei Postbank BestSign)", text: $tanMedium)
+        TextField("Anmeldename", text: $login, prompt: Text("z. B. VR-NetKey oder Kontonummer"))
+            .autocorrectionDisabled()
+        TextField("TAN-Medium", text: $tanMedium, prompt: Text("Optional"))
             .autocorrectionDisabled()
         if isPostbank {
             Label("Postbank: Als Anmeldename die Postbank ID verwenden (nicht die Kontonummer).", systemImage: "info.circle")
@@ -81,12 +85,15 @@ struct FinTsAddForm: View {
         if needsMediumHint {
             Text("Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie hier den Gerätenamen aus der BestSign-/App-Verwaltung ein, z. B. SO:Gerätename.")
                 .font(.caption).foregroundStyle(.secondary)
+        } else {
+            Text("Das TAN-Medium brauchen Sie nur, wenn die Bank danach fragt.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         if let n = preset?.note, !n.isEmpty {
             Text(n).font(.caption).foregroundStyle(.secondary)
         }
         if (!blz.isEmpty && !blzValid) || (!url.isEmpty && !urlValid) {
-            Label("BLZ: genau 8 Ziffern · URL: muss mit https:// beginnen", systemImage: "exclamationmark.triangle")
+            Label("Bankleitzahl: genau 8 Ziffern · FinTS-Adresse: beginnt mit https://", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
         }
         if submit == nil {
@@ -94,6 +101,12 @@ struct FinTsAddForm: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canAdd)
         }
+    }
+
+    private var urlField: some View {
+        TextField("FinTS-Adresse", text: $url, prompt: Text("https://…"))
+            .autocorrectionDisabled()
+            .onChange(of: url) { _, new in if new != autoURL { urlEdited = true } }
     }
 
     private func commit() {
