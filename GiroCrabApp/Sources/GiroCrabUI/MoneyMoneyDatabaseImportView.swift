@@ -416,7 +416,7 @@ struct MoneyMoneyDatabaseImportView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Noch zu tun: Freigabe über Enable Banking", systemImage: "link.circle.fill")
                 .font(.callout.weight(.medium)).foregroundStyle(Theme.accent)
-            Text("Eine Enable-Banking-Anwendung im eingeschränkten Modus sieht nur Konten, die mit ihr verknüpft sind. Verknüpfen Sie diese Konten zuerst auf enablebanking.com mit Ihrer Anwendung und starten Sie dann die Freigabe bei der Bank.")
+            Text("Starten Sie die Freigabe bei der Bank. Im eingeschränkten Modus sieht Ihre Enable-Banking-Anwendung nur verknüpfte Konten – falls diese Konten noch nicht verknüpft sind, holen Sie das auf enablebanking.com nach.")
                 .font(.caption).foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Link("Anwendungen auf enablebanking.com öffnen", destination: URL(string: "https://enablebanking.com/cp/applications")!)

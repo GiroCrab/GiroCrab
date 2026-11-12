@@ -13842,17 +13842,6 @@
         }
       }
     },
-    "Eine Enable-Banking-Anwendung im eingeschränkten Modus sieht nur Konten, die mit ihr verknüpft sind. Verknüpfen Sie diese Konten zuerst auf enablebanking.com mit Ihrer Anwendung und starten Sie dann die Freigabe bei der Bank." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "An Enable Banking application in restricted mode only sees accounts linked to it. First link these accounts to your application on enablebanking.com, then start the consent at the bank."
-          }
-        }
-      }
-    },
     "Freigabe starten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13904,6 +13893,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Through Enable Banking (PSD2): %@ – Enable Banking is set up at the first consent"
+          }
+        }
+      }
+    },
+    "Starten Sie die Freigabe bei der Bank. Im eingeschränkten Modus sieht Ihre Enable-Banking-Anwendung nur verknüpfte Konten – falls diese Konten noch nicht verknüpft sind, holen Sie das auf enablebanking.com nach." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start the consent at the bank. In restricted mode your Enable Banking application only sees linked accounts – if these accounts are not linked yet, do that on enablebanking.com."
           }
         }
       }
