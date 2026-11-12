@@ -133,7 +133,7 @@ struct MoneyMoneyDatabaseImportView: View {
     private var stepSubtitle: String {
         switch step {
         case .source:
-            return String(localized: "GiroCrab liest die MoneyMoney-Datenbank nur – MoneyMoney und seine Daten bleiben unverändert.")
+            return String(localized: "Wählen Sie, woher die Daten kommen. MoneyMoney und seine Daten bleiben unverändert.")
         case .accounts:
             guard let p = preview else { return "" }
             return [String(localized: "\(p.accounts.count) Konten"),
@@ -253,40 +253,20 @@ struct MoneyMoneyDatabaseImportView: View {
     // MARK: - 1. Source
 
     private var sourceStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("Quelle", selection: $source) {
-                Text("MoneyMoney-Datenbank").tag(MoneyMoneyImportSheet.Source.database)
-                Text("Exportdatei (CSV/XML)").tag(MoneyMoneyImportSheet.Source.export)
+        Form {
+            ImportSourceSection(source: $source)
+            Section {
+                ImportFileRow(title: "MoneyMoney-Daten", url: fileURL, name: fileURL?.lastPathComponent ?? "") { pickFile() }
+                SecureField("Datenbank-Passwort", text: $password, prompt: Text("Erforderlich"))
+            } header: {
+                Text("Datenbank")
+            } footer: {
+                footerText("Wählen Sie den MoneyMoney-Ordner, damit auch die Kontoauszüge übernommen werden. Eine einzelne Datei (MoneyMoney.sqlite), etwa aus einem Backup, geht auch.")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            Form {
-                Section {
-                    LabeledContent("MoneyMoney-Daten") {
-                        HStack(spacing: 8) {
-                            Text(fileURL?.lastPathComponent ?? String(localized: "Nicht ausgewählt"))
-                                .foregroundStyle(fileURL == nil ? Theme.tertiary : Theme.text)
-                                .lineLimit(1).truncationMode(.middle)
-                            Button(fileURL == nil ? "Auswählen …" : "Ändern …") { pickFile() }
-                        }
-                    }
-                    SecureField("Datenbank-Passwort", text: $password, prompt: Text("Passwort aus MoneyMoney"))
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Wählen Sie den MoneyMoney-Ordner – dann kommen auch die Kontoauszüge mit. Eine einzelne Datei (MoneyMoney.sqlite) geht auch, etwa aus einem Backup.")
-                        Text("Ist in MoneyMoney kein Datenbank-Passwort festgelegt, legen Sie dort vorher eines fest (Einstellungen → Sicherheit) und beenden MoneyMoney.")
-                    }
-                    .font(.caption).foregroundStyle(Theme.secondary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
-            .scrollDisabled(true)
         }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
+        .scrollDisabled(true)
     }
 
     // MARK: - 2. Accounts and data

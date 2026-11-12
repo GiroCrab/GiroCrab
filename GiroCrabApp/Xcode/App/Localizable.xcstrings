@@ -14238,17 +14238,6 @@
         }
       }
     },
-    "Exportdatei (CSV/XML)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Export file (CSV/XML)"
-          }
-        }
-      }
-    },
     "Für %@ braucht GiroCrab eine kostenlose Enable-Banking-Anwendung." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14260,17 +14249,6 @@
         }
       }
     },
-    "GiroCrab liest die MoneyMoney-Datenbank nur – MoneyMoney und seine Daten bleiben unverändert." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "GiroCrab only reads the MoneyMoney database – MoneyMoney and its data stay unchanged."
-          }
-        }
-      }
-    },
     "Import läuft" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14278,17 +14256,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Importing"
-          }
-        }
-      }
-    },
-    "Ist in MoneyMoney kein Datenbank-Passwort festgelegt, legen Sie dort vorher eines fest (Einstellungen → Sicherheit) und beenden MoneyMoney." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "If no database password is set in MoneyMoney, set one there first (Settings → Security) and quit MoneyMoney."
           }
         }
       }
@@ -14333,17 +14300,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Account groups (%lld)"
-          }
-        }
-      }
-    },
-    "Nicht ausgewählt" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Not selected"
           }
         }
       }
@@ -14399,17 +14355,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Online banking (FinTS)"
-          }
-        }
-      }
-    },
-    "Passwort aus MoneyMoney" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Password from MoneyMoney"
           }
         }
       }
@@ -14491,17 +14436,6 @@
         }
       }
     },
-    "Wählen Sie den MoneyMoney-Ordner – dann kommen auch die Kontoauszüge mit. Eine einzelne Datei (MoneyMoney.sqlite) geht auch, etwa aus einem Backup." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choose the MoneyMoney folder – the statements come along then. A single file (MoneyMoney.sqlite) works too, e.g. from a backup."
-          }
-        }
-      }
-    },
     "„Import abbrechen“ verwirft alles – es wird dann nichts übernommen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14575,17 +14509,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New account from the file"
-          }
-        }
-      }
-    },
-    "Umsätze eines Kontos aus einer MoneyMoney-Exportdatei – ohne Duplikate bei späteren Abrufen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transactions of one account from a MoneyMoney export file – without duplicates on later fetches."
           }
         }
       }
@@ -14931,28 +14854,6 @@
         }
       }
     },
-    "In MoneyMoney ein einzelnes Konto wählen – nicht „Alle Konten“ –, alle Umsätze markieren (⌘A) und „Umsätze exportieren …“ als CSV oder SEPA camt.053 (XML). Sie können die Datei auch hierher ziehen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "In MoneyMoney, choose a single account – not “All Accounts” –, select all transactions (⌘A) and “Export transactions …” as CSV or SEPA camt.053 (XML). You can also drag the file here."
-          }
-        }
-      }
-    },
-    "Nur CSV enthält auch die Kategorien. Ebenfalls möglich: MT940 (.sta / .mt940)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Only CSV also contains the categories. Also possible: MT940 (.sta / .mt940)."
-          }
-        }
-      }
-    },
     "Vorgewählt, weil die Datei zu diesem Konto passt. Bereits vorhandene Buchungen werden nicht doppelt übernommen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14960,6 +14861,127 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Preselected because the file belongs to this account. Bookings already present aren't imported twice."
+          }
+        }
+      }
+    },
+    "MoneyMoney-Datenbank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MoneyMoney Database"
+          }
+        }
+      }
+    },
+    "Exportdatei eines Kontos" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export File of One Account"
+          }
+        }
+      }
+    },
+    "Alle Konten mit Kategorien, Regeln, Bankzugängen und Kontoauszügen – empfohlen beim Umstieg." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All accounts with categories, rules, bank logins and statements – recommended when switching."
+          }
+        }
+      }
+    },
+    "CSV, camt.053 oder MT940 – um einzelne Konten zu ergänzen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CSV, camt.053 or MT940 – to add to individual accounts."
+          }
+        }
+      }
+    },
+    "Keine Auswahl" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "None Selected"
+          }
+        }
+      }
+    },
+    "Erforderlich" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Required"
+          }
+        }
+      }
+    },
+    "MoneyMoney-Daten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MoneyMoney Data"
+          }
+        }
+      }
+    },
+    "Datenbank-Passwort" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Database Password"
+          }
+        }
+      }
+    },
+    "Wählen Sie, woher die Daten kommen. MoneyMoney und seine Daten bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose where the data comes from. MoneyMoney and its data stay unchanged."
+          }
+        }
+      }
+    },
+    "In MoneyMoney ein einzelnes Konto wählen, alle Umsätze markieren (⌘A) und „Umsätze exportieren …“. Nur CSV enthält auch die Kategorien. Sie können die Datei auch hierher ziehen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In MoneyMoney, choose a single account, select all transactions (⌘A) and “Export transactions …”. Only CSV also contains the categories. You can also drag the file here."
+          }
+        }
+      }
+    },
+    "Wählen Sie den MoneyMoney-Ordner, damit auch die Kontoauszüge übernommen werden. Eine einzelne Datei (MoneyMoney.sqlite), etwa aus einem Backup, geht auch." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the MoneyMoney folder so the statements are imported as well. A single file (MoneyMoney.sqlite), e.g. from a backup, works too."
           }
         }
       }

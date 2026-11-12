@@ -44,6 +44,78 @@ struct MoneyMoneyImportSheet: View {
     }
 }
 
+/// First section of both import assistants: where the data comes from, as
+/// radio buttons with a short explanation each (HIG: a small set of mutually
+/// exclusive choices that need a description → radio group, not a segmented
+/// control). Identical on both sides, so switching keeps the layout.
+struct ImportSourceSection: View {
+    @Binding var source: MoneyMoneyImportSheet.Source
+
+    var body: some View {
+        Section {
+            Picker("Quelle", selection: $source) {
+                option("MoneyMoney-Datenbank",
+                       "Alle Konten mit Kategorien, Regeln, Bankzugängen und Kontoauszügen – empfohlen beim Umstieg.")
+                    .tag(MoneyMoneyImportSheet.Source.database)
+                option("Exportdatei eines Kontos",
+                       "CSV, camt.053 oder MT940 – um einzelne Konten zu ergänzen.")
+                    .tag(MoneyMoneyImportSheet.Source.export)
+            }
+            #if os(macOS)
+            .pickerStyle(.radioGroup)
+            #else
+            .pickerStyle(.inline)
+            #endif
+            .labelsHidden()
+        } header: {
+            Text("Quelle")
+        }
+    }
+
+    private func option(_ title: LocalizedStringKey, _ detail: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(detail).font(.caption).foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// The chosen file or folder in a form row: its Finder icon and name, or
+/// "Keine Auswahl"; the button opens the panel.
+struct ImportFileRow: View {
+    let title: LocalizedStringKey
+    let url: URL?
+    let name: String
+    var loading = false
+    let choose: () -> Void
+
+    var body: some View {
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                if loading { ProgressView().controlSize(.small) }
+                if name.isEmpty {
+                    Text("Keine Auswahl").foregroundStyle(Theme.tertiary)
+                } else {
+                    HStack(spacing: 5) {
+                        #if os(macOS)
+                        if let url {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                .resizable().frame(width: 16, height: 16)
+                                .accessibilityHidden(true)
+                        }
+                        #endif
+                        Text(name).lineLimit(1).truncationMode(.middle)
+                    }
+                    .help(url?.path ?? name)
+                }
+                Button(name.isEmpty ? "Auswählen …" : "Ändern …", action: choose)
+            }
+        }
+    }
+}
+
 /// Title row of the import assistants: symbol, step title and subtitle. No
 /// "Schritt n von m" – Apple's assistants name each step by its title.
 struct ImportAssistantHeader: View {
@@ -85,6 +157,7 @@ struct MoneyMoneyExportImportView: View {
     @State private var targeted = false
     @State private var fileName = ""
     @State private var fileData: Data?
+    @State private var fileURL: URL?
     /// nil = "Neues Konto aus Datei anlegen"
     @State private var target: Int64?
     /// The core's account suggestion is applied once per file; afterwards the
@@ -141,7 +214,7 @@ struct MoneyMoneyExportImportView: View {
     private var subtitle: String {
         switch step {
         case .file:
-            return String(localized: "Umsätze eines Kontos aus einer MoneyMoney-Exportdatei – ohne Duplikate bei späteren Abrufen.")
+            return String(localized: "Wählen Sie, woher die Daten kommen. MoneyMoney und seine Daten bleiben unverändert.")
         case .options:
             guard let p = preview else { return fileName }
             return [fileName, String(localized: "\(p.newBookings.formatted()) neue Buchungen"), yearSpan(p)]
@@ -152,49 +225,30 @@ struct MoneyMoneyExportImportView: View {
     // MARK: - 1. File
 
     private var fileStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let source {
-                Picker("Quelle", selection: source) {
-                    Text("MoneyMoney-Datenbank").tag(MoneyMoneyImportSheet.Source.database)
-                    Text("Exportdatei (CSV/XML)").tag(MoneyMoneyImportSheet.Source.export)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .disabled(importing)
-            }
-            Form {
-                Section {
-                    LabeledContent("Exportdatei") {
-                        HStack(spacing: 8) {
-                            if loading { ProgressView().controlSize(.small) }
-                            Text(fileData == nil ? String(localized: "Nicht ausgewählt") : fileName)
-                                .foregroundStyle(fileData == nil ? Theme.tertiary : Theme.text)
-                                .lineLimit(1).truncationMode(.middle)
-                            Button(fileData == nil ? "Auswählen …" : "Ändern …") { picking = true }
-                        }
-                    }
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("In MoneyMoney ein einzelnes Konto wählen – nicht „Alle Konten“ –, alle Umsätze markieren (⌘A) und „Umsätze exportieren …“ als CSV oder SEPA camt.053 (XML). Sie können die Datei auch hierher ziehen.")
-                        Text("Nur CSV enthält auch die Kategorien. Ebenfalls möglich: MT940 (.sta / .mt940).")
-                    }
+        Form {
+            if let source { ImportSourceSection(source: source).disabled(importing) }
+            Section {
+                ImportFileRow(title: "Exportdatei", url: fileURL, name: fileData == nil ? "" : fileName,
+                              loading: loading) { picking = true }
+            } header: {
+                Text("Datei")
+            } footer: {
+                Text("In MoneyMoney ein einzelnes Konto wählen, alle Umsätze markieren (⌘A) und „Umsätze exportieren …“. Nur CSV enthält auch die Kategorien. Sie können die Datei auch hierher ziehen.")
                     .font(.caption).foregroundStyle(Theme.secondary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
-            .scrollDisabled(true)
-            .overlay {
-                // the whole step takes a dropped file; outlined while one hovers
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Theme.accent, lineWidth: 2)
-                    .opacity(targeted ? 1 : 0)
-                    .allowsHitTesting(false)
-            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
+        .scrollDisabled(true)
+        .overlay {
+            // the whole step takes a dropped file; outlined while one hovers
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Theme.accent, lineWidth: 2)
+                .opacity(targeted ? 1 : 0)
+                .allowsHitTesting(false)
         }
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first else { return false }
@@ -295,6 +349,7 @@ struct MoneyMoneyExportImportView: View {
         do {
             fileData = try Data(contentsOf: url)
             fileName = url.lastPathComponent
+            fileURL = url
             suggestionApplied = false
             if target != nil { target = nil } else { refreshPreview() } // onChange(of: target) refreshes
         } catch {
