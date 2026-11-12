@@ -13,27 +13,41 @@ struct SettingsView: View {
         @Bindable var model = model
         TabView(selection: $model.settingsTab) {
             BankConnectionsSettings()
+                .disabled(model.vault == nil)
                 .tabItem { Label("Banken", systemImage: "building.columns") }
                 .tag(SettingsTab.banks)
             AccountGroupsSettings()
+                .disabled(model.vault == nil)
                 .tabItem { Label("Kontogruppen", systemImage: "folder") }
                 .tag(SettingsTab.groups)
             CredentialsSettings()
+                .disabled(model.vault == nil)
                 .tabItem { Label("FinTS & API-Schlüssel", systemImage: "key.horizontal") }
                 .tag(SettingsTab.credentials)
             LogoSettings()
+                .disabled(model.vault == nil)
                 .tabItem { Label("Händler-Logos", systemImage: "photo.on.rectangle") }
                 .tag(SettingsTab.logos)
             #if os(macOS)
             DocumentFolderSettings()
+                .disabled(model.vault == nil)
                 .tabItem { Label("Dokumente", systemImage: "doc.on.doc") }
                 .tag(SettingsTab.documents)
             #endif
             SecuritySettings()
+                .disabled(model.vault == nil)
                 .tabItem { Label("Sicherheit", systemImage: "lock.shield") }
                 .tag(SettingsTab.security)
+            #if os(macOS)
+            // Own pane like macOS "Softwareupdate"; works without an open vault.
+            // Only in the Developer-ID build (Sparkle registered).
+            if AppUpdates.shared.isAvailable {
+                UpdateSettings()
+                    .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
+                    .tag(SettingsTab.updates)
+            }
+            #endif
         }
-        .disabled(model.vault == nil)
         #if os(iOS)
         .navigationTitle("Einstellungen")
         .navigationBarTitleDisplayMode(.inline)
@@ -43,7 +57,7 @@ struct SettingsView: View {
 
 /// Tabs of the settings window (macOS) / sheet (iOS).
 enum SettingsTab: Hashable {
-    case banks, groups, credentials, logos, documents, security
+    case banks, groups, credentials, logos, documents, security, updates
 }
 
 struct BankConnectionsSettings: View {
@@ -311,6 +325,107 @@ struct SecuritySettings: View {
         .formStyle(.grouped)
     }
 }
+
+#if os(macOS)
+/// Einstellungen › Updates (nur im Developer-ID-Build mit Sparkle; im App-Store-
+/// oder Xcode-Build ist kein Updater registriert und der Tab fehlt). Bedienbar
+/// auch ohne geöffneten Tresor.
+///
+/// Die Kanäle Beta und Nightly sind bewusst versteckt: Die Auswahl erscheint
+/// erst, wenn bei geöffnetem Tab die Wahltaste (⌥) gedrückt wird, und bleibt
+/// dann sichtbar, bis die Einstellungen geschlossen werden – oder immer, wenn
+/// schon ein Vorabkanal aktiv ist, damit man ihn jederzeit verlassen kann. Der
+/// Wechsel in einen weniger stabilen Kanal muss bestätigt werden; „Abbrechen“
+/// ist dabei die Standardtaste (HIG: riskante Aktion nie als Default).
+struct UpdateSettings: View {
+    @Bindable private var updates = AppUpdates.shared
+    @State private var channelRevealed = NSEvent.modifierFlags.contains(.option)
+    @State private var flagsMonitor: Any?
+    @State private var pendingChannel: AppUpdateChannel?
+
+    private var showsChannelPicker: Bool {
+        channelRevealed || updates.channel != .stable
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Automatisch nach Updates suchen", isOn: $updates.automaticallyChecksForUpdates)
+                Toggle("Updates automatisch laden und installieren", isOn: $updates.automaticallyDownloadsUpdates)
+                    .disabled(!updates.automaticallyChecksForUpdates || !updates.allowsAutomaticUpdates)
+            }
+            Section {
+                if showsChannelPicker {
+                    Picker(selection: Binding(
+                        get: { updates.channel },
+                        set: { new in
+                            if new.risk > updates.channel.risk { pendingChannel = new } else { updates.setChannel(new) }
+                        }
+                    )) {
+                        Text("Stabil").tag(AppUpdateChannel.stable)
+                        Text("Beta").tag(AppUpdateChannel.beta)
+                        Text("Nightly").tag(AppUpdateChannel.nightly)
+                    } label: {
+                        if updates.channel == .stable {
+                            Text("Update-Kanal")
+                        } else {
+                            Label("Update-Kanal", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                LabeledContent("Zuletzt gesucht") {
+                    if let date = updates.lastUpdateCheckDate {
+                        Text(date, format: .relative(presentation: .named))
+                    } else {
+                        Text("Noch nie")
+                    }
+                }
+                Button("Nach Updates suchen …") { updates.checkForUpdates() }
+                    .disabled(!updates.canCheckForUpdates)
+            } footer: {
+                switch updates.channel {
+                case .stable:
+                    Text("Updates werden nur installiert, wenn sie mit dem GiroCrab-Schlüssel signiert und von Apple notarisiert sind.")
+                case .beta:
+                    Text("Beta-Versionen sind Vorabversionen zum Testen. Neuere stabile Versionen erhalten Sie weiterhin. Ein Wechsel zurück installiert keine ältere Version.")
+                case .nightly:
+                    Text("Nightly-Builds sind ungetestete Entwicklungsstände. Neuere Beta- und stabile Versionen erhalten Sie weiterhin. Ein Wechsel zurück installiert keine ältere Version.")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .alert(
+            pendingChannel == .nightly ? "Nightly-Builds erhalten?" : "Beta-Versionen erhalten?",
+            isPresented: Binding(get: { pendingChannel != nil }, set: { if !$0 { pendingChannel = nil } }),
+            presenting: pendingChannel
+        ) { channel in
+            Button(channel == .nightly ? "Nightly-Builds aktivieren" : "Beta-Versionen aktivieren", role: .destructive) {
+                updates.setChannel(channel)
+            }
+            Button("Abbrechen", role: .cancel) {}
+                .keyboardShortcut(.defaultAction)
+        } message: { channel in
+            if channel == .nightly {
+                Text("Nightly-Builds entstehen aus dem aktuellen Entwicklungsstand und sind nicht getestet. Sie können Fehler enthalten oder Ihre Daten so verändern, dass ältere Versionen sie nicht mehr lesen können. Legen Sie vorher eine Sicherung Ihres Tresors an.")
+            } else {
+                Text("Beta-Versionen sind Vorabversionen zum Testen. Sie können Fehler enthalten oder Ihre Daten so verändern, dass ältere Versionen sie nicht mehr lesen können. Legen Sie vorher eine Sicherung Ihres Tresors an.")
+            }
+        }
+        .onAppear {
+            flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                if event.modifierFlags.contains(.option) { channelRevealed = true }
+                return event
+            }
+        }
+        .onDisappear {
+            if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+            flagsMonitor = nil
+            channelRevealed = false
+        }
+    }
+}
+#endif
 
 /// Kompakter iCloud-Drive-Sync (nur die verschlüsselte Tresordatei).
 struct ICloudSyncSection: View {
