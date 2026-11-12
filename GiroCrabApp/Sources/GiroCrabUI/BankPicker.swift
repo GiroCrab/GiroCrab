@@ -87,7 +87,10 @@ struct AddFormFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(lines.filter { !$0.isEmpty }.enumerated()), id: \.offset) { _, l in Text(l) }
-            if let link { Link(link.title, destination: link.url) }
+            if let link {
+                // tint, not the footer's grey: it has to read as a link
+                Link(link.title, destination: link.url).foregroundStyle(.tint)
+            }
             Text("Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt.")
         }
         .font(.caption).foregroundStyle(.secondary)

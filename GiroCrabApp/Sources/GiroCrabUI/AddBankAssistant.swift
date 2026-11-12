@@ -395,31 +395,40 @@ struct AddBankSheet: View {
             }
             let other = keys.filter { !BankSetupSheet.enableBankingKeys.contains($0) }
             if !other.isEmpty {
+                let help = setupHelp(other)
                 Section {
                     ForEach(other, id: \.self) { key in settingField(key) }
+                    // a real row in accent colour, so it reads as a link (System Settings style)
+                    if let help {
+                        Link(destination: help.url) {
+                            Label(help.title, systemImage: "arrow.up.forward.square")
+                        }
+                    }
                 } footer: {
-                    if other.contains("fints.product_id") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("FinTS-Programme brauchen eine kostenlose Produktregistrierung bei der Deutschen Kreditwirtschaft. Sie dauert meist einige Tage.")
-                            Link("Produktregistrierung öffnen",
-                                 destination: URL(string: "https://www.fints.org/de/hersteller/produktregistrierung")!)
-                        }
-                        .font(.caption).foregroundStyle(Theme.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if let k = selected?.connector, let link = KindAddForm.credentialsLink(k) {
-                        // where these credentials come from, right under the fields
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Die Zugangsdaten erstellen Sie einmalig bei Ihrer Bank. GiroCrab speichert sie verschlüsselt im Tresor.")
-                            Link(link.title, destination: link.url)
-                        }
-                        .font(.caption).foregroundStyle(Theme.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let help {
+                        Text(help.note)
+                            .font(.caption).foregroundStyle(Theme.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+    }
+
+    /// Where the one-time setup values come from: link and a short note.
+    private func setupHelp(_ keys: [String]) -> (title: LocalizedStringKey, url: URL, note: LocalizedStringKey)? {
+        if keys.contains("fints.product_id") {
+            return ("Produktregistrierung öffnen",
+                    URL(string: "https://www.fints.org/de/hersteller/produktregistrierung")!,
+                    "FinTS-Programme brauchen eine kostenlose Produktregistrierung bei der Deutschen Kreditwirtschaft. Sie dauert meist einige Tage.")
+        }
+        if let k = selected?.connector, let link = KindAddForm.credentialsLink(k) {
+            return (link.title, link.url,
+                    "Die Zugangsdaten erstellen Sie einmalig bei Ihrer Bank. GiroCrab speichert sie verschlüsselt im Tresor.")
+        }
+        return nil
     }
 
     @ViewBuilder private func settingField(_ key: String) -> some View {
