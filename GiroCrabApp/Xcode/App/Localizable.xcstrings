@@ -14952,6 +14952,17 @@
           }
         }
       }
+    },
+    "Vorgewählt, weil die Datei zu diesem Konto passt. Bereits vorhandene Buchungen werden nicht doppelt übernommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preselected because the file belongs to this account. Bookings already present aren't imported twice."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

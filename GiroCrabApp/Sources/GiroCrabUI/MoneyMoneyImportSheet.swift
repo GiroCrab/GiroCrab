@@ -87,6 +87,9 @@ struct MoneyMoneyExportImportView: View {
     @State private var fileData: Data?
     /// nil = "Neues Konto aus Datei anlegen"
     @State private var target: Int64?
+    /// The core's account suggestion is applied once per file; afterwards the
+    /// user's choice (including "Neues Konto") stays.
+    @State private var suggestionApplied = false
     @State private var preview: MoneyMoneyImportPreview?
     @State private var error: String?
     @State private var loading = false
@@ -214,6 +217,8 @@ struct MoneyMoneyExportImportView: View {
             } footer: {
                 if target == nil, let p = preview {
                     footerText(String(localized: "Neues Archivkonto „\(p.suggestedAccountName)“ – der Saldo ist die Summe der Umsätze."))
+                } else if let t = target, t == preview?.suggestedAccountId {
+                    footerText(String(localized: "Vorgewählt, weil die Datei zu diesem Konto passt. Bereits vorhandene Buchungen werden nicht doppelt übernommen."))
                 }
             }
             if let p = preview {
@@ -290,7 +295,8 @@ struct MoneyMoneyExportImportView: View {
         do {
             fileData = try Data(contentsOf: url)
             fileName = url.lastPathComponent
-            refreshPreview()
+            suggestionApplied = false
+            if target != nil { target = nil } else { refreshPreview() } // onChange(of: target) refreshes
         } catch {
             self.error = describe(error)
         }
@@ -306,7 +312,16 @@ struct MoneyMoneyExportImportView: View {
             }.value
             loading = false
             switch result {
-            case .success(let p): preview = p
+            case .success(let p):
+                if !suggestionApplied {
+                    suggestionApplied = true
+                    // preselect the account the file belongs to; onChange(of: target) refreshes
+                    if target == nil, let s = p.suggestedAccountId, model.allAccounts.contains(where: { $0.id == s }) {
+                        target = s
+                        return
+                    }
+                }
+                preview = p
             case .failure(let e):
                 preview = nil
                 if case CoreError.InvalidInput = e {
