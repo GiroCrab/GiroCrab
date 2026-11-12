@@ -111,7 +111,6 @@ pub fn psd2_catalog() -> Vec<Psd2Bank> {
         psd2("Amazon Visa (Zinia)", "DE", "Open Bank", Some(AmazonVisa)),
         psd2("Barclays", "DE", "Barclays", None),
         psd2("Hanseatic Bank", "DE", "Hanseatic Bank", None),
-        psd2("Advanzia Bank", "DE", "Advanzia", None),
         psd2("Santander", "DE", "Santander", None),
         psd2("Commerzbank", "DE", "Commerzbank", None),
         psd2("Raiffeisen Bank (Österreich)", "AT", "Raiffeisen", None),
@@ -441,6 +440,14 @@ mod tests {
     }
 
     #[test]
+    fn advanzia_is_not_offered_through_enable_banking() {
+        // Enable Banking answers 422 "Wrong ASPSP name provided" for
+        // Advanzia (Mastercard Gold) – verified with a real account.
+        assert!(psd2_catalog().iter().all(|b| !b.name.contains("Advanzia")));
+        assert_eq!(match_psd2_bank("Advanzia Bank", &psd2_catalog()), None);
+    }
+
+    #[test]
     fn psd2_match_by_bank_name() {
         let cat = psd2_catalog();
         let m = |n: &str| match_psd2_bank(n, &cat).map(|b| b.aspsp);
@@ -478,7 +485,6 @@ mod tests {
             "American Express",
             "Barclays",
             "Hanseatic",
-            "Advanzia",
             "Santander",
             "Commerzbank",
             "Raiffeisen",

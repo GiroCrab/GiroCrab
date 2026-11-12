@@ -950,6 +950,31 @@ fn no_linked_accounts() -> CoreError {
     }
 }
 
+/// The exact ASPSP name for a generic bank from the live list. When the list
+/// has banks but none fits, the bank isn't offered through Enable Banking in
+/// that country: say so instead of letting `POST /auth` fail with
+/// "Wrong ASPSP name provided". An empty / unreadable list gives `None`
+/// (then the configured name is tried as it is).
+pub(crate) fn resolve_generic_aspsp(
+    list: &Value,
+    wanted: &str,
+    country: &str,
+) -> CoreResult<Option<String>> {
+    if let Some(exact) = pick_aspsp_name(list, wanted) {
+        return Ok(Some(exact));
+    }
+    if parse_aspsps(list).is_empty() {
+        return Ok(None);
+    }
+    Err(CoreError::Bank {
+        code: "EB_UNKNOWN_ASPSP".into(),
+        message: trf(
+            "„{0}“ ist über Enable Banking ({1}) nicht verfügbar. Für diese Bank gibt es in GiroCrab derzeit keinen Abruf.",
+            &[&wanted, &country],
+        ),
+    })
+}
+
 /// Accepts a full redirect URL ("https://…/callback?code=…&state=…") or a bare code.
 fn extract_code(input: &str, expected_state: &str) -> CoreResult<String> {
     let input = input.trim();
@@ -1040,7 +1065,7 @@ impl BankConnector for EnableBankingConnector {
                 )
                 .await
             {
-                if let Some(exact) = pick_aspsp_name(&list, &configured) {
+                if let Some(exact) = resolve_generic_aspsp(&list, &configured, &country)? {
                     if exact != configured {
                         names.insert(0, exact);
                     }
@@ -2217,6 +2242,20 @@ mod tests {
         assert_eq!(super::pick_aspsp_name(&list, "Santander"), None);
         assert_eq!(super::pick_aspsp_name(&list, "Nope"), None);
         assert_eq!(super::pick_aspsp_name(&list, " "), None);
+        // a bank the live list doesn't have: a clear error, not a 422 later
+        let err = super::resolve_generic_aspsp(&list, "Advanzia", "DE").unwrap_err();
+        assert!(err.to_string().contains("nicht verfügbar"), "{err}");
+        assert_eq!(
+            super::resolve_generic_aspsp(&list, "N26", "DE")
+                .unwrap()
+                .as_deref(),
+            Some("N26 Bank")
+        );
+        // no list (network error, empty answer): try the name as it is
+        assert_eq!(
+            super::resolve_generic_aspsp(&serde_json::Value::Null, "Advanzia", "DE").unwrap(),
+            None
+        );
         assert_eq!(super::pick_aspsp_name(&json!({}), "N26"), None);
     }
 

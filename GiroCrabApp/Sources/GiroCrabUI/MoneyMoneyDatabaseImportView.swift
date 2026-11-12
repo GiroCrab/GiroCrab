@@ -739,12 +739,19 @@ struct MoneyMoneyDatabaseImportView: View {
         return span[0] == span[1] ? span[0] : "\(span[0])–\(span[1])"
     }
 
-    /// The bank's connection options, plus Enable Banking from the live list
-    /// when the catalogue had none and the user's application is set up.
+    /// The bank's connection options. Once Enable Banking's live list is
+    /// loaded (the user's application is set up), it decides: Enable Banking
+    /// is offered only for banks listed there, with their exact name – the
+    /// built-in catalogue is best effort (e.g. Advanzia isn't offered).
     private func connectionOptions(_ b: MoneyMoneyDbBank) -> [MoneyMoneyDbConnectionOption] {
-        var list = b.connectionOptions
-        if !list.contains(where: { $0.via == .enableBanking }), !model.livePsd2Banks.isEmpty,
-           let x = matchPsd2BankByName(bankName: b.name, candidates: model.livePsd2Banks) {
+        let live = model.livePsd2Banks
+        guard !live.isEmpty else { return b.connectionOptions }
+        var list = b.connectionOptions.filter { $0.via != .enableBanking }
+        let catalogue = b.connectionOptions.first { $0.via == .enableBanking }?.psd2Bank
+        let hit = catalogue.flatMap { c in
+            live.first { $0.country == c.country && $0.aspsp.caseInsensitiveCompare(c.aspsp) == .orderedSame }
+        } ?? matchPsd2BankByName(bankName: b.name, candidates: live)
+        if let x = hit {
             list.append(MoneyMoneyDbConnectionOption(via: .enableBanking, connector: .enableBanking,
                                                      key: "enablebanking:\(x.country):\(x.aspsp)", psd2Bank: x))
         }
