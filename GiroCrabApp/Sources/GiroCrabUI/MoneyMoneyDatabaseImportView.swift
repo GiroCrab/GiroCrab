@@ -115,8 +115,8 @@ struct MoneyMoneyDatabaseImportView: View {
     private var stepTitle: String {
         switch step {
         case .source: return String(localized: "Aus MoneyMoney importieren")
-        case .accounts: return String(localized: "Konten und Daten")
-        case .banks: return String(localized: "Bankzugänge")
+        case .accounts: return String(localized: "Konten")
+        case .banks: return String(localized: "Übernahme")
         case .enableBanking: return String(localized: "Enable Banking einrichten")
         case .importing: return String(localized: "Import läuft")
         case .done: return String(localized: "Import abgeschlossen")
@@ -133,7 +133,7 @@ struct MoneyMoneyDatabaseImportView: View {
                     String(localized: "\(p.totalBookings.formatted()) Buchungen"),
                     yearSpan(p)].compactMap { $0 }.joined(separator: " · ")
         case .banks:
-            return String(localized: "Wie GiroCrab künftig Umsätze abruft. Vorausgewählt ist jeweils die beste Verbindung.")
+            return String(localized: "Was GiroCrab außerdem übernimmt und wie es künftig Umsätze abruft.")
         case .enableBanking:
             return String(localized: "Für \(ebBankNames) braucht GiroCrab eine kostenlose Enable-Banking-Anwendung.")
         case .importing:
@@ -145,8 +145,7 @@ struct MoneyMoneyDatabaseImportView: View {
 
     /// The numbered steps this import goes through.
     private var visibleSteps: [Step] {
-        var s: [Step] = [.source, .accounts]
-        if !(preview?.banks.isEmpty ?? true) { s.append(.banks) }
+        var s: [Step] = [.source, .accounts, .banks]
         if needsEnableBankingSetup { s.append(.enableBanking) }
         return s
     }
@@ -179,7 +178,7 @@ struct MoneyMoneyDatabaseImportView: View {
                 if step == .enableBanking {
                     Button("Später einrichten") { runImport() }
                 }
-                Button(isLastStep ? "Importieren" : "Weiter") { next() }
+                Button(isLastStep ? "Importieren" : "Fortfahren") { next() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canContinue)
@@ -282,9 +281,7 @@ struct MoneyMoneyDatabaseImportView: View {
                     .controlSize(.small)
                 }
                 accountTable(p)
-                    .frame(minHeight: 150, maxHeight: .infinity)
-                dataOptions(p)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxHeight: .infinity)
             }
         }
     }
@@ -359,25 +356,23 @@ struct MoneyMoneyDatabaseImportView: View {
         .labelsHidden()
     }
 
-    private func dataOptions(_ p: MoneyMoneyDbPreview) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Kategorien und Regeln (\(p.categoryPaths.count))", isOn: $importCategories)
-                if p.replacesStarterCategories && importCategories {
-                    Text("Ersetzt die GiroCrab-Startkategorien – Ihr Tresor enthält noch keine Buchungen.")
-                        .font(.caption).foregroundStyle(Theme.secondary)
-                }
-                Toggle("Notizen (\(p.notesCount))", isOn: $importNotes)
-                let groupCount = Set(p.accounts.map(\.groupName).filter { !$0.isEmpty }).count
-                if groupCount > 0 {
-                    Toggle("Kontogruppen (\(groupCount))", isOn: $importGroups)
-                }
-                if p.statementCount > 0 { statementOptions(p) }
+    /// "Daten" section of step 3: what is taken over besides the bookings.
+    @ViewBuilder
+    private func dataSection(_ p: MoneyMoneyDbPreview) -> some View {
+        Section {
+            Toggle("Kategorien und Regeln (\(p.categoryPaths.count))", isOn: $importCategories)
+            Toggle("Notizen (\(p.notesCount))", isOn: $importNotes)
+            let groupCount = Set(p.accounts.map(\.groupName).filter { !$0.isEmpty }).count
+            if groupCount > 0 {
+                Toggle("Kontogruppen (\(groupCount))", isOn: $importGroups)
             }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            Text("Außerdem übernehmen").font(.callout.weight(.medium))
+            if p.statementCount > 0 { statementOptions(p) }
+        } header: {
+            Text("Daten")
+        } footer: {
+            if p.replacesStarterCategories && importCategories {
+                footerText("Die Kategorien ersetzen die GiroCrab-Startkategorien – Ihr Tresor enthält noch keine Buchungen.")
+            }
         }
     }
 
@@ -386,20 +381,23 @@ struct MoneyMoneyDatabaseImportView: View {
     @ViewBuilder
     private func statementOptions(_ p: MoneyMoneyDbPreview) -> some View {
         let size = ByteCountFormatter.string(fromByteCount: Int64(p.statementsBytes), countStyle: .file)
-        HStack(spacing: 8) {
-            Toggle("Kontoauszüge und Dokumente (\(p.statementsFound), \(size))", isOn: $importStatements)
-                .disabled(p.statementsFound == 0)
-            if p.statementsFound < p.statementCount {
-                Button(statementsURL == nil ? "Ordner wählen …" : "Anderer Ordner …") { pickStatementsFolder() }
-                    .controlSize(.small)
-                    .disabled(loading)
+        Toggle(isOn: $importStatements) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Kontoauszüge und Dokumente (\(p.statementsFound), \(size))")
+                if p.statementsFound < p.statementCount {
+                    Text(p.statementsDir == nil
+                         ? String(localized: "\(p.statementCount) PDFs liegen nicht bei dieser Datenbank. Wählen Sie den Ordner, falls Sie sie gesichert haben.")
+                         : String(localized: "\(p.statementsFound) von \(p.statementCount) PDFs gefunden, die übrigen werden ausgelassen."))
+                        .font(.caption).foregroundStyle(Theme.secondary)
+                }
             }
         }
+        .disabled(p.statementsFound == 0)
         if p.statementsFound < p.statementCount {
-            Text(p.statementsDir == nil
-                 ? String(localized: "\(p.statementCount) PDFs liegen nicht bei dieser Datenbank. Wählen Sie den Ordner, falls Sie sie gesichert haben.")
-                 : String(localized: "\(p.statementsFound) von \(p.statementCount) PDFs gefunden, die übrigen werden ausgelassen."))
-                .font(.caption).foregroundStyle(Theme.secondary)
+            LabeledContent("Ordner mit Kontoauszügen") {
+                Button(statementsURL == nil ? "Auswählen …" : "Ändern …") { pickStatementsFolder() }
+                    .disabled(loading)
+            }
         }
     }
 
@@ -407,8 +405,11 @@ struct MoneyMoneyDatabaseImportView: View {
 
     private var banksStep: some View {
         Form {
+            if let p = preview { dataSection(p) }
             Section {
                 Toggle("Bankzugänge anlegen", isOn: $createConnections)
+            } header: {
+                Text("Bankzugänge")
             } footer: {
                 footerText("Die Konten erscheinen unter ihrem Bankzugang. Der erste Abruf übernimmt sie, ohne Duplikate anzulegen.")
             }
@@ -501,19 +502,25 @@ struct MoneyMoneyDatabaseImportView: View {
 
     private var importingStep: some View {
         let p = progress.value
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(spacing: 14) {
+            Image(systemName: "square.and.arrow.down.on.square")
+                .font(.system(size: 44)).foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
             ProgressView(value: p.fraction)
                 .progressViewStyle(.linear)
-            Text(progressStatus(p)).font(.callout).lineLimit(1).truncationMode(.middle)
-            if p.bookingsTotal > 0 || p.documentsTotal > 0 {
-                Text(progressCounts(p)).font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
+                .frame(width: 380)
+            VStack(spacing: 4) {
+                Text(progressStatus(p)).font(.callout).lineLimit(1).truncationMode(.middle)
+                if p.bookingsTotal > 0 || p.documentsTotal > 0 {
+                    Text(progressCounts(p)).font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
+                }
             }
             Text(cancelling
                  ? "Der Import wird abgebrochen …"
                  : "„Import abbrechen“ verwirft alles – es wird dann nichts übernommen.")
                 .font(.caption).foregroundStyle(Theme.secondary)
         }
-        .padding(.top, 40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func progressStatus(_ p: MoneyMoneyDbImportProgress) -> String {
@@ -536,11 +543,17 @@ struct MoneyMoneyDatabaseImportView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     let accounts = r.accountsCreated + r.accountsMerged
-                    Label(String(localized: "\(r.bookingsNew.formatted()) Buchungen aus \(accounts) Konten übernommen"),
-                          systemImage: "checkmark.circle.fill")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(Theme.inflow)
-                    checkSummary(r.accountChecks)
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 44)).foregroundStyle(Theme.inflow)
+                            .accessibilityHidden(true)
+                        Text(String(localized: "\(r.bookingsNew.formatted()) Buchungen aus \(accounts) Konten übernommen"))
+                            .font(.title3.weight(.semibold))
+                        checkSummary(r.accountChecks)
+                    }
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                     if !r.psd2Connections.isEmpty { nextStep(r.psd2Connections) }
                     if !r.accountChecks.isEmpty {
                         DisclosureGroup("Abgleich mit MoneyMoney") { checkRows(r.accountChecks) }

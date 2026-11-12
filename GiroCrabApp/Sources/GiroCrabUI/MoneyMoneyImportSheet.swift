@@ -33,7 +33,8 @@ struct MoneyMoneyImportSheet: View {
         }
         .padding(20)
         .macFrame(width: 860)
-        .background(Theme.card)
+        // the system sheet background: grouped forms then sit on it like in
+        // System Settings instead of forming a box inside a coloured card
         .onAppear {
             if model.demoImportPreview != nil { source = .export }
             #if os(macOS)
@@ -53,10 +54,10 @@ struct ImportAssistantHeader: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "square.and.arrow.down.on.square").font(.title2).foregroundStyle(Theme.accent)
+            Image(systemName: "square.and.arrow.down.on.square").font(.title).foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.title3.weight(.semibold))
                 if !subtitle.isEmpty {
                     Text(subtitle).font(.callout).foregroundStyle(Theme.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -266,7 +267,7 @@ struct MoneyMoneyExportImportView: View {
                 Button("Zurück") { error = nil; step = .file }
                     .disabled(importing)
             }
-            Button(step == .file ? "Weiter" : (importing ? "Importiere …" : "Importieren")) {
+            Button(step == .file ? "Fortfahren" : (importing ? "Importiere …" : "Importieren")) {
                 if step == .file { error = nil; step = .options } else { runImport() }
             }
             .buttonStyle(.borderedProminent)

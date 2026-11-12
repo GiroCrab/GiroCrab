@@ -14633,6 +14633,61 @@
           }
         }
       }
+    },
+    "Daten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data"
+          }
+        }
+      }
+    },
+    "Die Kategorien ersetzen die GiroCrab-Startkategorien – Ihr Tresor enthält noch keine Buchungen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The categories replace the GiroCrab starter categories – your vault has no transactions yet."
+          }
+        }
+      }
+    },
+    "Fortfahren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "Ordner mit Kontoauszügen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folder with statements"
+          }
+        }
+      }
+    },
+    "Was GiroCrab außerdem übernimmt und wie es künftig Umsätze abruft." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What else GiroCrab imports and how it fetches transactions from now on."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
