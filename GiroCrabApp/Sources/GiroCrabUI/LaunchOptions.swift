@@ -17,6 +17,8 @@ import Foundation
 ///                         for README screenshots
 ///  --dark                 (macOS) force the Dark Aqua appearance (README screenshots)
 ///  --light                (macOS, `swift run`) force the light Aqua appearance
+///  --show-tips           (developer) reset TipKit and show tips in the demo
+///                         vault too (screenshots of contextual tips)
 ///  --screenshot <file>    (macOS) render the main window, save a PNG, quit.
 ///                         Implies --demo-seed so the picture is reproducible.
 public struct LaunchOptions: Sendable {
@@ -34,6 +36,8 @@ public struct LaunchOptions: Sendable {
     public var pickBooking: String?
     /// (demo) "transfer", "moneymoney" or "moneymoney-db": open that sheet with fictional data
     public var demoSheet: String?
+    /// (developer) reset TipKit and show tips in the demo vault too
+    public var showTips: Bool
 
     public init(arguments: [String] = CommandLine.arguments, environment: [String: String] = ProcessInfo.processInfo.environment) {
         var demo = arguments.contains("--demo-seed")
@@ -76,6 +80,7 @@ public struct LaunchOptions: Sendable {
         self.demoSeed = demo
         self.screenshotPath = shot
         self.dark = arguments.contains("--dark")
+        self.showTips = arguments.contains("--show-tips")
     }
 
     public static let current = LaunchOptions()

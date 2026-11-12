@@ -304,8 +304,8 @@ public final class AppModel {
     }
     /// Settings tab on screen (set to `.groups` by "Gruppen bearbeiten …").
     var settingsTab: SettingsTab = .banks
-    /// macOS: the main window opens Settings when this is set.
-    var groupSettingsRequested = false
+    /// macOS: the main window opens Settings when this is set (see `openSettings(_:)`).
+    var settingsRequested = false
     /// The one group dialog on screen (new / rename / delete / move account).
     var groupDialog: GroupDialog?
     var expandedCategories: Set<Int64> = []
