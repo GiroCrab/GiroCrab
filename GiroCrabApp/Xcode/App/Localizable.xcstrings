@@ -1689,17 +1689,6 @@
         }
       }
     },
-    "Andere FinTS-Bank (BLZ + URL manuell)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Other FinTS bank (enter bank code + URL manually)"
-          }
-        }
-      }
-    },
     "Andere Quelle …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3737,17 +3726,6 @@
         }
       }
     },
-    "Eigene API" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Own API"
-          }
-        }
-      }
-    },
     "Eigene Domain für das Logo eintragen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5735,17 +5713,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "None (Top Level)"
-          }
-        }
-      }
-    },
-    "Keine Bank gefunden. Prüfen Sie die Schreibweise oder geben Sie die BLZ ein." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No bank found. Check the spelling or enter the bank code."
           }
         }
       }
@@ -7799,17 +7766,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Store PIN in Vault"
-          }
-        }
-      }
-    },
-    "PSD2" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "PSD2"
           }
         }
       }
@@ -11051,17 +11007,6 @@
         }
       }
     },
-    "z. B. Sparkasse, ING, N26, Revolut, bunq – oder die 8-stellige BLZ / Ihre IBAN" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "e.g. Sparkasse, ING, N26, Revolut, bunq – or the 8-digit bank code / your IBAN"
-          }
-        }
-      }
-    },
     "z. B. enbw.com" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12626,17 +12571,6 @@
         }
       }
     },
-    "Suche löschen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clear Search"
-          }
-        }
-      }
-    },
     "Vorlage „%@“ löschen?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13717,28 +13651,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Insert PIN 12345"
-          }
-        }
-      }
-    },
-    "Demo-Bank hinzufügen (Test & Vorschau)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Add demo bank (test & preview)"
-          }
-        }
-      }
-    },
-    "Kennung: demo, PIN: 12345, beliebige TAN – ohne echte Bank und ohne Netzwerk." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Login: demo, PIN: 12345, any TAN – no real bank, no network."
           }
         }
       }
@@ -15257,6 +15169,160 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Occasional news, independent of updates. For this, GiroCrab downloads a signed text file from GitHub – without an identifier and without tracking. Announcements never appear as a pop-up window and can be dismissed at any time. Security warnings are independent of this."
+          }
+        }
+      }
+    },
+    "Andere FinTS-Bank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other FinTS Bank"
+          }
+        }
+      }
+    },
+    "Suchen Sie Ihre Bank nach Name, Bankleitzahl oder IBAN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search for your bank by name, bank code or IBAN."
+          }
+        }
+      }
+    },
+    "Wie GiroCrab die Umsätze abruft. PIN und TAN fragt GiroCrab erst beim ersten Abruf ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "How GiroCrab retrieves the transactions. GiroCrab asks for PIN and TAN only on the first retrieval."
+          }
+        }
+      }
+    },
+    "Diese Angaben braucht GiroCrab einmalig, danach gelten sie für alle Banken dieser Art." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab needs this once; afterwards it applies to all banks of this kind."
+          }
+        }
+      }
+    },
+    "Häufig gesucht" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frequently Searched"
+          }
+        }
+      }
+    },
+    "Andere FinTS-Bank – BLZ und Adresse selbst eingeben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other FinTS bank – enter bank code and address yourself"
+          }
+        }
+      }
+    },
+    "Demo-Bank ausprobieren – ohne echte Bank, Kennung „demo“, PIN 12345" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try the demo bank – no real bank, login “demo”, PIN 12345"
+          }
+        }
+      }
+    },
+    "Von MoneyMoney umsteigen – Konten und Bankzugänge importieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switching from MoneyMoney – import accounts and bank logins …"
+          }
+        }
+      }
+    },
+    "Weitere Möglichkeiten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "More Options"
+          }
+        }
+      }
+    },
+    "Keine Bank gefunden. Prüfen Sie die Schreibweise oder geben Sie die Bankleitzahl ein." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No bank found. Check the spelling or enter the bank code."
+          }
+        }
+      }
+    },
+    "Verbindung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connection"
+          }
+        }
+      }
+    },
+    "GiroCrab empfiehlt FinTS: direkt zur Bank, ohne Anmeldung bei Dritten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab recommends FinTS: directly to the bank, without signing up with third parties."
+          }
+        }
+      }
+    },
+    "FinTS-Programme brauchen eine kostenlose Produktregistrierung bei der Deutschen Kreditwirtschaft. Sie dauert meist einige Tage." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FinTS programs need a free product registration with the Deutsche Kreditwirtschaft. It usually takes a few days."
+          }
+        }
+      }
+    },
+    "Produktregistrierung öffnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Product Registration"
           }
         }
       }

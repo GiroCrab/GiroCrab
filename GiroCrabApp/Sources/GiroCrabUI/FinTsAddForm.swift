@@ -10,6 +10,8 @@ struct FinTsAddForm: View {
     /// Bank chosen in the search picker (pre-fills BLZ, name and URL).
     var prefill: BankSearchResult? = nil
     var onAdded: () -> Void = {}
+    /// Inside the "Bank hinzufügen" assistant: no own button (see `AddBankSubmit`).
+    var submit: AddBankSubmit? = nil
 
     @State private var presets = fintsPresets()
     @State private var presetID = "custom"
@@ -48,6 +50,9 @@ struct FinTsAddForm: View {
             blz = p.blz
             lookup()
         }
+        .onAppear { apply(prefill) }
+        .onChange(of: prefill?.id) { _, _ in apply(prefill) }
+        .onChange(of: canAdd, initial: true) { _, ok in submit?.update(ok, commit) }
         TextField("BLZ (8 Ziffern) oder IBAN", text: $blz)
             .autocorrectionDisabled()
             .onChange(of: blz) { _, _ in
@@ -84,17 +89,19 @@ struct FinTsAddForm: View {
             Label("BLZ: genau 8 Ziffern · URL: muss mit https:// beginnen", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
         }
-        Button("Bank hinzufügen") {
-            let name = bankName.trimmingCharacters(in: .whitespaces)
-            model.addFinTsConnection(name: name.isEmpty ? "FinTS-Bank \(blz)" : name, blz: blz, url: url, login: login, tanMedium: tanMedium)
-            login = ""
-            tanMedium = ""
-            onAdded()
+        if submit == nil {
+            Button("Bank hinzufügen") { commit() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdd)
         }
-        .keyboardShortcut(.defaultAction)
-        .disabled(!canAdd)
-        .onAppear { apply(prefill) }
-        .onChange(of: prefill?.id) { _, _ in apply(prefill) }
+    }
+
+    private func commit() {
+        let name = bankName.trimmingCharacters(in: .whitespaces)
+        model.addFinTsConnection(name: name.isEmpty ? "FinTS-Bank \(blz)" : name, blz: blz, url: url, login: login, tanMedium: tanMedium)
+        login = ""
+        tanMedium = ""
+        onAdded()
     }
 
     private func apply(_ r: BankSearchResult?) {
