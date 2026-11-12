@@ -320,6 +320,7 @@ public final class AppModel {
         didSet {
             guard scope != oldValue else { return }
             listLimit = Self.defaultListLimit
+            if scope == .investments, dashboardStale { reloadDashboard() }
             // A selection still loading in the background has to pick up the new scope.
             if selectionLoadTask != nil { startSelectionLoad() } else { reloadScopeBookings() }
         }
@@ -472,7 +473,13 @@ public final class AppModel {
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
     var expandedCategories: Set<Int64> = []
-    var showRuleEditor = false
+    var showRuleEditor = false {
+        didSet { if showRuleEditor, rulesStale { reloadRules() } }
+    }
+    /// Rule match counts / investment dashboard are out of date (category change);
+    /// reloaded when the rule editor opens or the Investments scope is shown.
+    @ObservationIgnored private var rulesStale = false
+    @ObservationIgnored private var dashboardStale = false
     var ruleDraft: Rule?
     var showSettings = false
     var showCommandPalette = false
@@ -1103,13 +1110,7 @@ public final class AppModel {
     func reloadAccounts() {
         guard let vault else { return }
         run {
-            groups = try vault.listAccountGroups()
-            userGroups = try vault.listUserGroups()
-            // a group removed or combined (also via sync) can't stay selected
-            if case .userGroup(let u) = sidebarSelection, !userGroups.contains(where: { $0.uuid == u }) {
-                sidebarSelection = .allAccounts
-            }
-            rebuildAccountIndex()
+            applyAccountGroups(try vault.listAccountGroups(), try vault.listUserGroups())
             connections = try vault.listBankConnections()
             connectionKeys = Dictionary(uniqueKeysWithValues: connections.compactMap { c in
                 (try? vault.connectionKey(connectionId: c.id)).map { (c.id, $0) }
@@ -1127,8 +1128,19 @@ public final class AppModel {
         }
     }
 
+    private func applyAccountGroups(_ groups: [AccountGroup], _ userGroups: [UserGroup]) {
+        self.groups = groups
+        self.userGroups = userGroups
+        // a group removed or combined (also via sync) can't stay selected
+        if case .userGroup(let u) = sidebarSelection, !userGroups.contains(where: { $0.uuid == u }) {
+            sidebarSelection = .allAccounts
+        }
+        rebuildAccountIndex()
+    }
+
     func reloadDashboard() {
         guard let vault else { return }
+        dashboardStale = false
         run { dashboard = try vault.investmentDashboard(months: 6) }
     }
 
@@ -1578,6 +1590,7 @@ public final class AppModel {
 
     func reloadRules() {
         guard let vault else { return }
+        rulesStale = false
         run { rules = try vault.listRules() }
     }
 
@@ -2114,13 +2127,106 @@ public final class AppModel {
         setCategory(categoryID, for: [booking])
     }
 
-    /// One category for several bookings (multiple selection); reloads once.
+    /// One category for several bookings (multiple selection).
+    /// The write is cheap; the reloads behind it are not (~0.5 s on 30k bookings).
+    /// So the rows show the new category at once and everything derived from it
+    /// (totals, counts, KPIs) follows from a background refresh.
     func setCategory(_ categoryID: Int64?, for bookings: [Booking]) {
         guard let vault, !bookings.isEmpty else { return }
-        run {
+        var failed = false
+        do {
             for b in bookings { try vault.setTransactionCategory(transactionId: b.id, categoryId: categoryID) }
+        } catch {
+            errorMessage = describe(error)
+            failed = true
         }
-        reloadBookings(); reloadCategories(); reloadAccounts(); reloadRules(); reloadDashboard(); reloadMerchantStats()
+        if !failed { showCategory(categoryID, on: Set(bookings.map(\.id))) }
+        // Rule counts and the investment dashboard are only on screen in the rule
+        // editor / Investments scope: load them when shown, not after every click.
+        rulesStale = true
+        dashboardStale = true
+        if scope == .investments { reloadDashboard() }
+        refreshAfterCategoryChange()
+    }
+
+    /// Optimistic update: the new category on the loaded rows (and a sticky
+    /// inspector booking) before the background refresh brings the real data.
+    private func showCategory(_ categoryID: Int64?, on ids: Set<Booking.ID>) {
+        let c = categoryID.flatMap { id in categories.first { $0.id == id } }
+        func patch(_ b: inout Booking) {
+            b.categoryId = c?.id
+            b.categoryName = c?.name ?? ""
+            b.categoryPath = c?.path ?? ""
+            b.categoryColorHex = c?.colorHex ?? ""
+            b.categorySymbol = c?.sfSymbol ?? ""
+            b.categorySource = c == nil ? .none : .manual
+        }
+        var rows = bookings
+        for i in rows.indices where ids.contains(rows[i].id) { patch(&rows[i]) }
+        bookings = rows
+        if var s = stickyBooking, ids.contains(s.id) { patch(&s); stickyBooking = s }
+    }
+
+    /// Bookings, category totals, account counts and KPIs after a category change,
+    /// loaded off the main thread and published together. Shares `scopeLoadTask`:
+    /// a newer assignment, scope switch or synchronous reload supersedes it, so
+    /// quick successive assignments only publish the last result.
+    private func refreshAfterCategoryChange() {
+        // A selection still loading publishes everything itself.
+        if selectionLoadTask != nil { settlePendingSelectionLoad(); reloadAccounts(); return }
+        scopeLoadTask?.cancel()
+        dropPendingPage()
+        guard let vault else { return }
+        let filter = currentFilter
+        let (from, to) = periodRange
+        let listHasFlow = filter.scope == .all && filter.direction == .all && filter.checked == nil && filter.search == nil && filter.categoryId == nil && !filter.uncategorizedOnly
+        scopeLoadTask = Task { [weak self] in
+            do {
+                let r = try await Self.offMain { () -> CategoryRefresh in
+                    let page = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
+                    try Task.checkCancellation()
+                    let flow = listHasFlow ? nil : try vault.selectionFlow(accountIds: filter.accountIds, dateFrom: from, dateTo: to)
+                    try Task.checkCancellation()
+                    return CategoryRefresh(
+                        page: page,
+                        flow: flow,
+                        categories: try vault.listCategories(dateFrom: from, dateTo: to),
+                        groups: try vault.listAccountGroups(),
+                        userGroups: try vault.listUserGroups()
+                    )
+                }
+                guard !Task.isCancelled, let self else { return }
+                self.dropPendingPage()
+                self.page = r.page
+                self.bookings = r.page.transactions
+                if let id = self.selectedBookingID, self.booking(withID: id) == nil, self.stickyBooking?.id != id {
+                    self.selectedBookingID = r.page.transactions.first?.id
+                }
+                self.pruneMultiSelection()
+                if let f = r.flow {
+                    self.selectionFlow = (f.consumptionCents, f.investedCents, f.incomeCents)
+                } else {
+                    self.reloadSelectionKPIs() // takes the sums of the page just published
+                }
+                self.categories = r.categories
+                self.categoryTree = Self.buildTree(r.categories)
+                self.applyAccountGroups(r.groups, r.userGroups)
+                // Merchant history: keep it on screen until the fresh numbers arrive.
+                self.merchantStatsCache = [:]
+                self.loadMerchantStats(keepShown: true)
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), let self else { return }
+                self.errorMessage = describe(error)
+            }
+        }
+    }
+
+    private struct CategoryRefresh: @unchecked Sendable {
+        let page: BookingPage
+        let flow: SelectionFlow?
+        let categories: [GiroCrabCore.Category]
+        let groups: [AccountGroup]
+        let userGroups: [UserGroup]
     }
 
     func setChecked(_ checked: Bool, for booking: Booking) {
