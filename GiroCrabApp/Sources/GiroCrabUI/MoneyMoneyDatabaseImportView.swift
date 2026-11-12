@@ -3,81 +3,84 @@ import AppKit
 import SwiftUI
 import GiroCrabCore
 
-/// MoneyMoney database import: pick MoneyMoney's data folder (database plus
-/// statement PDFs) or a single `MoneyMoney.sqlite` (e.g. a backup; the PDFs
-/// can then come from a separately chosen folder), enter the MoneyMoney
-/// password, preview, then import all accounts in one go. Everything is only
-/// read (never changed); the password is dropped from the view state afterwards.
+/// MoneyMoney database import as an assistant (HIG: a longer task in a sheet
+/// goes step by step, Back / Continue at the bottom right):
+///
+///  1. Source – MoneyMoney's data folder (database plus statement PDFs) or a
+///     single `MoneyMoney.sqlite` (backup), and the database password;
+///  2. Accounts and data – which accounts, account type, target, what else;
+///  3. Bank connections – one connection type per bank login (FinTS, the
+///     bank's own API, Enable Banking), preset by priority;
+///  4. Enable Banking – set up the user's application, only when needed;
+///  then the import runs and the result shows the next step.
+///
+/// Everything is only read (never changed); the password is dropped from the
+/// view state afterwards.
 struct MoneyMoneyDatabaseImportView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    /// Tells the sheet that an import is running (it locks the source tabs).
+    /// Tells the sheet that an import is running.
     @Binding var running: Bool
+    /// Database or export file – switchable on the first step only.
+    @Binding var source: MoneyMoneyImportSheet.Source
+
+    enum Step: Hashable { case source, accounts, banks, enableBanking, importing, done }
 
     struct Choice: Equatable {
         var selected: Bool
         var kind: AccountKind
-        /// nil = "Neues Konto"
+        /// nil = new account
         var target: Int64?
     }
 
-    /// MoneyMoney's data folder or a single database file.
+    /// One table row.
+    struct AccountRow: Identifiable {
+        let a: MoneyMoneyDbAccount
+        var id: Int64 { a.mmId }
+    }
+
+    @State private var step: Step = .source
     @State private var fileURL: URL?
-    /// Folder with the statement PDFs, for a database without its folder (backup).
+    /// Folder with the statement PDFs when the database is a lone file (backup).
     @State private var statementsURL: URL?
     @State private var importStatements = true
     @State private var password = ""
     @State private var preview: MoneyMoneyDbPreview?
     @State private var choices: [Int64: Choice] = [:]
+    /// Connection per MoneyMoney bank login: option key, "" = don't connect.
+    @State private var bankChoice: [Int64: String] = [:]
     @State private var importCategories = true
     @State private var importNotes = true
     @State private var importGroups = true
     @State private var createConnections = true
     @State private var importPins = false
+    /// Enable Banking credentials entered in the assistant.
+    @State private var ebValues: [String: String] = [:]
     @State private var loading = false
-    @State private var importing = false
-    /// Where the running import is (shown instead of the options).
     @State private var progress = ImportProgressState()
-    /// The running import's observer; `cancel()` stops it.
+    /// Kept while the import runs: "Import abbrechen" tells the core through it.
     @State private var relay: ImportProgressRelay?
     @State private var cancelling = false
     @State private var error: String?
     @State private var result: MoneyMoneyDbImportResult?
 
+    /// The content area keeps one size on every step, like an assistant.
+    private let contentHeight: CGFloat = 470
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let result {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        resultCard(result)
-                        if !result.psd2Connections.isEmpty { psd2Card(result.psd2Connections) }
-                        if !result.accountChecks.isEmpty { checkCard(result.accountChecks) }
-                    }
-                    .padding(.trailing, 6)
-                }
-                .frame(minHeight: 280, idealHeight: 460, maxHeight: 560) // like the preview; room for "Details"
-            } else if importing {
-                // nothing can be changed while the import runs: progress instead of the options
-                progressCard
-            } else {
-                info
-                fileAndPassword
-                if loading { ProgressView().controlSize(.small) }
-                if let preview {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            totals(preview)
-                            accountList(preview)
-                            HStack(alignment: .top, spacing: 14) {
-                                bankList(preview)
-                                optionsCard(preview).frame(width: 330)
-                            }
-                        }
-                        .padding(.trailing, 6)
-                    }
-                    .frame(minHeight: 280, idealHeight: 460, maxHeight: 560) // fits a 13" screen
+        VStack(alignment: .leading, spacing: 16) {
+            header
+            Group {
+                switch step {
+                case .source: sourceStep
+                case .accounts: accountsStep
+                case .banks: banksStep
+                case .enableBanking: enableBankingStep
+                case .importing: importingStep
+                case .done: doneStep
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: contentHeight, maxHeight: contentHeight, alignment: .top)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(Theme.warning)
@@ -87,79 +90,440 @@ struct MoneyMoneyDatabaseImportView: View {
             }
             footer
         }
-        .interactiveDismissDisabled(importing)
-        .onChange(of: importing) { _, now in running = now }
+        .interactiveDismissDisabled(step == .importing)
+        .onChange(of: step) { _, now in running = now == .importing }
         .onAppear {
             if let demo = model.demoDbPreview {
                 fileURL = URL(fileURLWithPath: "/Users/max/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney")
                 password = "demo-passwort"
                 apply(demo)
+                step = .accounts
             }
         }
         .onDisappear { password = "" }
     }
 
-    // MARK: - Pieces
+    // MARK: - Header and footer
 
-    private var info: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "lock.shield").foregroundStyle(Theme.accent)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("MoneyMoney speichert alles in einer mit Ihrem MoneyMoney-Passwort verschlüsselten Datenbank. GiroCrab öffnet sie nur lesend – die Datei und MoneyMoney bleiben unverändert.")
-                Text("Kein Datenbank-Passwort in MoneyMoney? Dann vorher eines festlegen (Einstellungen → Sicherheit).")
-                    .foregroundStyle(Theme.secondary)
+    private var header: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "square.and.arrow.down.on.square").font(.title2).foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stepTitle).font(.headline)
+                Text(stepSubtitle).font(.callout).foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            if let n = visibleSteps.firstIndex(of: step) {
+                Text("Schritt \(n + 1) von \(visibleSteps.count)")
+                    .font(.caption).foregroundStyle(Theme.tertiary)
+            }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.canvas))
     }
 
-    private var fileAndPassword: some View {
-        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-            GridRow {
-                Text("Quelle").font(.callout).foregroundStyle(Theme.secondary)
+    private var stepTitle: String {
+        switch step {
+        case .source: return String(localized: "Aus MoneyMoney importieren")
+        case .accounts: return String(localized: "Konten und Daten")
+        case .banks: return String(localized: "Bankzugänge")
+        case .enableBanking: return String(localized: "Enable Banking einrichten")
+        case .importing: return String(localized: "Import läuft")
+        case .done: return String(localized: "Import abgeschlossen")
+        }
+    }
+
+    private var stepSubtitle: String {
+        switch step {
+        case .source:
+            return String(localized: "GiroCrab liest die MoneyMoney-Datenbank nur – MoneyMoney und seine Daten bleiben unverändert.")
+        case .accounts:
+            guard let p = preview else { return "" }
+            return [String(localized: "\(p.accounts.count) Konten"),
+                    String(localized: "\(p.totalBookings.formatted()) Buchungen"),
+                    yearSpan(p)].compactMap { $0 }.joined(separator: " · ")
+        case .banks:
+            return String(localized: "Wie GiroCrab künftig Umsätze abruft. Vorausgewählt ist jeweils die beste Verbindung.")
+        case .enableBanking:
+            return String(localized: "Für \(ebBankNames) braucht GiroCrab eine kostenlose Enable-Banking-Anwendung.")
+        case .importing:
+            return String(localized: "Bitte warten Sie, bis der Import fertig ist.")
+        case .done:
+            return ""
+        }
+    }
+
+    /// The numbered steps this import goes through.
+    private var visibleSteps: [Step] {
+        var s: [Step] = [.source, .accounts]
+        if !(preview?.banks.isEmpty ?? true) { s.append(.banks) }
+        if needsEnableBankingSetup { s.append(.enableBanking) }
+        return s
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            switch step {
+            case .importing:
+                Spacer()
+                // closing would leave the import running unseen: cancel it instead
+                Button(cancelling ? "Wird abgebrochen …" : "Import abbrechen") {
+                    cancelling = true
+                    relay?.cancel()
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(cancelling)
+            case .done:
+                Spacer()
+                Button("Fertig") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            default:
+                Button("Abbrechen") { password = ""; dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                if loading { ProgressView().controlSize(.small) }
+                if step != .source {
+                    Button("Zurück") { back() }
+                }
+                if step == .enableBanking {
+                    Button("Später einrichten") { runImport() }
+                }
+                Button(isLastStep ? "Importieren" : "Weiter") { next() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canContinue)
+            }
+        }
+    }
+
+    private var isLastStep: Bool { visibleSteps.last == step }
+
+    private var canContinue: Bool {
+        switch step {
+        case .source: return fileURL != nil && !loading
+        case .accounts: return choices.values.contains(where: \.selected)
+        default: return true
+        }
+    }
+
+    private func next() {
+        error = nil
+        switch step {
+        case .source:
+            loadPreview()
+        case .enableBanking:
+            for (k, v) in ebValues where !v.trimmingCharacters(in: .whitespaces).isEmpty {
+                model.saveSetting(k, v)
+            }
+            runImport()
+        default:
+            if isLastStep {
+                runImport()
+            } else if let i = visibleSteps.firstIndex(of: step) {
+                go(visibleSteps[i + 1])
+            }
+        }
+    }
+
+    private func back() {
+        error = nil
+        if let i = visibleSteps.firstIndex(of: step), i > 0 { go(visibleSteps[i - 1]) }
+    }
+
+    private func go(_ s: Step) {
+        if s == .enableBanking { model.psd2LinkHints = plannedPsd2Links }
+        step = s
+    }
+
+    // MARK: - 1. Source
+
+    private var sourceStep: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Quelle", selection: $source) {
+                Text("MoneyMoney-Datenbank").tag(MoneyMoneyImportSheet.Source.database)
+                Text("Exportdatei (CSV/XML)").tag(MoneyMoneyImportSheet.Source.export)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            Form {
+                Section {
+                    LabeledContent("MoneyMoney-Daten") {
+                        HStack(spacing: 8) {
+                            Text(fileURL?.lastPathComponent ?? String(localized: "Nicht ausgewählt"))
+                                .foregroundStyle(fileURL == nil ? Theme.tertiary : Theme.text)
+                                .lineLimit(1).truncationMode(.middle)
+                            Button(fileURL == nil ? "Auswählen …" : "Ändern …") { pickFile() }
+                        }
+                    }
+                    SecureField("Datenbank-Passwort", text: $password, prompt: Text("Passwort aus MoneyMoney"))
+                        .onSubmit { if canContinue { next() } }
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Wählen Sie den MoneyMoney-Ordner – dann kommen auch die Kontoauszüge mit. Eine einzelne Datei (MoneyMoney.sqlite) geht auch, etwa aus einem Backup.")
+                        Text("Ist in MoneyMoney kein Datenbank-Passwort festgelegt, legen Sie dort vorher eines fest (Einstellungen → Sicherheit) und beenden MoneyMoney.")
+                    }
+                    .font(.caption).foregroundStyle(Theme.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .formStyle(.grouped)
+            .scrollDisabled(true)
+        }
+    }
+
+    // MARK: - 2. Accounts and data
+
+    private var accountsStep: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let p = preview {
                 HStack {
-                    Text(fileURL?.lastPathComponent ?? String(localized: "MoneyMoney-Ordner oder MoneyMoney.sqlite auswählen …"))
-                        .font(.callout.weight(fileURL == nil ? .regular : .medium))
-                        .foregroundStyle(fileURL == nil ? Theme.secondary : Theme.text)
-                        .lineLimit(1).truncationMode(.middle)
+                    let selected = choices.values.filter(\.selected).count
+                    Text("\(selected) von \(p.accounts.count) Konten ausgewählt")
+                        .font(.callout).foregroundStyle(Theme.secondary)
                     Spacer()
-                    Button(fileURL == nil ? "Auswählen …" : "Andere Quelle …") { pickFile() }.controlSize(.small)
+                    Button(selected == p.accounts.count ? "Alle abwählen" : "Alle auswählen") {
+                        let all = selected != p.accounts.count
+                        for id in choices.keys { choices[id]?.selected = all }
+                    }
+                    .controlSize(.small)
+                }
+                accountTable(p)
+                    .frame(minHeight: 150, maxHeight: .infinity)
+                dataOptions(p)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func accountTable(_ p: MoneyMoneyDbPreview) -> some View {
+        let rows = p.accounts.map(AccountRow.init)
+        // "Ziel" only when GiroCrab already has accounts to merge into
+        if model.allAccounts.isEmpty {
+            Table(rows) {
+                TableColumn("") { r in selectCell(r.a) }.width(22)
+                TableColumn("Konto") { r in nameCell(r.a) }
+                TableColumn("Buchungen") { r in bookingsCell(r.a) }.width(80)
+                TableColumn("Saldo") { r in balanceCell(r.a) }.width(110)
+                TableColumn("Kontoart") { r in kindCell(r.a) }.width(150)
+            }
+        } else {
+            Table(rows) {
+                TableColumn("") { r in selectCell(r.a) }.width(22)
+                TableColumn("Konto") { r in nameCell(r.a) }
+                TableColumn("Buchungen") { r in bookingsCell(r.a) }.width(80)
+                TableColumn("Saldo") { r in balanceCell(r.a) }.width(110)
+                TableColumn("Kontoart") { r in kindCell(r.a) }.width(150)
+                TableColumn("Ziel") { r in targetCell(r.a) }.width(170)
+            }
+        }
+    }
+
+    private func selectCell(_ a: MoneyMoneyDbAccount) -> some View {
+        Toggle("„\(a.name)“ importieren", isOn: binding(a).selected).labelsHidden()
+    }
+
+    private func nameCell(_ a: MoneyMoneyDbAccount) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(a.name).lineLimit(1)
+            Text(accountSubtitle(a)).font(.caption).foregroundStyle(Theme.secondary).lineLimit(1)
+        }
+        .opacity(binding(a).wrappedValue.selected ? 1 : 0.5)
+    }
+
+    private func bookingsCell(_ a: MoneyMoneyDbAccount) -> some View {
+        Text(a.bookingCount.formatted())
+            .monospacedDigit()
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .help(bookingSummary(a))
+    }
+
+    private func balanceCell(_ a: MoneyMoneyDbAccount) -> some View {
+        Text(Money.format(a.computedBalanceCents, currency: a.currency))
+            .monospacedDigit()
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .help(a.balanceSource)
+    }
+
+    private func kindCell(_ a: MoneyMoneyDbAccount) -> some View {
+        Picker("Kontoart", selection: binding(a).kind) {
+            ForEach(AccountKind.importChoices, id: \.self) { k in Text(k.label).tag(k) }
+        }
+        .labelsHidden()
+    }
+
+    private func targetCell(_ a: MoneyMoneyDbAccount) -> some View {
+        Picker("Ziel", selection: binding(a).target) {
+            Text("Neues Konto").tag(Int64?.none)
+            ForEach(model.allAccounts) { acc in
+                Text(acc.id == a.existingAccountId ? String(localized: "\(acc.name) (gleiche IBAN)") : acc.name).tag(Int64?.some(acc.id))
+            }
+            if let id = a.existingAccountId, !model.allAccounts.contains(where: { $0.id == id }) {
+                Text(a.existingAccountName ?? String(localized: "Vorhandenes Konto")).tag(Int64?.some(id))
+            }
+        }
+        .labelsHidden()
+    }
+
+    private func dataOptions(_ p: MoneyMoneyDbPreview) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Kategorien und Regeln (\(p.categoryPaths.count))", isOn: $importCategories)
+                if p.replacesStarterCategories && importCategories {
+                    Text("Ersetzt die GiroCrab-Startkategorien – Ihr Tresor enthält noch keine Buchungen.")
+                        .font(.caption).foregroundStyle(Theme.secondary)
+                }
+                Toggle("Notizen (\(p.notesCount))", isOn: $importNotes)
+                let groupCount = Set(p.accounts.map(\.groupName).filter { !$0.isEmpty }).count
+                if groupCount > 0 {
+                    Toggle("Kontogruppen (\(groupCount))", isOn: $importGroups)
+                }
+                if p.statementCount > 0 { statementOptions(p) }
+            }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text("Außerdem übernehmen").font(.callout.weight(.medium))
+        }
+    }
+
+    /// Statement PDFs: MoneyMoney's database only lists them, the files are
+    /// in its `Statements` folder – or, for a backup, wherever the user saved them.
+    @ViewBuilder
+    private func statementOptions(_ p: MoneyMoneyDbPreview) -> some View {
+        let size = ByteCountFormatter.string(fromByteCount: Int64(p.statementsBytes), countStyle: .file)
+        HStack(spacing: 8) {
+            Toggle("Kontoauszüge und Dokumente (\(p.statementsFound), \(size))", isOn: $importStatements)
+                .disabled(p.statementsFound == 0)
+            if p.statementsFound < p.statementCount {
+                Button(statementsURL == nil ? "Ordner wählen …" : "Anderer Ordner …") { pickStatementsFolder() }
+                    .controlSize(.small)
+                    .disabled(loading)
+            }
+        }
+        if p.statementsFound < p.statementCount {
+            Text(p.statementsDir == nil
+                 ? String(localized: "\(p.statementCount) PDFs liegen nicht bei dieser Datenbank. Wählen Sie den Ordner, falls Sie sie gesichert haben.")
+                 : String(localized: "\(p.statementsFound) von \(p.statementCount) PDFs gefunden, die übrigen werden ausgelassen."))
+                .font(.caption).foregroundStyle(Theme.secondary)
+        }
+    }
+
+    // MARK: - 3. Bank connections
+
+    private var banksStep: some View {
+        Form {
+            Section {
+                Toggle("Bankzugänge anlegen", isOn: $createConnections)
+            } footer: {
+                footerText("Die Konten erscheinen unter ihrem Bankzugang. Der erste Abruf übernimmt sie, ohne Duplikate anzulegen.")
+            }
+            if let p = preview {
+                Section {
+                    ForEach(p.banks, id: \.mmId) { b in bankRow(b) }
+                } footer: {
+                    if createConnections, chosenEnableBanking, !enableBankingReady {
+                        footerText("Enable Banking richten Sie im nächsten Schritt ein.")
+                    }
+                }
+                .disabled(!createConnections)
+                if createConnections, p.banks.contains(where: { $0.hasSavedPin && usesPin($0) }) {
+                    Section {
+                        Toggle("Gespeicherte PINs übernehmen", isOn: $importPins)
+                    } footer: {
+                        footerText("Die PINs aus MoneyMoney kommen verschlüsselt in den GiroCrab-Tresor. Ohne diese Option werden sie nicht gelesen.")
+                    }
                 }
             }
-            GridRow {
-                Text("Passwort").font(.callout).foregroundStyle(Theme.secondary)
-                HStack {
-                    SecureField("MoneyMoney-Datenbank-Passwort", text: $password)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { loadPreview() }
-                    Button("Vorschau") { loadPreview() }
-                        .disabled(fileURL == nil || loading || importing)
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Section footer of a grouped form, aligned with the section (leading).
+    private func footerText(_ text: LocalizedStringKey) -> some View {
+        Text(text)
+            .font(.caption).foregroundStyle(Theme.secondary)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func bankRow(_ b: MoneyMoneyDbBank) -> some View {
+        let options = connectionOptions(b)
+        return LabeledContent {
+            if options.count > 1 {
+                Picker("Verbindung für \(b.name)", selection: bankBinding(b)) {
+                    ForEach(options, id: \.key) { o in Text(label(o)).tag(o.key) }
+                    Divider()
+                    Text("Nicht verbinden").tag("")
+                }
+                .labelsHidden()
+                .fixedSize()
+            } else if let o = options.first {
+                Text(label(o) + (b.existingConnectionId != nil ? " · " + String(localized: "vorhanden") : ""))
+                    .foregroundStyle(Theme.secondary)
+            } else {
+                Text("Nicht verfügbar").foregroundStyle(Theme.tertiary)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(b.name.isEmpty ? (b.connector?.displayName ?? String(localized: "Bank")) : b.name)
+                let detail = bankDetail(b)
+                if !detail.isEmpty {
+                    Text(detail).font(.caption).foregroundStyle(Theme.secondary)
                 }
             }
         }
     }
 
-    private var progressCard: some View {
+    /// Login name, and the bank code only when it is a real one (MoneyMoney
+    /// stores placeholders such as "Amazon-Kreditkarte" there).
+    private func bankDetail(_ b: MoneyMoneyDbBank) -> String {
+        let code = b.bankCode.filter(\.isNumber)
+        let blz = code.count == 8 && code == b.bankCode.filter { !$0.isWhitespace } ? String(localized: "BLZ \(code)") : nil
+        return [b.loginName.isEmpty ? nil : b.loginName, blz].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private func label(_ o: MoneyMoneyDbConnectionOption) -> String {
+        switch o.via {
+        case .finTs: return String(localized: "Online-Banking (FinTS)")
+        case .ownApi: return String(localized: "Schnittstelle der Bank")
+        case .enableBanking:
+            // the Enable Banking name only when it differs from MoneyMoney's
+            return String(localized: "Enable Banking")
+        }
+    }
+
+    // MARK: - 4. Enable Banking
+
+    private var enableBankingStep: some View {
+        ScrollView {
+            EnableBankingSetupSection(values: $ebValues)
+                .padding(.trailing, 6)
+        }
+    }
+
+    // MARK: - Import and result
+
+    private var importingStep: some View {
         let p = progress.value
         return VStack(alignment: .leading, spacing: 10) {
-            Label("Import läuft …", systemImage: "square.and.arrow.down.on.square").font(.headline)
             ProgressView(value: p.fraction)
                 .progressViewStyle(.linear)
-                .tint(Theme.accent)
-            Text(progressStatus(p)).font(.callout).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+            Text(progressStatus(p)).font(.callout).lineLimit(1).truncationMode(.middle)
             if p.bookingsTotal > 0 || p.documentsTotal > 0 {
                 Text(progressCounts(p)).font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
             }
             Text(cancelling
                  ? "Der Import wird abgebrochen …"
-                 : "Bitte warten Sie, bis der Import fertig ist. „Import abbrechen“ verwirft alles – es wird dann nichts übernommen.")
-                .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                 : "„Import abbrechen“ verwirft alles – es wird dann nichts übernommen.")
+                .font(.caption).foregroundStyle(Theme.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .padding(.top, 40)
     }
 
     private func progressStatus(_ p: MoneyMoneyDbImportProgress) -> String {
@@ -176,277 +540,84 @@ struct MoneyMoneyDatabaseImportView: View {
         return s
     }
 
-    private func totals(_ p: MoneyMoneyDbPreview) -> some View {
-        let span = [p.dateRangeStart, p.dateRangeEnd].compactMap { $0.map { String($0.prefix(4)) } }
-        let years = span.count == 2 ? (span[0] == span[1] ? span[0] : "\(span[0]) – \(span[1])") : "–"
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 18) {
-                stat(years, "Zeitraum")
-                stat("\(p.accounts.count)", "Konten")
-                stat(p.totalBookings.formatted(), "Buchungen")
-                stat("\(p.notesCount)", "Notizen")
-                stat("\(p.categoryPaths.count)", "Kategorien")
-                if p.statementCount > 0 { stat(p.statementCount.formatted(), "Dokumente") }
+    @ViewBuilder
+    private var doneStep: some View {
+        if let r = result {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    let accounts = r.accountsCreated + r.accountsMerged
+                    Label(String(localized: "\(r.bookingsNew.formatted()) Buchungen aus \(accounts) Konten übernommen"),
+                          systemImage: "checkmark.circle.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Theme.inflow)
+                    checkSummary(r.accountChecks)
+                    if !r.psd2Connections.isEmpty { nextStep(r.psd2Connections) }
+                    if !r.accountChecks.isEmpty {
+                        DisclosureGroup("Abgleich mit MoneyMoney") { checkRows(r.accountChecks) }
+                    }
+                    DisclosureGroup("Was wurde übernommen") { summaryLines(r) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, 6)
             }
-            if p.pendingBookings > 0 {
-                Text("\(p.pendingBookings) vorgemerkte Buchungen werden nicht übernommen – die Bank liefert sie nach der Buchung erneut.")
+        }
+    }
+
+    @ViewBuilder
+    private func checkSummary(_ checks: [MoneyMoneyDbAccountCheck]) -> some View {
+        let problems = checks.filter { !$0.ok }
+        if checks.isEmpty {
+            EmptyView()
+        } else if problems.isEmpty {
+            Text(checks.count == 1
+                 ? String(localized: "Das Konto stimmt mit MoneyMoney überein.")
+                 : String(localized: "Alle \(checks.count) Konten stimmen mit MoneyMoney überein."))
+                .foregroundStyle(Theme.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(String(localized: "\(problems.count) von \(checks.count) Konten weichen von MoneyMoney ab"),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.warning)
+                Text("Bitte prüfen Sie diese Konten. Ein erneuter Import ergänzt fehlende Buchungen, ohne Duplikate anzulegen.")
                     .font(.caption).foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                checkRows(problems)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card(padding: 12)
     }
 
-    private func accountList(_ p: MoneyMoneyDbPreview) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Konten").font(.subheadline.weight(.semibold)).padding(.bottom, 6)
-            ForEach(Array(p.accounts.enumerated()), id: \.element.mmId) { i, a in
-                if i > 0 { Divider() }
-                accountRow(a)
-            }
-        }
-        .card(padding: 12)
-    }
-
-    private func accountRow(_ a: MoneyMoneyDbAccount) -> some View {
-        let choice = binding(a)
-        return HStack(alignment: .center, spacing: 10) {
-            Toggle("„\(a.name)“ importieren", isOn: choice.selected).labelsHidden().toggleStyle(.checkbox)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(a.name).font(.callout.weight(.medium)).lineLimit(1)
-                Text(accountSubtitle(a)).font(.caption).foregroundStyle(Theme.secondary).lineLimit(1)
-                Text(bookingSummary(a)).font(.caption2).foregroundStyle(Theme.tertiary).lineLimit(1)
+    /// Enable Banking connections the import set up: the bank consent is next.
+    private func nextStep(_ list: [MoneyMoneyDbPsd2Connection]) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(enableBankingReady
+                     ? "Starten Sie die Freigabe bei der Bank. Konten, die noch nicht mit Ihrer Enable-Banking-Anwendung verknüpft sind, verknüpfen Sie auf enablebanking.com."
+                     : "Die Enable-Banking-Anwendung wird bei der ersten Freigabe eingerichtet. Verknüpfen Sie dabei alle Konten dieser Banken auf einmal.")
+                    .font(.caption).foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(list, id: \.connectionId) { c in
+                    Divider()
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(c.bankName).font(.callout.weight(.medium))
+                            ForEach(Array(c.accounts.enumerated()), id: \.offset) { _, a in
+                                Text([a.name, a.iban.isEmpty ? (a.accountNumber.isEmpty ? nil : String(localized: "Konto \(a.accountNumber)")) : formatIBAN(a.iban)]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Freigabe starten") { startConsent(c.connectionId) }
+                    }
+                }
+                Link("Anwendungen auf enablebanking.com öffnen", destination: URL(string: "https://enablebanking.com/cp/applications")!)
+                    .font(.caption)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(Money.format(a.computedBalanceCents, currency: a.currency))
-                    .font(.callout.monospacedDigit()).foregroundStyle(Theme.text)
-                Text("Saldo").font(.caption2).foregroundStyle(Theme.tertiary)
-            }
-            .help(a.balanceSource)
-            .frame(width: 110, alignment: .trailing)
-            Picker("Kontoart", selection: choice.kind) {
-                ForEach(AccountKind.importChoices, id: \.self) { k in Text(k.label).tag(k) }
-            }
-            .labelsHidden().frame(width: 150)
-            Picker("Ziel", selection: choice.target) {
-                Text("Neues Konto").tag(Int64?.none)
-                ForEach(model.allAccounts) { acc in
-                    Text(acc.id == a.existingAccountId ? String(localized: "\(acc.name) (gleiche IBAN)") : acc.name).tag(Int64?.some(acc.id))
-                }
-                if let id = a.existingAccountId, !model.allAccounts.contains(where: { $0.id == id }) {
-                    Text(a.existingAccountName ?? String(localized: "Vorhandenes Konto")).tag(Int64?.some(id))
-                }
-            }
-            .labelsHidden().frame(width: 190)
+        } label: {
+            Text("Nächster Schritt").font(.callout.weight(.medium))
         }
-        .padding(.vertical, 6)
-        .opacity(choice.wrappedValue.selected ? 1 : 0.5)
-    }
-
-    private func bankList(_ p: MoneyMoneyDbPreview) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Bankzugänge").font(.subheadline.weight(.semibold)).padding(.bottom, 6)
-            ForEach(Array(p.banks.enumerated()), id: \.element.mmId) { i, b in
-                if i > 0 { Divider() }
-                HStack(spacing: 10) {
-                    let psd2 = psd2Bank(b)
-                    Image(systemName: b.connector != nil ? "checkmark.circle.fill" : psd2 != nil ? "link.circle.fill" : "xmark.circle")
-                        .foregroundStyle(b.connector != nil ? Theme.inflow : psd2 != nil ? Theme.accent : Theme.tertiary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(b.name.isEmpty ? (b.connector?.displayName ?? "Bank") : b.name).font(.callout.weight(.medium))
-                        Text([b.bankCode.isEmpty ? nil : String(localized: "BLZ \(b.bankCode)"), b.loginName.isEmpty ? nil : String(localized: "Anmeldename \(b.loginName)")]
-                            .compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(Theme.secondary)
-                        if let psd2 {
-                            Text(enableBankingReady
-                                 ? String(localized: "Über Enable Banking (PSD2): \(psd2.name)")
-                                 : String(localized: "Über Enable Banking (PSD2): \(psd2.name) – Enable Banking wird bei der ersten Freigabe eingerichtet"))
-                                .font(.caption).foregroundStyle(Theme.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    if b.hasSavedPin {
-                        Image(systemName: "key").font(.caption).foregroundStyle(Theme.secondary).help("In MoneyMoney ist eine PIN gespeichert")
-                    }
-                    Text(bankStatus(b)).font(.caption).foregroundStyle(b.connector == nil && psd2Bank(b) == nil ? Theme.tertiary : Theme.text)
-                        .frame(width: 110, alignment: .trailing)
-                }
-                .padding(.vertical, 6)
-            }
-        }
-        .card(padding: 12)
-    }
-
-    private func optionsCard(_ p: MoneyMoneyDbPreview) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Kategorien übernehmen (\(p.categoryPaths.count))", isOn: $importCategories)
-            if p.replacesStarterCategories && importCategories {
-                Text("Ersetzt die GiroCrab-Startkategorien und ihre Regeln – Ihr Tresor enthält noch keine Buchungen.")
-                    .font(.caption).foregroundStyle(Theme.secondary).padding(.leading, 2)
-            }
-            Toggle("Notizen übernehmen (\(p.notesCount))", isOn: $importNotes)
-            let groupCount = Set(p.accounts.map(\.groupName).filter { !$0.isEmpty }).count
-            if groupCount > 0 {
-                Toggle("Kontogruppen übernehmen (\(groupCount))", isOn: $importGroups)
-            }
-            if p.statementCount > 0 {
-                statementOptions(p)
-            }
-            Toggle("Bankzugänge anlegen", isOn: $createConnections)
-            Toggle("Gespeicherte PINs übernehmen", isOn: $importPins)
-                .disabled(!createConnections)
-            Text("Die PINs werden dann im verschlüsselten GiroCrab-Tresor gespeichert. Ohne diese Option werden sie nicht einmal gelesen.")
-                .font(.caption).foregroundStyle(Theme.secondary).padding(.leading, 2)
-        }
-        .toggleStyle(.switch).controlSize(.small)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card(padding: 12)
-    }
-
-    /// Statement PDFs: MoneyMoney's database only lists them, the files are
-    /// in its `Statements` folder – or, for a backup, wherever the user saved them.
-    @ViewBuilder
-    private func statementOptions(_ p: MoneyMoneyDbPreview) -> some View {
-        let size = ByteCountFormatter.string(fromByteCount: Int64(p.statementsBytes), countStyle: .file)
-        Toggle("Kontoauszüge & Dokumente übernehmen (\(p.statementsFound))", isOn: $importStatements)
-            .disabled(p.statementsFound == 0)
-        VStack(alignment: .leading, spacing: 4) {
-            if p.statementsDir == nil {
-                Text("MoneyMoney verzeichnet \(p.statementCount) PDF-Dokumente, die Dateien liegen aber nicht bei dieser Datenbank. Wenn Sie sie gesichert haben, wählen Sie den Ordner aus – sonst werden sie ausgelassen und lassen sich später nachholen.")
-            } else if p.statementsFound < p.statementCount {
-                Text("\(p.statementsFound) von \(p.statementCount) PDF-Dokumenten gefunden (\(size)). Die übrigen werden ausgelassen.")
-            } else {
-                Text("\(p.statementCount) PDF-Dokumente (\(size)) kommen verschlüsselt in den GiroCrab-Tresor.")
-            }
-            if p.statementsFound < p.statementCount {
-                Button(statementsURL == nil ? "Ordner mit Auszügen wählen …" : "Anderen Ordner wählen …") { pickStatementsFolder() }
-                    .controlSize(.small)
-                    .disabled(loading || importing)
-            }
-        }
-        .font(.caption).foregroundStyle(Theme.secondary).padding(.leading, 2)
-    }
-
-    private func resultCard(_ r: MoneyMoneyDbImportResult) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Import abgeschlossen", systemImage: "checkmark.seal.fill").font(.headline).foregroundStyle(Theme.inflow)
-            HStack(spacing: 18) {
-                stat("\(r.accountsCreated)", "Konten neu")
-                stat("\(r.accountsMerged)", "Konten ergänzt")
-                stat(r.bookingsNew.formatted(), "neue Buchungen")
-                stat("\(r.bookingsDuplicates)", "bereits vorhanden")
-            }
-            Group {
-                if r.documentsImported > 0 {
-                    Text("\(r.documentsImported) Kontoauszüge und Dokumente (PDF) übernommen.")
-                }
-                if r.documentsExisting > 0 {
-                    Text("\(r.documentsExisting) Dokumente waren bereits vorhanden.")
-                }
-                if r.documentsMissing > 0 {
-                    Text("\(r.documentsMissing) Dokumente wurden nicht gefunden – sie lassen sich später mit dem Ordner der PDF-Dateien nachholen.")
-                }
-                if r.documentsMismatched > 0 {
-                    Text("\(r.documentsMismatched) Dateien stimmen nicht mit der Prüfsumme aus MoneyMoney überein und wurden nicht übernommen.")
-                }
-                if r.documentsTooLarge > 0 {
-                    Text("\(r.documentsTooLarge) Dokumente sind größer als 25 MB und wurden nicht übernommen.")
-                }
-                if r.documentsUnlisted > 0 {
-                    Text("\(r.documentsUnlisted) PDF-Dateien im Ordner kennt MoneyMoney nicht – sie gehören zu keinem Konto und wurden nicht übernommen.")
-                }
-                if r.holdingsImported > 0 {
-                    Text("\(r.holdingsImported) Depotpositionen übernommen.")
-                }
-                if r.categoriesCreated > 0 || r.notesImported > 0 {
-                    Text("\(r.categoriesCreated) Kategorien angelegt, \(r.notesImported) Notizen übernommen.")
-                }
-                if r.rulesCreated > 0 {
-                    Text("\(r.rulesCreated) Regeln übernommen.")
-                }
-                if r.rulesDisabled > 0 {
-                    Text("\(r.rulesDisabled) davon ausgeschaltet – sie nutzen Angaben, die GiroCrab nicht kennt, gelten nur für bestimmte Konten oder sind fehlerhaft.")
-                }
-                if r.connectionsCreated > 0 || r.connectionsExisting > 0 {
-                    Text(String(localized: "\(r.connectionsCreated) Bankzugänge angelegt")
-                        + (r.connectionsExisting > 0 ? String(localized: ", \(r.connectionsExisting) bereits vorhanden") : "")
-                        + (r.pinsStored > 0 ? String(localized: ", \(r.pinsStored) PINs im Tresor gespeichert.") : "."))
-                }
-                if r.banksSkippedUnsupported > 0 {
-                    Text("\(r.banksSkippedUnsupported) Bankzugänge werden von GiroCrab noch nicht unterstützt und wurden übersprungen.")
-                }
-                if r.pendingSkipped > 0 {
-                    Text("\(r.pendingSkipped) vorgemerkte Buchungen wurden nicht übernommen.")
-                }
-            }
-            .font(.caption).foregroundStyle(Theme.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
-    }
-
-    private var footer: some View {
-        HStack {
-            Spacer()
-            if result != nil {
-                Button("Fertig") { dismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-            } else if importing {
-                // closing the dialog would leave the import running unseen: cancel it instead
-                Button(cancelling ? "Wird abgebrochen …" : "Import abbrechen") {
-                    cancelling = true
-                    relay?.cancel()
-                }
-                .keyboardShortcut(.cancelAction)
-                .disabled(cancelling)
-            } else {
-                Button("Abbrechen") { password = ""; dismiss() }.keyboardShortcut(.cancelAction)
-                Button(importing ? "Importiere …" : "Importieren") { runImport() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(preview == nil || importing || !choices.values.contains(where: \.selected))
-            }
-        }
-    }
-
-    /// Enable Banking connections the import set up: what is left to do –
-    /// link the accounts to the user's application, then the bank consent.
-    private func psd2Card(_ list: [MoneyMoneyDbPsd2Connection]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Noch zu tun: Freigabe über Enable Banking", systemImage: "link.circle.fill")
-                .font(.callout.weight(.medium)).foregroundStyle(Theme.accent)
-            Group {
-                if enableBankingReady {
-                    Text("Starten Sie die Freigabe bei der Bank. Im eingeschränkten Modus sieht Ihre Enable-Banking-Anwendung nur verknüpfte Konten – falls diese Konten noch nicht verknüpft sind, holen Sie das auf enablebanking.com nach.")
-                } else {
-                    Text("Für diese Banken braucht GiroCrab eine kostenlose Enable-Banking-Anwendung. Sie wird bei der ersten Freigabe eingerichtet: Verknüpfen Sie beim Aktivieren der Anwendung alle unten aufgeführten Konten auf einmal – GiroCrab zeigt sie dabei noch einmal an. Danach starten Sie die Freigabe je Bank.")
-                }
-            }
-            .font(.caption).foregroundStyle(Theme.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            Link("Anwendungen auf enablebanking.com öffnen", destination: URL(string: "https://enablebanking.com/cp/applications")!)
-                .font(.caption)
-            ForEach(list, id: \.connectionId) { c in
-                Divider()
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(c.bankName).font(.callout.weight(.medium))
-                        ForEach(Array(c.accounts.enumerated()), id: \.offset) { _, a in
-                            Text([a.name, a.iban.isEmpty ? (a.accountNumber.isEmpty ? nil : String(localized: "Konto \(a.accountNumber)")) : formatIBAN(a.iban)]
-                                .compactMap { $0 }.joined(separator: " · "))
-                                .font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Freigabe starten") { startConsent(c.connectionId) }
-                        .controlSize(.small)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
     }
 
     /// Closes the import and starts the bank consent of that connection.
@@ -456,36 +627,36 @@ struct MoneyMoneyDatabaseImportView: View {
         model.requestSync(conn)
     }
 
-    /// "Abgleich mit MoneyMoney": every imported account read back from the
-    /// vault. All fine → one line (details on demand); otherwise the
-    /// accounts that differ, with the numbers.
-    private func checkCard(_ checks: [MoneyMoneyDbAccountCheck]) -> some View {
-        let problems = checks.filter { !$0.ok }
-        return VStack(alignment: .leading, spacing: 8) {
-            if problems.isEmpty {
-                Label(checks.count == 1
-                      ? String(localized: "Das Konto stimmt mit MoneyMoney überein.")
-                      : String(localized: "Alle \(checks.count) Konten stimmen mit MoneyMoney überein."),
-                      systemImage: "checkmark.circle.fill")
-                    .font(.callout.weight(.medium)).foregroundStyle(Theme.inflow)
-                DisclosureGroup("Details") { checkRows(checks) }
-                    .font(.caption)
-            } else {
-                Label(String(localized: "\(problems.count) von \(checks.count) Konten weichen von MoneyMoney ab"),
-                      systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout.weight(.medium)).foregroundStyle(Theme.warning)
-                Text("Bitte prüfen Sie diese Konten. Ein erneuter Import ergänzt fehlende Buchungen, ohne Duplikate anzulegen.")
-                    .font(.caption).foregroundStyle(Theme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                checkRows(problems)
-                if problems.count < checks.count {
-                    DisclosureGroup("Alle Konten") { checkRows(checks) }
-                        .font(.caption)
-                }
-            }
+    private func summaryLines(_ r: MoneyMoneyDbImportResult) -> some View {
+        var lines: [String] = []
+        lines.append(String(localized: "\(r.accountsCreated) Konten neu, \(r.accountsMerged) ergänzt"))
+        if r.bookingsDuplicates > 0 { lines.append(String(localized: "\(r.bookingsDuplicates) Buchungen waren bereits vorhanden")) }
+        if r.categoriesCreated > 0 || r.notesImported > 0 {
+            lines.append(String(localized: "\(r.categoriesCreated) Kategorien angelegt, \(r.notesImported) Notizen übernommen"))
         }
+        if r.rulesCreated > 0 {
+            lines.append(r.rulesDisabled > 0
+                         ? String(localized: "\(r.rulesCreated) Regeln übernommen, \(r.rulesDisabled) davon ausgeschaltet")
+                         : String(localized: "\(r.rulesCreated) Regeln übernommen"))
+        }
+        if r.groupsCreated > 0 { lines.append(String(localized: "\(r.groupsCreated) Kontogruppen angelegt")) }
+        if r.documentsImported > 0 { lines.append(String(localized: "\(r.documentsImported) Kontoauszüge und Dokumente übernommen")) }
+        if r.documentsMissing + r.documentsMismatched + r.documentsTooLarge > 0 {
+            lines.append(String(localized: "\(r.documentsMissing + r.documentsMismatched + r.documentsTooLarge) Dokumente ausgelassen (nicht gefunden, beschädigt oder größer als 25 MB)"))
+        }
+        if r.holdingsImported > 0 { lines.append(String(localized: "\(r.holdingsImported) Depotpositionen übernommen")) }
+        if r.connectionsCreated + r.connectionsExisting > 0 {
+            lines.append(String(localized: "\(r.connectionsCreated) Bankzugänge angelegt, \(r.connectionsExisting) bereits vorhanden"))
+        }
+        if r.pinsStored > 0 { lines.append(String(localized: "\(r.pinsStored) PINs im Tresor gespeichert")) }
+        if r.banksSkippedUnsupported > 0 { lines.append(String(localized: "\(r.banksSkippedUnsupported) Bankzugänge nicht verfügbar")) }
+        if r.pendingSkipped > 0 { lines.append(String(localized: "\(r.pendingSkipped) vorgemerkte Buchungen ausgelassen – die Bank liefert sie gebucht erneut")) }
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(lines, id: \.self) { Text($0) }
+        }
+        .font(.caption).foregroundStyle(Theme.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .padding(.top, 4)
     }
 
     private func checkRows(_ checks: [MoneyMoneyDbAccountCheck]) -> some View {
@@ -507,7 +678,6 @@ struct MoneyMoneyDatabaseImportView: View {
                         Text(c.name).lineLimit(1)
                         if let note = checkNote(c) {
                             Text(note).font(.caption2).foregroundStyle(Theme.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     Text("\(c.foundBookings + c.deletedBookings) / \(c.mmBookings)")
@@ -536,13 +706,6 @@ struct MoneyMoneyDatabaseImportView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private func stat(_ value: String, _ label: LocalizedStringKey) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.title3.weight(.semibold).monospacedDigit()).foregroundStyle(Theme.text)
-            Text(label).font(.caption2).foregroundStyle(Theme.secondary)
-        }
-    }
-
     // MARK: - Helpers
 
     private func binding(_ a: MoneyMoneyDbAccount) -> Binding<Choice> {
@@ -557,27 +720,57 @@ struct MoneyMoneyDatabaseImportView: View {
         if !a.bankName.isEmpty { parts.append(a.bankName) }
         if !a.iban.isEmpty { parts.append(TransferSheetView.groupedIBAN(a.iban)) } else if !a.accountNumber.isEmpty { parts.append(String(localized: "Konto \(a.accountNumber)")) }
         if a.currency != "EUR" { parts.append(a.currency) }
-        if !a.groupName.isEmpty { parts.append(String(localized: "Gruppe „\(a.groupName)“")) }
         return parts.joined(separator: " · ")
     }
 
     private func bookingSummary(_ a: MoneyMoneyDbAccount) -> String {
-        let n = a.bookingCount.formatted()
-        var s = String(localized: "\(n) Buchungen")
-        if let f = a.firstDate, let l = a.lastDate { s += " · \(DateText.medium(f)) – \(DateText.medium(l))" }
-        if a.pendingCount > 0 { s += " · " + String(localized: "\(a.pendingCount) vorgemerkt") }
-        if a.holdingCount > 0 { s += " · " + String(localized: "\(a.holdingCount) Depotpositionen") }
-        if a.statementCount > 0 { s += " · " + String(localized: "\(a.statementCount) Dokumente") }
-        return s
+        var parts: [String] = []
+        if let f = a.firstDate, let l = a.lastDate { parts.append("\(DateText.medium(f)) – \(DateText.medium(l))") }
+        if a.pendingCount > 0 { parts.append(String(localized: "\(a.pendingCount) vorgemerkt")) }
+        if a.holdingCount > 0 { parts.append(String(localized: "\(a.holdingCount) Depotpositionen")) }
+        if a.statementCount > 0 { parts.append(String(localized: "\(a.statementCount) Dokumente")) }
+        if !a.groupName.isEmpty { parts.append(String(localized: "Gruppe „\(a.groupName)“")) }
+        return parts.joined(separator: " · ")
     }
 
-    /// Enable Banking bank for a MoneyMoney bank without own connector: the
-    /// catalogue suggestion, else a match in the live list (when loaded).
-    private func psd2Bank(_ b: MoneyMoneyDbBank) -> Psd2Bank? {
-        guard b.connector == nil else { return nil }
-        if let s = b.connectionOptions.first(where: { $0.via == .enableBanking })?.psd2Bank { return s }
-        guard !model.livePsd2Banks.isEmpty else { return nil }
-        return matchPsd2BankByName(bankName: b.name, candidates: model.livePsd2Banks)
+    private func yearSpan(_ p: MoneyMoneyDbPreview) -> String? {
+        let span = [p.dateRangeStart, p.dateRangeEnd].compactMap { $0.map { String($0.prefix(4)) } }
+        guard span.count == 2 else { return nil }
+        return span[0] == span[1] ? span[0] : "\(span[0])–\(span[1])"
+    }
+
+    /// The bank's connection options, plus Enable Banking from the live list
+    /// when the catalogue had none and the user's application is set up.
+    private func connectionOptions(_ b: MoneyMoneyDbBank) -> [MoneyMoneyDbConnectionOption] {
+        var list = b.connectionOptions
+        if !list.contains(where: { $0.via == .enableBanking }), !model.livePsd2Banks.isEmpty,
+           let x = matchPsd2BankByName(bankName: b.name, candidates: model.livePsd2Banks) {
+            list.append(MoneyMoneyDbConnectionOption(via: .enableBanking, connector: .enableBanking,
+                                                     key: "enablebanking:\(x.country):\(x.aspsp)", psd2Bank: x))
+        }
+        return list
+    }
+
+    private func bankBinding(_ b: MoneyMoneyDbBank) -> Binding<String> {
+        Binding(
+            get: { bankChoice[b.mmId] ?? connectionOptions(b).first?.key ?? "" },
+            set: { bankChoice[b.mmId] = $0 }
+        )
+    }
+
+    /// The connection chosen for a bank (nil = none).
+    private func chosenOption(_ b: MoneyMoneyDbBank) -> MoneyMoneyDbConnectionOption? {
+        let key = bankChoice[b.mmId] ?? connectionOptions(b).first?.key ?? ""
+        return connectionOptions(b).first { $0.key == key }
+    }
+
+    private func usesPin(_ b: MoneyMoneyDbBank) -> Bool {
+        guard let o = chosenOption(b) else { return false }
+        return o.via != .enableBanking
+    }
+
+    private var chosenEnableBanking: Bool {
+        preview?.banks.contains { chosenOption($0)?.via == .enableBanking } ?? false
     }
 
     /// The user's own Enable Banking application is set up.
@@ -586,18 +779,31 @@ struct MoneyMoneyDatabaseImportView: View {
             && model.settingEntry("enablebanking.private_key_pem")?.hasValue == true
     }
 
-    private func bankStatus(_ b: MoneyMoneyDbBank) -> String {
-        if b.connector == nil, psd2Bank(b) != nil {
-            return createConnections ? String(localized: "wird angelegt (PSD2)") : String(localized: "wird nicht angelegt")
+    private var needsEnableBankingSetup: Bool {
+        createConnections && chosenEnableBanking && !enableBankingReady
+    }
+
+    private var ebBankNames: String {
+        (preview?.banks ?? []).filter { chosenOption($0)?.via == .enableBanking }
+            .map(\.name).formatted(.list(type: .and))
+    }
+
+    /// The Enable Banking banks of this import with their selected accounts –
+    /// shown in the setup so they can be linked while activating the application.
+    private var plannedPsd2Links: [MoneyMoneyDbPsd2Connection] {
+        guard let p = preview else { return [] }
+        return p.banks.filter { chosenOption($0)?.via == .enableBanking }.map { b in
+            MoneyMoneyDbPsd2Connection(
+                connectionId: -b.mmId, bankName: b.name, created: true,
+                accounts: p.accounts
+                    .filter { $0.mmBankId == b.mmId && (choices[$0.mmId]?.selected ?? true) }
+                    .map { MoneyMoneyDbPsd2Account(name: $0.name, iban: $0.iban, accountNumber: $0.accountNumber) })
         }
-        guard b.connector != nil else { return String(localized: "nicht unterstützt") }
-        if b.existingConnectionId != nil { return String(localized: "bereits vorhanden") }
-        return createConnections ? String(localized: "wird angelegt") : String(localized: "wird nicht angelegt")
     }
 
     private func apply(_ p: MoneyMoneyDbPreview) {
         preview = p
-        if p.banks.contains(where: { $0.connector == nil }) { model.loadLivePsd2Banks() }
+        model.loadLivePsd2Banks()
         var c: [Int64: Choice] = [:]
         for a in p.accounts {
             c[a.mmId] = choices[a.mmId] ?? Choice(selected: true, kind: a.suggestedKind, target: a.existingAccountId)
@@ -608,7 +814,6 @@ struct MoneyMoneyDatabaseImportView: View {
     // MARK: - Actions
 
     private func pickFile() {
-        #if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         // the folder brings the statement PDFs along; a single file is a backup
@@ -626,14 +831,13 @@ struct MoneyMoneyDatabaseImportView: View {
             statementsURL = nil
             preview = nil
             choices = [:]
+            bankChoice = [:]
             error = nil
         }
-        #endif
     }
 
     /// Folder with separately saved statement PDFs (for a backup database).
     private func pickStatementsFolder() {
-        #if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -642,12 +846,12 @@ struct MoneyMoneyDatabaseImportView: View {
         panel.prompt = String(localized: "Auswählen")
         if panel.runModal() == .OK, let url = panel.url {
             statementsURL = url
-            loadPreview()
+            loadPreview(stay: true)
         }
-        #endif
     }
 
-    private func loadPreview() {
+    /// Reads the database; `stay` = keep the current step (statements folder changed).
+    private func loadPreview(stay: Bool = false) {
         guard let vault = model.vault, let url = fileURL else { return }
         let statements = statementsURL
         let pw = password
@@ -662,9 +866,10 @@ struct MoneyMoneyDatabaseImportView: View {
             }.value
             loading = false
             switch result {
-            case .success(let p): apply(p)
+            case .success(let p):
+                apply(p)
+                if !stay { go(.accounts) }
             case .failure(let e):
-                preview = nil
                 if case CoreError.Authentication(let m) = e { error = m } else { error = describe(e) }
             }
         }
@@ -672,19 +877,12 @@ struct MoneyMoneyDatabaseImportView: View {
 
     private func runImport() {
         guard let vault = model.vault, let url = fileURL, let preview else { return }
+        error = nil
         if model.demoDbPreview != nil {
             // demo: nothing to read – show what the summary looks like
-            result = MoneyMoneyDbImportResult(accountsCreated: 5, accountsMerged: 1, groupsCreated: 2, bookingsNew: preview.totalBookings, bookingsDuplicates: 0, bookingsEnriched: 0, pendingSkipped: preview.pendingBookings, notesImported: preview.notesCount, categoriesCreated: UInt32(preview.categoryPaths.count), connectionsCreated: 4, connectionsExisting: 0, pinsStored: 0, banksSkippedUnsupported: 1, documentsImported: importStatements ? preview.statementsFound : 0, documentsExisting: 0, documentsMissing: 0, documentsMismatched: 0, documentsTooLarge: 0, documentsUnlisted: 0, holdingsImported: 0, rulesCreated: 0, rulesDisabled: 0,
-                accountChecks: preview.accounts.map { a in
-                    MoneyMoneyDbAccountCheck(mmId: a.mmId, accountId: 0, name: a.name, currency: a.currency, mmBookings: a.bookingCount, foundBookings: a.bookingCount, deletedBookings: 0, otherBookings: 0, mmBalanceCents: a.computedBalanceCents, mmBalanceShown: true, girocrabBalanceCents: a.computedBalanceCents, balanceFromBank: false, ok: true)
-                },
-                psd2Connections: preview.banks.filter { $0.connector == nil && psd2Bank($0) != nil }.map { b in
-                    MoneyMoneyDbPsd2Connection(connectionId: -b.mmId, bankName: b.name, created: true,
-                        accounts: preview.accounts.filter { $0.bankName == b.name }.map {
-                            MoneyMoneyDbPsd2Account(name: $0.name, iban: $0.iban, accountNumber: $0.accountNumber)
-                        })
-                })
+            result = Self.demoResult(preview, statements: importStatements, psd2: plannedPsd2Links)
             password = ""
+            step = .done
             return
         }
         let options = MoneyMoneyDbImportOptions(
@@ -699,19 +897,15 @@ struct MoneyMoneyDatabaseImportView: View {
             importGroups: importGroups,
             importStatements: importStatements && preview.statementsFound > 0,
             statementsDir: statementsURL?.path,
-            bankChoices: preview.banks.compactMap { b in
-                guard b.connector == nil, let x = psd2Bank(b) else { return nil }
-                return MoneyMoneyDbBankChoice(mmBankId: b.mmId, connection: MoneyMoneyDbConnectionOption(
-                    via: .enableBanking, connector: .enableBanking,
-                    key: "enablebanking:\(x.country):\(x.aspsp)", psd2Bank: x))
-            })
+            bankChoices: preview.banks.map { MoneyMoneyDbBankChoice(mmBankId: $0.mmId, connection: chosenOption($0)) })
         let statements = statementsURL
         let pw = password
         progress.value = MoneyMoneyDbImportProgress(fraction: 0, accountIndex: 0, accountCount: 0, accountName: "", bookingsDone: 0, bookingsTotal: 0, documentsDone: 0, documentsTotal: 0)
         let observer = ImportProgressRelay(state: progress)
         relay = observer
         cancelling = false
-        importing = true; error = nil
+        let from = step
+        step = .importing
         Task {
             let result = await Task.detached { () -> Result<MoneyMoneyDbImportResult, Error> in
                 let ok = url.startAccessingSecurityScopedResource()
@@ -720,22 +914,42 @@ struct MoneyMoneyDatabaseImportView: View {
                 defer { if ok2 { statements?.stopAccessingSecurityScopedResource() } }
                 return Result { try vault.importMoneymoneyDatabaseWithProgress(path: url.path, password: pw, options: options, observer: observer) }
             }.value
-            importing = false
             relay = nil
-            // after a cancel the form comes back as it was, ready for another try
+            // after a cancel or an error the assistant goes back, ready for another try
             let wasCancelled = cancelling
-            if !wasCancelled { password = "" }
             cancelling = false
             switch result {
             case .success(let r):
+                password = ""
                 self.result = r
                 model.finishMoneyMoneyDbImport(r)
+                step = .done
             case .failure where wasCancelled:
+                step = from
                 error = String(localized: "Import abgebrochen – es wurde nichts übernommen.")
             case .failure(let e):
+                step = from
                 if case CoreError.Authentication(let m) = e { error = m } else { error = describe(e) }
             }
         }
+    }
+
+    /// What the result looks like, for the demo (nothing is read or stored).
+    private static func demoResult(_ p: MoneyMoneyDbPreview, statements: Bool, psd2: [MoneyMoneyDbPsd2Connection]) -> MoneyMoneyDbImportResult {
+        MoneyMoneyDbImportResult(
+            accountsCreated: UInt32(p.accounts.count), accountsMerged: 0, groupsCreated: 2, bookingsNew: p.totalBookings,
+            bookingsDuplicates: 0, bookingsEnriched: 0, pendingSkipped: p.pendingBookings, notesImported: p.notesCount,
+            categoriesCreated: UInt32(p.categoryPaths.count), connectionsCreated: 4, connectionsExisting: 0, pinsStored: 0,
+            banksSkippedUnsupported: 1, documentsImported: statements ? p.statementsFound : 0, documentsExisting: 0,
+            documentsMissing: 0, documentsMismatched: 0, documentsTooLarge: 0, documentsUnlisted: 0, holdingsImported: 3,
+            rulesCreated: 0, rulesDisabled: 0,
+            accountChecks: p.accounts.map { a in
+                MoneyMoneyDbAccountCheck(mmId: a.mmId, accountId: 0, name: a.name, currency: a.currency, mmBookings: a.bookingCount,
+                                         foundBookings: a.bookingCount, deletedBookings: 0, otherBookings: 0,
+                                         mmBalanceCents: a.computedBalanceCents, mmBalanceShown: true,
+                                         girocrabBalanceCents: a.computedBalanceCents, balanceFromBank: false, ok: true)
+            },
+            psd2Connections: psd2)
     }
 }
 
@@ -806,36 +1020,42 @@ extension AppModel {
     static func demoMoneyMoneyDbPreview(existingGiro: Account?) -> MoneyMoneyDbPreview {
         func acc(_ id: Int64, _ name: String, _ bank: String, _ code: String, iban: String = "", number: String = "", currency: String = "EUR",
                  kind: AccountKind, portfolio: Bool = false, existing: Account? = nil, count: UInt32, pending: UInt32 = 0,
-                 from: String?, to: String?, balance: Int64, group: String = "Privat") -> MoneyMoneyDbAccount {
+                 from: String?, to: String?, balance: Int64, group: String = "Privat", bankId: Int64? = nil) -> MoneyMoneyDbAccount {
             MoneyMoneyDbAccount(mmId: id, name: name, iban: iban, accountNumber: number, currency: currency, bankCode: code, bankName: bank,
-                                owner: "Max Mustermann", groupName: group, mmBankId: nil, isPortfolio: portfolio, suggestedKind: kind,
+                                owner: "Max Mustermann", groupName: group, mmBankId: bankId, isPortfolio: portfolio, suggestedKind: kind,
                                 existingAccountId: existing?.id, existingAccountName: existing?.name, bookingCount: count, pendingCount: pending, holdingCount: portfolio ? 3 : 0,
                                 notesCount: 0, firstDate: from, lastDate: to, statementCount: kind == .checking ? 48 : 0, computedBalanceCents: balance,
                                 balanceSource: "Anfangssaldo laut MoneyMoney-Saldenverlauf + Umsätze")
         }
         let accounts = [
             acc(1, "Girokonto", "comdirect", "20041111", iban: "DE89370400440532013000", kind: .checking, existing: existingGiro,
-                count: 4812, pending: 3, from: "2009-04-01", to: "2026-11-09", balance: 3_245_18),
+                count: 4812, pending: 3, from: "2009-04-01", to: "2026-11-09", balance: 3_245_18, bankId: 1),
             acc(2, "Visa-Karte", "comdirect", "20041111", number: "4871 •••• 1234", kind: .creditCard, count: 1204, pending: 2,
-                from: "2011-02-14", to: "2026-11-08", balance: -412_90),
+                from: "2011-02-14", to: "2026-11-08", balance: -412_90, bankId: 1),
             acc(3, "Tagesgeld", "1822direkt", "50050201", iban: "DE02120300000000202051", kind: .savings, count: 96,
-                from: "2014-06-30", to: "2026-10-31", balance: 12_500_00, group: "Sparen"),
+                from: "2014-06-30", to: "2026-10-31", balance: 12_500_00, group: "Sparen", bankId: 2),
             acc(4, "Depot", "comdirect", "20041111", number: "123456789", kind: .brokerage, portfolio: true, count: 0,
-                from: nil, to: nil, balance: 0, group: "Sparen"),
+                from: nil, to: nil, balance: 0, group: "Sparen", bankId: 1),
             acc(5, "PayPal", "PayPal", "", number: "max@example.com", kind: .paymentService, count: 640,
-                from: "2013-08-02", to: "2026-11-05", balance: 23_45),
+                from: "2013-08-02", to: "2026-11-05", balance: 23_45, bankId: 3),
             acc(6, "Reisekasse USD", "Musterbank", "12345678", number: "1000200", currency: "USD", kind: .checking, count: 38,
-                from: "2019-07-10", to: "2025-09-22", balance: 310_75, group: ""),
+                from: "2019-07-10", to: "2025-09-22", balance: 310_75, group: "", bankId: 4),
             acc(7, "C24 Smartkonto", "C24 Bank", "50024024", iban: "DE02500105170137075030", kind: .checking, count: 57,
-                from: "2024-03-01", to: "2026-11-07", balance: 1_840_12),
+                from: "2024-03-01", to: "2026-11-07", balance: 1_840_12, bankId: 5),
         ]
+        func direct(_ via: MoneyMoneyDbConnectionVia, _ kind: ConnectorKind, _ key: String) -> MoneyMoneyDbConnectionOption {
+            MoneyMoneyDbConnectionOption(via: via, connector: kind, key: key, psd2Bank: nil)
+        }
         let banks = [
             MoneyMoneyDbBank(mmId: 1, bankCode: "20041111", name: "comdirect", loginName: "12345678", customerId: "12345678",
-                             connector: .comdirect, hasSavedPin: true, existingConnectionId: nil, accountCount: 3, connectionOptions: []),
+                             connector: .comdirect, hasSavedPin: true, existingConnectionId: nil, accountCount: 3,
+                             connectionOptions: [direct(.ownApi, .comdirect, "comdirect")]),
             MoneyMoneyDbBank(mmId: 2, bankCode: "50050201", name: "1822direkt", loginName: "max.mustermann", customerId: "",
-                             connector: .direkt1822, hasSavedPin: true, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
+                             connector: .direkt1822, hasSavedPin: true, existingConnectionId: nil, accountCount: 1,
+                             connectionOptions: [direct(.finTs, .direkt1822, "direkt1822")]),
             MoneyMoneyDbBank(mmId: 3, bankCode: "", name: "PayPal", loginName: "max@example.com", customerId: "",
-                             connector: .payPal, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
+                             connector: .payPal, hasSavedPin: false, existingConnectionId: nil, accountCount: 1,
+                             connectionOptions: [direct(.ownApi, .payPal, "paypal")]),
             MoneyMoneyDbBank(mmId: 4, bankCode: "12345678", name: "Musterbank", loginName: "mustermann", customerId: "",
                              connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
             // no own connector, but reachable through Enable Banking (PSD2)

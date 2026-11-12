@@ -20,39 +20,49 @@ struct MoneyMoneyImportSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
-                Image(systemName: "square.and.arrow.down.on.square").font(.title2).foregroundStyle(Theme.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Aus MoneyMoney importieren").font(.headline)
-                    Text("Komplette Historie, Kategorien und Notizen – ohne Duplikate bei späteren Abrufen.")
-                        .font(.caption).foregroundStyle(Theme.secondary)
-                }
-            }
             #if os(macOS)
-            Picker("Quelle", selection: $source) {
-                Text("MoneyMoney-Datenbank (empfohlen)").tag(Source.database)
-                Text("Export-Datei (CSV/XML)").tag(Source.export)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            // switching would drop the view of a running import
-            .disabled(importRunning)
             switch source {
-            case .database: MoneyMoneyDatabaseImportView(running: $importRunning)
-            case .export: MoneyMoneyExportImportView(running: $importRunning)
+            case .database:
+                // the assistant has its own title per step and the source switch on step 1
+                MoneyMoneyDatabaseImportView(running: $importRunning, source: $source)
+            case .export:
+                header
+                Picker("Quelle", selection: $source) {
+                    Text("MoneyMoney-Datenbank").tag(Source.database)
+                    Text("Exportdatei (CSV/XML)").tag(Source.export)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                // switching would drop the view of a running import
+                .disabled(importRunning)
+                MoneyMoneyExportImportView(running: $importRunning)
             }
             #else
+            header
             MoneyMoneyExportImportView(running: $importRunning)
             #endif
         }
         .padding(20)
-        .macFrame(width: source == .database ? 900 : 560)
+        .macFrame(width: source == .database ? 860 : 560)
         .background(Theme.card)
         .onAppear {
             if model.demoImportPreview != nil { source = .export }
             #if os(macOS)
             if model.demoDbPreview != nil { source = .database }
             #endif
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "square.and.arrow.down.on.square").font(.title2).foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Aus MoneyMoney importieren").font(.headline)
+                Text("Komplette Historie, Kategorien und Notizen – ohne Duplikate bei späteren Abrufen.")
+                    .font(.caption).foregroundStyle(Theme.secondary)
+            }
         }
     }
 }
