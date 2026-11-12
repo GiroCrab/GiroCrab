@@ -13907,6 +13907,28 @@
           }
         }
       }
+    },
+    "Aus Ihrem MoneyMoney-Import:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From your MoneyMoney import:"
+          }
+        }
+      }
+    },
+    "Für diese Banken braucht GiroCrab eine kostenlose Enable-Banking-Anwendung. Sie wird bei der ersten Freigabe eingerichtet: Verknüpfen Sie beim Aktivieren der Anwendung alle unten aufgeführten Konten auf einmal – GiroCrab zeigt sie dabei noch einmal an. Danach starten Sie die Freigabe je Bank." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For these banks GiroCrab needs a free Enable Banking application. It is set up at the first consent: when activating the application, link all accounts listed below at once – GiroCrab shows them again there. Then start the consent for each bank."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

@@ -2469,6 +2469,11 @@ public final class AppModel {
     /// All banks Enable Banking offers (`GET /aspsps`); empty until loaded or without credentials.
     var livePsd2Banks: [Psd2Bank] = []
 
+    /// Enable Banking connections the last MoneyMoney import set up, with the
+    /// accounts to link to the user's application – shown in the Enable
+    /// Banking setup so they can be linked while activating it.
+    var psd2LinkHints: [MoneyMoneyDbPsd2Connection] = []
+
     /// Loads the live ASPSP list when the user's Enable Banking credentials are set.
     func loadLivePsd2Banks() {
         guard let vault, livePsd2Banks.isEmpty, !isDemo,

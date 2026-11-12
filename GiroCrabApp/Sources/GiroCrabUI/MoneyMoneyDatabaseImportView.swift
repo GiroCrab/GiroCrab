@@ -416,9 +416,15 @@ struct MoneyMoneyDatabaseImportView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Noch zu tun: Freigabe über Enable Banking", systemImage: "link.circle.fill")
                 .font(.callout.weight(.medium)).foregroundStyle(Theme.accent)
-            Text("Starten Sie die Freigabe bei der Bank. Im eingeschränkten Modus sieht Ihre Enable-Banking-Anwendung nur verknüpfte Konten – falls diese Konten noch nicht verknüpft sind, holen Sie das auf enablebanking.com nach.")
-                .font(.caption).foregroundStyle(Theme.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Group {
+                if enableBankingReady {
+                    Text("Starten Sie die Freigabe bei der Bank. Im eingeschränkten Modus sieht Ihre Enable-Banking-Anwendung nur verknüpfte Konten – falls diese Konten noch nicht verknüpft sind, holen Sie das auf enablebanking.com nach.")
+                } else {
+                    Text("Für diese Banken braucht GiroCrab eine kostenlose Enable-Banking-Anwendung. Sie wird bei der ersten Freigabe eingerichtet: Verknüpfen Sie beim Aktivieren der Anwendung alle unten aufgeführten Konten auf einmal – GiroCrab zeigt sie dabei noch einmal an. Danach starten Sie die Freigabe je Bank.")
+                }
+            }
+            .font(.caption).foregroundStyle(Theme.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             Link("Anwendungen auf enablebanking.com öffnen", destination: URL(string: "https://enablebanking.com/cp/applications")!)
                 .font(.caption)
             ForEach(list, id: \.connectionId) { c in
@@ -785,6 +791,7 @@ extension AccountKind {
 extension AppModel {
     func finishMoneyMoneyDbImport(_ r: MoneyMoneyDbImportResult) {
         reloadAll()
+        if !r.psd2Connections.isEmpty { psd2LinkHints = r.psd2Connections }
         toast = String(localized: "MoneyMoney: \(r.bookingsNew) Buchungen in \(r.accountsCreated + r.accountsMerged) Konten importiert")
             + (r.bookingsDuplicates > 0 ? String(localized: ", \(r.bookingsDuplicates) bereits vorhanden") : "")
     }
