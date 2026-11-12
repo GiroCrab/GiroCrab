@@ -2266,3 +2266,33 @@ fn psd2_choice_without_create_connections_does_nothing() {
     assert!(r.psd2_connections.is_empty());
     assert!(v.list_bank_connections().unwrap().is_empty());
 }
+
+#[test]
+fn connection_priority_fints_then_own_api_then_enable_banking() {
+    let v = vault();
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage) VALUES
+           (40, 'DE', '12030000', 'hb-login', '', 'X', 'Hanseatic Bank', 'SYS', 'LS'),
+           (41, 'DE', '50024024', 'c24-login', '', 'X', 'C24 Bank', 'SYS', 'LS'),
+           (42, 'DE', '', 'pp-login', '', 'X', 'PayPal', 'SYS', 'LS');",
+    );
+    let p = v
+        .preview_moneymoney_database(path, PW.into(), None)
+        .unwrap();
+    let bank = |id: i64| p.banks.iter().find(|b| b.mm_id == id).unwrap();
+    // 1. FinTS wins: the bank code is FinTS-known, although the name is in
+    //    the PSD2 catalogue too
+    assert_eq!(bank(40).connector, Some(ConnectorKind::FinTsGeneric));
+    assert!(bank(40).psd2_bank.is_none());
+    // 2. own API: comdirect (no FinTS entry on purpose), PayPal
+    assert_eq!(bank(1).connector, Some(ConnectorKind::Comdirect));
+    assert_eq!(bank(42).connector, Some(ConnectorKind::PayPal));
+    assert!(bank(42).psd2_bank.is_none());
+    // 3. Enable Banking only without either
+    assert_eq!(bank(41).connector, None);
+    assert_eq!(
+        bank(41).psd2_bank.as_ref().map(|b| b.aspsp.as_str()),
+        Some("C24")
+    );
+}

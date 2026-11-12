@@ -693,6 +693,14 @@ fn connector_key_for(bankcode: &str, name: &str) -> Option<(ConnectorKind, Strin
     Some((kind, key))
 }
 
+/// GiroCrab connector for a MoneyMoney bank login, in this order of
+/// preference:
+///  1. FinTS – the bank code is in GiroCrab's FinTS directory (incl. the
+///     dedicated FinTS connectors Volksbank Kassel Göttingen, 1822direkt);
+///  2. the bank's own API, where GiroCrab has a connector (comdirect – not in
+///     the FinTS directory on purpose –, bunq, PayPal, Trade Republic, …);
+///  3. otherwise `None`: the preview then suggests Enable Banking (PSD2)
+///     from the catalogue (`MoneyMoneyDbBank::psd2_bank`).
 fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
     let code: String = bankcode.chars().filter(|c| c.is_ascii_digit()).collect();
     match code.as_str() {
