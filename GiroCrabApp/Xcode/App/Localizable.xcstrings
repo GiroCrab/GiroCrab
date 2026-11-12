@@ -15261,17 +15261,6 @@
         }
       }
     },
-    "Sparkassen, Volksbanken und alle anderen Banken finden Sie über Name, Ort, Bankleitzahl oder IBAN." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Find savings banks, cooperative banks and all other banks by name, town, bank code or IBAN."
-          }
-        }
-      }
-    },
     "über FinTS" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15422,6 +15411,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bank code: exactly 8 digits · FinTS address: starts with https://"
+          }
+        }
+      }
+    },
+    "Jede Sparkasse und Volksbank ist eine eigene Bank. Suchen Sie sie über ihren Namen (meist mit Ort), die Bankleitzahl oder Ihre IBAN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Every savings bank and cooperative bank is a bank of its own. Search for it by its name (usually with the town), the bank code or your IBAN."
           }
         }
       }

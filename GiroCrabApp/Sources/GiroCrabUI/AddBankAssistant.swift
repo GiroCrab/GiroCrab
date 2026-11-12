@@ -207,7 +207,7 @@ struct AddBankSheet: View {
                     } header: {
                         Text("Beliebte Banken")
                     } footer: {
-                        Text("Sparkassen, Volksbanken und alle anderen Banken finden Sie über Name, Ort, Bankleitzahl oder IBAN.")
+                        Text("Jede Sparkasse und Volksbank ist eine eigene Bank. Suchen Sie sie über ihren Namen (meist mit Ort), die Bankleitzahl oder Ihre IBAN.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 } else if results.isEmpty {
