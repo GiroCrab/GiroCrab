@@ -14699,6 +14699,259 @@
           }
         }
       }
+    },
+    "%@ Buchungen aus %u Konten übernommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ bookings from %2$u accounts imported."
+          }
+        }
+      }
+    },
+    "%lld von %lld Konten weichen von MoneyMoney ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld of %2$lld accounts differ from MoneyMoney."
+          }
+        }
+      }
+    },
+    "Freigeben …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Authorize …"
+          }
+        }
+      }
+    },
+    "Bankfreigaben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank Authorizations"
+          }
+        }
+      }
+    },
+    "Konten, die noch nicht mit Ihrer Enable-Banking-Anwendung verknüpft sind, verknüpfen Sie auf enablebanking.com." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link accounts that aren't yet linked to your Enable Banking application on enablebanking.com."
+          }
+        }
+      }
+    },
+    "Übernommen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported"
+          }
+        }
+      }
+    },
+    "%u bestehende ergänzt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%u existing ones completed"
+          }
+        }
+      }
+    },
+    "%@ waren bereits vorhanden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ already existed"
+          }
+        }
+      }
+    },
+    "%u davon ausgeschaltet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%u of them turned off"
+          }
+        }
+      }
+    },
+    "%u bereits vorhanden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%u already existed"
+          }
+        }
+      }
+    },
+    "Kontoauszüge und Dokumente" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statements and Documents"
+          }
+        }
+      }
+    },
+    "Depotpositionen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Securities Positions"
+          }
+        }
+      }
+    },
+    "PINs im Tresor" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PINs in the Vault"
+          }
+        }
+      }
+    },
+    "Kein Abruf" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Retrieval"
+          }
+        }
+      }
+    },
+    "Dokumente ausgelassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Documents Skipped"
+          }
+        }
+      }
+    },
+    "Nicht gefunden, beschädigt oder größer als 25 MB" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not found, damaged or larger than 25 MB"
+          }
+        }
+      }
+    },
+    "Vorgemerkte Buchungen ausgelassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending Bookings Skipped"
+          }
+        }
+      }
+    },
+    "Die Bank liefert sie gebucht erneut" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The bank delivers them again once booked"
+          }
+        }
+      }
+    },
+    "Nicht übernommen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Imported"
+          }
+        }
+      }
+    },
+    "Für diese Banken hat GiroCrab noch keinen Zugang. Ihre Konten und Buchungen sind übernommen, werden aber nicht automatisch aktualisiert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab can't connect to these banks yet. Their accounts and bookings were imported but won't be updated automatically."
+          }
+        }
+      }
+    },
+    "Das Konto stimmt überein" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The account matches"
+          }
+        }
+      }
+    },
+    "Alle %lld Konten stimmen überein" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All %lld accounts match"
+          }
+        }
+      }
+    },
+    "Bitte prüfen Sie die markierten Konten. Ein erneuter Import ergänzt fehlende Buchungen, ohne Duplikate anzulegen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please check the marked accounts. Importing again adds missing bookings without creating duplicates."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

@@ -1419,6 +1419,7 @@ INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, bic, 
         assert!(!v.connection_status(c.id).unwrap().has_pin);
     }
     assert_eq!(r.banks_skipped_unsupported, 1); // only the Sparkasse
+    assert_eq!(r.banks_skipped_names.len(), 1);
 }
 
 #[test]
@@ -2241,8 +2242,10 @@ fn banks_without_own_connector_are_set_up_through_enable_banking() {
         .find(|c| c.id == pc.connection_id)
         .unwrap();
     assert_eq!(conn.connector, ConnectorKind::EnableBanking);
-    // Sparkasse: no choice → still skipped
+    // Sparkasse: no choice → still skipped, by name
     assert_eq!(r.banks_skipped_unsupported, 1);
+    assert_eq!(r.banks_skipped_names.len(), 1);
+    assert!(!r.psd2_connections.iter().any(|p| r.banks_skipped_names.contains(&p.bank_name)));
 
     // second run: the same connection, nothing new
     let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();

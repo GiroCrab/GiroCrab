@@ -107,8 +107,16 @@ struct MoneyMoneyDatabaseImportView: View {
 
     // MARK: - Header and footer
 
+    @ViewBuilder
     private var header: some View {
-        ImportAssistantHeader(title: stepTitle, subtitle: stepSubtitle)
+        if step == .done, let r = result {
+            let ok = r.accountChecks.allSatisfy(\.ok)
+            ImportAssistantHeader(title: stepTitle, subtitle: stepSubtitle,
+                                  symbol: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                                  tint: ok ? Theme.inflow : Theme.warning)
+        } else {
+            ImportAssistantHeader(title: stepTitle, subtitle: stepSubtitle)
+        }
     }
 
     private var stepTitle: String {
@@ -138,7 +146,18 @@ struct MoneyMoneyDatabaseImportView: View {
         case .importing:
             return String(localized: "Bitte warten Sie, bis der Import fertig ist.")
         case .done:
-            return ""
+            guard let r = result else { return "" }
+            let accounts = r.accountsCreated + r.accountsMerged
+            let line = String(localized: "\(r.bookingsNew.formatted()) Buchungen aus \(accounts) Konten übernommen.")
+            let checks = r.accountChecks
+            let problems = checks.filter { !$0.ok }.count
+            if checks.isEmpty { return line }
+            if problems > 0 {
+                return line + " " + String(localized: "\(problems) von \(checks.count) Konten weichen von MoneyMoney ab.")
+            }
+            return line + " " + (checks.count == 1
+                ? String(localized: "Das Konto stimmt mit MoneyMoney überein.")
+                : String(localized: "Alle \(checks.count) Konten stimmen mit MoneyMoney überein."))
         }
     }
 
@@ -554,86 +573,46 @@ struct MoneyMoneyDatabaseImportView: View {
     @ViewBuilder
     private var doneStep: some View {
         if let r = result {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    let accounts = r.accountsCreated + r.accountsMerged
-                    VStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 44)).foregroundStyle(Theme.inflow)
-                            .accessibilityHidden(true)
-                        Text(String(localized: "\(r.bookingsNew.formatted()) Buchungen aus \(accounts) Konten übernommen"))
-                            .font(.title3.weight(.semibold))
-                        checkSummary(r.accountChecks)
-                    }
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    if !r.psd2Connections.isEmpty { nextStep(r.psd2Connections) }
-                    if !r.accountChecks.isEmpty {
-                        DisclosureGroup("Abgleich mit MoneyMoney") { checkRows(r.accountChecks) }
-                    }
-                    DisclosureGroup("Was wurde übernommen") { summaryLines(r) }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, 6)
+            let problems = r.accountChecks.filter { !$0.ok }
+            Form {
+                // what still needs the user comes first
+                if !r.psd2Connections.isEmpty { consentSection(r.psd2Connections) }
+                if !problems.isEmpty { checkSection(r.accountChecks, problems: problems) }
+                importedSection(r)
+                skippedSection(r)
+                if problems.isEmpty, !r.accountChecks.isEmpty { checkSection(r.accountChecks, problems: []) }
             }
-        }
-    }
-
-    @ViewBuilder
-    private func checkSummary(_ checks: [MoneyMoneyDbAccountCheck]) -> some View {
-        let problems = checks.filter { !$0.ok }
-        if checks.isEmpty {
-            EmptyView()
-        } else if problems.isEmpty {
-            Text(checks.count == 1
-                 ? String(localized: "Das Konto stimmt mit MoneyMoney überein.")
-                 : String(localized: "Alle \(checks.count) Konten stimmen mit MoneyMoney überein."))
-                .foregroundStyle(Theme.secondary)
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Label(String(localized: "\(problems.count) von \(checks.count) Konten weichen von MoneyMoney ab"),
-                      systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Theme.warning)
-                Text("Bitte prüfen Sie diese Konten. Ein erneuter Import ergänzt fehlende Buchungen, ohne Duplikate anzulegen.")
-                    .font(.caption).foregroundStyle(Theme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                checkRows(problems)
-            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
         }
     }
 
     /// Enable Banking connections the import set up: the bank consent is next.
-    private func nextStep(_ list: [MoneyMoneyDbPsd2Connection]) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(enableBankingReady
-                     ? "Starten Sie die Freigabe bei der Bank. Konten, die noch nicht mit Ihrer Enable-Banking-Anwendung verknüpft sind, verknüpfen Sie auf enablebanking.com."
-                     : "Die Enable-Banking-Anwendung wird bei der ersten Freigabe eingerichtet. Verknüpfen Sie dabei alle Konten dieser Banken auf einmal.")
-                    .font(.caption).foregroundStyle(Theme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                ForEach(list, id: \.connectionId) { c in
-                    Divider()
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(c.bankName).font(.callout.weight(.medium))
-                            ForEach(Array(c.accounts.enumerated()), id: \.offset) { _, a in
-                                Text([a.name, a.iban.isEmpty ? (a.accountNumber.isEmpty ? nil : String(localized: "Konto \(a.accountNumber)")) : formatIBAN(a.iban)]
-                                    .compactMap { $0 }.joined(separator: " · "))
-                                    .font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        Button("Freigabe starten") { startConsent(c.connectionId) }
-                    }
+    private func consentSection(_ list: [MoneyMoneyDbPsd2Connection]) -> some View {
+        Section {
+            ForEach(list, id: \.connectionId) { c in
+                LabeledContent {
+                    Button("Freigeben …") { startConsent(c.connectionId) }
+                } label: {
+                    Text(c.bankName)
+                    Text(c.accounts.map { a in
+                        [a.name, a.iban.isEmpty ? (a.accountNumber.isEmpty ? nil : String(localized: "Konto \(a.accountNumber)")) : formatIBAN(a.iban)]
+                            .compactMap { $0 }.joined(separator: " · ")
+                    }.joined(separator: "\n"))
+                    .monospacedDigit()
+                    .textSelection(.enabled)
                 }
+            }
+        } header: {
+            Text("Bankfreigaben")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                footerText(enableBankingReady
+                           ? "Konten, die noch nicht mit Ihrer Enable-Banking-Anwendung verknüpft sind, verknüpfen Sie auf enablebanking.com."
+                           : "Die Enable-Banking-Anwendung wird bei der ersten Freigabe eingerichtet. Verknüpfen Sie dabei alle Konten dieser Banken auf einmal.")
                 Link("Anwendungen auf enablebanking.com öffnen", destination: URL(string: "https://enablebanking.com/cp/applications")!)
                     .font(.caption)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            Text("Nächster Schritt").font(.callout.weight(.medium))
         }
     }
 
@@ -644,71 +623,137 @@ struct MoneyMoneyDatabaseImportView: View {
         model.requestSync(conn)
     }
 
-    private func summaryLines(_ r: MoneyMoneyDbImportResult) -> some View {
-        var lines: [String] = []
-        lines.append(String(localized: "\(r.accountsCreated) Konten neu, \(r.accountsMerged) ergänzt"))
-        if r.bookingsDuplicates > 0 { lines.append(String(localized: "\(r.bookingsDuplicates) Buchungen waren bereits vorhanden")) }
-        if r.categoriesCreated > 0 || r.notesImported > 0 {
-            lines.append(String(localized: "\(r.categoriesCreated) Kategorien angelegt, \(r.notesImported) Notizen übernommen"))
+    /// The counts of what arrived in GiroCrab; zero rows are left out.
+    private func importedSection(_ r: MoneyMoneyDbImportResult) -> some View {
+        Section("Übernommen") {
+            let accounts = r.accountsCreated + r.accountsMerged
+            countRow("Konten", accounts,
+                     detail: r.accountsMerged > 0 ? String(localized: "\(r.accountsMerged) bestehende ergänzt") : nil)
+            countRow("Buchungen", r.bookingsNew,
+                     detail: r.bookingsDuplicates > 0 ? String(localized: "\(r.bookingsDuplicates.formatted()) waren bereits vorhanden") : nil)
+            countRow("Kategorien", r.categoriesCreated)
+            countRow("Notizen", r.notesImported)
+            countRow("Regeln", r.rulesCreated,
+                     detail: r.rulesDisabled > 0 ? String(localized: "\(r.rulesDisabled) davon ausgeschaltet") : nil)
+            countRow("Kontogruppen", r.groupsCreated)
+            countRow("Kontoauszüge und Dokumente", r.documentsImported)
+            countRow("Depotpositionen", r.holdingsImported)
+            countRow("Bankzugänge", r.connectionsCreated,
+                     detail: r.connectionsExisting > 0 ? String(localized: "\(r.connectionsExisting) bereits vorhanden") : nil)
+            countRow("PINs im Tresor", r.pinsStored)
         }
-        if r.rulesCreated > 0 {
-            lines.append(r.rulesDisabled > 0
-                         ? String(localized: "\(r.rulesCreated) Regeln übernommen, \(r.rulesDisabled) davon ausgeschaltet")
-                         : String(localized: "\(r.rulesCreated) Regeln übernommen"))
-        }
-        if r.groupsCreated > 0 { lines.append(String(localized: "\(r.groupsCreated) Kontogruppen angelegt")) }
-        if r.documentsImported > 0 { lines.append(String(localized: "\(r.documentsImported) Kontoauszüge und Dokumente übernommen")) }
-        if r.documentsMissing + r.documentsMismatched + r.documentsTooLarge > 0 {
-            lines.append(String(localized: "\(r.documentsMissing + r.documentsMismatched + r.documentsTooLarge) Dokumente ausgelassen (nicht gefunden, beschädigt oder größer als 25 MB)"))
-        }
-        if r.holdingsImported > 0 { lines.append(String(localized: "\(r.holdingsImported) Depotpositionen übernommen")) }
-        if r.connectionsCreated + r.connectionsExisting > 0 {
-            lines.append(String(localized: "\(r.connectionsCreated) Bankzugänge angelegt, \(r.connectionsExisting) bereits vorhanden"))
-        }
-        if r.pinsStored > 0 { lines.append(String(localized: "\(r.pinsStored) PINs im Tresor gespeichert")) }
-        if r.banksSkippedUnsupported > 0 { lines.append(String(localized: "\(r.banksSkippedUnsupported) Bankzugänge nicht verfügbar")) }
-        if r.pendingSkipped > 0 { lines.append(String(localized: "\(r.pendingSkipped) vorgemerkte Buchungen ausgelassen – die Bank liefert sie gebucht erneut")) }
-        return VStack(alignment: .leading, spacing: 3) {
-            ForEach(lines, id: \.self) { Text($0) }
-        }
-        .font(.caption).foregroundStyle(Theme.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 4)
     }
 
-    private func checkRows(_ checks: [MoneyMoneyDbAccountCheck]) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+    @ViewBuilder
+    private func countRow(_ title: LocalizedStringKey, _ n: UInt32, detail: String? = nil) -> some View {
+        if n > 0 {
+            LabeledContent {
+                Text(n.formatted()).monospacedDigit()
+            } label: {
+                Text(title)
+                if let detail { Text(detail) }
+            }
+        }
+    }
+
+    /// What the import left out, each with its reason.
+    @ViewBuilder
+    private func skippedSection(_ r: MoneyMoneyDbImportResult) -> some View {
+        let documents = r.documentsMissing + r.documentsMismatched + r.documentsTooLarge
+        if !r.banksSkippedNames.isEmpty || documents > 0 || r.pendingSkipped > 0 {
+            Section {
+                ForEach(Array(r.banksSkippedNames.enumerated()), id: \.offset) { _, name in
+                    LabeledContent {
+                        Text("Kein Abruf")
+                    } label: {
+                        Label { Text(name) } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warning)
+                        }
+                    }
+                }
+                if documents > 0 {
+                    LabeledContent {
+                        Text(documents.formatted()).monospacedDigit()
+                    } label: {
+                        Text("Dokumente ausgelassen")
+                        Text("Nicht gefunden, beschädigt oder größer als 25 MB")
+                    }
+                }
+                if r.pendingSkipped > 0 {
+                    LabeledContent {
+                        Text(r.pendingSkipped.formatted()).monospacedDigit()
+                    } label: {
+                        Text("Vorgemerkte Buchungen ausgelassen")
+                        Text("Die Bank liefert sie gebucht erneut")
+                    }
+                }
+            } header: {
+                Text("Nicht übernommen")
+            } footer: {
+                if !r.banksSkippedNames.isEmpty {
+                    footerText("Für diese Banken hat GiroCrab noch keinen Zugang. Ihre Konten und Buchungen sind übernommen, werden aber nicht automatisch aktualisiert.")
+                }
+            }
+        }
+    }
+
+    /// Reconciliation with MoneyMoney: deviations open, otherwise folded away.
+    private func checkSection(_ checks: [MoneyMoneyDbAccountCheck], problems: [MoneyMoneyDbAccountCheck]) -> some View {
+        Section {
+            if problems.isEmpty {
+                DisclosureGroup(checks.count == 1
+                                ? String(localized: "Das Konto stimmt überein")
+                                : String(localized: "Alle \(checks.count) Konten stimmen überein")) {
+                    checkTable(checks)
+                }
+            } else {
+                checkTable(problems + checks.filter(\.ok))
+            }
+        } header: {
+            Text("Abgleich mit MoneyMoney")
+        } footer: {
+            if !problems.isEmpty {
+                footerText("Bitte prüfen Sie die markierten Konten. Ein erneuter Import ergänzt fehlende Buchungen, ohne Duplikate anzulegen.")
+            }
+        }
+    }
+
+    /// All rows at full height (no inner scrolling: the form scrolls as a whole).
+    private func checkTable(_ checks: [MoneyMoneyDbAccountCheck]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
             GridRow {
-                Text("")
                 Text("Konto")
                 Text("Buchungen").gridColumnAlignment(.trailing)
                 Text("Saldo MoneyMoney").gridColumnAlignment(.trailing)
                 Text("Saldo GiroCrab").gridColumnAlignment(.trailing)
             }
-            .font(.caption2).foregroundStyle(Theme.secondary)
+            .font(.caption).foregroundStyle(Theme.secondary)
             ForEach(checks, id: \.mmId) { c in
-                GridRow {
-                    Image(systemName: c.ok ? "checkmark.circle" : "exclamationmark.triangle")
-                        .foregroundStyle(c.ok ? Theme.inflow : Theme.warning)
-                        .accessibilityLabel(c.ok ? Text("Stimmt") : Text("Weicht ab"))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(c.name).lineLimit(1)
-                        if let note = checkNote(c) {
-                            Text(note).font(.caption2).foregroundStyle(Theme.secondary)
+                Divider().gridCellUnsizedAxes(.horizontal)
+                GridRow(alignment: .firstTextBaseline) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(c.name).lineLimit(1)
+                            if let note = checkNote(c) {
+                                Text(note).font(.caption).foregroundStyle(Theme.secondary)
+                            }
                         }
+                    } icon: {
+                        Image(systemName: c.ok ? "checkmark.circle" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(c.ok ? Theme.inflow : Theme.warning)
+                            .accessibilityLabel(c.ok ? Text("Stimmt") : Text("Weicht ab"))
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(c.foundBookings + c.deletedBookings) / \(c.mmBookings)")
-                        .monospacedDigit()
                         .foregroundStyle(c.foundBookings + c.deletedBookings == c.mmBookings ? Theme.text : Theme.warning)
-                    Text(Money.format(c.mmBalanceCents, currency: c.currency)).monospacedDigit()
-                    Text(Money.format(c.girocrabBalanceCents, currency: c.currency)).monospacedDigit()
+                    Text(Money.format(c.mmBalanceCents, currency: c.currency))
+                    Text(Money.format(c.girocrabBalanceCents, currency: c.currency))
                         .foregroundStyle(c.balanceFromBank || c.girocrabBalanceCents == c.mmBalanceCents ? Theme.text : Theme.warning)
                 }
-                .font(.caption)
+                .monospacedDigit()
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 4)
+        .padding(.vertical, 4)
     }
 
     /// Short explanation under the account name, only where something is special.
@@ -964,7 +1009,7 @@ struct MoneyMoneyDatabaseImportView: View {
             accountsCreated: UInt32(p.accounts.count), accountsMerged: 0, groupsCreated: 2, bookingsNew: p.totalBookings,
             bookingsDuplicates: 0, bookingsEnriched: 0, pendingSkipped: p.pendingBookings, notesImported: p.notesCount,
             categoriesCreated: UInt32(p.categoryPaths.count), connectionsCreated: 4, connectionsExisting: 0, pinsStored: 0,
-            banksSkippedUnsupported: 1, documentsImported: statements ? p.statementsFound : 0, documentsExisting: 0,
+            banksSkippedUnsupported: 1, banksSkippedNames: ["Musterbank"], documentsImported: statements ? p.statementsFound : 0, documentsExisting: 0,
             documentsMissing: 0, documentsMismatched: 0, documentsTooLarge: 0, documentsUnlisted: 0, holdingsImported: 3,
             rulesCreated: 0, rulesDisabled: 0,
             accountChecks: p.accounts.map { a in

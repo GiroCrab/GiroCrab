@@ -309,6 +309,9 @@ pub struct MoneyMoneyDbImportResult {
     pub connections_existing: u32,
     pub pins_stored: u32,
     pub banks_skipped_unsupported: u32,
+    /// Names of those bank logins (MoneyMoney's bank name), same order as
+    /// in the database.
+    pub banks_skipped_names: Vec<String>,
     /// PDF statements / documents newly stored in the document archive.
     pub documents_imported: u32,
     /// Already in the archive from an earlier run.
@@ -2581,6 +2584,7 @@ fn import(
         if default.is_none() {
             // counted unless the user connects it through Enable Banking below
             res.banks_skipped_unsupported += 1;
+            res.banks_skipped_names.push(b.name.clone());
         }
         if !options.create_connections {
             continue;
@@ -2602,6 +2606,7 @@ fn import(
                 }
                 if src.connector_key(b).is_none() {
                     res.banks_skipped_unsupported -= 1;
+                    res.banks_skipped_names.pop();
                 }
                 bank_connection.insert(b.id, id);
                 psd2_created.push((id, b, created));

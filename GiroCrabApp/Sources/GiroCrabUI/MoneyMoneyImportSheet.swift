@@ -49,10 +49,12 @@ struct MoneyMoneyImportSheet: View {
 struct ImportAssistantHeader: View {
     let title: String
     let subtitle: String
+    var symbol = "square.and.arrow.down.on.square"
+    var tint: Color = Theme.accent
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "square.and.arrow.down.on.square").font(.title).foregroundStyle(Theme.accent)
+            Image(systemName: symbol).font(.title).foregroundStyle(tint)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.title3.weight(.semibold))
