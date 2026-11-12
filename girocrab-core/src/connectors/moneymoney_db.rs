@@ -654,6 +654,25 @@ fn wrong_password() -> CoreError {
     }
 }
 
+/// MoneyMoney encrypts its database even when no database password is set
+/// (with a key of its own that GiroCrab cannot know). Such a file can only
+/// be read after the user sets a password in MoneyMoney.
+fn encrypted_without_password() -> CoreError {
+    CoreError::Authentication {
+        message: tr("MoneyMoney verschlüsselt diese Datenbank mit einem eigenen Schlüssel, weil dort kein Datenbank-Passwort festgelegt ist. Legen Sie in MoneyMoney unter Einstellungen → Sicherheit eines fest, beenden Sie MoneyMoney und geben Sie es hier ein.").into(),
+    }
+}
+
+/// True if the file starts with the plain SQLite header, i.e. is not
+/// encrypted (SQLCipher files start with a random salt instead).
+fn is_plain_sqlite(path: &str) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 16];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok_and(|_| &head == b"SQLite format 3\0")
+}
+
 // ------------------------------------------------------------------ reading
 
 /// Opens the MoneyMoney database read-only and unlocks it. The password is
@@ -664,9 +683,15 @@ fn open_source(path: &str, password: &SecretString) -> CoreResult<Connection> {
             what: tr("MoneyMoney-Datenbank").into(),
         });
     }
-    // MoneyMoney databases can be unencrypted: an empty password opens the
-    // file without a key (an encrypted file then fails the schema check below).
-    if password.is_empty() {
+    // Older MoneyMoney databases can be unencrypted: such a file is opened
+    // without a key, whatever was typed into the password field. An
+    // encrypted file without a password is MoneyMoney's own key (no database
+    // password set in MoneyMoney) – say so instead of "wrong password".
+    let plain = is_plain_sqlite(path);
+    if password.is_empty() && !plain {
+        return Err(encrypted_without_password());
+    }
+    if plain {
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,

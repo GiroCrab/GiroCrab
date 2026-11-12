@@ -213,11 +213,37 @@ fn unencrypted_database_opens_with_empty_password() {
         .preview_moneymoney_database(path.clone(), String::new(), None)
         .unwrap();
     assert_eq!(p.accounts.len(), 4);
-    // an encrypted file must not open without a password
+    // a password typed for an unencrypted file is ignored, not "wrong"
+    let p = v
+        .preview_moneymoney_database(path, PW.into(), None)
+        .unwrap();
+    assert_eq!(p.accounts.len(), 4);
+}
+
+#[test]
+fn encrypted_database_without_password_explains_moneymoney_key() {
+    // MoneyMoney encrypts with a key of its own when no database password
+    // is set; an empty password must say so instead of "wrong password".
     let enc = fake_db();
-    assert!(v
+    let err = vault()
         .preview_moneymoney_database(enc, String::new(), None)
-        .is_err());
+        .unwrap_err();
+    assert!(matches!(err, CoreError::Authentication { .. }));
+    let msg = err.to_string();
+    assert!(msg.contains("Einstellungen → Sicherheit"), "{msg}");
+    assert!(!msg.contains("Falsches Passwort"), "{msg}");
+}
+
+#[test]
+fn plain_sqlite_header_detection() {
+    let plain = fake_db_unencrypted();
+    assert!(is_plain_sqlite(&plain));
+    assert!(!is_plain_sqlite(&fake_db()));
+    // too short / missing files are not plain SQLite
+    let short = temp("short.sqlite");
+    std::fs::write(&short, b"SQLite").unwrap();
+    assert!(!is_plain_sqlite(&short.to_string_lossy()));
+    assert!(!is_plain_sqlite("/nonexistent/MoneyMoney.sqlite"));
 }
 
 #[test]

@@ -460,6 +460,7 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ connectors/moneymoney_db.rs
 "Import abgebrochen – es wurde nichts übernommen." => "Import cancelled – nothing was imported.",
                 "Falsches Passwort oder keine MoneyMoney-Datenbank." => "Wrong password or not a MoneyMoney database.",
+        "MoneyMoney verschlüsselt diese Datenbank mit einem eigenen Schlüssel, weil dort kein Datenbank-Passwort festgelegt ist. Legen Sie in MoneyMoney unter Einstellungen → Sicherheit eines fest, beenden Sie MoneyMoney und geben Sie es hier ein." => "MoneyMoney encrypts this database with a key of its own because no database password is set there. Set one in MoneyMoney under Settings → Security, quit MoneyMoney and enter it here.",
         "MoneyMoney-Datenbank" => "MoneyMoney database",
         "Anfangssaldo laut MoneyMoney-Saldenverlauf ({0}) + Umsätze" => {
             "Opening balance from MoneyMoney balance history ({0}) + transactions"

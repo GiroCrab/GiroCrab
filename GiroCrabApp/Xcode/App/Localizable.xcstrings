@@ -221,6 +221,17 @@
         }
       }
     },
+    "Kein Datenbank-Passwort in MoneyMoney? Dann vorher eines festlegen (Einstellungen → Sicherheit)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No database password in MoneyMoney? Set one first (Settings → Security)."
+          }
+        }
+      }
+    },
     "Kontosalden und Depotwerte abrufen …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6740,13 +6751,13 @@
         }
       }
     },
-    "MoneyMoney-Passwort (leer, wenn unverschlüsselt)" : {
+    "MoneyMoney-Datenbank-Passwort" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MoneyMoney password (empty if unencrypted)"
+            "value" : "MoneyMoney database password"
           }
         }
       }

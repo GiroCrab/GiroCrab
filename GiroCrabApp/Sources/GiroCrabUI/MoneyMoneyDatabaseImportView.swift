@@ -70,7 +70,13 @@ struct MoneyMoneyDatabaseImportView: View {
                     .frame(minHeight: 280, idealHeight: 460, maxHeight: 560) // fits a 13" screen
                 }
             }
-            if let error { Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(Theme.warning) }
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(Theme.warning)
+                    .fixedSize(horizontal: false, vertical: true) // wrap, never truncate
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
             footer
         }
         .interactiveDismissDisabled(importing)
@@ -90,8 +96,12 @@ struct MoneyMoneyDatabaseImportView: View {
     private var info: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "lock.shield").foregroundStyle(Theme.accent)
-            Text("MoneyMoney speichert alles in einer mit Ihrem MoneyMoney-Passwort verschlüsselten Datenbank. GiroCrab öffnet sie nur lesend – die Datei und MoneyMoney bleiben unverändert.")
-                .font(.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("MoneyMoney speichert alles in einer mit Ihrem MoneyMoney-Passwort verschlüsselten Datenbank. GiroCrab öffnet sie nur lesend – die Datei und MoneyMoney bleiben unverändert.")
+                Text("Kein Datenbank-Passwort in MoneyMoney? Dann vorher eines festlegen (Einstellungen → Sicherheit).")
+                    .foregroundStyle(Theme.secondary)
+            }
+            .font(.caption).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -114,7 +124,7 @@ struct MoneyMoneyDatabaseImportView: View {
             GridRow {
                 Text("Passwort").font(.callout).foregroundStyle(Theme.secondary)
                 HStack {
-                    SecureField("MoneyMoney-Passwort (leer, wenn unverschlüsselt)", text: $password)
+                    SecureField("MoneyMoney-Datenbank-Passwort", text: $password)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { loadPreview() }
                     Button("Vorschau") { loadPreview() }
