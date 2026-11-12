@@ -213,6 +213,7 @@ struct AddBankSheet: View {
                     }
                 } else if results.isEmpty {
                     ContentUnavailableView.search(text: query)
+                        .frame(maxWidth: .infinity)
                         .listRowSeparator(.hidden)
                 } else {
                     resultSections
@@ -373,28 +374,26 @@ struct AddBankSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                Section {
-                    switch s.mode {
-                    case .finTs:
-                        FinTsAddForm(prefill: s.id == Self.manualFinTs.id ? nil : s, onAdded: { dismiss() }, submit: submit)
-                    case .ownApi:
-                        if let k = s.connector { KindAddForm(kind: k, onAdded: { dismiss() }, submit: submit) }
-                    case .psd2:
+                if s.mode == .finTs {
+                    // brings its own sections (Bank, Anmeldung, Erweitert)
+                    FinTsAddForm(prefill: s.id == Self.manualFinTs.id ? nil : s, onAdded: { dismiss() }, submit: submit)
+                        .id(s.id) // a new form reports its own readiness
+                } else {
+                    Section {
                         if let k = s.connector {
                             KindAddForm(kind: k, onAdded: { dismiss() }, submit: submit)
                         } else {
                             Psd2AddForm(bank: s, onAdded: { dismiss() }, submit: submit)
                         }
+                    } header: {
+                        Text("Zugang")
+                    } footer: {
+                        Text("Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt.")
+                            .font(.caption).foregroundStyle(Theme.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                } header: {
-                    Text("Zugang")
-                } footer: {
-                    Text("Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt.")
-                        .font(.caption).foregroundStyle(Theme.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    .id(s.id)
                 }
-                // a new form reports its own readiness
-                .id(s.id)
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
