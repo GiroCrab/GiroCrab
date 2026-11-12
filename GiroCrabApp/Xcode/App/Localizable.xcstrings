@@ -15480,6 +15480,17 @@
           }
         }
       }
+    },
+    "API-Zugangsdaten bei comdirect erstellen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create API Credentials at comdirect"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

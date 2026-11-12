@@ -38,6 +38,16 @@ struct KindAddForm: View {
         [.comdirect, .tradeRepublic, .volksbankKasselGoettingen, .direkt1822, .finTsGeneric].contains(kind)
     }
 
+    /// Page where the bank hands out the API credentials GiroCrab asks for.
+    static func credentialsLink(_ kind: ConnectorKind) -> (title: LocalizedStringKey, url: URL)? {
+        switch kind {
+        case .comdirect:
+            return ("API-Zugangsdaten bei comdirect erstellen", URL(string: "https://kunde.comdirect.de/itx/oauth/privatkunden")!)
+        default:
+            return nil
+        }
+    }
+
     /// One section: login and the fixed facts as rows, every explanation once
     /// in the footer (HIG: notes belong under the section, not between rows).
     var body: some View {
@@ -59,7 +69,8 @@ struct KindAddForm: View {
             } footer: {
                 let missing = d.requiredSettings.filter { key in !(model.settings.first { $0.key == key }?.hasValue ?? false) }
                 AddFormFooter(lines: [d.note] + (missing.isEmpty || submit != nil ? [] :
-                    [String(localized: "Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))")]))
+                    [String(localized: "Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))")]),
+                              link: Self.credentialsLink(kind))
             }
         }
     }
@@ -69,10 +80,13 @@ struct KindAddForm: View {
 /// updated rather than added twice.
 struct AddFormFooter: View {
     let lines: [String]
+    /// Where the user gets what the form asks for (e.g. API credentials).
+    var link: (title: LocalizedStringKey, url: URL)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(lines.filter { !$0.isEmpty }.enumerated()), id: \.offset) { _, l in Text(l) }
+            if let link { Link(link.title, destination: link.url) }
             Text("Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt.")
         }
         .font(.caption).foregroundStyle(.secondary)
