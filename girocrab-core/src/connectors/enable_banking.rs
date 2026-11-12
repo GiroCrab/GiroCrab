@@ -942,6 +942,14 @@ pub(crate) fn pick_aspsp_name(list: &Value, wanted: &str) -> Option<String> {
     }
 }
 
+/// The consent went through, but Enable Banking returned no account.
+fn no_linked_accounts() -> CoreError {
+    CoreError::Bank {
+        code: "EB_NO_ACCOUNTS".into(),
+        message: tr("Die Bank hat die Freigabe erteilt, Enable Banking liefert aber keine Konten. Bei einer Anwendung im eingeschränkten Modus müssen die Konten zuerst auf enablebanking.com mit der Anwendung verknüpft werden („Linked accounts“). Danach die Freigabe erneut starten.").into(),
+    }
+}
+
 /// Accepts a full redirect URL ("https://…/callback?code=…&state=…") or a bare code.
 fn extract_code(input: &str, expected_state: &str) -> CoreResult<String> {
     let input = input.trim();
@@ -1141,6 +1149,12 @@ impl BankConnector for EnableBankingConnector {
             .unwrap_or_default()
             .to_string();
         let mut accounts = self.parse_accounts(&v);
+        if !self.card_mode() && accounts.is_empty() {
+            // A restricted application (activated by linking accounts) only
+            // sees accounts linked to it: the bank's consent then yields an
+            // empty list instead of an error.
+            return Err(no_linked_accounts());
+        }
         if !self.card_mode() {
             // New consent: keep the vault accounts of the previous session.
             let renames = carry_over(&self.st.accounts, &mut accounts);

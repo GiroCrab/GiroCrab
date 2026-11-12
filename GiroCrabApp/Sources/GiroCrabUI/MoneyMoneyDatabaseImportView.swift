@@ -50,6 +50,7 @@ struct MoneyMoneyDatabaseImportView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         resultCard(result)
+                        if !result.psd2Connections.isEmpty { psd2Card(result.psd2Connections) }
                         if !result.accountChecks.isEmpty { checkCard(result.accountChecks) }
                     }
                     .padding(.trailing, 6)
@@ -249,19 +250,27 @@ struct MoneyMoneyDatabaseImportView: View {
             ForEach(Array(p.banks.enumerated()), id: \.element.mmId) { i, b in
                 if i > 0 { Divider() }
                 HStack(spacing: 10) {
-                    Image(systemName: b.connector == nil ? "xmark.circle" : "checkmark.circle.fill")
-                        .foregroundStyle(b.connector == nil ? Theme.tertiary : Theme.inflow)
+                    let psd2 = psd2Bank(b)
+                    Image(systemName: b.connector != nil ? "checkmark.circle.fill" : psd2 != nil ? "link.circle.fill" : "xmark.circle")
+                        .foregroundStyle(b.connector != nil ? Theme.inflow : psd2 != nil ? Theme.accent : Theme.tertiary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(b.name.isEmpty ? (b.connector?.displayName ?? "Bank") : b.name).font(.callout.weight(.medium))
                         Text([b.bankCode.isEmpty ? nil : String(localized: "BLZ \(b.bankCode)"), b.loginName.isEmpty ? nil : String(localized: "Anmeldename \(b.loginName)")]
                             .compactMap { $0 }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(Theme.secondary)
+                        if let psd2 {
+                            Text(enableBankingReady
+                                 ? String(localized: "Über Enable Banking (PSD2): \(psd2.name)")
+                                 : String(localized: "Über Enable Banking (PSD2): \(psd2.name) – Enable Banking wird bei der ersten Freigabe eingerichtet"))
+                                .font(.caption).foregroundStyle(Theme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if b.hasSavedPin {
                         Image(systemName: "key").font(.caption).foregroundStyle(Theme.secondary).help("In MoneyMoney ist eine PIN gespeichert")
                     }
-                    Text(bankStatus(b)).font(.caption).foregroundStyle(b.connector == nil ? Theme.tertiary : Theme.text)
+                    Text(bankStatus(b)).font(.caption).foregroundStyle(b.connector == nil && psd2Bank(b) == nil ? Theme.tertiary : Theme.text)
                         .frame(width: 110, alignment: .trailing)
                 }
                 .padding(.vertical, 6)
@@ -401,6 +410,46 @@ struct MoneyMoneyDatabaseImportView: View {
         }
     }
 
+    /// Enable Banking connections the import set up: what is left to do –
+    /// link the accounts to the user's application, then the bank consent.
+    private func psd2Card(_ list: [MoneyMoneyDbPsd2Connection]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Noch zu tun: Freigabe über Enable Banking", systemImage: "link.circle.fill")
+                .font(.callout.weight(.medium)).foregroundStyle(Theme.accent)
+            Text("Eine Enable-Banking-Anwendung im eingeschränkten Modus sieht nur Konten, die mit ihr verknüpft sind. Verknüpfen Sie diese Konten zuerst auf enablebanking.com mit Ihrer Anwendung und starten Sie dann die Freigabe bei der Bank.")
+                .font(.caption).foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Link("Anwendungen auf enablebanking.com öffnen", destination: URL(string: "https://enablebanking.com/cp/applications")!)
+                .font(.caption)
+            ForEach(list, id: \.connectionId) { c in
+                Divider()
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(c.bankName).font(.callout.weight(.medium))
+                        ForEach(Array(c.accounts.enumerated()), id: \.offset) { _, a in
+                            Text([a.name, a.iban.isEmpty ? (a.accountNumber.isEmpty ? nil : String(localized: "Konto \(a.accountNumber)")) : formatIBAN(a.iban)]
+                                .compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Freigabe starten") { startConsent(c.connectionId) }
+                        .controlSize(.small)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    /// Closes the import and starts the bank consent of that connection.
+    private func startConsent(_ connectionID: Int64) {
+        guard let conn = model.connections.first(where: { $0.id == connectionID }) else { return }
+        dismiss()
+        model.requestSync(conn)
+    }
+
     /// "Abgleich mit MoneyMoney": every imported account read back from the
     /// vault. All fine → one line (details on demand); otherwise the
     /// accounts that differ, with the numbers.
@@ -516,7 +565,25 @@ struct MoneyMoneyDatabaseImportView: View {
         return s
     }
 
+    /// Enable Banking bank for a MoneyMoney bank without own connector: the
+    /// catalogue suggestion, else a match in the live list (when loaded).
+    private func psd2Bank(_ b: MoneyMoneyDbBank) -> Psd2Bank? {
+        guard b.connector == nil else { return nil }
+        if let s = b.psd2Bank { return s }
+        guard !model.livePsd2Banks.isEmpty else { return nil }
+        return matchPsd2BankByName(bankName: b.name, candidates: model.livePsd2Banks)
+    }
+
+    /// The user's own Enable Banking application is set up.
+    private var enableBankingReady: Bool {
+        model.settingEntry("enablebanking.application_id")?.hasValue == true
+            && model.settingEntry("enablebanking.private_key_pem")?.hasValue == true
+    }
+
     private func bankStatus(_ b: MoneyMoneyDbBank) -> String {
+        if b.connector == nil, psd2Bank(b) != nil {
+            return createConnections ? String(localized: "wird angelegt (PSD2)") : String(localized: "wird nicht angelegt")
+        }
         guard b.connector != nil else { return String(localized: "nicht unterstützt") }
         if b.existingConnectionId != nil { return String(localized: "bereits vorhanden") }
         return createConnections ? String(localized: "wird angelegt") : String(localized: "wird nicht angelegt")
@@ -524,6 +591,7 @@ struct MoneyMoneyDatabaseImportView: View {
 
     private func apply(_ p: MoneyMoneyDbPreview) {
         preview = p
+        if p.banks.contains(where: { $0.connector == nil }) { model.loadLivePsd2Banks() }
         var c: [Int64: Choice] = [:]
         for a in p.accounts {
             c[a.mmId] = choices[a.mmId] ?? Choice(selected: true, kind: a.suggestedKind, target: a.existingAccountId)
@@ -600,9 +668,15 @@ struct MoneyMoneyDatabaseImportView: View {
         guard let vault = model.vault, let url = fileURL, let preview else { return }
         if model.demoDbPreview != nil {
             // demo: nothing to read – show what the summary looks like
-            result = MoneyMoneyDbImportResult(accountsCreated: 5, accountsMerged: 1, groupsCreated: 2, bookingsNew: preview.totalBookings, bookingsDuplicates: 0, bookingsEnriched: 0, pendingSkipped: preview.pendingBookings, notesImported: preview.notesCount, categoriesCreated: UInt32(preview.categoryPaths.count), connectionsCreated: 3, connectionsExisting: 0, pinsStored: 0, banksSkippedUnsupported: 1, documentsImported: importStatements ? preview.statementsFound : 0, documentsExisting: 0, documentsMissing: 0, documentsMismatched: 0, documentsTooLarge: 0, documentsUnlisted: 0, holdingsImported: 0, rulesCreated: 0, rulesDisabled: 0,
+            result = MoneyMoneyDbImportResult(accountsCreated: 5, accountsMerged: 1, groupsCreated: 2, bookingsNew: preview.totalBookings, bookingsDuplicates: 0, bookingsEnriched: 0, pendingSkipped: preview.pendingBookings, notesImported: preview.notesCount, categoriesCreated: UInt32(preview.categoryPaths.count), connectionsCreated: 4, connectionsExisting: 0, pinsStored: 0, banksSkippedUnsupported: 1, documentsImported: importStatements ? preview.statementsFound : 0, documentsExisting: 0, documentsMissing: 0, documentsMismatched: 0, documentsTooLarge: 0, documentsUnlisted: 0, holdingsImported: 0, rulesCreated: 0, rulesDisabled: 0,
                 accountChecks: preview.accounts.map { a in
                     MoneyMoneyDbAccountCheck(mmId: a.mmId, accountId: 0, name: a.name, currency: a.currency, mmBookings: a.bookingCount, foundBookings: a.bookingCount, deletedBookings: 0, otherBookings: 0, mmBalanceCents: a.computedBalanceCents, mmBalanceShown: true, girocrabBalanceCents: a.computedBalanceCents, balanceFromBank: false, ok: true)
+                },
+                psd2Connections: preview.banks.filter { $0.connector == nil && $0.psd2Bank != nil }.map { b in
+                    MoneyMoneyDbPsd2Connection(connectionId: -b.mmId, bankName: b.name, created: true,
+                        accounts: preview.accounts.filter { $0.bankName == b.name }.map {
+                            MoneyMoneyDbPsd2Account(name: $0.name, iban: $0.iban, accountNumber: $0.accountNumber)
+                        })
                 })
             password = ""
             return
@@ -618,7 +692,10 @@ struct MoneyMoneyDatabaseImportView: View {
             importPins: createConnections && importPins,
             importGroups: importGroups,
             importStatements: importStatements && preview.statementsFound > 0,
-            statementsDir: statementsURL?.path)
+            statementsDir: statementsURL?.path,
+            psd2Banks: preview.banks.compactMap { b in
+                psd2Bank(b).map { MoneyMoneyDbPsd2Choice(mmBankId: b.mmId, aspsp: $0.aspsp, country: $0.country) }
+            })
         let statements = statementsURL
         let pw = password
         progress.value = MoneyMoneyDbImportProgress(fraction: 0, accountIndex: 0, accountCount: 0, accountName: "", bookingsDone: 0, bookingsTotal: 0, documentsDone: 0, documentsTotal: 0)
@@ -739,21 +816,28 @@ extension AppModel {
                 from: "2013-08-02", to: "2026-11-05", balance: 23_45),
             acc(6, "Reisekasse USD", "Musterbank", "12345678", number: "1000200", currency: "USD", kind: .checking, count: 38,
                 from: "2019-07-10", to: "2025-09-22", balance: 310_75, group: ""),
+            acc(7, "C24 Smartkonto", "C24 Bank", "50024024", iban: "DE02500105170137075030", kind: .checking, count: 57,
+                from: "2024-03-01", to: "2026-11-07", balance: 1_840_12),
         ]
         let banks = [
             MoneyMoneyDbBank(mmId: 1, bankCode: "20041111", name: "comdirect", loginName: "12345678", customerId: "12345678",
-                             connector: .comdirect, hasSavedPin: true, existingConnectionId: nil, accountCount: 3),
+                             connector: .comdirect, hasSavedPin: true, existingConnectionId: nil, accountCount: 3, psd2Bank: nil),
             MoneyMoneyDbBank(mmId: 2, bankCode: "50050201", name: "1822direkt", loginName: "max.mustermann", customerId: "",
-                             connector: .direkt1822, hasSavedPin: true, existingConnectionId: nil, accountCount: 1),
+                             connector: .direkt1822, hasSavedPin: true, existingConnectionId: nil, accountCount: 1, psd2Bank: nil),
             MoneyMoneyDbBank(mmId: 3, bankCode: "", name: "PayPal", loginName: "max@example.com", customerId: "",
-                             connector: .payPal, hasSavedPin: false, existingConnectionId: nil, accountCount: 1),
+                             connector: .payPal, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, psd2Bank: nil),
             MoneyMoneyDbBank(mmId: 4, bankCode: "12345678", name: "Musterbank", loginName: "mustermann", customerId: "",
-                             connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1),
+                             connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, psd2Bank: nil),
+            // no own connector, but reachable through Enable Banking (PSD2)
+            MoneyMoneyDbBank(mmId: 5, bankCode: "50024024", name: "C24 Bank", loginName: "max.mustermann", customerId: "",
+                             connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1,
+                             psd2Bank: psd2Catalog().first { $0.aspsp == "C24" }),
         ]
         let categories = ["Gehalt", "Haushalt › Lebensmittel", "Haushalt › Drogerie", "Wohnen › Miete", "Wohnen › Nebenkosten › Strom",
                           "Mobilität › Tanken", "Mobilität › ÖPNV", "Freizeit › Restaurants", "Freizeit › Sport", "Versicherungen",
                           "Steuern", "Reisen", "Abos", "Gesundheit", "Geschenke", "Sparen"]
-        return MoneyMoneyDbPreview(accounts: accounts, banks: banks, categoryPaths: categories, totalBookings: 6790,
+        return MoneyMoneyDbPreview(accounts: accounts, banks: banks, categoryPaths: categories,
+                                   totalBookings: accounts.reduce(0) { $0 + $1.bookingCount },
                                    pendingBookings: 5, notesCount: 312, splitParts: 14,
                                    dateRangeStart: "2009-04-01", dateRangeEnd: "2026-11-09", replacesStarterCategories: true,
                                    databasePath: "MoneyMoney.sqlite",

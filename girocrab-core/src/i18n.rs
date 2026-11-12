@@ -589,6 +589,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Muss in Ihrer Enable-Banking-Anwendung freigegeben sein." => "Must be allowed in your Enable Banking application.",
         "ASPSP-Name American Express" => "ASPSP name American Express",
         "Exakter Name aus GET /aspsps." => "Exact name from GET /aspsps.",
+        "Die Bank hat die Freigabe erteilt, Enable Banking liefert aber keine Konten. Bei einer Anwendung im eingeschränkten Modus müssen die Konten zuerst auf enablebanking.com mit der Anwendung verknüpft werden („Linked accounts“). Danach die Freigabe erneut starten." => "The bank granted access, but Enable Banking returns no accounts. With an application in restricted mode, the accounts must first be linked to the application on enablebanking.com (“Linked accounts”). Then start the consent again.",
         "Land American Express" => "Country American Express",
         "American Express per Enable Banking abrufen" => "Sync American Express via Enable Banking",
         "Amazon Visa per Enable Banking abrufen" => "Sync Amazon Visa via Enable Banking",

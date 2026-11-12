@@ -43,6 +43,7 @@ use rusqlite::types::Value;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 use zeroize::Zeroizing;
 
+use crate::connectors::bank_directory::{match_psd2_bank, psd2_catalog, Psd2Bank};
 use crate::connectors::fints::sepa;
 use crate::connectors::group_for;
 use crate::connectors::moneymoney_import::{
@@ -112,6 +113,10 @@ pub struct MoneyMoneyDbBank {
     pub has_saved_pin: bool,
     pub existing_connection_id: Option<i64>,
     pub account_count: u32,
+    /// No own connector, but the bank is reachable through Enable Banking
+    /// (PSD2): the suggestion from GiroCrab's PSD2 catalogue. The app may
+    /// refine it with the live list (`match_psd2_bank_by_name`).
+    pub psd2_bank: Option<Psd2Bank>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -170,6 +175,38 @@ pub struct MoneyMoneyDbImportOptions {
     /// Folder with the PDFs, for a database without MoneyMoney's folder
     /// around it (backup). `None` = `Statements` in the MoneyMoney folder.
     pub statements_dir: Option<String>,
+    /// Banks without own connector to connect through Enable Banking (only
+    /// with `create_connections`).
+    pub psd2_banks: Vec<MoneyMoneyDbPsd2Choice>,
+}
+
+/// A MoneyMoney bank login to set up as an Enable Banking (PSD2) connection.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MoneyMoneyDbPsd2Choice {
+    pub mm_bank_id: i64,
+    /// Enable Banking ASPSP name and its country (ISO alpha-2).
+    pub aspsp: String,
+    pub country: String,
+}
+
+/// An Enable Banking connection the import set up, with the accounts that
+/// must be linked to the user's Enable Banking application before the
+/// first consent (restricted applications only see linked accounts).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MoneyMoneyDbPsd2Connection {
+    pub connection_id: i64,
+    pub bank_name: String,
+    /// `false`: the connection existed already (an earlier import or set up
+    /// by hand).
+    pub created: bool,
+    pub accounts: Vec<MoneyMoneyDbPsd2Account>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MoneyMoneyDbPsd2Account {
+    pub name: String,
+    pub iban: String,
+    pub account_number: String,
 }
 
 /// Check of one imported account after the import: does GiroCrab now hold
@@ -245,6 +282,8 @@ pub struct MoneyMoneyDbImportResult {
     pub rules_disabled: u32,
     /// One check per imported account, in import order.
     pub account_checks: Vec<MoneyMoneyDbAccountCheck>,
+    /// Enable Banking connections set up for banks without own connector.
+    pub psd2_connections: Vec<MoneyMoneyDbPsd2Connection>,
 }
 
 /// Where a running import is, for a progress bar.
@@ -1940,6 +1979,7 @@ fn preview(
         });
     }
     let mut banks = Vec::new();
+    let catalog = psd2_catalog();
     for b in &src.banks {
         let connector = src.connector(b);
         banks.push(MoneyMoneyDbBank {
@@ -1965,6 +2005,11 @@ fn preview(
                 .iter()
                 .filter(|a| a.bank_key == Some(b.id))
                 .count() as u32,
+            psd2_bank: if connector.is_none() {
+                match_psd2_bank(&b.name, &catalog)
+            } else {
+                None
+            },
         });
     }
     let known: HashSet<i64> = src.accounts.iter().map(|a| a.id).collect();
@@ -2455,9 +2500,28 @@ fn import(
     }
 
     let mut bank_connection: HashMap<i64, i64> = HashMap::new();
+    // Enable Banking connections set up here: (connection id, MoneyMoney bank)
+    let mut psd2_created: Vec<(i64, &SrcBank, bool)> = Vec::new();
     for b in &src.banks {
         let Some((kind, key)) = src.connector_key(b) else {
-            res.banks_skipped_unsupported += 1;
+            let choice = options
+                .psd2_banks
+                .iter()
+                .find(|c| c.mm_bank_id == b.id)
+                .filter(|_| options.create_connections);
+            match choice.and_then(|c| psd2_connection(conn, b, c).transpose()) {
+                Some(r) => {
+                    let (id, created) = r?;
+                    if created {
+                        res.connections_created += 1;
+                    } else {
+                        res.connections_existing += 1;
+                    }
+                    bank_connection.insert(b.id, id);
+                    psd2_created.push((id, b, created));
+                }
+                None => res.banks_skipped_unsupported += 1,
+            }
             continue;
         };
         if !options.create_connections {
@@ -2514,8 +2578,72 @@ fn import(
             )?;
         }
     }
+    for (id, b, created) in psd2_created {
+        let mut st = conn.prepare(
+            "SELECT name, iban, account_number FROM accounts
+             WHERE connection_id = ?1 AND deleted_ms IS NULL ORDER BY sort_order, id",
+        )?;
+        let accounts = st
+            .query_map([id], |r| {
+                Ok(MoneyMoneyDbPsd2Account {
+                    name: r.get(0)?,
+                    iban: r.get(1)?,
+                    account_number: r.get(2)?,
+                })
+            })?
+            .collect::<Result<_, _>>()?;
+        res.psd2_connections.push(MoneyMoneyDbPsd2Connection {
+            connection_id: id,
+            bank_name: b.name.clone(),
+            created,
+            accounts,
+        });
+    }
     Vault::apply_rules_inner(conn, true)?;
     Ok(res)
+}
+
+/// Enable Banking connection for a MoneyMoney bank without own connector:
+/// the existing one for that ASPSP, else a new one. `None` when the banking
+/// lock blocks the bank or the choice is invalid (the bank is skipped).
+fn psd2_connection(
+    conn: &Connection,
+    b: &SrcBank,
+    choice: &MoneyMoneyDbPsd2Choice,
+) -> CoreResult<Option<(i64, bool)>> {
+    let aspsp = choice.aspsp.trim();
+    let country = choice.country.trim().to_uppercase();
+    let key = ConnectorKind::enable_banking_key(&country, aspsp);
+    if aspsp.is_empty() || ConnectorKind::enable_banking_target(&key).is_none() {
+        return Ok(None);
+    }
+    if crate::banking_gate::check_connector(&key).is_err() {
+        return Ok(None);
+    }
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL ORDER BY id LIMIT 1",
+            [&key],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(id) = existing {
+        return Ok(Some((id, false)));
+    }
+    let display = if b.name.trim().is_empty() {
+        aspsp.to_string()
+    } else {
+        b.name.clone()
+    };
+    let (id, created) = Vault::add_bank_connection_keyed(
+        conn,
+        ConnectorKind::EnableBanking,
+        &key,
+        None,
+        display,
+        aspsp.to_string(),
+    )?;
+    Ok(Some((id, created)))
 }
 
 #[uniffi::export]

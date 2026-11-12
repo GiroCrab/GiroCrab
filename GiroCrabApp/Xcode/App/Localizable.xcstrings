@@ -13830,6 +13830,83 @@
           }
         }
       }
+    },
+    "Anwendungen auf enablebanking.com öffnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open applications on enablebanking.com"
+          }
+        }
+      }
+    },
+    "Eine Enable-Banking-Anwendung im eingeschränkten Modus sieht nur Konten, die mit ihr verknüpft sind. Verknüpfen Sie diese Konten zuerst auf enablebanking.com mit Ihrer Anwendung und starten Sie dann die Freigabe bei der Bank." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An Enable Banking application in restricted mode only sees accounts linked to it. First link these accounts to your application on enablebanking.com, then start the consent at the bank."
+          }
+        }
+      }
+    },
+    "Freigabe starten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start consent"
+          }
+        }
+      }
+    },
+    "Noch zu tun: Freigabe über Enable Banking" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still to do: consent through Enable Banking"
+          }
+        }
+      }
+    },
+    "wird angelegt (PSD2)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "will be added (PSD2)"
+          }
+        }
+      }
+    },
+    "Über Enable Banking (PSD2): %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Through Enable Banking (PSD2): %@"
+          }
+        }
+      }
+    },
+    "Über Enable Banking (PSD2): %@ – Enable Banking wird bei der ersten Freigabe eingerichtet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Through Enable Banking (PSD2): %@ – Enable Banking is set up at the first consent"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

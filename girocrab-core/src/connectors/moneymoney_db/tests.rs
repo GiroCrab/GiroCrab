@@ -128,6 +128,7 @@ pub(crate) fn options_from(
         import_groups: true,
         import_statements: true,
         statements_dir: None,
+        psd2_banks: vec![],
     }
 }
 
@@ -2176,4 +2177,92 @@ fn account_check_flags_missing_bookings_and_a_wrong_balance() {
     // a bank-synced account keeps the bank's balance: only the bookings count
     let c = check_account(&db, a, "Girokonto", giro.account_id, &src.rows_for(a), true).unwrap();
     assert!(!c.ok, "a missing booking is still flagged");
+}
+
+#[test]
+fn banks_without_own_connector_are_set_up_through_enable_banking() {
+    let v = vault();
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
+           VALUES (30, 'DE', '50024024', 'c24-login', '', 'GEHEIM-30', 'C24 Bank', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (30, 30, '1234567890', '50024024', 0, 'DE02 5002 4024 1234 5678 90', 'EUR', 'C24 Smartkonto', 'Max Mustermann', 0, 0, 30, 0, 0, 'GEHEIM'),
+                  (31, 30, '0987654321', '50024024', 0, '', 'EUR', 'C24 Pocket', 'Max Mustermann', 0, 0, 31, 0, 0, 'GEHEIM');",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let c24 = p.banks.iter().find(|b| b.mm_id == 30).unwrap();
+    assert_eq!(c24.connector, None);
+    let psd2 = c24.psd2_bank.clone().expect("C24 is in the PSD2 catalogue");
+    assert_eq!((psd2.aspsp.as_str(), psd2.country.as_str()), ("C24", "DE"));
+    // the Sparkasse stays unsupported: neither FinTS-known here nor PSD2
+    let spk = p.banks.iter().find(|b| b.mm_id == 3).unwrap();
+    assert!(spk.psd2_bank.is_none());
+
+    let mut o = options_from(&p, true, false);
+    o.psd2_banks = vec![MoneyMoneyDbPsd2Choice {
+        mm_bank_id: 30,
+        aspsp: psd2.aspsp.clone(),
+        country: psd2.country.clone(),
+    }];
+    let r = v
+        .import_moneymoney_database(path.clone(), PW.into(), o.clone())
+        .unwrap();
+    assert_eq!(r.psd2_connections.len(), 1);
+    let pc = &r.psd2_connections[0];
+    assert!(pc.created);
+    assert_eq!(pc.bank_name, "C24 Bank");
+    let mut names: Vec<&str> = pc.accounts.iter().map(|a| a.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["C24 Pocket", "C24 Smartkonto"]);
+    assert!(pc
+        .accounts
+        .iter()
+        .any(|a| a.iban.replace(' ', "") == "DE02500240241234567890"));
+    let conn = v
+        .list_bank_connections()
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == pc.connection_id)
+        .unwrap();
+    assert_eq!(conn.connector, ConnectorKind::EnableBanking);
+    // Sparkasse: no choice → still skipped
+    assert_eq!(r.banks_skipped_unsupported, 1);
+
+    // second run: the same connection, nothing new
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert_eq!(r.psd2_connections.len(), 1);
+    assert!(!r.psd2_connections[0].created);
+    assert_eq!(r.psd2_connections[0].connection_id, pc.connection_id);
+    let eb = v
+        .list_bank_connections()
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.connector == ConnectorKind::EnableBanking)
+        .count();
+    assert_eq!(eb, 1);
+}
+
+#[test]
+fn psd2_choice_without_create_connections_does_nothing() {
+    let v = vault();
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
+           VALUES (30, 'DE', '50024024', 'c24-login', '', 'GEHEIM-30', 'C24 Bank', 'SYS', 'LS');",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, false, false);
+    o.psd2_banks = vec![MoneyMoneyDbPsd2Choice {
+        mm_bank_id: 30,
+        aspsp: "C24".into(),
+        country: "DE".into(),
+    }];
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert!(r.psd2_connections.is_empty());
+    assert!(v.list_bank_connections().unwrap().is_empty());
 }
