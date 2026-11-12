@@ -2245,7 +2245,10 @@ fn banks_without_own_connector_are_set_up_through_enable_banking() {
     // Sparkasse: no choice → still skipped, by name
     assert_eq!(r.banks_skipped_unsupported, 1);
     assert_eq!(r.banks_skipped_names.len(), 1);
-    assert!(!r.psd2_connections.iter().any(|p| r.banks_skipped_names.contains(&p.bank_name)));
+    assert!(!r
+        .psd2_connections
+        .iter()
+        .any(|p| r.banks_skipped_names.contains(&p.bank_name)));
 
     // second run: the same connection, nothing new
     let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();

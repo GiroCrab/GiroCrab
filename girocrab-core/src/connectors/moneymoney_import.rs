@@ -644,7 +644,9 @@ pub(crate) fn suggest_account(
             .filter(|a| sepa::normalize_iban(&a.1) == iban)
             .collect();
         let pick: Vec<_> = if same.len() > 1 && !ccy.is_empty() {
-            same.iter().filter(|a| a.2.eq_ignore_ascii_case(&ccy)).collect()
+            same.iter()
+                .filter(|a| a.2.eq_ignore_ascii_case(&ccy))
+                .collect()
         } else {
             same.iter().collect()
         };
@@ -661,7 +663,11 @@ pub(crate) fn suggest_account(
               WHERE a.deleted_ms IS NULL AND t.booking_date BETWEEN ?1 AND ?2",
         )?;
         for r in q.query_map(params![from, to], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })? {
             let (a, d, c) = r?;
             *have.entry(a).or_default().entry((d, c)).or_default() += 1;
@@ -690,7 +696,11 @@ pub(crate) fn suggest_account(
         }
     }
     let stem = account_name_from_file(file_name);
-    let stem = stem.strip_suffix(" (MoneyMoney)").unwrap_or(&stem).trim().to_lowercase();
+    let stem = stem
+        .strip_suffix(" (MoneyMoney)")
+        .unwrap_or(&stem)
+        .trim()
+        .to_lowercase();
     let named: Vec<_> = accounts
         .iter()
         .filter(|a| a.3.trim().to_lowercase() == stem)
@@ -1339,9 +1349,15 @@ mod tests {
     fn export_with_sepa_references_matches_bookings_without_them() {
         let (_dir, v) = vault();
         let head = "\"Datum\";\"Wertstellung\";\"Kategorie\";\"Name\";\"Verwendungszweck\";\"Konto\";\"Bank\";\"Betrag\";\"Währung\"\n";
-        let row = |purpose: &str| format!("\"02.01.2026\";\"\";\"\";\"Stadtwerke\";\"{purpose}\";\"DE02120300000000202051\";\"\";\"-50,00\";\"EUR\"\n");
+        let row = |purpose: &str| {
+            format!("\"02.01.2026\";\"\";\"\";\"Stadtwerke\";\"{purpose}\";\"DE02120300000000202051\";\"\";\"-50,00\";\"EUR\"\n")
+        };
         // as from the database: two payments, references not in the purpose
-        let db = format!("{head}{}{}", row("Abschlag Januar"), row("Abschlag Nachzahlung"));
+        let db = format!(
+            "{head}{}{}",
+            row("Abschlag Januar"),
+            row("Abschlag Nachzahlung")
+        );
         let a = v
             .import_moneymoney_data(db.into_bytes(), "Giro.csv".into(), None, true, true)
             .unwrap();
@@ -1359,9 +1375,17 @@ mod tests {
         assert_eq!((p.new_bookings, p.duplicates_skipped_or_enriched), (1, 2));
 
         // own transfer: the database import filled in the IBAN, the export has none
-        let own = |iban: &str| format!("{head}\"05.01.2026\";\"\";\"\";\"Tagesgeld\";\"Umbuchung\";\"{iban}\";\"\";\"-100,00\";\"EUR\"\n");
-        v.import_moneymoney_data(own("DE89370400440532013000").into_bytes(), "Giro.csv".into(), Some(a.account_id), true, true)
-            .unwrap();
+        let own = |iban: &str| {
+            format!("{head}\"05.01.2026\";\"\";\"\";\"Tagesgeld\";\"Umbuchung\";\"{iban}\";\"\";\"-100,00\";\"EUR\"\n")
+        };
+        v.import_moneymoney_data(
+            own("DE89370400440532013000").into_bytes(),
+            "Giro.csv".into(),
+            Some(a.account_id),
+            true,
+            true,
+        )
+        .unwrap();
         let p = v
             .preview_moneymoney_import(own("").into_bytes(), "Giro.csv".into(), Some(a.account_id))
             .unwrap();
@@ -1648,7 +1672,10 @@ mod tests {
         let set = |id: i64, name: &str, iban: &str| {
             v.db()
                 .unwrap()
-                .execute("UPDATE accounts SET name = ?2, iban = ?3 WHERE id = ?1", params![id, name, iban])
+                .execute(
+                    "UPDATE accounts SET name = ?2, iban = ?3 WHERE id = ?1",
+                    params![id, name, iban],
+                )
                 .unwrap();
         };
         // 1. bookings already in an account
