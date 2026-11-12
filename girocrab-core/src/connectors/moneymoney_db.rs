@@ -348,6 +348,8 @@ struct Source {
     categories: HashMap<i64, Vec<String>>,
     /// all category paths in MoneyMoney order
     category_order: Vec<Vec<String>>,
+    /// (category or category-group path, `#RRGGBB`) – groups first
+    category_colors: Vec<(Vec<String>, String)>,
     /// (category path, rule expression, restricted to certain accounts), in
     /// MoneyMoney order; only categories with a non-blank rule
     category_rules: Vec<(Vec<String>, String, bool)>,
@@ -423,6 +425,55 @@ pub(crate) fn real_to_cents(x: f64) -> Option<i64> {
 /// MoneyMoney dates are Unix seconds at 12:00 UTC → `YYYY-MM-DD` (UTC).
 pub(crate) fn unix_to_date(ts: i64) -> Option<String> {
     chrono::DateTime::from_timestamp(ts, 0).map(|d| d.date_naive().format("%Y-%m-%d").to_string())
+}
+
+/// GiroCrab's colour for categories nobody has given one.
+const DEFAULT_CATEGORY_COLOR: &str = "#8E8E93";
+
+/// MoneyMoney colour (`#rrggbb`, also `#rgb` / `#rrggbbaa`, optionally
+/// quoted) → `#RRGGBB`; `None` when empty or not a colour.
+fn mm_color(s: &str) -> Option<String> {
+    let hex = s
+        .trim()
+        .trim_matches(['\'', '"'])
+        .trim()
+        .strip_prefix('#')?;
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let rgb: String = match hex.len() {
+        3 => hex.chars().flat_map(|c| [c, c]).collect(),
+        6 | 8 => hex[..6].to_string(),
+        _ => return None,
+    };
+    Some(format!("#{}", rgb.to_ascii_uppercase()))
+}
+
+/// Gives imported categories MoneyMoney's colours – only where the category
+/// still has GiroCrab's default grey, so colours chosen in GiroCrab stay.
+/// Paths missing in the tree (e.g. empty category groups) are skipped.
+fn apply_category_colors(
+    conn: &Connection,
+    src: &Source,
+    cache: &HashMap<String, i64>,
+) -> CoreResult<()> {
+    // the colour is a field edit: stamp it, so a sync merge keeps it
+    // ("newest edit wins") instead of reverting it to another device's grey
+    let now = crate::user_groups::now_ms();
+    for (path, color) in &src.category_colors {
+        let key: String = path
+            .iter()
+            .map(|p| format!("\u{1}{}", p.to_lowercase()))
+            .collect();
+        if let Some(id) = cache.get(&key) {
+            conn.execute(
+                "UPDATE categories SET color_hex = ?1, color_ms = ?4
+                 WHERE id = ?2 AND upper(color_hex) = ?3 AND deleted_ms IS NULL",
+                params![color, id, DEFAULT_CATEGORY_COLOR, now],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// `11:4094.320000,3:EUR,` (length-prefixed fields) → (cents, currency).
@@ -939,22 +990,53 @@ fn read_source(path: &str, password: &SecretString, with_pins: bool) -> CoreResu
 
     // categories (+ nested groups)
     {
-        let mut groups: HashMap<i64, (String, i64)> = HashMap::new();
+        // rowid -> (name, parent group rowid or 0, colour)
+        let mut groups: HashMap<i64, (String, i64, Option<String>)> = HashMap::new();
         if have.contains("category_groups") {
             let sql = select(
                 &conn,
                 "category_groups",
-                &["rowid", "name", "group_key"],
+                &["rowid", "name", "group_key", "color"],
                 "",
             )?;
             let mut st = conn.prepare(&sql)?;
             let rows = st.query_map([], |r| {
                 Ok((
                     vint(get(r, 0)?).unwrap_or_default(),
-                    (vtext(get(r, 1)?), vint(get(r, 2)?).unwrap_or(0)),
+                    (
+                        vtext(get(r, 1)?),
+                        vint(get(r, 2)?).unwrap_or(0),
+                        mm_color(&vtext(get(r, 3)?)),
+                    ),
                 ))
             })?;
             groups = rows.collect::<Result<_, _>>()?;
+        }
+        // names of a group and its parents, outermost first
+        let group_path = |mut g: i64| -> Vec<String> {
+            let mut path = Vec::new();
+            let mut guard = 0;
+            while g > 0 && guard < 32 {
+                guard += 1;
+                let Some((gname, parent, _)) = groups.get(&g) else {
+                    break;
+                };
+                if !gname.is_empty() {
+                    path.push(gname.clone());
+                }
+                g = *parent;
+            }
+            path.reverse();
+            path
+        };
+        let mut group_ids: Vec<&i64> = groups.keys().collect();
+        group_ids.sort();
+        for g in group_ids {
+            if let (Some(color), path) = (&groups[g].2, group_path(*g)) {
+                if !path.is_empty() {
+                    src.category_colors.push((path, color.clone()));
+                }
+            }
         }
         let sql = select(
             &conn,
@@ -966,6 +1048,7 @@ fn read_source(path: &str, password: &SecretString, with_pins: bool) -> CoreResu
                 "group_key",
                 "rules",
                 "apply_to_account",
+                "color",
             ],
             "ORDER BY group_key, sort, rowid",
         )?;
@@ -978,33 +1061,25 @@ fn read_source(path: &str, password: &SecretString, with_pins: bool) -> CoreResu
                 vint(get(r, 3)?).unwrap_or(0),
                 vtext(get(r, 4)?),
                 vtext(get(r, 5)?),
+                mm_color(&vtext(get(r, 6)?)),
             ))
         })?;
         for row in rows {
-            let (id, name, typ, group, rules, apply_to_account) = row?;
+            let (id, name, typ, group, rules, apply_to_account, color) = row?;
             // rowid 1 / type 0 / empty name = "Ohne Kategorie"
             if name.is_empty() || typ == Some(0) {
                 continue;
             }
-            let mut path = vec![name];
-            let mut g = group;
-            let mut guard = 0;
-            while g > 0 && guard < 32 {
-                guard += 1;
-                let Some((gname, parent)) = groups.get(&g) else {
-                    break;
-                };
-                if !gname.is_empty() {
-                    path.push(gname.clone());
-                }
-                g = *parent;
-            }
-            path.reverse();
+            let mut path = group_path(group);
+            path.push(name);
             let rules = rules.trim();
             if !rules.is_empty() {
                 let restricted = !apply_to_account.trim().is_empty();
                 src.category_rules
                     .push((path.clone(), rules.to_string(), restricted));
+            }
+            if let Some(color) = color {
+                src.category_colors.push((path.clone(), color));
             }
             src.category_order.push(path.clone());
             src.categories.insert(id, path);
@@ -2062,6 +2137,7 @@ fn import(
         for path in &src.category_order {
             find_or_create_category(conn, path, &mut cat_cache, &mut res.categories_created)?;
         }
+        apply_category_colors(conn, src, &cat_cache)?;
         import_category_rules(conn, src, &mut cat_cache, &mut res)?;
     }
     let mut to_link: Vec<(i64, i64)> = Vec::new();

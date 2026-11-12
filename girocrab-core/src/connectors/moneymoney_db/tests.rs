@@ -926,6 +926,94 @@ fn starter_categories_are_replaced_in_an_empty_vault() {
 }
 
 #[test]
+fn category_colors_are_taken_over_without_overwriting_own_ones() {
+    let v = vault();
+    let path = fake_db_with(
+        false,
+        "UPDATE category_groups SET color = '#ff9500' WHERE rowid = 1;  -- Haushalt
+         UPDATE category_groups SET color = '#0a0' WHERE rowid = 2;     -- Wohnen (#rgb)
+         UPDATE categories SET color = '#34C759ff' WHERE rowid = 2;     -- Supermarkt (#rrggbbaa)
+         UPDATE categories SET color = '''#ff3b30''' WHERE rowid = 4;   -- Strom (quoted)
+         UPDATE categories SET color = 'blau' WHERE rowid = 3;          -- Gehalt (invalid)
+         INSERT INTO category_groups (rowid, name, group_key, sort, color)
+           VALUES (9, 'Leer', 0, 9, '#123456');                         -- no categories",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    v.import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false, false))
+        .unwrap();
+    let color = |name: &str| {
+        v.list_categories(None, None)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == name)
+            .map(|c| c.color_hex)
+    };
+    assert_eq!(color("Haushalt").as_deref(), Some("#FF9500"));
+    assert_eq!(color("Wohnen").as_deref(), Some("#00AA00"));
+    assert_eq!(color("Supermarkt").as_deref(), Some("#34C759"));
+    assert_eq!(color("Strom").as_deref(), Some("#FF3B30"));
+    {
+        // taken-over colours are stamped for the sync merge, grey ones not touched
+        let db = v.db().unwrap();
+        let ms = |name: &str| -> i64 {
+            db.query_row(
+                "SELECT color_ms FROM categories WHERE name = ?1 AND deleted_ms IS NULL",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(
+            ms("Strom") >= ms("Gehalt"),
+            "colour stamp not older than creation"
+        );
+        assert!(ms("Strom") > 0);
+    }
+    assert_eq!(color("Gehalt").as_deref(), Some(DEFAULT_CATEGORY_COLOR));
+    assert_eq!(
+        color("Nebenkosten").as_deref(),
+        Some(DEFAULT_CATEGORY_COLOR)
+    );
+    assert_eq!(color("Leer"), None, "empty groups are not created");
+
+    // a colour chosen in GiroCrab survives a second import
+    let strom = v
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name == "Strom")
+        .unwrap();
+    v.update_category(
+        strom.id,
+        strom.name,
+        strom.parent_id,
+        strom.sf_symbol,
+        "#5856D6".into(),
+    )
+    .unwrap();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    v.import_moneymoney_database(path, PW.into(), options_from(&p, false, false))
+        .unwrap();
+    assert_eq!(color("Strom").as_deref(), Some("#5856D6"));
+    assert_eq!(color("Haushalt").as_deref(), Some("#FF9500"));
+}
+
+#[test]
+fn mm_color_formats() {
+    assert_eq!(mm_color("#ff9500").as_deref(), Some("#FF9500"));
+    assert_eq!(mm_color(" '#FF9500' ").as_deref(), Some("#FF9500"));
+    assert_eq!(mm_color("#abc").as_deref(), Some("#AABBCC"));
+    assert_eq!(mm_color("#11223344").as_deref(), Some("#112233"));
+    for bad in ["", "ff9500", "#ff95", "#gg9500", "rot", "#"] {
+        assert_eq!(mm_color(bad), None, "{bad:?}");
+    }
+}
+
+#[test]
 fn starter_categories_stay_when_the_vault_has_bookings() {
     let v = vault();
     let starter = v.seed_starter_categories().unwrap() as usize;
