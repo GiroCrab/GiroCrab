@@ -12,6 +12,11 @@ struct TwoFactorSheet: View {
     @State private var consent: ConsentBrowser?
     @State private var showManualRedirect = false
 
+    /// The sheet shows the bank's consent page (needs a browser-sized window).
+    private var showsConsentPage: Bool {
+        consent != nil && model.activeChallenge?.challenge.kind == .redirect
+    }
+
     var body: some View {
         if let active = model.activeChallenge {
             let c = active.challenge
@@ -87,7 +92,9 @@ struct TwoFactorSheet: View {
                     if let consent {
                         // Bank login inside GiroCrab; closes itself on the redirect.
                         ConsentWebView(browser: consent)
-                            .frame(minWidth: 760, minHeight: 560)
+                            // banks lay their consent pages out for a desktop
+                            // browser: a narrower view cuts off the account list
+                            .frame(minWidth: 820, idealWidth: 880, minHeight: 560, idealHeight: 680)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
                         Text("Bei der Bank anmelden und den Zugriff erlauben – das Fenster schließt sich danach von selbst.")
@@ -142,7 +149,8 @@ struct TwoFactorSheet: View {
                 }
             }
             .padding(24)
-            .macFrame(minWidth: 400, idealWidth: 420)
+            // the bank's own page needs the room of a browser window
+            .macFrame(minWidth: showsConsentPage ? 868 : 400, idealWidth: showsConsentPage ? 928 : 420)
         }
     }
 
