@@ -1931,17 +1931,6 @@
         }
       }
     },
-    "Auch möglich: Kontoauszüge als CAMT.053 (XML) oder MT940 (.sta / .mt940)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Also supported: statements as CAMT.053 (XML) or MT940 (.sta / .mt940)."
-          }
-        }
-      }
-    },
     "Auf enablebanking.com eine Anwendung registrieren: „Production“ wählen, den Schlüssel im Browser erzeugen lassen und diese Redirect-URL eintragen:" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14557,17 +14546,6 @@
         }
       }
     },
-    "In MoneyMoney: Konto wählen, alle Umsätze markieren (⌘A), dann „Umsätze exportieren …“ als XML oder CSV. Sie können die Datei auch hierher ziehen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "In MoneyMoney: choose the account, select all transactions (⌘A), then “Export transactions …” as XML or CSV. You can also drag the file here."
-          }
-        }
-      }
-    },
     "Neue Buchungen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14949,6 +14927,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Please check the marked accounts. Importing again adds missing bookings without creating duplicates."
+          }
+        }
+      }
+    },
+    "In MoneyMoney ein einzelnes Konto wählen – nicht „Alle Konten“ –, alle Umsätze markieren (⌘A) und „Umsätze exportieren …“ als CSV oder SEPA camt.053 (XML). Sie können die Datei auch hierher ziehen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In MoneyMoney, choose a single account – not “All Accounts” –, select all transactions (⌘A) and “Export transactions …” as CSV or SEPA camt.053 (XML). You can also drag the file here."
+          }
+        }
+      }
+    },
+    "Nur CSV enthält auch die Kategorien. Ebenfalls möglich: MT940 (.sta / .mt940)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only CSV also contains the categories. Also possible: MT940 (.sta / .mt940)."
           }
         }
       }

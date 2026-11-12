@@ -173,8 +173,8 @@ struct MoneyMoneyExportImportView: View {
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("In MoneyMoney: Konto wählen, alle Umsätze markieren (⌘A), dann „Umsätze exportieren …“ als XML oder CSV. Sie können die Datei auch hierher ziehen.")
-                        Text("Auch möglich: Kontoauszüge als CAMT.053 (XML) oder MT940 (.sta / .mt940).")
+                        Text("In MoneyMoney ein einzelnes Konto wählen – nicht „Alle Konten“ –, alle Umsätze markieren (⌘A) und „Umsätze exportieren …“ als CSV oder SEPA camt.053 (XML). Sie können die Datei auch hierher ziehen.")
+                        Text("Nur CSV enthält auch die Kategorien. Ebenfalls möglich: MT940 (.sta / .mt940).")
                     }
                     .font(.caption).foregroundStyle(Theme.secondary)
                     .multilineTextAlignment(.leading)
