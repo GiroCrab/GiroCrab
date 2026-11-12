@@ -146,16 +146,19 @@ public struct GiroCrabScenes: Scene {
                     .keyboardShortcut("l", modifiers: [.command, .control])
                     .disabled(!model.hasOwnVault)
             }
-            // Hilfe › Mitteilungen …: ellipsis because a window opens.
-            CommandGroup(after: .help) {
-                Button("Mitteilungen …") { openWindow(id: "announcements") }
-            }
-            // Bearbeiten › Suchen …: focuses the toolbar search field.
-            CommandGroup(after: .pasteboard) {
-                Divider()
-                Button("Suchen …") { ToolbarSearch.focus() }
-                    .keyboardShortcut("f", modifiers: .command)
-                    .disabled(model.vault == nil)
+            // `Group`: a CommandsBuilder takes at most 10 children (older Xcode in CI).
+            Group {
+                // Hilfe › Mitteilungen …: ellipsis because a window opens.
+                CommandGroup(after: .help) {
+                    Button("Mitteilungen …") { openWindow(id: "announcements") }
+                }
+                // Bearbeiten › Suchen …: focuses the toolbar search field.
+                CommandGroup(after: .pasteboard) {
+                    Divider()
+                    Button("Suchen …") { ToolbarSearch.focus() }
+                        .keyboardShortcut("f", modifiers: .command)
+                        .disabled(model.vault == nil)
+                }
             }
             SidebarCommands()
             ToolbarCommands()
