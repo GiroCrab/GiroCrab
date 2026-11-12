@@ -5,12 +5,51 @@ notarized stable release** from GitHub (`GiroCrab-macOS-arm64.zip`, Apple Silico
 macOS 14 Sonoma or later).
 
 ```bash
-brew install --cask girocrab/tap/girocrab
+brew install --cask girocrab/tap/girocrab           # stable
+brew install --cask girocrab/tap/girocrab@beta      # beta (pre-release)
+brew install --cask girocrab/tap/girocrab@nightly   # nightly build
 ```
 
-The cask source lives in this repo at
-[`packaging/homebrew/Casks/girocrab.rb`](../packaging/homebrew/Casks/girocrab.rb) and is
-copied into the tap repository `GiroCrab/homebrew-tap` (path `Casks/girocrab.rb`).
+The cask sources live in this repo in
+[`packaging/homebrew/Casks/`](../packaging/homebrew/Casks/) and are copied into the tap
+repository `GiroCrab/homebrew-tap` (path `Casks/`). The three casks install the same
+`GiroCrab.app` and therefore declare `conflicts_with` each other.
+
+## Channels: stable, beta, nightly
+
+| Cask | Source | Version / checksum | `auto_updates` | livecheck |
+|---|---|---|---|---|
+| `girocrab` | `releases/download/vX.Y.Z/…` | pinned | yes | `:github_latest` |
+| `girocrab@beta` | `releases/download/vX.Y.Z-beta.N/…` (pre-release) | pinned | yes | git tags `vX.Y.Z-beta.N` |
+| `girocrab@nightly` | `releases/download/nightly/…` (rolling) | `version :latest`, `sha256 :no_check` | no (not allowed with `:latest`) | – |
+
+- The `@beta` / `@nightly` suffixes follow Homebrew's naming for variants
+  (e.g. `firefox@nightly`).
+- **Nightly has no pinned checksum**, because the rolling `nightly` release replaces its
+  zip on every build. It is still signed: Homebrew keeps the quarantine flag, so Gatekeeper
+  checks the Developer ID signature and notarization on first launch, and later updates
+  come through Sparkle with EdDSA verification. A pinned checksum would need dated nightly
+  zips plus a cask update every night.
+- The app picks its update channel from the installed build (`X.Y.ZbN` → beta,
+  `<tag>.<timestamp>` → nightly), so a Homebrew beta or nightly install keeps getting
+  beta or nightly updates through Sparkle. See `docs/auto-updates.md` on the Sparkle branch.
+
+### Switching the channel inside the app
+
+Users who installed through Homebrew **can** switch the channel in the app
+(Settings › Updates, ⌥). Nothing has to be removed: with `auto_updates true` Homebrew
+leaves updates to Sparkle. One thing to know:
+
+- Homebrew still records the cask that was installed. `brew upgrade` (without `--greedy`)
+  ignores self-updating casks, so this is harmless by default.
+- **`brew upgrade --greedy`** reinstalls the cask's version when that cask is bumped. If
+  someone installed `girocrab`, switched to beta in the app (e.g. 0.7.0b1) and later runs
+  `brew upgrade --greedy` after the stable cask moved to 0.6.1, Homebrew **replaces the
+  beta with the older 0.6.1**. A beta may already have changed the vault format.
+- Recommendation (also in the caveats of `@beta`/`@nightly`): to change the channel
+  permanently, switch the cask instead:
+  `brew uninstall --cask girocrab && brew install --cask girocrab/tap/girocrab@beta`.
+  The vault stays in `~/Library/Application Support/GiroCrab` (no `--zap`).
 
 ## Own tap vs. official `homebrew/cask`
 
@@ -41,8 +80,9 @@ be retired or kept as a mirror.
 - The cask URL is pinned to a tag: `releases/download/v#{version}/GiroCrab-macOS-arm64.zip`.
 - `livecheck` uses `strategy :github_latest`. GitHub's "latest release" never returns a
   pre-release, so the rolling `nightly` pre-release is never offered.
-- `scripts/update-homebrew-cask.sh` refuses drafts and pre-releases, and only accepts
-  `vX.Y.Z` tags.
+- `scripts/update-homebrew-cask.sh` updates `girocrab.rb` only from published stable
+  releases (`vX.Y.Z`), and `girocrab@beta.rb` only from pre-releases `vX.Y.Z-beta.N`.
+  `nightly` is refused (that cask has no version to update).
 - Possible later alternative: once every stable release ships a Sparkle `appcast.xml`,
   livecheck could use `strategy :sparkle` with
   `url "https://github.com/GiroCrab/GiroCrab/releases/latest/download/appcast.xml"`.
@@ -61,11 +101,16 @@ installed app; this is expected for self-updating casks.
 
 ## Releasing: updating the cask
 
-After `scripts/notarize.sh --upload vX.Y.Z` has published the stable release:
+After `scripts/notarize.sh --upload <tag>` has published the release:
 
 ```bash
-scripts/update-homebrew-cask.sh vX.Y.Z
+scripts/update-homebrew-cask.sh vX.Y.Z           # -> Casks/girocrab.rb
+scripts/update-homebrew-cask.sh vX.Y.Z-beta.N    # -> Casks/girocrab@beta.rb
 ```
+
+`girocrab@beta.rb` carries a placeholder version and checksum until the first beta
+pre-release exists; run the script once that release is published. Nightly needs no
+update.
 
 The script reads the release via `gh api`, takes the asset's SHA-256 digest (or downloads
 and hashes the zip if GitHub has no digest), and rewrites `version` and `sha256` in

@@ -15,6 +15,10 @@ cask "girocrab" do
   end
 
   auto_updates true
+  conflicts_with cask: [
+    "girocrab@beta",
+    "girocrab@nightly",
+  ]
   depends_on arch: :arm64
   depends_on macos: :sonoma
 
@@ -40,5 +44,8 @@ cask "girocrab" do
     `brew uninstall --cask girocrab` keeps it.
     `brew uninstall --cask --zap girocrab` moves it to the Trash.
     Make a backup before zapping if you want to keep your data.
+    Switching to beta/nightly inside the app works, but `brew upgrade --greedy`
+    may then replace the newer in-app update with this cask's version. To change
+    the channel for good, install girocrab@beta or girocrab@nightly instead.
   EOS
 end

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Rewrite `version` and `sha256` in the Homebrew cask from a published GitHub release.
+# Rewrite `version` and `sha256` in a Homebrew cask from a published GitHub release.
 #
 # Usage: scripts/update-homebrew-cask.sh <TAG> [CASK_FILE]
-#   TAG        stable release tag, e.g. v0.5.6 (pre-releases such as "nightly" are refused)
-#   CASK_FILE  defaults to packaging/homebrew/Casks/girocrab.rb
+#   TAG        vX.Y.Z         stable release   -> packaging/homebrew/Casks/girocrab.rb
+#              vX.Y.Z-beta.N  beta pre-release -> packaging/homebrew/Casks/girocrab@beta.rb
+#              ("nightly" is refused: girocrab@nightly uses version :latest, no checksum)
+#   CASK_FILE  overrides the default cask file
 #
 # Run after `scripts/notarize.sh --upload <TAG>`. Only edits the local file; it never
 # commits or pushes. Copy the result into the GiroCrab/homebrew-tap repo (see docs/homebrew.md).
@@ -14,15 +16,29 @@ ASSET="GiroCrab-macOS-arm64.zip"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 TAG="${1:-}"
-CASK="${2:-$ROOT/packaging/homebrew/Casks/girocrab.rb}"
-
-[[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]] || { echo "usage: $0 vX.Y.Z [CASK_FILE]" >&2; exit 2; }
+if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  KIND="stable"; DEFAULT_CASK="girocrab.rb"
+elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+  KIND="beta"; DEFAULT_CASK="girocrab@beta.rb"
+else
+  echo "usage: $0 vX.Y.Z|vX.Y.Z-beta.N [CASK_FILE]" >&2; exit 2
+fi
+CASK="${2:-$ROOT/packaging/homebrew/Casks/$DEFAULT_CASK}"
 [ -f "$CASK" ] || { echo "error: cask not found: $CASK" >&2; exit 1; }
 VERSION="${TAG#v}"
 
 release="$(gh api "repos/$REPO/releases/tags/$TAG")"
-if [ "$(jq -r '.prerelease or .draft' <<<"$release")" = "true" ]; then
-  echo "error: $TAG is a draft or pre-release; the cask only tracks stable releases" >&2
+if [ "$(jq -r '.draft' <<<"$release")" = "true" ]; then
+  echo "error: $TAG is still a draft; publish it first" >&2
+  exit 1
+fi
+PRE="$(jq -r '.prerelease' <<<"$release")"
+if [ "$KIND" = "stable" ] && [ "$PRE" = "true" ]; then
+  echo "error: $TAG is a pre-release; the stable cask only tracks stable releases" >&2
+  exit 1
+fi
+if [ "$KIND" = "beta" ] && [ "$PRE" != "true" ]; then
+  echo "error: $TAG is not marked as pre-release; betas must be pre-releases" >&2
   exit 1
 fi
 
