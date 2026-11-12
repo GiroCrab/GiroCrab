@@ -18,6 +18,7 @@ struct AddBankSheet: View {
     @State private var step: Step = .bank
     @State private var query = ""
     @State private var selected: BankSearchResult?
+    @State private var selectedID: String?
     /// Ways to reach the selected bank (FinTS, own API, Enable Banking).
     @State private var ways: [BankSearchResult] = []
     @State private var setupValues: [String: String] = [:]
@@ -147,59 +148,73 @@ struct AddBankSheet: View {
 
     // MARK: - 1. Bank
 
+    /// A native single-selection list: the chosen bank is highlighted like
+    /// any selected row (HIG: checkmarks mean "toggle several"), arrow keys
+    /// move, double-click or Return continues.
     private var bankStep: some View {
-        Form {
-            Section {
-                searchField
-            }
-            if query.trimmingCharacters(in: .whitespaces).isEmpty {
+        VStack(alignment: .leading, spacing: 10) {
+            searchField
+            List(selection: $selectedID) {
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Section {
+                        suggestionRow
+                    } header: {
+                        Text("Häufig gesucht")
+                    }
+                } else {
+                    resultSections
+                }
                 Section {
-                    suggestionRow
+                    row(symbol: "square.and.pencil", title: String(localized: "Andere FinTS-Bank"),
+                        detail: String(localized: "Bankleitzahl und FinTS-Adresse selbst eingeben"))
+                        .tag(Self.manualFinTs.id)
                 } header: {
-                    Text("Häufig gesucht")
+                    Text("Nicht gefunden?")
                 }
-            } else {
-                resultSections
             }
-            Section {
-                Button {
-                    selected = Self.manualFinTs
-                    next()
-                } label: {
-                    Label("Andere FinTS-Bank – BLZ und Adresse selbst eingeben", systemImage: "square.and.pencil")
-                }
-                Button {
+            #if os(macOS)
+            .listStyle(.inset)
+            #endif
+            .contextMenu(forSelectionType: String.self, menu: { _ in EmptyView() }, primaryAction: { ids in
+                guard let id = ids.first else { return }
+                selectedID = id
+                choose(id)
+                next()
+            })
+            .onChange(of: selectedID) { _, id in choose(id) }
+            HStack(spacing: 18) {
+                Button("Demo-Bank ausprobieren") {
                     model.addDemoBank()
                     dismiss()
-                } label: {
-                    Label("Demo-Bank ausprobieren – ohne echte Bank, Kennung „demo“, PIN 12345", systemImage: "play.circle")
                 }
+                .help(String(localized: "Ohne echte Bank: Kennung „demo“, PIN 12345, beliebige TAN"))
                 #if os(macOS)
-                Button {
+                Button("Von MoneyMoney umsteigen …") {
                     dismiss()
                     model.showMoneyMoneyImport = true
-                } label: {
-                    Label("Von MoneyMoney umsteigen – Konten und Bankzugänge importieren …", systemImage: "square.and.arrow.down.on.square")
                 }
                 #endif
-            } header: {
-                Text("Weitere Möglichkeiten")
             }
+            .buttonStyle(.link)
+            .font(.callout)
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
-        .buttonStyle(.borderless)
+    }
+
+    private func choose(_ id: String?) {
+        guard let id else { selected = nil; return }
+        selected = id == Self.manualFinTs.id ? Self.manualFinTs : results.first { $0.id == id }
     }
 
     private var searchField: some View {
         #if os(macOS)
         SystemSearchField(text: $query, prompt: String(localized: "Bank, BLZ oder IBAN suchen …"))
-            .onChange(of: query) { _, _ in selected = nil }
+            .onChange(of: query) { _, _ in selectedID = nil }
         #else
         TextField("Bank, BLZ oder IBAN suchen …", text: $query)
+            .textFieldStyle(.roundedBorder)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
-            .onChange(of: query) { _, _ in selected = nil }
+            .onChange(of: query) { _, _ in selectedID = nil }
         #endif
     }
 
@@ -220,52 +235,43 @@ struct AddBankSheet: View {
         if all.isEmpty {
             Section {
                 Text("Keine Bank gefunden. Prüfen Sie die Schreibweise oder geben Sie die Bankleitzahl ein.")
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(.secondary)
             }
         } else {
             ForEach([BankAccessMode.finTs, .ownApi, .psd2], id: \.self) { mode in
                 let rows = all.filter { $0.mode == mode }
                 if !rows.isEmpty {
                     Section {
-                        ForEach(rows, id: \.id) { r in resultRow(r) }
+                        ForEach(rows, id: \.id) { r in
+                            row(symbol: Self.symbol(r), title: r.name, detail: Self.detailLine(r))
+                                .tag(r.id)
+                        }
                     } header: {
-                        Text(Self.groupTitle(mode))
-                    } footer: {
-                        Text(Self.groupHint(mode))
-                            .font(.caption).foregroundStyle(Theme.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(Self.groupTitle(mode))
+                            Text(Self.groupHint(mode)).font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
         }
     }
 
-    /// Click selects, double-click (or Return) continues – like a list in an
-    /// assistant, not a navigation link.
-    private func resultRow(_ r: BankSearchResult) -> some View {
-        let isSelected = selected?.id == r.id
-        return HStack(spacing: 10) {
-            Image(systemName: Self.symbol(r))
+    /// One bank row. Hierarchical styles, so the text stays readable on the
+    /// selection highlight.
+    private func row(symbol: String, title: String, detail: String?) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
                 .frame(width: 22)
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
-                Text(r.name).fontWeight(isSelected ? .semibold : .regular)
-                if let d = Self.detailLine(r) {
-                    Text(d).font(.caption).foregroundStyle(Theme.secondary)
+                Text(title)
+                if let detail {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Spacer(minLength: 8)
-            Image(systemName: "checkmark")
-                .foregroundStyle(Theme.accent)
-                .opacity(isSelected ? 1 : 0)
-                .accessibilityHidden(true)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { selected = r; next() }
-        .onTapGesture { selected = r }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { selected = r }
+        .padding(.vertical, 2)
     }
 
     // MARK: - 2. Access

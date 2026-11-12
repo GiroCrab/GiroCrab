@@ -15228,50 +15228,6 @@
         }
       }
     },
-    "Andere FinTS-Bank – BLZ und Adresse selbst eingeben" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Other FinTS bank – enter bank code and address yourself"
-          }
-        }
-      }
-    },
-    "Demo-Bank ausprobieren – ohne echte Bank, Kennung „demo“, PIN 12345" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Try the demo bank – no real bank, login “demo”, PIN 12345"
-          }
-        }
-      }
-    },
-    "Von MoneyMoney umsteigen – Konten und Bankzugänge importieren …" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Switching from MoneyMoney – import accounts and bank logins …"
-          }
-        }
-      }
-    },
-    "Weitere Möglichkeiten" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "More Options"
-          }
-        }
-      }
-    },
     "Keine Bank gefunden. Prüfen Sie die Schreibweise oder geben Sie die Bankleitzahl ein." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15323,6 +15279,61 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Open Product Registration"
+          }
+        }
+      }
+    },
+    "Bankleitzahl und FinTS-Adresse selbst eingeben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter bank code and FinTS address yourself"
+          }
+        }
+      }
+    },
+    "Nicht gefunden?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Found?"
+          }
+        }
+      }
+    },
+    "Demo-Bank ausprobieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try the Demo Bank"
+          }
+        }
+      }
+    },
+    "Von MoneyMoney umsteigen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch from MoneyMoney …"
+          }
+        }
+      }
+    },
+    "Ohne echte Bank: Kennung „demo“, PIN 12345, beliebige TAN" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No real bank: login “demo”, PIN 12345, any TAN"
           }
         }
       }
