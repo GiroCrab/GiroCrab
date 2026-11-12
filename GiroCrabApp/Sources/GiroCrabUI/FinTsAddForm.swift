@@ -100,19 +100,12 @@ struct FinTsAddForm: View {
         } header: {
             Text("Anmeldung")
         } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                if isPostbank {
-                    Text("Postbank: Als Anmeldename die Postbank ID verwenden, nicht die Kontonummer.")
-                }
-                Text(needsMediumHint
-                     ? "Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein, z. B. SO:Gerätename."
-                     : "Das TAN-Medium brauchen Sie nur, wenn die Bank danach fragt.")
-                if submit != nil {
-                    Text("Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt.")
-                }
-            }
-            .font(.caption).foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            AddFormFooter(lines: [
+                isPostbank ? String(localized: "Postbank: Als Anmeldename die Postbank ID verwenden, nicht die Kontonummer.") : "",
+                needsMediumHint
+                    ? String(localized: "Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein, z. B. SO:Gerätename.")
+                    : String(localized: "Das TAN-Medium brauchen Sie nur, wenn die Bank danach fragt."),
+            ])
         }
 
         if known {

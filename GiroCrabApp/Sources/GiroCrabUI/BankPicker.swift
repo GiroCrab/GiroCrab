@@ -38,28 +38,45 @@ struct KindAddForm: View {
         [.comdirect, .tradeRepublic, .volksbankKasselGoettingen, .direkt1822, .finTsGeneric].contains(kind)
     }
 
+    /// One section: login and the fixed facts as rows, every explanation once
+    /// in the footer (HIG: notes belong under the section, not between rows).
     var body: some View {
         if let d = bankCatalog().first(where: { $0.kind == kind }) {
-            if model.demoActive { DemoHintBanner(style: .credentials) { login = "demo" } }
-            TextField(d.loginLabel, text: $login)
-                .autocorrectionDisabled()
-                .onChange(of: canAdd, initial: true) { _, ok in submit?.update(ok, commit) }
-            LabeledContent("Verfahren", value: d.protocol)
-            if !d.bankCode.isEmpty { LabeledContent("BLZ", value: d.bankCode) }
-            Text(d.note).font(.caption).foregroundStyle(.secondary)
-            let missing = d.requiredSettings.filter { key in !(model.settings.first { $0.key == key }?.hasValue ?? false) }
-            if !missing.isEmpty, submit == nil {
-                Label("Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))", systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary)
+            Section {
+                if model.demoActive { DemoHintBanner(style: .credentials) { login = "demo" } }
+                TextField(d.loginLabel, text: $login, prompt: loginRequired ? nil : Text("Optional"))
+                    .autocorrectionDisabled()
+                    .onChange(of: canAdd, initial: true) { _, ok in submit?.update(ok, commit) }
+                LabeledContent("Verfahren", value: d.protocol)
+                if !d.bankCode.isEmpty { LabeledContent("Bankleitzahl", value: d.bankCode) }
+                if submit == nil {
+                    Button("Bank hinzufügen") { commit() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!canAdd)
+                }
+            } header: {
+                Text("Zugang")
+            } footer: {
+                let missing = d.requiredSettings.filter { key in !(model.settings.first { $0.key == key }?.hasValue ?? false) }
+                AddFormFooter(lines: [d.note] + (missing.isEmpty || submit != nil ? [] :
+                    [String(localized: "Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))")]))
             }
-            if submit == nil {
-                Button("Bank hinzufügen") { commit() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canAdd)
-            }
-            Text("Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt.")
-                .font(.caption2).foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Footer of an add form: the notes, then the hint that an existing login is
+/// updated rather than added twice.
+struct AddFormFooter: View {
+    let lines: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(lines.filter { !$0.isEmpty }.enumerated()), id: \.offset) { _, l in Text(l) }
+            Text("Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt.")
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -84,27 +101,25 @@ struct Psd2AddForm: View {
     }
 
     var body: some View {
-        LabeledContent("Bank", value: bank.name)
-        LabeledContent("Land", value: bank.country)
-        LabeledContent("Verfahren", value: String(localized: "PSD2 über Enable Banking"))
-        if model.demoActive { DemoHintBanner(style: .credentials) { label = "demo" } }
-        TextField("Bezeichnung", text: $label, prompt: Text("Optional"))
-            .autocorrectionDisabled()
-            .onAppear { submit?.update(true, commit) }
-        if !bank.tested.isEmpty {
-            Label(bank.tested, systemImage: "checkmark.seal")
-                .font(.caption).foregroundStyle(.green)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        Text("Sie melden sich in einem GiroCrab-Fenster direkt bei Ihrer Bank an. Dafür brauchen Sie eine kostenlose eigene Anwendung auf enablebanking.com – die Einrichtung führt Sie Schritt für Schritt hindurch.")
-            .font(.caption).foregroundStyle(.secondary)
-        if !missing.isEmpty, submit == nil {
-            Label("Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))", systemImage: "info.circle")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        if submit == nil {
-            Button("Bank hinzufügen") { commit() }
-                .keyboardShortcut(.defaultAction)
+        Section {
+            LabeledContent("Land", value: Locale.current.localizedString(forRegionCode: bank.country) ?? bank.country)
+            LabeledContent("Verfahren", value: String(localized: "PSD2 über Enable Banking"))
+            if model.demoActive { DemoHintBanner(style: .credentials) { label = "demo" } }
+            TextField("Bezeichnung", text: $label, prompt: Text("Optional"))
+                .autocorrectionDisabled()
+                .onAppear { submit?.update(true, commit) }
+            if submit == nil {
+                Button("Bank hinzufügen") { commit() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        } header: {
+            Text("Zugang")
+        } footer: {
+            AddFormFooter(lines: [
+                bank.tested,
+                String(localized: "Sie melden sich in einem GiroCrab-Fenster direkt bei Ihrer Bank an. Dafür brauchen Sie eine kostenlose eigene Anwendung auf enablebanking.com – die Einrichtung führt Sie Schritt für Schritt hindurch."),
+            ] + (missing.isEmpty || submit != nil ? [] :
+                [String(localized: "Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))")]))
         }
     }
 }
