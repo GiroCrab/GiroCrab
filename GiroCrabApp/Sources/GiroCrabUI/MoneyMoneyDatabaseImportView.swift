@@ -106,20 +106,10 @@ struct MoneyMoneyDatabaseImportView: View {
     // MARK: - Header and footer
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "square.and.arrow.down.on.square").font(.title2).foregroundStyle(Theme.accent)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(stepTitle).font(.headline)
-                Text(stepSubtitle).font(.callout).foregroundStyle(Theme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
-            if let n = visibleSteps.firstIndex(of: step) {
-                Text("Schritt \(n + 1) von \(visibleSteps.count)")
-                    .font(.caption).foregroundStyle(Theme.tertiary)
-            }
-        }
+        ImportAssistantHeader(
+            title: stepTitle,
+            subtitle: stepSubtitle,
+            step: visibleSteps.firstIndex(of: step).map { ($0 + 1, visibleSteps.count) })
     }
 
     private var stepTitle: String {

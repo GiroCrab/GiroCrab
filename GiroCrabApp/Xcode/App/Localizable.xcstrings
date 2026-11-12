@@ -14523,6 +14523,116 @@
           }
         }
       }
+    },
+    "%@ neue Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ new transactions"
+          }
+        }
+      }
+    },
+    "Bereits vorhanden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Already there"
+          }
+        }
+      }
+    },
+    "Exportdatei" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export file"
+          }
+        }
+      }
+    },
+    "In MoneyMoney: Konto wählen, alle Umsätze markieren (⌘A), dann „Umsätze exportieren …“ als XML oder CSV. Sie können die Datei auch hierher ziehen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In MoneyMoney: choose the account, select all transactions (⌘A), then “Export transactions …” as XML or CSV. You can also drag the file here."
+          }
+        }
+      }
+    },
+    "Neue Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New transactions"
+          }
+        }
+      }
+    },
+    "Neues Archivkonto „%@“ – der Saldo ist die Summe der Umsätze." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New archive account “%@” – its balance is the sum of the transactions."
+          }
+        }
+      }
+    },
+    "Neues Konto aus der Datei" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New account from the file"
+          }
+        }
+      }
+    },
+    "Umsätze eines Kontos aus einer MoneyMoney-Exportdatei – ohne Duplikate bei späteren Abrufen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transactions of one account from a MoneyMoney export file – without duplicates on later fetches."
+          }
+        }
+      }
+    },
+    "Vorhandene Buchungen werden nicht doppelt angelegt, sie erhalten nur Kategorie und Notiz." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Existing transactions aren't created twice; they only get category and note."
+          }
+        }
+      }
+    },
+    "Übernahme" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import options"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
