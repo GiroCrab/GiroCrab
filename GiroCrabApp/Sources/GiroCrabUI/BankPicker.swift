@@ -70,7 +70,8 @@ struct KindAddForm: View {
                 let missing = d.requiredSettings.filter { key in !(model.settings.first { $0.key == key }?.hasValue ?? false) }
                 AddFormFooter(lines: [d.note] + (missing.isEmpty || submit != nil ? [] :
                     [String(localized: "Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))")]),
-                              link: Self.credentialsLink(kind))
+                              // in the assistant the link sits under the credential fields ("Einrichten")
+                              link: submit == nil ? Self.credentialsLink(kind) : nil)
             }
         }
     }

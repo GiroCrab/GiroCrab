@@ -15491,6 +15491,17 @@
           }
         }
       }
+    },
+    "Die Zugangsdaten erstellen Sie einmalig bei Ihrer Bank. GiroCrab speichert sie verschlüsselt im Tresor." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You create these credentials once at your bank. GiroCrab stores them encrypted in the vault."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

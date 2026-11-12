@@ -406,6 +406,14 @@ struct AddBankSheet: View {
                         }
                         .font(.caption).foregroundStyle(Theme.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if let k = selected?.connector, let link = KindAddForm.credentialsLink(k) {
+                        // where these credentials come from, right under the fields
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Die Zugangsdaten erstellen Sie einmalig bei Ihrer Bank. GiroCrab speichert sie verschlüsselt im Tresor.")
+                            Link(link.title, destination: link.url)
+                        }
+                        .font(.caption).foregroundStyle(Theme.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
