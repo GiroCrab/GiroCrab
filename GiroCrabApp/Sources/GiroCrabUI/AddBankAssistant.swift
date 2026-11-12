@@ -197,7 +197,7 @@ struct AddBankSheet: View {
             #if os(macOS)
             SystemSearchField(text: $query, prompt: String(localized: "Bank, BLZ oder IBAN suchen …"),
                               onMoveUp: { moveSelection(-1) }, onMoveDown: { moveSelection(1) },
-                              onSubmit: submitSearch)
+                              onSubmit: submitSearch, onCancel: { dismiss() })
                 .onChange(of: query) { _, _ in selectedID = nil }
             #endif
             ScrollViewReader { proxy in

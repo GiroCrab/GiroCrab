@@ -123,6 +123,8 @@ struct SystemSearchField: NSViewRepresentable {
     var onMoveDown: () -> Void = {}
     /// Return in the field.
     var onSubmit: () -> Void = {}
+    /// Esc in the empty field (with text, Esc clears it first – like Spotlight).
+    var onCancel: () -> Void = {}
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
@@ -140,6 +142,7 @@ struct SystemSearchField: NSViewRepresentable {
         c.onMoveUp = onMoveUp
         c.onMoveDown = onMoveDown
         c.onSubmit = onSubmit
+        c.onCancel = onCancel
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
@@ -149,6 +152,7 @@ struct SystemSearchField: NSViewRepresentable {
         var onMoveUp: () -> Void = {}
         var onMoveDown: () -> Void = {}
         var onSubmit: () -> Void = {}
+        var onCancel: () -> Void = {}
         init(text: Binding<String>) { self.text = text }
         func controlTextDidChange(_ note: Notification) {
             if let field = note.object as? NSSearchField { text.wrappedValue = field.stringValue }
@@ -158,6 +162,9 @@ struct SystemSearchField: NSViewRepresentable {
             case #selector(NSResponder.moveUp(_:)): onMoveUp(); return true
             case #selector(NSResponder.moveDown(_:)): onMoveDown(); return true
             case #selector(NSResponder.insertNewline(_:)): onSubmit(); return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                if textView.string.isEmpty { onCancel(); return true }
+                return false // the field clears itself
             default: return false
             }
         }
