@@ -92,6 +92,7 @@ struct AddBankSheet: View {
         .onAppear {
             model.loadLivePsd2Banks()
             loadPopular()
+            if let spec = model.demoAddBank { applyDemo(spec) }
         }
         .onChange(of: model.livePsd2Banks.count) { _, _ in loadPopular() }
     }
@@ -117,6 +118,26 @@ struct AddBankSheet: View {
         case .setup:
             return String(localized: "Diese Angaben braucht GiroCrab einmalig, danach gelten sie für alle Banken dieser Art.")
         }
+    }
+
+    /// `--demo-sheet add-bank:…` (screenshots): "search:<text>" shows hits with
+    /// the first one selected, "bank:<name>" opens its Zugang step, ":setup"
+    /// on top the Einrichten step.
+    private func applyDemo(_ spec: String) {
+        model.demoAddBank = nil
+        let parts = spec.split(separator: ":", maxSplits: 2).map(String.init)
+        guard parts.count >= 2 else { return }
+        query = parts[1]
+        if parts[0] == "search" {
+            // after the search field's own reset of the selection
+            DispatchQueue.main.async { selectedID = candidates.first?.id }
+            return
+        }
+        selectedID = candidates.first?.id
+        choose(selectedID)
+        guard parts[0] == "bank", selected != nil else { return }
+        next()
+        if parts.count > 2, parts[2] == "setup", !missingSettings.isEmpty { step = .setup }
     }
 
     // MARK: - Navigation
