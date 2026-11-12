@@ -973,6 +973,7 @@ fn sample(r: &MmRow, i: i64, account_id: i64) -> Booking {
         salary_flag: None,
         is_salary: false,
         recurrence_key: String::new(),
+        is_pending: false,
     };
     enrich(&mut b);
     b.is_salary = crate::salary::salary_signal(&b);
