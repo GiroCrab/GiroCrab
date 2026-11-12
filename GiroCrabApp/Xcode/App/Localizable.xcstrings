@@ -14688,6 +14688,17 @@
           }
         }
       }
+    },
+    "Freigabe wird übernommen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taking over the consent …"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

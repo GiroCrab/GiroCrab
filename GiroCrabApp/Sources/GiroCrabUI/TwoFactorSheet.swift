@@ -130,8 +130,16 @@ struct TwoFactorSheet: View {
                     .font(.callout)
                 }
 
+                if active.busy && c.kind == .redirect {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Freigabe wird übernommen …").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
                 if let e = active.error {
                     Text(e).foregroundStyle(.red).font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
                 }
                 if let s = c.expiresInSeconds {
                     Text("Gültig noch etwa \(s / 60) Min.").font(.caption).foregroundStyle(.tertiary)
@@ -149,14 +157,22 @@ struct TwoFactorSheet: View {
                 }
             }
             .padding(24)
+            // the sheet takes the height its content needs: never cut off the
+            // result line, the error or the buttons
+            .fixedSize(horizontal: false, vertical: true)
             // the bank's own page needs the room of a browser window
             .macFrame(minWidth: showsConsentPage ? 868 : 400, idealWidth: showsConsentPage ? 928 : 420)
         }
     }
 
+    /// Sends the code / pasted address – once: Return reaches both the field
+    /// and the default button, and a second, empty call would cut off the
+    /// first. A pasted address stays in the field until the answer is in, so
+    /// it can be sent again after an error.
     private func submit() {
-        let value = code
-        code = ""
+        let value = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, model.activeChallenge?.busy != true else { return }
+        if model.activeChallenge?.challenge.kind != .redirect { code = "" }
         model.submitCode(value)
     }
 
