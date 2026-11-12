@@ -1,8 +1,15 @@
 # Homebrew distribution
 
 GiroCrab for macOS is distributed through a Homebrew Cask that installs the **signed and
-notarized stable release** from GitHub (`GiroCrab-macOS-arm64.zip`, Apple Silicon only,
-macOS 14 Sonoma or later).
+notarized stable release** from GitHub (Apple Silicon only, macOS 14 Sonoma or later).
+
+**Release artifact:** a Developer-ID-signed, notarized and stapled disk image
+`GiroCrab-macOS-arm64.dmg` (introduced with the Sparkle PR, GiroCrab/GiroCrab#120). Releases
+up to v0.5.5 only have `GiroCrab-macOS-arm64.zip`, so the stable cask still points to the
+ZIP; `scripts/update-homebrew-cask.sh` switches it to `.dmg` with the first release that
+ships the image. `girocrab@beta` and `girocrab@nightly` point to `.dmg` directly, because
+no beta or nightly release exists yet. Homebrew handles both formats the same way
+(`app "GiroCrab.app"`).
 
 ```bash
 brew install --cask girocrab/tap/girocrab           # stable
@@ -26,10 +33,10 @@ repository `GiroCrab/homebrew-tap` (path `Casks/`). The three casks install the 
 - The `@beta` / `@nightly` suffixes follow Homebrew's naming for variants
   (e.g. `firefox@nightly`).
 - **Nightly has no pinned checksum**, because the rolling `nightly` release replaces its
-  zip on every build. It is still signed: Homebrew keeps the quarantine flag, so Gatekeeper
+  disk image on every build. It is still signed: Homebrew keeps the quarantine flag, so Gatekeeper
   checks the Developer ID signature and notarization on first launch, and later updates
   come through Sparkle with EdDSA verification. A pinned checksum would need dated nightly
-  zips plus a cask update every night.
+  disk images plus a cask update every night.
 - The app picks its update channel from the installed build (`X.Y.ZbN` → beta,
   `<tag>.<timestamp>` → nightly), so a Homebrew beta or nightly install keeps getting
   beta or nightly updates through Sparkle. See `docs/auto-updates.md` on the Sparkle branch.
@@ -77,7 +84,8 @@ be retired or kept as a mirror.
 
 ## Only stable releases
 
-- The cask URL is pinned to a tag: `releases/download/v#{version}/GiroCrab-macOS-arm64.zip`.
+- The cask URL is pinned to a tag: `releases/download/v#{version}/GiroCrab-macOS-arm64.dmg`
+  (`.zip` up to v0.5.5).
 - `livecheck` uses `strategy :github_latest`. GitHub's "latest release" never returns a
   pre-release, so the rolling `nightly` pre-release is never offered.
 - `scripts/update-homebrew-cask.sh` updates `girocrab.rb` only from published stable
@@ -112,9 +120,10 @@ scripts/update-homebrew-cask.sh vX.Y.Z-beta.N    # -> Casks/girocrab@beta.rb
 pre-release exists; run the script once that release is published. Nightly needs no
 update.
 
-The script reads the release via `gh api`, takes the asset's SHA-256 digest (or downloads
-and hashes the zip if GitHub has no digest), and rewrites `version` and `sha256` in
-`packaging/homebrew/Casks/girocrab.rb`. It does **not** commit or push.
+The script reads the release via `gh api`, picks the asset (`.dmg`, or `.zip` for releases
+up to v0.5.5), takes its SHA-256 digest (or downloads and hashes it if GitHub has no
+digest), and rewrites `version`, `sha256` and the file name in the `url` line of
+`packaging/homebrew/Casks/girocrab.rb` (or `girocrab@beta.rb`). It does **not** commit or push.
 
 Then validate and publish manually:
 

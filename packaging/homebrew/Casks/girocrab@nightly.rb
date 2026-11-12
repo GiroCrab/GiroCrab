@@ -1,12 +1,12 @@
 cask "girocrab@nightly" do
-  # The rolling `nightly` pre-release replaces its zip on every build, so there is no
+  # The rolling `nightly` pre-release replaces its disk image on every build, so there is no
   # stable version or checksum to pin. Integrity still holds: the app is Developer ID
   # signed and notarized (Gatekeeper checks it on first launch, Homebrew keeps the
   # quarantine flag), and later updates come through Sparkle with EdDSA verification.
   version :latest
   sha256 :no_check
 
-  url "https://github.com/GiroCrab/GiroCrab/releases/download/nightly/GiroCrab-macOS-arm64.zip"
+  url "https://github.com/GiroCrab/GiroCrab/releases/download/nightly/GiroCrab-macOS-arm64.dmg"
   name "GiroCrab Nightly"
   desc "Local-first banking app for German banks"
   homepage "https://github.com/GiroCrab/GiroCrab"

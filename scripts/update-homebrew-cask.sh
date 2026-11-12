@@ -12,7 +12,10 @@
 set -euo pipefail
 
 REPO="${GIROCRAB_REPO:-GiroCrab/GiroCrab}"
-ASSET="GiroCrab-macOS-arm64.zip"
+# Release artifact: the signed disk image (since the Sparkle PR); older releases
+# (up to v0.5.5) only have the ZIP. The script picks what the release has and
+# rewrites the file name in the cask's url line accordingly.
+ASSET_BASE="GiroCrab-macOS-arm64"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 TAG="${1:-}"
@@ -42,6 +45,14 @@ if [ "$KIND" = "beta" ] && [ "$PRE" != "true" ]; then
   exit 1
 fi
 
+ASSET=""
+for ext in dmg zip; do
+  if jq -e --arg n "$ASSET_BASE.$ext" '.assets[] | select(.name == $n)' <<<"$release" >/dev/null; then
+    ASSET="$ASSET_BASE.$ext"; break
+  fi
+done
+[ -n "$ASSET" ] || { echo "error: $TAG has neither $ASSET_BASE.dmg nor $ASSET_BASE.zip" >&2; exit 1; }
+
 digest="$(jq -r --arg n "$ASSET" '.assets[] | select(.name == $n) | .digest // empty' <<<"$release")"
 if [[ "$digest" == sha256:* ]]; then
   SHA="${digest#sha256:}"
@@ -55,10 +66,11 @@ else
 fi
 [[ "$SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "error: bad sha256 '$SHA'" >&2; exit 1; }
 
-VERSION="$VERSION" SHA="$SHA" perl -0pi -e '
+VERSION="$VERSION" SHA="$SHA" ASSET="$ASSET" perl -0pi -e '
   s/^(\s*version\s+)"[^"]*"/$1"$ENV{VERSION}"/m or die "no version line\n";
   s/^(\s*sha256\s+)"[^"]*"/$1"$ENV{SHA}"/m or die "no sha256 line\n";
+  s{^(\s*url\s+"[^"]*/)GiroCrab-macOS-arm64\.(?:zip|dmg)"}{$1$ENV{ASSET}"}m or die "no url line\n";
 ' "$CASK"
 
-echo "updated $CASK -> version $VERSION, sha256 $SHA"
+echo "updated $CASK -> version $VERSION, $ASSET, sha256 $SHA"
 echo "next: brew style/audit via local tap, then copy into GiroCrab/homebrew-tap (see docs/homebrew.md)"

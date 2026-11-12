@@ -2,6 +2,8 @@ cask "girocrab" do
   version "0.5.5"
   sha256 "fb20c939f1bdfe0ff6f971d402c581cc4ebb6fe73b27f214ea391469008c5304"
 
+  # Up to v0.5.5 the release asset is a ZIP; from the first release with the
+  # signed disk image on, scripts/update-homebrew-cask.sh switches this to .dmg.
   url "https://github.com/GiroCrab/GiroCrab/releases/download/v#{version}/GiroCrab-macOS-arm64.zip"
   name "GiroCrab"
   desc "Local-first banking app for German banks"

@@ -4,7 +4,7 @@ cask "girocrab@beta" do
   version "0.6.0-beta.1"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
-  url "https://github.com/GiroCrab/GiroCrab/releases/download/v#{version}/GiroCrab-macOS-arm64.zip"
+  url "https://github.com/GiroCrab/GiroCrab/releases/download/v#{version}/GiroCrab-macOS-arm64.dmg"
   name "GiroCrab Beta"
   desc "Local-first banking app for German banks"
   homepage "https://github.com/GiroCrab/GiroCrab"
