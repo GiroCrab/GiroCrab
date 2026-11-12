@@ -265,6 +265,7 @@ struct MoneyMoneyDatabaseImportView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
             .scrollDisabled(true)
         }
     }
@@ -444,6 +445,7 @@ struct MoneyMoneyDatabaseImportView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
     }
 
     /// Section footer of a grouped form, aligned with the section (leading).

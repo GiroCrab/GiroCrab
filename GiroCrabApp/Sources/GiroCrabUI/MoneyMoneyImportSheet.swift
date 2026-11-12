@@ -181,6 +181,7 @@ struct MoneyMoneyExportImportView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
             .scrollDisabled(true)
             .overlay {
                 // the whole step takes a dropped file; outlined while one hovers
@@ -236,6 +237,7 @@ struct MoneyMoneyExportImportView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden) // flush with the sheet, like System Settings
         .disabled(importing)
     }
 
