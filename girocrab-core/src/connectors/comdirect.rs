@@ -247,32 +247,44 @@ impl Default for ComdirectConnector {
 }
 
 fn strip_line_numbers(info: &str) -> String {
-    // comdirect sends fixed-width lines prefixed "01", "02", ...
+    // comdirect sends fixed-width lines (35 characters) prefixed "01", "02", ...
+    // A line shorter than that is padded with spaces, a full one is directly
+    // followed by the next number ("…Re02chnungsnummer …").
+    const LINE: usize = 35;
     if !info.starts_with("01") {
         return info.trim().to_string();
     }
-    let mut parts: Vec<&str> = Vec::new();
+    let chars: Vec<char> = info.chars().collect();
+    let mut out = String::new();
     let mut pos = 2;
     let mut n = 2;
     loop {
-        let marker = format!(" {n:02}");
-        match info[pos..].find(&marker) {
-            Some(off) => {
-                parts.push(info[pos..pos + off].trim());
-                pos += off + marker.len();
-                n += 1;
-            }
-            None => {
-                parts.push(info[pos..].trim());
+        let marker: Vec<char> = format!("{n:02}").chars().collect();
+        let rest = &chars[pos..];
+        // a space followed by the next number ends a padded line ...
+        let spaced = (0..rest.len()).find(|&i| rest[i] == ' ' && rest[i + 1..].starts_with(&marker));
+        // ... a full line is directly followed by it and may end mid-word
+        let full = (rest.len() >= LINE + marker.len() && rest[LINE..].starts_with(&marker)).then_some(LINE);
+        let (end, skip, is_full) = match (spaced, full) {
+            (Some(i), Some(f)) if i < f => (i, 1 + marker.len(), false),
+            (_, Some(f)) => (f, marker.len(), true),
+            (Some(i), None) => (i, 1 + marker.len(), false),
+            (None, None) => {
+                out.extend(rest);
                 break;
             }
+        };
+        let line: String = rest[..end].iter().collect();
+        if is_full {
+            out.push_str(&line); // the line breaks are arbitrary: join without a gap
+        } else {
+            out.push_str(line.trim_end());
+            out.push(' ');
         }
+        pos += end + skip;
+        n += 1;
     }
-    parts
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[async_trait]
@@ -702,6 +714,13 @@ mod tests {
             "Miete Januar Wohnung 3"
         );
         assert_eq!(super::strip_line_numbers("Kartenzahlung"), "Kartenzahlung");
+        // full 35-character lines carry no padding before the next number
+        assert_eq!(
+            super::strip_line_numbers(
+                "01easybell.de Kundennummer 4077068 Re02chnungsnummer R2026003619640 03End-to-End-Ref.: 04R2026003619640 05CORE / Mandatsref.: 06MND-2841562-1 07Gläubiger-ID: 08DE74ZZZ00000150248"
+            ),
+            "easybell.de Kundennummer 4077068 Rechnungsnummer R2026003619640 End-to-End-Ref.: R2026003619640 CORE / Mandatsref.: MND-2841562-1 Gläubiger-ID: DE74ZZZ00000150248"
+        );
     }
 
     #[test]
