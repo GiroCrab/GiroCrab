@@ -25,8 +25,6 @@ struct AddBankSheet: View {
     @State private var submit = AddBankSubmit()
     /// Shown while the search is empty (computed once, the directory is large).
     @State private var popular: [BankSearchResult] = []
-    @FocusState private var listFocused: Bool
-    @State private var searchFocus = 0
 
     /// Well-known banks offered before typing. Sparkassen and Volksbanken are
     /// hundreds of banks – they are found by name, place or BLZ instead.
@@ -190,16 +188,19 @@ struct AddBankSheet: View {
     // MARK: - 1. Bank
 
     /// A native single-selection list: the chosen bank is highlighted like
-    /// any selected row (HIG: checkmarks mean "toggle several"). ↓ moves from
-    /// the search field into the list, ↑ on the first row back; double-click or
-    /// Return continues, Return in the search field takes a single hit.
+    /// any selected row (HIG: checkmarks mean "toggle several"). While typing,
+    /// ↑ / ↓ move the selection and the focus stays in the search field (like
+    /// Spotlight); a click hands the keys to the list. Double-click or Return
+    /// continues; Return in the search field takes a single hit.
     private var bankStep: some View {
         VStack(alignment: .leading, spacing: 10) {
             #if os(macOS)
             SystemSearchField(text: $query, prompt: String(localized: "Bank, BLZ oder IBAN suchen …"),
-                              onMoveDown: enterList, onSubmit: submitSearch, focusRequest: searchFocus)
+                              onMoveUp: { moveSelection(-1) }, onMoveDown: { moveSelection(1) },
+                              onSubmit: submitSearch)
                 .onChange(of: query) { _, _ in selectedID = nil }
             #endif
+            ScrollViewReader { proxy in
             List(selection: $selectedID) {
                 if !searching {
                     Section {
@@ -220,6 +221,7 @@ struct AddBankSheet: View {
                     row(symbol: "square.and.pencil", title: String(localized: "Andere FinTS-Bank"),
                         detail: String(localized: "Bankleitzahl und FinTS-Adresse selbst eingeben"))
                         .tag(Self.manualFinTs.id)
+                        .id(Self.manualFinTs.id)
                 } header: {
                     Text("Nicht gefunden?")
                 }
@@ -231,21 +233,17 @@ struct AddBankSheet: View {
                         prompt: Text("Bank, BLZ oder IBAN suchen …"))
             .onChange(of: query) { _, _ in selectedID = nil }
             #endif
-            .focused($listFocused)
             .contextMenu(forSelectionType: String.self, menu: { _ in EmptyView() }, primaryAction: { ids in
                 guard let id = ids.first else { return }
                 selectedID = id
                 choose(id)
                 next()
             })
-            .onChange(of: selectedID) { _, id in choose(id) }
-            .onKeyPress(.upArrow) {
-                // ↑ on the first row: back into the search field
-                guard let first = candidates.first?.id, selectedID == first || selectedID == nil else { return .ignored }
-                selectedID = nil
-                listFocused = false
-                searchFocus += 1
-                return .handled
+            .onChange(of: selectedID) { _, id in
+                choose(id)
+                // keep the row chosen with ↑ / ↓ visible
+                if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
+            }
             }
             HStack(spacing: 18) {
                 Button("Demo-Bank ausprobieren") {
@@ -269,22 +267,26 @@ struct AddBankSheet: View {
         }
     }
 
-    /// ↓ in the search field: focus the list on its first row.
-    private func enterList() {
-        if selectedID == nil { selectedID = candidates.first?.id ?? Self.manualFinTs.id }
-        listFocused = true
+    /// Every selectable row in display order (results, then "Andere FinTS-Bank").
+    private var rowIDs: [String] { candidates.map(\.id) + [Self.manualFinTs.id] }
+
+    /// ↑ / ↓ from the search field; ↑ on the first row clears the selection.
+    private func moveSelection(_ delta: Int) {
+        let ids = rowIDs
+        guard let current = selectedID, let i = ids.firstIndex(of: current) else {
+            if delta > 0 { selectedID = ids.first }
+            return
+        }
+        let j = i + delta
+        selectedID = j < 0 ? nil : ids[min(j, ids.count - 1)]
     }
 
-    /// Return in the search field: a single hit (or the chosen row) continues,
-    /// otherwise the list takes over.
+    /// Return in the search field: the selected row – or a single hit – continues.
     private func submitSearch() {
         if selectedID == nil, searching, candidates.count == 1 { selectedID = candidates[0].id }
-        if selectedID != nil {
-            choose(selectedID)
-            next()
-        } else {
-            enterList()
-        }
+        guard selectedID != nil else { return }
+        choose(selectedID)
+        next()
     }
 
     private func choose(_ id: String?) {
@@ -314,6 +316,7 @@ struct AddBankSheet: View {
         row(symbol: Self.symbol(r), title: r.name, detail: Self.detailLine(r),
             accessibility: [r.name, Self.accessibleDetail(r)].compactMap { $0 }.joined(separator: ", "))
             .tag(r.id)
+            .id(r.id)
     }
 
     /// One bank row. Hierarchical styles, so the text stays readable on the
