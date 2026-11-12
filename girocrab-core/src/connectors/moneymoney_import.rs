@@ -474,10 +474,66 @@ pub(crate) struct Stats {
 
 struct Existing {
     id: i64,
+    /// Exact fingerprint (date, amount, counterparty, purpose).
+    fp: String,
+    /// Without the purpose: MoneyMoney's exports append the SEPA references
+    /// to the purpose (CSV ", Mandatsref: …", camt "EREF+… SVWZ+…"), while
+    /// the database keeps them apart.
+    weak: String,
+    /// Date, amount and name only: the database import fills in the own IBAN
+    /// for transfers that MoneyMoney only knows by account number (#94), the
+    /// export leaves it empty.
+    named: String,
     category_source: String,
     note: String,
     /// Soft-deleted: counts as present, but is never updated.
     deleted: bool,
+}
+
+/// For each row the existing booking it duplicates (index into `existing`).
+/// Both passes count as multisets – every existing booking is used once, so
+/// two identical coffees on one day stay two rows:
+/// 1. exact fingerprint,
+/// 2. rows still unmatched: same date, amount and counterparty (purpose
+///    ignored), in order,
+/// 3. rows without counterparty IBAN: same date, amount and name.
+fn match_existing(rows: &[MmRow], existing: &[Existing]) -> Vec<Option<usize>> {
+    let mut by_fp: HashMap<&str, std::collections::VecDeque<usize>> = HashMap::new();
+    for (j, e) in existing.iter().enumerate() {
+        by_fp.entry(e.fp.as_str()).or_default().push_back(j);
+    }
+    let mut used = vec![false; existing.len()];
+    let mut out: Vec<Option<usize>> = rows
+        .iter()
+        .map(|r| {
+            let j = by_fp.get_mut(r.fp().as_str())?.pop_front()?;
+            used[j] = true;
+            Some(j)
+        })
+        .collect();
+    let mut by_weak: HashMap<&str, std::collections::VecDeque<usize>> = HashMap::new();
+    for (j, e) in existing.iter().enumerate().filter(|(j, _)| !used[*j]) {
+        by_weak.entry(e.weak.as_str()).or_default().push_back(j);
+    }
+    for (r, m) in rows.iter().zip(out.iter_mut()).filter(|(_, m)| m.is_none()) {
+        let weak = fingerprint(&r.booking_date, r.amount_cents, &r.iban, &r.name, "");
+        if let Some(j) = by_weak.get_mut(weak.as_str()).and_then(|q| q.pop_front()) {
+            used[j] = true;
+            *m = Some(j);
+        }
+    }
+    let mut by_name: HashMap<&str, std::collections::VecDeque<usize>> = HashMap::new();
+    for (j, e) in existing.iter().enumerate().filter(|(j, _)| !used[*j]) {
+        by_name.entry(e.named.as_str()).or_default().push_back(j);
+    }
+    for (r, m) in rows.iter().zip(out.iter_mut()) {
+        if m.is_some() || !r.iban.trim().is_empty() || r.name.trim().is_empty() {
+            continue;
+        }
+        let key = fingerprint(&r.booking_date, r.amount_cents, "", &r.name, "");
+        *m = by_name.get_mut(key.as_str()).and_then(|q| q.pop_front());
+    }
+    out
 }
 
 pub(crate) fn find_or_create_category(
@@ -634,47 +690,42 @@ pub(crate) fn merge_rows(
     cat_cache: &mut HashMap<String, i64>,
     st: &mut Stats,
 ) -> CoreResult<()> {
-    // Existing bookings of the account, bucketed by fingerprint (multiset: two
-    // identical coffees on one day stay two rows).
-    let mut existing: HashMap<String, Vec<Existing>> = HashMap::new();
+    // Existing bookings of the account (incl. soft-deleted ones: a deleted
+    // booking is matched, never re-imported), with their exact fingerprint and
+    // a weak key without the purpose.
+    let mut existing: Vec<Existing> = Vec::new();
     {
         let mut q = conn.prepare(
-            // includes soft-deleted rows: a deleted booking is matched, never re-imported
             "SELECT id, booking_date, amount_cents, counterparty_iban, counterparty, purpose,
                     import_fp, category_source, note, deleted_ms IS NOT NULL
              FROM transactions WHERE account_id = ?1 ORDER BY id",
         )?;
         let it = q.query_map([st.account_id], |r| {
+            let (date, cents, iban, name, purpose): (String, i64, String, String, String) =
+                (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?);
             let fp: String = r.get(6)?;
-            let fp = if fp.is_empty() {
-                fingerprint(
-                    &r.get::<_, String>(1)?,
-                    r.get(2)?,
-                    &r.get::<_, String>(3)?,
-                    &r.get::<_, String>(4)?,
-                    &r.get::<_, String>(5)?,
-                )
-            } else {
-                fp
-            };
-            Ok((
-                fp,
-                Existing {
-                    id: r.get(0)?,
-                    category_source: r.get(7)?,
-                    note: r.get(8)?,
-                    deleted: r.get(9)?,
+            Ok(Existing {
+                id: r.get(0)?,
+                fp: if fp.is_empty() {
+                    fingerprint(&date, cents, &iban, &name, &purpose)
+                } else {
+                    fp
                 },
-            ))
+                weak: fingerprint(&date, cents, &iban, &name, ""),
+                named: fingerprint(&date, cents, "", &name, ""),
+                category_source: r.get(7)?,
+                note: r.get(8)?,
+                deleted: r.get(9)?,
+            })
         })?;
         for e in it {
-            let (fp, e) = e?;
-            existing.entry(fp).or_default().push(e);
+            existing.push(e?);
         }
     }
+    let match_of = match_existing(rows, &existing);
 
     let mut seen: HashMap<String, usize> = HashMap::new();
-    for r in rows {
+    for (i, r) in rows.iter().enumerate() {
         let fp = r.fp();
         let k = {
             let n = seen.entry(fp.clone()).or_insert(0);
@@ -698,7 +749,7 @@ pub(crate) fn merge_rows(
             None
         };
         let note = if preserve_notes { r.note.as_str() } else { "" };
-        if let Some(e) = existing.get(&fp).and_then(|v| v.get(k)) {
+        if let Some(e) = match_of[i].map(|j| &existing[j]) {
             st.duplicates += 1;
             if e.deleted {
                 continue;
@@ -1163,6 +1214,42 @@ mod tests {
             .find(|a| a.id == res.account_id)
             .unwrap();
         assert_eq!(acc.balance_cents, 76_544);
+    }
+
+    /// MoneyMoney's exports append the SEPA references to the purpose, the
+    /// database keeps them apart: an export over a database import must not
+    /// duplicate (seen with a real 1,522-booking account). Still a multiset.
+    #[test]
+    fn export_with_sepa_references_matches_bookings_without_them() {
+        let (_dir, v) = vault();
+        let head = "\"Datum\";\"Wertstellung\";\"Kategorie\";\"Name\";\"Verwendungszweck\";\"Konto\";\"Bank\";\"Betrag\";\"Währung\"\n";
+        let row = |purpose: &str| format!("\"02.01.2026\";\"\";\"\";\"Stadtwerke\";\"{purpose}\";\"DE02120300000000202051\";\"\";\"-50,00\";\"EUR\"\n");
+        // as from the database: two payments, references not in the purpose
+        let db = format!("{head}{}{}", row("Abschlag Januar"), row("Abschlag Nachzahlung"));
+        let a = v
+            .import_moneymoney_data(db.into_bytes(), "Giro.csv".into(), None, true, true)
+            .unwrap();
+        assert_eq!(a.imported, 2);
+        // the export: references appended, plus one booking more
+        let export = format!(
+            "{head}{}{}{}",
+            row("Abschlag Januar, Mandatsref: M-1, Gläubiger: DE98ZZZ09999999999"),
+            row("Abschlag Nachzahlung, Mandatsref: M-1, Gläubiger: DE98ZZZ09999999999"),
+            row("Abschlag Februar, Mandatsref: M-1, Gläubiger: DE98ZZZ09999999999"),
+        );
+        let p = v
+            .preview_moneymoney_import(export.into_bytes(), "Giro.csv".into(), Some(a.account_id))
+            .unwrap();
+        assert_eq!((p.new_bookings, p.duplicates_skipped_or_enriched), (1, 2));
+
+        // own transfer: the database import filled in the IBAN, the export has none
+        let own = |iban: &str| format!("{head}\"05.01.2026\";\"\";\"\";\"Tagesgeld\";\"Umbuchung\";\"{iban}\";\"\";\"-100,00\";\"EUR\"\n");
+        v.import_moneymoney_data(own("DE89370400440532013000").into_bytes(), "Giro.csv".into(), Some(a.account_id), true, true)
+            .unwrap();
+        let p = v
+            .preview_moneymoney_import(own("").into_bytes(), "Giro.csv".into(), Some(a.account_id))
+            .unwrap();
+        assert_eq!((p.new_bookings, p.duplicates_skipped_or_enriched), (0, 1));
     }
 
     #[test]
