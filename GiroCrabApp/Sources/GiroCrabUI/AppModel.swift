@@ -320,7 +320,7 @@ public final class AppModel {
         didSet {
             guard scope != oldValue else { return }
             listLimit = Self.defaultListLimit
-            if scope == .investments, dashboardStale { reloadDashboard() }
+            if scope == .investments, dashboardStale { loadDashboard() }
             // A selection still loading in the background has to pick up the new scope.
             if selectionLoadTask != nil { startSelectionLoad() } else { reloadScopeBookings() }
         }
@@ -1042,6 +1042,8 @@ public final class AppModel {
         guard holdsRealData else { return }
         demoDismissedLock = true
         scopeLoadTask?.cancel()
+        categoryRefreshTask?.cancel()
+        dashboardTask?.cancel()
         selectionLoadTask?.cancel()
         selectionLoadTask = nil
         isLoadingSelection = false
@@ -1140,8 +1142,29 @@ public final class AppModel {
 
     func reloadDashboard() {
         guard let vault else { return }
+        dashboardTask?.cancel()
         dashboardStale = false
         run { dashboard = try vault.investmentDashboard(months: 6) }
+    }
+
+    @ObservationIgnored private var dashboardTask: Task<Void, Never>?
+
+    /// The investment dashboard reads every booking (~150 ms on 30k): off the
+    /// main thread when it only follows an edit or a scope switch.
+    private func loadDashboard() {
+        dashboardTask?.cancel()
+        guard let vault else { return }
+        dashboardStale = false
+        dashboardTask = Task { [weak self] in
+            do {
+                let d = try await Self.offMain { try vault.investmentDashboard(months: 6) }
+                guard !Task.isCancelled, let self, self.vault === vault else { return }
+                self.dashboard = d
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), let self else { return }
+                self.errorMessage = describe(error)
+            }
+        }
     }
 
     /// After an edit that can change a merchant's history: drop the cache, load again.
@@ -1359,16 +1382,9 @@ public final class AppModel {
         run {
             let filter = currentFilter
             let p = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
-            Perf.interval("publishBookings") {
-                page = p
-                bookings = p.transactions
-            }
-        }
-        if let sel = selectedBookingID, booking(withID: sel) == nil, stickyBooking?.id != sel {
-            selectedBookingID = bookings.first?.id
+            Perf.interval("publishBookings") { publish(p) }
         }
         reloadSelectionKPIs()
-        pruneMultiSelection()
         // Every edit, sync and import ends up here: cached merchant histories may be
         // stale, and so may a scan still running from before the change. Restart it,
         // also when a history is on screen (it would otherwise keep the old numbers).
@@ -1383,6 +1399,18 @@ public final class AppModel {
         let visible = Set(visibleBookings.map(\.id))
         let kept = selectedBookingIDs.filter { visible.contains($0) || $0 == selectedBookingID }
         if kept.count != selectedBookingIDs.count { selectedBookingIDs = kept }
+    }
+
+    /// Shows a freshly loaded list page. A selected booking the page no longer
+    /// contains falls back to the first row, unless it is sticky (kept in the
+    /// inspector after an edit moved it out of the filter).
+    private func publish(_ p: BookingPage) {
+        page = p
+        bookings = p.transactions
+        if let id = selectedBookingID, booking(withID: id) == nil, stickyBooking?.id != id {
+            selectedBookingID = p.transactions.first?.id
+        }
+        pruneMultiSelection()
     }
 
     /// Let the segmented control finish updating immediately. Database work
@@ -1409,13 +1437,7 @@ public final class AppModel {
                 guard !Task.isCancelled, let self else { return }
                 // a page requested while this scope was loading belongs to no list
                 self.dropPendingPage()
-                self.page = p
-                self.bookings = p.transactions
-                // Same rule as reloadBookings: a sticky booking stays selected.
-                if let id = self.selectedBookingID, self.booking(withID: id) == nil, self.stickyBooking?.id != id {
-                    self.selectedBookingID = p.transactions.first?.id
-                }
-                self.pruneMultiSelection()
+                self.publish(p)
                 // selectionFlow always uses scope .all and is unchanged here.
             } catch {
                 guard !Task.isCancelled, let self else { return }
@@ -1431,7 +1453,7 @@ public final class AppModel {
         let (from, to) = periodRange
         let filter = currentFilter
         // The list query already summed the same bookings unless it is narrowed further.
-        if let page, filter.scope == .all, filter.direction == .all, filter.checked == nil, filter.search == nil, filter.categoryId == nil, !filter.uncategorizedOnly {
+        if let page, filter.listHasFlow {
             selectionFlow = (page.flow.consumptionCents, page.flow.investedCents, page.flow.incomeCents)
             return
         }
@@ -1547,7 +1569,7 @@ public final class AppModel {
                 let filter = self.currentFilter
                 let (from, to) = self.periodRange
                 let chart = self.historyRequest
-                let listHasFlow = filter.scope == .all && filter.direction == .all && filter.checked == nil && filter.search == nil && filter.categoryId == nil && !filter.uncategorizedOnly
+                let listHasFlow = filter.listHasFlow
                 let loaded = try await Self.offMain {
                     let page = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
                     try Task.checkCancellation()
@@ -1564,12 +1586,7 @@ public final class AppModel {
                 self.selectionLoadTask = nil
                 self.isLoadingSelection = false
                 let publish = Perf.signposter.beginInterval("publishSelection")
-                self.page = loaded.page
-                self.bookings = loaded.page.transactions
-                if let sel = self.selectedBookingID, self.booking(withID: sel) == nil, self.stickyBooking?.id != sel {
-                    self.selectedBookingID = self.bookings.first?.id
-                }
-                self.pruneMultiSelection()
+                self.publish(loaded.page)
                 self.selectionFlow = (loaded.flow.consumptionCents, loaded.flow.investedCents, loaded.flow.incomeCents)
                 self.recurring = loaded.recurring.series
                 self.recurringHidden = loaded.recurring.ignored
@@ -2133,19 +2150,22 @@ public final class AppModel {
     /// (totals, counts, KPIs) follows from a background refresh.
     func setCategory(_ categoryID: Int64?, for bookings: [Booking]) {
         guard let vault, !bookings.isEmpty else { return }
-        var failed = false
         do {
             for b in bookings { try vault.setTransactionCategory(transactionId: b.id, categoryId: categoryID) }
         } catch {
+            // Partly written: show the database state as before (synchronous).
             errorMessage = describe(error)
-            failed = true
+            reloadAfterCategoryChange()
+            return
         }
-        if !failed { showCategory(categoryID, on: Set(bookings.map(\.id))) }
-        // Rule counts and the investment dashboard are only on screen in the rule
-        // editor / Investments scope: load them when shown, not after every click.
-        rulesStale = true
-        dashboardStale = true
-        if scope == .investments { reloadDashboard() }
+        showCategory(categoryID, on: Set(bookings.map(\.id)))
+        // Merchant histories count categories: keep the shown one until the new one is in.
+        merchantStatsCache = [:]
+        loadMerchantStats(keepShown: true)
+        // Rule counts and the investment dashboard: reload only when on screen,
+        // otherwise when the rule editor opens / the Investments scope is shown.
+        if showRuleEditor { reloadRules() } else { rulesStale = true }
+        if scope == .investments { loadDashboard() } else { dashboardStale = true }
         refreshAfterCategoryChange()
     }
 
@@ -2167,25 +2187,41 @@ public final class AppModel {
         if var s = stickyBooking, ids.contains(s.id) { patch(&s); stickyBooking = s }
     }
 
-    /// Bookings, category totals, account counts and KPIs after a category change,
-    /// loaded off the main thread and published together. Shares `scopeLoadTask`:
-    /// a newer assignment, scope switch or synchronous reload supersedes it, so
-    /// quick successive assignments only publish the last result.
+    /// The synchronous reloads a category change needs (fallback when the write
+    /// or the background refresh failed).
+    private func reloadAfterCategoryChange() {
+        categoryRefreshTask?.cancel()
+        reloadBookings(); reloadCategories(); reloadAccounts()
+    }
+
+    /// Category refresh in flight; only a newer category change or a vault
+    /// switch cancels it, so the totals it brings can't get lost.
+    @ObservationIgnored private var categoryRefreshTask: Task<Void, Never>?
+
+    /// Everything a category change affects, loaded off the main thread:
+    /// - the list page, published unless another list load started meanwhile
+    ///   (`listGeneration`; that load already reads the new category),
+    /// - KPIs and category totals, published if the accounts / period are unchanged,
+    /// - the account counters ("ohne Kategorie"), published always.
+    /// Quick successive assignments only publish the last result.
     private func refreshAfterCategoryChange() {
         // A selection still loading publishes everything itself.
         if selectionLoadTask != nil { settlePendingSelectionLoad(); reloadAccounts(); return }
+        categoryRefreshTask?.cancel()
+        // An older list load in flight would publish rows without the new category.
         scopeLoadTask?.cancel()
         dropPendingPage()
         guard let vault else { return }
+        let generation = listGeneration
         let filter = currentFilter
         let (from, to) = periodRange
-        let listHasFlow = filter.scope == .all && filter.direction == .all && filter.checked == nil && filter.search == nil && filter.categoryId == nil && !filter.uncategorizedOnly
-        scopeLoadTask = Task { [weak self] in
+        let listHasFlow = filter.listHasFlow
+        categoryRefreshTask = Task { [weak self] in
             do {
                 let r = try await Self.offMain { () -> CategoryRefresh in
                     let page = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
                     try Task.checkCancellation()
-                    let flow = listHasFlow ? nil : try vault.selectionFlow(accountIds: filter.accountIds, dateFrom: from, dateTo: to)
+                    let flow = listHasFlow ? page.flow : try vault.selectionFlow(accountIds: filter.accountIds, dateFrom: from, dateTo: to)
                     try Task.checkCancellation()
                     return CategoryRefresh(
                         page: page,
@@ -2195,35 +2231,31 @@ public final class AppModel {
                         userGroups: try vault.listUserGroups()
                     )
                 }
-                guard !Task.isCancelled, let self else { return }
-                self.dropPendingPage()
-                self.page = r.page
-                self.bookings = r.page.transactions
-                if let id = self.selectedBookingID, self.booking(withID: id) == nil, self.stickyBooking?.id != id {
-                    self.selectedBookingID = r.page.transactions.first?.id
+                guard !Task.isCancelled, let self, self.vault === vault else { return }
+                if generation == self.listGeneration {
+                    self.dropPendingPage()
+                    self.publish(r.page)
                 }
-                self.pruneMultiSelection()
-                if let f = r.flow {
-                    self.selectionFlow = (f.consumptionCents, f.investedCents, f.incomeCents)
-                } else {
-                    self.reloadSelectionKPIs() // takes the sums of the page just published
+                let (nowFrom, nowTo) = self.periodRange
+                if nowFrom == from, nowTo == to {
+                    if self.currentFilter.accountIds == filter.accountIds {
+                        self.selectionFlow = (r.flow.consumptionCents, r.flow.investedCents, r.flow.incomeCents)
+                    }
+                    self.categories = r.categories
+                    self.categoryTree = Self.buildTree(r.categories)
                 }
-                self.categories = r.categories
-                self.categoryTree = Self.buildTree(r.categories)
                 self.applyAccountGroups(r.groups, r.userGroups)
-                // Merchant history: keep it on screen until the fresh numbers arrive.
-                self.merchantStatsCache = [:]
-                self.loadMerchantStats(keepShown: true)
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError), let self else { return }
                 self.errorMessage = describe(error)
+                self.reloadAfterCategoryChange()
             }
         }
     }
 
     private struct CategoryRefresh: @unchecked Sendable {
         let page: BookingPage
-        let flow: SelectionFlow?
+        let flow: SelectionFlow
         let categories: [GiroCrabCore.Category]
         let groups: [AccountGroup]
         let userGroups: [UserGroup]
@@ -3391,5 +3423,13 @@ enum StartupClock {
         let ms = Int((Date().timeIntervalSince1970 - start) * 1000)
         NSLog("[startup] %6d ms  %@", ms, label)
         #endif
+    }
+}
+
+extension BookingFilter {
+    /// The list query sums exactly the selection's bookings (all of them, not a
+    /// narrowed subset), so its `flow` can stand in for `selectionFlow`.
+    var listHasFlow: Bool {
+        scope == .all && direction == .all && checked == nil && search == nil && categoryId == nil && !uncategorizedOnly
     }
 }
