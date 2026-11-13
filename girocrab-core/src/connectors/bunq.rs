@@ -1694,6 +1694,59 @@ fn refuses_card_actions(status: u16) -> bool {
     matches!(status, 400 | 403 | 404 | 405)
 }
 
+/// Privacy-safe outline of a bunq object for the live surveys: field names,
+/// a few enumerated values, amount signs and dates relative to `now`.
+#[cfg(test)]
+fn survey_shape(o: &Value, now: chrono::NaiveDateTime, prefix: &str) -> String {
+    const ENUMS: [&str; 9] = [
+        "status",
+        "sub_status",
+        "type",
+        "sub_type",
+        "recurrence_unit",
+        "recurrence_size",
+        "action",
+        "request_reference_split_the_bill",
+        "eligible_whitelist_id",
+    ];
+    let Some(map) = o.as_object() else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    for (k, v) in map {
+        let name = format!("{prefix}{k}");
+        let part = match v {
+            Value::String(t) => {
+                match chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S%.f") {
+                    Ok(t) => format!("{name}={:+}d", (t - now).num_days()),
+                    Err(_) if ENUMS.contains(&k.as_str()) => format!("{name}={t}"),
+                    Err(_) if t.is_empty() => format!("{name}=\"\""),
+                    Err(_) => name,
+                }
+            }
+            Value::Number(n) if ENUMS.contains(&k.as_str()) => format!("{name}={n}"),
+            Value::Null => format!("{name}=null"),
+            Value::Object(m) if m.contains_key("value") && m.contains_key("currency") => {
+                match json_number_to_cents(&v["value"]) {
+                    Ok(c) if c < 0 => format!("{name}=neg"),
+                    Ok(0) => format!("{name}=zero"),
+                    Ok(_) => format!("{name}=pos"),
+                    Err(_) => format!("{name}=?"),
+                }
+            }
+            // One level deeper for the nested payment/schedule of a ScheduledPayment.
+            Value::Object(_)
+                if prefix.is_empty() && matches!(k.as_str(), "payment" | "schedule") =>
+            {
+                format!("{name}{{{}}}", survey_shape(v, now, ""))
+            }
+            _ => name,
+        };
+        parts.push(part);
+    }
+    parts.join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2366,6 +2419,99 @@ mod tests {
         }
         for (row, n) in seen {
             println!("{n:>4}x {row}");
+        }
+    }
+
+    /// Read-only look for direct debits that bunq already knows before they are
+    /// booked, plus scheduled payments. Prints only field names, status values,
+    /// amount signs and dates relative to now (no names, amounts or texts):
+    /// `BUNQ_API_KEY=... cargo test -q -p girocrab-core bunq_direct_debit_survey -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn bunq_direct_debit_survey() {
+        use crate::secret::SecretString;
+        let key = std::env::var("BUNQ_API_KEY").expect("BUNQ_API_KEY");
+        let ctx = ConnectContext {
+            connection_id: 1,
+            login_name: String::new(),
+            secret: SecretString::new(key),
+            settings: Default::default(),
+            state: Value::Null,
+            since: "2020-01-01".into(),
+            since_by_account: Default::default(),
+        };
+        let mut c = BunqConnector::new();
+        c.begin(&ctx).await.unwrap();
+        let now = chrono::Utc::now().naive_utc();
+        let uid = c.state.user_id;
+        // (path below the account, object key, label)
+        let lists = [
+            (
+                "request-response?count=200",
+                "RequestResponse",
+                "request-response",
+            ),
+            (
+                "schedule-payment?count=200",
+                "ScheduledPayment",
+                "schedule-payment",
+            ),
+            ("schedule?count=200", "Schedule", "schedule"),
+        ];
+        for (id, acc) in c.accounts().await.unwrap() {
+            println!("== account {} ({})", acc.kind.as_str(), acc.currency);
+            for (path, obj_key, label) in lists {
+                let full = format!("/v1/user/{uid}/monetary-account/{id}/{path}");
+                match c.get(&full).await {
+                    Err(e) => println!("  {label}: ERROR {} {}", e.status, e.message),
+                    Ok(v) => {
+                        let items: Vec<&Value> = v["Response"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|i| &i[obj_key])
+                            .filter(|o| o.is_object())
+                            .collect();
+                        println!("  {label}: {} item(s) on the first page", items.len());
+                        let mut seen = BTreeMap::new();
+                        for o in items {
+                            *seen.entry(survey_shape(o, now, "")).or_insert(0) += 1;
+                        }
+                        for (row, n) in seen {
+                            println!("  {n:>4}x {row}");
+                        }
+                    }
+                }
+            }
+            // Anything still awaiting a reply, whatever its type.
+            let full = format!(
+                "/v1/user/{uid}/event?monetary_account_id={id}&count=200&display_user_event=false"
+            );
+            match c.get(&full).await {
+                Err(e) => println!("  event: ERROR {} {}", e.status, e.message),
+                Ok(v) => {
+                    let mut seen = BTreeMap::new();
+                    for i in v["Response"].as_array().into_iter().flatten() {
+                        let ev = &i["Event"];
+                        let ty = ev["object"]
+                            .as_object()
+                            .and_then(|m| m.keys().next().cloned())
+                            .unwrap_or_else(|| "-".into());
+                        let inner = ev["object"][&ty].clone();
+                        let row = format!(
+                            "type={ty} event_status={} action={} | {}",
+                            ev["status"].as_str().unwrap_or("-"),
+                            ev["action"].as_str().unwrap_or("-"),
+                            survey_shape(&inner, now, "")
+                        );
+                        *seen.entry(row).or_insert(0) += 1;
+                    }
+                    println!("  event (first page, by shape):");
+                    for (row, n) in seen {
+                        println!("  {n:>4}x {row}");
+                    }
+                }
+            }
         }
     }
 
