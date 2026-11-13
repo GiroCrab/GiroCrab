@@ -298,6 +298,27 @@ extension AppModel {
         }
     }
 
+    /// A group dropped onto a group row in the sidebar: into `target` (as its
+    /// subgroup), or – `before` – right above it as its sibling; onto "Ohne
+    /// Gruppe" it moves to the top level, at the end. Refuses moving a group
+    /// into itself or its own subgroups. Returns whether anything happened.
+    @discardableResult
+    func dropUserGroup(_ uuid: String, onto target: UserGroup, before: Bool) -> Bool {
+        guard !uuid.isEmpty, uuid != target.uuid,
+              let moving = userGroups.first(where: { $0.uuid == uuid }),
+              !userGroupSubtree(uuid).contains(where: { $0.uuid == target.uuid })
+        else { return false }
+        let parent: String? = target.isUngrouped ? nil : (before ? target.parentUuid : target.uuid)
+        if moving.parentUuid != parent { setUserGroupParent(moving, parent: parent) }
+        if target.isUngrouped || before {
+            var order = namedUserGroups.map(\.uuid).filter { $0 != uuid }
+            let at = target.isUngrouped ? order.count : (order.firstIndex(of: target.uuid) ?? order.count)
+            order.insert(uuid, at: at)
+            reorderUserGroups(order)
+        }
+        return true
+    }
+
     func reorderUserGroups(_ uuids: [String]) {
         guard let vault else { return }
         run2 { try vault.reorderUserGroups(uuids: uuids.filter { !$0.isEmpty }) }
