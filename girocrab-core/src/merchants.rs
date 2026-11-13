@@ -782,6 +782,7 @@ fn to_info(e: &Entry) -> MerchantInfo {
             "o2" => "O2".to_string(),
             "ing" => "ING".to_string(),
             "trade-republic" => "TR".to_string(),
+            "finpension" => "fp".to_string(),
             "deutsche-bahn" => "DB".to_string(),
             "huk" => "HUK".to_string(),
             _ => monogram(e.name),
@@ -1359,6 +1360,10 @@ mod tests {
         assert_eq!(
             MerchantResolver::resolve("Techniker Krankenkasse", "").domain,
             "tk.de"
+        );
+        assert_eq!(
+            MerchantResolver::resolve("finpension 3a", "").domain,
+            "finpension.ch"
         );
         assert_eq!(
             MerchantResolver::resolve("TK Maxx Kassel", "").domain,

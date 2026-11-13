@@ -25,7 +25,9 @@
 //!     POST https://accounts.finpension.ch/api/logout
 
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER};
+use reqwest::header::{
+    HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER,
+};
 use serde_json::{json, Value};
 
 use super::{
@@ -90,8 +92,8 @@ pub fn normalize_phone(input: &str) -> String {
     if t.is_empty() {
         return String::new();
     }
-    if t.starts_with('+') {
-        let digits: String = t[1..].chars().filter(|c| c.is_ascii_digit()).collect();
+    if let Some(rest) = t.strip_prefix('+') {
+        let digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
         return format!("+{digits}");
     }
     if let Some(rest) = t.strip_prefix("00") {
@@ -285,9 +287,12 @@ impl BankConnector for FinpensionConnector {
             });
         }
 
-        let password = self.cached_password.take().ok_or_else(|| CoreError::Authentication {
-            message: tr("Passwort nicht mehr im Speicher. Bitte Anmeldung neu starten.").into(),
-        })?;
+        let password = self
+            .cached_password
+            .take()
+            .ok_or_else(|| CoreError::Authentication {
+                message: tr("Passwort nicht mehr im Speicher. Bitte Anmeldung neu starten.").into(),
+            })?;
 
         let client = http_client()?;
         let body = json!({
@@ -317,9 +322,11 @@ impl BankConnector for FinpensionConnector {
             });
         }
 
-        let token = val["token"].as_str().ok_or_else(|| CoreError::Authentication {
-            message: tr("finpension: Kein Token in der 2FA-Antwort.").into(),
-        })?;
+        let token = val["token"]
+            .as_str()
+            .ok_or_else(|| CoreError::Authentication {
+                message: tr("finpension: Kein Token in der 2FA-Antwort.").into(),
+            })?;
 
         self.auth_token = Some(token.to_string());
         Ok(Phase::Ready)
@@ -391,7 +398,11 @@ impl BankConnector for FinpensionConnector {
 pub fn parse_portfolios_data(
     val: &Value,
     today: &str,
-) -> CoreResult<(Vec<RemoteAccount>, Vec<RemoteHolding>, Vec<RemoteTransaction>)> {
+) -> CoreResult<(
+    Vec<RemoteAccount>,
+    Vec<RemoteHolding>,
+    Vec<RemoteTransaction>,
+)> {
     let portfolios = val.as_array().ok_or_else(|| CoreError::Protocol {
         message: "finpension: Erwartete Liste von Portfolios".into(),
     })?;
@@ -438,7 +449,8 @@ pub fn parse_portfolios_data(
                             (pos["asset_name"].as_str(), pos["isin"].as_str())
                         {
                             if !isin.trim().is_empty() {
-                                isin_by_name.insert(asset_name.to_string(), isin.trim().to_string());
+                                isin_by_name
+                                    .insert(asset_name.to_string(), isin.trim().to_string());
                             }
                         }
                     }
@@ -449,8 +461,7 @@ pub fn parse_portfolios_data(
         // 2. Estimate purchase price ratio via performance profit/deposits
         let current_profit_cents =
             json_number_to_cents(&p["performance"]["current_profit_value"]).unwrap_or(0);
-        let deposits_cents =
-            json_number_to_cents(&p["performance"]["deposits_ytd"]).unwrap_or(0);
+        let deposits_cents = json_number_to_cents(&p["performance"]["deposits_ytd"]).unwrap_or(0);
         let profit_ratio = if deposits_cents > 0 && current_profit_cents != 0 {
             current_profit_cents as f64 / deposits_cents as f64
         } else {
@@ -652,7 +663,8 @@ mod tests {
             }
         ]);
 
-        let (accounts, holdings, transactions) = parse_portfolios_data(&fixture, "2026-01-01").unwrap();
+        let (accounts, holdings, transactions) =
+            parse_portfolios_data(&fixture, "2026-01-01").unwrap();
 
         // 1 Account
         assert_eq!(accounts.len(), 1);
@@ -671,7 +683,10 @@ mod tests {
         assert_eq!(cash_pos.current_price_cents, 50_050);
 
         let equity_pos = &holdings[1].holding;
-        assert_eq!(equity_pos.name, "CSIF (CH) III Equity World ex CH Blue - ZB");
+        assert_eq!(
+            equity_pos.name,
+            "CSIF (CH) III Equity World ex CH Blue - ZB"
+        );
         assert_eq!(equity_pos.isin, "CH0033782431");
         assert_eq!(equity_pos.quantity, 10.0);
         assert_eq!(equity_pos.value_cents, 1_500_000);
@@ -705,7 +720,10 @@ mod tests {
                 } else if first_line.contains("/login") {
                     ("200 OK", r#"{"message":"OK","method":"sms"}"#)
                 } else if first_line.contains("/portfolios") {
-                    ("200 OK", r#"[{"id":999,"number":1,"performance":{"current_value":1000.00},"allocation_by_asset_class":[{"positions":[{"asset_name":"Cash","value":1000.00,"shares":1.0}]}],"transactions":[]}]"#)
+                    (
+                        "200 OK",
+                        r#"[{"id":999,"number":1,"performance":{"current_value":1000.00},"allocation_by_asset_class":[{"positions":[{"asset_name":"Cash","value":1000.00,"shares":1.0}]}],"transactions":[]}]"#,
+                    )
                 } else if first_line.contains("/logout") {
                     ("200 OK", r#"{"message":"OK"}"#)
                 } else {
@@ -743,7 +761,10 @@ mod tests {
 
         // 2. Respond phase -> Ready
         let phase2 = connector
-            .respond(&ctx, ChallengeResponse::Code(SecretString::new("654321".into())))
+            .respond(
+                &ctx,
+                ChallengeResponse::Code(SecretString::new("654321".into())),
+            )
             .await
             .unwrap();
         assert!(matches!(phase2, Phase::Ready));
@@ -773,7 +794,10 @@ mod tests {
         };
         let mut conn2 = FinpensionConnector::with_base_urls(base.clone(), base.clone());
         let phase_reused = conn2.begin(&ctx_with_session).await.unwrap();
-        assert!(matches!(phase_reused, Phase::Ready), "Session token must be re-used directly without challenge");
+        assert!(
+            matches!(phase_reused, Phase::Ready),
+            "Session token must be re-used directly without challenge"
+        );
 
         // 5. Finish (logout)
         conn2.finish(&ctx_with_session).await;
