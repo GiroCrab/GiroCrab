@@ -1355,7 +1355,18 @@ mod tests {
         .unwrap());
         assert_eq!(ext_ids(&db, acc), vec!["c1"]);
         // a different short purpose with the same amount is not adopted
-        assert!(!adopt_import(&db, acc, "c2", "2026-11-10", -180, "", "", "Kartenzahlung", "Buchung").unwrap());
+        assert!(!adopt_import(
+            &db,
+            acc,
+            "c2",
+            "2026-11-10",
+            -180,
+            "",
+            "",
+            "Kartenzahlung",
+            "Buchung"
+        )
+        .unwrap());
     }
 
     #[test]

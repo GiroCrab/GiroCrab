@@ -262,9 +262,11 @@ fn strip_line_numbers(info: &str) -> String {
         let marker: Vec<char> = format!("{n:02}").chars().collect();
         let rest = &chars[pos..];
         // a space followed by the next number ends a padded line ...
-        let spaced = (0..rest.len()).find(|&i| rest[i] == ' ' && rest[i + 1..].starts_with(&marker));
+        let spaced =
+            (0..rest.len()).find(|&i| rest[i] == ' ' && rest[i + 1..].starts_with(&marker));
         // ... a full line is directly followed by it and may end mid-word
-        let full = (rest.len() >= LINE + marker.len() && rest[LINE..].starts_with(&marker)).then_some(LINE);
+        let full = (rest.len() >= LINE + marker.len() && rest[LINE..].starts_with(&marker))
+            .then_some(LINE);
         let (end, skip, is_full) = match (spaced, full) {
             (Some(i), Some(f)) if i < f => (i, 1 + marker.len(), false),
             (_, Some(f)) => (f, marker.len(), true),
@@ -597,7 +599,11 @@ impl BankConnector for ComdirectConnector {
 /// `reference` and often no `bookingDate`; the caller fills in an id and date.
 fn map_transaction(t: &Value, account_ref: &str) -> RemoteTransaction {
     let amount = json_number_to_cents(&t["amount"]["value"]).unwrap_or(0);
-    let party = if amount < 0 { &t["creditor"] } else { &t["remitter"] };
+    let party = if amount < 0 {
+        &t["creditor"]
+    } else {
+        &t["remitter"]
+    };
     let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
     RemoteTransaction {
         account_ref: account_ref.to_string(),
