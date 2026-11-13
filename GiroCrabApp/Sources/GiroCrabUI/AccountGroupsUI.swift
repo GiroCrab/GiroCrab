@@ -148,14 +148,14 @@ struct AccountGroupMenu: View {
     }
 }
 
-/// "Symbol & Farbe …" of an account or group: colour palette and symbol
-/// grid in one popover, like MoneyMoney. A click applies immediately.
+/// "Symbol & Farbe …" of an account, group or category: colour palette and
+/// symbol grid in one popover, like MoneyMoney. A click applies immediately.
 struct IconColorPopover: View {
     @Environment(AppModel.self) private var model
     let target: IconColorTarget
 
     private static let palette = accountColorPalette()
-    private static let names: [String: LocalizedStringKey] = [
+    static let names: [String: LocalizedStringKey] = [
         "#2563EB": "Blau", "#D97706": "Bernstein", "#059669": "Grün", "#DB2777": "Pink",
         "#7C3AED": "Violett", "#0891B2": "Cyan", "#DC2626": "Rot", "#65A30D": "Limette",
         "#C026D3": "Fuchsia", "#EA580C": "Orange", "#4F46E5": "Indigo", "#0D9488": "Petrol",
@@ -169,8 +169,12 @@ struct IconColorPopover: View {
         if case .group(let uuid) = target { return model.userGroups.first { $0.uuid == uuid } }
         return nil
     }
-    private var colorHex: String { (account?.colorHex ?? group?.colorHex ?? "").uppercased() }
-    private var symbol: String { account?.sfSymbol ?? group?.sfSymbol ?? "" }
+    private var category: GiroCrabCore.Category? {
+        if case .category(let id) = target { return model.categories.first { $0.id == id } }
+        return nil
+    }
+    private var colorHex: String { (account?.colorHex ?? group?.colorHex ?? category?.colorHex ?? "").uppercased() }
+    private var symbol: String { account?.sfSymbol ?? group?.sfSymbol ?? category?.sfSymbol ?? "" }
     /// The palette, plus the current colour first if it is not in it (e.g.
     /// from an import), so the current choice is always marked.
     private var swatches: [String] {
@@ -185,10 +189,12 @@ struct IconColorPopover: View {
     private func setColor(_ hex: String?) {
         if let account { model.setAccountColor(account.id, hex: hex) }
         if let group { model.setUserGroupColor(group, hex: hex) }
+        if let category, let hex { model.setCategoryColor(category.id, hex: hex) }
     }
     private func setSymbol(_ s: String) {
         if let account { model.setAccountSymbol(account.id, symbol: s) }
         if let group { model.updateUserGroup(group, symbol: s) }
+        if let category { model.setCategorySymbol(category.id, symbol: s) }
     }
 
     var body: some View {
@@ -205,15 +211,18 @@ struct IconColorPopover: View {
                     .focusEffectDisabled() // no focus ring on the first swatch
                     .help(Self.names[hex].map { Text($0) } ?? Text(verbatim: hex))
                 }
-                Button { setColor(nil) } label: {
-                    Image(systemName: "arrow.uturn.backward.circle")
-                        .font(.title3)
-                        .frame(width: 20, height: 20)
+                // a category always has a colour: no "none" for it
+                if category == nil {
+                    Button { setColor(nil) } label: {
+                        Image(systemName: "arrow.uturn.backward.circle")
+                            .font(.title3)
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .focusEffectDisabled()
+                    .help(account != nil ? Text("Standardfarbe") : Text("Keine Farbe"))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .focusEffectDisabled()
-                .help(account != nil ? Text("Standardfarbe") : Text("Keine Farbe"))
                 // any other colour: the system colour well (like the category sheet)
                 ColorPicker("Eigene Farbe", selection: Binding(
                     get: { colorHex.isEmpty ? Theme.accent : Color(hex: colorHex) },
@@ -345,7 +354,7 @@ struct AccountGroupDialogs: ViewModifier {
                     }
                 case .merge(let from, let into):
                     Button("Zusammenführen") { model.mergeUserGroups(from, into: into) }
-                case .create, .rename, .renameAccount:
+                case .create, .rename, .renameAccount, .renameCategory:
                     EmptyView()
                 }
                 Button("Abbrechen", role: .cancel) {}
@@ -369,6 +378,7 @@ struct AccountGroupDialogs: ViewModifier {
             // after the alert has closed
             if let next = model.renameUserGroup(g, to: name) { DispatchQueue.main.async { dialog = next } }
         case .renameAccount(let a): model.renameAccount(a.id, to: name)
+        case .renameCategory(let c): model.renameCategory(c.id, to: name)
         case .delete, .moveAccount, .merge: break
         }
     }

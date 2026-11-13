@@ -319,23 +319,46 @@ struct SidebarView: View {
                 } label: {
                     CategoryRow(category: node.category)
                         .contextMenu { categoryMenu(node.category) }
+                        .modifier(CategoryIconColorPopover(id: node.id))
                 }
                 .tag(SidebarItem.category(node.id))
             } else {
                 CategoryRow(category: node.category)
                     .tag(SidebarItem.category(node.id))
                     .contextMenu { categoryMenu(node.category) }
+                    .modifier(CategoryIconColorPopover(id: node.id))
             }
         })
     }
 
     @ViewBuilder
     private func categoryMenu(_ category: GiroCrabCore.Category) -> some View {
+        // same order as the menus of accounts and groups (#183): rename, look,
+        // place – then what only categories have – then delete
+        Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameCategory(category) }
+        Button("Symbol & Farbe …", systemImage: "paintpalette") { model.iconColorTarget = .category(category.id) }
+        Menu("Verschieben nach", systemImage: "arrow.turn.down.right") {
+            Toggle(isOn: Binding(
+                get: { category.parentId == nil },
+                set: { _ in model.moveCategory(category.id, to: nil) }
+            )) {
+                Label("Oberste Ebene", systemImage: "arrow.up.to.line")
+            }
+            Divider()
+            ForEach(model.categoryMoveTargets(for: category.id)) { c in
+                Toggle(isOn: Binding(
+                    get: { category.parentId == c.id },
+                    set: { _ in model.moveCategory(category.id, to: c.id) }
+                )) {
+                    Label(String(repeating: "\u{2003}", count: Int(c.depth)) + c.name, systemImage: c.sfSymbol)
+                }
+            }
+        }
+        Divider()
         Button("Neue Unterkategorie …", systemImage: "plus") { model.newCategoryRequest = NewCategoryRequest(parent: category.id) }
-        Button("Neue Hauptkategorie …", systemImage: "plus.square") { model.newCategoryRequest = NewCategoryRequest(parent: nil) }
         Button("Monatsbudget festlegen …", systemImage: "gauge.with.dots.needle.67percent") { budgetCategory = IDBox(id: category.id) }
         Divider()
-        Button("„\(category.name)“ löschen …", systemImage: "trash", role: .destructive) { dialog = .deleteCategory(category) }
+        Button("Kategorie löschen …", systemImage: "trash", role: .destructive) { dialog = .deleteCategory(category) }
     }
 }
 
@@ -503,6 +526,19 @@ private enum SidebarDialog {
         case .deleteAccount: Text("Archiviertes Konto endgültig löschen?")
         case .removeConnection: Text("Bankzugang entfernen?")
         case .deleteCategory: Text("Kategorie löschen?")
+        }
+    }
+}
+
+/// The "Symbol & Farbe" popover of a category row, anchored to the row like
+/// those of accounts and groups.
+private struct CategoryIconColorPopover: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let id: Int64
+
+    func body(content: Content) -> some View {
+        content.popover(isPresented: model.iconColorBinding(.category(id)), arrowEdge: .trailing) {
+            IconColorPopover(target: .category(id)).environment(model)
         }
     }
 }
