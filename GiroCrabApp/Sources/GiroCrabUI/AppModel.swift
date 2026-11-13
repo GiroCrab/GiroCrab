@@ -499,6 +499,8 @@ public final class AppModel {
     var groupDialog: GroupDialog?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
+    /// "Symbol …" from a group's context menu (#167).
+    var symbolSheet: SymbolSheetTarget?
     var expandedCategories: Set<Int64> = []
     var showRuleEditor = false {
         didSet { if showRuleEditor, rulesStale { reloadRules() } }

@@ -185,16 +185,8 @@ struct UserGroupMenu: View {
         #endif
         if !group.isUngrouped {
             Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .rename(group) }
-            Menu("Symbol", systemImage: group.sfSymbol) {
-                ForEach(GroupSymbols.named, id: \.symbol) { item in
-                    Toggle(isOn: Binding(
-                        get: { item.symbol == group.sfSymbol },
-                        set: { _ in model.updateUserGroup(group, symbol: item.symbol) }
-                    )) {
-                        Label(item.name, systemImage: item.symbol)
-                    }
-                }
-            }
+            // same picker as for accounts (#167)
+            Button("Symbol …", systemImage: group.sfSymbol) { model.symbolSheet = .group(group.uuid) }
             Toggle(isOn: Binding(
                 get: { group.includeInTotal },
                 set: { model.updateUserGroup(group, includeInTotal: $0) }
@@ -507,26 +499,11 @@ struct GroupDetailEditor: View {
                 Section {
                     TextField("Name", text: $name)
                         .onSubmit { commitName() }
-                }
-                Section("Symbol") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 40), spacing: 8)], spacing: 8) {
-                        ForEach(GroupSymbols.all, id: \.self) { s in
-                            Button { model.updateUserGroup(g, symbol: s) } label: {
-                                Image(systemName: s)
-                                    .font(.title3)
-                                    .frame(width: 38, height: 38)
-                                    .background(RoundedRectangle(cornerRadius: 8).fill(s == g.sfSymbol ? Theme.accent.opacity(0.18) : Color.clear))
-                                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(s == g.sfSymbol ? Theme.accent : Theme.tertiary.opacity(0.3)))
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(s == g.sfSymbol ? Theme.accent : Theme.secondary)
-                            .accessibilityLabel(GroupSymbols.named.first { $0.symbol == s }.map { Text($0.name) } ?? Text(verbatim: s))
-                            .help(GroupSymbols.named.first { $0.symbol == s }.map { Text($0.name) } ?? Text(verbatim: s))
-                            .accessibilityAddTraits(s == g.sfSymbol ? .isSelected : [])
-                        }
-                    }
-                    .padding(.vertical, 4)
+                    // shared picker for groups, accounts and categories (#167)
+                    SymbolPickerButton(selection: Binding(
+                        get: { g.sfSymbol },
+                        set: { model.updateUserGroup(g, symbol: $0) }
+                    ))
                 }
                 Section {
                     Picker("Übergeordnete Gruppe", selection: Binding(

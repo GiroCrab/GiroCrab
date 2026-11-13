@@ -75,17 +75,6 @@ enum GroupDialog {
     }
 }
 
-/// Symbols offered for groups (kept small on purpose).
-enum GroupSymbols {
-    static let named: [(symbol: String, name: LocalizedStringKey)] = [
-        ("folder", "Ordner"), ("person", "Person"), ("person.2", "Paar"),
-        ("figure.and.child.holdinghands", "Familie"), ("briefcase", "Beruf"), ("building.2", "Firma"),
-        ("house", "Haus"), ("heart", "Herz"), ("graduationcap", "Ausbildung"),
-        ("airplane", "Reisen"), ("chart.pie", "Vermögen"), ("banknote", "Geld"),
-    ]
-    static var all: [String] { named.map(\.symbol) }
-}
-
 extension AppModel {
     /// The view shown: the explicit choice, else "Nach Gruppe" once a group exists.
     var accountView: AccountSidebarMode {

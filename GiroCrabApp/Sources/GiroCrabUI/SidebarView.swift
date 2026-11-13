@@ -148,6 +148,12 @@ struct SidebarView: View {
             }
         }
         .sheet(item: $budgetCategory) { box in BudgetEditorSheet(categoryID: box.id).environment(model) }
+        .sheet(item: $model.symbolSheet) { target in SymbolSheet(target: target).environment(model) }
+        .task { // screenshots: --demo-sheet group-symbol
+            guard model.options.demoSheet == "group-symbol" else { return }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            if let g = model.namedUserGroups.first { model.symbolSheet = .group(g.uuid) }
+        }
     }
 
     /// "Nach Kontoart": the fixed kind sections.
