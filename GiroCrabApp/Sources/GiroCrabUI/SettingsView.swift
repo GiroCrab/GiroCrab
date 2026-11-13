@@ -425,7 +425,8 @@ struct SecuritySettings: View {
                 LabeledContent("Hauptschlüssel", value: model.isDemo ? String(localized: "Demo-Schlüssel (Wegwerf)") : String(localized: "Schlüsselbund, geschützt durch \(VaultKeyManager.shared.biometryName)"))
                 LabeledContent("Datei", value: model.vault?.filePath() ?? "–")
                     .textSelection(.enabled)
-                LabeledContent("Core-Version", value: coreVersion())
+                LabeledContent("Version", value: AppVersionDisplay.current(core: coreVersion()))
+                    .textSelection(.enabled)
             }
             ICloudSyncSection()
             BankingPolicySection()
