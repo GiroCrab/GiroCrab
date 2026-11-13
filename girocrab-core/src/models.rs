@@ -236,6 +236,8 @@ pub struct UserGroup {
     pub uuid: String,
     pub name: String,
     pub sf_symbol: String,
+    /// The group's colour (`#RRGGBB`); empty = none chosen.
+    pub color_hex: String,
     pub sort_order: i32,
     /// The group's own switch: its accounts count towards the overall total.
     pub include_in_total: bool,
@@ -331,6 +333,9 @@ pub struct Booking {
     pub is_salary: bool,
     /// Series key for recurring bookings (see `list_recurring`); "" = none.
     pub recurrence_key: String,
+    /// Not booked yet (card hold, pending transfer): the bank still reports it
+    /// as open, so it can change or disappear. The list shows it dashed.
+    pub is_pending: bool,
 }
 
 /// Dry-run result of a MoneyMoney import (nothing stored).
@@ -347,6 +352,9 @@ pub struct MoneyMoneyImportPreview {
     pub detected_categories: Vec<String>,
     pub sample_bookings: Vec<Booking>,
     pub suggested_account_name: String,
+    /// Existing account the file most likely belongs to (statement IBAN,
+    /// matching bookings or the file name), to preselect as target.
+    pub suggested_account_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]

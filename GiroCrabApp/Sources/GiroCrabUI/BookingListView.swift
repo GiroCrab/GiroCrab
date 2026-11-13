@@ -437,6 +437,14 @@ struct BookingRow: View {
     var body: some View {
         HStack(spacing: 12) {
             MerchantSignet(merchant: booking.merchant, categorySymbol: booking.categorySymbol, showNewDot: !booking.checked)
+                .opacity(booking.isPending ? 0.7 : 1)
+                .overlay {
+                    // not booked yet: dashed outline instead of a solid tile
+                    if booking.isPending {
+                        RoundedRectangle(cornerRadius: 36 * 0.28, style: .continuous)
+                            .strokeBorder(Theme.secondary, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                    }
+                }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(booking.merchant.name.isEmpty ? booking.bookingText : booking.merchant.name)
@@ -460,7 +468,8 @@ struct BookingRow: View {
                 HStack(spacing: 6) {
                     #if !os(iOS)
                     if model.showsAccountMarkers {
-                        AccountChip(label: model.accountShortLabel(booking.accountId), color: model.accountColor(booking.accountId), compact: compactChip)
+                        AccountChip(label: model.accountShortLabel(booking.accountId), color: model.accountColor(booking.accountId),
+                                    symbol: model.accountSymbol(booking.accountId), compact: compactChip)
                     }
                     #endif
                     // category with the sidebar's icon and colour, then the payment method
@@ -485,9 +494,23 @@ struct BookingRow: View {
                     .foregroundStyle(Theme.tertiary)
                     .help("Geprüft")
             }
+            if booking.isPending {
+                Image(systemName: "clock")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.tertiary)
+                    .help("Vorgemerkt – noch nicht gebucht")
+                    .accessibilityLabel("Vorgemerkt")
+            }
             AmountLabel(cents: booking.amountCents)
                 .lineLimit(1)
                 .fixedSize()
+                .padding(.horizontal, booking.isPending ? 6 : 0)
+                .padding(.vertical, booking.isPending ? 2 : 0)
+                .overlay {
+                    if booking.isPending {
+                        Capsule().strokeBorder(Theme.secondary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    }
+                }
         }
         .frame(minHeight: 44)
         .padding(.horizontal, 14)
@@ -570,16 +593,20 @@ struct BookingCategoryLabel: View {
     }
 }
 
-/// Account of a booking in mixed lists: coloured dot + short name.
+/// Account of a booking in mixed lists: the account's symbol in its colour
+/// + short name (#170 – a symbol is easier to spot than a small dot).
 struct AccountChip: View {
     let label: String
     let color: Color
-    /// Narrow iPhone rows: just the dot (the category keeps the room).
+    var symbol = "building.columns"
+    /// Narrow rows: just the symbol (the category keeps the room).
     var compact = false
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 6, height: 6)
+            Image(systemName: symbol)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
             if !compact {
                 Text(label)
                     .font(.subheadline.weight(.medium))
