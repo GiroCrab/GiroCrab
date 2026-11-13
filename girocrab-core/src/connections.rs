@@ -29,6 +29,7 @@ pub struct ConnectionStatus {
 pub fn normalize_login(kind: ConnectorKind, login: &str) -> String {
     match kind {
         ConnectorKind::TradeRepublic => normalize_phone(login),
+        ConnectorKind::Finpension => crate::connectors::finpension::normalize_phone(login),
         _ => login.trim().to_string(),
     }
 }

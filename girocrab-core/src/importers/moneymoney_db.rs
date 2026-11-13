@@ -779,6 +779,8 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
         Some(ConnectorKind::Comdirect)
     } else if n.contains("bunq") || is_bunq_bic(bankcode) {
         Some(ConnectorKind::Bunq)
+    } else if n.contains("finpension") || bankcode.eq_ignore_ascii_case("finpension 3a") {
+        Some(ConnectorKind::Finpension)
     } else {
         None // incl. any other German bank with an 8-digit code
     }
@@ -831,6 +833,7 @@ fn pin_usable(kind: ConnectorKind) -> bool {
             | ConnectorKind::FinTsGeneric
             | ConnectorKind::Comdirect
             | ConnectorKind::TradeRepublic
+            | ConnectorKind::Finpension
     )
 }
 

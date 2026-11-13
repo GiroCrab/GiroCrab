@@ -20,6 +20,7 @@ pub mod comdirect;
 pub mod demo;
 pub mod dpop;
 pub mod enable_banking;
+pub mod finpension;
 pub mod fints;
 pub mod fints_directory;
 pub mod fints_presets;

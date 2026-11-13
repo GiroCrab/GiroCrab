@@ -88,11 +88,19 @@ impl BankConnector for DemoConnector {
                 expires_in_seconds: Some(300),
                 poll_interval_seconds: 2,
             },
-            ConnectorKind::TradeRepublic => Challenge {
+            ConnectorKind::TradeRepublic | ConnectorKind::Finpension => Challenge {
                 kind: ChallengeKind::Code,
-                title: "Trade Republic 2FA".into(),
-                message: tr("Demo: beliebigen 4-stelligen Code eingeben.").into(),
-                method_name: tr("App-Code (Demo)").into(),
+                title: if self.kind == ConnectorKind::Finpension {
+                    "finpension 2FA".into()
+                } else {
+                    "Trade Republic 2FA".into()
+                },
+                message: if self.kind == ConnectorKind::Finpension {
+                    tr("Demo: beliebigen 6-stelligen SMS-Code eingeben.").into()
+                } else {
+                    tr("Demo: beliebigen 4-stelligen Code eingeben.").into()
+                },
+                method_name: tr("SMS-Code (Demo)").into(),
                 redirect_url: None,
                 image: None,
                 expires_in_seconds: Some(120),

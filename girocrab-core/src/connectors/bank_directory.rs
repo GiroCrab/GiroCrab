@@ -154,6 +154,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "Amazon Bestellungen",
             "amazon kundenkonto bestellungen einkäufe shop",
         ),
+        (
+            ConnectorKind::Finpension,
+            "finpension (Säule 3a)",
+            "finpension saule 3a schweiz vorsorge depot pillar pension",
+        ),
     ]
 }
 
@@ -536,6 +541,7 @@ mod tests {
             ("scalable", ConnectorKind::ScalableCapital),
             ("Interactive Brokers", ConnectorKind::Ibkr),
             ("ibkr", ConnectorKind::Ibkr),
+            ("finpension", ConnectorKind::Finpension),
         ] {
             let r = search(q, vec![], 10);
             assert!(

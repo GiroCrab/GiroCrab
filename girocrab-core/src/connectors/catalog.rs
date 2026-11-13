@@ -113,6 +113,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             required_settings: vec![],
             note: tr("quirion: Depotpositionen, Liquiditätskonto, Verrechnungskonto und gebuchte Umsätze. Anmeldung im Browserfenster. Interne Portal-API; Änderungen sind möglich.").into(),
         },
+        ConnectorKind::Finpension => BankDescriptor {
+            kind,
+            name: "finpension (Säule 3a)".into(),
+            protocol: tr("finpension Web-API (SMS-2FA)").into(),
+            bank_code: String::new(),
+            sf_symbol: "chart.line.uptrend.xyaxis".into(),
+            login_label: tr("Handynummer (z. B. +41… oder +49…)").into(),
+            secret_label: tr("Passwort").into(),
+            required_settings: vec![],
+            note: tr("finpension Säule 3a: Portfolios, Wertschriften und Cash-Bestände via finpension.ch. SMS-Code bei der Erstanmeldung erforderlich; die Sitzung wird verschlüsselt gespeichert.").into(),
+        },
         ConnectorKind::Fnz => BankDescriptor {
             kind,
             name: "FNZ Bank".into(),
@@ -223,6 +234,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::Quirion => Box::new(quirion::WebOnlyConnector),
         ConnectorKind::Bunq => Box::new(bunq::BunqConnector::new()),
         ConnectorKind::ScalableCapital => Box::new(scalable::ScalableConnector::new()),
+        ConnectorKind::Finpension => Box::new(finpension::FinpensionConnector::new()),
         ConnectorKind::EnableBanking => {
             let (country, aspsp) = ConnectorKind::enable_banking_target(key).unwrap_or(("DE", ""));
             Box::new(enable_banking::EnableBankingConnector::for_aspsp(
