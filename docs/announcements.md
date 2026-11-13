@@ -77,11 +77,23 @@ functions (App Review Guidelines 2.5.2 / 2.4.5 (iv)).
 
 ## Publishing
 
-1. Edit `policy/announcements.json`, raise `sequence`.
-2. Sign with the policy key: `openssl`/`banking-policy.sh`-style detached
-   Ed25519 signature over the exact file bytes → `announcements.json.sig`.
-3. Commit both files to `main` (reviewable). The app picks them up within six
-   hours, no release needed.
+Draft in a file of your own (start from `policy/announcements.example.json`;
+the example is never loaded by the app, only `announcements.json` is).
+
+```bash
+scripts/announcements.sh check my-draft.json     # validate only
+scripts/announcements.sh publish my-draft.json   # sequence+1, sign, verify, commit
+scripts/announcements.sh verify                  # check what is published
+scripts/announcements.sh clear                   # withdraw everything
+```
+
+`publish` uses the banking-policy key from the release Mac's keychain, sets
+`sequence` above the published one, verifies the signature and **commits**
+`policy/announcements.json` + `.sig`. It never pushes: push the commit to
+`main` or open it as a pull request (reviewable). The app picks it up within
+six hours, no release needed. `check` also enforces the writing guidelines:
+title ≤ 10 words, summary ≤ 2 sentences, German and English, `https` links,
+an `until` date for `important`.
 
 Test locally with a Debug build:
 `GIROCRAB_ANNOUNCEMENTS_KEY=<base64 test key> GIROCRAB_ANNOUNCEMENTS_URL=http://localhost:8000/announcements.json`.
