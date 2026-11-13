@@ -497,8 +497,12 @@ public final class AppModel {
     var demoSettingsSheet: String?
     /// The one group dialog on screen (new / rename / delete / move account).
     var groupDialog: GroupDialog?
+    /// The account / group whose "Symbol & Farbe" popover is open.
+    var iconColorTarget: IconColorTarget?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
+    /// "Belege & PostBox" filtered to one account (#172); nil = all accounts.
+    var documentsAccountFilter: Int64?
     var expandedCategories: Set<Int64> = []
     var showRuleEditor = false {
         didSet { if showRuleEditor, rulesStale { reloadRules() } }
@@ -688,7 +692,7 @@ public final class AppModel {
                 totalRows: 4820, newBookings: 4820, duplicatesSkippedOrEnriched: 0, notesCount: 312,
                 dateRangeStart: "2012-01-03", dateRangeEnd: "2026-10-30",
                 detectedCategories: ["Haushalt > Lebensmittel", "Gehalt", "Steuern", "Wohnen > Miete", "Mobilität > Tanken", "Freizeit > Restaurants", "Versicherungen", "Reisen"],
-                sampleBookings: [], suggestedAccountName: "MoneyMoney-Archiv")
+                sampleBookings: [], suggestedAccountName: "MoneyMoney-Archiv", suggestedAccountId: nil)
             showMoneyMoneyImport = true
         case "recurring":
             showRecurringSheet = true
@@ -698,6 +702,10 @@ public final class AppModel {
             #endif
         case "rules":
             ruleDraft = nil
+            showRuleEditor = true
+        case "rule-edit":
+            // a rule opened in the editor (#179 pattern field)
+            ruleDraft = rules.first
             showRuleEditor = true
         case "palette":
             showCommandPalette = true
@@ -2120,6 +2128,10 @@ public final class AppModel {
 
     /// Short account label for the booking list, e.g. "Girokonto" – with
     /// "··3000" only when another account has the same name.
+    func accountSymbol(_ accountId: Int64) -> String {
+        accountMarkers[accountId]?.symbol ?? "building.columns"
+    }
+
     func accountShortLabel(_ accountId: Int64) -> String {
         accountMarkers[accountId]?.label ?? ""
     }
@@ -2140,6 +2152,12 @@ public final class AppModel {
         reloadAccounts()
     }
 
+    func setAccountSymbol(_ accountId: Int64, symbol: String) {
+        guard let vault else { return }
+        run { try vault.setAccountSymbol(accountId: accountId, sfSymbol: symbol) }
+        reloadAccounts()
+    }
+
     fileprivate func rebuildAccountIndex() {
         reloadLoans()
         let accounts = allAccounts
@@ -2152,7 +2170,7 @@ public final class AppModel {
                 let digits = String((a.iban.isEmpty ? a.accountNumber : a.iban).filter(\.isNumber).suffix(4))
                 if !digits.isEmpty && !label.contains(digits) { label += " ··\(digits)" }
             }
-            return (a.id, AccountMarker(label: label, color: Color.readable(hex: a.colorHex)))
+            return (a.id, AccountMarker(label: label, color: Color.readable(hex: a.colorHex), symbol: a.sfSymbol))
         }, uniquingKeysWith: { a, _ in a })
     }
 
@@ -2469,6 +2487,11 @@ public final class AppModel {
     /// All banks Enable Banking offers (`GET /aspsps`); empty until loaded or without credentials.
     var livePsd2Banks: [Psd2Bank] = []
 
+    /// Enable Banking connections the last MoneyMoney import set up, with the
+    /// accounts to link to the user's application – shown in the Enable
+    /// Banking setup so they can be linked while activating it.
+    var psd2LinkHints: [MoneyMoneyDbPsd2Connection] = []
+
     /// Loads the live ASPSP list when the user's Enable Banking credentials are set.
     func loadLivePsd2Banks() {
         guard let vault, livePsd2Banks.isEmpty, !isDemo,
@@ -2619,9 +2642,9 @@ public final class AppModel {
         return (try? vault?.listDocumentsForBooking(bookingId: booking.id)) ?? []
     }
 
-    func allDocuments(search: String = "", unlinkedOnly: Bool = false) -> [DocumentInfo] {
+    func allDocuments(search: String = "", unlinkedOnly: Bool = false, accountId: Int64? = nil) -> [DocumentInfo] {
         _ = documentsVersion
-        let f = DocumentFilter(accountId: nil, docType: nil, search: search.isEmpty ? nil : search, unlinkedOnly: unlinkedOnly)
+        let f = DocumentFilter(accountId: accountId, docType: nil, search: search.isEmpty ? nil : search, unlinkedOnly: unlinkedOnly)
         return (try? vault?.listAllDocuments(filter: f)) ?? []
     }
 
@@ -3436,6 +3459,8 @@ func formatIBAN(_ iban: String) -> String {
 struct AccountMarker {
     let label: String
     let color: Color
+    /// The account's SF Symbol, tinted with `color` (#170).
+    let symbol: String
 }
 
 
