@@ -72,7 +72,7 @@ functions (App Review Guidelines 2.5.2 / 2.4.5 (iv)).
 
 - Only things users need or clearly want to know. No "rate us", no sales
   pressure, no repeats under a new `id`.
-- Title ≤ 8 words, summary ≤ 2 sentences, sentence case, no exclamation marks.
+- Title ≤ 8 words (`check` allows 10), summary ≤ 2 sentences, sentence case, no exclamation marks.
 - Set `until` for everything time-bound.
 
 ## Publishing
