@@ -352,22 +352,30 @@ struct SectionHeader: View {
         HStack(spacing: 5) {
             Button(action: toggle) {
                 Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
+                    .font(.caption.weight(.bold))
                     .rotationEffect(.degrees(open ? 90 : 0))
-                    .frame(width: 12, height: 14)
+                    .frame(width: 12, height: 18)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .accessibilityLabel(open ? "„\(group.name)“ einklappen" : "„\(group.name)“ ausklappen")
             .accessibilityValue(open ? "Ausgeklappt" : "Eingeklappt")
+            // styled like the "Gruppen" headers (UserGroupHeader), so both
+            // views read the same and no header is smaller than its accounts (#171)
+            Image(systemName: group.sfSymbol)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+                .accessibilityHidden(true)
             Text(group.name)
             Spacer()
             Text(Money.format(group.balanceCents))
+                .font(.callout.weight(.semibold)) // same size as the account balances
                 .monospacedDigit()
                 .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(group.balanceCents < 0 && isLoanGroup ? Theme.loan : (group.balanceCents < 0 ? Theme.negative : Theme.secondary)))
         }
-        .font(.caption.weight(.semibold))
+        .font(.body.weight(.semibold)) // as big as the account names
         .foregroundStyle(.secondary)
     }
 }
@@ -409,12 +417,17 @@ struct AccountRow: View {
                     }
                 }
                 if let repaid {
-                    ProgressView(value: repaid)
-                        .progressViewStyle(.linear)
-                        .tint(Theme.loan.opacity(0.7))
-                        .controlSize(.mini)
-                        .frame(maxWidth: 110)
-                        .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+                    // in a line as tall as the bank name of other accounts, so
+                    // loan rows don't sit higher than their neighbours (#171)
+                    ZStack(alignment: .leading) {
+                        Text(verbatim: " ").font(.caption2).hidden()
+                        ProgressView(value: repaid)
+                            .progressViewStyle(.linear)
+                            .tint(Theme.loan.opacity(0.7))
+                            .controlSize(.mini)
+                            .frame(maxWidth: 110)
+                    }
+                    .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
                 } else if let date = account.archivedDate {
                     Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
