@@ -10,20 +10,16 @@ use crate::vault::Vault;
 
 use super::*;
 
-// ------------------------------------------------------------------ SEPA transfer session
-
-pub(super) struct TransferState {
-    pub(super) connector: Box<dyn BankConnector>,
-    pub(super) ctx: ConnectContext,
-    pub(super) job: TransferJob,
-    pub(super) account_id: i64,
+struct TransferState {
+    connector: Box<dyn BankConnector>,
+    ctx: ConnectContext,
+    job: TransferJob,
+    account_id: i64,
     /// false = still logging in, true = transfer submitted (waiting for TAN).
-    pub(super) submitted: bool,
-    pub(super) done: bool,
+    submitted: bool,
+    done: bool,
 }
 
-/// One SEPA transfer. Created by `Vault::begin_transfer`; same two-phase
-/// challenge handling as `SyncSession` (login SCA, then transfer SCA).
 /// After the order was handed to the bank, only errors that prove it was
 /// refused (wrong credentials, invalid input) mean "not executed". Anything
 /// else (network, garbled reply, ...) leaves the result unknown.
@@ -34,13 +30,35 @@ pub(super) fn error_leaves_outcome_unknown(e: &CoreError) -> bool {
     )
 }
 
+/// One SEPA transfer. Created by `Vault::begin_transfer`; same two-phase
+/// challenge handling as `SyncSession` (login SCA, then transfer SCA).
 #[derive(uniffi::Object)]
 pub struct TransferSession {
-    pub(super) vault: Arc<Vault>,
-    pub(super) state: AsyncMutex<TransferState>,
+    vault: Arc<Vault>,
+    state: AsyncMutex<TransferState>,
 }
 
 impl TransferSession {
+    pub(super) fn new(
+        vault: Arc<Vault>,
+        connector: Box<dyn BankConnector>,
+        ctx: ConnectContext,
+        job: TransferJob,
+        account_id: i64,
+    ) -> Self {
+        Self {
+            vault,
+            state: AsyncMutex::new(TransferState {
+                connector,
+                ctx,
+                job,
+                account_id,
+                submitted: false,
+                done: false,
+            }),
+        }
+    }
+
     async fn advance(
         &self,
         phase: CoreResult<Phase>,

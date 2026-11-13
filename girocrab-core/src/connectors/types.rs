@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use rusqlite::params;
 
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::tr;
@@ -376,45 +375,6 @@ impl ContentIds {
         *n += 1;
         id
     }
-}
-
-pub(super) fn is_content_id(id: &str, prefix: char) -> bool {
-    let mut c = id.chars();
-    id.len() == 17 && c.next() == Some(prefix) && c.all(|c| c.is_ascii_hexdigit())
-}
-
-/// One-time migration of ids from older versions: a booking stored under a
-/// legacy content id (`h…`, `DefaultHasher` / list position) with exactly the
-/// same content gets the new id instead of being imported a second time.
-pub(super) fn adopt_legacy_content_id(
-    tx: &rusqlite::Connection,
-    account_id: i64,
-    t: &RemoteTransaction,
-) -> CoreResult<()> {
-    if !is_content_id(&t.external_id, CONTENT_ID_PREFIX) {
-        return Ok(());
-    }
-    let pattern = format!("h{}", "[0-9a-f]".repeat(16));
-    tx.execute(
-        "UPDATE transactions SET external_id = ?1
-          WHERE id = (SELECT id FROM transactions
-                       WHERE account_id = ?2 AND external_id GLOB ?3
-                         AND booking_date = ?4 AND value_date = ?5 AND amount_cents = ?6
-                         AND counterparty = ?7 AND purpose = ?8
-                       ORDER BY id LIMIT 1)
-            AND NOT EXISTS (SELECT 1 FROM transactions WHERE account_id = ?2 AND external_id = ?1)",
-        params![
-            t.external_id,
-            account_id,
-            pattern,
-            t.booking_date,
-            t.value_date,
-            t.amount_cents,
-            t.counterparty,
-            t.purpose
-        ],
-    )?;
-    Ok(())
 }
 
 #[derive(Debug, Default)]

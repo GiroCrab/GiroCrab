@@ -5,7 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use rusqlite::{params, OptionalExtension};
-use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -14,6 +13,45 @@ use crate::secret::SecretString;
 use crate::vault::Vault;
 
 use super::*;
+
+pub(super) fn is_content_id(id: &str, prefix: char) -> bool {
+    let mut c = id.chars();
+    id.len() == 17 && c.next() == Some(prefix) && c.all(|c| c.is_ascii_hexdigit())
+}
+
+/// One-time migration of ids from older versions: a booking stored under a
+/// legacy content id (`h…`, `DefaultHasher` / list position) with exactly the
+/// same content gets the new id instead of being imported a second time.
+fn adopt_legacy_content_id(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+) -> CoreResult<()> {
+    if !is_content_id(&t.external_id, CONTENT_ID_PREFIX) {
+        return Ok(());
+    }
+    let pattern = format!("h{}", "[0-9a-f]".repeat(16));
+    tx.execute(
+        "UPDATE transactions SET external_id = ?1
+          WHERE id = (SELECT id FROM transactions
+                       WHERE account_id = ?2 AND external_id GLOB ?3
+                         AND booking_date = ?4 AND value_date = ?5 AND amount_cents = ?6
+                         AND counterparty = ?7 AND purpose = ?8
+                       ORDER BY id LIMIT 1)
+            AND NOT EXISTS (SELECT 1 FROM transactions WHERE account_id = ?2 AND external_id = ?1)",
+        params![
+            t.external_id,
+            account_id,
+            pattern,
+            t.booking_date,
+            t.value_date,
+            t.amount_cents,
+            t.counterparty,
+            t.purpose
+        ],
+    )?;
+    Ok(())
+}
 
 /// Persists accounts, bookings and documents of one fetch (shared by bank
 /// syncs and the keyless web-portal / statement import).
@@ -886,15 +924,12 @@ impl Vault {
             since,
             since_by_account,
         };
-        Ok(Arc::new(SyncSession {
-            vault: self.clone(),
+        Ok(Arc::new(SyncSession::new(
+            self.clone(),
             kind,
-            state: AsyncMutex::new(SessionState {
-                connector: make_connector_for(kind, &key_str, demo),
-                ctx,
-                done: false,
-            }),
-        }))
+            make_connector_for(kind, &key_str, demo),
+            ctx,
+        )))
     }
 }
 
@@ -1020,21 +1055,7 @@ impl Vault {
         }
         // Reuse the sync session set-up (settings, PIN, connector state).
         let sync = self.clone().begin_sync(connection_id, secret, demo)?;
-        let ctx = {
-            let st = sync
-                .state
-                .try_lock()
-                .map_err(|_| CoreError::SessionClosed)?;
-            ConnectContext {
-                connection_id: st.ctx.connection_id,
-                login_name: st.ctx.login_name.clone(),
-                secret: SecretString::new(st.ctx.secret.expose().to_string()),
-                settings: st.ctx.settings.clone(),
-                state: st.ctx.state.clone(),
-                since: st.ctx.since.clone(),
-                since_by_account: st.ctx.since_by_account.clone(),
-            }
-        };
+        let ctx = sync.clone_context()?;
         let job = TransferJob {
             source_iban: iban,
             source_owner: owner,
@@ -1050,17 +1071,13 @@ impl Vault {
             execution_date: exec_date,
             end_to_end_id: new_end_to_end_id(),
         };
-        Ok(Arc::new(TransferSession {
-            vault: self.clone(),
-            state: AsyncMutex::new(TransferState {
-                connector: make_connector_for(kind, &key_str, demo),
-                ctx,
-                job,
-                account_id: request.account_id,
-                submitted: false,
-                done: false,
-            }),
-        }))
+        Ok(Arc::new(TransferSession::new(
+            self.clone(),
+            make_connector_for(kind, &key_str, demo),
+            ctx,
+            job,
+            request.account_id,
+        )))
     }
 
     /// Known recipients (name + IBAN) from past outgoing bookings, most used

@@ -11,23 +11,56 @@ use crate::vault::Vault;
 
 use super::*;
 
-// ------------------------------------------------------------------ sync session (FFI object)
-
-pub(super) struct SessionState {
-    pub(super) connector: Box<dyn BankConnector>,
-    pub(super) ctx: ConnectContext,
-    pub(super) done: bool,
+struct SessionState {
+    connector: Box<dyn BankConnector>,
+    ctx: ConnectContext,
+    done: bool,
 }
 
 /// One sync run for one bank connection. Created by `Vault::begin_sync`.
 #[derive(uniffi::Object)]
 pub struct SyncSession {
-    pub(super) vault: Arc<Vault>,
-    pub(super) kind: ConnectorKind,
-    pub(super) state: AsyncMutex<SessionState>,
+    vault: Arc<Vault>,
+    kind: ConnectorKind,
+    state: AsyncMutex<SessionState>,
 }
 
 impl SyncSession {
+    pub(super) fn new(
+        vault: Arc<Vault>,
+        kind: ConnectorKind,
+        connector: Box<dyn BankConnector>,
+        ctx: ConnectContext,
+    ) -> Self {
+        Self {
+            vault,
+            kind,
+            state: AsyncMutex::new(SessionState {
+                connector,
+                ctx,
+                done: false,
+            }),
+        }
+    }
+
+    /// Copy of the prepared login context (settings, PIN, connector state),
+    /// e.g. to reuse the sync set-up for a transfer.
+    pub(super) fn clone_context(&self) -> CoreResult<ConnectContext> {
+        let st = self
+            .state
+            .try_lock()
+            .map_err(|_| CoreError::SessionClosed)?;
+        Ok(ConnectContext {
+            connection_id: st.ctx.connection_id,
+            login_name: st.ctx.login_name.clone(),
+            secret: SecretString::new(st.ctx.secret.expose().to_string()),
+            settings: st.ctx.settings.clone(),
+            state: st.ctx.state.clone(),
+            since: st.ctx.since.clone(),
+            since_by_account: st.ctx.since_by_account.clone(),
+        })
+    }
+
     async fn advance(
         &self,
         phase: CoreResult<Phase>,
