@@ -266,7 +266,11 @@ struct CredentialsSettings: View {
                         Text("GiroCrab-Registrierung (empfohlen)").tag("builtin")
                         Text("Eigene Registrierung").tag("own")
                     }
+                    #if os(macOS)
                     .pickerStyle(.radioGroup)
+                    #else
+                    .pickerStyle(.inline) // radio buttons do not exist on iOS; the inline list shows a checkmark
+                    #endif
                 }
                 // The own ID is entered right here, only when it is the one in use.
                 if !model.fintsBuiltinAvailable || model.fintsProductIDMode == "own" {
