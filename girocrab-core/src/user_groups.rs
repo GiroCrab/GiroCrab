@@ -90,6 +90,10 @@ const ACCOUNT_COLUMNS: &[(&str, &str)] = &[
     // archived accounts (GiroCrab/GiroCrab#43): time of archiving, NULL = active
     ("archived_unix", "INTEGER"),
     ("archived_ms", "INTEGER NOT NULL DEFAULT 0"),
+    // user-chosen SF Symbol (GiroCrab/GiroCrab#169), NULL = derived from the
+    // account kind; a separate column, so bank syncs never overwrite it
+    ("symbol_custom", "TEXT"),
+    ("symbol_ms", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 /// `user_groups` columns added after the first v7 table (name, definition).
@@ -357,22 +361,22 @@ pub(crate) fn merge_attached(
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
-        (Option<i64>, i64),
+        (Option<i64>, i64, Option<String>, i64),
     )> = tx
         .prepare(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
-                    archived_unix, archived_ms
+                    archived_unix, archived_ms, symbol_custom, symbol_ms
              FROM other.accounts",
         )?
         .query_map([], |r| {
             Ok((
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
-                (r.get(8)?, r.get(9)?),
+                (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?),
             ))
         })?
         .collect::<Result<_, _>>()?;
-    for ((oid, uuid, order, placed, name, named, color, colored), (archived, archived_ms)) in rows {
+    for ((oid, uuid, order, placed, name, named, color, colored), (archived, archived_ms, symbol, symbol_ms)) in rows {
         let Some(&id) = acc_map.get(&oid) else {
             continue;
         };
@@ -393,6 +397,10 @@ pub(crate) fn merge_attached(
         changed += tx.execute(
             "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3 WHERE id = ?1 AND (?4 OR archived_ms < ?3)",
             params![id, archived, archived_ms, fresh],
+        )? as u32;
+        changed += tx.execute(
+            "UPDATE accounts SET symbol_custom = ?2, symbol_ms = ?3 WHERE id = ?1 AND (?4 OR symbol_ms < ?3)",
+            params![id, symbol, symbol_ms, fresh],
         )? as u32;
     }
     changed += combine_same_names(tx)?;
@@ -972,6 +980,36 @@ impl Vault {
                                  archived_ms = ?3
              WHERE id = ?1",
             params![account_id, archived, now_ms()],
+        )?;
+        if n == 0 {
+            return Err(CoreError::NotFound {
+                what: trf("Konto {0}", &[&account_id]),
+            });
+        }
+        Ok(())
+    }
+
+    /// Sets an account's SF Symbol (GiroCrab/GiroCrab#169); `None` = back to
+    /// the symbol of its account kind. Stored apart from the derived symbol,
+    /// so a bank sync never replaces the user's choice.
+    pub fn set_account_symbol(
+        &self,
+        account_id: i64,
+        sf_symbol: Option<String>,
+    ) -> Result<(), CoreError> {
+        let symbol = match sf_symbol.map(|s| s.trim().to_string()) {
+            Some(s) if !s.is_empty() && s.len() <= 64 && !s.chars().any(char::is_whitespace) => Some(s),
+            Some(s) if s.is_empty() => None,
+            Some(s) => {
+                return Err(CoreError::InvalidInput {
+                    message: trf("Ungültiges Symbol: {0}", &[&s]),
+                })
+            }
+            None => None,
+        };
+        let n = self.db()?.execute(
+            "UPDATE accounts SET symbol_custom = ?2, symbol_ms = ?3 WHERE id = ?1",
+            params![account_id, symbol, now_ms()],
         )?;
         if n == 0 {
             return Err(CoreError::NotFound {

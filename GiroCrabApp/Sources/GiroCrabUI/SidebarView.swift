@@ -149,10 +149,16 @@ struct SidebarView: View {
         }
         .sheet(item: $budgetCategory) { box in BudgetEditorSheet(categoryID: box.id).environment(model) }
         .sheet(item: $model.symbolSheet) { target in SymbolSheet(target: target).environment(model) }
-        .task { // screenshots: --demo-sheet group-symbol
-            guard model.options.demoSheet == "group-symbol" else { return }
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            if let g = model.namedUserGroups.first { model.symbolSheet = .group(g.uuid) }
+        .task { // screenshots: --demo-sheet group-symbol / account-symbol
+            switch model.options.demoSheet {
+            case "group-symbol":
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                if let g = model.namedUserGroups.first { model.symbolSheet = .group(g.uuid) }
+            case "account-symbol":
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                if let a = model.allAccounts.first { model.symbolSheet = .account(a.id) }
+            default: break
+            }
         }
     }
 
@@ -279,6 +285,7 @@ struct SidebarView: View {
         ManualLoanAccountMenu(model: model, account: account)
         AccountGroupMenu(account: account)
         AccountColorMenu(account: account)
+        Button("Symbol …", systemImage: account.sfSymbol) { model.symbolSheet = .account(account.id) }
         Divider()
         if !account.isArchived, let cid = account.connectionId, let conn = model.connections.first(where: { $0.id == cid }) {
             Button("\(conn.displayName) abrufen", systemImage: "arrow.triangle.2.circlepath") { model.requestSync(conn) }

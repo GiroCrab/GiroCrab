@@ -499,7 +499,7 @@ public final class AppModel {
     var groupDialog: GroupDialog?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
-    /// "Symbol …" from a group's context menu (#167).
+    /// "Symbol …" from a context menu (account or group, #167/#169).
     var symbolSheet: SymbolSheetTarget?
     var expandedCategories: Set<Int64> = []
     var showRuleEditor = false {
@@ -2134,6 +2134,13 @@ public final class AppModel {
         case .userGroup(let uuid): userGroupAccountIDs(uuid).count > 1
         default: accountMarkers.count > 1
         }
+    }
+
+    /// The account's own symbol (#169); nil = the account kind's default.
+    func setAccountSymbol(_ accountId: Int64, symbol: String?) {
+        guard let vault else { return }
+        run { try vault.setAccountSymbol(accountId: accountId, sfSymbol: symbol) }
+        reloadAccounts()
     }
 
     func setAccountColor(_ accountId: Int64, hex: String?) {

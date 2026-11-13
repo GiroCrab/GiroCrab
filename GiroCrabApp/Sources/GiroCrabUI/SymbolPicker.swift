@@ -137,6 +137,7 @@ enum SymbolCatalog {
 
 /// What a "Symbol …" sheet edits.
 enum SymbolSheetTarget: Identifiable, Hashable {
+    case account(Int64)
     case group(String)
     var id: Self { self }
 }
@@ -276,7 +277,7 @@ private struct NativeSearchField: NSViewRepresentable {
 }
 #endif
 
-/// "Symbol …" from a context menu: the picker in a sheet,
+/// "Symbol …" from a context menu (account or group): the picker in a sheet,
 /// since a menu command has no control to anchor a popover to. Picking a
 /// symbol applies it and closes the sheet.
 struct SymbolSheet: View {
@@ -295,6 +296,14 @@ struct SymbolSheet: View {
 
     private var resolved: Resolved? {
         switch target {
+        case .account(let id):
+            guard let a = model.allAccounts.first(where: { $0.id == id }) else { return nil }
+            return Resolved(
+                name: a.name, symbol: a.sfSymbol, tint: model.accountColor(id),
+                set: { model.setAccountSymbol(id, symbol: $0) },
+                // without a choice the symbol follows the account kind (#169)
+                reset: a.customSymbol ? { model.setAccountSymbol(id, symbol: nil) } : nil
+            )
         case .group(let uuid):
             guard let g = model.userGroups.first(where: { $0.uuid == uuid }) else { return nil }
             return Resolved(

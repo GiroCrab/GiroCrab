@@ -1294,7 +1294,7 @@ impl Vault {
         let db = self.db()?;
         let mut stmt = db.prepare(
             "SELECT a.id, a.connection_id, c.connector, a.group_id, a.name, a.bank_name, a.owner, a.iban, a.account_number,
-                    a.currency, a.kind, a.balance_cents, a.balance_date, a.sf_symbol, a.sort_order,
+                    a.currency, a.kind, a.balance_cents, a.balance_date, IFNULL(a.symbol_custom, a.sf_symbol), a.sort_order,
                     (SELECT count(*) FROM transactions t WHERE t.account_id = a.id AND t.deleted_ms IS NULL),
                     -- uncategorised, split-aware like `category_match_sql(\"IS NULL\")`
                     (SELECT count(*) FROM transactions t WHERE t.account_id = a.id AND t.category_id IS NULL AND t.deleted_ms IS NULL
@@ -1305,7 +1305,7 @@ impl Vault {
                     (SELECT count(*) FROM transactions t WHERE t.account_id = a.id AND t.checked = 0 AND t.deleted_ms IS NULL),
                     a.initial_balance_cents, g.uuid, IFNULL(g.include_in_total, 1) AND a.archived_unix IS NULL,
                     a.color_hex, IFNULL(c.connector, ''), IFNULL(c.bank_code, ''), IFNULL(c.login_name, ''), a.external_ref,
-                    a.archived_unix, a.access_revoked
+                    a.archived_unix, a.access_revoked, a.symbol_custom IS NOT NULL
              FROM accounts a LEFT JOIN bank_connections c ON c.id = a.connection_id
              LEFT JOIN user_groups g ON g.uuid = a.user_group_uuid AND g.deleted_ms IS NULL
              WHERE a.deleted_ms IS NULL
@@ -1358,6 +1358,7 @@ impl Vault {
                 },
                 archived_unix: r.get(26)?,
                 access_revoked: r.get::<_, i64>(27)? != 0,
+                custom_symbol: r.get(28)?,
             })
         })?;
         let mut accounts = rows.collect::<Result<Vec<_>, _>>()?;

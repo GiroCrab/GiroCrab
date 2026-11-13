@@ -216,6 +216,8 @@ pub struct Account {
     /// The bank / PSD2 consent no longer grants access (e.g. not included in a
     /// renewed Enable Banking consent). Kept with its bookings, not synced.
     pub access_revoked: bool,
+    /// `sf_symbol` is the user's choice (#169), not the account kind's default.
+    pub custom_symbol: bool,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]

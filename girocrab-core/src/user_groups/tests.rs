@@ -1268,3 +1268,48 @@ fn archived_state_syncs_and_newest_change_wins() {
     assert_eq!(archived(&c, "Giro"), None);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn account_symbol_survives_bank_sync_and_syncs_both_ways() {
+    // GiroCrab/GiroCrab#169
+    let dir = temp_dir("symbols");
+    let key = vec![7u8; 32];
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let ia = seed(&a);
+    seed(&b);
+    let giro = |v: &Vault| {
+        let x = v.list_accounts().unwrap().into_iter().find(|x| x.name == "Giro").unwrap();
+        (x.sf_symbol, x.custom_symbol, x.id)
+    };
+    let default = giro(&a).0;
+    assert!(!giro(&a).1);
+
+    assert!(a.set_account_symbol(ia[0], Some("two words".into())).is_err());
+    assert!(a.set_account_symbol(999, Some("car".into())).is_err());
+    a.set_account_symbol(ia[0], Some("car".into())).unwrap();
+    assert_eq!(giro(&a).0, "car");
+    assert!(giro(&a).1);
+
+    // a bank sync rewrites the derived symbol – the user's choice stays
+    a.db()
+        .unwrap()
+        .execute("UPDATE accounts SET sf_symbol = 'creditcard' WHERE id = ?1", [ia[0]])
+        .unwrap();
+    assert_eq!(giro(&a).0, "car");
+
+    // the choice syncs to the other device …
+    tick();
+    b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    assert_eq!(giro(&b).0, "car");
+    assert!(giro(&b).1);
+
+    // … and so does going back to the default
+    b.set_account_symbol(giro(&b).2, None).unwrap();
+    tick();
+    a.merge_other_vault(b.file_path(), key.clone()).unwrap();
+    assert!(!giro(&a).1);
+    assert_eq!(giro(&a).0, "creditcard", "back to the derived symbol");
+    assert_ne!(default, "car");
+    let _ = std::fs::remove_dir_all(dir);
+}
