@@ -13,7 +13,7 @@ struct SettingsView: View {
         @Bindable var model = model
         TabView(selection: $model.settingsTab) {
             GeneralSettings()
-                .settingsPane(height: 340)   // "Sprache" + "Buchungen" + "Demo"
+                .settingsPane(height: 380)   // "Sprache" + "Mitteilungen" + "Buchungen" + "Demo"
                 .tabItem { Label("Allgemein", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
             BankConnectionsSettings()
