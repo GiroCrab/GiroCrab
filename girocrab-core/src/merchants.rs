@@ -1095,8 +1095,8 @@ fn needle_in(text: &str, needle: &str) -> bool {
 }
 
 /// Sub-brands that the counterparty only shows under the parent company's legal
-/// entity ("Telekom Deutschland GmbH" bills fraenk and congstar). When the
-/// purpose names the sub-brand, it wins over the parent.
+/// entity ("Fraenk - eine Marke der Telekom Deutschland GmbH"). When the
+/// counterparty or purpose names the sub-brand, it wins over the parent.
 const SUB_BRANDS: &[(&str, &[&str])] = &[("telekom", &["fraenk", "congstar"])];
 
 fn entry_by_key(key: &str) -> Option<&'static Entry> {
@@ -1652,7 +1652,7 @@ impl MerchantResolver {
                 if let Some(sub) = subs
                     .iter()
                     .filter_map(|k| entry_by_key(k))
-                    .find(|sub| sub.needles.iter().any(|n| needle_in(&pu, n)))
+                    .find(|sub| sub.needles.iter().any(|n| needle_in(&ctx, n)))
                 {
                     return to_info(sub);
                 }
@@ -2168,6 +2168,11 @@ mod tests {
             "congstar"
         );
         assert_eq!(name("Telekom Deutschland GmbH", "Festnetz"), "Telekom");
+        // Real booking (#204): the counterparty itself names both brands.
+        assert_eq!(
+            name("Fraenk - eine Marke der Telekom Deu tschland GmbH", ""),
+            "fraenk"
+        );
     }
 
     #[test]
