@@ -687,6 +687,11 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "category":
+            // edit sheet of the first sub-category (#168)
+            if let c = categories.first(where: { $0.depth > 0 }) {
+                newCategoryRequest = NewCategoryRequest(parent: c.parentId, editing: c.id)
+            }
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = .lastMonth
@@ -2387,6 +2392,17 @@ public final class AppModel {
         guard let vault else { return }
         run { _ = try vault.createCategory(name: name, parentId: parent, sfSymbol: symbol, colorHex: color) }
         reloadCategories()
+    }
+
+    /// Name, parent, symbol and colour of an existing category (#168).
+    func updateCategory(_ category: GiroCrabCore.Category, name: String, parent: Int64?, symbol: String, color: String) {
+        guard let vault else { return }
+        run {
+            try vault.updateCategory(id: category.id, name: name, parentId: parent,
+                                     sfSymbol: symbol, colorHex: color)
+        }
+        reloadCategories()
+        reloadBookings()
     }
 
     /// "Hauptkategorie › Unterkategorie" for a category id (nil = top level).

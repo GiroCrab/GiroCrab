@@ -148,6 +148,15 @@ struct AccountGroupMenu: View {
     }
 }
 
+/// Names of the account colour palette (tooltips, accessibility).
+enum AccountColorNames {
+    static let names: [String: LocalizedStringKey] = [
+        "#2563EB": "Blau", "#D97706": "Bernstein", "#059669": "Grün", "#DB2777": "Pink",
+        "#7C3AED": "Violett", "#0891B2": "Cyan", "#DC2626": "Rot", "#65A30D": "Limette",
+        "#C026D3": "Fuchsia", "#EA580C": "Orange", "#4F46E5": "Indigo", "#0D9488": "Petrol",
+    ]
+}
+
 /// "Symbol & Farbe …" of an account or group: colour palette and symbol
 /// grid in one popover, like MoneyMoney. A click applies immediately.
 struct IconColorPopover: View {
@@ -155,11 +164,7 @@ struct IconColorPopover: View {
     let target: IconColorTarget
 
     private static let palette = accountColorPalette()
-    private static let names: [String: LocalizedStringKey] = [
-        "#2563EB": "Blau", "#D97706": "Bernstein", "#059669": "Grün", "#DB2777": "Pink",
-        "#7C3AED": "Violett", "#0891B2": "Cyan", "#DC2626": "Rot", "#65A30D": "Limette",
-        "#C026D3": "Fuchsia", "#EA580C": "Orange", "#4F46E5": "Indigo", "#0D9488": "Petrol",
-    ]
+    private static let names = AccountColorNames.names
 
     private var account: Account? {
         if case .account(let id) = target { return model.account(for: id) }
