@@ -499,6 +499,8 @@ public final class AppModel {
     var groupDialog: GroupDialog?
     /// The account / group whose "Symbol & Farbe" popover is open.
     var iconColorTarget: IconColorTarget?
+    /// "Symbol …" sheet: the searchable symbol picker (#167).
+    var symbolSheet: SymbolSheetTarget?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
     /// "Belege & PostBox" filtered to one account (#172); nil = all accounts.
@@ -2189,6 +2191,13 @@ public final class AppModel {
     func setAccountColor(_ accountId: Int64, hex: String?) {
         guard let vault else { return }
         run { try vault.setAccountColor(accountId: accountId, colorHex: hex) }
+        reloadAccounts()
+    }
+
+    /// Back to the symbol of the account kind; a bank sync keeps a chosen symbol.
+    func resetAccountSymbol(_ accountId: Int64) {
+        guard let vault else { return }
+        run { try vault.resetAccountSymbol(accountId: accountId) }
         reloadAccounts()
     }
 

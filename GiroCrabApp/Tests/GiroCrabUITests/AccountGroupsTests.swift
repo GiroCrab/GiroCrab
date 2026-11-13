@@ -391,7 +391,7 @@ final class AccountGroupsTests: XCTestCase {
             switch rng.next() % 6 {
             case 0 where groups.count < 6:
                 created += 1
-                model.createUserGroup(name: "G\(created)", symbol: GroupSymbols.all[Int(rng.next() % 12)])
+                model.createUserGroup(name: "G\(created)", symbol: SymbolCatalog.sections.flatMap { $0.items.map(\.symbol) }[Int(rng.next() % 12)])
             case 1 where !groups.isEmpty:
                 let a = accounts[Int(rng.next() % UInt64(accounts.count))]
                 let g = groups[Int(rng.next() % UInt64(groups.count))]

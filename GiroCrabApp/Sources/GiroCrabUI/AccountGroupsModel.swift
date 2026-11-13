@@ -83,20 +83,6 @@ enum GroupDialog {
     }
 }
 
-/// Symbols offered for accounts and groups – one list for both, the
-/// account types' own symbols first.
-enum GroupSymbols {
-    static let named: [(symbol: String, name: LocalizedStringKey)] = [
-        ("building.columns", "Bank"), ("banknote", "Geld"), ("creditcard", "Kreditkarte"),
-        ("envelope.circle", "Bezahldienst"), ("chart.line.uptrend.xyaxis", "Depot"), ("eurosign.circle", "Bargeld"),
-        ("house", "Haus"), ("folder", "Ordner"), ("person", "Person"), ("person.2", "Paar"),
-        ("figure.and.child.holdinghands", "Familie"), ("briefcase", "Beruf"), ("building.2", "Firma"),
-        ("heart", "Herz"), ("graduationcap", "Ausbildung"), ("airplane", "Reisen"),
-        ("chart.pie", "Vermögen"), ("wallet.bifold", "Geldbörse"), ("bitcoinsign.circle", "Krypto"),
-    ]
-    static var all: [String] { named.map(\.symbol) }
-}
-
 /// What the "Symbol & Farbe" popover edits.
 enum IconColorTarget: Equatable {
     case account(Int64)
