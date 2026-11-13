@@ -225,7 +225,7 @@ final class AccountGroupsTests: XCTestCase {
 
         // onto "Ohne Gruppe": top level, at the end
         XCTAssertTrue(model.dropUserGroup(c, onto: g(a), before: false))
-        let ungrouped = UserGroup(uuid: "", name: "", sfSymbol: "", sortOrder: 0, includeInTotal: true,
+        let ungrouped = UserGroup(uuid: "", name: "", sfSymbol: "", colorHex: "", sortOrder: 0, includeInTotal: true,
                                   inTotal: true, isUngrouped: true, parentUuid: nil, depth: 0,
                                   balanceCents: 0, accounts: [])
         XCTAssertTrue(model.dropUserGroup(c, onto: ungrouped, before: false))
