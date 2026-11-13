@@ -508,12 +508,24 @@ impl BunqConnector {
         key: &str,
         since: &str,
     ) -> CoreResult<Vec<Value>> {
+        self.list_since_api(first, key, since)
+            .await
+            .map_err(ApiError::into_core)
+    }
+
+    /// `list_since` keeping the HTTP status of a failed page.
+    async fn list_since_api(
+        &mut self,
+        first: String,
+        key: &str,
+        since: &str,
+    ) -> ApiResult<Vec<Value>> {
         let mut out = Vec::new();
         let mut path = Some(first);
         let mut pages = 0;
         while let Some(p) = path.take() {
             pages += 1;
-            let v = self.get(&p).await.map_err(ApiError::into_core)?;
+            let v = self.get(&p).await?;
             let mut reached_since = false;
             for item in v["Response"].as_array().into_iter().flatten() {
                 let obj = &item[key];
@@ -866,12 +878,12 @@ impl BunqConnector {
     }
 
     /// Card authorisations (MasterCardAction) of the last weeks.
-    async fn card_actions(&mut self, account_id: i64, since: &str) -> CoreResult<Vec<Value>> {
+    async fn card_actions(&mut self, account_id: i64, since: &str) -> ApiResult<Vec<Value>> {
         let first = format!(
             "/v1/user/{}/monetary-account/{account_id}/mastercard-action?count=200",
             self.state.user_id
         );
-        self.list_since(first, "MasterCardAction", since).await
+        self.list_since_api(first, "MasterCardAction", since).await
     }
 
     /// Payment ids booked for a card action (`…/mastercard-action/{id}/payment`).
@@ -900,7 +912,7 @@ impl BunqConnector {
         account_id: i64,
         account: &RemoteAccount,
         payments: &mut [RemoteTransaction],
-    ) -> CoreResult<Vec<RemoteTransaction>> {
+    ) -> ApiResult<Vec<RemoteTransaction>> {
         // Always the full window: an old hold (hotel, rental car) must not
         // vanish just because this sync only asks for recent bookings.
         // Foreign-currency notes are therefore added for recent payments only.
@@ -1624,10 +1636,8 @@ impl BankConnector for BunqConnector {
     }
 
     async fn fetch(&mut self, ctx: &ConnectContext) -> CoreResult<FetchResult> {
-        let mut out = FetchResult {
-            hold_prefix: Some(HOLD_PREFIX.into()),
-            ..Default::default()
-        };
+        let mut out = FetchResult::default();
+        let mut holds_ok = true;
         // Incremental syncs only ask for the last days, but receipts can be
         // added to older payments: list the whole receipt window.
         let receipt_since = (chrono::Local::now().date_naive()
@@ -1654,18 +1664,34 @@ impl BankConnector for BunqConnector {
             out.documents.extend(receipts);
             let statements = self.statements(id, &account).await;
             out.documents.extend(statements);
-            // Accounts without a card can refuse this endpoint: holds are optional.
-            let holds = self
-                .card_details(id, &account, &mut txs)
-                .await
-                .unwrap_or_default();
+            let holds = match self.card_details(id, &account, &mut txs).await {
+                Ok(holds) => holds,
+                // Accounts without a card can refuse this endpoint: they have no holds.
+                Err(e) if refuses_card_actions(e.status) => Vec::new(),
+                // Network or server trouble: the list is incomplete, keep the stored holds.
+                Err(_) => {
+                    holds_ok = false;
+                    Vec::new()
+                }
+            };
             out.transactions.extend(txs);
             out.transactions.extend(holds);
             out.accounts.push(account);
         }
+        // Claim the hold list as complete (stale holds are removed) only when
+        // every card-action request worked.
+        if holds_ok {
+            out.hold_prefix = Some(HOLD_PREFIX.into());
+        }
         out.state = Some(serde_json::to_value(&self.state).unwrap_or(Value::Null));
         Ok(out)
     }
+}
+
+/// HTTP status meaning "this account has no card actions" rather than a failure.
+/// 429 (rate limit) and 401 (session gone) are failures: the holds may still exist.
+fn refuses_card_actions(status: u16) -> bool {
+    matches!(status, 400 | 403 | 404 | 405)
 }
 
 #[cfg(test)]
@@ -1724,6 +1750,19 @@ mod tests {
         let v: Value = serde_json::from_slice(body).unwrap();
         assert_eq!(find(&v, "Token")["token"], "abc");
         assert_eq!(key_fingerprint("k").len(), 16);
+    }
+
+    #[test]
+    fn card_action_refusals() {
+        assert!(refuses_card_actions(404));
+        assert!(refuses_card_actions(403));
+        for status in [0, 401, 429, 500, 503] {
+            assert!(!refuses_card_actions(status), "{status}");
+        }
+        assert!(
+            HOLD_PREFIX.starts_with("pending-"),
+            "Booking.is_pending relies on it"
+        );
     }
 
     #[test]
@@ -2281,8 +2320,10 @@ mod tests {
                 Ok(a) => a,
                 Err(e) => {
                     println!(
-                        "account {}: card actions unavailable ({e})",
-                        acc.kind.as_str()
+                        "account {}: card actions unavailable ({} {})",
+                        acc.kind.as_str(),
+                        e.status,
+                        e.message
                     );
                     continue;
                 }
