@@ -375,13 +375,18 @@ struct SectionHeader: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel(open ? "„\(group.name)“ einklappen" : "„\(group.name)“ ausklappen")
             .accessibilityValue(open ? "Ausgeklappt" : "Eingeklappt")
+            // same size as the account rows below and the "Gruppen" headers (#171)
+            Image(systemName: group.sfSymbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+                .accessibilityHidden(true)
             Text(group.name)
             Spacer()
             Text(Money.format(group.balanceCents))
                 .monospacedDigit()
                 .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(group.balanceCents < 0 && isLoanGroup ? Theme.loan : (group.balanceCents < 0 ? Theme.negative : Theme.secondary)))
         }
-        .font(.caption.weight(.semibold))
+        .font(.body.weight(.semibold))
         .foregroundStyle(.secondary)
     }
 }
@@ -423,12 +428,17 @@ struct AccountRow: View {
                     }
                 }
                 if let repaid {
-                    ProgressView(value: repaid)
-                        .progressViewStyle(.linear)
-                        .tint(Theme.loan.opacity(0.7))
-                        .controlSize(.mini)
-                        .frame(maxWidth: 110)
-                        .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+                    // in a line as tall as the bank name of other accounts, so
+                    // loan rows don't sit higher than their neighbours (#171)
+                    ZStack(alignment: .leading) {
+                        Text(verbatim: " ").font(.caption2).hidden()
+                        ProgressView(value: repaid)
+                            .progressViewStyle(.linear)
+                            .tint(Theme.loan.opacity(0.7))
+                            .controlSize(.mini)
+                            .frame(maxWidth: 110)
+                    }
+                    .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
                 } else if let date = account.archivedDate {
                     Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
