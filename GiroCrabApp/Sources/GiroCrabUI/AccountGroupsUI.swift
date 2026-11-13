@@ -220,7 +220,7 @@ struct IconColorPopover: View {
                     Image(systemName: SymbolCatalog.exists(symbol) ? symbol : "questionmark")
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 22)
-                    Text(SymbolCatalog.name(of: symbol).map { Text($0) } ?? Text("Symbol wählen"))
+                    (SymbolCatalog.name(of: symbol).map { Text($0) } ?? Text("Symbol wählen"))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
