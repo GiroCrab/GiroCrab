@@ -171,6 +171,16 @@ struct IconColorPopover: View {
     }
     private var colorHex: String { (account?.colorHex ?? group?.colorHex ?? "").uppercased() }
     private var symbol: String { account?.sfSymbol ?? group?.sfSymbol ?? "" }
+    /// The palette, plus the current colour first if it is not in it (e.g.
+    /// from an import), so the current choice is always marked.
+    private var swatches: [String] {
+        colorHex.isEmpty || Self.palette.contains(colorHex) ? Self.palette : [colorHex] + Self.palette
+    }
+    /// The chosen colour, else the accent (also marks the current symbol).
+    private var tint: Color {
+        if let account { return model.accountColor(account.id) }
+        return colorHex.isEmpty ? Theme.accent : Color.readable(hex: colorHex)
+    }
 
     private func setColor(_ hex: String?) {
         if let account { model.setAccountColor(account.id, hex: hex) }
@@ -184,8 +194,8 @@ struct IconColorPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Farbe").font(.headline)
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 6), count: 7), spacing: 6) {
-                ForEach(Self.palette, id: \.self) { hex in
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 6), count: 7), alignment: .leading, spacing: 6) {
+                ForEach(swatches, id: \.self) { hex in
                     Button { setColor(hex) } label: {
                         Circle().fill(Color.readable(hex: hex))
                             .frame(width: 20, height: 20)
@@ -204,35 +214,26 @@ struct IconColorPopover: View {
                 .foregroundStyle(.secondary)
                 .focusEffectDisabled()
                 .help(account != nil ? Text("Standardfarbe") : Text("Keine Farbe"))
+                // any other colour: the system colour well (like the category sheet)
+                ColorPicker("Eigene Farbe", selection: Binding(
+                    get: { colorHex.isEmpty ? Theme.accent : Color(hex: colorHex) },
+                    set: { if let hex = $0.hexRGB { setColor(hex) } }
+                ), supportsOpacity: false)
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 26, height: 20)
+                .help("Eigene Farbe")
             }
+            .frame(maxWidth: .infinity, alignment: .leading) // under its heading, not centred
             Divider()
             Text("Symbol").font(.headline)
-            // icon and name, two columns: easier to find than icons alone
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 2), spacing: 2) {
-                ForEach(GroupSymbols.named, id: \.symbol) { item in
-                    Button { setSymbol(item.symbol) } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: item.symbol)
-                                .font(.system(size: 13, weight: .semibold))
-                                .frame(width: 22)
-                            Text(item.name).lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .contentShape(Rectangle())
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(item.symbol == symbol ? Theme.accent.opacity(0.25) : Color.clear)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .focusEffectDisabled()
-                }
-            }
+            // the shared, searchable picker (#167) instead of a fixed list;
+            // a click applies the symbol and the popover stays open
+            SymbolPicker(selection: Binding(get: { symbol }, set: setSymbol), tint: tint)
+                .padding(.horizontal, -14) // full popover width for the grid
         }
         .padding(14)
-        .frame(width: 340)
+        .frame(width: SymbolPicker.size.width)
     }
 }
 
@@ -557,6 +558,7 @@ struct GroupDetailEditor: View {
     /// default: pop back (iOS navigation).
     var onGone: (() -> Void)?
     @State private var name = ""
+    @State private var iconColorOpen = false
 
     private var group: UserGroup? { model.userGroups.first { $0.uuid == uuid } }
 
@@ -567,25 +569,22 @@ struct GroupDetailEditor: View {
                     TextField("Name", text: $name)
                         .onSubmit { commitName() }
                 }
-                Section("Symbol") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 40), spacing: 8)], spacing: 8) {
-                        ForEach(GroupSymbols.all, id: \.self) { s in
-                            Button { model.updateUserGroup(g, symbol: s) } label: {
-                                Image(systemName: s)
-                                    .font(.title3)
-                                    .frame(width: 38, height: 38)
-                                    .background(RoundedRectangle(cornerRadius: 8).fill(s == g.sfSymbol ? Theme.accent.opacity(0.18) : Color.clear))
-                                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(s == g.sfSymbol ? Theme.accent : Theme.tertiary.opacity(0.3)))
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(s == g.sfSymbol ? Theme.accent : Theme.secondary)
-                            .accessibilityLabel(GroupSymbols.named.first { $0.symbol == s }.map { Text($0.name) } ?? Text(verbatim: s))
-                            .help(GroupSymbols.named.first { $0.symbol == s }.map { Text($0.name) } ?? Text(verbatim: s))
-                            .accessibilityAddTraits(s == g.sfSymbol ? .isSelected : [])
+                Section {
+                    // the same "Symbol & Farbe" popover as the sidebar's group menu
+                    LabeledContent("Symbol & Farbe") {
+                        Button { iconColorOpen = true } label: {
+                            Image(systemName: g.sfSymbol)
+                                .foregroundStyle(g.colorHex.isEmpty ? Theme.accent : Color.readable(hex: g.colorHex))
+                                .frame(width: 24, height: 22)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.accent.opacity(0.12)))
+                                .contentShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("Symbol & Farbe …"))
+                        .popover(isPresented: $iconColorOpen, arrowEdge: .trailing) {
+                            IconColorPopover(target: .group(g.uuid)).environment(model)
                         }
                     }
-                    .padding(.vertical, 4)
                 }
                 Section {
                     Picker("Übergeordnete Gruppe", selection: Binding(

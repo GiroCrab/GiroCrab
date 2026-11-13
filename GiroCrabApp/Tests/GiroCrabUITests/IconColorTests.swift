@@ -16,11 +16,17 @@ final class IconColorTests: XCTestCase {
 
     func testSymbolListOffersEveryAccountTypesOwnSymbol() throws {
         // the symbols the core gives accounts by type must all be choosable
-        let offered = Set(GroupSymbols.all)
+        let all = SymbolCatalog.sections.flatMap { $0.items.map(\.symbol) }
+        let offered = Set(all)
         for a in model.allAccounts {
             XCTAssertTrue(offered.contains(a.sfSymbol), "\(a.name): \(a.sfSymbol) missing")
         }
-        XCTAssertEqual(offered.count, GroupSymbols.all.count, "no duplicates")
+        // every kind's own symbol, not only those of the demo accounts
+        for s in ["building.columns", "banknote", "creditcard", "envelope.circle",
+                  "chart.line.uptrend.xyaxis", "eurosign.circle", "house"] {
+            XCTAssertTrue(offered.contains(s), "\(s) missing")
+        }
+        XCTAssertEqual(offered.count, all.count, "no duplicates")
     }
 
     func testGroupColourAndSymbolViaModel() throws {

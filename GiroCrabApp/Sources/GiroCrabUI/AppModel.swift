@@ -679,6 +679,9 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "icon-color":
+            // the "Symbol & Farbe" popover of the first account (#167)
+            if let a = allAccounts.first { iconColorTarget = .account(a.id) }
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = .lastMonth
