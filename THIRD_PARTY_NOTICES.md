@@ -15,6 +15,7 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 | **`getrandom`** | `0.4.3` | `MIT OR Apache-2.0` | [https://github.com/rust-random/getrandom](https://github.com/rust-random/getrandom) |
 | **`hex`** | `0.4.3` | `MIT OR Apache-2.0` | [https://github.com/KokaKiwi/rust-hex](https://github.com/KokaKiwi/rust-hex) |
 | **`jsonwebtoken`** | `12.0.0` | `MIT` | [https://github.com/Keats/jsonwebtoken](https://github.com/Keats/jsonwebtoken) |
+| **`openssl`** | `0.10.82` | `Apache-2.0` | [https://github.com/rust-openssl/rust-openssl](https://github.com/rust-openssl/rust-openssl) |
 | **`miniz_oxide`** | `0.9.1` | `MIT OR Zlib OR Apache-2.0` | [https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide](https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide) |
 | **`libc`** | `0.2.191` | `MIT OR Apache-2.0` | [https://github.com/rust-lang/libc](https://github.com/rust-lang/libc) |
 | **`p256`** | `0.14.0` | `Apache-2.0 OR MIT` | [https://github.com/RustCrypto/elliptic-curves](https://github.com/RustCrypto/elliptic-curves/tree/master/p256) |

@@ -16,7 +16,7 @@ serde = []
 
 [dependencies]
 uniffi = { version = "0.32", features = ["tokio"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 rusqlite = { version = "0.42", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 zeroize = { version = "1.9", features = ["zeroize_derive"] }
 async-trait = "0.1"
@@ -33,6 +33,7 @@ rsa = { version = "0.10", features = ["encoding", "getrandom", "pkcs1v15"] }
 getrandom = { version = "0.4", features = ["sys_rng"] }
 p256 = { version = "0.14", features = ["ecdsa"] }
 sha2 = "0.11"
+openssl = { version = "0.10", features = ["vendored"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rand = "0.9"
 hex = "0.4"
