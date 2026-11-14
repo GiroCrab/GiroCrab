@@ -101,7 +101,7 @@ public final class AppModel {
     }
     /// `recurring` by `baseKey`: every booking row asks `recurringSeries(for:)`,
     /// a lookup instead of a scan over all series.
-    private var recurringByKey: [String: [RecurringSeries]] = [:]
+    var recurringByKey: [String: [RecurringSeries]] = [:]
     /// Recurring bookings of the current month: booked vs. still due.
     var recurringMonth: RecurringMonthOverview?
     var showRecurringSheet = false
@@ -1160,7 +1160,7 @@ public final class AppModel {
     }
 
     /// Loads the list far enough back to contain `day` (plus some older context).
-    private func loadBookings(through day: String) {
+    func loadBookings(through day: String) {
         guard let vault, let total = page?.totalCount, UInt32(bookings.count) < total else { return }
         if let oldest = dayGroups.last?.date, day >= oldest { return }
         // count the bookings from that day on
@@ -1417,7 +1417,7 @@ public final class AppModel {
     /// A synchronous reload while a background selection load is still running:
     /// drop that load and bring everything it would have delivered up to date
     /// now, so its older result can never overwrite fresher data.
-    private func settlePendingSelectionLoad() {
+    func settlePendingSelectionLoad() {
         guard selectionLoadTask != nil else { return }
         endSelectionLoad()
         refreshSalaryCycle()
@@ -1617,7 +1617,7 @@ public final class AppModel {
     // MARK: - Pay cycle (GitHub #37)
 
     /// Accounts of the sidebar selection; empty = all accounts.
-    private var selectionAccountIDs: [Int64] {
+    var selectionAccountIDs: [Int64] {
         switch sidebarSelection {
         case .account(let id): return [id]
         case .group(let gid): return groups.first(where: { $0.id == gid })?.accounts.map(\.id) ?? []
@@ -1771,73 +1771,6 @@ public final class AppModel {
         run { try vault.setAutoStatements(accountId: account.id, enabled: on) }
     }
 
-    // MARK: - Recurring bookings (GitHub #35)
-
-    func refreshRecurring() {
-        settlePendingSelectionLoad()
-        guard let vault else { recurring = []; recurringMonth = nil; return }
-        let ids = selectionAccountIDs
-        let c = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: Date())
-        run {
-            let snapshot = try vault.recurringSnapshot(accountIds: ids, year: Int32(c.year ?? 2026), month: UInt32(c.month ?? 1))
-            recurring = snapshot.series
-            recurringHidden = snapshot.ignored
-            recurringMonth = snapshot.month
-        }
-    }
-
-    /// The recurring series a booking belongs to, if any.
-    func recurringSeries(for b: Booking) -> RecurringSeries? {
-        guard !b.recurrenceKey.isEmpty else { return nil }
-        return recurringByKey[b.recurrenceKey]?.first { s in
-            (!s.amountSpecific || abs(b.amountCents - s.amountCents) * 100 <= abs(s.amountCents) * 15)
-        }
-    }
-
-    func markRecurring(_ b: Booking, _ interval: RecurrenceInterval, customDates: [String] = []) {
-        guard let vault else { return }
-        run { try vault.markBookingRecurring(bookingId: b.id, interval: interval, customDates: customDates) }
-        refreshRecurring()
-    }
-
-    /// "Nicht wiederkehrend" for a detected or marked series.
-    func ignoreRecurring(_ s: RecurringSeries) {
-        guard let vault else { return }
-        run { try vault.ignoreRecurring(seriesKey: s.seriesKey) }
-        refreshRecurring()
-    }
-
-    /// Back to automatic detection (also shows a hidden series again).
-    func resetRecurring(_ s: RecurringSeries) { resetRecurring(key: s.seriesKey) }
-
-    func resetRecurring(key: String) {
-        guard let vault else { return }
-        run { try vault.resetRecurring(seriesKey: key) }
-        refreshRecurring()
-    }
-
-    /// Selects a booking in the list, widening the period if it is outside of it.
-    func revealBooking(_ id: Int64) {
-        if booking(withID: id) == nil {
-            sidebarSelection = .allAccounts
-            period = .all
-            directionFilter = .all
-            statusFilter = .all
-            searchText = ""
-        }
-        // After a closing sheet / list reload, so the list can scroll to the row.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard let self else { return }
-            // an older booking is not on the first page: load back to its day
-            if booking(withID: id) == nil, let day = try? vault?.bookingDate(bookingId: id) {
-                loadBookings(through: day)
-            }
-            if selectedBookingID == id { selectedBookingID = nil }
-            selectedBookingID = id
-        }
-    }
-
     // MARK: - Core-call helper
 
     func run(_ body: () throws -> Void) {
@@ -1883,7 +1816,7 @@ public final class AppModel {
         dayGroups = out
     }
 
-    private func booking(withID id: Booking.ID) -> Booking? {
+    func booking(withID id: Booking.ID) -> Booking? {
         bookingIndexByID[id].map { bookings[$0] }
     }
 
