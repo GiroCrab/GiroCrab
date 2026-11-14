@@ -72,7 +72,7 @@ final class ICloudFolderMigrationTests: XCTestCase {
         try requireSnapshotName()
         try put(snapshot, in: old, "old")
         try put(snapshot, in: new, "new")
-        let r = ICloudFolderMigration.resolve(cloudDocs: root)
+        let r = ICloudFolderMigration.resolve(cloudDocs: root, migratedByThisApp: true)
         XCTAssertEqual(r, .init(url: new, conflict: false))
         XCTAssertEqual(try String(contentsOf: new.appendingPathComponent(snapshot), encoding: .utf8), "new")
     }
@@ -140,10 +140,93 @@ extension ICloudFolderMigrationTests {
         try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -100)], ofItemAtPath: file.path)
         try Data("n".utf8).write(to: old.appendingPathComponent("notes.txt"))
         XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated, hashes: hashes))
-        XCTAssertEqual(try fm.contentsOfDirectory(atPath: old.path).sorted(), ["notes.txt", snap])
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: old.path).sorted(), ["GIROCRAB_MOVED.txt", "notes.txt", snap])
     }
 
     func test_legacy_check_without_old_folder_is_false() {
         XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: fm.temporaryDirectory.appendingPathComponent(UUID().uuidString), since: .distantPast, hashes: [:]))
+    }
+}
+
+/// Moved marker, both-folders conflict, iOS decisions.
+extension ICloudFolderMigrationTests {
+    private func makeRoot() throws -> URL {
+        let root = fm.temporaryDirectory.appendingPathComponent("icloud-mig4-\(UUID().uuidString)")
+        try fm.createDirectory(at: root.appendingPathComponent("moneymoney"), withIntermediateDirectories: true)
+        addTeardownBlock { [fm] in try? fm.removeItem(at: root) }
+        return root
+    }
+
+    private var snapName: String { "tresor-01234567-89ab-cdef-0123-456789abcdef.girocrab" }
+
+    func test_marker_written_after_migration_and_vault_files_untouched() throws {
+        let root = try makeRoot()
+        let old = root.appendingPathComponent("moneymoney"), new = root.appendingPathComponent("GiroCrab")
+        let file = old.appendingPathComponent(snapName)
+        try Data("vault".utf8).write(to: file)
+        let before = try fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
+        XCTAssertTrue(ICloudFolderMigration.resolve(cloudDocs: root).didMigrate)
+        XCTAssertTrue(ICloudFolderMigration.hasMovedMarker(in: old))
+        XCTAssertEqual(try String(contentsOf: old.appendingPathComponent("GIROCRAB_MOVED.txt"), encoding: .utf8), ICloudFolderMigration.movedMarkerText)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "vault")
+        XCTAssertEqual(try fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date, before)
+        // the marker is not copied, and it is neither a vault file nor a legacy change
+        XCTAssertFalse(ICloudFolderMigration.hasMovedMarker(in: new))
+        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: .distantPast, hashes: ICloudFolderMigration.vaultHashes(in: old)))
+        // two sentences per language, old folder name never mentioned
+        XCTAssertFalse(ICloudFolderMigration.movedMarkerText.localizedCaseInsensitiveContains("moneymoney"))
+        XCTAssertTrue(ICloudFolderMigration.movedMarkerText.contains("„GiroCrab“") && ICloudFolderMigration.movedMarkerText.contains("“GiroCrab”"))
+    }
+
+    func test_no_marker_without_migration() throws {
+        let root = try makeRoot()
+        let old = root.appendingPathComponent("moneymoney"), new = root.appendingPathComponent("GiroCrab")
+        try Data("v".utf8).write(to: old.appendingPathComponent(snapName))
+        try fm.createDirectory(at: new, withIntermediateDirectories: true)
+        try Data("f".utf8).write(to: new.appendingPathComponent("foreign.txt"))
+        XCTAssertTrue(ICloudFolderMigration.resolve(cloudDocs: root).conflict)
+        XCTAssertFalse(ICloudFolderMigration.hasMovedMarker(in: old))
+    }
+
+    func test_both_folders_with_vault_not_migrated_by_this_app_keeps_old() throws {
+        let root = try makeRoot()
+        let old = root.appendingPathComponent("moneymoney"), new = root.appendingPathComponent("GiroCrab")
+        try Data("old".utf8).write(to: old.appendingPathComponent(snapName))
+        try fm.createDirectory(at: new, withIntermediateDirectories: true)
+        try Data("new".utf8).write(to: new.appendingPathComponent(snapName))
+        let r = ICloudFolderMigration.resolve(cloudDocs: root)
+        XCTAssertEqual(r.url, old)
+        XCTAssertTrue(r.bothHaveVault)
+        XCTAssertFalse(r.conflict)
+        XCTAssertFalse(r.didMigrate)
+        // nothing written anywhere
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: old.path), [snapName])
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: new.path), [snapName])
+        XCTAssertEqual(try String(contentsOf: new.appendingPathComponent(snapName), encoding: .utf8), "new")
+    }
+
+    func test_ios_hint_only_when_marker_present() throws {
+        let root = try makeRoot()
+        let old = root.appendingPathComponent("moneymoney")
+        // a folder with the old name but no marker: no hint
+        XCTAssertFalse(CloudSyncManager.folderWasMoved(old))
+        try Data("x".utf8).write(to: old.appendingPathComponent("GIROCRAB_MOVED.txt"))
+        XCTAssertTrue(CloudSyncManager.folderWasMoved(old))
+        // a differently named folder with the marker also shows it
+        let other = root.appendingPathComponent("Anderer")
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        XCTAssertFalse(CloudSyncManager.folderWasMoved(other))
+        try Data("x".utf8).write(to: other.appendingPathComponent("GIROCRAB_MOVED.txt"))
+        XCTAssertTrue(CloudSyncManager.folderWasMoved(other))
+    }
+
+    func test_ios_new_vault_needs_confirmation_only_without_vault() throws {
+        let root = try makeRoot()
+        let dir = root.appendingPathComponent("moneymoney")
+        XCTAssertTrue(ICloudFolderMigration.needsNewVaultConfirmation(dir))
+        try Data("x".utf8).write(to: dir.appendingPathComponent("foreign.txt"))
+        XCTAssertTrue(ICloudFolderMigration.needsNewVaultConfirmation(dir))
+        try Data("v".utf8).write(to: dir.appendingPathComponent(snapName))
+        XCTAssertFalse(ICloudFolderMigration.needsNewVaultConfirmation(dir))
     }
 }

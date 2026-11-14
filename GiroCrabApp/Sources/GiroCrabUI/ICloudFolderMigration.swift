@@ -14,6 +14,8 @@ enum ICloudFolderMigration {
         var url: URL
         /// "GiroCrab" is occupied by foreign files, so the old folder stays in use: show a hint.
         var conflict: Bool
+        /// Both folders hold a vault and this app did not migrate: no automatic switch, show a hint.
+        var bothHaveVault = false
         /// The data was copied just now (record the time, see `legacyChanged`).
         var didMigrate = false
         /// SHA-256 (hex) of each vault file in the old folder at migration time, by file name.
@@ -22,19 +24,46 @@ enum ICloudFolderMigration {
 
     /// Decides the folder inside `cloudDocs` (iCloud Drive root) and migrates if due.
     /// With `create`, a new "GiroCrab" folder is created when neither exists.
-    static func resolve(cloudDocs: URL, create: Bool = true, fm: FileManager = .default) -> Resolution {
+    /// `migratedByThisApp`: this app copied the data before (a vault in "GiroCrab" is then its own).
+    static func resolve(cloudDocs: URL, create: Bool = true, migratedByThisApp: Bool = false, fm: FileManager = .default) -> Resolution {
         let new = cloudDocs.appendingPathComponent(folderName, isDirectory: true)
         let old = cloudDocs.appendingPathComponent(legacyFolderName, isDirectory: true)
         guard SyncFolder.containsVault(old) else {
             if create { try? fm.createDirectory(at: new, withIntermediateDirectories: true) }
             return Resolution(url: new, conflict: false)
         }
-        if SyncFolder.containsVault(new) { return Resolution(url: new, conflict: false) }
+        if SyncFolder.containsVault(new) {
+            return migratedByThisApp
+                ? Resolution(url: new, conflict: false)
+                : Resolution(url: old, conflict: false, bothHaveVault: true)
+        }
         if !isEmpty(new, fm) { return Resolution(url: old, conflict: true) }
         guard create else { return Resolution(url: old, conflict: false) }
         guard copy(from: old, to: new, cloudDocs: cloudDocs, fm: fm) else { return Resolution(url: old, conflict: false) }
+        writeMovedMarker(in: old)
         return Resolution(url: new, conflict: false, didMigrate: true, legacyHashes: vaultHashes(in: old, fm: fm))
     }
+
+    /// Marker the old folder gets after a successful migration. Vault files stay untouched.
+    static let movedMarkerName = "GIROCRAB_MOVED.txt"
+    static let movedMarkerText = """
+        Die Daten dieser Synchronisierung liegen jetzt im Ordner „GiroCrab“ in iCloud Drive. Bitte aktualisieren Sie alle Geräte auf die neueste GiroCrab-Version.
+
+        The data of this sync now lives in the “GiroCrab” folder in iCloud Drive. Please update all devices to the latest GiroCrab version.
+
+        """
+
+    private static func writeMovedMarker(in old: URL) {
+        try? Data(movedMarkerText.utf8).write(to: old.appendingPathComponent(movedMarkerName), options: .atomic)
+    }
+
+    /// Whether the folder carries the marker (iOS: the picked folder was moved).
+    static func hasMovedMarker(in dir: URL, fm: FileManager = .default) -> Bool {
+        fm.fileExists(atPath: dir.appendingPathComponent(movedMarkerName).path)
+    }
+
+    /// iOS: a picked folder without a vault would get a NEW vault; the user confirms first.
+    static func needsNewVaultConfirmation(_ dir: URL) -> Bool { !SyncFolder.containsVault(dir) }
 
     /// Whether `url` is the former folder (iOS: the picked folder).
     static func isLegacyFolder(_ url: URL) -> Bool { url.lastPathComponent == legacyFolderName }
