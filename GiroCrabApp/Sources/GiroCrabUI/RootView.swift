@@ -73,7 +73,9 @@ public struct GiroCrabScenes: Scene {
             CommandGroup(replacing: .importExport) {
                 Button("Aus MoneyMoney importieren …") { model.openMoneyMoneyImport() }
                     .disabled(!model.isUnlocked)
-                Button("Buchungen als CSV exportieren …") { model.exportFilteredBookingsCSV() }
+                Button("Umsätze exportieren …") { model.openBookingExport() }
+                    .disabled(!model.isUnlocked)
+                Button("Umsätze als CSV exportieren …") { model.exportFilteredBookingsCSV() }
                     .disabled(!model.isUnlocked)
             }
             CommandGroup(replacing: .printItem) {
