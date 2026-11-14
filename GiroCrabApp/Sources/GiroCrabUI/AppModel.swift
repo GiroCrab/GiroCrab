@@ -280,6 +280,8 @@ public final class AppModel {
     private(set) var vault: Vault?
     /// Manual loans (GitHub #36), see ManualLoansUI.swift.
     @ObservationIgnored let loanStore = ManualLoanStore()
+    /// Sachwerte (GitHub #87), see TangibleAssetsUI.swift.
+    @ObservationIgnored let assetStore = AssetStore()
     var vaultState: VaultState = .locked
     /// The vault is open and the lock screen shows the crab's unlock hop for a moment.
     var unlockCelebrating = false
@@ -681,6 +683,11 @@ public final class AppModel {
             if let q = options.pickBooking, let b = bookings.first(where: { $0.merchantName.lowercased().contains(q) || $0.counterparty.lowercased().contains(q) }) {
                 selectedBookingID = b.id
             }
+            // Sachwerte (#87): --pick also selects an item by name
+            if let q = options.pickBooking, case .account(let id) = sidebarSelection, isTangible(id),
+               let item = assetItems(id).first(where: { $0.setup.name.lowercased().contains(q) }) {
+                selectAssetItem(item.id)
+            }
             if let sheet = options.demoSheet {
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 600_000_000)
@@ -873,6 +880,8 @@ public final class AppModel {
         selectedBookingID = nil
         sidebarSelection = .allAccounts
         reloadAll()
+        // Sachwerte: the demo's gold items load real prices from the API
+        refreshAssetPrices()
         #if os(macOS)
         selectedBookingID = (bookings.first(where: { $0.flow == .consumption && $0.documentCount > 0 }) ?? bookings.first(where: { $0.flow == .consumption }))?.id
         #endif
@@ -895,6 +904,7 @@ public final class AppModel {
             selectedBookingID = nil
             sidebarSelection = .allAccounts
             reloadAll()
+            refreshAssetPrices()
             #if os(macOS)
             // iPhone: a preselected booking would push the detail page over the list.
             selectedBookingID = (bookings.first(where: { $0.flow == .consumption && $0.documentCount > 0 }) ?? bookings.first(where: { $0.flow == .consumption }))?.id
@@ -1592,6 +1602,9 @@ public final class AppModel {
            let firstChange = points.indices.dropFirst().first(where: { points[$0].balanceCents != points[$0 - 1].balanceCents }) {
             // keep one point before the first change
             points = Array(points[(firstChange - 1)...])
+        } else if from == nil, points.count > 366 {
+            // nothing ever changed (e.g. a depot without bookings): the last year is enough
+            points = Array(points.suffix(366))
         }
         return points
     }
@@ -2258,7 +2271,7 @@ public final class AppModel {
 
     var headerBalance: (label: String, cents: Int64)? {
         switch sidebarSelection {
-        case .account(let id): return allAccounts.first { $0.id == id }.map { (String(localized: "Kontostand"), $0.balanceCents) }
+        case .account(let id): return allAccounts.first { $0.id == id }.map { (isTangible(id) ? String(localized: "Wert heute") : String(localized: "Kontostand"), $0.balanceCents) }
         case .group(let id): return groups.first { $0.id == id }.map { (String(localized: "Summe"), $0.balanceCents) }
         case .userGroup(let uuid): return userGroups.first { $0.uuid == uuid }.map { (String(localized: "Summe"), $0.balanceCents) }
         case .allAccounts, .none: return (String(localized: "Verfügbar (Giro, Tagesgeld, Karten)"), liquidBalance)
@@ -2329,6 +2342,7 @@ public final class AppModel {
 
     fileprivate func rebuildAccountIndex() {
         reloadLoans()
+        reloadAssets()
         let accounts = allAccounts
         accountsByID = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         func base(_ a: Account) -> String { a.name.replacingOccurrences(of: " (MoneyMoney)", with: "") }
@@ -3308,6 +3322,7 @@ public final class AppModel {
     /// Runs `logins` one after another; read once the banking policy is fresh.
     private func requestSyncBatch(_ logins: @escaping @MainActor () -> [BankConnection]) {
         guard syncingConnectionID == nil else { return }
+        refreshAssetPrices()
         withFreshBankingPolicy { [self] in
             guard syncingConnectionID == nil else { return }
             let batch = logins()
