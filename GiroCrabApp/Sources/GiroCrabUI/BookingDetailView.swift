@@ -120,6 +120,18 @@ struct ReceiptCard: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let source = model.amazonRefundSource(booking) {
+                // refund: jump to the order it belongs to (same order code)
+                Button {
+                    model.selectedBookingID = source.id
+                } label: {
+                    Label("Erstattung zu: \(source.items)", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.accent)
+                .help("Zur erstatteten Bestellung springen")
+            }
             Toggle("Geprüft", isOn: Binding(get: { booking.checked }, set: { model.setChecked($0, for: booking) }))
                 .toggleStyle(.switch)
                 .controlSize(.small)

@@ -432,6 +432,14 @@ struct DayCardRow: View {
 struct BookingRow: View {
     @Environment(AppModel.self) private var model
     let booking: Booking
+    /// Amazon orders: drill-down of all items (and the refunded order's items)
+    /// below the row; collapsed rows keep the uniform list height.
+    @State private var amazonExpanded = false
+
+    private var amazonRef: AmazonOrderRef? {
+        AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain,
+                             bookingText: booking.bookingText)
+    }
 
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -441,7 +449,8 @@ struct BookingRow: View {
     #endif
 
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
             MerchantSignet(merchant: booking.merchant, categorySymbol: booking.categorySymbol, showNewDot: !booking.checked)
                 .opacity(booking.isPending ? 0.7 : 1)
                 .overlay {
@@ -481,23 +490,29 @@ struct BookingRow: View {
                     // category with the sidebar's icon and colour, then the payment method
                     BookingCategoryLabel(booking: booking)
                         .layoutPriority(1)
-                    if let ref = AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain, bookingText: booking.bookingText) {
-                        // Amazon order: what was ordered beats the "Bestellung" kind label
-                        if !ref.items.isEmpty {
-                            Text("· \(ref.items)")
+                    if let ref = amazonRef {
+                        // Amazon order: what was ordered beats the "Bestellung" kind label.
+                        // Refunds show the refunded order's items (joined via the order code).
+                        let refundSource = ref.isRefund ? model.amazonRefundSource(booking) : nil
+                        let itemsText = refundSource.map { "· ↩ \($0.items)" }
+                            ?? (ref.items.isEmpty ? nil : "· \(ref.items)")
+                        if let itemsText {
+                            Text(itemsText)
                                 .font(.callout)
                                 .foregroundStyle(Theme.secondary)
                                 .lineLimit(1)
                                 .layoutPriority(-1)
-                                .help(ref.itemList.joined(separator: "\n"))
+                                .help(ref.isRefund
+                                      ? "Erstattung für Bestellung #\(ref.code)"
+                                      : ref.itemList.joined(separator: "\n"))
                         }
                         if ref.moreCount > 0 {
-                            // multi-item orders: the rest as its own compact badge, not inline text
+                            // items beyond the two shown; the drill-down lists everything
                             Text("+\(ref.moreCount) weitere")
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(Theme.tertiary)
                                 .lineLimit(1)
-                                .help(ref.itemList.dropFirst().joined(separator: "\n"))
+                                .help(ref.itemList.dropFirst(2).joined(separator: "\n"))
                         }
                         if ref.isSubscription {
                             // "D01-…" charges are the recurring Spar-Abo, plain orders are one-off
@@ -513,6 +528,16 @@ struct BookingRow: View {
                             .lineLimit(1)
                             .fixedSize()
                             .layoutPriority(-1)
+                        // drill-down when there is more than the head can show
+                        if ref.itemList.count > 1 || refundSource != nil {
+                            Button { amazonExpanded.toggle() } label: {
+                                Image(systemName: amazonExpanded ? "chevron.down" : "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(Theme.tertiary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help(amazonExpanded ? "Artikel einklappen" : "Alle Artikel anzeigen")
+                        }
                     } else if !booking.paymentMethod.isEmpty {
                         Text("· \(booking.paymentMethod)")
                             .font(.callout)
@@ -550,7 +575,27 @@ struct BookingRow: View {
                     }
                 }
         }
-        .frame(minHeight: 44)
+        if amazonExpanded, let ref = amazonRef {
+            // drill-down: every item on its own line, indented under the signet
+            VStack(alignment: .leading, spacing: 2) {
+                if let source = model.amazonRefundSource(booking) {
+                    Text("Erstattung zu:").font(.caption2).foregroundStyle(Theme.tertiary)
+                    ForEach(source.list, id: \.self) { item in
+                        Text(item).font(.callout).foregroundStyle(Theme.secondary)
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    ForEach(ref.itemList, id: \.self) { item in
+                        Text(item).font(.callout).foregroundStyle(Theme.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .padding(.leading, 48)
+            .padding(.bottom, 4)
+        }
+        }
+        .frame(minHeight: 44, alignment: .top)
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
         .background(RowSelectionBackground(id: booking.id))

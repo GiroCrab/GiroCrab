@@ -1,4 +1,5 @@
 import Foundation
+import GiroCrabCore
 
 /// Order info extracted from an Amazon-orders booking purpose.
 ///
@@ -30,6 +31,9 @@ struct AmazonOrderRef: Equatable {
     /// Same wording and dash (en dash) as `purpose()` in amazon_orders.rs.
     private static let orderSuffix = " – Bestellung "
     private static let refundPrefix = "Erstattung für Bestellung "
+
+    /// True when this ref describes a refund booking (not an order).
+    var isRefund: Bool { items == "Erstattung" }
 
     /// Parses an Amazon-orders booking purpose; nil for any other booking.
     ///
@@ -66,7 +70,9 @@ struct AmazonOrderRef: Equatable {
         let itemsPart = purpose[..<suffix.lowerBound].trimmingCharacters(in: .whitespaces)
         guard isOrderCode(code), !itemsPart.isEmpty else { return nil }
         let itemList = itemsPart.split(separator: "; ", omittingEmptySubsequences: true).map(String.init)
-        return AmazonOrderRef(items: itemList.first ?? "", moreCount: itemList.count - 1,
+        // Most orders carry one or two items — show both, count only the rest.
+        let head = itemList.prefix(2).joined(separator: ", ")
+        return AmazonOrderRef(items: head, moreCount: max(0, itemList.count - 2),
                               itemList: itemList, code: code,
                               isSubscription: code.hasPrefix("D"), domain: shop)
     }
@@ -84,5 +90,25 @@ struct AmazonOrderRef: Equatable {
 
     private static func isASCIIDigit(_ c: Character) -> Bool {
         c.asciiValue.map { (0x30...0x39).contains($0) } ?? false
+    }
+}
+
+extension AppModel {
+    /// The order a refund booking belongs to: same account, same order code.
+    /// Returns its display items, full item list and booking id, so the row can
+    /// show what the refund is for and the detail view can jump to the original.
+    func amazonRefundSource(_ booking: Booking) -> (items: String, list: [String], id: Booking.ID)? {
+        guard let ref = AmazonOrderRef.parse(purpose: booking.purpose,
+                                             merchantDomain: booking.merchantDomain,
+                                             bookingText: booking.bookingText),
+              ref.isRefund else { return nil }
+        for other in bookings where other.accountId == booking.accountId && other.id != booking.id {
+            guard let o = AmazonOrderRef.parse(purpose: other.purpose,
+                                               merchantDomain: other.merchantDomain,
+                                               bookingText: other.bookingText),
+                  o.code == ref.code, !o.isRefund else { continue }
+            return (o.items, o.itemList, other.id)
+        }
+        return nil
     }
 }

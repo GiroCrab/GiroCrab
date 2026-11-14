@@ -16,10 +16,17 @@ final class AmazonOrderRefTests: XCTestCase {
 
     func testMultiItemOrderCountsRemainingSegments() {
         let r = parse("USB-Kabel; Buch; 4× AA Zellen – Bestellung 028-0171190-7789978")!
-        XCTAssertEqual(r.items, "USB-Kabel")
-        XCTAssertEqual(r.moreCount, 2)
+        // the row shows the first two items, the rest becomes "+N weitere"
+        XCTAssertEqual(r.items, "USB-Kabel, Buch")
+        XCTAssertEqual(r.moreCount, 1)
         XCTAssertEqual(r.itemList, ["USB-Kabel", "Buch", "4× AA Zellen"])
         XCTAssertEqual(r.code, "028-0171190-7789978")
+    }
+
+    func testTwoItemOrderShowsBothItems() {
+        let r = parse("RayNeo Lens Shade; Magicfly Textilfarbe – Bestellung 028-9527653-7863537")!
+        XCTAssertEqual(r.items, "RayNeo Lens Shade, Magicfly Textilfarbe")
+        XCTAssertEqual(r.moreCount, 0)
     }
 
     func testSubscriptionChargeCode() {
