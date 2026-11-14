@@ -32,3 +32,5 @@ miniz_oxide = "0.9"
 
 [build-dependencies]
 cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
+# Reads the Mac app's string catalog for the English UI (i18n, build.rs).
+serde_json = "1"

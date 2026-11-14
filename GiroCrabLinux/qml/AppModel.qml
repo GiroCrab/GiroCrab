@@ -2599,7 +2599,7 @@ QtObject {
     function customDateDisplay(mmdd) {
         const p = mmdd.split("-").map(Number)
         if (p.length !== 2 || isNaN(p[0]) || isNaN(p[1])) return mmdd
-        return new Date(2024, p[0] - 1, p[1]).toLocaleDateString(Fmt.locale, "d. MMMM")
+        return new Date(2024, p[0] - 1, p[1]).toLocaleDateString(Fmt.locale, Fmt.pattern("d. MMMM"))
     }
     /// CustomDates.parse: "15.03.", "15.3", "03-15" → valid MM-DD (sorted) and unreadable tokens.
     function parseCustomDates(text) {
