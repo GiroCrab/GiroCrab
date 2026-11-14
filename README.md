@@ -11,12 +11,12 @@
 <p align="center">FinTS 3.0 · PSD2 · SEPA · MoneyMoney-Import — 100&nbsp;% lokal verschlüsselt, ohne Abo, ohne Cloud-Zwang.</p>
 
 <p align="center">
-  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.6.1 · Apple Silicon (.dmg)" width="260" height="56"></a>
+  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.6.3 · Apple Silicon (.dmg)" width="260" height="56"></a>
   &nbsp;
   <a href="https://testflight.apple.com/join/KBmvKVpT"><img src="docs/assets/download-ios.svg" alt="iOS &amp; iPadOS App – kostenlos via Apple TestFlight" width="260" height="56"></a>
 </p>
 
-<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.6.1</sub></p>
+<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.6.3</sub></p>
 
 <p align="center">
   <a href="https://github.com/GiroCrab/GiroCrab/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/GiroCrab/GiroCrab?label=release&color=2ea44f"></a>
@@ -54,9 +54,16 @@ zu Ihren Banken per **FinTS 3.0 / HBCI** und **PSD2 (Enable Banking)** – ohne 
 
 *Angaben zu Drittprodukten ohne Gewähr; GiroCrab ist unabhängig von diesen Anbietern. Auch als Alternative zu Banking4, Bank X oder Pecunia gedacht, die einen lokalen Mac-Client suchen.*
 
-### ✨ Neu in v0.6.2
+### ✨ Neu in v0.6.3
 
-*Aktuell als Beta `v0.6.2-beta.1` für Tester (Kanal „Beta“); die stabile Version bleibt v0.6.1.*
+- 🏦 **FinTS: Einschritt-Fallback bei Fehler 9010 (#313):** lehnt die Bank die Dialoginitialisierung mit TAN-Prozess 4 ab, versucht GiroCrab es einmalig im Einschritt-Verfahren 999 und merkt sich die Präferenz für die Verbindung.
+- 🧾 **SEPA-Referenzen werden gespeichert:** End-to-End-ID, Mandatsreferenz und Gläubiger-ID landen bankunabhängig am Umsatz (Schema 12) – befüllt von comdirect, FinTS/CAMT und Enable Banking (Mandatsreferenz). Die SEPA-Rohdaten sind in der Buchung aufklappbar (#320). Vor dem Testen eine Sicherungskopie des Tresors anlegen, falls ältere Versionen ihn wieder öffnen sollen.
+- 🔄 **comdirect-Paging korrigiert:** Kontoumsätze blättern bei voller Seite weiter, die PostBox lädt bis zu 500 statt 50 Dokumente.
+- 🪙 **bunq:** externe Sparkonten werden als Sparkonto erkannt, Konten in Auflösung übersprungen.
+- 🏷️ **Kategorien (#94):** eine manuell gesetzte Kategorie oder ein ETF-Sparplan hat Vorrang vor der Eigenkonto-IBAN-Heuristik; Umbuchungen bleiben nur bei unkategorisierten Buchungen automatisch erkannt.
+- 🛡️ **Weitere Korrekturen:** MoneyMoney-Passworthinweis (#321), Symlink-Schutz beim Kontoauszug-Import (#318), iOS-Entsperrtext, Sheet-Breiten auf dem iPhone und Mindestdauer des Krabben-Splash (#317) sowie Hinweise bei lang laufenden Tresor-Zugriffen mit Zählung per SQL-Aggregat (#266).
+
+**Highlights aus v0.6.2:**
 
 - 🧮 **Startsaldo für Konten mit berechnetem Saldo (#212, #227):** wie in MoneyMoney lässt sich ein Startsaldo mit optionalem Stichtag festlegen und per „Kalibrieren“ aus dem letzten Kontostand ableiten; der MoneyMoney-Datenbankimport übernimmt ihn. Entfernen setzt den Saldo auf die reine Umsatzsumme zurück.
 - 🗄️ **Versionierte Schema-Migrationen mit Downgrade-Schutz (#206, #232):** Tresore werden in nummerierten Schritten migriert; ein Tresor aus einer neueren Version wird nicht geöffnet. Diese Version hebt Tresore auf **Schema 10** – vor dem Testen eine Sicherungskopie anlegen, falls v0.6.1 den Tresor wieder öffnen soll.
@@ -171,20 +178,38 @@ nur um Kategorie und Notiz ergänzt.
 
 Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erkennung und Bank-Konnektoren; `GiroCrabApp` (SwiftUI) ist die native Oberfläche für macOS und iOS. **Mitwirken:** siehe [CONTRIBUTING.md](CONTRIBUTING.md) – bitte lassen Sie sich ein Issue **vor Arbeitsbeginn zuweisen** (Ausnahme: Kleinstkorrekturen).
 
-### Bank-Unterstützung
+### Unterstützte Banken & Schnittstellen
 
-| Institut | Verfahren | Status |
-|---|---|---|
-| Volksbanken & Sparda-Banken (Atruvia) / Postbank / DKB / 1822direkt – oder jede FinTS-3.0-Bank per BLZ + URL | FinTS 3.0 PIN/TAN (HKCAZ/camt, HKKAZ/MT940, Darlehen) | ✅ Unterstützt |
-| comdirect | Offizielle REST-API | ✅ Unterstützt |
-| quirion / Quirin Privatbank | Browser-Anmeldung, interne Portal-API | ✅ Depot, Positionen inkl. berechneter GuV, Konten, Umsatzhistorie und PDF-Archiv |
-| bunq | Offizielle API, persönlicher API-Schlüssel | ✅ Unterstützt |
-| PayPal | Transaction-Search-API | ✅ Unterstützt |
-| Trade Republic | WebSocket (inoffiziell) | ⚠️ Unterstützt, kann brechen |
-| American Express / Amazon Visa | PSD2 via Enable Banking | ✅ Unterstützt |
-| ING, N26, Scalable Capital, Consorsbank, Santander | – | 🙋 **Help Wanted** |
+<!-- sync:connectors:start -->
+| Bank | Schnittstelle | Umsätze | Salden | Depot | Überweisung | Dauerauftrag | PDF/Postfach | Status |
+|---|---|---|---|---|---|---|---|---|
+| 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verifiziert |
+| Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
+| FinTS-Bank (BLZ + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verifiziert |
+| ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
+| Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verifiziert |
+| bunq | REST-API | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
+| comdirect | REST-API | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
+| Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
+| PayPal | REST-API | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
+| Scalable Capital | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
+| Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
+| American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
+| Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
+| Weitere Banken per PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen |
+| Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | 🧪 Test gesucht |
+| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
+| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
+| Trade Republic | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ⚠️ Mit Einschränkungen |
+
+Weitere deutsche Banken mit FinTS 3.0 (PIN/TAN) lassen sich über BLZ und FinTS-URL anbinden (2.010 Institute im FinTS-Verzeichnis); europäische PSD2-Banken über Enable Banking mit einer eigenen, kostenlosen Anwendung.
+
+<sub>✅ mit echten Konten getestet · 🧪 implementiert, Rückmeldungen aus der Praxis willkommen (Issue verlinkt) · ⚠️ bekannte Einschränkungen · ✓ umgesetzt · – nicht umgesetzt. Bei FinTS hängen Depot und PDF-Kontoauszüge vom Angebot der jeweiligen Bank ab.</sub>
+<!-- sync:connectors:end -->
 
 quirion: Einrichtung, technische Details und geprüfter Umfang stehen in [docs/quirion-connector.md](docs/quirion-connector.md).
+
+FNZ Bank / ebase / finvesto: Einrichtung, Konto- und Depotumsätze, Fondspositionen, PDF-Archiv und Einschränkungen stehen in [docs/fnz-connector.md](docs/fnz-connector.md).
 
 Eine neue Bank anzubinden dauert meist unter 100 Zeilen: siehe
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) und [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -210,7 +235,7 @@ Die Demo enthält fiktive Konten und erfundene Buchungen – keine echten Daten.
 ### 📦 Download (macOS)
 
 Das fertige Disk-Image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) gibt es unter [GitHub Releases](../../releases) – ohne Rust oder Xcode.
-Aktuelle Version: **v0.6.1**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
+Aktuelle Version: **v0.6.3**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
 **iPhone / iPad:** [TestFlight-Beta beitreten](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel-Macs:** Die offiziellen Binaries sind nur für Apple Silicon (`arm64`). Auf Intel-Macs lässt sich GiroCrab mit Swift/Xcode selbst aus dem Quellcode bauen (siehe [Schnellstart](#schnellstart)).
@@ -252,9 +277,16 @@ recognition, savings-plan view, loan repayment progress and direct connections t
 
 *Information about third-party products without guarantee; GiroCrab is independent of these vendors.*
 
-### ✨ What's new in v0.6.2
+### ✨ What's new in v0.6.3
 
-*Currently available as beta `v0.6.2-beta.1` for testers (“Beta” channel); the stable version stays v0.6.1.*
+- 🏦 **FinTS: single-step fallback on error 9010 (#313):** if the bank rejects dialog initialisation with TAN process 4, GiroCrab retries once with single-step method 999 and remembers the preference for that connection.
+- 🧾 **SEPA references are stored:** end-to-end ID, mandate reference and creditor ID are kept per booking, independent of the bank (schema 12) – filled by comdirect, FinTS/CAMT and Enable Banking (mandate reference). Raw SEPA data can be expanded in the booking (#320). Make a vault backup first if you may want to open it in an older version again.
+- 🔄 **comdirect paging fixed:** account transactions keep paging on full pages, and the PostBox loads up to 500 instead of 50 documents.
+- 🪙 **bunq:** external savings accounts are recognised as savings accounts, accounts being closed are skipped.
+- 🏷️ **Categories (#94):** a manually set category or an ETF savings plan takes precedence over the own-account IBAN heuristic; transfers are still detected automatically for uncategorised bookings.
+- 🛡️ **More fixes:** MoneyMoney password hint (#321), symlink protection for statement import (#318), iOS unlock text, sheet widths on iPhone and minimum duration of the crab splash (#317), plus reporting of long-running vault accesses and counts via SQL aggregate (#266).
+
+**Highlights from v0.6.2:**
 
 - 🧮 **Opening balance for accounts with a computed balance (#212, #227):** as in MoneyMoney, set an opening balance with an optional cut-off date and derive it from the latest statement balance with “Calibrate”; the MoneyMoney database import picks it up. Removing it falls back to the plain sum of the bookings.
 - 🗄️ **Versioned schema migrations with downgrade protection (#206, #232):** vaults migrate in numbered steps; a vault written by a newer version is refused. This version upgrades vaults to **schema 10** – make a backup copy first if you may want to open the vault in v0.6.1 again.
@@ -356,18 +388,34 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 
 **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) – please ask to be **assigned to an issue before you start** (tiny fixes excepted).
 
-### Bank support matrix
+### Supported Banks & Interfaces
 
-| Bank | Protocol | Status |
-|---|---|---|
-| Volksbanken & Sparda-Banken (Atruvia) / Postbank / DKB / 1822direkt – or any FinTS 3.0 bank via bank code + URL | FinTS 3.0 PIN/TAN (camt, MT940, loans) | ✅ Supported |
-| comdirect | Official REST API | ✅ Supported |
-| quirion / Quirin Privatbank | Browser login, internal portal API | ✅ Portfolio, positions with calculated unrealized gains, accounts, transaction history and PDF archive |
-| bunq | Official API, personal API key | ✅ Supported |
-| PayPal | Transaction Search API | ✅ Supported |
-| Trade Republic | WebSocket (unofficial) | ⚠️ Supported, may break |
-| American Express / Amazon Visa | PSD2 via Enable Banking | ✅ Supported |
-| ING, N26, Scalable Capital, Consorsbank, Santander | – | 🙋 **Help wanted** |
+<!-- sync:connectors:start -->
+| Bank | Interface | Transactions | Balances | Securities | Transfers | Standing orders | PDF/post box | Status |
+|---|---|---|---|---|---|---|---|---|
+| 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verified |
+| Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
+| FinTS bank (bank code + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verified |
+| ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
+| Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verified |
+| bunq | REST-API | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
+| comdirect | REST-API | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
+| Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
+| PayPal | REST-API | ✓ | ✓ | – | – | – | – | ⚠️ Limited [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
+| Scalable Capital | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
+| Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verified |
+| American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verified |
+| More banks via PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ⚠️ Limited |
+| Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
+| Amazon orders | Web-Portal | ✓ | – | – | – | – | – | 🧪 Testing wanted |
+| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
+| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
+| Trade Republic | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ⚠️ Limited |
+
+Further German banks with FinTS 3.0 (PIN/TAN) can be connected via bank code and FinTS URL (2,010 institutions in the FinTS directory); European PSD2 banks via Enable Banking with your own free application.
+
+<sub>✅ tested with real accounts · 🧪 implemented, feedback from real accounts welcome (issue linked) · ⚠️ known limitations · ✓ implemented · – not implemented. For FinTS, securities and PDF statements depend on what the individual bank offers.</sub>
+<!-- sync:connectors:end -->
 
 Adding a bank usually takes under 100 lines – start from
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) and read [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -375,7 +423,7 @@ Adding a bank usually takes under 100 lines – start from
 ### Download (macOS)
 
 The pre-built disk image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) is available under
-[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.6.1**. Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
+[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.6.3**. Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
 **iPhone / iPad:** [join the TestFlight beta](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel Macs:** the official binaries are Apple Silicon (`arm64`) only. On Intel Macs you can build GiroCrab yourself from source with Swift/Xcode (see [Quickstart](#quickstart)).

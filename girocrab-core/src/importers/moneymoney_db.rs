@@ -871,7 +871,7 @@ fn open_failure(e: rusqlite::Error) -> CoreError {
 /// be read after the user sets a password in MoneyMoney.
 fn encrypted_without_password() -> CoreError {
     CoreError::Authentication {
-        message: tr("MoneyMoney verschlüsselt diese Datenbank mit einem eigenen Schlüssel, weil dort kein Datenbank-Passwort festgelegt ist. Legen Sie in MoneyMoney unter Einstellungen → Sicherheit eines fest, beenden Sie MoneyMoney und geben Sie es hier ein.").into(),
+        message: tr("MoneyMoney verschlüsselt diese Datenbank mit einem eigenen Schlüssel, weil dort kein Datenbank-Passwort festgelegt ist. Legen Sie in der App MoneyMoney (nicht in GiroCrab) unter MoneyMoney › Einstellungen › Sicherheit eines fest, beenden Sie MoneyMoney und geben Sie es dann im Feld „Datenbank-Passwort“ dieses Dialogs ein.").into(),
     }
 }
 
@@ -1475,6 +1475,8 @@ fn component(s: &str) -> Option<&str> {
 /// The folder the PDFs are taken from, and how to find a listed file in it.
 struct StatementFiles {
     root: PathBuf,
+    /// `root` with all symlinks resolved; every file handed out lies below it.
+    canonical_root: Option<PathBuf>,
     /// All PDFs below `root` (built on first use).
     all: Option<Vec<PathBuf>>,
     /// SHA-256 → file, for files not at their original place (built on first use).
@@ -1486,6 +1488,7 @@ struct StatementFiles {
 impl StatementFiles {
     fn new(root: PathBuf) -> Self {
         Self {
+            canonical_root: std::fs::canonicalize(&root).ok(),
             root,
             all: None,
             by_digest: None,
@@ -1523,6 +1526,17 @@ impl StatementFiles {
         self.all.as_deref().unwrap_or_default()
     }
 
+    /// A regular file that is not a symlink and, after resolving every link
+    /// on the way, lies inside the selected folder (no escapes via a linked
+    /// sub-folder or file).
+    fn safe_file(&self, path: &Path) -> bool {
+        let Some(root) = &self.canonical_root else {
+            return false;
+        };
+        let plain = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file());
+        plain && std::fs::canonicalize(path).is_ok_and(|c| c.starts_with(root))
+    }
+
     /// The file of a listed document: at its original place, else by name
     /// directly in the folder, else by checksum anywhere below it.
     fn find(&mut self, d: &SrcDoc) -> Option<PathBuf> {
@@ -1531,11 +1545,14 @@ impl StatementFiles {
         if let Some(dir) = component(&d.directory) {
             candidates.insert(0, self.root.join(dir).join(name));
         }
-        let mut hit = candidates.into_iter().find(|c| c.is_file());
+        let mut hit = candidates.into_iter().find(|c| self.safe_file(c));
         if hit.is_none() && !d.digest.is_empty() {
             if self.by_digest.is_none() {
                 let mut map = HashMap::new();
                 for f in self.all().to_vec() {
+                    if !self.safe_file(&f) {
+                        continue;
+                    }
                     let small = std::fs::metadata(&f).is_ok_and(|m| m.len() <= MAX_PDF_BYTES);
                     if let (true, Ok(bytes)) = (small, std::fs::read(&f)) {
                         map.entry(sha256_hex(&bytes)).or_insert(f);
@@ -1596,9 +1613,10 @@ struct AccountRows {
     balance_shown: bool,
     balance_source: String,
     balance_date: String,
-    /// MoneyMoney's opening balance ("Startsaldo"): (cents, date it applies
-    /// from, "" = all bookings). Carried over as the account's opening balance.
-    opening: Option<(i64, String)>,
+    /// MoneyMoney has an opening balance ("Startsaldo") for the account: a
+    /// usable balance-history row or the account's own initial balance.
+    /// Carried over undated, its amount solved from `balance_cents` (#212).
+    opening: bool,
 }
 
 impl Source {
@@ -1764,7 +1782,7 @@ impl Source {
             balance_shown: false,
             balance_source: String::new(),
             balance_date: String::new(),
-            opening: None,
+            opening: false,
         };
         // (date, cents) of the booked bookings that count for the balance:
         // parents (not their parts), account currency only.
@@ -1843,14 +1861,13 @@ impl Source {
             .map(|r| r.booking_date.clone())
             .max()
             .unwrap_or_default();
-        // the newest balance-history row, else the account's own initial balance
         out.opening = match self.balances.get(&(a.id, a.currency.clone())) {
-            Some((ts, v)) => real_to_cents(*v).map(|c| (c, unix_to_date(*ts).unwrap_or_default())),
+            Some((_, v)) => real_to_cents(*v).is_some(),
             None => a
                 .initial_balance
                 .filter(|v| *v != 0.0)
                 .and_then(real_to_cents)
-                .map(|c| (c, String::new())),
+                .is_some(),
         };
         if let Some((cents, cur)) = &a.shown_balance {
             if cur.is_empty() || *cur == a.currency {
@@ -1924,6 +1941,19 @@ fn find_existing_accounts(
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
+        // a twin folded into its bank account: the import goes there
+        let by_ref = match by_ref {
+            Some((id, name)) => match crate::sync_merge::twins::folded_into(conn, id)? {
+                Some(bank) => Some((
+                    bank,
+                    conn.query_row("SELECT name FROM accounts WHERE id = ?1", [bank], |r| {
+                        r.get(0)
+                    })?,
+                )),
+                None => Some((id, name)),
+            },
+            None => None,
+        };
         if let Some(found) = by_ref {
             claimed.insert(found.0);
             out.insert(a.id, found);
@@ -2464,7 +2494,11 @@ fn import(
                     [&ext],
                     |r| r.get::<_, i64>(0),
                 )
-                .optional()?,
+                .optional()?
+                .map(|id| {
+                    crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id))
+                })
+                .transpose()?,
         };
         let (account_id, currency) = match target {
             Some(id) => {
@@ -2544,19 +2578,16 @@ fn import(
             if kind == AccountKind::Loan {
                 Vault::derive_initial_balance(conn, account_id)?;
             }
-            // #212: MoneyMoney's opening balance becomes the account's. When
-            // MoneyMoney showed a balance of its own, that stays the balance:
-            // the opening amount is calibrated to it (date kept).
-            if let (Some((cents, date)), false) = (
-                &r.opening,
-                matches!(kind, AccountKind::Brokerage | AccountKind::Loan),
-            ) {
-                crate::opening_balance::store(conn, account_id, Some(*cents), date)?;
-                if r.balance_shown {
-                    crate::opening_balance::calibrate_in(conn, account_id, r.balance_cents)?;
-                } else {
-                    crate::opening_balance::refresh(conn, account_id)?;
-                }
+            // #212: MoneyMoney's opening balance becomes the account's. MoneyMoney
+            // has no cut-off date: the Startsaldo applies before the first
+            // booking. A balance-history row is dated, though (its value is the
+            // balance at that point, a date that may lie after every booking),
+            // so the undated amount is calibrated to the balance MoneyMoney
+            // shows or the one computed above: after an import the balance is
+            // MoneyMoney's, as the account check expects.
+            if r.opening && !matches!(kind, AccountKind::Brokerage | AccountKind::Loan) {
+                crate::opening_balance::store(conn, account_id, Some(0), "")?;
+                crate::opening_balance::calibrate_in(conn, account_id, r.balance_cents)?;
             }
             // Positions are a snapshot: always replace, so a depot whose positions
             // were all sold in MoneyMoney ends up empty here too.

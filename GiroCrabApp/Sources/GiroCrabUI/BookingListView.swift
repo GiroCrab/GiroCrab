@@ -5,6 +5,9 @@ import GiroCrabCore
 /// inspector, bookings grouped into white day cards
 /// with the daily sum in the card header.
 struct BookingStreamView: View {
+    /// The empty state repeats the search text, which is drawn as a parameter
+    /// `Text` and cannot carry `.sensitive()`.
+    @Environment(\.reportRedaction) private var redaction
 
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
@@ -64,7 +67,7 @@ struct BookingStreamView: View {
                                 }
                                 .padding(.top, 8)
                             }
-                            .font(.subheadline.weight(.medium))
+                            .appFont(.subheadline, weight: .medium)
                             .padding(.horizontal, 14).padding(.vertical, 10)
                             .frame(maxWidth: .infinity)
                             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
@@ -90,7 +93,7 @@ struct BookingStreamView: View {
                             ContentUnavailableView(
                                 model.searchText.isEmpty ? "Keine Buchungen" : "Keine Treffer",
                                 systemImage: model.searchText.isEmpty ? "tray" : "magnifyingglass",
-                                description: Text(model.searchText.isEmpty ? "Konto abrufen oder anderen Zeitraum wählen." : "Nichts passt zu „\(model.searchText)“.")
+                                description: Text(model.searchText.isEmpty ? "Konto abrufen oder anderen Zeitraum wählen." : "Nichts passt zu „\(redaction.contains(.personal) ? BugReport.searchPlaceholder : model.searchText)“.")
                             )
                             .padding(.top, 40)
                         }
@@ -209,7 +212,7 @@ struct BookingStreamView: View {
             }
             return .handled
         }
-        .searchable(text: $model.searchText, placement: .toolbar, prompt: "Händler, Zweck, IBAN, Betrag")
+        .searchable(text: $model.searchText, placement: .toolbar, prompt: "Händler, Zweck, IBAN / Kontonummer, Betrag")
         #if os(iOS)
         .modifier(MainToolbar())
         #endif
@@ -251,7 +254,7 @@ struct BookingStreamView: View {
                                     withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { showAnalytics.toggle() }
                                 } label: {
                                     Label("Analysen", systemImage: "chart.bar.xaxis")
-                                        .font(.caption.weight(.medium))
+                                        .appFont(.caption, weight: .medium)
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 4)
                                         .background(showAnalytics ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: Capsule())
@@ -356,11 +359,12 @@ struct DayHeader: View {
         VStack(spacing: 0) {
             HStack {
                 Text(DateText.dayHeader(day.date))
-                    .font(.subheadline.weight(.semibold))
+                    .appFont(.subheadline, weight: .semibold)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Text(Money.signed(day.sum))
-                    .font(.subheadline.monospacedDigit())
+                    .sensitive()
+                    .appFont(.subheadline, monospacedDigit: true)
                     .foregroundStyle(day.sum > 0 ? Theme.inflow : Theme.secondary)
             }
             .padding(.horizontal, 16)
@@ -463,18 +467,19 @@ struct BookingRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(booking.merchant.name.isEmpty ? booking.bookingText : booking.merchant.name)
-                        .font(.body.weight(.semibold))
+                        .sensitive()
+                        .appFont(.body, weight: .semibold)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     if booking.documentCount > 0 {
                         Image(systemName: "doc.text.fill")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(Theme.accent.opacity(0.8))
                             .help("\(booking.documentCount) Beleg(e) – Leertaste für QuickLook")
                     }
                     if model.recurringSeries(for: booking) != nil {
                         Image(systemName: "repeat")
-                            .font(.caption.weight(.semibold))
+                            .appFont(.caption, weight: .semibold)
                             .foregroundStyle(Theme.secondary)
                             .help("Wiederkehrende Buchung")
                             .accessibilityLabel("Wiederkehrend")
@@ -500,7 +505,8 @@ struct BookingRow: View {
                             ?? (ref.items.isEmpty ? nil : "· \(ref.items)")
                         if let itemsText {
                             Text(itemsText)
-                                .font(.callout)
+                                .sensitive()
+                                .appFont(.callout)
                                 .foregroundStyle(Theme.secondary)
                                 .lineLimit(1)
                                 .layoutPriority(-1)
@@ -511,7 +517,7 @@ struct BookingRow: View {
                         if ref.moreCount > 0 {
                             // items beyond the two shown; the drill-down lists everything
                             Text("+\(ref.moreCount) weitere")
-                                .font(.caption2.weight(.medium))
+                                .appFont(.caption2, weight: .medium)
                                 .foregroundStyle(Theme.tertiary)
                                 .lineLimit(1)
                                 .help(ref.itemList.dropFirst(2).joined(separator: "\n"))
@@ -520,12 +526,13 @@ struct BookingRow: View {
                             // "D01-…" charges are the recurring Spar-Abo, plain orders are one-off
                             Label("Abo", systemImage: "arrow.triangle.2.circlepath")
                                 .labelStyle(.titleAndIcon)
-                                .font(.caption2.weight(.medium))
+                                .appFont(.caption2, weight: .medium)
                                 .foregroundStyle(Theme.tertiary)
                                 .help("Abonnement (Spar-Abo) – wiederkehrende Abbuchung")
                         }
                         Text("· #\(ref.code)")
-                            .font(.callout.monospacedDigit())
+                            .sensitive()
+                            .appFont(.callout, monospacedDigit: true)
                             .foregroundStyle(Theme.tertiary)
                             .lineLimit(1)
                             .fixedSize()
@@ -534,7 +541,7 @@ struct BookingRow: View {
                         if ref.itemList.count > 1 || refundSource != nil {
                             Button { amazonExpanded.toggle() } label: {
                                 Image(systemName: amazonExpanded ? "chevron.down" : "chevron.right")
-                                    .font(.caption2.weight(.semibold))
+                                    .appFont(.caption2, weight: .semibold)
                                     .foregroundStyle(Theme.tertiary)
                             }
                             .buttonStyle(.borderless)
@@ -542,7 +549,7 @@ struct BookingRow: View {
                         }
                     } else if !booking.paymentMethod.isEmpty {
                         Text("· \(booking.paymentMethod)")
-                            .font(.callout)
+                            .appFont(.callout)
                             .foregroundStyle(Theme.secondary)
                             .lineLimit(1)
                             .layoutPriority(-1)
@@ -555,13 +562,13 @@ struct BookingRow: View {
             Spacer(minLength: 8)
             if booking.checked {
                 Image(systemName: "checkmark")
-                    .font(.caption.weight(.semibold))
+                    .appFont(.caption, weight: .semibold)
                     .foregroundStyle(Theme.tertiary)
                     .help("Geprüft")
             }
             if booking.isPending {
                 Image(systemName: "clock")
-                    .font(.caption.weight(.semibold))
+                    .appFont(.caption, weight: .semibold)
                     .foregroundStyle(Theme.tertiary)
                     .help("Vorgemerkt – noch nicht gebucht")
                     .accessibilityLabel("Vorgemerkt")
@@ -570,7 +577,8 @@ struct BookingRow: View {
                 // Order account: no signs — colour says the direction. Charges and
                 // refunds are badged symmetrically (same padding, same alignment).
                 Text(Money.format(ref.isRefund ? booking.amountCents : abs(booking.amountCents)))
-                    .font(.body.weight(.semibold).monospacedDigit())
+                    .sensitive()
+                    .appFont(.body, weight: .semibold, monospacedDigit: true)
                     .foregroundStyle(ref.isRefund ? Theme.inflow : Theme.charge)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(ref.isRefund ? Theme.inflowBadge : Theme.outflowBadge))
@@ -593,14 +601,14 @@ struct BookingRow: View {
             // drill-down: every item on its own line, indented under the signet
             VStack(alignment: .leading, spacing: 2) {
                 if let source = model.amazonRefundSource(booking) {
-                    Text("Erstattung zu:").font(.caption2).foregroundStyle(Theme.tertiary)
+                    Text("Erstattung zu:").appFont(.caption2).foregroundStyle(Theme.tertiary)
                     ForEach(source.list, id: \.self) { item in
-                        Text(item).font(.callout).foregroundStyle(Theme.secondary)
+                        Text(item).sensitive().appFont(.callout).foregroundStyle(Theme.secondary)
                             .textSelection(.enabled)
                     }
                 } else {
                     ForEach(ref.itemList, id: \.self) { item in
-                        Text(item).font(.callout).foregroundStyle(Theme.secondary)
+                        Text(item).sensitive().appFont(.callout).foregroundStyle(Theme.secondary)
                             .textSelection(.enabled)
                     }
                 }
@@ -681,9 +689,10 @@ struct BookingCategoryLabel: View {
         let color = none ? Theme.warning : Color.readable(hex: booking.categoryColorHex)
         HStack(spacing: 3) {
             Image(systemName: none ? "questionmark.folder" : (booking.categorySymbol.isEmpty ? "tag.fill" : booking.categorySymbol))
-                .font(.caption)
+                .appFont(.caption)
             Text(none ? String(localized: "Ohne Kategorie") : booking.categoryName)
-                .font(.callout.weight(.medium))
+                .sensitive(none ? [] : .labels)
+                .appFont(.callout, weight: .medium)
                 .lineLimit(1)
         }
         .foregroundStyle(color)
@@ -702,11 +711,12 @@ struct AccountChip: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: symbol)
-                .font(.caption.weight(.semibold))
+                .appFont(.caption, weight: .semibold)
                 .foregroundStyle(color)
             if !compact {
                 Text(label)
-                    .font(.subheadline.weight(.medium))
+                    .sensitive()
+                    .appFont(.subheadline, weight: .medium)
                     .foregroundStyle(color)
                     .lineLimit(1)
             }
@@ -728,13 +738,15 @@ struct AmountLabel: View {
     var body: some View {
         if cents > 0 {
             Text(Money.signed(cents))
-                .font(.body.weight(.semibold).monospacedDigit())
+                .sensitive()
+                .appFont(.body, weight: .semibold, monospacedDigit: true)
                 .foregroundStyle(Theme.inflow)
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(Capsule().fill(Theme.inflowBadge))
         } else {
             Text(Money.format(cents))
-                .font(.body.weight(.medium).monospacedDigit())
+                .sensitive()
+                .appFont(.body, weight: .medium, monospacedDigit: true)
                 .foregroundStyle(Theme.outflow)
         }
     }
@@ -747,7 +759,7 @@ struct LoadMoreBookingsFooter: View {
     var body: some View {
         VStack(spacing: 8) {
             Text("\(model.bookings.count) von \(model.bookings.count + model.remainingBookingCount) Buchungen geladen – ältere Buchungen sind noch nicht sichtbar.")
-                .font(.caption).foregroundStyle(.secondary)
+                .appFont(.caption).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             // always laid out, only faded: the footer keeps its height while a page loads
             ProgressView().controlSize(.small)
@@ -772,9 +784,13 @@ struct LoadMoreBookingsFooter: View {
 /// (macOS 15+). iOS keeps the empty navigation title as before.
 struct WindowTitle: ViewModifier {
     let title: String
+    /// The title bar is drawn by AppKit, so `.sensitive()` cannot cover it:
+    /// any bug report capture shows the app name (the title may be an account).
+    @Environment(\.reportRedaction) private var redaction
 
     func body(content: Content) -> some View {
         #if os(macOS)
+        let title = redaction.isEmpty ? title : "GiroCrab"
         if #available(macOS 15.0, *) {
             content.navigationTitle(title).toolbar(removing: .title)
         } else {

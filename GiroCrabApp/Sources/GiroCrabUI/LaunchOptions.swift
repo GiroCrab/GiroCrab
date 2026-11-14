@@ -16,11 +16,11 @@ import Foundation
 ///  --try-add-bank <name>  (developer, with --fresh-vault) add a bank on start,
 ///                         e.g. 1822direkt, to see the setup form
 ///  --select <text>        (demo) preselect the account whose name contains <text>
-///  --demo-sheet transfer|moneymoney|moneymoney-db|recurring|print|rules|palette|
+///  --demo-sheet account-selection|transfer|moneymoney|moneymoney-db|recurring|print|rules|palette|
 ///               categorizer|payee-match|payee-close|payee-nomatch|error|rule-edit|icon-color|category|icon-color-category
 ///                         (demo) open that sheet pre-filled with fictional data,
 ///                         for README / PR screenshots
-///  --demo-settings general|banks|groups|documents|security[:edit|:add|:remove]
+///  --demo-settings general|banks|groups|documents|security[:edit|:add|:remove|:select]
 ///                         (demo) open the Settings window on that tab (`groups` opens the
 ///                         group editor sheet instead), optionally with
 ///                         the first bank's edit sheet or the "add bank" sheet;
@@ -30,12 +30,18 @@ import Foundation
 ///                         income or expenses (PR screenshots, #53)
 ///  --dark                 (macOS) force the Dark Aqua appearance (README screenshots)
 ///  --light                (macOS, `swift run`) force the light Aqua appearance
+///  --text-size standard|large|larger
+///                         (macOS) text size for this launch, also with --screenshot
+///                         (which otherwise always uses standard, #343)
 ///  --simulate-system-language <code>
 ///                         (developer) pretend the system language is <code> (e.g. en);
 ///                         the app's language choice is kept in the separate defaults
 ///                         domain de.girocrab.app.language-simulation (#93)
 ///  --show-tips           (developer) reset TipKit and show tips in the demo
 ///                         vault too (screenshots of contextual tips)
+///  --redact[=labels]      (developer) draw the main window as the bug report
+///                         screenshot does (#301): personal data covered, with
+///                         `=labels` category and group names too
 ///  --demo-menu <title>    (macOS, with --screenshot and GIROCRAB_SCREENSHOT_NATIVE=1)
 ///                         pop up that menu-bar menu over the window and capture it
 ///  --screenshot <file>    (macOS) render the main window, save a PNG, quit.
@@ -44,6 +50,8 @@ public struct LaunchOptions: Sendable {
     public var demoSeed: Bool
     public var screenshotPath: String?
     public var dark: Bool
+    /// raw value of `AppTextSize`, see `--text-size`
+    public var textSize: String?
     public var demoSync: Bool
     /// "alle" (default), "alltag" or "sparplaene"
     public var initialView: String
@@ -69,6 +77,8 @@ public struct LaunchOptions: Sendable {
     public var simulateSystemLanguage: String?
     /// (developer) reset TipKit and show tips in the demo vault too
     public var showTips: Bool
+    /// (developer) `--redact`: main window drawn as in the bug report screenshot
+    public var redaction: ReportRedaction
 
     public init(arguments: [String] = CommandLine.arguments, environment: [String: String] = ProcessInfo.processInfo.environment) {
         var demo = arguments.contains("--demo-seed")
@@ -113,6 +123,7 @@ public struct LaunchOptions: Sendable {
         keepFreshVault = arguments.contains("--keep-fresh-vault")
         freshVault = arguments.contains("--fresh-vault") || keepFreshVault
         developer = arguments.contains("--developer") || environment["GIROCRAB_DEVELOPER"] == "1"
+        redaction = arguments.contains("--redact=labels") ? [.personal, .labels] : arguments.contains("--redact") ? .personal : []
         if let i = arguments.firstIndex(of: "--try-add-bank"), i + 1 < arguments.count {
             tryAddBank = arguments[i + 1].lowercased()
         } else {
@@ -128,6 +139,11 @@ public struct LaunchOptions: Sendable {
         self.demoSeed = demo
         self.screenshotPath = shot
         self.dark = arguments.contains("--dark")
+        if let i = arguments.firstIndex(of: "--text-size"), i + 1 < arguments.count {
+            textSize = arguments[i + 1].lowercased()
+        } else {
+            textSize = nil
+        }
         if let i = arguments.firstIndex(of: "--simulate-system-language"), i + 1 < arguments.count {
             simulateSystemLanguage = arguments[i + 1]
         } else {

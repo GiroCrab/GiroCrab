@@ -182,6 +182,12 @@ CREATE TABLE IF NOT EXISTS settings (
 #[derive(uniffi::Object)]
 pub struct Vault {
     conn: Mutex<Connection>,
+    pub(crate) pending_account_fetches: Mutex<
+        std::collections::HashMap<
+            i64,
+            (crate::models::ConnectorKind, crate::connectors::FetchResult),
+        >,
+    >,
     path: String,
     /// The master key, kept for sync snapshots and peer merges so the app
     /// doesn't ask the keychain again. Wiped on drop.
@@ -395,12 +401,16 @@ impl Vault {
         let _ = crate::sync_merge::fill_missing_uuids(&conn);
         // merge duplicate bank logins left by older versions (keeps bookings)
         let _ = crate::connections::deduplicate(&conn);
+        // fold MoneyMoney accounts a merge added next to the bank account
+        // that took them over (keeps bookings)
+        let _ = crate::sync_merge::twins::fold_twins(&conn);
         // repair "MÃ¼ller" -> "Müller" stored by older versions
         let _ = crate::text::repair_stored_text(&conn);
         // one-time purge of favicons that don't belong to a known brand
         let _ = crate::insights::purge_untrusted_logos(&conn);
         Ok(Arc::new(Vault {
             conn: Mutex::new(conn),
+            pending_account_fetches: Mutex::new(std::collections::HashMap::new()),
             path,
             key: Mutex::new(key),
             _open: OpenVault::new(),
