@@ -1,5 +1,8 @@
 # easybank-Anbindung (ehemals Barclays Deutschland)
 
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur easybank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
+> This connector is an independent community project and is not affiliated with easybank. Interface: unofficial. Using unofficial interfaces may violate the bank's terms of service.
+
 Status: **funktioniert** (live getestet 2026-11-14: Login, SMS-TAN, Karten, Umsätze) –
 `ConnectorKind::Easybank` (Schlüssel `easybank`), direkter HTTP-Login in
 `girocrab-core/src/connectors/easybank.rs`, kein Browserfenster.

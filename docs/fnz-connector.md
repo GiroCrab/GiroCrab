@@ -1,5 +1,8 @@
 # FNZ Bank browser connector
 
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur FNZ Bank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
+> This connector is an independent community project and is not affiliated with FNZ Bank. Interface: unofficial. Using unofficial interfaces may violate the bank's terms of service.
+
 ## Scope and setup
 
 The FNZ Bank / ebase / finvesto connector uses the authenticated FNZ web portal.

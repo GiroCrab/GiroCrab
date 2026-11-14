@@ -65,6 +65,22 @@ Nutzersichtbare Texte (README, docs, Website, App-Strings, Release-Notes) nennen
 Finanzsoftware und enthalten keine Vergleiche mit Fremdprodukten. Funktionen von GiroCrab werden sachlich und
 belegbar beschrieben.
 
+## Markennamen und Quellen / Trademarks and sources
+
+**DE**
+- Andere Finanz- und Banking-Software (z. B. andere Banking-Apps) wird in nutzersichtbaren Texten nicht genannt: weder in README, Doku, Website, App-Texten noch in Release-Notes. Keine Vergleiche mit Fremdprodukten. Interne Code-Bezeichner sind davon ausgenommen. Der CI-Check `scripts/lint-brand-names.sh` prüft das.
+- Banken, Broker und Zahlungsdienste, die GiroCrab anbindet, dürfen sachlich genannt werden („Connector für Konten bei der X-Bank“). Nicht erlaubt: Formulierungen, die eine Partnerschaft oder offizielle Unterstützung nahelegen, sowie Logos von Banken in Doku und Website.
+- Inoffizielle Schnittstellen werden in Doku und Bank-Tabelle als „inoffiziell“ gekennzeichnet, mit Hinweis auf mögliche Verstöße gegen Nutzungsbedingungen.
+- Kein Kopieren aus proprietärer Dokumentation oder fremdem Code. Fremdcode nur mit GPL-kompatibler Lizenz und Quellenangabe (Projekt, Lizenz, Link). Technische Erkenntnisse in eigenen Worten beschreiben.
+- Funktionen von GiroCrab sachlich und belegbar beschreiben: keine absoluten Versprechen („verlustfrei“, „alle Banken“), keine Zeitangaben ohne Messgrundlage.
+
+**EN**
+- Other finance or banking software is not named in user-facing text (README, docs, website, app strings, release notes), and there are no comparisons with third-party products. Internal code identifiers are exempt. Enforced by `scripts/lint-brand-names.sh`.
+- Banks, brokers and payment services that GiroCrab connects to may be named factually ("connector for accounts at X Bank"). Do not imply a partnership or official support, and do not use bank logos in docs or on the website.
+- Mark unofficial interfaces as "unofficial" in docs and the bank table, noting possible terms-of-service issues.
+- Do not copy from proprietary documentation or third-party code. Third-party code only under a GPL-compatible licence with attribution (project, licence, link). Describe technical findings in your own words.
+- Describe GiroCrab's features factually and verifiably: no absolute claims ("lossless", "all banks"), no time claims without measurement.
+
 ## Adding merchants
 
 Edit `girocrab-core/data/merchants.tsv` (parsed by `src/data_tables.rs`, matching logic in

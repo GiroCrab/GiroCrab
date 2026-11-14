@@ -55,7 +55,6 @@ struct MoneyMoneyDatabaseImportView: View {
     @State private var importNotes = true
     @State private var importGroups = true
     @State private var createConnections = true
-    @State private var importPins = false
     /// Enable Banking credentials entered in the assistant.
     @State private var ebValues: [String: String] = [:]
     @State private var loading = false
@@ -435,13 +434,6 @@ struct MoneyMoneyDatabaseImportView: View {
                     }
                 }
                 .disabled(!createConnections)
-                if createConnections, p.banks.contains(where: { $0.hasSavedPin && usesPin($0) }) {
-                    Section {
-                        Toggle("Gespeicherte PINs übernehmen", isOn: $importPins)
-                    } footer: {
-                        footerText("Die PINs aus der Datenbank kommen verschlüsselt in den GiroCrab-Tresor. Ohne diese Option werden sie nicht gelesen.")
-                    }
-                }
             }
         }
         .formStyle(.grouped)
@@ -620,7 +612,6 @@ struct MoneyMoneyDatabaseImportView: View {
             countRow("Depotpositionen", r.holdingsImported)
             countRow("Bankzugänge", r.connectionsCreated,
                      detail: r.connectionsExisting > 0 ? String(localized: "\(r.connectionsExisting) bereits vorhanden") : nil)
-            countRow("PINs im Tresor", r.pinsStored)
         } header: { Text("Übernommen").appSectionHeader() }
     }
 
@@ -813,11 +804,6 @@ struct MoneyMoneyDatabaseImportView: View {
         return connectionOptions(b).first { $0.key == key }
     }
 
-    private func usesPin(_ b: MoneyMoneyDbBank) -> Bool {
-        guard let o = chosenOption(b) else { return false }
-        return o.via != .enableBanking
-    }
-
     private var chosenEnableBanking: Bool {
         preview?.banks.contains { chosenOption($0)?.via == .enableBanking } ?? false
     }
@@ -871,10 +857,7 @@ struct MoneyMoneyDatabaseImportView: View {
         panel.message = String(localized: "Ordner mit Datenbank und Kontoauszügen auswählen – oder eine einzelne Datenbank, z. B. ein Backup (.sqlite)")
         panel.prompt = String(localized: "Auswählen")
         panel.treatsFilePackagesAsDirectories = true
-        // opens inside MoneyMoney's folder: "Auswählen" right away takes the folder
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney")
-        if FileManager.default.fileExists(atPath: dir.path) { panel.directoryURL = dir }
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
         if panel.runModal() == .OK, let url = panel.url {
             fileURL = url
             statementsURL = nil
@@ -942,7 +925,6 @@ struct MoneyMoneyDatabaseImportView: View {
             importCategories: importCategories,
             importNotes: importNotes,
             createConnections: createConnections,
-            importPins: createConnections && importPins,
             importGroups: importGroups,
             importStatements: importStatements && preview.statementsFound > 0,
             statementsDir: statementsURL?.path,
@@ -988,7 +970,7 @@ struct MoneyMoneyDatabaseImportView: View {
         MoneyMoneyDbImportResult(
             accountsCreated: UInt32(p.accounts.count), accountsMerged: 0, groupsCreated: 2, bookingsNew: p.totalBookings,
             bookingsDuplicates: 0, bookingsEnriched: 0, pendingSkipped: p.pendingBookings, notesImported: p.notesCount,
-            categoriesCreated: UInt32(p.categoryPaths.count), connectionsCreated: 4, connectionsExisting: 0, pinsStored: 0,
+            categoriesCreated: UInt32(p.categoryPaths.count), connectionsCreated: 4, connectionsExisting: 0,
             banksSkippedUnsupported: 1, banksSkippedNames: ["Musterbank"], documentsImported: statements ? p.statementsFound : 0, documentsExisting: 0,
             documentsMissing: 0, documentsMismatched: 0, documentsTooLarge: 0, documentsUnlisted: 0, holdingsImported: 3,
             rulesCreated: 0, rulesDisabled: 0,
@@ -1106,19 +1088,19 @@ extension AppModel {
         }
         let banks = [
             MoneyMoneyDbBank(mmId: 1, bankCode: "20041111", name: "comdirect", loginName: "12345678", customerId: "12345678",
-                             connector: .comdirect, hasSavedPin: true, existingConnectionId: nil, accountCount: 3,
+                             connector: .comdirect, existingConnectionId: nil, accountCount: 3,
                              connectionOptions: [direct(.ownApi, .comdirect, "comdirect")]),
             MoneyMoneyDbBank(mmId: 2, bankCode: "50050201", name: "1822direkt", loginName: "max.mustermann", customerId: "",
-                             connector: .direkt1822, hasSavedPin: true, existingConnectionId: nil, accountCount: 1,
+                             connector: .direkt1822, existingConnectionId: nil, accountCount: 1,
                              connectionOptions: [direct(.finTs, .direkt1822, "direkt1822")]),
             MoneyMoneyDbBank(mmId: 3, bankCode: "", name: "PayPal", loginName: "max@example.com", customerId: "",
-                             connector: .payPal, hasSavedPin: false, existingConnectionId: nil, accountCount: 1,
+                             connector: .payPal, existingConnectionId: nil, accountCount: 1,
                              connectionOptions: [direct(.ownApi, .payPal, "paypal")]),
             MoneyMoneyDbBank(mmId: 4, bankCode: "12345678", name: "Musterbank", loginName: "mustermann", customerId: "",
-                             connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
+                             connector: nil, existingConnectionId: nil, accountCount: 1, connectionOptions: []),
             // no own connector, but reachable through Enable Banking (PSD2)
             MoneyMoneyDbBank(mmId: 5, bankCode: "50024024", name: "C24 Bank", loginName: "max.mustermann", customerId: "",
-                             connector: nil, hasSavedPin: false, existingConnectionId: nil, accountCount: 1,
+                             connector: nil, existingConnectionId: nil, accountCount: 1,
                              connectionOptions: psd2Catalog().filter { $0.aspsp == "C24" }.map {
                                  MoneyMoneyDbConnectionOption(via: .enableBanking, connector: .enableBanking,
                                                               key: "enablebanking:\($0.country):\($0.aspsp)", psd2Bank: $0)

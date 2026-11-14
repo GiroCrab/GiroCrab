@@ -91,8 +91,7 @@ oder später per FinTS abgerufene, überlappende Tage werden als Duplikate erkan
 nur um Kategorie und Notiz ergänzt.
 
 **Komfort-Funktionen im Alltag:**
-<!-- TODO(Andreas): bitte prüfen: Ist „Sm@rtPaste“ eine eigene Bezeichnung oder der Funktionsname eines anderen Produkts? Ggf. neutral umbenennen (z. B. „Smarte Zwischenablage“). -->
-* **📋 Sm@rtPaste (`⌘V` / `⇧⌘V`):** Rechnungstexte oder Bankverbindungen aus der Zwischenablage direkt ins Überweisungsfenster einfügen – Empfänger, prüfsummengültige IBAN, BIC, Betrag und Verwendungszweck werden automatisch erkannt.
+* **📋 Überweisung aus Zwischenablage (`⌘V` / `⇧⌘V`):** Rechnungstexte oder Bankverbindungen aus der Zwischenablage direkt ins Überweisungsfenster einfügen – Empfänger, prüfsummengültige IBAN, BIC, Betrag und Verwendungszweck werden automatisch erkannt.
 * **📄 E-Rechnungen & PDF-Drop:** PDF-Rechnungen einfach auf das Überweisungsfenster ziehen (liest eingebettetes **ZUGFeRD / Factur-X XML**, **EPC-QR-Codes / GiroCode** oder den PDF-Text).
 * **✅ Geprüft-Häkchen (`Space`):** Umsätze in der Liste direkt per Leertaste als „geprüft“ markieren.
 * **🖱️ Rechtsklick-Workflows:** Mit einem Klick alle Buchungen desselben Empfängers filtern (*„Nach ‚…‘ suchen“*) oder eine *„Neue Überweisung aus Buchung …“* vorausfüllen lassen.
@@ -295,7 +294,7 @@ Hierarchical categories (`Household\Groceries`) are kept as a tree, notes show i
 Every booking gets a fingerprint (date, amount, IBAN/name, purpose), so a repeated import or overlapping days
 fetched later via FinTS are recognised as duplicates and not created twice – existing bookings are only enriched with category and note.
 **Everyday convenience features:**
-* **📋 Sm@rtPaste (`⌘V` / `⇧⌘V`):** Paste invoice text or bank details from the clipboard straight into the transfer sheet — recipient, checksum-verified IBAN, BIC, amount and purpose are filled in automatically.
+* **📋 Transfer from clipboard (`⌘V` / `⇧⌘V`):** Paste invoice text or bank details from the clipboard straight into the transfer sheet — recipient, checksum-verified IBAN, BIC, amount and purpose are filled in automatically.
 * **📄 E-Invoice & PDF Drop:** Drag & drop a PDF invoice onto the transfer sheet (parses embedded **ZUGFeRD / Factur-X XML**, **EPC QR / GiroCode**, or PDF/OCR text).
 * **✅ Checked toggle (`Space`):** Mark bookings as checked directly via the Spacebar.
 * **🖱️ Context menu actions:** Right-click any booking to filter all transactions by that counterparty or pre-fill a new transfer from the booking.

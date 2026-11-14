@@ -1244,17 +1244,6 @@
         }
       }
     },
-    "%u PINs im Tresor gespeichert" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%u PINs stored in the vault"
-          }
-        }
-      }
-    },
     "%u Regeln übernommen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1455,17 +1444,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%u× invested"
-          }
-        }
-      }
-    },
-    ", %u PINs im Tresor gespeichert." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : ", %u PINs stored in the vault."
           }
         }
       }
@@ -5998,28 +5976,6 @@
         }
       }
     },
-    "Die PINs aus der Datenbank kommen verschlüsselt in den GiroCrab-Tresor. Ohne diese Option werden sie nicht gelesen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The PINs from the database are stored encrypted in the GiroCrab vault. Without this option they aren't read."
-          }
-        }
-      }
-    },
-    "Die PINs werden dann im verschlüsselten GiroCrab-Tresor gespeichert. Ohne diese Option werden sie nicht einmal gelesen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The PINs are then stored in the encrypted GiroCrab vault. Without this option they are not even read."
-          }
-        }
-      }
-    },
     "Die PSD2-Zustimmung für %@ ist abgelaufen. Bitte in GiroCrab neu verbinden." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8611,17 +8567,6 @@
         }
       }
     },
-    "Gespeicherte PINs übernehmen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Import saved PINs"
-          }
-        }
-      }
-    },
     "Gestern, %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9967,17 +9912,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "In your bank’s app choose “photo transfer” or “scan QR code”, scan the code and approve it there with a TAN. GiroCrab sends nothing."
-          }
-        }
-      }
-    },
-    "In der Datenbank ist eine PIN gespeichert" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A PIN is stored in the database"
           }
         }
       }
@@ -14593,17 +14527,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Store PIN in Vault"
-          }
-        }
-      }
-    },
-    "PINs im Tresor" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "PINs in the Vault"
           }
         }
       }
