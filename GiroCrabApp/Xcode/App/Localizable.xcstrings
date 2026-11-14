@@ -4969,6 +4969,17 @@
         }
       }
     },
+    "Braun" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brown"
+          }
+        }
+      }
+    },
     "Brille" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7203,6 +7214,17 @@
         }
       }
     },
+    "Eigene Farben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom Colours"
+          }
+        }
+      }
+    },
     "Eigene Produktregistrierung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9036,6 +9058,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Salary / Pension"
+          }
+        }
+      }
+    },
+    "Gelb" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yellow"
           }
         }
       }
@@ -16728,6 +16761,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Saveback (1%)"
+          }
+        }
+      }
+    },
+    "Schiefer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Slate"
           }
         }
       }
