@@ -75,20 +75,20 @@ struct SidebarView: View {
             // header, whose small caption style can't match them)
             CategoriesHeader()
                 .padding(.top, 10)
-            Group {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                    Text("Ohne Kategorie").appDefaultFont()
-                    Spacer()
-                }
-                .badge(model.uncategorizedCount)
-                .tag(SidebarItem.uncategorized)
-                if !model.categoriesCollapsed {
+            if !model.categoriesCollapsed {
+                Group {
+                    HStack(spacing: 8) {
+                        Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                        Text("Ohne Kategorie").appDefaultFont()
+                        Spacer()
+                    }
+                    .badge(model.uncategorizedCount)
+                    .tag(SidebarItem.uncategorized)
                     categoryRows(model.categoryTree)
                 }
+                // one step right of their header, like the groups under „Alle Konten“
+                .padding(.leading, 14)
             }
-            // one step right of their header, like the groups under „Alle Konten“
-            .padding(.leading, 14)
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
