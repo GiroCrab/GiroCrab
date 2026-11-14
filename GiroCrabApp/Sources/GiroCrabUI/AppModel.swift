@@ -1002,7 +1002,8 @@ public final class AppModel {
 
     // MARK: - Core-call helper
 
-    func run(_ body: () throws -> Void) {
+    /// Runs a synchronous core call on the main actor and shows its error, if any.
+    func runCore(_ body: () throws -> Void) {
         do { try body() } catch { errorMessage = describe(error) }
     }
 }

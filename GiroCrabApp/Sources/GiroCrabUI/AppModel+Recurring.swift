@@ -10,7 +10,7 @@ extension AppModel {
         guard let vault else { recurring = []; recurringMonth = nil; return }
         let ids = selectionAccountIDs
         let c = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: Date())
-        run {
+        runCore {
             let snapshot = try vault.recurringSnapshot(accountIds: ids, year: Int32(c.year ?? 2026), month: UInt32(c.month ?? 1))
             recurring = snapshot.series
             recurringHidden = snapshot.ignored
@@ -28,14 +28,14 @@ extension AppModel {
 
     func markRecurring(_ b: Booking, _ interval: RecurrenceInterval, customDates: [String] = []) {
         guard let vault else { return }
-        run { try vault.markBookingRecurring(bookingId: b.id, interval: interval, customDates: customDates) }
+        runCore { try vault.markBookingRecurring(bookingId: b.id, interval: interval, customDates: customDates) }
         refreshRecurring()
     }
 
     /// "Nicht wiederkehrend" for a detected or marked series.
     func ignoreRecurring(_ s: RecurringSeries) {
         guard let vault else { return }
-        run { try vault.ignoreRecurring(seriesKey: s.seriesKey) }
+        runCore { try vault.ignoreRecurring(seriesKey: s.seriesKey) }
         refreshRecurring()
     }
 
@@ -44,7 +44,7 @@ extension AppModel {
 
     func resetRecurring(key: String) {
         guard let vault else { return }
-        run { try vault.resetRecurring(seriesKey: key) }
+        runCore { try vault.resetRecurring(seriesKey: key) }
         refreshRecurring()
     }
 

@@ -239,13 +239,13 @@ extension AppModel {
         settlePendingSelectionLoad()
         guard let vault else { salaryCycle = nil; return }
         let ids = selectionAccountIDs
-        run { salaryCycle = try vault.salaryCycle(accountIds: ids) }
+        runCore { salaryCycle = try vault.salaryCycle(accountIds: ids) }
     }
 
     /// `true` = salary, `false` = never salary, `nil` = automatic detection.
     func setSalaryFlag(_ booking: Booking, _ flag: Bool?) {
         guard let vault else { return }
-        run { try vault.setBookingSalaryFlag(bookingId: booking.id, flag: flag) }
+        runCore { try vault.setBookingSalaryFlag(bookingId: booking.id, flag: flag) }
         // keep the edited booking selected even if it leaves the period
         if selectedBookingID == booking.id { stickyBooking = freshBooking(booking) }
         refreshSalaryCycle()

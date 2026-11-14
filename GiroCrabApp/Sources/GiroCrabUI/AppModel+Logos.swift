@@ -87,14 +87,14 @@ extension AppModel {
     /// Sets / clears the original loan amount ("Ursprünglicher Kreditbetrag").
     func setAccountInitialBalance(_ accountId: Int64, cents: Int64?) {
         guard let vault else { return }
-        run { try vault.setAccountInitialBalance(accountId: accountId, cents: cents) }
+        runCore { try vault.setAccountInitialBalance(accountId: accountId, cents: cents) }
         reloadAccounts()
     }
 
     /// Manual domain from the inspector; nil/empty removes the override.
     func setMerchantDomain(_ merchant: MerchantInfo, _ domain: String?) {
         guard let vault else { return }
-        run {
+        runCore {
             let stored = try vault.setMerchantDomain(merchantKey: merchant.key, domain: domain)
             toast = stored.map { String(localized: "Domain für \(merchant.name): \($0) – Logo wird geladen") } ?? String(localized: "Domain-Zuordnung entfernt")
         }
@@ -122,7 +122,7 @@ extension AppModel {
 
     func clearLogoCache() {
         guard let vault else { return }
-        run { _ = try vault.clearLogoCache() }
+        runCore { _ = try vault.clearLogoCache() }
         logoCache = [:]
         toast = String(localized: "Logo-Cache geleert")
     }

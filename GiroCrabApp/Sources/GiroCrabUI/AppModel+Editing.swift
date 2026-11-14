@@ -124,7 +124,7 @@ extension AppModel {
 
     func setChecked(_ checked: Bool, for booking: Booking) {
         guard let vault else { return }
-        run { try vault.setTransactionChecked(transactionId: booking.id, checked: checked) }
+        runCore { try vault.setTransactionChecked(transactionId: booking.id, checked: checked) }
         // With "Neu" / "Geprüft" active the booking leaves the list: keep it in the inspector.
         if statusFilter != .all, selectedBookingID == booking.id { stickyBooking = freshBooking(booking) }
         reloadBookings(); reloadAccounts()
@@ -188,7 +188,7 @@ extension AppModel {
 
     func updateText(counterparty: String, purpose: String, for booking: Booking) {
         guard let vault else { return }
-        run { try vault.updateTransactionText(transactionId: booking.id, counterparty: counterparty, purpose: purpose) }
+        runCore { try vault.updateTransactionText(transactionId: booking.id, counterparty: counterparty, purpose: purpose) }
         reloadBookings(); reloadMerchantStats()
     }
 
@@ -204,13 +204,13 @@ extension AppModel {
 
     func updateNote(_ note: String, for booking: Booking) {
         guard let vault else { return }
-        run { try vault.updateTransactionNote(transactionId: booking.id, note: note) }
+        runCore { try vault.updateTransactionNote(transactionId: booking.id, note: note) }
         reloadBookings()
     }
 
     func createCategory(name: String, parent: Int64?, symbol: String, color: String) {
         guard let vault else { return }
-        run { _ = try vault.createCategory(name: name, parentId: parent, sfSymbol: symbol, colorHex: color) }
+        runCore { _ = try vault.createCategory(name: name, parentId: parent, sfSymbol: symbol, colorHex: color) }
         reloadCategories()
     }
 
@@ -219,7 +219,7 @@ extension AppModel {
     private func editCategory(_ id: Int64, _ change: (inout GiroCrabCore.Category) -> Void) {
         guard let vault, var c = categories.first(where: { $0.id == id }) else { return }
         change(&c)
-        run {
+        runCore {
             try vault.updateCategory(id: c.id, name: c.name, parentId: c.parentId,
                                      sfSymbol: c.sfSymbol, colorHex: c.colorHex)
         }
@@ -269,7 +269,7 @@ extension AppModel {
 
     func deleteCategory(_ id: Int64) {
         guard let vault else { return }
-        run { try vault.deleteCategory(id: id) }
+        runCore { try vault.deleteCategory(id: id) }
         if sidebarSelection == .category(id) { sidebarSelection = .allAccounts }
         reloadAll()
     }
@@ -313,7 +313,7 @@ extension AppModel {
 
     func deleteRule(_ id: Int64) {
         guard let vault else { return }
-        run { try vault.deleteRule(ruleId: id) }
+        runCore { try vault.deleteRule(ruleId: id) }
         reloadAll()
     }
 
@@ -324,7 +324,7 @@ extension AppModel {
 
     func applyAllRules() {
         guard let vault else { return }
-        run {
+        runCore {
             let n = try vault.applyRules(onlyUncategorized: false)
             toast = String(localized: "Regeln angewendet – \(n) Buchungen neu zugeordnet")
         }

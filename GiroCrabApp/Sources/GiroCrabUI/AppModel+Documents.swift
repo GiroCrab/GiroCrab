@@ -77,7 +77,7 @@ extension AppModel {
 
     func setAutoStatements(_ account: Account, _ on: Bool) {
         guard let vault else { return }
-        run { try vault.setAutoStatements(accountId: account.id, enabled: on) }
+        runCore { try vault.setAutoStatements(accountId: account.id, enabled: on) }
     }
 
     // MARK: - Belege & PostBox
@@ -173,7 +173,7 @@ extension AppModel {
             let ok = url.startAccessingSecurityScopedResource()
             defer { if ok { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { continue }
-            run { _ = try vault.attachDocumentToBooking(bookingId: booking.id, fileName: url.lastPathComponent, bytes: data); n += 1 }
+            runCore { _ = try vault.attachDocumentToBooking(bookingId: booking.id, fileName: url.lastPathComponent, bytes: data); n += 1 }
         }
         if n > 0 { toast = String(localized: "\(n) Belege an „\(booking.merchantName)“ angehängt") }
         documentsChanged()
@@ -211,13 +211,13 @@ extension AppModel {
 
     func deleteDocument(_ doc: DocumentInfo) {
         guard let vault else { return }
-        run { try vault.deleteDocument(docId: doc.id) }
+        runCore { try vault.deleteDocument(docId: doc.id) }
         documentsChanged()
     }
 
     func linkDocument(_ doc: DocumentInfo, to booking: Booking?) {
         guard let vault else { return }
-        run { try vault.linkDocument(docId: doc.id, bookingId: booking?.id) }
+        runCore { try vault.linkDocument(docId: doc.id, bookingId: booking?.id) }
         documentsChanged()
     }
 
@@ -250,7 +250,7 @@ extension AppModel {
         guard let vault else { return }
         let ok = folder.startAccessingSecurityScopedResource()
         defer { if ok { folder.stopAccessingSecurityScopedResource() } }
-        run {
+        runCore {
             let n = try vault.exportAllDocuments(destDir: folder.path)
             toast = String(localized: "\(n) Belege nach „\(folder.lastPathComponent)/GiroCrab-Belege“ exportiert")
         }

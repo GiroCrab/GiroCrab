@@ -20,14 +20,14 @@ extension AppModel {
     /// Stores the choice. The user's own ID always stays in the vault.
     func setFintsProductIDMode(_ mode: String) {
         guard let vault else { return }
-        run { try vault.setFintsProductIdMode(mode: mode) }
+        runCore { try vault.setFintsProductIdMode(mode: mode) }
         offerProductIDChoice = false
         reloadSettings()
     }
 
     func saveSetting(_ key: String, _ value: String) {
         guard let vault else { return }
-        run { try vault.setSetting(key: key, value: value) }
+        runCore { try vault.setSetting(key: key, value: value) }
         reloadSettings()
     }
 
@@ -79,7 +79,7 @@ extension AppModel {
         }
         guard let vault else { return }
         var newID: Int64?
-        run { newID = try vault.addBankConnection(connector: kind, displayName: "", loginName: login) }
+        runCore { newID = try vault.addBankConnection(connector: kind, displayName: "", loginName: login) }
         reloadAccounts()
         if let id = newID, let conn = connections.first(where: { $0.id == id }) {
             toast = String(localized: "\(conn.displayName) hinzugefügt")
@@ -101,7 +101,7 @@ extension AppModel {
         }
         guard let vault else { return }
         var newID: Int64?
-        run { newID = try vault.addFintsConnection(blz: blz, url: url, displayName: name, loginName: login, tanMedium: tanMedium) }
+        runCore { newID = try vault.addFintsConnection(blz: blz, url: url, displayName: name, loginName: login, tanMedium: tanMedium) }
         reloadSettings()
         reloadAccounts()
         if let id = newID, let conn = connections.first(where: { $0.id == id }) {
@@ -125,7 +125,7 @@ extension AppModel {
         }
         guard let vault else { return }
         var newID: Int64?
-        run { newID = try vault.addEnableBankingConnection(aspsp: aspsp, country: country, displayName: name, loginName: label) }
+        runCore { newID = try vault.addEnableBankingConnection(aspsp: aspsp, country: country, displayName: name, loginName: label) }
         reloadAccounts()
         if let id = newID, let conn = connections.first(where: { $0.id == id }) {
             toast = String(localized: "\(conn.displayName) hinzugefügt")
@@ -229,7 +229,7 @@ extension AppModel {
     /// everything, but are skipped by syncs and rule runs and leave the overall total.
     func setAccountArchived(_ account: Account, _ archived: Bool) {
         guard let vault else { return }
-        run {
+        runCore {
             try vault.setAccountArchived(accountId: account.id, archived: archived)
             toast = archived
                 ? String(localized: "„\(account.name)“ archiviert")
@@ -241,7 +241,7 @@ extension AppModel {
     /// Deletes one archived account incl. bookings/documents/holdings (and its connection if it was the last account).
     func deleteAccount(_ id: Int64) {
         guard let vault else { return }
-        run { try vault.deleteAccount(accountId: id) }
+        runCore { try vault.deleteAccount(accountId: id) }
         if sidebarSelection == .account(id) { sidebarSelection = .allAccounts }
         reloadAll()
     }
@@ -252,7 +252,7 @@ extension AppModel {
         if connections.first(where: { $0.id == id })?.connector == .tradeRepublic {
             Task { await WebLoginSheet.clearAllTradeRepublicWebData() }
         }
-        run { try vault.deleteBankConnection(connectionId: id) }
+        runCore { try vault.deleteBankConnection(connectionId: id) }
         reloadAll()
     }
 
@@ -264,18 +264,18 @@ extension AppModel {
 
     func updateConnection(_ id: Int64, name: String, login: String) {
         guard let vault else { return }
-        run { try vault.updateBankConnection(connectionId: id, displayName: name, loginName: login) }
+        runCore { try vault.updateBankConnection(connectionId: id, displayName: name, loginName: login) }
         reloadAccounts()
     }
 
     func setConnectionPin(_ id: Int64, _ pin: String?) {
         guard let vault else { return }
-        run { try vault.setConnectionPin(connectionId: id, pin: pin) }
+        runCore { try vault.setConnectionPin(connectionId: id, pin: pin) }
     }
 
     func clearSession(_ id: Int64) {
         guard let vault else { return }
-        run { try vault.clearConnectionSession(connectionId: id) }
+        runCore { try vault.clearConnectionSession(connectionId: id) }
         toast = String(localized: "Sitzung gelöscht")
     }
 

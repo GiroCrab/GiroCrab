@@ -22,7 +22,7 @@ extension AppModel {
 
     func reloadAccounts() {
         guard let vault else { return }
-        run {
+        runCore {
             applyAccountGroups(try vault.listAccountGroups(), try vault.listUserGroups())
             connections = try vault.listBankConnections()
             connectionKeys = Dictionary(uniqueKeysWithValues: connections.compactMap { c in
@@ -35,7 +35,7 @@ extension AppModel {
         settlePendingSelectionLoad()
         guard let vault else { return }
         let (from, to) = periodRange
-        run {
+        runCore {
             categories = try vault.listCategories(dateFrom: from, dateTo: to)
             categoryTree = Self.buildTree(categories)
         }
@@ -55,7 +55,7 @@ extension AppModel {
         guard let vault else { return }
         dashboardTask?.cancel()
         dashboardStale = false
-        run { dashboard = try vault.investmentDashboard(months: 6) }
+        runCore { dashboard = try vault.investmentDashboard(months: 6) }
     }
 
     /// The investment dashboard reads every booking (~150 ms on 30k): off the
@@ -239,7 +239,7 @@ extension AppModel {
         scopeLoadTask?.cancel()
         dropPendingPage()
         guard let vault else { return }
-        run {
+        runCore {
             let filter = currentFilter
             let p = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
             Perf.interval("publishBookings") { publish(p) }
@@ -318,7 +318,7 @@ extension AppModel {
             return
         }
         let ids = filter.accountIds
-        run {
+        runCore {
             let f = try vault.selectionFlow(accountIds: ids, dateFrom: from, dateTo: to)
             selectionFlow = (f.consumptionCents, f.investedCents, f.incomeCents)
         }
@@ -329,7 +329,7 @@ extension AppModel {
         guard let vault else { return }
         let (ids, days) = historyRequest
         let (from, to) = periodRange
-        run { history = Self.trimmedHistory(try vault.balanceHistory(accountIds: ids, days: days), from: from, to: to) }
+        runCore { history = Self.trimmedHistory(try vault.balanceHistory(accountIds: ids, days: days), from: from, to: to) }
     }
 
     /// Accounts and day count of the balance chart for the current selection and period.
@@ -365,12 +365,12 @@ extension AppModel {
     func reloadRules() {
         guard let vault else { return }
         rulesStale = false
-        run { rules = try vault.listRules() }
+        runCore { rules = try vault.listRules() }
     }
 
     func reloadSettings() {
         guard let vault else { return }
-        run {
+        runCore {
             settings = try vault.listSettings()
             logoProvider = try vault.onlineLogoProvider()
         }
@@ -510,20 +510,20 @@ extension AppModel {
 
     func setAccountColor(_ accountId: Int64, hex: String?) {
         guard let vault else { return }
-        run { try vault.setAccountColor(accountId: accountId, colorHex: hex) }
+        runCore { try vault.setAccountColor(accountId: accountId, colorHex: hex) }
         reloadAccounts()
     }
 
     /// Back to the symbol of the account kind; a bank sync keeps a chosen symbol.
     func resetAccountSymbol(_ accountId: Int64) {
         guard let vault else { return }
-        run { try vault.resetAccountSymbol(accountId: accountId) }
+        runCore { try vault.resetAccountSymbol(accountId: accountId) }
         reloadAccounts()
     }
 
     func setAccountSymbol(_ accountId: Int64, symbol: String) {
         guard let vault else { return }
-        run { try vault.setAccountSymbol(accountId: accountId, sfSymbol: symbol) }
+        runCore { try vault.setAccountSymbol(accountId: accountId, sfSymbol: symbol) }
         reloadAccounts()
     }
 
