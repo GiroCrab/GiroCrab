@@ -633,7 +633,7 @@ public final class AppModel {
         }
     }
 
-    @ObservationIgnored private var bootstrapped = false
+    @ObservationIgnored var bootstrapped = false
 
     /// Create + seed the throw-away demo vault on a background thread; only the finished
     /// vault is handed back to the main actor.
@@ -902,6 +902,8 @@ public final class AppModel {
 
     /// Set when the user left the demo to the lock screen: no automatic prompt then.
     var demoDismissedLock = false
+    /// „App zurücksetzen“ is running (guards against a second start).
+    var isResettingApp = false
 
     nonisolated private static let realDataKey = "girocrab.hasRealData"
 
@@ -935,6 +937,12 @@ public final class AppModel {
     func lock() {
         guard holdsRealData else { return }
         demoDismissedLock = true
+        releaseVaultState()
+        vaultState = .locked
+    }
+
+    /// Cancels every task, drops the vault and clears what it loaded (shared by `lock()` and the app reset).
+    func releaseVaultState() {
         scopeLoadTask?.cancel()
         categoryRefreshTask?.cancel()
         dashboardTask?.cancel()
@@ -955,7 +963,6 @@ public final class AppModel {
         vault = nil
         groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; connections = []; settings = []
         page = nil; dashboard = nil; merchantStats = nil; logoCache = [:]
-        vaultState = .locked
     }
 
     /// Locking ends every bank dialog: no session keeps writing into the vault,
