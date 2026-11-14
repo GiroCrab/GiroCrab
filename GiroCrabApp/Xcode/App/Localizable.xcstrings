@@ -12903,6 +12903,17 @@
         }
       }
     },
+    "Passwort im Tresor speichern" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Store Password in Vault"
+          }
+        }
+      }
+    },
     "PayPal Client-ID" : {
       "extractionState" : "manual",
       "localizations" : {

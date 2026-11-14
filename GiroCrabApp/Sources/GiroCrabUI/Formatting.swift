@@ -376,6 +376,7 @@ extension ConnectorKind {
         case .fnz: return "FNZ Bank"
         case .ibkr: return "Interactive Brokers (IBKR)"
         case .quirion: return "quirion"
+        case .easybank: return "easybank"
         }
     }
 
@@ -397,6 +398,7 @@ extension ConnectorKind {
         case .fnz: return "#265B55"
         case .ibkr: return "#D81222"
         case .quirion: return "#D4005A"
+        case .easybank: return "#00AEEF"
         }
     }
 
@@ -425,6 +427,7 @@ extension ConnectorKind {
         case .fnz: return "FNZ"
         case .ibkr: return "IB"
         case .quirion: return "Q"
+        case .easybank: return "EB"
         }
     }
 }
