@@ -494,7 +494,9 @@ struct BookingRow: View {
                         // Amazon order: what was ordered beats the "Bestellung" kind label.
                         // Refunds show the refunded order's items (joined via the order code).
                         let refundSource = ref.isRefund ? model.amazonRefundSource(booking) : nil
-                        let itemsText = refundSource.map { "· ↩ \($0.items)" }
+                        // Refund rows start flush like every other row ("· item…");
+                        // the ↩ marker goes at the end of the item text.
+                        let itemsText = refundSource.map { "· \($0.items)  ↩" }
                             ?? (ref.items.isEmpty ? nil : "· \(ref.items)")
                         if let itemsText {
                             Text(itemsText)
