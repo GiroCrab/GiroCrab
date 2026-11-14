@@ -222,12 +222,3 @@ extension AppModel {
         showTransferSheet = true
     }
 }
-
-func formatIBAN(_ iban: String) -> String {
-    var out = ""
-    for (i, ch) in iban.enumerated() {
-        if i > 0 && i % 4 == 0 { out.append(" ") }
-        out.append(ch)
-    }
-    return out
-}

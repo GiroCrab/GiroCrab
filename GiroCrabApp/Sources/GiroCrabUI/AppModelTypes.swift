@@ -298,6 +298,15 @@ let settingLabels: [String: String] = [
     "enablebanking.redirect_url": String(localized: "Enable Banking Redirect-URL"),
 ]
 
+func formatIBAN(_ iban: String) -> String {
+    var out = ""
+    for (i, ch) in iban.enumerated() {
+        if i > 0 && i % 4 == 0 { out.append(" ") }
+        out.append(ch)
+    }
+    return out
+}
+
 /// How a booking row marks its account: short name and colour.
 struct AccountMarker {
     let label: String
