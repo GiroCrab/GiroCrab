@@ -340,7 +340,12 @@ struct IconColorPopover: View {
             if !customColors.isEmpty {
                 Text("Eigene Farben").appFont(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 6), count: 7), alignment: .leading, spacing: 6) {
-                    ForEach(customColors, id: \.self) { hex in swatch(hex) }
+                    ForEach(customColors, id: \.self) { hex in
+                        swatch(hex)
+                            .contextMenu {
+                                Button("Entfernen", systemImage: "trash", role: .destructive) { model.removeColor(hex) }
+                            }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

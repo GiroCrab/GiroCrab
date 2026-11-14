@@ -22,3 +22,40 @@ final class ColorChoicesTests: XCTestCase {
         XCTAssertEqual(ColorChoices.customColors(used: used, palette: palette).count, ColorChoices.maxCustom)
     }
 }
+
+/// „Entfernen“ on a custom colour.
+@MainActor
+final class RemoveColorTests: XCTestCase {
+    private var model: AppModel!
+
+    override func setUp() async throws {
+        model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        XCTAssertEqual(model.vaultState, .open)
+    }
+
+    override func tearDown() async throws { model = nil }
+
+    private let custom = "#123456"
+
+    private func paint() throws -> (accounts: [Int64], category: Int64) {
+        let accounts = Array(model.allAccounts.prefix(2)).map(\.id)
+        XCTAssertEqual(accounts.count, 2)
+        for id in accounts { model.setAccountColor(id, hex: custom) }
+        let category = try XCTUnwrap(model.categories.first { $0.depth == 0 }).id
+        model.setCategoryColor(category, hex: custom)
+        return (accounts, category)
+    }
+
+    private func hexes(_ accounts: [Int64], _ category: Int64) -> [String] {
+        accounts.map { id in model.allAccounts.first { $0.id == id }!.colorHex.uppercased() }
+            + [model.categories.first { $0.id == category }!.colorHex.uppercased()]
+    }
+
+    func testRemoveLeavesNoElementWithTheColour() throws {
+        let (accounts, category) = try paint()
+        model.removeColor(custom)
+        let after = hexes(accounts, category)
+        XCTAssertFalse(after.contains(custom))
+        XCTAssertFalse(after.last!.isEmpty, "a category always keeps a colour")
+    }
+}
