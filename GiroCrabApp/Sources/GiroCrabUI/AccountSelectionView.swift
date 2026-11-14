@@ -32,17 +32,17 @@ struct AccountSelectionList: View {
                         })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.name)
-                            Text(detail(c)).font(.caption).foregroundStyle(.secondary)
+                            Text(detail(c)).appFont(.caption).foregroundStyle(.secondary)
                             if c.pending {
                                 Label("Bereits über „\(c.existingConnection)“ eingebunden", systemImage: "exclamationmark.triangle")
-                                    .font(.caption).foregroundStyle(Theme.warning)
+                                    .appFont(.caption).foregroundStyle(Theme.warning)
                             }
                         }
                     }
                 }
                 Text("Abrufen: Konto, Umsätze und Dokumente werden über diesen Zugang importiert. Überspringen: nichts davon, bereits gespeicherte Daten bleiben erhalten.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if let error { Text(error).font(.caption).foregroundStyle(Theme.negative) }
+                    .appFont(.caption).foregroundStyle(.secondary)
+                if let error { Text(error).appFont(.caption).foregroundStyle(Theme.negative) }
                 if showsSaveButton {
                     Button(saveTitle) { save() }
                         .buttonStyle(.borderedProminent)
@@ -90,9 +90,9 @@ struct AccountSelectionPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Konten auswählen – \(connection.displayName)").font(.title3.bold())
+                Text("Konten auswählen – \(connection.displayName)").appFont(.title3, weight: .bold)
                 Text("Einige Konten sind bereits über einen anderen Zugang eingebunden. Wählen Sie, welche über diesen Zugang abgerufen werden sollen. Ohne Auswahl werden sie übersprungen.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .appFont(.callout).foregroundStyle(.secondary)
             }
             .padding(20)
             Divider()

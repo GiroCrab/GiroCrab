@@ -664,6 +664,17 @@
         }
       }
     },
+    "%lld Treffer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld matches"
+          }
+        }
+      }
+    },
     "%lld Umsätze als gelesen markiert" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1492,6 +1503,17 @@
         }
       }
     },
+    "1 Treffer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 match"
+          }
+        }
+      }
+    },
     "8 Ziffern oder IBAN" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1499,6 +1521,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "8 digits or IBAN"
+          }
+        }
+      }
+    },
+    "<!-- Beschreibe kurz das Problem: Was hast du getan, was hast du erwartet, was ist stattdessen passiert? Bitte keine echten IBANs, Namen oder Buchungsdaten. -->" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "<!-- Briefly describe the problem: what did you do, what did you expect, what happened instead? Please no real IBANs, names or booking data. -->"
           }
         }
       }
@@ -1631,6 +1664,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fetch Log"
+          }
+        }
+      }
+    },
+    "Abruf-Protokoll (neueste zuerst):" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch log (newest first):"
+          }
+        }
+      }
+    },
+    "Abruf-Protokoll anhängen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attach fetch log"
           }
         }
       }
@@ -1943,6 +1998,17 @@
         }
       }
     },
+    "Alle Markierungen entfernen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove All Marks"
+          }
+        }
+      }
+    },
     "Alle Regeln anwenden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2075,6 +2141,17 @@
         }
       }
     },
+    "Als PNG sichern …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save as PNG …"
+          }
+        }
+      }
+    },
     "Als Vorlage speichern …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2203,6 +2280,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Analytics"
+          }
+        }
+      }
+    },
+    "Anbindungen: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connections: %@"
           }
         }
       }
@@ -2687,6 +2775,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Also supported: statements as CAMT.053 (XML) or MT940 (.sta / .mt940)."
+          }
+        }
+      }
+    },
+    "Auf Gruppe links ziehen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag onto a group on the left"
           }
         }
       }
@@ -3506,6 +3605,17 @@
         }
       }
     },
+    "Bankübersicht" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank Overview"
+          }
+        }
+      }
+    },
     "Bargeld" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3645,6 +3755,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "On the next refresh you’ll need to sign in again and confirm the sign-in in your bank’s app."
+          }
+        }
+      }
+    },
+    "Beim Öffnen des Issues liegt der geschwärzte Screenshot in der Zwischenablage. Es wird nichts automatisch gesendet: Der Browser zeigt ein vorausgefülltes Issue, das du vor dem Absenden noch bearbeiten kannst." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When the issue opens, the redacted screenshot is on your clipboard. Nothing is sent automatically: your browser shows a prefilled issue that you can still edit before submitting."
           }
         }
       }
@@ -3869,6 +3990,28 @@
         }
       }
     },
+    "Bereiche schwärzen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Black Out Areas"
+          }
+        }
+      }
+    },
+    "Bereiche schwärzen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Black Out Areas …"
+          }
+        }
+      }
+    },
     "Bereits vorhanden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4019,6 +4162,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter Amount"
+          }
+        }
+      }
+    },
+    "Beträge, IBANs, Namen, Kontonamen, Verwendungszwecke und Belege werden abgedeckt; „Kategorien ausblenden“ deckt auch Kategorien, Gruppen und Wertpapiernamen ab. Im Demo-Tresor sind alle Daten erfunden, deshalb lässt sich die Schwärzung hier abschalten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amounts, IBANs, names, account names, payment references and documents are covered; “Hide Categories” also covers categories, groups and security names. All data in the demo vault is fictitious, so redaction can be turned off here."
+          }
+        }
+      }
+    },
+    "Beträge, IBANs, Namen, Kontonamen, Verwendungszwecke und Belege werden abgedeckt; „Kategorien ausblenden“ deckt auch Kategorien, Gruppen und Wertpapiernamen ab. Prüfe das Bild trotzdem, bevor du es teilst." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amounts, IBANs, names, account names, payment references and documents are covered; “Hide Categories” also covers categories, groups and security names. Still check the picture before you share it."
           }
         }
       }
@@ -4650,6 +4815,17 @@
         }
       }
     },
+    "Das Abruf-Protokoll wird nicht angehängt: Es konnte nicht vollständig geladen und bereinigt werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The fetch log is not attached: it could not be fully loaded and sanitized."
+          }
+        }
+      }
+    },
     "Das FinTS-Produkt von GiroCrab ist eingebaut. Eigene API-Anwendungen (zum Beispiel für comdirect oder PayPal) registrieren Sie selbst; die Werte liegen nur in Ihrem verschlüsselten Tresor." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5196,6 +5372,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Details"
+          }
+        }
+      }
+    },
+    "Diagnose" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostics"
+          }
+        }
+      }
+    },
+    "Diagnose (automatisch bereinigt)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostics (automatically sanitized)"
+          }
+        }
+      }
+    },
+    "Diagnose wird bereinigt …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sanitizing diagnostics …"
           }
         }
       }
@@ -6136,6 +6345,17 @@
         }
       }
     },
+    "Ein Konto gehört zu höchstens einer Gruppe. Konten per Ziehen auf eine andere Gruppe links legen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An account belongs to at most one group. Drag accounts onto another group on the left."
+          }
+        }
+      }
+    },
     "Ein Update ist in Vorbereitung." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6176,6 +6396,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "A selected transaction counts as reviewed after this time – like a read email. Never with multiple selection."
+          }
+        }
+      }
+    },
+    "Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A new capture discards the marks, since the content may have moved."
           }
         }
       }
@@ -6682,6 +6913,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No accounts or transactions are deleted."
+          }
+        }
+      }
+    },
+    "Es wird nichts automatisch gesendet: Der Browser öffnet ein vorausgefülltes Issue, das du vor dem Absenden noch bearbeiten kannst." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing is sent automatically: your browser opens a prefilled issue that you can still edit before submitting."
           }
         }
       }
@@ -7940,6 +8182,17 @@
         }
       }
     },
+    "GiroCrab-Fehlerbericht" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab Bug Report"
+          }
+        }
+      }
+    },
     "GiroCrab-Hilfe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8035,6 +8288,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Google"
+          }
+        }
+      }
+    },
+    "Groß" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Large"
           }
         }
       }
@@ -8182,6 +8446,17 @@
         }
       }
     },
+    "Gruppe, Konto, Kontoinhaber, IBAN …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Group, account, holder, IBAN…"
+          }
+        }
+      }
+    },
     "Gruppen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8215,6 +8490,17 @@
         }
       }
     },
+    "Gruppen und Konten suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search groups and accounts"
+          }
+        }
+      }
+    },
     "Gruppenübersicht" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8222,6 +8508,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Group Overview"
+          }
+        }
+      }
+    },
+    "Größer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bigger"
           }
         }
       }
@@ -8431,6 +8728,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search merchant"
+          }
+        }
+      }
+    },
+    "Händler, Zweck, IBAN / Kontonummer, Betrag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merchant, purpose, IBAN / account number, amount"
           }
         }
       }
@@ -9062,6 +9370,28 @@
         }
       }
     },
+    "Issue auf GitHub öffnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Issue on GitHub"
+          }
+        }
+      }
+    },
+    "Issue öffnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Issue"
+          }
+        }
+      }
+    },
     "Ja" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9348,6 +9678,17 @@
         }
       }
     },
+    "Kategorien ausblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Categories"
+          }
+        }
+      }
+    },
     "Kategorien und Regeln (%lld)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9465,6 +9806,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Logo"
+          }
+        }
+      }
+    },
+    "Kein Screenshot: Das Hauptfenster ist geschlossen, minimiert, gesperrt oder wurde nicht rechtzeitig geschwärzt. „Neu aufnehmen“ versucht es erneut; sonst wird das Issue ohne Screenshot erstellt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No screenshot: the main window is closed, minimized, locked or was not redacted in time. “Retake” tries again; otherwise the issue is created without a screenshot."
+          }
+        }
+      }
+    },
+    "Kein Treffer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No match"
           }
         }
       }
@@ -9750,7 +10113,18 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No Results"
+            "value" : "No matches"
+          }
+        }
+      }
+    },
+    "Keine Treffer in dieser Gruppe" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matches in this group"
           }
         }
       }
@@ -9872,6 +10246,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Clothing"
+          }
+        }
+      }
+    },
+    "Kleiner" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smaller"
           }
         }
       }
@@ -10030,6 +10415,17 @@
         }
       }
     },
+    "Konten nach Bank anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Accounts by Bank"
+          }
+        }
+      }
+    },
     "Konten nach Gruppe anzeigen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10070,6 +10466,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Accounts without a group appear in the sidebar under “Ungrouped”."
+          }
+        }
+      }
+    },
+    "Konten ohne Gruppe stehen in der Seitenleiste unter „Ohne Gruppe“. Konten per Ziehen auf eine Gruppe links legen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accounts without a group appear in the sidebar under “Ungrouped”. Drag accounts onto a group on the left."
+          }
+        }
+      }
+    },
+    "Konten per Ziehen auf eine Gruppe legen, Reihenfolge per Ziehen ändern. Suche nach Name, Kontoinhaber oder IBAN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag accounts onto a group, reorder by dragging. Search by name, account holder or IBAN."
+          }
+        }
+      }
+    },
+    "Konten suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search Accounts"
           }
         }
       }
@@ -10861,6 +11290,28 @@
         }
       }
     },
+    "Markierung hinzufügen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Mark"
+          }
+        }
+      }
+    },
+    "Markierungen entfernen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Marks"
+          }
+        }
+      }
+    },
     "Medikamente" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11550,6 +12001,17 @@
         }
       }
     },
+    "Nach Bank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By Bank"
+          }
+        }
+      }
+    },
     "Nach Gruppe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11704,6 +12166,17 @@
         }
       }
     },
+    "Name, Kontoinhaber, IBAN …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name, account holder, IBAN…"
+          }
+        }
+      }
+    },
     "Name, Verwendungszweck und Buchungstext" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11766,6 +12239,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New"
+          }
+        }
+      }
+    },
+    "Neu aufnehmen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retake"
           }
         }
       }
@@ -12397,6 +12881,17 @@
         }
       }
     },
+    "Noch keine Konten – mit + hinzufügen oder hierher ziehen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No accounts yet – add with + or drag here"
+          }
+        }
+      }
+    },
     "Noch keine Raten seit dem Stichtag" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12782,6 +13277,17 @@
         }
       }
     },
+    "Ohne Bank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Bank"
+          }
+        }
+      }
+    },
     "Ohne Entsperren: Demo-Daten ansehen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12932,6 +13438,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose Folder …"
+          }
+        }
+      }
+    },
+    "Originalgröße" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actual Size"
           }
         }
       }
@@ -13134,6 +13651,17 @@
         }
       }
     },
+    "Passendes Konto hinzufügen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add matching account"
+          }
+        }
+      }
+    },
     "Passwort" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13185,6 +13713,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Person"
+          }
+        }
+      }
+    },
+    "Persönliche Daten schwärzen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redact Personal Data"
+          }
+        }
+      }
+    },
+    "Persönliche Daten sind abgedeckt, dazu %lld eigene Markierungen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personal data is covered, plus %lld marks of your own."
+          }
+        }
+      }
+    },
+    "Persönliche Daten sind abgedeckt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personal data is covered."
+          }
+        }
+      }
+    },
+    "Persönliche Daten werden geschwärzt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personal data is redacted"
           }
         }
       }
@@ -13361,6 +13933,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Private person – no logo"
+          }
+        }
+      }
+    },
+    "Problem melden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report a Problem"
+          }
+        }
+      }
+    },
+    "Problem melden …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report a Problem …"
           }
         }
       }
@@ -13949,6 +14543,17 @@
         }
       }
     },
+    "Rückgängig" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undo"
+          }
+        }
+      }
+    },
     "SEPA & Bank-Rohdaten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14197,6 +14802,17 @@
         }
       }
     },
+    "Schriftgröße" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text size"
+          }
+        }
+      }
+    },
     "Schritt %lld von %lld" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14226,6 +14842,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Protection"
+          }
+        }
+      }
+    },
+    "Screenshot" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screenshot"
+          }
+        }
+      }
+    },
+    "Screenshot wird erstellt …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taking screenshot …"
+          }
+        }
+      }
+    },
+    "Sehr groß" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Extra large"
           }
         }
       }
@@ -14676,6 +15325,17 @@
         }
       }
     },
+    "Sprache: %@ · Demo-Modus: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Language: %1$@ · Demo mode: %2$@"
+          }
+        }
+      }
+    },
     "Später" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14782,6 +15442,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Set New Balance of “%@”"
+          }
+        }
+      }
+    },
+    "Standard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standard"
           }
         }
       }
@@ -16178,6 +16849,17 @@
         }
       }
     },
+    "Vergrößert die Schrift in der ganzen App. Auch im Menü Ansicht mit ⌘+ / ⌘− / ⌘0." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enlarges the text throughout the app. Also in the View menu with ⌘+ / ⌘− / ⌘0."
+          }
+        }
+      }
+    },
     "Verknüpfung lösen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16596,6 +17278,17 @@
         }
       }
     },
+    "Vorschau des Screenshots" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screenshot preview"
+          }
+        }
+      }
+    },
     "Vorschau erscheint, sobald Restschuld und Stichtag ausgefüllt sind." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16680,6 +17373,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "What else GiroCrab imports and how it fetches transactions from now on."
+          }
+        }
+      }
+    },
+    "Was ist passiert?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What happened?"
           }
         }
       }
@@ -17190,6 +17894,28 @@
         }
       }
     },
+    "Ziehe Rechtecke über Stellen, die zusätzlich schwarz übermalt werden sollen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag rectangles over areas that should also be painted black."
+          }
+        }
+      }
+    },
+    "Ziehe mit der Maus Rechtecke über Stellen, die zusätzlich schwarz übermalt werden sollen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag rectangles with the mouse over areas that should also be painted black."
+          }
+        }
+      }
+    },
     "Ziel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17543,6 +18269,17 @@
         }
       }
     },
+    "ja" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "yes"
+          }
+        }
+      }
+    },
     "kein Gerätecode eingerichtet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17583,6 +18320,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "manual"
+          }
+        }
+      }
+    },
+    "nein" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "no"
           }
         }
       }
@@ -18436,6 +19184,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "⌘A (select all transactions)"
+          }
+        }
+      }
+    },
+    "📋 Der geschwärzte Screenshot liegt in deiner Zwischenablage – klicke hier ins Textfeld und drücke **⌘V**, um ihn einzufügen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📋 The redacted screenshot is on your clipboard – click into the text field here and press **⌘V** to paste it."
+          }
+        }
+      }
+    },
+    "📋 Der geschwärzte Screenshot liegt in deiner Zwischenablage – tippe hier lange ins Textfeld und wähle **Einsetzen**." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📋 The redacted screenshot is on your clipboard – long-press the text field here and choose **Paste**."
           }
         }
       }
