@@ -1033,7 +1033,8 @@ impl BankConnector for TradeRepublicConnector {
                 name: "Depot".into(),
                 owner: String::new(),
                 iban: String::new(),
-                account_number: self.phone.clone(),
+                // no phone number here: it would show up as an account number
+                account_number: String::new(),
                 currency: "EUR".into(),
                 kind: AccountKind::Brokerage,
                 balance_cents: 0,
