@@ -6,19 +6,19 @@
 #     (nil when locked or the vault changed) or `requireVaultOffMain` (throws),
 #   - jobs of several calls (FNZ import): `model.pinVault()` → `pin.run { … }`,
 #   - "is a vault open?": `model.isUnlocked`.
-# `vault` itself is used only inside AppModel and its extensions (bare `vault`).
+# `vault` itself is used only inside AppModel.swift and its AppModel+*.swift extensions.
 #
 #   scripts/lint-vault-access.sh      exits 1 and lists offending lines
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# Any `<expr>.vault` (model.vault, self.vault in a view, …) outside AppModel.swift,
+# Any `<expr>.vault` (model.vault, self.vault in a view, …) outside AppModel.swift and AppModel+*.swift,
 # which owns the vault and VaultPin. Not flagged: comment lines, identifiers that
 # merely start with "vault" (vaultState, …) and `.vault"` closing a string
 # ("de.girocrab.vault").
 hits=$(grep -rnE '\.vault([^A-Za-z0-9_"]|$)' GiroCrabApp/Sources --include='*.swift' \
-    | grep -v '^GiroCrabApp/Sources/GiroCrabUI/AppModel\.swift:' \
+    | grep -vE '^GiroCrabApp/Sources/GiroCrabUI/AppModel(\+[A-Za-z]+)?\.swift:' \
     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
 
 if [[ -n "$hits" ]]; then
