@@ -206,8 +206,8 @@ struct SidebarView: View {
                 SectionHeader(
                     name: group.name, sfSymbol: group.sfSymbol, balanceCents: group.balanceCents,
                     selected: model.sidebarSelection == .bank(group.id),
-                    nameRedaction: [],
                     isLoanGroup: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .loan },
+                    nameRedaction: [],
                     open: open, toggle: toggle
                 )
                 .padding(.top, 10)
