@@ -6339,6 +6339,17 @@
         }
       }
     },
+    "Dieser Ordner wird nicht mehr empfohlen. Wählen Sie über „Ordner wählen …“ den Ordner „GiroCrab“ in iCloud Drive, damit alle Geräte denselben Ordner nutzen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This folder is no longer recommended. Use “Choose folder …” to pick the “GiroCrab” folder in iCloud Drive so all devices share the same folder."
+          }
+        }
+      }
+    },
     "Dieser Tresor wurde mit einer neueren GiroCrab-Version gespeichert. Bitte die App aktualisieren." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6880,6 +6891,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Another device saved a new Enable Banking application. It replaces the one set up here."
+          }
+        }
+      }
+    },
+    "Ein anderes Gerät nutzt noch eine ältere GiroCrab-Version und schreibt in den alten Ordner. Bitte alle Geräte aktualisieren." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another device is still using an older GiroCrab version and writes to the old folder. Please update all devices."
           }
         }
       }

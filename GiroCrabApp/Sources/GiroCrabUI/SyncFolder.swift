@@ -20,7 +20,7 @@ struct SyncFolder: Sendable {
 
     /// Exact names only: iCloud's conflict copies ("tresor-… 2.girocrab")
     /// and anything else in the folder are left alone.
-    private static func isSnapshotName(_ name: String) -> Bool {
+    static func isSnapshotName(_ name: String) -> Bool {
         name == legacyName || name.range(of: devicePattern, options: .regularExpression) != nil
     }
 

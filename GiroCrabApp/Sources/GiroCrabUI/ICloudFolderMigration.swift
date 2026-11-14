@@ -13,6 +13,8 @@ enum ICloudFolderMigration {
         var url: URL
         /// "GiroCrab" is occupied by foreign files, so the old folder stays in use: show a hint.
         var conflict: Bool
+        /// The data was copied just now (record the time, see `legacyChanged`).
+        var didMigrate = false
     }
 
     /// Decides the folder inside `cloudDocs` (iCloud Drive root) and migrates if due.
@@ -28,8 +30,20 @@ enum ICloudFolderMigration {
         if !isEmpty(new, fm) { return Resolution(url: old, conflict: true) }
         guard create else { return Resolution(url: old, conflict: false) }
         return copy(from: old, to: new, cloudDocs: cloudDocs, fm: fm)
-            ? Resolution(url: new, conflict: false)
+            ? Resolution(url: new, conflict: false, didMigrate: true)
             : Resolution(url: old, conflict: false)
+    }
+
+    /// Whether a vault file in the old folder changed after `since` (the migration):
+    /// another device still writes there. The old folder is only read, never changed.
+    static func legacyChanged(cloudDocs: URL, since: Date, fm: FileManager = .default) -> Bool {
+        let old = cloudDocs.appendingPathComponent(legacyFolderName, isDirectory: true)
+        let names = (try? fm.contentsOfDirectory(atPath: old.path)) ?? []
+        return names.contains { name in
+            guard SyncFolder.isSnapshotName(SyncFolder.placeholderTarget(name) ?? name) else { return false }
+            let values = try? old.appendingPathComponent(name).resourceValues(forKeys: [.contentModificationDateKey])
+            return (values?.contentModificationDate ?? .distantPast) > since
+        }
     }
 
     /// Finder metadata only counts as empty.

@@ -572,6 +572,14 @@ struct ICloudSyncSection: View {
                     Text("Der Ordner „GiroCrab“ in iCloud Drive enthält bereits andere Dateien. Ihre bisherigen Daten bleiben unverändert im bisherigen Ordner und werden dort weiter synchronisiert.")
                         .appFont(.caption).foregroundStyle(.orange)
                 }
+                if sync.legacyFolderWritten {
+                    Text("Ein anderes Gerät nutzt noch eine ältere GiroCrab-Version und schreibt in den alten Ordner. Bitte alle Geräte aktualisieren.")
+                        .appFont(.caption).foregroundStyle(.orange)
+                }
+                if sync.repickFolderHint {
+                    Text("Dieser Ordner wird nicht mehr empfohlen. Wählen Sie über „Ordner wählen …“ den Ordner „GiroCrab“ in iCloud Drive, damit alle Geräte denselben Ordner nutzen.")
+                        .appFont(.caption).foregroundStyle(.orange)
+                }
                 // The app's own iCloud container is neither visible in Finder nor
                 // chosen by the user: only a plain folder gets these buttons.
                 if sync.location == .folder {
