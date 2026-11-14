@@ -219,6 +219,9 @@ public final class AppModel {
     var ruleDraft: Rule?
     var showSettings = false
     var showCommandPalette = false
+    /// Set while the bug report takes its screenshot (#301): the main window
+    /// draws `.sensitive()` content as placeholders.
+    var reportRedaction: ReportRedaction = []
     /// The balance chart has keyboard focus (Return there jumps to its day,
     /// instead of editing the selected booking's note).
     @ObservationIgnored var chartHasKeyboardFocus = false
@@ -254,6 +257,10 @@ public final class AppModel {
     var connectionKeys: [Int64: String] = [:]
     /// Showing the throw-away demo vault (also when the own vault is still empty).
     var demoActive = false
+    /// Where the own Enable Banking application is shared between devices.
+    @ObservationIgnored var enableBankingKeyStore: EnableBankingKeyStore = KeychainEnableBankingKeyStore()
+    /// Taken over from another device; shown once unless the user turned it off.
+    var enableBankingAdoptNotice: EnableBankingAdoptNotice?
     /// The personal vault while demo data is shown (nil if never unlocked).
     private(set) var ownVault: Vault?
     var activeChallenge: ActiveChallenge?
@@ -307,6 +314,8 @@ public final class AppModel {
     var transferInstantDeclined: String?
     /// The order reached the bank but its result is unclear.
     var transferUnknown: TransferUnknownNotice?
+    /// The user cancelled, but the bank did not confirm it (re-check or retry).
+    var transferCancelNotice: UnconfirmedTransferCancel?
     var splitBooking: Booking?
     var transferBusy = false
     var syncQueue: [BankConnection] = []
@@ -848,6 +857,7 @@ public final class AppModel {
         reloadAll()
         selectedBookingID = bookings.first?.id
         if demo { stopAutoSync() } else { startAutoSync() }
+        if !demo { reconcileEnableBankingKey() }
     }
 
     /// Switch to the demo data (own vault stays unlocked in the background).
@@ -948,7 +958,7 @@ public final class AppModel {
         transferDraft.pin = ""
         Task {
             await session?.cancel()
-            await transfer?.cancel()
+            _ = await transfer?.cancel()  // result cannot be shown once locked
         }
     }
 

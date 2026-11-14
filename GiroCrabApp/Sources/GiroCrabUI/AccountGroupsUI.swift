@@ -53,7 +53,7 @@ struct AccountsSectionHeader: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 2) {
                 Text("Konten")
-                    .font(.caption.weight(.semibold))
+                    .appFont(.caption, weight: .semibold)
                     .foregroundStyle(Theme.secondary)
                 Spacer()
                 if model.hasArchivedAccounts {
@@ -90,11 +90,12 @@ struct AccountsSectionHeader: View {
             .controlSize(.small)
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(Theme.tertiary)
                 TextField("Name, Kontoinhaber, IBAN …", text: $model.sidebarAccountSearch)
                     .textFieldStyle(.plain)
-                    .font(.caption)
+                    .sensitive() // typed owner names / IBANs (#301)
+                    .appFont(.caption)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -104,7 +105,7 @@ struct AccountsSectionHeader: View {
                         model.sidebarAccountSearch = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(Theme.tertiary)
                     }
                     .buttonStyle(.plain)
@@ -135,7 +136,7 @@ struct UserGroupHeader: View {
         HStack(spacing: 5) {
             Button(action: toggle) {
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
+                    .appFont(.caption, weight: .bold)
                     .rotationEffect(.degrees(open ? 90 : 0))
                     .frame(width: 12, height: 18)
                     .contentShape(Rectangle())
@@ -144,27 +145,29 @@ struct UserGroupHeader: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel(open ? "Gruppe einklappen" : "Gruppe ausklappen")
             Image(systemName: group.sfSymbol)
-                .font(.body.weight(.semibold))
+                .appFont(.body, weight: .semibold)
                 // the group's colour, like an account's icon (white when selected)
                 .foregroundStyle(selected || group.colorHex.isEmpty
                                  ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.readable(hex: group.colorHex)))
                 .frame(width: 20)
-            Text(group.name).lineLimit(1)
+            Text(group.name).lineLimit(1).sensitive(.labels)
             if !group.inTotal {
                 Image(systemName: "eye.slash")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .help("Nicht in der Gesamtsumme")
                     .accessibilityLabel("Nicht in der Gesamtsumme")
             }
             Spacer()
             Text(Money.format(group.balanceCents))
-                .font(.callout.weight(.semibold)) // same size as the account balances
+                .sensitive()
+                .appFont(.callout, weight: .semibold) // same size as the account balances
                 .monospacedDigit()
+                .fixedSize() // the name truncates, never the balance (#343)
                 .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(group.balanceCents < 0 ? Theme.negative : Theme.secondary))
                 .opacity(group.inTotal ? 1 : 0.6)
         }
-        .font(.body.weight(.semibold)) // as big as the account names
+        .appFont(.body, weight: .semibold) // as big as the account names
         .foregroundStyle(.secondary)
     }
 }
@@ -253,7 +256,7 @@ struct IconColorPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Farbe").font(.headline)
+            Text("Farbe").appFont(.headline)
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 6), count: 7), alignment: .leading, spacing: 6) {
                 ForEach(swatches, id: \.self) { hex in
                     Button { setColor(hex) } label: {
@@ -269,7 +272,7 @@ struct IconColorPopover: View {
                 if category == nil {
                     Button { setColor(nil) } label: {
                         Image(systemName: "arrow.uturn.backward.circle")
-                            .font(.title3)
+                            .appFont(.title3)
                             .frame(width: 20, height: 20)
                     }
                     .buttonStyle(.plain)
@@ -290,7 +293,7 @@ struct IconColorPopover: View {
             .frame(maxWidth: .infinity, alignment: .leading) // under its heading, not centred
             Divider()
             HStack {
-                Text("Symbol").font(.headline)
+                Text("Symbol").appFont(.headline)
                 Spacer()
                 // an account's symbol can go back to the one of its kind
                 if let account {
@@ -553,7 +556,7 @@ struct AccountGroupsSettings: View {
     private var searchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(Theme.tertiary)
             TextField("Gruppe, Konto, Kontoinhaber, IBAN …", text: $search)
                 .textFieldStyle(.plain)
@@ -613,7 +616,7 @@ struct AccountGroupsSettings: View {
                             if isSearching, listedGroups.isEmpty,
                                !(model.hasUserGroups && model.ungroupedForSettings.accounts.contains(where: { $0.matchesSidebarSearch(search) })) {
                                 Text("Keine Treffer")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -641,7 +644,7 @@ struct AccountGroupsSettings: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
                     Text(footer)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -728,7 +731,7 @@ struct GroupListRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(group.name).lineLimit(1)
                 Text(subtitle)
-                    .font(.caption).foregroundStyle(Theme.secondary)
+                    .appFont(.caption).foregroundStyle(Theme.secondary)
             }
             Spacer(minLength: 4)
             if !group.inTotal {
@@ -810,7 +813,7 @@ private struct GroupAccountsList: View {
             AccountSignet(account: a, size: 22, color: model.accountColor(a.id))
             VStack(alignment: .leading, spacing: 1) {
                 Text(a.name).foregroundStyle(Theme.text)
-                Text(rowDetail(a)).font(.caption2).foregroundStyle(Theme.secondary)
+                Text(rowDetail(a)).appFont(.caption2).foregroundStyle(Theme.secondary)
             }
         }
         .draggable(GroupDrag.account(a.id))
@@ -900,7 +903,7 @@ private struct GroupAccountsList: View {
             .overlay {
                 if listedAccounts.isEmpty {
                     Text(emptyLabel)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 12)
@@ -931,7 +934,7 @@ private struct GroupAccountsList: View {
                 Spacer()
                 if isSearching {
                     Text("Auf Gruppe links ziehen")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundStyle(Theme.tertiary)
                         .padding(.trailing, 8)
                 }
@@ -984,7 +987,7 @@ private struct UngroupedDetail: View {
             Section {
                 GroupAccountsList(group: model.ungroupedForSettings, search: search)
             } header: {
-                Text("Konten")
+                Text("Konten").appSectionHeader()
             } footer: {
                 Text("Konten ohne Gruppe stehen in der Seitenleiste unter „Ohne Gruppe“. Konten per Ziehen auf eine Gruppe links legen.")
             }
@@ -1063,7 +1066,7 @@ struct GroupDetailEditor: View {
                 Section {
                     GroupAccountsList(group: g, search: search)
                 } header: {
-                    Text("Konten")
+                    Text("Konten").appSectionHeader()
                 } footer: {
                     Text("Ein Konto gehört zu höchstens einer Gruppe. Konten per Ziehen auf eine andere Gruppe links legen.").leadingFooter()
                 }

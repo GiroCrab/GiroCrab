@@ -9,6 +9,7 @@ struct MerchantSignet: View {
     @Environment(AppModel.self) private var model
     let merchant: MerchantInfo
     var categorySymbol: String = ""
+    @Environment(\.textScale) private var textScale
     var size: CGFloat = 36
     var showNewDot = false
 
@@ -18,6 +19,7 @@ struct MerchantSignet: View {
     @State private var loadedLogo: (image: Image, pixels: Int)?
 
     var body: some View {
+        let size = self.size * textScale   // grows with the text size (#343)
         let logo = model.cachedLogo(for: merchant) ?? loadedLogo
         let shape = RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
         let brand = Color(hex: merchant.colorHex)
@@ -29,6 +31,7 @@ struct MerchantSignet: View {
                 Text(merchant.monogram)
                     .font(.system(size: size * 0.36, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.personText)
+                    .sensitive() // a person's initials
             } else if let img = sharpLogo {
                 // downloaded favicon (Google s2, 128 px) – real brand logo
                 shape.fill(Color.white)
@@ -54,6 +57,7 @@ struct MerchantSignet: View {
                     .font(.system(size: size * (merchant.monogram.count > 2 ? 0.30 : 0.40), weight: .bold, design: .rounded))
                     .foregroundStyle(Color.readable(hex: merchant.colorHex))
                     .minimumScaleFactor(0.6)
+                    .sensitive(merchant.known ? [] : .personal) // initials of an unknown counterparty
             }
             if !merchant.isPerson {
                 shape.strokeBorder(sharpLogo == nil ? brand.opacity(0.16) : Theme.border, lineWidth: 1)
@@ -80,6 +84,7 @@ struct MerchantSignet: View {
 /// Small signet for accounts (no bank logos: monogram + subtle tint).
 struct AccountSignet: View {
     let account: Account
+    @Environment(\.textScale) private var textScale
     var size: CGFloat = 22
     /// The account's colour (its marker in the booking list); nil = bank tint.
     var color: Color? = nil
@@ -87,6 +92,7 @@ struct AccountSignet: View {
     var onSelection = false
 
     var body: some View {
+        let size = self.size * textScale
         let tint = onSelection ? Color.primary
             : color ?? (account.kind == .loan ? Theme.loan : (account.connector?.tint ?? Theme.secondary))
         RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
@@ -104,9 +110,11 @@ struct AccountSignet: View {
 struct SymbolTile: View {
     let symbol: String
     let tint: Color
+    @Environment(\.textScale) private var textScale
     var size: CGFloat = 22
 
     var body: some View {
+        let size = self.size * textScale
         Image(systemName: symbol)
             .font(.system(size: size * 0.5, weight: .semibold))
             .foregroundStyle(tint)

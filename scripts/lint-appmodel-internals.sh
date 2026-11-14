@@ -19,11 +19,11 @@ cd "$ROOT"
 
 INTERNAL="
 activeSession activeTransfer applyAccountGroups booking bookingIndexByID categoryRefreshTask
-dashboardStale dashboardTask dropPendingPage endSelectionLoad failedSyncSecret finishSync
+dashboardStale dashboardTask dropPendingPage enableBankingSettingSaved endSelectionLoad failedSyncSecret finishSync
 finishTransfer freshBooking handle handleTransfer historyRequest listGeneration loadBookings
 loadDashboard loadMerchantStats loadMoreTask loadsSelectionInBackground logoCache logoInflight
 merchantStatsCache merchantStatsKey merchantStatsTask mirrorRunning offMain periodDidChange
-pollTask productIDAlternatives pruneMultiSelection publish quickLookCleanupObserver
+pollTask productIDAlternatives pruneMultiSelection publish quickLookCleanupObserver reconcileEnableBankingKey
 rebuildAccountIndex rebuildBookingIndex recurringByKey reloadProductIDState reloadScopeBookings
 reloadSelection resetSyncBatch rulesStale runCore scheduleAutoReview schedulePoll
 scheduleSearch scopeLoadTask searchTask selectionAccountIDs selectionLoadTask
@@ -43,7 +43,7 @@ fail=0
 # Every listed member must still be declared on AppModel.
 for name in $INTERNAL $READ_ONLY; do
     if ! grep -qE "^    ([@A-Za-z()]+ )*(var|let|func) $name([^A-Za-z0-9_]|$)" "${model_files[@]}"; then
-        echo "lint-appmodel-internals: '$name' ist in AppModel*.swift nicht mehr deklariert – Liste in $0 anpassen." >&2
+        echo "lint-appmodel-internals: '$name' is no longer declared in AppModel*.swift; update the list in $0." >&2
         fail=1
     fi
 done
@@ -64,12 +64,12 @@ hits=$(others "(^|[^A-Za-z0-9_])$recv\.($internal_re)$end")
 writes=$(others "(^|[^A-Za-z0-9_])$recv\.($read_only_re)([[:space:]]*([-+*/]?=[^=]|\.(append|insert|remove[A-Za-z]*|merge|formUnion|subtract)\()|\[[^]]*\][[:space:]]*=[^=])|\\\$$recv\.($read_only_re)$end")
 
 if [[ -n "$hits" ]]; then
-    echo "AppModel-Interna außerhalb von AppModel*.swift (siehe scripts/lint-appmodel-internals.sh):" >&2
+    echo "AppModel internals used outside AppModel*.swift, see scripts/lint-appmodel-internals.sh:" >&2
     echo "$hits" >&2
     fail=1
 fi
 if [[ -n "$writes" ]]; then
-    echo "Schreibzugriff auf AppModel-Zustand, den nur AppModel setzt (siehe scripts/lint-appmodel-internals.sh):" >&2
+    echo "Write to AppModel state that only AppModel may set, see scripts/lint-appmodel-internals.sh:" >&2
     echo "$writes" >&2
     fail=1
 fi
