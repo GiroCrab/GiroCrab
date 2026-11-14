@@ -18,7 +18,11 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `girocrab-core/src/merchants.rs` – merchant matching
 - `girocrab-core/src/documents.rs` – booking documents / PDF text extraction
 - `girocrab-core/src/text.rs` – text helpers (mojibake repair etc.)
-- `GiroCrabApp/Sources/GiroCrabUI/AppModel.swift` – app state / core bridge
+- `GiroCrabApp/Sources/GiroCrabUI/AppModel.swift` – app state (all stored properties), init, vault lifecycle,
+  `vaultOffMain`/`pinVault`; features live in `AppModel+<Feature>.swift` extensions: `Loading` (reloads, booking
+  list paging, account markers), `Selection` (sidebar/period/search, pay cycle), `Editing` (categories, rules,
+  notes), `Connections` (bank connections, settings, FinTS product ID), `Sync`, `Transfer`, `Documents`,
+  `Recurring`, `Logos`, `Printing`; helper types in `AppModelTypes.swift`
 - `GiroCrabApp/Sources/GiroCrabUI/RootView.swift` – top-level UI
 - `GiroCrabApp/Sources/GiroCrabUI/BookingListView.swift` – booking list
 - `GiroCrabApp/Sources/GiroCrabUI/ConnectionsUI.swift` – bank connections UI
