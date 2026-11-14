@@ -849,7 +849,7 @@ fn pin_usable(kind: ConnectorKind) -> bool {
 
 fn wrong_password() -> CoreError {
     CoreError::Authentication {
-        message: tr("Falsches Passwort oder keine MoneyMoney-Datenbank.").into(),
+        message: tr("Falsches Passwort oder keine unterstützte Datenbank.").into(),
     }
 }
 
@@ -857,7 +857,7 @@ fn wrong_password() -> CoreError {
 /// with `SQLITE_BUSY`, which is not a wrong password (#201).
 fn locked_by_moneymoney() -> CoreError {
     CoreError::Authentication {
-        message: tr("MoneyMoney ist noch geöffnet und sperrt die Datenbank. Beenden Sie MoneyMoney vollständig und versuchen Sie es erneut.").into(),
+        message: tr("Die Datenbank ist noch in einem anderen Programm geöffnet und gesperrt. Beenden Sie dieses Programm vollständig und versuchen Sie es erneut.").into(),
     }
 }
 
@@ -884,7 +884,7 @@ fn open_failure(e: rusqlite::Error) -> CoreError {
 /// be read after the user sets a password in MoneyMoney.
 fn encrypted_without_password() -> CoreError {
     CoreError::Authentication {
-        message: tr("MoneyMoney verschlüsselt diese Datenbank mit einem eigenen Schlüssel, weil dort kein Datenbank-Passwort festgelegt ist. Legen Sie in der App MoneyMoney (nicht in GiroCrab) unter MoneyMoney › Einstellungen › Sicherheit eines fest, beenden Sie MoneyMoney und geben Sie es dann im Feld „Datenbank-Passwort“ dieses Dialogs ein.").into(),
+        message: tr("Die Datenbank ist mit einem programmeigenen Schlüssel verschlüsselt, weil kein Datenbank-Passwort festgelegt ist. Legen Sie in dem Programm, das die Datenbank erstellt hat (nicht in GiroCrab), ein Passwort fest, beenden Sie es und geben Sie das Passwort dann im Feld „Datenbank-Passwort“ dieses Dialogs ein.").into(),
     }
 }
 
@@ -905,7 +905,7 @@ fn is_plain_sqlite(path: &str) -> bool {
 fn open_source(path: &str, password: &SecretString) -> CoreResult<Connection> {
     if !std::path::Path::new(path).is_file() {
         return Err(CoreError::NotFound {
-            what: tr("MoneyMoney-Datenbank").into(),
+            what: tr("Datenbankdatei").into(),
         });
     }
     // Older MoneyMoney databases can be unencrypted: such a file is opened
@@ -1462,7 +1462,7 @@ fn locate(path: &str) -> CoreResult<(String, Option<PathBuf>)> {
         .into_iter()
         .next()
         .ok_or_else(|| CoreError::NotFound {
-            what: tr("MoneyMoney-Datenbank").into(),
+            what: tr("Datenbankdatei").into(),
         })?;
     let statements = p.join("Statements");
     Ok((
@@ -1725,7 +1725,7 @@ impl Source {
         let bank = self.bank(a.bank_key).map(|b| b.name.as_str()).unwrap_or("");
         let s = format!("{bank} {}", a.account).trim().to_string();
         if s.is_empty() {
-            format!("MoneyMoney-Konto {}", a.id)
+            format!("Konto {}", a.id)
         } else {
             s
         }
@@ -1889,9 +1889,9 @@ impl Source {
                 out.balance_cents = *cents;
                 out.balance_shown = true;
                 out.balance_source = if d.is_empty() {
-                    tr("Saldo laut MoneyMoney").into()
+                    tr("Saldo laut Datenbank").into()
                 } else {
-                    trf("Saldo laut MoneyMoney ({0})", &[&d])
+                    trf("Saldo laut Datenbank ({0})", &[&d])
                 };
                 out.balance_date = last.max(d);
                 return out;
@@ -1903,7 +1903,7 @@ impl Source {
                 (
                     *v,
                     trf(
-                        "Anfangssaldo laut MoneyMoney-Saldenverlauf ({0}) + Umsätze",
+                        "Anfangssaldo laut Saldenverlauf der Datenbank ({0}) + Umsätze",
                         &[&d],
                     ),
                     d,
@@ -2448,7 +2448,7 @@ fn import(
             .iter()
             .find(|a| a.id == choice.mm_id)
             .ok_or_else(|| CoreError::NotFound {
-                what: format!("MoneyMoney-Konto {}", choice.mm_id),
+                what: format!("Konto {}", choice.mm_id),
             })?;
         plan.push((choice, a, src.rows_for(a)));
     }
@@ -2535,7 +2535,7 @@ fn import(
                     .bank(a.bank_key)
                     .map(|b| b.name.clone())
                     .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| "MoneyMoney-Import".into());
+                    .unwrap_or_else(|| "Datenimport".into());
                 conn.execute(
                     "INSERT INTO accounts(connection_id, group_id, external_ref, name, bank_name, owner, iban, account_number,
                                           currency, kind, balance_cents, balance_date, sf_symbol, sort_order, created_ms)

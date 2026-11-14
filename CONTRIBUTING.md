@@ -33,7 +33,7 @@ Database schema changes are a new migration step plus a fixture vault, see
    `pub mod <bank>;` in `connectors/mod.rs`. The `BankConnector` trait and its DTOs (`Phase`,
    `Challenge`, `FetchResult`, …) live in `connectors/types.rs`; the sync/transfer state machines are
    in `sync_session.rs` / `transfer_session.rs`, and storing fetched data is `persist.rs`.
-   File importers (MoneyMoney, CSV/CAMT/MT940, portal imports) are not connectors: see
+   File importers (database, CSV/CAMT/MT940, portal imports) are not connectors: see
    `girocrab-core/src/importers/`.
    Add the Swift display name/colour in `GiroCrabUI/Formatting.swift`.
 3. **Test it with fake data.** Unit-test your parser with invented fixtures, then check the UI via
@@ -53,6 +53,17 @@ don't collide at the end of the file. Add keys with `GiroCrabApp/Tools/update-lo
 by hand, then run `scripts/xcstrings.py format` (CI checks it).
 `git config merge.xcstrings.driver 'scripts/xcstrings.py merge %O %A %B'` makes git merge the
 catalogs per key instead of per line; the hooks in `.githooks` register it automatically.
+
+## Texts and documentation
+
+User-visible texts (README, docs, website, app strings, release notes) do not name brands of other banking or
+finance software and contain no comparisons with other products. Describe GiroCrab's features factually and
+verifiably. Internal code identifiers (module, function, test and file names) are exempt; `scripts/lint-brand-names.sh`
+(CI) checks the documentation and string catalogs.
+
+Nutzersichtbare Texte (README, docs, Website, App-Strings, Release-Notes) nennen keine Marken anderer Banking- oder
+Finanzsoftware und enthalten keine Vergleiche mit Fremdprodukten. Funktionen von GiroCrab werden sachlich und
+belegbar beschrieben.
 
 ## Adding merchants
 

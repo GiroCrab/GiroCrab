@@ -243,8 +243,7 @@ fn encrypted_database_without_password_explains_moneymoney_key() {
     assert!(matches!(err, CoreError::Authentication { .. }));
     let msg = err.to_string();
     assert!(
-        msg.contains("MoneyMoney (nicht in GiroCrab)")
-            && msg.contains("Einstellungen › Sicherheit"),
+        msg.contains("(nicht in GiroCrab)") && msg.contains("Datenbank-Passwort"),
         "{msg}"
     );
     assert!(!msg.contains("Falsches Passwort"), "{msg}");
@@ -1492,7 +1491,7 @@ fn depot_balance_from_shown_balance_and_holdings() {
     assert!(depot.is_portfolio);
     assert_eq!(depot.computed_balance_cents, 1_234_567);
     assert!(
-        depot.balance_source.contains("MoneyMoney"),
+        depot.balance_source.contains("Saldo laut Datenbank"),
         "{}",
         depot.balance_source
     );
@@ -1605,7 +1604,7 @@ fn shown_balance_also_wins_for_checking_accounts() {
     let giro = p.accounts.iter().find(|a| a.name == "Girokonto").unwrap();
     assert_eq!(giro.computed_balance_cents, 123_456);
     assert!(
-        giro.balance_source.contains("Saldo laut MoneyMoney"),
+        giro.balance_source.contains("Saldo laut Datenbank"),
         "{}",
         giro.balance_source
     );
@@ -2459,7 +2458,7 @@ fn database_locked_by_running_moneymoney_is_not_a_wrong_password() {
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
     assert!(matches!(err, CoreError::Authentication { .. }));
     let msg = err.to_string();
-    assert!(msg.contains("noch geöffnet"), "{msg}");
+    assert!(msg.contains("geöffnet und gesperrt"), "{msg}");
     assert!(!msg.contains("Falsches Passwort"), "{msg}");
     drop(holder);
     let p = v

@@ -95,4 +95,4 @@ node --test scripts/test-quirion-portal.cjs
 
 The archived [homebanking_data_importer](https://github.com/lkwg82/homebanking_data_importer)
 provided context for the browser approach. No source was copied from it; the
-connector uses the portal API observed in Safari and the supplied MoneyMoney log.
+connector uses the portal API observed in Safari and the supplied log of a third-party app.

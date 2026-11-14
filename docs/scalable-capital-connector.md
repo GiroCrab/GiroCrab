@@ -393,7 +393,7 @@ First live run on 2026-11-11 (macOS, GiroCrab debug build):
   `OvernightSummary.totalAmount`; `ListFixedTermAccounts` 0 accounts.
 - DPoP nonce challenges: none observed (no retry needed on any call).
 - **Amounts are unsigned.** Overnight withdrawals ("Internal Transfer",
-  "Auszahlung" in MoneyMoney) arrived positive in the first import. The sign now
+  "Auszahlung" in a reference export) arrived positive in the first import. The sign now
   derives from *all* kind fields (`type`, `cashTransactionType`,
   `securityTransactionType`, `nonTradeSecurityTransactionType`) with keyword rules
   (`WITHDRAW`, `_OUT`, `FEE`, `TAX`, `BUY`, `SAVINGS_PLAN`, …). The exact enum
@@ -401,10 +401,10 @@ First live run on 2026-11-11 (macOS, GiroCrab debug build):
   will be pinned down in the next run.
 - **Titles**: the booking kind ("Einzahlung", "Auszahlung", "Zinsen", "Kauf" …) is
   now the counterparty line, the API `description` ("Internal Transfer",
-  "Umbuchung Tagesgeld") the purpose – matching MoneyMoney's presentation.
+  "Umbuchung Tagesgeld") the purpose – matching the reference export.
 - Bookings are stored with `INSERT OR IGNORE`, so rows imported with a wrong sign
   are not corrected by a re-sync: delete the connection and add it again.
-- Dates matched MoneyMoney for all visible rows (3.11., 1.11., 12.10., 10.10., 5.10.).
+- Dates matched the reference export for all visible rows (3.11., 1.11., 12.10., 10.10., 5.10.).
 - **Depot value**: the three holdings' `portfolioIsinPerformance.valuation` sum
   exactly to the depot balance (`securitiesValuation`), so Q1 is answered for the
   depot account: securities only. `quoteTick.midPrice` was missing for 2 of 3
