@@ -369,8 +369,7 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         name: "Interactive Brokers (IBKR)",
         kind: Some(ConnectorKind::Ibkr),
         interface: Interface::RestApi,
-        // TODO(Andreas): IBKR official/unofficial klären
-        official: None,
+        official: Some(true),
         capabilities: &[
             Capability::Transactions,
             Capability::Balances,
