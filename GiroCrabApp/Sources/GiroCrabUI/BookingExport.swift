@@ -398,50 +398,42 @@ struct ExportFileDocument: FileDocument {
 
 enum BookingExportBuilder {
     /// Excel CSV with optional Tagessaldo column and Kontostand header lines.
+    /// Order, purpose line and balance edges are prepared here; formatting and the
+    /// formula guard live in the core (`export_csv`).
     static func csv(_ report: PrintReport, options: ExportOptions) -> String {
-        let print = options.asPrintOptions
-        let rows = PrintReportBuilder.rows(report.rows, options: print)
-        var out = "\u{FEFF}"
+        let rows = PrintReportBuilder.rows(report.rows, options: options.asPrintOptions)
+        var lines: [ExportCsvBalanceLine] = []
         if options.showCurrentBalance {
             let ids = Set(rows.map(\.accountId))
-            for a in report.accounts.filter({ ids.contains($0.id) }).sorted(by: { $0.name < $1.name }) {
-                out += "# \(csvField(a.name, text: true));\(csvAmount(a.balanceCents));\(csvField(a.currency));\(csvField(a.balanceDate))\r\n"
+            lines = report.accounts.filter { ids.contains($0.id) }.sorted { $0.name < $1.name }.map {
+                ExportCsvBalanceLine(name: $0.name, balanceCents: $0.balanceCents, currency: $0.currency,
+                                     date: $0.balanceDate)
             }
         }
-        var header = ["Datum", "Konto", "Name", "Verwendungszweck"]
-        if options.showCategory { header.append("Kategorie") }
-        if options.showNote { header.append("Notiz") }
-        header.append(contentsOf: ["Betrag", "Währung"])
-        if options.showDailyBalance { header.append("Tagessaldo") }
-        out += header.map { csvField($0) }.joined(separator: ";") + "\r\n"
-
         let balances = options.showDailyBalance ? report.dailyBalances[0] : nil
-        for (i, r) in rows.enumerated() {
-            var cols = [
-                csvField(r.date),
-                csvField(r.accountName, text: true),
-                csvField(r.counterparty, text: true),
-                csvField(PrintReportBuilder.displayPurpose(r, firstLineOnly: options.firstLineOnly), text: true),
-            ]
-            if options.showCategory { cols.append(csvField(r.category, text: true)) }
-            if options.showNote { cols.append(csvField(r.note, text: true)) }
-            cols.append(csvAmount(r.amountCents))
-            cols.append(csvField(r.currency))
+        let out = rows.enumerated().map { i, r -> ExportCsvRow in
+            var dayBalance: Int64?
             if let balances {
+                // Balance on the last row of a day (in output order).
                 let next = i + 1 < rows.count ? rows[i + 1].date : nil
                 let prev = i > 0 ? rows[i - 1].date : nil
                 let edge = options.newestFirst ? prev != r.date : next != r.date
-                let value = edge ? balances[r.date].map(csvAmount) ?? "" : ""
-                cols.append(value)
+                dayBalance = edge ? balances[r.date] : nil
             }
-            out += cols.joined(separator: ";") + "\r\n"
+            return ExportCsvRow(
+                date: r.date, accountName: r.accountName, counterparty: r.counterparty,
+                purpose: PrintReportBuilder.displayPurpose(r, firstLineOnly: options.firstLineOnly),
+                category: r.category, note: r.note, amountCents: r.amountCents, currency: r.currency,
+                dayBalanceCents: dayBalance)
         }
-        return out
+        let columns = ExportCsvColumns(category: options.showCategory, note: options.showNote,
+                                       dailyBalance: options.showDailyBalance)
+        return exportCsv(rows: out, columns: columns, balanceLines: lines)
     }
 
-    /// CAMT.053 account statement for one account (GitHub #372).
-    /// OPBD = balance at the start of the first day; CLBD = OPBD + booked entries. Pending
-    /// entries (`PDNG`) are listed but not part of CLBD, like on a bank statement.
+    /// CAMT.053 account statement for one account (GitHub #372), written by the core
+    /// (`camt053_statement`, tested against the ISO 20022 XSDs there).
+    /// OPBD = balance at the start of the first day; CLBD = OPBD + booked entries.
     static func camt053(
         account: Account,
         bookings: [Booking],
@@ -450,48 +442,10 @@ enum BookingExportBuilder {
         openingDate: String,
         created: Date = Date()
     ) -> String {
-        let version = format == .camt053v02 ? "02" : "08"
-        let ns = "urn:iso:std:iso:20022:tech:xsd:camt.053.001.\(version)"
-        let v08 = version == "08"
-        let ordered = bookings.sorted { a, b in
-            if a.bookingDate != b.bookingDate { return a.bookingDate < b.bookingDate }
-            return a.id < b.id
-        }
-        let booked = ordered.filter { !$0.isPending }.reduce(Int64(0)) { $0 + $1.amountCents }
-        let closing = openingCents + booked
-        let currency = ordered.first?.currency ?? account.currency
-        let from = ordered.first?.bookingDate ?? openingDate
-        let to = ordered.last?.bookingDate ?? openingDate
-        let stamp = isoDateTime(created)
-        let stmtId = String("GC-\(account.id)-\(from)-\(to)".prefix(35))
-        let iban = account.iban.replacingOccurrences(of: " ", with: "").uppercased()
-        let ownBIC = iban.isEmpty ? "" : (bicForIban(iban: iban) ?? "")
-        let bicTag = v08 ? "BICFI" : "BIC"
-
-        var out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-        out += "<Document xmlns=\"\(ns)\">\n"
-        out += "<BkToCstmrStmt>\n"
-        out += "<GrpHdr><MsgId>\(esc(stmtId))</MsgId><CreDtTm>\(esc(stamp))</CreDtTm></GrpHdr>\n"
-        out += "<Stmt>\n"
-        out += "<Id>\(esc(stmtId))</Id><ElctrncSeqNb>1</ElctrncSeqNb><CreDtTm>\(esc(stamp))</CreDtTm>\n"
-        // Acct: Id, Ccy, Ownr, Svcr – schema order.
-        out += "<Acct><Id>\(accountIdXML(iban: iban, other: account.accountNumber, fallback: "GC-\(account.id)"))</Id>"
-        out += "<Ccy>\(esc(currency))</Ccy>"
-        let owner = account.owner.isEmpty ? account.name : account.owner
-        if !owner.isEmpty {
-            out += "<Ownr><Nm>\(esc(max140(owner)))</Nm></Ownr>"
-        }
-        if !ownBIC.isEmpty {
-            out += "<Svcr><FinInstnId><\(bicTag)>\(esc(ownBIC))</\(bicTag)></FinInstnId></Svcr>"
-        }
-        out += "</Acct>\n"
-        out += balanceXML(code: "OPBD", cents: openingCents, currency: currency, date: openingDate.isEmpty ? from : openingDate)
-        out += balanceXML(code: "CLBD", cents: closing, currency: currency, date: to)
-        for b in ordered {
-            out += entryXML(b, v08: v08)
-        }
-        out += "</Stmt>\n</BkToCstmrStmt>\n</Document>\n"
-        return out
+        camt053Statement(account: account, bookings: bookings,
+                         version: format == .camt053v02 ? .v02 : .v08,
+                         openingCents: openingCents, openingDate: openingDate,
+                         createdAt: isoDateTime(created))
     }
 
     /// Suggested save name, e.g. `Umsaetze-Girokonto-2025-03-01_2025-03-31.pdf`.
@@ -581,127 +535,12 @@ enum BookingExportBuilder {
         return DateText.iso(prev)
     }
 
-    /// One CSV cell. `text` cells get the formula guard: a leading `=`, `+`, `-`, `@`, tab
-    /// or CR would make Excel/Numbers evaluate the cell (`-2+3`, `=HYPERLINK(…)`).
-    static func csvField(_ v: String, text: Bool = false) -> String {
-        if text, let first = v.unicodeScalars.first, "=+-@\t\r".unicodeScalars.contains(first) {
-            return csvField("'" + v)
-        }
-        let s = v.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
-        if s.contains(";") || s.contains("\"") {
-            return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
-        }
-        return s
-    }
-
-    private static func csvAmount(_ cents: Int64) -> String {
-        let sign = cents < 0 ? "-" : ""
-        let a = cents.magnitude
-        return "\(sign)\(a / 100),\(String(format: "%02llu", a % 100))"
-    }
-
-    private static func xmlAmount(_ cents: Int64) -> String {
-        let a = cents.magnitude
-        return "\(a / 100).\(String(format: "%02llu", a % 100))"
-    }
-
-    private static func balanceXML(code: String, cents: Int64, currency: String, date: String) -> String {
-        let ind = cents < 0 ? "DBIT" : "CRDT"
-        return "<Bal><Tp><CdOrPrtry><Cd>\(code)</Cd></CdOrPrtry></Tp>"
-            + "<Amt Ccy=\"\(esc(currency))\">\(xmlAmount(cents))</Amt>"
-            + "<CdtDbtInd>\(ind)</CdtDbtInd><Dt><Dt>\(esc(date))</Dt></Dt></Bal>\n"
-    }
-
-    private static func entryXML(_ b: Booking, v08: Bool) -> String {
-        let ind = b.amountCents < 0 ? "DBIT" : "CRDT"
-        let status = b.isPending ? "PDNG" : "BOOK"
-        let value = b.valueDate.isEmpty ? b.bookingDate : b.valueDate
-        let name = b.merchant.name.isEmpty ? b.counterparty : b.merchant.name
-        let purpose = b.cleanPurpose.isEmpty ? b.purpose : b.cleanPurpose
-        let peerIBAN = b.counterpartyIban.replacingOccurrences(of: " ", with: "").uppercased()
-        let peerIsIBAN = isIBAN(peerIBAN)
-        let peerBIC = peerIsIBAN ? bicForIban(iban: peerIBAN) : nil
-        let bicTag = v08 ? "BICFI" : "BIC"
-
-        var e = "<Ntry>"
-        e += "<Amt Ccy=\"\(esc(b.currency))\">\(xmlAmount(b.amountCents))</Amt>"
-        e += "<CdtDbtInd>\(ind)</CdtDbtInd>"
-        // .08: Sts is a choice (ExternalEntryStatus1Code), .02: a plain code.
-        e += v08 ? "<Sts><Cd>\(status)</Cd></Sts>" : "<Sts>\(status)</Sts>"
-        e += "<BookgDt><Dt>\(esc(b.bookingDate))</Dt></BookgDt>"
-        e += "<ValDt><Dt>\(esc(value))</Dt></ValDt>"
-        // BkTxCd is mandatory in both versions; empty when the bank sent no GVC.
-        let gvc = String(b.gvc.prefix(35))
-        e += gvc.isEmpty ? "<BkTxCd/>" : "<BkTxCd><Prtry><Cd>\(esc(gvc))</Cd></Prtry></BkTxCd>"
-        e += "<NtryDtls><TxDtls>"
-        // TxDtls order: RltdPties, RltdAgts, Purp, RmtInf.
-        if !name.isEmpty || !peerIBAN.isEmpty {
-            e += "<RltdPties>"
-            // Own account credits → debtor is peer; debits → creditor is peer.
-            let peerTag = b.amountCents < 0 ? "Cdtr" : "Dbtr"
-            let acctTag = b.amountCents < 0 ? "CdtrAcct" : "DbtrAcct"
-            if !name.isEmpty {
-                e += v08
-                    ? "<\(peerTag)><Pty><Nm>\(esc(max140(name)))</Nm></Pty></\(peerTag)>"
-                    : "<\(peerTag)><Nm>\(esc(max140(name)))</Nm></\(peerTag)>"
-            }
-            if !peerIBAN.isEmpty {
-                e += "<\(acctTag)><Id>\(accountIdXML(iban: peerIBAN, other: peerIBAN, fallback: ""))</Id></\(acctTag)>"
-            }
-            e += "</RltdPties>"
-            if let bic = peerBIC, !bic.isEmpty {
-                let agent = b.amountCents < 0 ? "CdtrAgt" : "DbtrAgt"
-                e += "<RltdAgts><\(agent)><FinInstnId><\(bicTag)>\(esc(bic))</\(bicTag)></FinInstnId></\(agent)></RltdAgts>"
-            }
-        }
-        // ExternalPurpose1Code: 1–4 characters.
-        if (1...4).contains(b.purposeCode.count) {
-            e += "<Purp><Cd>\(esc(b.purposeCode))</Cd></Purp>"
-        }
-        let lines = ustrdLines(purpose)
-        if !lines.isEmpty {
-            e += "<RmtInf>" + lines.map { "<Ustrd>\(esc($0))</Ustrd>" }.joined() + "</RmtInf>"
-        }
-        e += "</TxDtls></NtryDtls></Ntry>\n"
-        return e
-    }
-
-    /// `<IBAN>` when `iban` is one, else `<Othr><Id>` (Max34Text) – the schema's IBAN
-    /// pattern rejects account numbers and card numbers.
-    private static func accountIdXML(iban: String, other: String, fallback: String) -> String {
-        if isIBAN(iban) { return "<IBAN>\(esc(iban))</IBAN>" }
-        let id = other.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : other
-        return "<Othr><Id>\(esc(String(id.trimmingCharacters(in: .whitespacesAndNewlines).prefix(34))))</Id></Othr>"
-    }
-
-    /// ISO 20022 IBAN2007Identifier: `[A-Z]{2}[0-9]{2}[a-zA-Z0-9]{1,30}`.
-    static func isIBAN(_ s: String) -> Bool {
-        s.range(of: "^[A-Z]{2}[0-9]{2}[a-zA-Z0-9]{1,30}$", options: .regularExpression) != nil
-    }
-
-    /// Remittance text as `Ustrd` lines of at most 140 characters (Max140Text).
-    static func ustrdLines(_ text: String) -> [String] {
-        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
-            .trimmingCharacters(in: .whitespaces)
-        guard !flat.isEmpty else { return [] }
-        var out: [String] = []
-        var rest = Substring(flat)
-        while !rest.isEmpty {
-            out.append(String(rest.prefix(140)))
-            rest = rest.dropFirst(140)
-        }
-        return out
-    }
-
-    private static func max140(_ s: String) -> String { String(s.prefix(140)) }
-
     private static func isoDateTime(_ date: Date) -> String {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f.string(from: date)
     }
 
-    private static func esc(_ s: String) -> String { PrintReportBuilder.esc(s) }
 }
 
 #if os(macOS) || os(iOS)

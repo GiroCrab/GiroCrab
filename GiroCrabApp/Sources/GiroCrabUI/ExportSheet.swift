@@ -233,6 +233,9 @@ struct ExportSheet: View {
         .onChange(of: canUseSelection) { _, ok in
             if !ok, !isSelectionExport { options.scope = .filtered }
         }
+        .onChange(of: options.scope) { _, scope in
+            if scope == .selection, options.format.isCamt { options.format = .pdf }
+        }
         .onChange(of: options.format) { _, format in
             if format.isCamt {
                 options.accountOutput = .combined
@@ -263,6 +266,8 @@ struct ExportSheet: View {
             snapshot.customTo = previous.customTo
             snapshot.selectedAccountIDs = previous.selectedAccountIDs
             snapshot.accountOutput = previous.accountOutput
+            // CAMT is not offered for marked bookings; keep it as the saved choice.
+            if previous.format.isCamt, snapshot.format == .pdf { snapshot.format = previous.format }
         } else {
             snapshot.selectedAccountIDs = Array(selectedIDs).sorted()
             if snapshot.scope == .selection { snapshot.scope = .filtered }
@@ -525,14 +530,25 @@ struct ExportSheet: View {
 
     private var formatSection: some View {
         Section {
-            ForEach(BookingExportFormat.allCases) { format in
+            ForEach(availableFormats) { format in
                 choiceRow(title: format.title, subtitle: format.subtitle, selected: options.format == format) {
                     options.format = format
                 }
             }
         } header: {
             Text("Format").appSectionHeader()
+        } footer: {
+            if options.scope == .selection {
+                Text("CAMT.053 nur für einen Zeitraum: Ein Kontoauszug braucht alle Buchungen, sonst stimmt der Endsaldo nicht.")
+                    .leadingFooter()
+            }
         }
+    }
+
+    /// CAMT.053 is a statement: OPBD + all entries = CLBD. Marked bookings alone
+    /// would give a closing balance that differs from the bank's, so it needs a period.
+    private var availableFormats: [BookingExportFormat] {
+        options.scope == .selection ? BookingExportFormat.allCases.filter { !$0.isCamt } : BookingExportFormat.allCases
     }
 
     private var detailsSection: some View {
@@ -585,6 +601,7 @@ struct ExportSheet: View {
         if isSelectionExport {
             // Context menu: only the marked bookings — ignore saved period/account prefs.
             options.scope = .selection
+            if options.format.isCamt { options.format = .pdf }
             let bookingAccounts = accountIDsForSelectedBookings
             selectedIDs = bookingAccounts.isEmpty ? Set(poolAccounts.map(\.id)) : bookingAccounts
         } else {
@@ -752,6 +769,7 @@ struct ExportSheet: View {
         case .csv:
             data = Data(BookingExportBuilder.csv(report, options: options).utf8)
         case .camt053v08, .camt053v02:
+            guard bookingIDs == nil else { throw ExportError.camtSelection }
             data = try Data(camtXML(bookings: bookings, dailyBalances: report.dailyBalances, options: options).utf8)
         case .pdf:
             let html = PrintReportBuilder.html(report, options: print, paper: .a4)
@@ -788,6 +806,7 @@ private enum ExportError: LocalizedError {
     case camtMultiAccount
     case empty
     case camtNoOpeningBalance
+    case camtSelection
     var errorDescription: String? {
         switch self {
         case .unsupported:
@@ -796,6 +815,8 @@ private enum ExportError: LocalizedError {
             return String(localized: "CAMT.053 nur für ein einzelnes Konto (#372).")
         case .empty:
             return String(localized: "Keine Umsätze für den Export.")
+        case .camtSelection:
+            return String(localized: "CAMT.053 nur für einen Zeitraum: Ein Kontoauszug braucht alle Buchungen, sonst stimmt der Endsaldo nicht.")
         case .camtNoOpeningBalance:
             return String(localized: "Für dieses Konto gibt es keinen Tagessaldo zum Beginn des Zeitraums, daher fehlt der Anfangssaldo für CAMT.053. Bitte das Konto synchronisieren oder einen anderen Zeitraum wählen.")
         }

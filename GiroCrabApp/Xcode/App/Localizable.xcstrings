@@ -5123,6 +5123,17 @@
         }
       }
     },
+    "CAMT.053 nur für einen Zeitraum: Ein Kontoauszug braucht alle Buchungen, sonst stimmt der Endsaldo nicht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CAMT.053 only for a period: a statement needs all bookings, otherwise the closing balance is wrong."
+          }
+        }
+      }
+    },
     "CSV exportieren" : {
       "extractionState" : "manual",
       "localizations" : {

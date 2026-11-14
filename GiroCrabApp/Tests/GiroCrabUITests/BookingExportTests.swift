@@ -86,8 +86,10 @@ final class BookingExportTests: XCTestCase {
     private func validate(_ xml: String, schema: String) throws {
         let xmllint = "/usr/bin/xmllint"
         guard FileManager.default.isExecutableFile(atPath: xmllint) else { throw XCTSkip("xmllint fehlt") }
-        let xsd = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/iso20022/\(schema).xsd")
+        // Repo root ← GiroCrabApp/Tests/GiroCrabUITests/<file>
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let xsd = root.appendingPathComponent("girocrab-core/tests/fixtures/iso20022/\(schema).xsd")
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("camt-\(UUID().uuidString).xml")
         try Data(xml.utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
@@ -172,22 +174,19 @@ final class BookingExportTests: XCTestCase {
 
     // MARK: - CSV / XML edge cases, files
 
+    /// Field rules are tested in the core (`export::tests`); here the app's wiring.
     func testCSVFormulaGuard() {
-        XCTAssertEqual(BookingExportBuilder.csvField("-2+3", text: true), "'-2+3")
-        XCTAssertEqual(BookingExportBuilder.csvField("=SUM(A1)", text: true), "'=SUM(A1)")
-        XCTAssertEqual(BookingExportBuilder.csvField("@x;y", text: true), "\"'@x;y\"")
-        XCTAssertEqual(BookingExportBuilder.csvField("\tx", text: true), "'\tx")
-        XCTAssertEqual(BookingExportBuilder.csvField("Miete", text: true), "Miete")
-        XCTAssertEqual(BookingExportBuilder.csvField("-12,50"), "-12,50")
-
         var r = report()
         r.accounts = [PrintAccount(id: 10, name: "=HYPERLINK(\"x\")", iban: "", balanceCents: 0,
                                    balanceDate: "2025-03-31", currency: "EUR", owner: "")]
         var o = ExportOptions()
         o.format = .csv
         o.showCurrentBalance = true
+        r.rows.append(PrintRow(id: 3, accountId: 10, accountName: "Giro", date: "2025-03-03", amountCents: -100,
+                               counterparty: "-2+3", purpose: "x", category: ""))
         let csv = BookingExportBuilder.csv(r, options: o)
         XCTAssertTrue(csv.contains("# \"'=HYPERLINK(\"\"x\"\")\";"), csv)
+        XCTAssertTrue(csv.contains(";'-2+3;"), csv)
     }
 
     func testEscapeDropsXMLForbiddenControlCharacters() {
