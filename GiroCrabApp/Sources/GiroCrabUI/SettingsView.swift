@@ -433,7 +433,7 @@ struct SecuritySettings: View {
             Button("Alles löschen", role: .destructive) { Task { await model.resetApp() } }
             Button("Abbrechen", role: .cancel) {}
         } message: {
-            Text("Der Tresor mit allen Konten und Buchungen, der Tresor-Schlüssel (auch im iCloud-Schlüsselbund), Ihr Enable-Banking-Zugang und alle Einstellungen werden gelöscht. Ohne eigenes Backup sind die Daten verloren. Zugriffe bei Ihren Banken und Dokumente in Ihrem Dokumentenordner bleiben bestehen. Zur Bestätigung werden Sie nach \(VaultKeyManager.shared.biometryName) oder Ihrem Gerätecode gefragt.")
+            Text("Der Tresor mit allen Konten und Buchungen, der Tresor-Schlüssel (auch im iCloud-Schlüsselbund und damit auf Ihren anderen Geräten, z. B. am Mac: dort angelegte Tresore und iCloud-Drive-Sicherungen sind dann nicht mehr lesbar), Ihr Enable-Banking-Zugang und alle Einstellungen werden gelöscht. Ohne eigenes Backup sind die Daten verloren. Zugriffe bei Ihren Banken und Dokumente in Ihrem Dokumentenordner bleiben bestehen. Zur Bestätigung werden Sie nach \(VaultKeyManager.shared.biometryName) oder Ihrem Gerätecode gefragt.")
         }
     }
 }

@@ -5673,13 +5673,13 @@
         }
       }
     },
-    "Der Tresor mit allen Konten und Buchungen, der Tresor-Schlüssel (auch im iCloud-Schlüsselbund), Ihr Enable-Banking-Zugang und alle Einstellungen werden gelöscht. Ohne eigenes Backup sind die Daten verloren. Zugriffe bei Ihren Banken und Dokumente in Ihrem Dokumentenordner bleiben bestehen. Zur Bestätigung werden Sie nach %@ oder Ihrem Gerätecode gefragt." : {
+    "Der Tresor mit allen Konten und Buchungen, der Tresor-Schlüssel (auch im iCloud-Schlüsselbund und damit auf Ihren anderen Geräten, z. B. am Mac: dort angelegte Tresore und iCloud-Drive-Sicherungen sind dann nicht mehr lesbar), Ihr Enable-Banking-Zugang und alle Einstellungen werden gelöscht. Ohne eigenes Backup sind die Daten verloren. Zugriffe bei Ihren Banken und Dokumente in Ihrem Dokumentenordner bleiben bestehen. Zur Bestätigung werden Sie nach %@ oder Ihrem Gerätecode gefragt." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The vault with all accounts and transactions, the vault key (including in iCloud Keychain), your Enable Banking access and all settings will be deleted. Without your own backup the data is lost. Access granted at your banks and documents in your documents folder remain. To confirm, you will be asked for %@ or your device passcode."
+            "value" : "The vault with all accounts and transactions, the vault key (including in iCloud Keychain and thus on your other devices, e.g. your Mac: vaults and iCloud Drive backups made there become unreadable), your Enable Banking access and all settings will be deleted. Without your own backup the data is lost. Access granted at your banks and documents in your documents folder remain. To confirm, you will be asked for %@ or your device passcode."
           }
         }
       }
