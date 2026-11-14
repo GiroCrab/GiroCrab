@@ -79,10 +79,27 @@ struct SidebarView: View {
                 }
                 .badge(model.uncategorizedCount)
                 .tag(SidebarItem.uncategorized)
-                categoryRows(model.categoryTree)
+                if !model.categoriesCollapsed {
+                    categoryRows(model.categoryTree)
+                }
             } header: {
                 HStack(spacing: 4) {
-                    Text("Kategorien").appFont(.caption, weight: .semibold)
+                    // folds the category tree away, like a group (rarely used, takes room)
+                    Button {
+                        withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.categoriesCollapsed.toggle() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.right")
+                                .appFont(.caption2, weight: .bold)
+                                .rotationEffect(.degrees(model.categoriesCollapsed ? 0 : 90))
+                                .frame(width: 10)
+                            Text("Kategorien").appFont(.caption, weight: .semibold)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(model.categoriesCollapsed ? "Kategorien ausklappen" : "Kategorien einklappen")
+                    .accessibilityValue(model.categoriesCollapsed ? "Eingeklappt" : "Ausgeklappt")
                     Spacer()
                     Button { model.newCategoryRequest = NewCategoryRequest(parent: nil) } label: {
                         Image(systemName: "plus").frame(width: 24, height: 18).contentShape(Rectangle())
