@@ -564,16 +564,35 @@ struct BookingRow: View {
                     .help("Vorgemerkt – noch nicht gebucht")
                     .accessibilityLabel("Vorgemerkt")
             }
-            AmountLabel(cents: booking.amountCents)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, booking.isPending ? 6 : 0)
-                .padding(.vertical, booking.isPending ? 2 : 0)
-                .overlay {
-                    if booking.isPending {
-                        Capsule().strokeBorder(Theme.secondary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    }
+            if let ref = amazonRef {
+                // Order account: no signs — colour says the direction (red order,
+                // green refund) and the item text keeps the width the sign took.
+                if ref.isRefund {
+                    Text(Money.format(booking.amountCents))
+                        .font(.body.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Theme.inflow)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Capsule().fill(Theme.inflowBadge))
+                        .lineLimit(1).fixedSize()
+                        .help("Gutschrift (Erstattung)")
+                } else {
+                    Text(Money.format(abs(booking.amountCents)))
+                        .font(.body.weight(.medium).monospacedDigit())
+                        .foregroundStyle(Theme.outflow)
+                        .lineLimit(1).fixedSize()
                 }
+            } else {
+                AmountLabel(cents: booking.amountCents)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, booking.isPending ? 6 : 0)
+                    .padding(.vertical, booking.isPending ? 2 : 0)
+                    .overlay {
+                        if booking.isPending {
+                            Capsule().strokeBorder(Theme.secondary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        }
+                    }
+            }
         }
         if amazonExpanded, let ref = amazonRef {
             // drill-down: every item on its own line, indented under the signet
