@@ -567,22 +567,15 @@ struct BookingRow: View {
                     .accessibilityLabel("Vorgemerkt")
             }
             if let ref = amazonRef {
-                // Order account: no signs — colour says the direction (red order,
-                // green refund) and the item text keeps the width the sign took.
-                if ref.isRefund {
-                    Text(Money.format(booking.amountCents))
-                        .font(.body.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(Theme.inflow)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(Theme.inflowBadge))
-                        .lineLimit(1).fixedSize()
-                        .help("Gutschrift (Erstattung)")
-                } else {
-                    Text(Money.format(abs(booking.amountCents)))
-                        .font(.body.weight(.medium).monospacedDigit())
-                        .foregroundStyle(Theme.outflow)
-                        .lineLimit(1).fixedSize()
-                }
+                // Order account: no signs — colour says the direction. Charges and
+                // refunds are badged symmetrically (same padding, same alignment).
+                Text(Money.format(ref.isRefund ? booking.amountCents : abs(booking.amountCents)))
+                    .font(.body.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(ref.isRefund ? Theme.inflow : Theme.charge)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(ref.isRefund ? Theme.inflowBadge : Theme.outflowBadge))
+                    .lineLimit(1).fixedSize()
+                    .help(ref.isRefund ? "Gutschrift (Erstattung)" : "Bestellung")
             } else {
                 AmountLabel(cents: booking.amountCents)
                     .lineLimit(1)
