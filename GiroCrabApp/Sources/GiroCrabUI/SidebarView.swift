@@ -414,8 +414,10 @@ struct SectionHeader: View {
                 .frame(width: 20)
                 .accessibilityHidden(true)
             Text(group.name)
+                .sensitive(.labels)
             Spacer()
             Text(Money.format(group.balanceCents))
+                .sensitive()
                 .appFont(.callout, weight: .semibold) // same size as the account balances
                 .monospacedDigit()
                 .fixedSize()
@@ -451,7 +453,7 @@ struct AccountRow: View {
             AccountSignet(account: account, size: 24, color: model.accountColor(account.id), onSelection: onSelection)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
-                    Text(account.name).lineLimit(1)
+                    Text(account.name).lineLimit(1).sensitive()
                     if account.accessRevoked {
                         Image(systemName: "lock.slash")
                             .appFont(.caption2)
@@ -488,6 +490,7 @@ struct AccountRow: View {
             }
             VStack(alignment: .trailing, spacing: 1) {
                 Text(Money.format(account.balanceCents, currency: account.currency))
+                    .sensitive()
                     .appFont(.callout, monospacedDigit: true)
                     .fixedSize() // the name truncates, never the balance (#343)
                     .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
@@ -509,10 +512,11 @@ struct CategoryRow: View {
             Image(systemName: category.sfSymbol)
                 .foregroundStyle(Color.readable(hex: category.colorHex).opacity(0.85))
                 .frame(width: 20)
-            Text(category.name).lineLimit(1).appDefaultFont()
+            Text(category.name).lineLimit(1).appDefaultFont().sensitive(.labels)
             Spacer(minLength: 4)
             if category.totalCents != 0 {
                 Text(Money.format(category.totalCents))
+                    .sensitive()
                     .appFont(.caption, monospacedDigit: true)
                     .fixedSize()
                     .foregroundStyle(.secondary) // follows selection, Dark Mode, Increase Contrast
