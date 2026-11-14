@@ -664,6 +664,17 @@
         }
       }
     },
+    "%lld Tage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Days"
+          }
+        }
+      }
+    },
     "%lld Treffer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -811,6 +822,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld."
+          }
+        }
+      }
+    },
+    "%lld. Quartal %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Q%lld %@"
           }
         }
       }
@@ -1514,6 +1536,17 @@
         }
       }
     },
+    "12 Monate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "12 Months"
+          }
+        }
+      }
+    },
     "8 Ziffern oder IBAN" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1976,6 +2009,17 @@
         }
       }
     },
+    "Alle Konten ausklappen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand All Accounts"
+          }
+        }
+      }
+    },
     "Alle Konten dieses Bankzugangs werden samt Buchungen, Belegen und gespeicherten Zugangsdaten aus dem Tresor gelöscht. Das lässt sich nicht widerrufen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1983,6 +2027,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "All accounts of this bank login are deleted from the vault, including their transactions, documents and stored credentials. This can’t be undone."
+          }
+        }
+      }
+    },
+    "Alle Konten einklappen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapse All Accounts"
           }
         }
       }
@@ -4925,6 +4980,17 @@
         }
       }
     },
+    "Consorsbank: Als Anmeldename die 10-stellige Kontonummer des Verrechnungskontos (mit führenden Nullen) gefolgt von 001 verwenden, z. B. 0001234567001 – nicht den Anmeldenamen der Website. Ein falscher Anmeldename wird als „PIN ungültig“ gemeldet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Consorsbank: use the 10-digit account number of the settlement account (with leading zeros) followed by 001 as the login name, e.g. 0001234567001 – not the website login. A wrong login name is reported as “PIN invalid”."
+          }
+        }
+      }
+    },
     "Core-Version" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5950,6 +6016,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The System Language Has Changed"
+          }
+        }
+      }
+    },
+    "Die Teilbeträge müssen zusammen %@ ergeben, erst dann lässt sich speichern." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The parts must add up to %@ before you can save."
           }
         }
       }
@@ -9997,6 +10074,17 @@
         }
       }
     },
+    "Jahr %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Year %@"
+          }
+        }
+      }
+    },
     "Jahre" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10015,6 +10103,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Every savings bank and cooperative bank is a bank of its own. Search for it by its name (usually with the town), the bank code or your IBAN."
+          }
+        }
+      }
+    },
+    "Jeder Teil braucht einen Betrag größer als 0." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Each part needs an amount greater than 0."
           }
         }
       }
@@ -10279,6 +10378,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hide Categories"
+          }
+        }
+      }
+    },
+    "Kategorien ausklappen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand Categories"
+          }
+        }
+      }
+    },
+    "Kategorien einklappen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapse Categories"
           }
         }
       }
@@ -11539,6 +11660,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Account holder"
+          }
+        }
+      }
+    },
+    "Kontonummer (10-stellig) + 001" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account number (10 digits) + 001"
           }
         }
       }
@@ -19111,6 +19243,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Period"
+          }
+        }
+      }
+    },
+    "Zeitraum: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Period: %@"
+          }
+        }
+      }
+    },
+    "Zeitraum: 12 Monate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Period: 12 Months"
           }
         }
       }

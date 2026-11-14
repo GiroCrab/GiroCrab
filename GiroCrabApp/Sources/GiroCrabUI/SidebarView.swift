@@ -13,16 +13,27 @@ struct SidebarView: View {
     var body: some View {
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) {
-            HStack(spacing: 8) {
-                Image(systemName: "square.grid.2x2").foregroundStyle(Theme.secondary).frame(width: 20)
-                Text("Übersicht").fontWeight(.medium).appDefaultFont()
-                Spacer()
+            if !model.allAccounts.isEmpty {
+                AccountsSectionHeader()
             }
-            .badge(model.newCount) // system sidebar badge (hidden at 0)
-            .tag(SidebarItem.allAccounts)
-            .contextMenu {
-                Button("Alle als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: model.allAccounts.map(\.id)) }
-                    .disabled(model.newCount == 0)
+            // the root of the account tree, like MoneyMoney's „Alle Konten“
+            AllAccountsRow()
+                .badge(model.newCount) // system sidebar badge (hidden at 0)
+                .tag(SidebarItem.allAccounts)
+                .contextMenu {
+                    Button("Alle als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: model.allAccounts.map(\.id)) }
+                        .disabled(model.newCount == 0)
+                }
+            if model.showsAccountTree {
+                Group {
+                    switch model.accountView {
+                    case .byGroup: userGroupRows
+                    case .byBank: bankGroupRows
+                    case .byKind: kindGroupRows
+                    }
+                }
+                // one step right of „Alle Konten“
+                .padding(.leading, 14)
             }
             HStack(spacing: 8) {
                 Image(systemName: "doc.on.doc").foregroundStyle(Theme.secondary).frame(width: 20)
@@ -34,21 +45,13 @@ struct SidebarView: View {
             // Ablage › Aus MoneyMoney importieren …, the command palette and
             // the welcome card (HIG: sidebar rows are navigation destinations).
 
-            if !model.allAccounts.isEmpty {
-                AccountsSectionHeader()
-            }
-            switch model.accountView {
-            case .byGroup: userGroupRows
-            case .byBank: bankGroupRows
-            case .byKind: kindGroupRows
-            }
 
             let pending = model.connections.filter { c in !model.allAccounts.contains { $0.connectionId == c.id } }
             if !pending.isEmpty {
                 Section("Neue Bankzugänge") {
                 ForEach(pending) { c in
                     HStack(spacing: 9) {
-                        SymbolTile(symbol: c.sfSymbol, tint: c.connector.tint, size: 24)
+                        SymbolTile(symbol: c.sfSymbol, tint: c.tint, size: 24)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(c.displayName).lineLimit(1).appDefaultFont()
                             Text(model.missingSettings(for: c).isEmpty ? "Noch nicht abgerufen" : "Einrichtung fehlt")
@@ -68,28 +71,23 @@ struct SidebarView: View {
                 }
             }
 
-            Section {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                    Text("Ohne Kategorie").appDefaultFont()
-                    Spacer()
-                }
-                .badge(model.uncategorizedCount)
-                .tag(SidebarItem.uncategorized)
-                categoryRows(model.categoryTree)
-            } header: {
-                HStack(spacing: 4) {
-                    Text("Kategorien").appFont(.caption, weight: .semibold)
-                    Spacer()
-                    Button { model.newCategoryRequest = NewCategoryRequest(parent: nil) } label: {
-                        Image(systemName: "plus").frame(width: 24, height: 18).contentShape(Rectangle())
+            // a plain row styled like the group headers (not a List section
+            // header, whose small caption style can't match them)
+            CategoriesHeader()
+                .padding(.top, 10)
+            if !model.categoriesCollapsed {
+                Group {
+                    HStack(spacing: 8) {
+                        Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                        Text("Ohne Kategorie").appDefaultFont()
+                        Spacer()
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Theme.secondary)
-                    .help("Neue Hauptkategorie …")
-                    .accessibilityLabel("Neue Hauptkategorie")
-                    .disabled(!model.isUnlocked)
+                    .badge(model.uncategorizedCount)
+                    .tag(SidebarItem.uncategorized)
+                    categoryRows(model.categoryTree)
                 }
+                // one step right of their header, like the groups under „Alle Konten“
+                .padding(.leading, 14)
             }
         }
         .listStyle(.sidebar)
@@ -737,5 +735,46 @@ private struct CategoryIconColorPopover: ViewModifier {
         content.popover(isPresented: model.iconColorBinding(.category(id)), arrowEdge: .trailing) {
             IconColorPopover(target: .category(id)).environment(model)
         }
+    }
+}
+
+/// Header of the category tree: chevron, symbol and name like a group header
+/// (`UserGroupHeader`), the „+“ for a new main category on the right.
+private struct CategoriesHeader: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let open = !model.categoriesCollapsed
+        let toggle = { withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.categoriesCollapsed.toggle() } }
+        HStack(spacing: 5) {
+            // folds the category tree away (rarely used, takes room)
+            Button(action: toggle) {
+                Image(systemName: "chevron.right")
+                    .appFont(.caption, weight: .bold)
+                    .rotationEffect(.degrees(open ? 90 : 0))
+                    .frame(width: 12, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(open ? "Kategorien einklappen" : "Kategorien ausklappen")
+            .accessibilityValue(open ? "Ausgeklappt" : "Eingeklappt")
+            Image(systemName: "tag")
+                .appFont(.body, weight: .semibold)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            Text("Kategorien").lineLimit(1)
+            Spacer()
+            Button { model.newCategoryRequest = NewCategoryRequest(parent: nil) } label: {
+                Image(systemName: "plus").frame(width: 24, height: 18).contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("Neue Hauptkategorie …")
+            .accessibilityLabel("Neue Hauptkategorie")
+            .disabled(!model.isUnlocked)
+        }
+        .appFont(.body, weight: .semibold) // as big as the group headers
+        .foregroundStyle(.secondary)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
     }
 }

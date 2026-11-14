@@ -180,6 +180,14 @@ public final class AppModel {
     var collapsedGroups: Set<Int64> = Set(UserDefaults.standard.array(forKey: "sidebar.collapsedKindGroups") as? [Int64] ?? []) {
         didSet { UserDefaults.standard.set(Array(collapsedGroups), forKey: "sidebar.collapsedKindGroups") }
     }
+    /// „Alle Konten“ (the sidebar's root row) folded away with every group.
+    var allAccountsCollapsed: Bool = UserDefaults.standard.bool(forKey: AppModel.allAccountsCollapsedKey) {
+        didSet { UserDefaults.standard.set(allAccountsCollapsed, forKey: AppModel.allAccountsCollapsedKey) }
+    }
+    /// The sidebar's category tree, „Ohne Kategorie“ included, folded away under its header.
+    var categoriesCollapsed: Bool = UserDefaults.standard.bool(forKey: "sidebar.categoriesCollapsed") {
+        didSet { UserDefaults.standard.set(categoriesCollapsed, forKey: "sidebar.categoriesCollapsed") }
+    }
     var collapsedUserGroups: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "sidebar.collapsedUserGroups") ?? []) {
         didSet { UserDefaults.standard.set(Array(collapsedUserGroups), forKey: "sidebar.collapsedUserGroups") }
     }
@@ -514,7 +522,7 @@ public final class AppModel {
             }
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
-            period = .lastMonth
+            period = Period.previousMonth()
             showPrintSheet = true
         case "transfer", "transfer-confirm":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
