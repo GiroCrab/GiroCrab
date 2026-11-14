@@ -481,7 +481,39 @@ struct BookingRow: View {
                     // category with the sidebar's icon and colour, then the payment method
                     BookingCategoryLabel(booking: booking)
                         .layoutPriority(1)
-                    if !booking.paymentMethod.isEmpty {
+                    if let ref = AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain, bookingText: booking.bookingText) {
+                        // Amazon order: what was ordered beats the "Bestellung" kind label
+                        if !ref.items.isEmpty {
+                            Text("· \(ref.items)")
+                                .font(.callout)
+                                .foregroundStyle(Theme.secondary)
+                                .lineLimit(1)
+                                .layoutPriority(-1)
+                                .help(ref.itemList.joined(separator: "\n"))
+                        }
+                        if ref.moreCount > 0 {
+                            // multi-item orders: the rest as its own compact badge, not inline text
+                            Text("+\(ref.moreCount) weitere")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(Theme.tertiary)
+                                .lineLimit(1)
+                                .help(ref.itemList.dropFirst().joined(separator: "\n"))
+                        }
+                        if ref.isSubscription {
+                            // "D01-…" charges are the recurring Spar-Abo, plain orders are one-off
+                            Label("Abo", systemImage: "arrow.triangle.2.circlepath")
+                                .labelStyle(.titleAndIcon)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(Theme.tertiary)
+                                .help("Abonnement (Spar-Abo) – wiederkehrende Abbuchung")
+                        }
+                        Text("· #\(ref.code)")
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(Theme.tertiary)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .layoutPriority(-1)
+                    } else if !booking.paymentMethod.isEmpty {
                         Text("· \(booking.paymentMethod)")
                             .font(.callout)
                             .foregroundStyle(Theme.secondary)

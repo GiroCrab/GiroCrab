@@ -102,7 +102,18 @@ struct ReceiptCard: View {
             }
             .font(.caption)
             .foregroundStyle(Theme.secondary)
-            if !booking.cleanPurpose.isEmpty {
+            if let ref = AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain, bookingText: booking.bookingText), !ref.itemList.isEmpty {
+                // Amazon order: one item per line instead of the ";" purpose run
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(ref.itemList, id: \.self) { item in
+                        Text(item)
+                            .font(.callout)
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else if !booking.cleanPurpose.isEmpty {
                 Text(booking.cleanPurpose)
                     .font(.callout)
                     .foregroundStyle(Theme.text)
@@ -467,6 +478,20 @@ struct RawDataCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 row("Verwendungszweck (roh)", booking.purpose.isEmpty ? "–" : booking.purpose)
                 if !booking.bookingText.isEmpty { row("Buchungstext", booking.bookingText) }
+                if let ref = AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain, bookingText: booking.bookingText) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Bestellnummer").font(.caption2).foregroundStyle(Theme.secondary)
+                        if let url = ref.orderURL {
+                            Link(ref.code, destination: url)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(Theme.accent)
+                                .help("Bestellung auf \(ref.domain) öffnen")
+                        }
+                    }
+                    if ref.isSubscription {
+                        row("Bestelltyp", "Abonnement (Spar-Abo) – wiederkehrende Abbuchung")
+                    }
+                }
                 if let e = sepa("EREF") { row("EREF (Ende-zu-Ende-Referenz)", e) }
                 if let m = sepa("MREF") { row("MREF (Mandatsreferenz)", m) }
                 if let c = sepa("CRED") { row("Gläubiger-ID", c) }
