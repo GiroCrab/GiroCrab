@@ -375,6 +375,34 @@ extension AppModel {
         }
     }
 
+    func schedulePoll(connection: BankConnection, interval: UInt32) {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(interval, 1)) * 1_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            if let transfer = self.activeTransfer {
+                do {
+                    let step = try await transfer.poll()
+                    guard self.activeTransfer === transfer else { return }  // cancelled meanwhile
+                    self.handleTransfer(step, connection: connection)
+                } catch {
+                    guard self.activeTransfer === transfer else { return }
+                    self.finishTransfer(error: error)
+                }
+                return
+            }
+            guard let session = self.activeSession else { return }
+            do {
+                let step = try await session.poll()
+                guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
+                self.handle(step, connection: connection)
+            } catch {
+                guard self.activeSession === session else { return }
+                self.finishSync(error: error)
+            }
+        }
+    }
+
     func submitCode(_ code: String) {
         if let transfer = activeTransfer, let ch = activeChallenge {
             activeChallenge?.busy = true

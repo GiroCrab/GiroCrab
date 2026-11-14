@@ -72,6 +72,19 @@ extension AppModel {
         reloadHistory()
     }
 
+    /// A synchronous reload while a background selection load is still running:
+    /// drop that load and bring everything it would have delivered up to date
+    /// now, so its older result can never overwrite fresher data.
+    func settlePendingSelectionLoad() {
+        guard selectionLoadTask != nil else { return }
+        endSelectionLoad()
+        refreshSalaryCycle()
+        refreshRecurring()
+        reloadCategories()
+        reloadBookings()
+        reloadHistory()
+    }
+
     /// Stops a running selection load and its placeholder timer (no data is touched).
     func endSelectionLoad() {
         selectionLoadTask?.cancel()
@@ -169,6 +182,18 @@ extension AppModel {
         }
     }
 
+    // MARK: - Pay cycle (GitHub #37)
+
+    /// Accounts of the sidebar selection; empty = all accounts.
+    var selectionAccountIDs: [Int64] {
+        switch sidebarSelection {
+        case .account(let id): return [id]
+        case .group(let gid): return groups.first(where: { $0.id == gid })?.accounts.map(\.id) ?? []
+        case .userGroup(let uuid): return userGroupAccountIDs(uuid)
+        default: return []
+        }
+    }
+
     /// Date range of the selected period; `.sinceSalary` starts at the latest salary.
     var periodRange: (String?, String?) {
         if period == .sinceSalary, let c = salaryCycle { return (c.lastDate, nil) }
@@ -226,6 +251,15 @@ extension AppModel {
         refreshSalaryCycle()
         if period == .sinceSalary { reloadCategories(); reloadHistory() }
         reloadBookings()
+    }
+
+    /// Re-reads one booking from the vault (independent of the list filter).
+    func freshBooking(_ b: Booking) -> Booking? {
+        guard let vault else { return nil }
+        let f = BookingFilter(accountIds: [b.accountId], categoryId: nil, includeSubcategories: true, uncategorizedOnly: false,
+                              search: nil, dateFrom: b.bookingDate, dateTo: b.bookingDate, limit: 0, offset: 0,
+                              scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
+        return (try? vault.listTransactions(filter: f))?.transactions.first { $0.id == b.id }
     }
 
     // MARK: - Keyboard navigation

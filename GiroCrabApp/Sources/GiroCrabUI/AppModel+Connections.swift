@@ -165,6 +165,38 @@ extension AppModel {
         return codes.contains(code) || codes.contains { message.contains($0) }
     }
 
+    func productIDAlternatives(for conn: BankConnection, error: Error, secret: String?) -> [(title: String, action: @MainActor () -> Void)] {
+        guard Self.isProductIDRejection(error),
+              bankCatalog().first(where: { $0.kind == conn.connector })?.requiredSettings.contains("fints.product_id") == true
+        else { return [] }
+        let hasOwn = settingEntry("fints.product_id")?.hasValue == true
+        var out: [(title: String, action: @MainActor () -> Void)] = []
+        switch fintsProductIDSource {
+        case "builtin":
+            // GiroCrab's registration was refused: the own one goes into Settings (no extra
+            // field here), then the account is fetched again by hand.
+            out.append((hasOwn ? String(localized: "Eigene Registrierung ersetzen …") : String(localized: "Eigene Registrierung eintragen …"),
+                        { [weak self] in self?.enterOwnProductID() }))
+        case "own":
+            // The own registration is wrong: replace it, or use GiroCrab's instead.
+            out.append((String(localized: "Eigene Registrierung ersetzen …"), { [weak self] in self?.enterOwnProductID() }))
+            if fintsBuiltinAvailable {
+                out.append((String(localized: "Mit GiroCrab-Registrierung erneut versuchen"), { [weak self] in
+                    self?.setFintsProductIDMode("builtin")
+                    guard let self, let c = self.connections.first(where: { $0.id == conn.id }) else { return }
+                    // Same login and PIN as the failed attempt: only the registration changes.
+                    if let secret, !secret.isEmpty, self.bankingGate(for: c) == nil {
+                        self.startSync(c, secret: secret)
+                    } else {
+                        self.requestSync(c)
+                    }
+                }))
+            }
+        default: break
+        }
+        return out
+    }
+
     /// After a rejected registration: switch to the own one, open Settings › Banks (FinTS registration)
     /// and put the cursor into its field (no extra field in the alert).
     func enterOwnProductID() {

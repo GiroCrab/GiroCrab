@@ -331,10 +331,10 @@ public final class AppModel {
     @ObservationIgnored var selectionPlaceholderDelay: Duration = .milliseconds(200)
     @ObservationIgnored var selectionPlaceholderTask: Task<Void, Never>?
     @ObservationIgnored var loadsSelectionInBackground = false
-    @ObservationIgnored private var merchantStatsTask: Task<Void, Never>?
+    @ObservationIgnored var merchantStatsTask: Task<Void, Never>?
     @ObservationIgnored var merchantStatsCache: [String: MerchantStats] = [:]
     /// Merchant whose history `merchantStats` currently shows.
-    @ObservationIgnored private var merchantStatsKey: String?
+    @ObservationIgnored var merchantStatsKey: String?
 
     // MARK: State used by AppModel+Loading.swift
 
@@ -947,135 +947,6 @@ public final class AppModel {
         }
     }
 
-    func applyAccountGroups(_ groups: [AccountGroup], _ userGroups: [UserGroup]) {
-        self.groups = groups
-        self.userGroups = userGroups
-        // a group removed or combined (also via sync) can't stay selected
-        if case .userGroup(let u) = sidebarSelection, !userGroups.contains(where: { $0.uuid == u }) {
-            sidebarSelection = .allAccounts
-        }
-        rebuildAccountIndex()
-    }
-
-    /// The investment dashboard reads every booking (~150 ms on 30k): off the
-    /// main thread when it only follows an edit or a scope switch.
-    func loadDashboard() {
-        dashboardTask?.cancel()
-        guard let vault else { return }
-        dashboardStale = false
-        dashboardTask = Task { [weak self] in
-            do {
-                let d = try await Self.offMain { try vault.investmentDashboard(months: 6) }
-                guard !Task.isCancelled, let self, self.vault === vault else { return }
-                self.dashboard = d
-            } catch {
-                guard !Task.isCancelled, !(error is CancellationError), let self else { return }
-                self.errorMessage = describe(error)
-            }
-        }
-    }
-
-    /// Merchant history of the selected booking. The core scans every booking
-    /// for it, so it runs off the main thread and is cached per merchant; the
-    /// short delay keeps arrow-key navigation from queueing one scan per row.
-    /// `keepShown`: after a data change the shown history of the same merchant
-    /// stays until the fresh one arrives (no flicker).
-    func loadMerchantStats(keepShown: Bool = false) {
-        merchantStatsTask?.cancel()
-        guard let vault, let key = selectedBooking?.merchant.key else {
-            merchantStats = nil; merchantStatsKey = nil; return
-        }
-        if let cached = merchantStatsCache[key] { merchantStats = cached; merchantStatsKey = key; return }
-        if !(keepShown && merchantStatsKey == key) { merchantStats = nil; merchantStatsKey = nil }
-        merchantStatsTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(80))
-            guard !Task.isCancelled else { return }
-            let stats = await Task.detached(priority: .userInitiated) {
-                Perf.interval("merchantStats") { try? vault.merchantStats(merchantKey: key) }
-            }.value
-            // A vault switch or data change in the meantime cancels this task.
-            guard !Task.isCancelled, let self, let stats else { return }
-            self.merchantStatsCache[key] = stats
-            if self.selectedBooking?.merchant.key == key { self.merchantStats = stats; self.merchantStatsKey = key }
-        }
-    }
-
-    /// Every full reload calls this first: a page still on its way belongs to the old list.
-    func dropPendingPage() {
-        listGeneration += 1
-        loadMoreTask?.cancel()
-        loadMoreTask = nil
-        isLoadingMoreBookings = false
-    }
-
-    /// Loads the list far enough back to contain `day` (plus some older context).
-    func loadBookings(through day: String) {
-        guard let vault, let total = page?.totalCount, UInt32(bookings.count) < total else { return }
-        if let oldest = dayGroups.last?.date, day >= oldest { return }
-        // count the bookings from that day on
-        var f = currentFilter
-        if f.dateFrom.map({ $0 < day }) ?? true { f.dateFrom = day }
-        if let newer = try? vault.countTransactions(filter: f) {
-            listLimit = max(listLimit, newer + 200)
-            reloadBookings()
-        }
-    }
-
-    /// Shows a freshly loaded list page. A selected booking the page no longer
-    /// contains falls back to the first row, unless it is sticky (kept in the
-    /// inspector after an edit moved it out of the filter).
-    func publish(_ p: BookingPage) {
-        page = p
-        bookings = p.transactions
-        if let id = selectedBookingID, booking(withID: id) == nil, stickyBooking?.id != id {
-            selectedBookingID = p.transactions.first?.id
-        }
-        pruneMultiSelection()
-    }
-
-    /// Accounts and day count of the balance chart for the current selection and period.
-    var historyRequest: (ids: [Int64], days: UInt32) {
-        var ids: [Int64]
-        switch sidebarSelection {
-        case .account(let id): ids = [id]
-        // same accounts as the group's sum in the header (#208)
-        case .group(let gid): ids = groups.first(where: { $0.id == gid })?.accounts.filter { !$0.isArchived }.map(\.id) ?? []
-        case .userGroup(let uuid): ids = userGroupBalanceAccountIDs(uuid)
-        default: ids = liquidAccounts.map(\.id)
-        }
-        if ids.isEmpty { ids = [-1] }
-        // The chart follows the selected period. "Gesamter Zeitraum": up to ~15 years back,
-        // then the flat lead-in before the first booking is cut off.
-        let today = Calendar.current.startOfDay(for: Date())
-        let start = periodRange.0.flatMap(DateText.date) ?? Calendar.current.date(byAdding: .year, value: -15, to: today)!
-        let days = max(2, (Calendar.current.dateComponents([.day], from: start, to: today).day ?? 120) + 1)
-        return (ids, UInt32(days))
-    }
-
-    static func trimmedHistory(_ all: [DailyBalance], from: String?, to: String?) -> [DailyBalance] {
-        var points = all
-        if let to { points = points.filter { $0.date <= to } }
-        if from == nil,
-           let firstChange = points.indices.dropFirst().first(where: { points[$0].balanceCents != points[$0 - 1].balanceCents }) {
-            // keep one point before the first change
-            points = Array(points[(firstChange - 1)...])
-        }
-        return points
-    }
-
-    /// A synchronous reload while a background selection load is still running:
-    /// drop that load and bring everything it would have delivered up to date
-    /// now, so its older result can never overwrite fresher data.
-    func settlePendingSelectionLoad() {
-        guard selectionLoadTask != nil else { return }
-        endSelectionLoad()
-        refreshSalaryCycle()
-        refreshRecurring()
-        reloadCategories()
-        reloadBookings()
-        reloadHistory()
-    }
-
     // MARK: - Off-main vault access
 
     /// Runs a core call against the open vault off the main thread. Returns `nil` when the
@@ -1129,97 +1000,11 @@ public final class AppModel {
         return try await withTaskCancellationHandler { try await job.value } onCancel: { job.cancel() }
     }
 
-    // MARK: - Pay cycle (GitHub #37)
-
-    /// Accounts of the sidebar selection; empty = all accounts.
-    var selectionAccountIDs: [Int64] {
-        switch sidebarSelection {
-        case .account(let id): return [id]
-        case .group(let gid): return groups.first(where: { $0.id == gid })?.accounts.map(\.id) ?? []
-        case .userGroup(let uuid): return userGroupAccountIDs(uuid)
-        default: return []
-        }
-    }
-
-    /// Re-reads one booking from the vault (independent of the list filter).
-    func freshBooking(_ b: Booking) -> Booking? {
-        guard let vault else { return nil }
-        let f = BookingFilter(accountIds: [b.accountId], categoryId: nil, includeSubcategories: true, uncategorizedOnly: false,
-                              search: nil, dateFrom: b.bookingDate, dateTo: b.bookingDate, limit: 0, offset: 0,
-                              scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
-        return (try? vault.listTransactions(filter: f))?.transactions.first { $0.id == b.id }
-    }
-
     // MARK: - Core-call helper
 
     func run(_ body: () throws -> Void) {
         do { try body() } catch { errorMessage = describe(error) }
     }
-
-    func booking(withID id: Booking.ID) -> Booking? {
-        bookingIndexByID[id].map { bookings[$0] }
-    }
-
-    func productIDAlternatives(for conn: BankConnection, error: Error, secret: String?) -> [(title: String, action: @MainActor () -> Void)] {
-        guard Self.isProductIDRejection(error),
-              bankCatalog().first(where: { $0.kind == conn.connector })?.requiredSettings.contains("fints.product_id") == true
-        else { return [] }
-        let hasOwn = settingEntry("fints.product_id")?.hasValue == true
-        var out: [(title: String, action: @MainActor () -> Void)] = []
-        switch fintsProductIDSource {
-        case "builtin":
-            // GiroCrab's registration was refused: the own one goes into Settings (no extra
-            // field here), then the account is fetched again by hand.
-            out.append((hasOwn ? String(localized: "Eigene Registrierung ersetzen …") : String(localized: "Eigene Registrierung eintragen …"),
-                        { [weak self] in self?.enterOwnProductID() }))
-        case "own":
-            // The own registration is wrong: replace it, or use GiroCrab's instead.
-            out.append((String(localized: "Eigene Registrierung ersetzen …"), { [weak self] in self?.enterOwnProductID() }))
-            if fintsBuiltinAvailable {
-                out.append((String(localized: "Mit GiroCrab-Registrierung erneut versuchen"), { [weak self] in
-                    self?.setFintsProductIDMode("builtin")
-                    guard let self, let c = self.connections.first(where: { $0.id == conn.id }) else { return }
-                    // Same login and PIN as the failed attempt: only the registration changes.
-                    if let secret, !secret.isEmpty, self.bankingGate(for: c) == nil {
-                        self.startSync(c, secret: secret)
-                    } else {
-                        self.requestSync(c)
-                    }
-                }))
-            }
-        default: break
-        }
-        return out
-    }
-
-    func schedulePoll(connection: BankConnection, interval: UInt32) {
-        pollTask?.cancel()
-        pollTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(interval, 1)) * 1_000_000_000)
-            guard !Task.isCancelled, let self else { return }
-            if let transfer = self.activeTransfer {
-                do {
-                    let step = try await transfer.poll()
-                    guard self.activeTransfer === transfer else { return }  // cancelled meanwhile
-                    self.handleTransfer(step, connection: connection)
-                } catch {
-                    guard self.activeTransfer === transfer else { return }
-                    self.finishTransfer(error: error)
-                }
-                return
-            }
-            guard let session = self.activeSession else { return }
-            do {
-                let step = try await session.poll()
-                guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
-                self.handle(step, connection: connection)
-            } catch {
-                guard self.activeSession === session else { return }
-                self.finishSync(error: error)
-            }
-        }
-    }
-
 }
 
 /// A vault bound to one job (see `AppModel.pinVault`). Views hold this instead of the
