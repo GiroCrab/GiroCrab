@@ -18142,6 +18142,61 @@
           }
         }
       }
+    },
+    "Enable-Banking-Anwendung synchronisiert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Banking application synced"
+          }
+        }
+      }
+    },
+    "Ein anderes Gerät hat eine neue Enable-Banking-Anwendung gespeichert. Sie ersetzt die bisher hier eingerichtete." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another device saved a new Enable Banking application. It replaces the one set up here."
+          }
+        }
+      }
+    },
+    "Die Enable-Banking-Anwendung eines anderen Geräts wurde aus dem iCloud-Schlüsselbund übernommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Enable Banking application of another device was taken from iCloud Keychain."
+          }
+        }
+      }
+    },
+    "Anwendungs-ID: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Application ID: %@"
+          }
+        }
+      }
+    },
+    "Verwendet von: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Used by: %@"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
