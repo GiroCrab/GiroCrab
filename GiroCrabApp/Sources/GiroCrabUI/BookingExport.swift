@@ -114,19 +114,28 @@ enum ExportPeriodPreset: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    /// The list period this preset stands for (`nil` for `.current` / `.custom`).
+    func listPeriod(now: Date = Date()) -> Period? {
+        let menu = Period.menu(now: now)
+        switch self {
+        case .current, .custom: return nil
+        case .thisMonth: return menu[2][0]
+        case .lastMonth: return Period.previousMonth(now: now)
+        case .last3Months: return .days(90)
+        case .last12Months: return .months12
+        case .thisQuarter: return menu[3][0]
+        case .thisYear: return menu[4][0]
+        case .lastYear: return Period.previousYear(now: now)
+        case .sinceSalary: return .sinceSalary
+        case .all: return .all
+        }
+    }
+
     var title: String {
         switch self {
         case .current: return String(localized: "Aktuelle Ansicht")
-        case .thisMonth: return Period.thisMonth.title
-        case .lastMonth: return Period.lastMonth.title
-        case .last3Months: return Period.last3Months.title
-        case .last12Months: return Period.last12Months.title
-        case .thisQuarter: return Period.thisQuarter.title
-        case .thisYear: return Period.thisYear.title
-        case .lastYear: return Period.lastYear.title
-        case .sinceSalary: return Period.sinceSalary.title
-        case .all: return Period.all.title
         case .custom: return String(localized: "Eigener Zeitraum")
+        default: return listPeriod()?.title ?? ""
         }
     }
 
@@ -142,21 +151,15 @@ enum ExportPeriodPreset: String, CaseIterable, Identifiable, Codable {
                salaryFrom: String? = nil) -> (String?, String?)? {
         switch self {
         case .current: return nil
-        case .thisMonth: return Period.thisMonth.range(now: now)
-        case .lastMonth: return Period.lastMonth.range(now: now)
-        case .last3Months: return Period.last3Months.range(now: now)
-        case .last12Months: return Period.last12Months.range(now: now)
-        case .thisQuarter: return Period.thisQuarter.range(now: now)
-        case .thisYear: return Period.thisYear.range(now: now)
-        case .lastYear: return Period.lastYear.range(now: now)
         case .sinceSalary:
             if let salaryFrom { return (salaryFrom, nil) }
-            return Period.thisMonth.range(now: now)
-        case .all: return (nil, nil)
+            return Period.sinceSalary.range(now: now)
         case .custom:
             let a = customFrom.isEmpty ? nil : customFrom
             let b = customTo.isEmpty ? nil : customTo
             return (a, b)
+        default:
+            return listPeriod(now: now)?.range(now: now)
         }
     }
 }
@@ -362,6 +365,23 @@ enum ExportDirectory {
             ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
+    /// `filename` in `directory`, or the first free `Name-2.ext`, `Name-3.ext`, … so an
+    /// export never replaces an existing file without asking.
+    static func freeURL(in directory: URL, filename: String,
+                        exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) -> URL {
+        let first = directory.appendingPathComponent(filename)
+        guard exists(first) else { return first }
+        let ext = (filename as NSString).pathExtension
+        let stem = (filename as NSString).deletingPathExtension
+        var n = 2
+        while true {
+            let name = ext.isEmpty ? "\(stem)-\(n)" : "\(stem)-\(n).\(ext)"
+            let url = directory.appendingPathComponent(name)
+            if !exists(url) { return url }
+            n += 1
+        }
+    }
+
     static func remember(fileURL: URL) {
         UserDefaults.standard.set(fileURL.deletingLastPathComponent().path, forKey: key)
     }
@@ -385,7 +405,7 @@ enum BookingExportBuilder {
         if options.showCurrentBalance {
             let ids = Set(rows.map(\.accountId))
             for a in report.accounts.filter({ ids.contains($0.id) }).sorted(by: { $0.name < $1.name }) {
-                out += "# \(csvField(a.name));\(csvAmount(a.balanceCents));\(csvField(a.currency));\(csvField(a.balanceDate))\r\n"
+                out += "# \(csvField(a.name, text: true));\(csvAmount(a.balanceCents));\(csvField(a.currency));\(csvField(a.balanceDate))\r\n"
             }
         }
         var header = ["Datum", "Konto", "Name", "Verwendungszweck"]
@@ -420,13 +440,15 @@ enum BookingExportBuilder {
     }
 
     /// CAMT.053 account statement for one account (GitHub #372).
-    /// Opening balance = start of first exported day; closing = opening + sum(entries).
+    /// OPBD = balance at the start of the first day; CLBD = OPBD + booked entries. Pending
+    /// entries (`PDNG`) are listed but not part of CLBD, like on a bank statement.
     static func camt053(
         account: Account,
         bookings: [Booking],
         format: BookingExportFormat,
         openingCents: Int64,
-        openingDate: String
+        openingDate: String,
+        created: Date = Date()
     ) -> String {
         let version = format == .camt053v02 ? "02" : "08"
         let ns = "urn:iso:std:iso:20022:tech:xsd:camt.053.001.\(version)"
@@ -435,31 +457,33 @@ enum BookingExportBuilder {
             if a.bookingDate != b.bookingDate { return a.bookingDate < b.bookingDate }
             return a.id < b.id
         }
-        let sum = ordered.reduce(Int64(0)) { $0 + $1.amountCents }
-        let closing = openingCents + sum
+        let booked = ordered.filter { !$0.isPending }.reduce(Int64(0)) { $0 + $1.amountCents }
+        let closing = openingCents + booked
         let currency = ordered.first?.currency ?? account.currency
         let from = ordered.first?.bookingDate ?? openingDate
         let to = ordered.last?.bookingDate ?? openingDate
-        let created = isoDateTime(Date())
-        let stmtId = "GC-\(account.id)-\(from)-\(to)"
-        let ownBIC = bicForIban(iban: account.iban) ?? ""
+        let stamp = isoDateTime(created)
+        let stmtId = String("GC-\(account.id)-\(from)-\(to)".prefix(35))
+        let iban = account.iban.replacingOccurrences(of: " ", with: "").uppercased()
+        let ownBIC = iban.isEmpty ? "" : (bicForIban(iban: iban) ?? "")
+        let bicTag = v08 ? "BICFI" : "BIC"
 
         var out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         out += "<Document xmlns=\"\(ns)\">\n"
         out += "<BkToCstmrStmt>\n"
-        out += "<GrpHdr><MsgId>\(esc(stmtId))</MsgId><CreDtTm>\(esc(created))</CreDtTm></GrpHdr>\n"
+        out += "<GrpHdr><MsgId>\(esc(stmtId))</MsgId><CreDtTm>\(esc(stamp))</CreDtTm></GrpHdr>\n"
         out += "<Stmt>\n"
-        out += "<Id>\(esc(stmtId))</Id><ElctrncSeqNb>1</ElctrncSeqNb><CreDtTm>\(esc(created))</CreDtTm>\n"
-        out += "<Acct><Id><IBAN>\(esc(account.iban.replacingOccurrences(of: " ", with: "")))</IBAN></Id>"
-        if !ownBIC.isEmpty {
-            out += v08
-                ? "<Svcr><FinInstnId><BICFI>\(esc(ownBIC))</BICFI></FinInstnId></Svcr>"
-                : "<Svcr><FinInstnId><BIC>\(esc(ownBIC))</BIC></FinInstnId></Svcr>"
-        }
+        out += "<Id>\(esc(stmtId))</Id><ElctrncSeqNb>1</ElctrncSeqNb><CreDtTm>\(esc(stamp))</CreDtTm>\n"
+        // Acct: Id, Ccy, Ownr, Svcr – schema order.
+        out += "<Acct><Id>\(accountIdXML(iban: iban, other: account.accountNumber, fallback: "GC-\(account.id)"))</Id>"
+        out += "<Ccy>\(esc(currency))</Ccy>"
         let owner = account.owner.isEmpty ? account.name : account.owner
-        out += v08
-            ? "<Ownr><Nm>\(esc(owner))</Nm></Ownr>"
-            : "<Ownr><Nm>\(esc(owner))</Nm></Ownr>"
+        if !owner.isEmpty {
+            out += "<Ownr><Nm>\(esc(max140(owner)))</Nm></Ownr>"
+        }
+        if !ownBIC.isEmpty {
+            out += "<Svcr><FinInstnId><\(bicTag)>\(esc(ownBIC))</\(bicTag)></FinInstnId></Svcr>"
+        }
         out += "</Acct>\n"
         out += balanceXML(code: "OPBD", cents: openingCents, currency: currency, date: openingDate.isEmpty ? from : openingDate)
         out += balanceXML(code: "CLBD", cents: closing, currency: currency, date: to)
@@ -542,28 +566,28 @@ enum BookingExportBuilder {
         return String(collapsed.prefix(80))
     }
 
-    /// Opening balance at the start of `firstDate` from end-of-day history (#372).
-    static func camtOpeningBalance(
-        endOfDay: [String: Int64],
-        firstDate: String,
-        bookingsOnFirstDay: [Booking]
-    ) -> (cents: Int64, date: String) {
-        let sumFirst = bookingsOnFirstDay.reduce(Int64(0)) { $0 + $1.amountCents }
-        if let eod = endOfDay[firstDate] {
-            return (eod - sumFirst, firstDate)
-        }
-        // Day before firstDate, if present.
-        if let prev = previousISODate(firstDate), let eod = endOfDay[prev] {
-            return (eod, firstDate)
-        }
-        return (0, firstDate)
+    /// Opening balance at the start of `firstDate` (= end of the previous day) from the
+    /// end-of-day history (#372). `nil` when the history has no value for that day (e.g. a
+    /// foreign-currency account): a CAMT file must not invent a 0 opening balance.
+    static func camtOpeningBalance(endOfDay: [String: Int64], firstDate: String) -> Int64? {
+        guard let prev = previousISODate(firstDate) else { return nil }
+        return endOfDay[prev]
     }
 
-    private static func csvField(_ v: String, text: Bool = false) -> String {
-        var s = v.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
-        if text && (s.hasPrefix("=") || s.hasPrefix("+") || s.hasPrefix("@") || s.hasPrefix("\t")) {
-            s = "'" + s
+    /// Day before `iso` (`yyyy-MM-dd`), for loading the history the opening balance needs.
+    static func previousISODate(_ iso: String) -> String? {
+        guard let d = DateText.date(iso) else { return nil }
+        guard let prev = Calendar(identifier: .gregorian).date(byAdding: .day, value: -1, to: d) else { return nil }
+        return DateText.iso(prev)
+    }
+
+    /// One CSV cell. `text` cells get the formula guard: a leading `=`, `+`, `-`, `@`, tab
+    /// or CR would make Excel/Numbers evaluate the cell (`-2+3`, `=HYPERLINK(…)`).
+    static func csvField(_ v: String, text: Bool = false) -> String {
+        if text, let first = v.unicodeScalars.first, "=+-@\t\r".unicodeScalars.contains(first) {
+            return csvField("'" + v)
         }
+        let s = v.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
         if s.contains(";") || s.contains("\"") {
             return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
@@ -590,64 +614,91 @@ enum BookingExportBuilder {
 
     private static func entryXML(_ b: Booking, v08: Bool) -> String {
         let ind = b.amountCents < 0 ? "DBIT" : "CRDT"
-        let sts = b.isPending ? "PDNG" : "BOOK"
+        let status = b.isPending ? "PDNG" : "BOOK"
         let value = b.valueDate.isEmpty ? b.bookingDate : b.valueDate
         let name = b.merchant.name.isEmpty ? b.counterparty : b.merchant.name
         let purpose = b.cleanPurpose.isEmpty ? b.purpose : b.cleanPurpose
-        let peerIBAN = b.counterpartyIban.replacingOccurrences(of: " ", with: "")
-        let peerBIC = peerIBAN.isEmpty ? nil : bicForIban(iban: peerIBAN)
+        let peerIBAN = b.counterpartyIban.replacingOccurrences(of: " ", with: "").uppercased()
+        let peerIsIBAN = isIBAN(peerIBAN)
+        let peerBIC = peerIsIBAN ? bicForIban(iban: peerIBAN) : nil
+        let bicTag = v08 ? "BICFI" : "BIC"
 
         var e = "<Ntry>"
         e += "<Amt Ccy=\"\(esc(b.currency))\">\(xmlAmount(b.amountCents))</Amt>"
-        e += "<CdtDbtInd>\(ind)</CdtDbtInd><Sts>\(sts)</Sts>"
+        e += "<CdtDbtInd>\(ind)</CdtDbtInd>"
+        // .08: Sts is a choice (ExternalEntryStatus1Code), .02: a plain code.
+        e += v08 ? "<Sts><Cd>\(status)</Cd></Sts>" : "<Sts>\(status)</Sts>"
         e += "<BookgDt><Dt>\(esc(b.bookingDate))</Dt></BookgDt>"
         e += "<ValDt><Dt>\(esc(value))</Dt></ValDt>"
-        if !b.gvc.isEmpty {
-            e += "<BkTxCd><Prtry><Cd>\(esc(b.gvc))</Cd></Prtry></BkTxCd>"
-        }
+        // BkTxCd is mandatory in both versions; empty when the bank sent no GVC.
+        let gvc = String(b.gvc.prefix(35))
+        e += gvc.isEmpty ? "<BkTxCd/>" : "<BkTxCd><Prtry><Cd>\(esc(gvc))</Cd></Prtry></BkTxCd>"
         e += "<NtryDtls><TxDtls>"
+        // TxDtls order: RltdPties, RltdAgts, Purp, RmtInf.
         if !name.isEmpty || !peerIBAN.isEmpty {
             e += "<RltdPties>"
             // Own account credits → debtor is peer; debits → creditor is peer.
             let peerTag = b.amountCents < 0 ? "Cdtr" : "Dbtr"
             let acctTag = b.amountCents < 0 ? "CdtrAcct" : "DbtrAcct"
             if !name.isEmpty {
-                if v08 {
-                    e += "<\(peerTag)><Pty><Nm>\(esc(name))</Nm></Pty></\(peerTag)>"
-                } else {
-                    e += "<\(peerTag)><Nm>\(esc(name))</Nm></\(peerTag)>"
-                }
+                e += v08
+                    ? "<\(peerTag)><Pty><Nm>\(esc(max140(name)))</Nm></Pty></\(peerTag)>"
+                    : "<\(peerTag)><Nm>\(esc(max140(name)))</Nm></\(peerTag)>"
             }
             if !peerIBAN.isEmpty {
-                e += "<\(acctTag)><Id><IBAN>\(esc(peerIBAN))</IBAN></Id></\(acctTag)>"
+                e += "<\(acctTag)><Id>\(accountIdXML(iban: peerIBAN, other: peerIBAN, fallback: ""))</Id></\(acctTag)>"
             }
             e += "</RltdPties>"
             if let bic = peerBIC, !bic.isEmpty {
-                let bicTag = v08 ? "BICFI" : "BIC"
                 let agent = b.amountCents < 0 ? "CdtrAgt" : "DbtrAgt"
                 e += "<RltdAgts><\(agent)><FinInstnId><\(bicTag)>\(esc(bic))</\(bicTag)></FinInstnId></\(agent)></RltdAgts>"
             }
         }
-        if !purpose.isEmpty {
-            e += "<RmtInf><Ustrd>\(esc(purpose))</Ustrd></RmtInf>"
-        }
-        if !b.purposeCode.isEmpty {
+        // ExternalPurpose1Code: 1–4 characters.
+        if (1...4).contains(b.purposeCode.count) {
             e += "<Purp><Cd>\(esc(b.purposeCode))</Cd></Purp>"
+        }
+        let lines = ustrdLines(purpose)
+        if !lines.isEmpty {
+            e += "<RmtInf>" + lines.map { "<Ustrd>\(esc($0))</Ustrd>" }.joined() + "</RmtInf>"
         }
         e += "</TxDtls></NtryDtls></Ntry>\n"
         return e
     }
 
+    /// `<IBAN>` when `iban` is one, else `<Othr><Id>` (Max34Text) – the schema's IBAN
+    /// pattern rejects account numbers and card numbers.
+    private static func accountIdXML(iban: String, other: String, fallback: String) -> String {
+        if isIBAN(iban) { return "<IBAN>\(esc(iban))</IBAN>" }
+        let id = other.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : other
+        return "<Othr><Id>\(esc(String(id.trimmingCharacters(in: .whitespacesAndNewlines).prefix(34))))</Id></Othr>"
+    }
+
+    /// ISO 20022 IBAN2007Identifier: `[A-Z]{2}[0-9]{2}[a-zA-Z0-9]{1,30}`.
+    static func isIBAN(_ s: String) -> Bool {
+        s.range(of: "^[A-Z]{2}[0-9]{2}[a-zA-Z0-9]{1,30}$", options: .regularExpression) != nil
+    }
+
+    /// Remittance text as `Ustrd` lines of at most 140 characters (Max140Text).
+    static func ustrdLines(_ text: String) -> [String] {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !flat.isEmpty else { return [] }
+        var out: [String] = []
+        var rest = Substring(flat)
+        while !rest.isEmpty {
+            out.append(String(rest.prefix(140)))
+            rest = rest.dropFirst(140)
+        }
+        return out
+    }
+
+    private static func max140(_ s: String) -> String { String(s.prefix(140)) }
+
     private static func isoDateTime(_ date: Date) -> String {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f.string(from: date)
-    }
-
-    private static func previousISODate(_ iso: String) -> String? {
-        guard let d = DateText.date(iso) else { return nil }
-        guard let prev = Calendar(identifier: .gregorian).date(byAdding: .day, value: -1, to: d) else { return nil }
-        return DateText.iso(prev)
     }
 
     private static func esc(_ s: String) -> String { PrintReportBuilder.esc(s) }

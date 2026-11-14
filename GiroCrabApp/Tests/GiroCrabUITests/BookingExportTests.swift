@@ -52,52 +52,159 @@ final class BookingExportTests: XCTestCase {
         XCTAssertFalse(csv.contains("Wocheneinkauf"))
     }
 
-    func testCamt053V02FromDemoBookings() {
+    // MARK: - CAMT.053
+
+    private func demoModel() -> AppModel {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         XCTAssertEqual(model.vaultState, .open)
-        let account = try! XCTUnwrap(model.allAccounts.first { !$0.iban.isEmpty })
-        let bookings = model.exportBookings().filter { $0.accountId == account.id }.prefix(5).map { $0 }
-        XCTAssertFalse(bookings.isEmpty)
-        let first = bookings.map(\.bookingDate).min()!
-        let onFirst = bookings.filter { $0.bookingDate == first }
-        let opening = BookingExportBuilder.camtOpeningBalance(
-            endOfDay: [:], firstDate: first, bookingsOnFirstDay: Array(onFirst))
-        let xml = BookingExportBuilder.camt053(
-            account: account, bookings: Array(bookings), format: .camt053v02,
-            openingCents: opening.cents, openingDate: opening.date)
-        XCTAssertTrue(xml.contains("camt.053.001.02"))
-        XCTAssertTrue(xml.contains("<BkToCstmrStmt>"))
-        XCTAssertTrue(xml.contains("<Ntry>"))
-        XCTAssertTrue(xml.contains("<Cd>OPBD</Cd>"))
-        XCTAssertTrue(xml.contains("<Cd>CLBD</Cd>"))
-        XCTAssertTrue(xml.contains(account.iban.replacingOccurrences(of: " ", with: ""))
-                      || xml.contains("<IBAN>"))
+        return model
     }
 
-    func testCamt053V08UsesPtyWrapper() {
-        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
-        let account = try! XCTUnwrap(model.allAccounts.first)
-        let bookings = Array(model.exportBookings().filter { $0.accountId == account.id }.prefix(3))
-        guard !bookings.isEmpty else { return }
-        let xml = BookingExportBuilder.camt053(
-            account: account, bookings: bookings, format: .camt053v08,
-            openingCents: 100_000, openingDate: bookings.map(\.bookingDate).min()!)
-        XCTAssertTrue(xml.contains("camt.053.001.08"))
-        // v08 party name under Pty
-        if xml.contains("<Cdtr>") || xml.contains("<Dbtr>") {
-            XCTAssertTrue(xml.contains("<Pty>"), xml)
+    private func demoBookings(_ model: AppModel, account: Int64? = nil) async throws -> [Booking] {
+        let rows = try await model.loadExportBookings(
+            accountIDs: account.map { [$0] }, period: .all, bookingIDs: nil, options: nil)
+        return try XCTUnwrap(rows)
+    }
+
+    /// Demo bookings of one IBAN account plus edge cases: pending entry, control
+    /// characters, a long purpose, a non-IBAN counterparty and no GVC.
+    private func camtFixture() async throws -> (Account, [Booking]) {
+        let model = demoModel()
+        let account = try XCTUnwrap(model.allAccounts.first { !$0.iban.isEmpty })
+        var bookings = Array(try await demoBookings(model, account: account.id).prefix(6))
+        XCTAssertGreaterThanOrEqual(bookings.count, 3)
+        bookings[0].purpose = "Rechnung\u{1}Nr. 7 & <Sonder> \u{0B}" + String(repeating: "x", count: 300)
+        bookings[0].cleanPurpose = ""
+        bookings[0].gvc = ""
+        bookings[0].purposeCode = "SALA"
+        bookings[1].isPending = true
+        bookings[1].counterpartyIban = "1234567890"
+        bookings[2].counterparty = String(repeating: "N", count: 200)
+        return (account, bookings)
+    }
+
+    private func validate(_ xml: String, schema: String) throws {
+        let xmllint = "/usr/bin/xmllint"
+        guard FileManager.default.isExecutableFile(atPath: xmllint) else { throw XCTSkip("xmllint fehlt") }
+        let xsd = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/iso20022/\(schema).xsd")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("camt-\(UUID().uuidString).xml")
+        try Data(xml.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: xmllint)
+        process.arguments = ["--noout", "--schema", xsd.path, file.path]
+        let pipe = Pipe()
+        process.standardError = pipe
+        process.standardOutput = pipe
+        try process.run()
+        process.waitUntilExit()
+        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertEqual(process.terminationStatus, 0, "\(schema): \(output)\n\(xml.prefix(3000))")
+    }
+
+    func testCamt053ValidatesAgainstISO20022Schemas() async throws {
+        let (account, bookings) = try await camtFixture()
+        for (format, schema) in [(BookingExportFormat.camt053v02, "camt.053.001.02"), (.camt053v08, "camt.053.001.08")] {
+            let xml = BookingExportBuilder.camt053(
+                account: account, bookings: bookings, format: format,
+                openingCents: 100_000, openingDate: bookings.map(\.bookingDate).min()!)
+            XCTAssertFalse(xml.contains("\u{1}"))
+            try validate(xml, schema: schema)
         }
+        // Account without IBAN → <Othr><Id>
+        var noIBAN = account
+        noIBAN.iban = ""
+        noIBAN.accountNumber = "4711"
+        let xml = BookingExportBuilder.camt053(
+            account: noIBAN, bookings: bookings, format: .camt053v08, openingCents: 0, openingDate: "2025-01-01")
+        XCTAssertTrue(xml.contains("<Othr><Id>4711</Id></Othr>"), xml)
+        try validate(xml, schema: "camt.053.001.08")
     }
 
-    func testCamtOpeningBalanceFromEndOfDay() {
-        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
-        let b = try! XCTUnwrap(model.exportBookings().first)
-        let day = b.bookingDate
-        let eod: Int64 = 50_000
-        let o = BookingExportBuilder.camtOpeningBalance(
-            endOfDay: [day: eod], firstDate: day, bookingsOnFirstDay: [b])
-        XCTAssertEqual(o.cents, eod - b.amountCents)
-        XCTAssertEqual(o.date, day)
+    func testCamt053StatusOrderAndClosingBalance() async throws {
+        let (account, bookings) = try await camtFixture()
+        let v08 = BookingExportBuilder.camt053(
+            account: account, bookings: bookings, format: .camt053v08, openingCents: 100_000, openingDate: "2025-01-01")
+        XCTAssertTrue(v08.contains("<Sts><Cd>BOOK</Cd></Sts>"))
+        XCTAssertTrue(v08.contains("<Sts><Cd>PDNG</Cd></Sts>"))
+        let v02 = BookingExportBuilder.camt053(
+            account: account, bookings: bookings, format: .camt053v02, openingCents: 100_000, openingDate: "2025-01-01")
+        XCTAssertTrue(v02.contains("<Sts>BOOK</Sts>"))
+        XCTAssertTrue(v02.contains("<Sts>PDNG</Sts>"))
+        // Acct: Ownr before Svcr; TxDtls: Purp before RmtInf
+        for xml in [v02, v08] {
+            if let svcr = xml.range(of: "<Svcr>") {
+                XCTAssertLessThan(try XCTUnwrap(xml.range(of: "<Ownr>")).lowerBound, svcr.lowerBound)
+            }
+            let entry = try XCTUnwrap(xml.components(separatedBy: "<Ntry>").first { $0.contains("<Purp>") })
+            XCTAssertLessThan(try XCTUnwrap(entry.range(of: "<Purp>")).lowerBound,
+                              try XCTUnwrap(entry.range(of: "<RmtInf>")).lowerBound)
+        }
+        // CLBD = OPBD + booked entries only (the pending one is left out).
+        let booked = bookings.filter { !$0.isPending }.reduce(Int64(0)) { $0 + $1.amountCents }
+        let closing = 100_000 + booked
+        let amount = "\(closing.magnitude / 100).\(String(format: "%02llu", closing.magnitude % 100))"
+        let clbd = try XCTUnwrap(v08.range(of: "<Cd>CLBD</Cd>"))
+        XCTAssertTrue(v08[clbd.upperBound...].hasPrefix("</CdOrPrtry></Tp><Amt Ccy=\"EUR\">\(amount)</Amt>"), v08)
+    }
+
+    func testCamtOpeningBalanceIsPreviousDayEndOrMissing() {
+        XCTAssertEqual(BookingExportBuilder.camtOpeningBalance(
+            endOfDay: ["2025-02-28": 50_000, "2025-03-01": 60_000], firstDate: "2025-03-01"), 50_000)
+        // No history for the day before → no invented 0
+        XCTAssertNil(BookingExportBuilder.camtOpeningBalance(endOfDay: ["2025-03-01": 60_000], firstDate: "2025-03-01"))
+        XCTAssertNil(BookingExportBuilder.camtOpeningBalance(endOfDay: [:], firstDate: ""))
+    }
+
+    func testCamtFilterIgnoresListFilters() {
+        let model = demoModel()
+        let filter = model.exportFilter(accountIDs: [1], period: .all, options: nil, ignoreListFilters: true)
+        XCTAssertNil(filter.search)
+        XCTAssertNil(filter.categoryId)
+        XCTAssertNil(filter.merchantKey)
+        XCTAssertNil(filter.checked)
+        XCTAssertEqual(filter.direction, .all)
+        XCTAssertEqual(filter.scope, .all)
+        XCTAssertEqual(filter.accountIds, [1])
+        XCTAssertEqual(filter.limit, 0)
+    }
+
+    // MARK: - CSV / XML edge cases, files
+
+    func testCSVFormulaGuard() {
+        XCTAssertEqual(BookingExportBuilder.csvField("-2+3", text: true), "'-2+3")
+        XCTAssertEqual(BookingExportBuilder.csvField("=SUM(A1)", text: true), "'=SUM(A1)")
+        XCTAssertEqual(BookingExportBuilder.csvField("@x;y", text: true), "\"'@x;y\"")
+        XCTAssertEqual(BookingExportBuilder.csvField("\tx", text: true), "'\tx")
+        XCTAssertEqual(BookingExportBuilder.csvField("Miete", text: true), "Miete")
+        XCTAssertEqual(BookingExportBuilder.csvField("-12,50"), "-12,50")
+
+        var r = report()
+        r.accounts = [PrintAccount(id: 10, name: "=HYPERLINK(\"x\")", iban: "", balanceCents: 0,
+                                   balanceDate: "2025-03-31", currency: "EUR", owner: "")]
+        var o = ExportOptions()
+        o.format = .csv
+        o.showCurrentBalance = true
+        let csv = BookingExportBuilder.csv(r, options: o)
+        XCTAssertTrue(csv.contains("# \"'=HYPERLINK(\"\"x\"\")\";"), csv)
+    }
+
+    func testEscapeDropsXMLForbiddenControlCharacters() {
+        XCTAssertEqual(PrintReportBuilder.esc("a\u{0}b\u{1F}c\u{FFFE}"), "abc")
+        XCTAssertEqual(PrintReportBuilder.esc("a\tb\nc\r\nd"), "a\tb\nc\r\nd")
+        XCTAssertEqual(PrintReportBuilder.esc("<&>\"'"), "&lt;&amp;&gt;&quot;&#39;")
+    }
+
+    func testFreeURLNeverOverwrites() {
+        let dir = URL(fileURLWithPath: "/tmp/export")
+        var taken: Set<String> = ["Umsaetze.pdf", "Umsaetze-2.pdf"]
+        let exists = { (url: URL) in taken.contains(url.lastPathComponent) }
+        XCTAssertEqual(ExportDirectory.freeURL(in: dir, filename: "Neu.pdf", exists: exists).lastPathComponent, "Neu.pdf")
+        XCTAssertEqual(ExportDirectory.freeURL(in: dir, filename: "Umsaetze.pdf", exists: exists).lastPathComponent,
+                       "Umsaetze-3.pdf")
+        taken = ["Liste"]
+        XCTAssertEqual(ExportDirectory.freeURL(in: dir, filename: "Liste", exists: exists).lastPathComponent, "Liste-2")
     }
 
     func testPrintMappingIsAlwaysWhiteLabel() {
@@ -199,21 +306,26 @@ final class BookingExportTests: XCTestCase {
         XCTAssertEqual(migrated.periodPreset, .lastMonth)
     }
 
-    func testExportSourceRespectsAccountAndPeriod() {
-        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
-        XCTAssertEqual(model.vaultState, .open)
-        let account = try! XCTUnwrap(model.allAccounts.first { !$0.iban.isEmpty })
-        let all = try! XCTUnwrap(model.exportSource(accountIDs: nil, period: .current, bookingIDs: nil))
-        let one = try! XCTUnwrap(model.exportSource(accountIDs: [account.id], period: .lastMonth, bookingIDs: nil))
-        XCTAssertTrue(one.rows.allSatisfy { $0.accountId == account.id })
-        XCTAssertEqual(one.periodLabel, Period.lastMonth.title)
-        XCTAssertLessThanOrEqual(one.rows.count, all.rows.count)
+    func testExportBookingsRespectAccountAndPeriod() async throws {
+        let model = demoModel()
+        let account = try XCTUnwrap(model.allAccounts.first { !$0.iban.isEmpty })
+        let all = try await demoBookings(model)
+        let loaded = try await model.loadExportBookings(
+            accountIDs: [account.id], period: .lastMonth, bookingIDs: nil, options: nil)
+        let one = try XCTUnwrap(loaded)
+        XCTAssertTrue(one.allSatisfy { $0.accountId == account.id })
+        let (from, to) = Period.previousMonth().range
+        XCTAssertTrue(one.allSatisfy { $0.bookingDate >= from! && $0.bookingDate <= to! })
+        XCTAssertLessThanOrEqual(one.count, all.count)
+        let report = model.exportReport(bookings: one, accountIDs: [account.id], period: .lastMonth,
+                                        bookingIDs: nil, options: nil)
+        XCTAssertEqual(report.periodLabel, Period.previousMonth().title)
+        XCTAssertEqual(report.title, account.name)
     }
 
-    func testOpenBookingExportPrefersSelection() {
-        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
-        XCTAssertEqual(model.vaultState, .open)
-        let ids = Array(model.exportBookings().prefix(2).map(\.id))
+    func testOpenBookingExportPrefersSelection() async throws {
+        let model = demoModel()
+        let ids = Array(try await demoBookings(model).prefix(2).map(\.id))
         XCTAssertEqual(ids.count, 2)
         model.selectedBookingIDs = Set(ids)
         model.selectedBookingID = ids[0]

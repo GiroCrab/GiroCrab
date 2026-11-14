@@ -550,20 +550,25 @@ enum PrintReportBuilder {
         """
     }
 
+    /// Escapes for HTML and XML text/attributes. Drops what XML 1.0 forbids (control
+    /// characters below U+0020 except tab, LF, CR; U+FFFE/U+FFFF), so bank texts with
+    /// stray control bytes still give a well-formed CAMT.053 file.
     static func esc(_ s: String) -> String {
-        var out = ""
-        out.reserveCapacity(s.count)
-        for c in s {
-            switch c {
-            case "&": out += "&amp;"
-            case "<": out += "&lt;"
-            case ">": out += "&gt;"
-            case "\"": out += "&quot;"
-            case "'": out += "&#39;"
-            default: out.append(c)
+        var out = String.UnicodeScalarView()
+        for u in s.unicodeScalars {
+            switch u {
+            case "&": out.append(contentsOf: "&amp;".unicodeScalars)
+            case "<": out.append(contentsOf: "&lt;".unicodeScalars)
+            case ">": out.append(contentsOf: "&gt;".unicodeScalars)
+            case "\"": out.append(contentsOf: "&quot;".unicodeScalars)
+            case "'": out.append(contentsOf: "&#39;".unicodeScalars)
+            case "\t", "\n", "\r": out.append(u)
+            default:
+                if u.value < 0x20 || u.value == 0xFFFE || u.value == 0xFFFF { continue }
+                out.append(u)
             }
         }
-        return out
+        return String(out)
     }
 
     private static let css = """

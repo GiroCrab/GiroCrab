@@ -8611,6 +8611,17 @@
         }
       }
     },
+    "Für dieses Konto gibt es keinen Tagessaldo zum Beginn des Zeitraums, daher fehlt der Anfangssaldo für CAMT.053. Bitte das Konto synchronisieren oder einen anderen Zeitraum wählen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is no daily balance for this account at the start of the period, so the opening balance for CAMT.053 is missing. Please sync the account or choose another period."
+          }
+        }
+      }
+    },
     "Für „Privacy URL“ und „Terms URL“ genügt z. B. https://girocrab.de oder https://github.com/GiroCrab/GiroCrab." : {
       "extractionState" : "manual",
       "localizations" : {

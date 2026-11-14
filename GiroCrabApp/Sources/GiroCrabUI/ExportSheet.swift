@@ -12,7 +12,10 @@ struct ExportSheet: View {
     @State private var options = ExportOptions.load()
     @State private var busy = false
     @State private var showDetails = ExportOptions.load().hasNonDefaultContent
+    /// Booking count and file name for the current choices, loaded off the main thread
+    /// (`nil` while loading). Refreshed only when `previewKey` changes.
     @State private var previewCount: Int?
+    @State private var previewName: String?
     @State private var accountSearch = ""
     @State private var selectedIDs: Set<Int64> = []
     /// Bank names that are collapsed (accounts hidden).
@@ -37,7 +40,7 @@ struct ExportSheet: View {
 
     /// Accounts available in the current sidebar scope (Übersicht → all).
     private var poolAccounts: [Account] {
-        let ids = model.selectionAccountIDs
+        let ids = model.exportScopeAccountIDs
         let pool = model.allAccounts.filter { !$0.isArchived }
         if ids.isEmpty { return pool }
         return pool.filter { ids.contains($0.id) }
@@ -116,28 +119,33 @@ struct ExportSheet: View {
         if isBulk {
             return String(localized: "\(selectedAccounts.count) × Umsaetze-….pdf")
         }
-        let ids = effectiveAccountIDs
-        let accounts = model.allAccounts.filter { ids.contains($0.id) }.map {
-            PrintAccount(id: $0.id, name: $0.name, iban: $0.iban, balanceCents: $0.balanceCents,
-                         balanceDate: $0.balanceDate, currency: $0.currency, owner: $0.owner)
+        return previewName ?? "…"
+    }
+
+    /// Everything the preview depends on; a change reloads it (`.task(id:)` cancels the old load).
+    private struct PreviewKey: Equatable {
+        var options: ExportOptions
+        var accountIDs: [Int64]
+        var bookingIDs: Set<Int64>?
+    }
+
+    private var previewKey: PreviewKey {
+        PreviewKey(options: options, accountIDs: effectiveAccountIDs, bookingIDs: exportIDs)
+    }
+
+    private var exportPeriod: ExportPeriodPreset {
+        options.scope == .selection ? .current : options.periodPreset
+    }
+
+    private var fallbackTitle: String {
+        if options.scope == .selection {
+            return selectionCount == 1
+                ? String(localized: "Umsatz")
+                : String(localized: "\(selectionCount) Umsaetze")
         }
-        let rows = model.exportSource(
-            accountIDs: ids,
-            period: options.scope == .selection ? .current : options.periodPreset,
-            bookingIDs: exportIDs,
-            options: options
-        )?.rows ?? []
-        let fallback: String = {
-            if options.scope == .selection {
-                return selectionCount == 1
-                    ? String(localized: "Umsatz")
-                    : String(localized: "\(selectionCount) Umsaetze")
-            }
-            if accounts.count == 1 { return accounts[0].name }
-            return String(localized: "\(accounts.count) Konten")
-        }()
-        return BookingExportBuilder.defaultFilename(
-            accounts: accounts, rows: rows, format: options.format, fallbackTitle: fallback)
+        let n = effectiveAccountIDs.count
+        if n == 1, let a = model.allAccounts.first(where: { $0.id == effectiveAccountIDs[0] }) { return a.name }
+        return String(localized: "\(n) Konten")
     }
 
     private var saveTitle: String {
@@ -170,7 +178,7 @@ struct ExportSheet: View {
                 Section {
                     LabeledContent("Datei") {
                         Text(suggestedName)
-                            .font(.caption.monospaced())
+                            .appFont(.caption, design: .monospaced)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                             .multilineTextAlignment(.trailing)
@@ -215,12 +223,12 @@ struct ExportSheet: View {
         #endif
         .onAppear { bootstrap() }
         .onDisappear { persistOptions() }
-        .onChange(of: options) { _, _ in persistOptions(); refreshPreviewCount() }
+        .task(id: previewKey) { await refreshPreview() }
+        .onChange(of: options) { _, _ in persistOptions() }
         .onChange(of: selectedIDs) { _, ids in
             guard !isSelectionExport else { return }
             options.selectedAccountIDs = Array(ids).sorted()
             persistOptions()
-            refreshPreviewCount()
         }
         .onChange(of: canUseSelection) { _, ok in
             if !ok, !isSelectionExport { options.scope = .filtered }
@@ -288,7 +296,7 @@ struct ExportSheet: View {
                 }
             }
         } header: {
-            Text("Ausgabe")
+            Text("Ausgabe").appSectionHeader()
         }
     }
 
@@ -300,7 +308,7 @@ struct ExportSheet: View {
             }
             HStack {
                 Text(String(localized: "\(selectedIDs.count) von \(poolAccounts.count) gewählt"))
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Alle") { selectedIDs = Set(poolAccounts.map(\.id)) }
@@ -319,7 +327,7 @@ struct ExportSheet: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .font(.caption)
+                .appFont(.caption)
                 Spacer()
             }
             ScrollView {
@@ -336,7 +344,7 @@ struct ExportSheet: View {
             }
             .frame(maxHeight: accountListHeight)
         } header: {
-            Text("Konten")
+            Text("Konten").appSectionHeader()
         } footer: {
             Group {
                 if options.format.isCamt {
@@ -367,7 +375,7 @@ struct ExportSheet: View {
                 else { collapsedBanks.remove(bank) }
             } label: {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 16, alignment: .center)
             }
@@ -387,12 +395,12 @@ struct ExportSheet: View {
                     Image(systemName: allOn ? "checkmark.square.fill" : (someOn ? "minus.square.fill" : "square"))
                         .foregroundStyle(allOn || someOn ? Color.accentColor : .secondary)
                     Text(bank)
-                        .font(.subheadline.weight(.semibold))
+                        .appFont(.subheadline, weight: .semibold)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text("\(selected.count)/\(accounts.count)")
-                        .font(.caption.monospacedDigit())
+                        .appFont(.caption, monospacedDigit: true)
                         .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
@@ -425,7 +433,7 @@ struct ExportSheet: View {
                     let sub = accountSubtitle(account)
                     if !sub.isEmpty {
                         Text(sub)
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -477,17 +485,15 @@ struct ExportSheet: View {
                 DatePicker("Bis", selection: $customToDate, in: customFromDate..., displayedComponents: .date)
             }
         } header: {
-            Text("Zeitraum")
+            Text("Zeitraum").appSectionHeader()
         }
         .onChange(of: customFromDate) { _, d in
             options.customFrom = DateText.iso(d)
             persistOptions()
-            refreshPreviewCount()
         }
         .onChange(of: customToDate) { _, d in
             options.customTo = DateText.iso(d)
             persistOptions()
-            refreshPreviewCount()
         }
     }
 
@@ -508,7 +514,7 @@ struct ExportSheet: View {
 
     private func syncCustomDatesFromOptions() {
         if options.customFrom.isEmpty || options.customTo.isEmpty {
-            let (from, to) = Period.lastMonth.range
+            let (from, to) = Period.previousMonth().range
             options.customFrom = from ?? DateText.iso(Date())
             options.customTo = to ?? DateText.iso(Date())
         }
@@ -525,7 +531,7 @@ struct ExportSheet: View {
                 }
             }
         } header: {
-            Text("Format")
+            Text("Format").appSectionHeader()
         }
     }
 
@@ -558,12 +564,12 @@ struct ExportSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).foregroundStyle(.primary)
                     if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                        Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "checkmark")
-                    .font(.body.weight(.semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(selected ? Color.accentColor : .clear)
                     .accessibilityHidden(!selected)
             }
@@ -587,8 +593,8 @@ struct ExportSheet: View {
             let pool = Set(poolAccounts.map(\.id))
             var ids = Set(options.selectedAccountIDs).intersection(pool)
             if ids.isEmpty {
-                if model.selectionAccountIDs.count == 1 {
-                    ids = Set(model.selectionAccountIDs)
+                if model.exportScopeAccountIDs.count == 1 {
+                    ids = Set(model.exportScopeAccountIDs)
                 } else {
                     ids = pool
                 }
@@ -603,29 +609,49 @@ struct ExportSheet: View {
             }
             if options.periodPreset == .custom { syncCustomDatesFromOptions() }
         }
-        refreshPreviewCount()
     }
 
-    private func refreshPreviewCount() {
-        let ids = effectiveAccountIDs
-        guard !ids.isEmpty || options.scope == .selection else {
+    /// Loads count + file name off the main thread. Runs from `.task(id: previewKey)`, so a
+    /// newer choice cancels this load; a cancelled or stale load never publishes.
+    private func refreshPreview() async {
+        let key = previewKey
+        guard !key.accountIDs.isEmpty || options.scope == .selection else {
             previewCount = 0
+            previewName = nil
             return
         }
-        let rows = model.exportSource(
-            accountIDs: ids.isEmpty ? nil : ids,
+        previewCount = nil
+        do {
+            guard let bookings = try await loadBookings(accountIDs: key.accountIDs, bookingIDs: key.bookingIDs,
+                                                        options: key.options),
+                  !Task.isCancelled, key == previewKey else { return }
+            let report = model.exportReport(bookings: bookings, accountIDs: key.accountIDs, period: exportPeriod,
+                                            bookingIDs: key.bookingIDs, options: key.options)
+            previewCount = report.rows.count
+            previewName = BookingExportBuilder.defaultFilename(
+                accounts: report.accounts, rows: report.rows, format: key.options.format,
+                fallbackTitle: fallbackTitle)
+        } catch {
+            guard !Task.isCancelled else { return }
+            previewCount = 0
+            previewName = nil
+        }
+    }
+
+    /// Bookings for an export, off the main thread. CAMT.053 ignores the list's search,
+    /// category and direction filters so its closing balance matches the bank's.
+    private func loadBookings(accountIDs: [Int64], bookingIDs: Set<Int64>?,
+                              options: ExportOptions) async throws -> [Booking]? {
+        try await model.loadExportBookings(
+            accountIDs: accountIDs.isEmpty ? nil : accountIDs,
             period: options.scope == .selection ? .current : options.periodPreset,
-            bookingIDs: exportIDs,
-            options: options
-        )?.rows ?? []
-        previewCount = rows.count
+            bookingIDs: bookingIDs, options: options, ignoreListFilters: options.format.isCamt)
     }
 
     @MainActor
     private func export(askWhere: Bool) async {
         busy = true
         defer { busy = false }
-        let period = options.scope == .selection ? ExportPeriodPreset.current : options.periodPreset
         let ids = effectiveAccountIDs
         guard !ids.isEmpty || options.scope == .selection else {
             model.showError(String(localized: "Export fehlgeschlagen"),
@@ -633,31 +659,34 @@ struct ExportSheet: View {
             return
         }
         if isBulk {
-            await exportBulk(period: period, accountIDs: ids)
+            await exportBulk(accountIDs: ids)
             return
         }
         do {
             let file = try await buildFile(
                 accountIDs: ids.isEmpty ? Array(poolAccounts.map(\.id)) : ids,
-                period: period,
                 bookingIDs: exportIDs,
                 options: options
             )
             finishAndPresent(file: file, askWhere: askWhere)
+        } catch is CancellationError {
+            return
         } catch {
             model.showError(String(localized: "Export fehlgeschlagen"), error.localizedDescription)
         }
     }
 
     @MainActor
-    private func exportBulk(period: ExportPeriodPreset, accountIDs: [Int64]) async {
+    private func exportBulk(accountIDs: [Int64]) async {
         var files: [(data: Data, filename: String)] = []
         do {
             for id in accountIDs {
-                if let file = try await buildFileOptional(accountIDs: [id], period: period, bookingIDs: nil, options: options) {
+                if let file = try await buildFileOptional(accountIDs: [id], bookingIDs: nil, options: options) {
                     files.append(file)
                 }
             }
+        } catch is CancellationError {
+            return
         } catch {
             model.showError(String(localized: "Export fehlgeschlagen"), error.localizedDescription)
             return
@@ -685,37 +714,45 @@ struct ExportSheet: View {
     }
 
     @MainActor
-    private func buildFile(accountIDs: [Int64], period: ExportPeriodPreset, bookingIDs: Set<Int64>?,
+    private func buildFile(accountIDs: [Int64], bookingIDs: Set<Int64>?,
                            options: ExportOptions) async throws -> (data: Data, filename: String) {
-        guard let file = try await buildFileOptional(accountIDs: accountIDs, period: period, bookingIDs: bookingIDs, options: options) else {
+        guard let file = try await buildFileOptional(accountIDs: accountIDs, bookingIDs: bookingIDs, options: options) else {
             throw ExportError.empty
         }
         return file
     }
 
     @MainActor
-    private func buildFileOptional(accountIDs: [Int64], period: ExportPeriodPreset, bookingIDs: Set<Int64>?,
+    private func buildFileOptional(accountIDs: [Int64], bookingIDs: Set<Int64>?,
                                    options: ExportOptions) async throws -> (data: Data, filename: String)? {
-        guard var report = model.exportSource(accountIDs: accountIDs, period: period, bookingIDs: bookingIDs, options: options) else {
-            throw ExportError.empty
+        let period = options.scope == .selection ? ExportPeriodPreset.current : options.periodPreset
+        // nil = vault locked or swapped while loading: nothing to export.
+        guard let bookings = try await loadBookings(accountIDs: accountIDs, bookingIDs: bookingIDs, options: options) else {
+            throw CancellationError()
         }
-        guard !report.rows.isEmpty else { return nil }
+        guard !bookings.isEmpty else { return nil }
+        var report = model.exportReport(bookings: bookings, accountIDs: accountIDs, period: period,
+                                        bookingIDs: bookingIDs, options: options)
         report.generatedAt = Date()
         report.logoDataURI = nil
         report = BookingExportBuilder.prepareStatement(report)
         let print = options.asPrintOptions
-        let needsDaily = options.format == .pdf || options.format.isCamt
-            || (options.showDailyBalance && !options.format.isCamt)
+        let needsDaily = options.format == .pdf || options.format.isCamt || options.showDailyBalance
         if needsDaily, let earliest = report.rows.map(\.date).min() {
             let ids = Array(Set(report.rows.map(\.accountId))).sorted()
-            report.dailyBalances = model.printDailyBalances(accountIds: ids, from: earliest)
+            // From the day before: CAMT's opening balance is that day's end balance.
+            let from = BookingExportBuilder.previousISODate(earliest) ?? earliest
+            guard let balances = try await model.loadDailyBalances(accountIds: ids, from: from) else {
+                throw CancellationError()
+            }
+            report.dailyBalances = balances
         }
         let data: Data
         switch options.format {
         case .csv:
             data = Data(BookingExportBuilder.csv(report, options: options).utf8)
         case .camt053v08, .camt053v02:
-            data = try Data(camtXML(report: report, accountIDs: accountIDs, period: period, bookingIDs: bookingIDs, options: options).utf8)
+            data = try Data(camtXML(bookings: bookings, dailyBalances: report.dailyBalances, options: options).utf8)
         case .pdf:
             let html = PrintReportBuilder.html(report, options: print, paper: .a4)
             #if os(macOS) || os(iOS)
@@ -729,21 +766,20 @@ struct ExportSheet: View {
         return (data, name)
     }
 
-    private func camtXML(report: PrintReport, accountIDs: [Int64], period: ExportPeriodPreset, bookingIDs: Set<Int64>?,
+    private func camtXML(bookings: [Booking], dailyBalances: [Int64: [String: Int64]],
                          options: ExportOptions) throws -> String {
-        let bookings = model.exportBookings(accountIDs: accountIDs, period: period, bookingIDs: bookingIDs, options: options)
         let ids = Set(bookings.map(\.accountId))
         guard ids.count == 1, let id = ids.first, let account = model.account(for: id) else {
             throw ExportError.camtMultiAccount
         }
         let first = bookings.map(\.bookingDate).min() ?? ""
-        let onFirst = bookings.filter { $0.bookingDate == first }
-        let eod = report.dailyBalances[id] ?? [:]
-        let opening = BookingExportBuilder.camtOpeningBalance(
-            endOfDay: eod, firstDate: first, bookingsOnFirstDay: onFirst)
+        guard let opening = BookingExportBuilder.camtOpeningBalance(
+            endOfDay: dailyBalances[id] ?? [:], firstDate: first) else {
+            throw ExportError.camtNoOpeningBalance
+        }
         return BookingExportBuilder.camt053(
             account: account, bookings: bookings, format: options.format,
-            openingCents: opening.cents, openingDate: opening.date)
+            openingCents: opening, openingDate: first)
     }
 }
 
@@ -751,6 +787,7 @@ private enum ExportError: LocalizedError {
     case unsupported
     case camtMultiAccount
     case empty
+    case camtNoOpeningBalance
     var errorDescription: String? {
         switch self {
         case .unsupported:
@@ -759,6 +796,8 @@ private enum ExportError: LocalizedError {
             return String(localized: "CAMT.053 nur für ein einzelnes Konto (#372).")
         case .empty:
             return String(localized: "Keine Umsätze für den Export.")
+        case .camtNoOpeningBalance:
+            return String(localized: "Für dieses Konto gibt es keinen Tagessaldo zum Beginn des Zeitraums, daher fehlt der Anfangssaldo für CAMT.053. Bitte das Konto synchronisieren oder einen anderen Zeitraum wählen.")
         }
     }
 }
