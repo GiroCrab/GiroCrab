@@ -10,6 +10,7 @@ public struct GiroCrabScenes: Scene {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics = true
+    @AppStorage(AppTextSize.defaultsKey) private var textSize: AppTextSize = .standard
     #endif
 
     public init(options: LaunchOptions = .current) {
@@ -41,6 +42,7 @@ public struct GiroCrabScenes: Scene {
                 .environment(model)
                 .modifier(AutoLockOnBackground(model: model))
                 #if os(macOS)
+                .appTextSize(textSize.effective)
                 // Keep the minimum independent of the split columns' ideal heights.
                 .frame(minHeight: 480, maxHeight: .infinity)
                 #endif
@@ -164,6 +166,10 @@ public struct GiroCrabScenes: Scene {
                     Divider()
                     Button("Mitteilungen …") { openWindow(id: "announcements") }
                     Divider()
+                    // #301: redacted screenshot + scrubbed diagnostics, then a prefilled issue.
+                    Button("Problem melden …") { openWindow(id: "bug-report") }
+                        .keyboardShortcut("b", modifiers: [.command, .option])
+                    Divider()
                     Link("Webseite & Dokumentation (girocrab.de)", destination: HelpLinks.website)
                     Link("Fehler melden / Issue erstellen (GitHub)", destination: HelpLinks.issues)
                     Link("Community & Diskussionen (GitHub)", destination: HelpLinks.discussions)
@@ -185,13 +191,25 @@ public struct GiroCrabScenes: Scene {
                 Toggle("Auswertungen anzeigen", isOn: $showStatistics)
                     .disabled(!model.isUnlocked)
                 Divider()
+                // Like Mail/Notes: text size of the whole app (#343).
+                Button("Größer") { textSize = textSize.larger ?? textSize }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(textSize.larger == nil)
+                Button("Kleiner") { textSize = textSize.smaller ?? textSize }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(textSize.smaller == nil)
+                Button("Originalgröße") { textSize = .standard }
+                    .keyboardShortcut("0", modifiers: .command)
+                    .disabled(textSize == .standard)
+                Divider()
                 Button("Befehlspalette …") { model.showCommandPalette = true }
                     .keyboardShortcut("k", modifiers: .command)
                     .disabled(!model.isUnlocked)
                 Divider()
                 Picker("Konten anzeigen", selection: Binding(get: { model.accountView }, set: { model.accountView = $0 })) {
-                    Text("Nach Gruppe").tag(AccountSidebarMode.byGroup)
-                    Text("Nach Kontoart").tag(AccountSidebarMode.byKind)
+                    ForEach(AccountSidebarMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
                 }
                 .disabled(!model.isUnlocked)
                 Button("Kontogruppen bearbeiten …") { model.openGroupManager() }
@@ -209,22 +227,32 @@ public struct GiroCrabScenes: Scene {
         #if os(macOS)
         Window("Mitteilungen", id: "announcements") {
             AnnouncementsListView()
+                .appTextSize(textSize.effective)
         }
         .defaultSize(width: 460, height: 360)
         Window("Abruf-Protokoll", id: "sync-log") {
             SyncLogView()
                 .environment(model)
+                .appTextSize(textSize.effective)
         }
         .defaultSize(width: 900, height: 520)
 
+        Window("Problem melden", id: "bug-report") {
+            BugReportView()
+                .environment(model)
+        }
+        .defaultSize(width: 760, height: 860)
+
         Window("GiroCrab-Hilfe", id: "help") {
             NavigationStack { HelpView() }
+                .appTextSize(textSize.effective)
         }
         .defaultSize(width: 640, height: 720)
         Settings {
             // HIG: the Settings window fits each tab (SettingsView sizes them).
             SettingsView()
                 .environment(model)
+                .appTextSize(textSize.effective)
         }
         #endif
     }
@@ -278,6 +306,10 @@ public struct GiroCrabRootView: View {
                     .onAppear { model.bootstrap() }
             case .open:
                 MainSplitView()
+                    // the only window the bug report may capture; inside the
+                    // redaction environment, so it can report what was built
+                    .background(MainWindowTracker())
+                    .environment(\.reportRedaction, model.reportRedaction.union(LaunchOptions.current.redaction))
                     .onAppear { StartupClock.mark("MainSplitView appear") }
                     // Asked only once the vault is open, so it never competes with Touch ID.
                     .modifier(SystemLanguageChangedAlert(newLanguage: Binding(
@@ -353,7 +385,7 @@ struct LockView: View {
         VStack(spacing: 18) {
             AnimatedCrabLogoView(size: 120, phase: crabPhase)
             Text("GiroCrab ist gesperrt")
-                .font(.title.bold())
+                .appFont(.title, weight: .bold)
             Text("Ihre Buchungen liegen in einem verschlüsselten Tresor.\nDer Schlüssel verlässt nie den Schlüsselbund dieses Geräts.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.secondary)
@@ -377,14 +409,14 @@ struct LockView: View {
                 }
                 if waitingLong {
                     Label(waitingHint, systemImage: "exclamationmark.bubble")
-                        .font(.callout)
+                        .appFont(.callout)
                         .foregroundStyle(Theme.warning)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 460)
                 }
             }
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red).multilineTextAlignment(.center)
+                Text(error).appFont(.callout).foregroundStyle(.red).multilineTextAlignment(.center)
             }
             if model.lockPreview && !AppModel.vaultMayHoldRealData && model.vaultState != .unlocking {
                 Button("Zurück zur Demo") { model.endLockPreview() }
@@ -408,6 +440,8 @@ struct LockView: View {
 
 struct MainSplitView: View {
     @Environment(AppModel.self) private var model
+    @AppStorage(EnableBankingKeySync.noticeSuppressedKey) private var enableBankingNoticeSuppressed = false
+    @Environment(\.textScale) private var textScale
     #if os(macOS)
     @State private var columns: NavigationSplitViewVisibility = .all
     @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
@@ -419,7 +453,8 @@ struct MainSplitView: View {
     private var sidebar: some View {
         SidebarView()
             .frame(minHeight: 0, maxHeight: .infinity)
-            .macColumnWidth(min: 240, ideal: 260, max: 480)
+            // wider with larger text (#343): balances must not be cut off
+            .macColumnWidth(min: 240 * textScale, ideal: 260 * textScale, max: 480 * textScale)
     }
 
     private var bookingColumn: some View {
@@ -508,6 +543,10 @@ struct MainSplitView: View {
             CommandPaletteView()
                 .environment(model)
         }
+        .sheet(item: $model.accountSelectionConnection) { c in
+            AccountSelectionSheet(connection: c)
+                .environment(model)
+        }
         .sheet(isPresented: $model.showAddBank) {
             AddBankSheet()
                 .environment(model)
@@ -579,6 +618,12 @@ struct MainSplitView: View {
                 Text(String(format: String(localized: "Der Auftrag hat die Bank erreicht, aber die Antwort ist nicht eindeutig. Die Überweisung wurde möglicherweise bereits ausgeführt.\n\nBitte prüfen Sie zuerst Ihr Konto (Umsätze oder Online-Banking), bevor Sie sie erneut senden. In GiroCrab ist sie als „Status unklar“ vorgemerkt.\n\nReferenz (EndToEnd-ID): %@\nBank: %@"), u.endToEndId, u.reason))
             }
         }
+        .alert("Stornierung nicht bestätigt", isPresented: Binding(get: { model.transferCancelNotice != nil }, set: { if !$0 { model.transferCancelNotice = nil } })) {
+            Button("Status erneut prüfen") { model.recheckTransferCancel() }
+            Button("Schließen", role: .cancel) { model.transferCancelNotice = nil }
+        } message: {
+            Text(model.transferCancelNotice?.message ?? "")
+        }
         .alert(model.errorTitle ?? String(localized: "Etwas ist schiefgelaufen"),
                isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             if let retry = model.errorRetry {
@@ -599,6 +644,19 @@ struct MainSplitView: View {
             Button("Meine eigene behalten") { model.setFintsProductIDMode("own") }
         } message: {
             Text("GiroCrab hat jetzt eine eigene FinTS-Produktregistrierung. Sie müssen dafür nichts mehr tun. Ihre eigene Registrierung bleibt gespeichert, und Sie können jederzeit in den Einstellungen wechseln.")
+        }
+        // own host view: the "don't show again" toggle must not reach other dialogs
+        .background {
+            Color.clear
+                .alert("Enable-Banking-Anwendung synchronisiert",
+                       isPresented: Binding(get: { model.enableBankingAdoptNotice != nil },
+                                            set: { if !$0 { model.enableBankingAdoptNotice = nil } }),
+                       presenting: model.enableBankingAdoptNotice) { _ in
+                    Button("OK") {}
+                } message: { notice in
+                    Text(notice.message)
+                }
+                .dialogSuppressionToggle(isSuppressed: $enableBankingNoticeSuppressed)
         }
         .overlay(alignment: .bottom) {
             if let toast = model.toast {

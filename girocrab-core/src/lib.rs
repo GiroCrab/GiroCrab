@@ -42,6 +42,7 @@ pub mod money;
 pub mod opening_balance;
 pub mod planning;
 pub mod recurring;
+pub mod report_sanitizer;
 pub mod rules;
 pub mod salary;
 mod schema;

@@ -124,9 +124,9 @@ struct DepotPositionsView: View {
                 } label: {
                     HStack {
                         Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
+                            .appFont(.caption, weight: .semibold)
                             .rotationEffect(.degrees(showSold ? 90 : 0))
-                        Text("Ehemalige Positionen (\(sold.count))").font(.subheadline.weight(.semibold))
+                        Text("Ehemalige Positionen (\(sold.count))").appFont(.subheadline, weight: .semibold)
                         Spacer()
                     }
                     .foregroundStyle(Theme.secondary)
@@ -146,7 +146,8 @@ struct DepotPositionsView: View {
                            valueCents: item.holding.valueCents,
                            warning: item.missingPriceDate != nil,
                            selected: selected,
-                           dimmed: item.sold)
+                           dimmed: item.sold,
+                           nameRedaction: .personal)
             .onTapGesture { model.selectAssetItem(item.id) }
             .simultaneousGesture(TapGesture(count: 2).onEnded {
                 // the second click toggled the selection off again: keep the item selected
@@ -184,10 +185,10 @@ struct DepotPositionsView: View {
 
     private func cardHeader(_ title: LocalizedStringKey, total: Int64? = nil) -> some View {
         HStack {
-            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
+            Text(title).appFont(.subheadline, weight: .semibold).foregroundStyle(Theme.text)
             Spacer()
             if let total {
-                Text(Money.format(total)).font(.subheadline.monospacedDigit()).foregroundStyle(Theme.secondary)
+                Text(Money.format(total)).sensitive().appFont(.subheadline, monospacedDigit: true).foregroundStyle(Theme.secondary)
             }
         }
     }
@@ -237,6 +238,8 @@ struct PositionRow: View {
     var warning = false
     var selected = false
     var dimmed = false
+    /// Bug report screenshot (#301): security names hide on request, own items (house, car) always.
+    var nameRedaction: ReportRedaction = .labels
     /// Securities: gain or loss against the cost price, if the bank sent one.
     var gain: (cents: Int64, percent: Double)?
 
@@ -246,14 +249,16 @@ struct PositionRow: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.body.weight(.semibold))
+                    .sensitive(nameRedaction)
+                    .appFont(.body, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 HStack(spacing: 3) {
                     if warning { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warning) }
                     Text(detail)
                 }
-                .font(.callout)
+                .sensitive()
+                .appFont(.callout)
                 .foregroundStyle(Theme.secondary)
                 .lineLimit(1)
             }
@@ -261,11 +266,13 @@ struct PositionRow: View {
             if !(dimmed && valueCents == 0) {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(Money.format(valueCents))
-                        .font(.body.weight(.medium).monospacedDigit())
+                        .sensitive()
+                        .appFont(.body, weight: .medium, monospacedDigit: true)
                         .foregroundStyle(Theme.text)
                     if let gain {
                         Text("GuV (berechnet): \(Money.format(gain.cents)) (\(gain.percent.formatted(.number.precision(.fractionLength(2)))) %)")
-                            .font(.caption.monospacedDigit())
+                            .sensitive()
+                            .appFont(.caption, monospacedDigit: true)
                             .foregroundStyle(gain.cents < 0 ? Color.red : Color.green)
                     }
                 }

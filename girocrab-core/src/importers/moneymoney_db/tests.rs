@@ -438,15 +438,18 @@ fn import_categories_splits_pending_notes_and_balance() {
     assert_eq!(usd.currency, "USD");
     assert_eq!(bookings(&v, usd.id)[0].amount_cents, 2526);
 
-    // #212: MoneyMoney's opening balances carry over and keep driving the balance
+    // #212: MoneyMoney's opening balances carry over undated (MoneyMoney has
+    // no cut-off date) and keep driving the balance. The balance-history row
+    // (100 € on 2020-01-01) is moved before the 2005 salary of 2500 €.
     assert!(giro.balance_derived);
     assert_eq!(
         (
             giro.opening_balance_cents,
             giro.opening_balance_date.as_str()
         ),
-        (Some(10_000), "2020-01-01")
+        (Some(10_000 - 250_000), "")
     );
+    assert_eq!(giro.balance_cents, 10_000 - 4567 - 1230 - 10_000);
     assert_eq!(
         (usd.opening_balance_cents, usd.opening_balance_date.as_str()),
         (Some(1050), "")
@@ -456,7 +459,10 @@ fn import_categories_splits_pending_notes_and_balance() {
     assert_eq!(account_by_name(&v, "Depot").opening_balance_cents, None);
     v.calibrate_account_opening_balance(giro.id, 0).unwrap();
     let giro = account_by_name(&v, "Girokonto");
-    assert_eq!(giro.opening_balance_cents, Some(4567 + 1230 + 10_000));
+    assert_eq!(
+        giro.opening_balance_cents,
+        Some(4567 + 1230 + 10_000 - 250_000)
+    );
     assert_eq!(giro.balance_cents, 0);
 }
 
@@ -838,7 +844,7 @@ fn opening_balance_applies_to_accounts_linked_to_a_bank_login() {
     let giro = account_by_name(&v, "Girokonto");
     assert!(giro.connection_id.is_some());
     assert!(giro.balance_derived);
-    assert_eq!(giro.opening_balance_cents, Some(10_000));
+    assert_eq!(giro.opening_balance_cents, Some(10_000 - 250_000));
     v.calibrate_account_opening_balance(giro.id, 0).unwrap();
     assert_eq!(account_by_name(&v, "Girokonto").balance_cents, 0);
     // taken over by a sync: the bank's balance counts, not the Startsaldo
@@ -1618,11 +1624,12 @@ fn shown_balance_also_wins_for_checking_accounts() {
     // balance date = max(newest booking, balance timestamp)
     assert_eq!(acc.balance_date, "2026-03-08");
     // #212: the opening balance is calibrated to MoneyMoney's own balance,
-    // its date kept, so later bookings continue from the shown value
-    assert_eq!(acc.opening_balance_date, "2020-01-01");
+    // undated (before every booking), so later bookings continue from the
+    // shown value
+    assert_eq!(acc.opening_balance_date, "");
     assert_eq!(
         acc.opening_balance_cents,
-        Some(123_456 + 4567 + 1230 + 10_000)
+        Some(123_456 + 4567 + 1230 + 10_000 - 250_000)
     );
 }
 
@@ -2527,4 +2534,51 @@ fn statement_lookup_rejects_symlinks_leaving_the_import_folder() {
     // the digest fallback must not hand out the linked outside file either
     let digest = sha256_hex(&secret);
     assert!(files.find(&doc("", "other.pdf", digest)).is_none());
+}
+
+/// A MoneyMoney account folded into the bank account that took it over (see
+/// `sync_merge::twins`): importing MoneyMoney again goes to the bank account
+/// instead of reviving the twin.
+#[test]
+fn import_goes_to_the_bank_account_a_twin_was_folded_into() {
+    let v = vault();
+    let c = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "login".into())
+        .unwrap();
+    let ext = format!("{EXT_PREFIX}1:{}", fnv("20041111|0102211000"));
+    let mut ids = Vec::new();
+    {
+        let db = v.db().unwrap();
+        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        for r in ["API1", ext.as_str()] {
+            db.execute(
+                "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
+                 VALUES (?1, ?2, ?3, 'Girokonto', 'DE53200411110102211000', 'EUR', 'checking', 0)",
+                params![c, gid, r],
+            )
+            .unwrap();
+            let id = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 VALUES (?1, 'mm-1', '2026-01-01', -5)",
+                [id],
+            )
+            .unwrap();
+            ids.push(id);
+        }
+        assert_eq!(crate::sync_merge::twins::fold_twins(&db).unwrap(), 1);
+    }
+    let path = temp("twin-src.db").to_string_lossy().to_string();
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(SCHEMA).unwrap();
+    conn.execute_batch(
+        "INSERT INTO accounts (rowid, account, bankcode, iban, currency, name, kind, type, sort) VALUES
+           (1, '0102211000', '20041111', 'DE53 2004 1111 0102 2110 00', 'EUR', 'Girokonto', 0, 0, 1);",
+    )
+    .unwrap();
+    drop(conn);
+    let p = v
+        .preview_moneymoney_database(path, String::new(), None)
+        .unwrap();
+    assert_eq!(p.accounts[0].existing_account_id, Some(ids[0]));
 }

@@ -25,9 +25,9 @@ struct InspectorView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
                         Label("Keine Buchung ausgewählt", systemImage: "doc.text.magnifyingglass")
-                            .font(.headline)
+                            .appFont(.headline)
                         Text("Wählen Sie eine Buchung, um Beleg, Händler-Historie und Kategorie zu sehen.")
-                            .font(.callout).foregroundStyle(Theme.secondary)
+                            .appFont(.callout).foregroundStyle(Theme.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .card()
@@ -55,16 +55,16 @@ struct ReceiptCard: View {
                     draftPurpose = booking.purpose
                     editing = true
                 } label: { Label("Text bearbeiten …", systemImage: "pencil") }
-                    .buttonStyle(.borderless).controlSize(.small).font(.caption)
+                    .buttonStyle(.borderless).controlSize(.small).appFont(.caption)
                     .help("Gegenpartei und Verwendungszweck korrigieren")
             }
             .popover(isPresented: $editing) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Gegenpartei").font(.caption).foregroundStyle(Theme.secondary)
+                    Text("Gegenpartei").appFont(.caption).foregroundStyle(Theme.secondary)
                     TextField("Gegenpartei", text: $draftName).textFieldStyle(.roundedBorder)
-                    Text("Verwendungszweck").font(.caption).foregroundStyle(Theme.secondary)
+                    Text("Verwendungszweck").appFont(.caption).foregroundStyle(Theme.secondary)
                     TextEditor(text: $draftPurpose)
-                        .font(.callout).frame(height: 90)
+                        .appFont(.callout).frame(height: 90)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.secondary.opacity(0.3)))
                     HStack {
                         Spacer()
@@ -82,16 +82,19 @@ struct ReceiptCard: View {
                 MerchantSignet(merchant: booking.merchant, categorySymbol: booking.categorySymbol, size: 48)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(booking.merchant.name)
-                        .font(.title3.weight(.semibold))
+                        .sensitive()
+                        .appFont(.title3, weight: .semibold)
                         .foregroundStyle(Theme.text)
                         .textSelection(.enabled)
                     Text("\(booking.accountName) · \(booking.paymentMethod)")
-                        .font(.caption).foregroundStyle(Theme.secondary)
+                        .sensitive()
+                        .appFont(.caption).foregroundStyle(Theme.secondary)
                     MerchantDomainRow(merchant: booking.merchant)
                 }
                 Spacer()
             }
             Text(Money.signed(booking.amountCents))
+                .sensitive()
                 .font(.system(.largeTitle, design: .rounded, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Money.ink(booking.amountCents))
             HStack(spacing: 6) {
@@ -100,19 +103,45 @@ struct ReceiptCard: View {
                 Spacer()
                 FlowBadge(flow: booking.flow)
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(Theme.secondary)
-            if !booking.cleanPurpose.isEmpty {
+            if let ref = AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain, bookingText: booking.bookingText), !ref.itemList.isEmpty {
+                // Amazon order: one item per line instead of the ";" purpose run
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(ref.itemList, id: \.self) { item in
+                        Text(item)
+                            .sensitive()
+                            .appFont(.callout)
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else if !booking.cleanPurpose.isEmpty {
                 Text(booking.cleanPurpose)
-                    .font(.callout)
+                    .sensitive()
+                    .appFont(.callout)
                     .foregroundStyle(Theme.text)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let source = model.amazonRefundSource(booking) {
+                // refund: jump to the order it belongs to (same order code)
+                Button {
+                    model.selectedBookingID = source.id
+                } label: {
+                    Label("Erstattung zu: \(source.items)", systemImage: "arrow.uturn.backward")
+                        .sensitive()
+                        .appFont(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.accent)
+                .help("Zur erstatteten Bestellung springen")
+            }
             Toggle("Geprüft", isOn: Binding(get: { booking.checked }, set: { model.setChecked($0, for: booking) }))
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .font(.caption)
+                .appFont(.caption)
         }
         .card()
     }
@@ -127,10 +156,11 @@ struct NoteCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Notiz", systemImage: "note.text").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
+            Label("Notiz", systemImage: "note.text").appFont(.subheadline, weight: .semibold).foregroundStyle(Theme.text)
             TextEditor(text: $draft)
-                .font(.callout)
+                .appFont(.callout)
                 .frame(minHeight: 54, maxHeight: 120)
+                .sensitive()
                 .scrollContentBackground(.hidden)
                 .focused($focused)
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border))
@@ -184,7 +214,8 @@ struct MerchantDomainRow: View {
             HStack(spacing: 4) {
                 TextField("z. B. enbw.com", text: $text)
                     .textFieldStyle(.roundedBorder)
-                    .font(.caption)
+                    .sensitive()
+                    .appFont(.caption)
                     .frame(maxWidth: 180)
                     .autocorrectionDisabled()
                     .onSubmit(save)
@@ -200,16 +231,18 @@ struct MerchantDomainRow: View {
             }
         } else {
             HStack(spacing: 4) {
-                Image(systemName: "globe").font(.caption2)
+                Image(systemName: "globe").appFont(.caption2)
                 Text(merchant.domain.isEmpty ? (merchant.isPerson ? String(localized: "Privatperson – kein Logo") : String(localized: "Domain festlegen")) : merchant.domain)
-                    .font(.caption.monospaced())
+                    .appFont(.caption, design: .monospaced)
+                    // a guessed domain spells out the (redacted) counterparty; dictionary brands show their logo anyway
+                    .sensitive(merchant.domain.isEmpty || merchant.domainSource == "dictionary" ? [] : .personal)
                 if !merchant.domain.isEmpty {
-                    Text("· \(sourceLabel)").font(.caption2)
+                    Text("· \(sourceLabel)").appFont(.caption2)
                 }
                 Button {
                     text = merchant.domain
                     editing = true
-                } label: { Label("Domain bearbeiten", systemImage: "pencil").labelStyle(.iconOnly).font(.caption2) }
+                } label: { Label("Domain bearbeiten", systemImage: "pencil").labelStyle(.iconOnly).appFont(.caption2) }
                     .buttonStyle(.borderless)
                     .help("Eigene Domain für das Logo eintragen")
             }
@@ -242,7 +275,7 @@ struct SalaryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Gehalt / Rente")
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline, weight: .semibold)
                 .foregroundStyle(booking.isSalary ? Theme.inflow : Theme.text)
             Picker("Gehalt / Rente", selection: Binding(
                 get: { choice },
@@ -257,7 +290,7 @@ struct SalaryCard: View {
             .labelsHidden()
             .pickerStyle(.segmented)
             Text(hint)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -287,7 +320,7 @@ struct FlowBadge: View {
         case .consumption: Theme.outflow
         }
         Text(flow.label)
-            .font(.caption2.weight(.semibold))
+            .appFont(.caption2, weight: .semibold)
             .foregroundStyle(color)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.08)))
@@ -300,16 +333,16 @@ struct MerchantHistoryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Händler-Historie").font(.subheadline.weight(.semibold))
+            Text("Händler-Historie").appFont(.subheadline, weight: .semibold)
             if let s = model.merchantStats, s.key == booking.merchant.key {
                 HStack(spacing: 10) {
                     stat("Buchungen", "\(s.count)×")
-                    stat("Summe", Money.format(s.totalCents))
-                    stat("Ø Betrag", Money.format(s.averageCents))
+                    stat("Summe", Money.format(s.totalCents), sensitive: true)
+                    stat("Ø Betrag", Money.format(s.averageCents), sensitive: true)
                 }
                 if !s.firstDate.isEmpty {
                     Text("Seit \(DateText.medium(s.firstDate)) · zuletzt \(DateText.medium(s.lastDate))")
-                        .font(.caption2).foregroundStyle(Theme.tertiary)
+                        .appFont(.caption2).foregroundStyle(Theme.tertiary)
                 }
             }
             if !booking.merchant.isin.isEmpty || !booking.merchant.assetClass.isEmpty {
@@ -325,18 +358,19 @@ struct MerchantHistoryCard: View {
         .card()
     }
 
-    private func stat(_ title: LocalizedStringKey, _ value: String) -> some View {
+    private func stat(_ title: LocalizedStringKey, _ value: String, sensitive: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2).foregroundStyle(Theme.secondary)
-            Text(value).font(.callout.weight(.semibold).monospacedDigit()).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
+            Text(title).appFont(.caption2).foregroundStyle(Theme.secondary)
+            Text(value).appFont(.callout, weight: .semibold, monospacedDigit: true).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
+                .sensitive(sensitive ? .personal : [])
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func labeled(_ title: LocalizedStringKey, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.caption2).foregroundStyle(Theme.secondary)
-            Text(value).font(.caption.monospaced()).textSelection(.enabled)
+            Text(title).appFont(.caption2).foregroundStyle(Theme.secondary)
+            Text(value).appFont(.caption, design: .monospaced).textSelection(.enabled)
         }
     }
 }
@@ -377,10 +411,10 @@ struct CategoryGridCard: View {
         let path = openPath ?? currentPath
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Kategorie").font(.subheadline.weight(.semibold))
+                Text("Kategorie").appFont(.subheadline, weight: .semibold)
                 Spacer()
                 Text(booking.categoryPath.isEmpty ? String(localized: "Ohne Kategorie") : booking.categoryPath)
-                    .font(.caption).foregroundStyle(Theme.secondary).lineLimit(1)
+                    .appFont(.caption).foregroundStyle(Theme.secondary).lineLimit(1)
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], spacing: 6) {
                 ForEach(model.categoryTree) { node in
@@ -416,7 +450,7 @@ struct CategoryGridCard: View {
             .tint(Theme.accent)
             .controlSize(.large)
             Text("In der Liste: C kategorisieren · R Regel erstellen")
-                .font(.caption2).foregroundStyle(Theme.tertiary)
+                .appFont(.caption2).foregroundStyle(Theme.tertiary)
         }
         .card()
         .onChange(of: booking.id) { _, _ in openPath = nil }
@@ -434,11 +468,13 @@ struct CategoryChip: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Image(systemName: category.sfSymbol).font(.subheadline)
-                Text(title ?? category.name).font(.caption).lineLimit(1).minimumScaleFactor(0.8)
+                Image(systemName: category.sfSymbol).appFont(.subheadline)
+                // two lines instead of shrinking: long names stay at the text size (#343)
+                Text(title ?? category.name).appFont(.caption).lineLimit(2).sensitive(.labels)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
+            .frame(maxHeight: .infinity)
             // Selected: accent fill and border, text in the normal colour – accent-
             // coloured text on an accent fill is unreadable with light accents (yellow).
             .foregroundStyle(Theme.text)
@@ -471,11 +507,11 @@ struct RawDataCard: View {
             } label: {
                 HStack(spacing: 6) {
                     Label("SEPA & Bank-Rohdaten", systemImage: "doc.plaintext")
-                        .font(.subheadline.weight(.semibold))
+                        .appFont(.subheadline, weight: .semibold)
                         .foregroundStyle(Theme.text)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
+                        .appFont(.caption, weight: .semibold)
                         .foregroundStyle(Theme.secondary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
@@ -487,14 +523,29 @@ struct RawDataCard: View {
                 VStack(alignment: .leading, spacing: 8) {
                     row("Verwendungszweck (roh)", booking.purpose.isEmpty ? "–" : booking.purpose)
                     if !booking.bookingText.isEmpty { row("Buchungstext", booking.bookingText) }
+                    if let ref = AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain, bookingText: booking.bookingText) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Bestellnummer").appFont(.caption2).foregroundStyle(Theme.secondary)
+                            if let url = ref.orderURL {
+                                Link(ref.code, destination: url)
+                                    .appFont(.caption, design: .monospaced)
+                                    .foregroundStyle(Theme.accent)
+                                    .help("Bestellung auf \(ref.domain) öffnen")
+                            }
+                        }
+                        .sensitive() // order numbers identify the purchase (#301)
+                        if ref.isSubscription {
+                            row("Bestelltyp", "Abonnement (Spar-Abo) – wiederkehrende Abbuchung", hides: [])
+                        }
+                    }
                     if let e = sepa("EREF") { row("EREF (Ende-zu-Ende-Referenz)", e) }
                     if let m = sepa("MREF") { row("MREF (Mandatsreferenz)", m) }
                     if let c = sepa("CRED") { row("Gläubiger-ID", c) }
-                    if !booking.purposeCode.isEmpty { row("Purpose-Code", booking.purposeCode) }
-                    if !booking.gvc.isEmpty { row("Geschäftsvorfallcode", booking.gvc) }
+                    if !booking.purposeCode.isEmpty { row("Purpose-Code", booking.purposeCode, hides: []) }
+                    if !booking.gvc.isEmpty { row("Geschäftsvorfallcode", booking.gvc, hides: []) }
                     if !booking.counterpartyIban.isEmpty { row("IBAN Gegenkonto", formatIBAN(booking.counterpartyIban)) }
                     row("Gegenpartei (roh)", booking.counterparty)
-                    if !booking.valueDate.isEmpty { row("Wertstellung", DateText.medium(booking.valueDate)) }
+                    if !booking.valueDate.isEmpty { row("Wertstellung", DateText.medium(booking.valueDate), hides: []) }
                     row("Konto", booking.accountName)
                 }
                 .padding(.top, 8)
@@ -503,11 +554,13 @@ struct RawDataCard: View {
         .card()
     }
 
-    private func row(_ title: LocalizedStringKey, _ value: String) -> some View {
+    /// `hides`: what the bug report screenshot covers (#301); raw data is personal.
+    private func row(_ title: LocalizedStringKey, _ value: String, hides: ReportRedaction = .personal) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.caption2).foregroundStyle(Theme.secondary)
-            Text(value).font(.caption.monospaced()).foregroundStyle(Theme.text).textSelection(.enabled)
+            Text(title).appFont(.caption2).foregroundStyle(Theme.secondary)
+            Text(value).appFont(.caption, design: .monospaced).foregroundStyle(Theme.text).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+                .sensitive(hides)
         }
     }
 }
@@ -522,13 +575,13 @@ struct MultiSelectionCard: View {
         let expense = many.filter { $0.amountCents < 0 }.reduce(Int64(0)) { $0 + $1.amountCents }
         VStack(alignment: .leading, spacing: 12) {
             Label("\(many.count) Buchungen ausgewählt", systemImage: "checkmark.circle")
-                .font(.headline)
+                .appFont(.headline)
             VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("Summe", value: Money.format(income + expense))
-                if income != 0 { LabeledContent("Einnahmen", value: Money.format(income)) }
-                if expense != 0 { LabeledContent("Ausgaben", value: Money.format(expense)) }
+                LabeledContent("Summe") { Text(Money.format(income + expense)).sensitive() }
+                if income != 0 { LabeledContent("Einnahmen") { Text(Money.format(income)).sensitive() } }
+                if expense != 0 { LabeledContent("Ausgaben") { Text(Money.format(expense)).sensitive() } }
             }
-            .font(.callout.monospacedDigit())
+            .appFont(.callout, monospacedDigit: true)
             Button {
                 model.showCategorizer = true
             } label: {
@@ -540,7 +593,7 @@ struct MultiSelectionCard: View {
                 if let id = model.selectedBookingID { model.selectBooking(id) }
             }
             Text("⌘-Klick fügt eine Buchung hinzu oder entfernt sie, ⇧-Klick wählt einen Bereich, ⌘A alle.")
-                .font(.caption).foregroundStyle(.secondary)
+                .appFont(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
