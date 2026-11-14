@@ -383,6 +383,73 @@ public final class AppModel {
     /// Merchant whose history `merchantStats` currently shows.
     @ObservationIgnored private var merchantStatsKey: String?
 
+    // MARK: State used by AppModel+Loading.swift
+
+    @ObservationIgnored private var dashboardTask: Task<Void, Never>?
+    /// How many bookings a full reload fetches: one page, or as many as are loaded.
+    var listLimit: UInt32 = AppModel.defaultListLimit
+    /// Size of the pages appended while scrolling (tests use small pages).
+    var appendPageSize: UInt32 = AppModel.defaultListLimit
+    /// The next page is being fetched in the background.
+    private(set) var isLoadingMoreBookings = false
+    @ObservationIgnored private var loadMoreTask: Task<Void, Never>?
+    /// Bumped by every full reload of the list; a page requested before is dropped.
+    @ObservationIgnored private var listGeneration = 0
+    /// Day card the stream should scroll to (set by a click in the balance chart);
+    /// a fresh token per click, so clicking the same day again scrolls again.
+    var scrollToDay: DayJump?
+
+    // MARK: State used by AppModel+Documents.swift
+
+    /// Folder that receives a copy of every document (nil = off). Per Mac, not per vault.
+    var documentMirrorPath: String? = UserDefaults.standard.string(forKey: "documents.mirrorDir")
+    /// Result of the latest mirror run, for the settings.
+    var documentMirrorStatus: String?
+    private var mirrorRunning = false
+    var documentsVersion = 0
+    /// Account whose statements (HKEKA) are being fetched by the running session.
+    var statementsAccountID: Int64?
+    private var statementsCountBefore = 0
+    /// Decrypted copy shown in QuickLook; removed again as soon as the
+    /// preview closes or shows another document (and on lock / quit).
+    var quickLookURL: URL? {
+        didSet {
+            if let old = oldValue, old != quickLookURL { try? FileManager.default.removeItem(at: old) }
+        }
+    }
+
+    // MARK: State used by AppModel+Logos.swift
+
+    /// Bumped whenever a domain override changes -> signets refetch.
+    var logoVersion = 0
+    private var logoInflight: [String: Task<(image: Image, pixels: Int)?, Never>] = [:]
+
+    // MARK: State used by AppModel+Editing.swift
+
+    /// Category refresh in flight; only a newer category change or a vault
+    /// switch cancels it, so the totals it brings can't get lost.
+    @ObservationIgnored private var categoryRefreshTask: Task<Void, Never>?
+
+    // MARK: State used by AppModel+Connections.swift
+
+    /// Last queued background settings write; the next one waits for it, so
+    /// two quick edits reach the vault in the order they were made.
+    @ObservationIgnored private var settingsWriteTask: Task<Void, Never>?
+    /// All banks Enable Banking offers (`GET /aspsps`); empty until loaded or without credentials.
+    var livePsd2Banks: [Psd2Bank] = []
+    /// Enable Banking connections the last MoneyMoney import set up, with the
+    /// accounts to link to the user's application – shown in the Enable
+    /// Banking setup so they can be linked while activating it.
+    var psd2LinkHints: [MoneyMoneyDbPsd2Connection] = []
+
+    // MARK: State used by AppModel+Sync.swift
+
+    /// Hook for tests: runs the action's sync instead of the real one.
+    @ObservationIgnored var refreshSyncOverride: ((RefreshSyncAction) -> Void)?
+    private var syncingConnectionIDBeforeError: Int64?
+    /// PIN of the sync that just failed (memory only, cleared in `finishSync`).
+    private var failedSyncSecret: String?
+
     public init(options: LaunchOptions = .current) {
         self.options = options
         StartupClock.mark("AppModel.init begin")
@@ -982,8 +1049,6 @@ public final class AppModel {
         run { dashboard = try vault.investmentDashboard(months: 6) }
     }
 
-    @ObservationIgnored private var dashboardTask: Task<Void, Never>?
-
     /// The investment dashboard reads every booking (~150 ms on 30k): off the
     /// main thread when it only follows an edit or a scope switch.
     private func loadDashboard() {
@@ -1047,15 +1112,6 @@ public final class AppModel {
     /// days) and appends further pages while the user scrolls. A click on an
     /// older day in the balance chart raises the limit until that day is loaded.
     static let defaultListLimit: UInt32 = 300
-    /// How many bookings a full reload fetches: one page, or as many as are loaded.
-    var listLimit: UInt32 = AppModel.defaultListLimit
-    /// Size of the pages appended while scrolling (tests use small pages).
-    var appendPageSize: UInt32 = AppModel.defaultListLimit
-    /// The next page is being fetched in the background.
-    private(set) var isLoadingMoreBookings = false
-    @ObservationIgnored private var loadMoreTask: Task<Void, Never>?
-    /// Bumped by every full reload of the list; a page requested before is dropped.
-    @ObservationIgnored private var listGeneration = 0
 
     /// Every full reload calls this first: a page still on its way belongs to the old list.
     private func dropPendingPage() {
@@ -1206,6 +1262,8 @@ public final class AppModel {
         for id in accountIds { out[id] = map([id]) }
         return out
     }
+
+    // MARK: - Booking list, KPIs & history
 
     func reloadBookings() {
         // A synchronous refresh (account, period, edit, vault change) supersedes
@@ -1369,6 +1427,8 @@ public final class AppModel {
         reloadHistory()
     }
 
+    // MARK: - Off-main vault access
+
     /// Runs a core call against the open vault off the main thread. Returns `nil` when the
     /// vault is locked or was swapped (lock, demo switch) while the read ran, so a
     /// caller never publishes data from a vault that is no longer current.
@@ -1412,7 +1472,7 @@ public final class AppModel {
 
     /// Runs blocking core calls off the main thread; cancelling the caller cancels the work.
     /// File-private: UI code goes through `vaultOffMain` / `VaultPin`, which carry the vault.
-    fileprivate nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
         let job = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
             return try work()
@@ -1637,11 +1697,6 @@ public final class AppModel {
     // MARK: - PDF statements & document folder (GitHub #57)
 
     private static let mirrorDirKey = "documents.mirrorDir"
-    /// Folder that receives a copy of every document (nil = off). Per Mac, not per vault.
-    var documentMirrorPath: String? = UserDefaults.standard.string(forKey: "documents.mirrorDir")
-    /// Result of the latest mirror run, for the settings.
-    var documentMirrorStatus: String?
-    private var mirrorRunning = false
 
     /// Suggested mirror folder: iCloud Drive/GiroCrab/Kontoauszüge (if iCloud Drive exists).
     static var suggestedMirrorURL: URL? {
@@ -1783,15 +1838,13 @@ public final class AppModel {
         }
     }
 
-    private func run(_ body: () throws -> Void) {
+    // MARK: - Core-call helper
+
+    func run(_ body: () throws -> Void) {
         do { try body() } catch { errorMessage = describe(error) }
     }
 
     // MARK: - Logos (Tier 2)
-
-    /// Bumped whenever a domain override changes -> signets refetch.
-    var logoVersion = 0
-    private var logoInflight: [String: Task<(image: Image, pixels: Int)?, Never>] = [:]
 
     /// Dual-source pipeline, stage 2: cached PNG/ICO from the vault or the
     /// Google S2 / DuckDuckGo favicon for the first candidate domain that
@@ -1918,10 +1971,6 @@ public final class AppModel {
 
     /// The loaded bookings; every filter of the list is applied by the core.
     var visibleBookings: [Booking] { bookings }
-
-    /// Day card the stream should scroll to (set by a click in the balance chart);
-    /// a fresh token per click, so clicking the same day again scrolls again.
-    var scrollToDay: DayJump?
 
     /// Jump to `date` in the booking stream: that day, or the nearest earlier
     /// day with bookings (the balance of a quiet day comes from there).
@@ -2150,10 +2199,6 @@ public final class AppModel {
         categoryRefreshTask?.cancel()
         reloadBookings(); reloadCategories(); reloadAccounts()
     }
-
-    /// Category refresh in flight; only a newer category change or a vault
-    /// switch cancels it, so the totals it brings can't get lost.
-    @ObservationIgnored private var categoryRefreshTask: Task<Void, Never>?
 
     /// Everything a category change affects, loaded off the main thread:
     /// - the list page, published unless another list load started meanwhile
@@ -2433,10 +2478,6 @@ public final class AppModel {
         reloadSettings()
     }
 
-    /// Last queued background settings write; the next one waits for it, so
-    /// two quick edits reach the vault in the order they were made.
-    @ObservationIgnored private var settingsWriteTask: Task<Void, Never>?
-
     /// Same as `saveSetting`, but the write and the list reload run off the main
     /// thread (they hold the vault mutex). For edits made in the Settings window,
     /// where nothing right after depends on the value being stored; flows that
@@ -2538,14 +2579,6 @@ public final class AppModel {
             requestSync(conn)
         }
     }
-
-    /// All banks Enable Banking offers (`GET /aspsps`); empty until loaded or without credentials.
-    var livePsd2Banks: [Psd2Bank] = []
-
-    /// Enable Banking connections the last MoneyMoney import set up, with the
-    /// accounts to link to the user's application – shown in the Enable
-    /// Banking setup so they can be linked while activating it.
-    var psd2LinkHints: [MoneyMoneyDbPsd2Connection] = []
 
     /// Loads the live ASPSP list when the user's Enable Banking credentials are set.
     func loadLivePsd2Banks() {
@@ -2670,14 +2703,7 @@ public final class AppModel {
         reloadAll()
     }
 
-    // MARK: - Sync (two-phase)
-
     // MARK: - Belege & PostBox
-
-    var documentsVersion = 0
-    /// Account whose statements (HKEKA) are being fetched by the running session.
-    var statementsAccountID: Int64?
-    private var statementsCountBefore = 0
 
     func accountDocuments(_ accountID: Int64) -> [DocumentInfo] {
         _ = documentsVersion
@@ -2698,14 +2724,6 @@ public final class AppModel {
         statementsAccountID = account.id
         statementsCountBefore = accountDocuments(account.id).count
         requestSync(connection)
-    }
-
-    /// Decrypted copy shown in QuickLook; removed again as soon as the
-    /// preview closes or shows another document (and on lock / quit).
-    var quickLookURL: URL? {
-        didSet {
-            if let old = oldValue, old != quickLookURL { try? FileManager.default.removeItem(at: old) }
-        }
     }
 
     /// Private folder (0700) for the decrypted QuickLook copies.
@@ -2861,6 +2879,8 @@ public final class AppModel {
         }
     }
 
+    // MARK: - Connection details
+
     func connectionStatus(_ id: Int64) -> ConnectionStatus? {
         try? vault?.connectionStatus(connectionId: id)
     }
@@ -2899,6 +2919,8 @@ public final class AppModel {
             showError(String(localized: "Anmeldung konnte nicht übernommen werden"), describe(error))
         }
     }
+
+    // MARK: - Sync (two-phase)
 
     /// Starts a sync (or the login it needs) once the banking policy is fresh
     /// and allows this login; otherwise explains why not.
@@ -2998,9 +3020,6 @@ public final class AppModel {
             return .all
         }
     }
-
-    /// Hook for tests: runs the action's sync instead of the real one.
-    @ObservationIgnored var refreshSyncOverride: ((RefreshSyncAction) -> Void)?
 
     /// Pull-to-refresh: merges the iCloud snapshots first (bookings synced on
     /// the Mac), then syncs what the current selection shows. Returns when the
@@ -3359,10 +3378,6 @@ public final class AppModel {
         resetSyncBatch()
         Task { await s?.cancel() }
     }
-
-    private var syncingConnectionIDBeforeError: Int64?
-    /// PIN of the sync that just failed (memory only, cleared in `finishSync`).
-    private var failedSyncSecret: String?
 
     private func finishSync(error: Error) {
         let failedID = quietSyncConnectionID ?? syncingConnectionID
