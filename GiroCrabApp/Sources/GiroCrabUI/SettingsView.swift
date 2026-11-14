@@ -568,6 +568,10 @@ struct ICloudSyncSection: View {
                 }
             if sync.isEnabled {
                 LabeledContent("Ordner", value: sync.folderName ?? "iCloud Drive / GiroCrab")
+                if sync.folderNotice {
+                    Text("Der Ordner „GiroCrab“ in iCloud Drive enthält bereits andere Dateien. Ihre bisherigen Daten bleiben unverändert im bisherigen Ordner und werden dort weiter synchronisiert.")
+                        .appFont(.caption).foregroundStyle(.orange)
+                }
                 // The app's own iCloud container is neither visible in Finder nor
                 // chosen by the user: only a plain folder gets these buttons.
                 if sync.location == .folder {
@@ -633,9 +637,7 @@ struct ICloudSyncSection: View {
     private func revealFolder() {
         let cloudDocs = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
-        let mm = cloudDocs.appendingPathComponent("moneymoney", isDirectory: true)
-        let gc = cloudDocs.appendingPathComponent("GiroCrab", isDirectory: true)
-        let url = SyncFolder.containsVault(mm) ? mm : gc
+        let url = ICloudFolderMigration.resolve(cloudDocs: cloudDocs, create: false).url
         if FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {

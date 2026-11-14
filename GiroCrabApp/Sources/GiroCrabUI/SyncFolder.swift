@@ -25,7 +25,7 @@ struct SyncFolder: Sendable {
     }
 
     /// Name of the file an iCloud placeholder (`.name.icloud`) stands for.
-    private static func placeholderTarget(_ name: String) -> String? {
+    static func placeholderTarget(_ name: String) -> String? {
         guard name.hasPrefix("."), name.hasSuffix(".icloud") else { return nil }
         return String(name.dropFirst().dropLast(".icloud".count))
     }

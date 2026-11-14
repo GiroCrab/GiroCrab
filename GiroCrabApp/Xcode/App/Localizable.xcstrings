@@ -5640,6 +5640,17 @@
         }
       }
     },
+    "Der Ordner „GiroCrab“ in iCloud Drive enthält bereits andere Dateien. Ihre bisherigen Daten bleiben unverändert im bisherigen Ordner und werden dort weiter synchronisiert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The “GiroCrab” folder in iCloud Drive already contains other files. Your existing data stays unchanged in its current folder and keeps syncing there."
+          }
+        }
+      }
+    },
     "Der Sachwert und sein Verlauf werden entfernt." : {
       "extractionState" : "manual",
       "localizations" : {
