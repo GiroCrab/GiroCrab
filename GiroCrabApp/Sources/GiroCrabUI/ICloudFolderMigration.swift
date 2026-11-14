@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Which iCloud Drive folder holds the sync snapshots. Older versions used a
@@ -15,6 +16,8 @@ enum ICloudFolderMigration {
         var conflict: Bool
         /// The data was copied just now (record the time, see `legacyChanged`).
         var didMigrate = false
+        /// SHA-256 (hex) of each vault file in the old folder at migration time, by file name.
+        var legacyHashes: [String: String] = [:]
     }
 
     /// Decides the folder inside `cloudDocs` (iCloud Drive root) and migrates if due.
@@ -29,20 +32,40 @@ enum ICloudFolderMigration {
         if SyncFolder.containsVault(new) { return Resolution(url: new, conflict: false) }
         if !isEmpty(new, fm) { return Resolution(url: old, conflict: true) }
         guard create else { return Resolution(url: old, conflict: false) }
-        return copy(from: old, to: new, cloudDocs: cloudDocs, fm: fm)
-            ? Resolution(url: new, conflict: false, didMigrate: true)
-            : Resolution(url: old, conflict: false)
+        guard copy(from: old, to: new, cloudDocs: cloudDocs, fm: fm) else { return Resolution(url: old, conflict: false) }
+        return Resolution(url: new, conflict: false, didMigrate: true, legacyHashes: vaultHashes(in: old, fm: fm))
     }
 
-    /// Whether a vault file in the old folder changed after `since` (the migration):
-    /// another device still writes there. The old folder is only read, never changed.
-    static func legacyChanged(cloudDocs: URL, since: Date, fm: FileManager = .default) -> Bool {
+    /// Whether `url` is the former folder (iOS: the picked folder).
+    static func isLegacyFolder(_ url: URL) -> Bool { url.lastPathComponent == legacyFolderName }
+
+    /// SHA-256 of every downloaded vault file in `dir`, by name.
+    static func vaultHashes(in dir: URL, fm: FileManager = .default) -> [String: String] {
+        var result: [String: String] = [:]
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where SyncFolder.isSnapshotName(name) {
+            if let hash = sha256(dir.appendingPathComponent(name)) { result[name] = hash }
+        }
+        return result
+    }
+
+    private static func sha256(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Whether the CONTENT of a vault file in the old folder differs from the migration
+    /// (`hashes`): another device still writes there. The modification time (after `since`)
+    /// is only a pre-filter, so a touched but identical file raises no notice.
+    /// The old folder is only read, never changed.
+    static func legacyChanged(cloudDocs: URL, since: Date, hashes: [String: String], fm: FileManager = .default) -> Bool {
         let old = cloudDocs.appendingPathComponent(legacyFolderName, isDirectory: true)
         let names = (try? fm.contentsOfDirectory(atPath: old.path)) ?? []
         return names.contains { name in
-            guard SyncFolder.isSnapshotName(SyncFolder.placeholderTarget(name) ?? name) else { return false }
-            let values = try? old.appendingPathComponent(name).resourceValues(forKeys: [.contentModificationDateKey])
-            return (values?.contentModificationDate ?? .distantPast) > since
+            guard SyncFolder.isSnapshotName(name) else { return false }
+            let url = old.appendingPathComponent(name)
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            guard (modified ?? .distantPast) > since, let hash = sha256(url) else { return false }
+            return hashes[name] != hash
         }
     }
 
@@ -79,6 +102,6 @@ enum ICloudFolderMigration {
 
     /// Folder name for the UI; the old name is never shown.
     static func displayName(for url: URL) -> String {
-        url.lastPathComponent == legacyFolderName ? "iCloud Drive" : url.lastPathComponent
+        isLegacyFolder(url) ? "iCloud Drive" : url.lastPathComponent
     }
 }

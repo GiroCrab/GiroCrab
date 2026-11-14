@@ -104,8 +104,16 @@ extension ICloudFolderMigrationTests {
         let old = root.appendingPathComponent("moneymoney")
         try fm.createDirectory(at: old, withIntermediateDirectories: true)
         try Data("a".utf8).write(to: old.appendingPathComponent(snap))
-        XCTAssertTrue(ICloudFolderMigration.resolve(cloudDocs: root).didMigrate)
+        let first = ICloudFolderMigration.resolve(cloudDocs: root)
+        XCTAssertTrue(first.didMigrate)
+        XCTAssertEqual(first.legacyHashes.keys.sorted(), [snap])
+        XCTAssertEqual(first.legacyHashes[snap]?.count, 64)
         XCTAssertFalse(ICloudFolderMigration.resolve(cloudDocs: root).didMigrate)
+    }
+
+    func test_old_folder_selected_is_recognised_for_ios_hint() {
+        XCTAssertTrue(ICloudFolderMigration.isLegacyFolder(URL(fileURLWithPath: "/x/moneymoney")))
+        XCTAssertFalse(ICloudFolderMigration.isLegacyFolder(URL(fileURLWithPath: "/x/GiroCrab")))
     }
 
     func test_legacy_change_detected_after_migration() throws {
@@ -118,19 +126,24 @@ extension ICloudFolderMigrationTests {
         try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -100)], ofItemAtPath: file.path)
         XCTAssertTrue(ICloudFolderMigration.resolve(cloudDocs: root).didMigrate)
         let migrated = Date()
+        let hashes = ICloudFolderMigration.vaultHashes(in: old)
         // untouched since the migration: no notice, and our own copy never touches the old folder
-        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated))
+        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated, hashes: hashes))
         // an older device writes the snapshot
+        // touched, content identical (e.g. iCloud re-download): no notice
         try fm.setAttributes([.modificationDate: migrated.addingTimeInterval(60)], ofItemAtPath: file.path)
-        XCTAssertTrue(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated))
+        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated, hashes: hashes))
+        // content changed
+        try Data("changed".utf8).write(to: file)
+        XCTAssertTrue(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated, hashes: hashes))
         // other files (not vault snapshots) are ignored; the old folder stays as it was
         try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -100)], ofItemAtPath: file.path)
         try Data("n".utf8).write(to: old.appendingPathComponent("notes.txt"))
-        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated))
+        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: root, since: migrated, hashes: hashes))
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: old.path).sorted(), ["notes.txt", snap])
     }
 
     func test_legacy_check_without_old_folder_is_false() {
-        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: fm.temporaryDirectory.appendingPathComponent(UUID().uuidString), since: .distantPast))
+        XCTAssertFalse(ICloudFolderMigration.legacyChanged(cloudDocs: fm.temporaryDirectory.appendingPathComponent(UUID().uuidString), since: .distantPast, hashes: [:]))
     }
 }

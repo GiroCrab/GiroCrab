@@ -21,6 +21,7 @@ public final class CloudSyncManager {
         static let seen = "girocrab.sync.seen"
         static let failed = "girocrab.sync.failed"
         static let migrated = "girocrab.sync.folderMigrated"
+        static let migratedHashes = "girocrab.sync.folderMigratedHashes"
     }
     /// Legacy plaintext key file of v0.4.0. Never written anymore; removed on sync.
     private let legacyKeyFileName = "tresor.key"
@@ -74,7 +75,7 @@ public final class CloudSyncManager {
             folderName = ICloudFolderMigration.displayName(for: url)
             #if os(iOS)
             // iOS only sees the picked folder, not its siblings: it cannot migrate by itself.
-            repickFolderHint = isEnabled && url.lastPathComponent == ICloudFolderMigration.legacyFolderName
+            repickFolderHint = isEnabled && ICloudFolderMigration.isLegacyFolder(url)
             #endif
         } else if isEnabled {
             // Only touch iCloud Drive when the user has actually enabled sync.
@@ -95,7 +96,10 @@ public final class CloudSyncManager {
         guard FileManager.default.fileExists(atPath: cloudDocs.path) else { return nil }
         // Only reached once sync is enabled (init / isEnabled / sync call it gated).
         let r = ICloudFolderMigration.resolve(cloudDocs: cloudDocs)
-        if r.didMigrate { defaults.set(Date(), forKey: K.migrated) }
+        if r.didMigrate {
+            defaults.set(r.legacyHashes, forKey: K.migratedHashes)
+            defaults.set(Date(), forKey: K.migrated)
+        }
         if folderNotice != r.conflict { folderNotice = r.conflict }
         return r.url
     }
@@ -121,7 +125,10 @@ public final class CloudSyncManager {
             return
         }
         let docs = Self.cloudDocsURL
-        legacyFolderWritten = await Task.detached { ICloudFolderMigration.legacyChanged(cloudDocs: docs, since: since) }.value
+        let hashes = defaults.dictionary(forKey: K.migratedHashes) as? [String: String] ?? [:]
+        legacyFolderWritten = await Task.detached {
+            ICloudFolderMigration.legacyChanged(cloudDocs: docs, since: since, hashes: hashes)
+        }.value
         #endif
     }
 
