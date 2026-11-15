@@ -58,6 +58,8 @@ public final class AppModel {
     var merchantAccountStats: (accountId: Int64, stats: MerchantStats)?
     var rules: [Rule] = []
     var history: [DailyBalance] = []
+    /// Monthly sums of the selected category incl. subcategories (chart above its bookings, #502).
+    var categoryHistory: [CategoryPeriodSum] = []
     var connections: [BankConnection] = []
     /// Login with accounts that another login already delivers: asks which to fetch (#346).
     var accountSelectionConnection: BankConnection?
@@ -76,6 +78,11 @@ public final class AppModel {
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
             listLimit = Self.defaultListLimit
+            // A category with its own default period switches to it; that load covers the selection too (#425).
+            if case .category(let id)? = sidebarSelection, let saved = categoryPeriod(id), saved != period {
+                period = saved
+                return
+            }
             reloadSelection(periodChanged: false)
         }
     }
@@ -116,7 +123,11 @@ public final class AppModel {
     }
     var interactivePeriod: Period {
         get { period }
-        set { loadsSelectionInBackground = true; period = newValue; loadsSelectionInBackground = false }
+        set {
+            loadsSelectionInBackground = true; period = newValue; loadsSelectionInBackground = false
+            // The user's choice becomes the default of the selected category (#425).
+            if case .category(let id)? = sidebarSelection { setCategoryPeriod(newValue, for: id) }
+        }
     }
     /// Latest salary of the selected accounts; start of the `.sinceSalary` period.
     var salaryCycle: SalaryCycle?
@@ -163,6 +174,15 @@ public final class AppModel {
             guard directionFilter != oldValue else { return }
             listLimit = Self.defaultListLimit
             reloadBookings()
+        }
+    }
+    /// Accounts whose bookings the category views show („Ohne Kategorie“ and
+    /// a category, GitHub #406); empty = all accounts. Kept while the app runs.
+    var categoryAccountFilter: Set<Int64> = [] {
+        didSet {
+            guard categoryAccountFilter != oldValue, showsCategoryAccountFilter else { return }
+            listLimit = Self.defaultListLimit
+            reloadSelection(periodChanged: false)
         }
     }
     var searchText: String = "" { didSet { scheduleSearch() } }
@@ -887,22 +907,29 @@ public final class AppModel {
                 defer { key.resetBytes(in: 0..<key.count) }
                 let fileSize = (try? FileManager.default.attributesOfItem(atPath: Self.vaultURL.path)[.size] as? Int) ?? -1
                 Self.debugLog("unlock: vault=\(Self.vaultURL.lastPathComponent) size=\(fileSize) key_created_new=\(VaultKeyManager.shared.lastUnlockCreatedKey)")
-                let v = try Vault.open(path: Self.vaultURL.path, key: key)
-                _ = try v.seedStarterCategories()
+                // Opening (key derivation, migrations) and the emptiness check run off the
+                // main thread: the lock screen's crab keeps moving meanwhile.
+                let path = Self.vaultURL.path
+                let (v, isEmpty) = try await Self.offMain { [key] () throws -> (Vault, Bool) in
+                    let v = try Vault.open(path: path, key: key)
+                    _ = try v.seedStarterCategories()
+                    let connections = (try? v.listBankConnections()) ?? []
+                    return (v, try v.accountCount() == 0 && connections.isEmpty)
+                }
+                StartupClock.mark("own vault opened (background)")
                 self.ownVault = v
                 // Let the crab's unlock hop play on the lock screen before the main view replaces it.
-                if !Motion.reduced {
-                    self.unlockCelebrating = true
-                    try? await Task.sleep(for: .milliseconds(320))
-                }
+                self.unlockCelebrating = !Motion.reduced
                 defer { self.unlockCelebrating = false }
-                if try v.accountCount() == 0 && self.connectionsExist(v) == false {
+                let hop = Task { if !Motion.reduced { try? await Task.sleep(for: .milliseconds(320)) } }
+                if isEmpty {
                     // Nothing synced yet: show demo bookings so the UI can be judged.
                     UserDefaults.standard.set(false, forKey: Self.realDataKey)
-                    self.openDemoVault()
+                    await hop.value
+                    await self.openDemoVaultAsync()
                     self.toast = String(localized: "Ihr Tresor ist noch leer – Sie sehen Demo-Daten")
                 } else {
-                    self.useVault(v, demo: false)
+                    await self.useOwnVaultAfterUnlock(v, hop: hop)
                 }
                 if CloudSyncManager.shared.isEnabled {
                     await self.performSyncOrAutoAdopt(vault: v)
@@ -993,6 +1020,39 @@ public final class AppModel {
 
     func connectionsExist(_ v: Vault) -> Bool {
         ((try? v.listBankConnections()) ?? []).isEmpty == false
+    }
+
+    /// `useVault(v, demo: false)` for the unlock: the lock screen stays (crab animated)
+    /// while the first lists load off the main thread; the main view appears with them.
+    func useOwnVaultAfterUnlock(_ v: Vault, hop: Task<Void, Never>) async {
+        // Without a vault the selection reset loads nothing: its `didSet` would
+        // otherwise scan the bookings synchronously, before the load below.
+        vault = nil
+        selectedBookingID = nil
+        sidebarSelection = .allAccounts
+        vault = v
+        demoActive = false
+        UserDefaults.standard.set(true, forKey: Self.realDataKey)
+        logoCache = [:]
+        // nothing of the vault shown before (demo) may appear under the new one
+        page = nil; bookings = []; history = []
+        assetClassificationVersion += 1
+        // cheap, indexed calls; everything that scans bookings goes off the main thread
+        reloadAccounts()
+        reloadRules()
+        reloadSettings()
+        mirrorDocumentsIfEnabled()
+        startSelectionLoad()
+        loadDashboard()
+        await selectionLoadTask?.value
+        await hop.value
+        StartupClock.mark("own vault loaded (background)")
+        // locked, or switched to the demo, while loading
+        guard vault === v, vaultState == .unlocking else { return }
+        vaultState = .open
+        selectedBookingID = bookings.first?.id
+        startAutoSync()
+        reconcileEnableBankingKey()
     }
 
     func useVault(_ v: Vault, demo: Bool) {

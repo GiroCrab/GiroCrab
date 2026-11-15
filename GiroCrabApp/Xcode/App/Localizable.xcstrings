@@ -8310,6 +8310,17 @@
         }
       }
     },
+    "Duplizieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duplicate"
+          }
+        }
+      }
+    },
     "EREF (Ende-zu-Ende-Referenz)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9703,6 +9714,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Colour"
+          }
+        }
+      }
+    },
+    "Farbe von Abbuchungen in der Buchungsliste: neutral wie der übrige Text oder rot wie negative Salden in der Seitenleiste. Das Minuszeichen bleibt immer sichtbar." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Color of debits in the booking list: neutral like the rest of the text, or red like negative balances in the sidebar. The minus sign always stays visible."
           }
         }
       }
@@ -14115,6 +14137,28 @@
         }
       }
     },
+    "Konten: %lld von %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accounts: %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Konten: Alle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accounts: All"
+          }
+        }
+      }
+    },
     "Kontenauswahl" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14535,6 +14579,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Balance After"
+          }
+        }
+      }
+    },
+    "Kopfbereich einblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Header"
+          }
+        }
+      }
+    },
+    "Kopfbereich minimieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimize Header"
+          }
+        }
+      }
+    },
+    "Kopie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy"
           }
         }
       }
@@ -15716,6 +15793,17 @@
         }
       }
     },
+    "Monatssummen der Kategorie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Monthly totals of the category"
+          }
+        }
+      }
+    },
     "Motorrad" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16098,6 +16186,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use this name"
+          }
+        }
+      }
+    },
+    "Negative Beträge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Negative Amounts"
           }
         }
       }
@@ -16593,6 +16692,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Newest First"
+          }
+        }
+      }
+    },
+    "Neutral" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neutral"
           }
         }
       }
@@ -17191,6 +17301,17 @@
         }
       }
     },
+    "Nur Buchungen ausgewählter Konten anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show only bookings of selected accounts"
+          }
+        }
+      }
+    },
     "Nur Einnahmen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17319,6 +17440,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unlinked Only"
+          }
+        }
+      }
+    },
+    "Nutzt ein anderes Gerät (etwa die Mac-App) den Ordner „GiroCrab“ in iCloud Drive, wählen Sie diesen Ordner, damit beide denselben Tresor sehen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If another device (such as the Mac app) uses the “GiroCrab” folder in iCloud Drive, choose that folder so both see the same vault."
           }
         }
       }
@@ -21358,6 +21490,17 @@
         }
       }
     },
+    "Tresor in iCloud aktualisiert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vault updated in iCloud"
+          }
+        }
+      }
+    },
     "Tresor liegt in einem Unterordner" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23131,6 +23274,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Show Again"
+          }
+        }
+      }
+    },
+    "Wieder über iCloud synchronisieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync via iCloud Again"
           }
         }
       }

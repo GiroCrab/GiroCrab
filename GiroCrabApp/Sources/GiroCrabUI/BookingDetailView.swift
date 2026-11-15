@@ -17,9 +17,8 @@ struct InspectorView: View {
     }
 
     var body: some View {
-        // The bar sits above the scroll view instead of in a `safeAreaInset`: clicks inside the
-        // inspector's scroll view landed one row too low by the height of any top inset, and a
-        // button as the first scroll row got no clicks at all (macOS, #448, #454).
+        // The bar sits above the scroll view instead of in a `safeAreaInset` or as its first row:
+        // there it got no clicks, and clicks below it landed a row too low (macOS 27, #448, #492).
         VStack(spacing: 0) {
             if showsBookingCards {
                 InspectorLayoutBar(editing: $editingLayout, canReset: !layout.isStandard) {
@@ -560,6 +559,7 @@ struct CategoryChip: View {
             .fontWeight(selected ? .semibold : nil)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(selected ? Theme.selection : (filled ? Theme.canvas : Theme.card)))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 1.5 : 1))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])

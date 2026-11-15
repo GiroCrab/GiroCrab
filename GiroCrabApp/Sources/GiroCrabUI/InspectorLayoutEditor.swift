@@ -3,19 +3,10 @@ import GiroCrabCore
 
 /// One inspector card for a booking, as placed by `InspectorLayout` (#448).
 struct InspectorSectionCard: View {
-    @Environment(AppModel.self) private var model
     let section: InspectorSection
     let booking: Booking
     /// In the edit mode a card that would not show for this booking stands in as a placeholder.
     var placeholderWhenEmpty = false
-
-    /// The history card changes height when its stats arrive; the cards below it then kept stale
-    /// hit-test geometry (#454). A new identity re-lays them out.
-    private var belowHistoryKey: [Int64] {
-        [booking.id,
-         model.merchantStats?.key == booking.merchant.key ? 1 : 0,
-         model.merchantAccountStats?.accountId == booking.accountId ? 1 : 0]
-    }
 
     var body: some View {
         switch section {
@@ -29,8 +20,8 @@ struct InspectorSectionCard: View {
             }
         case .recurring: RecurringCard(booking: booking)
         case .merchantHistory: MerchantHistoryCard(booking: booking)
-        case .categories: CategoryGridCard(booking: booking).id(belowHistoryKey)
-        case .documents: DocumentsCard(booking: booking).id(belowHistoryKey)
+        case .categories: CategoryGridCard(booking: booking)
+        case .documents: DocumentsCard(booking: booking)
         case .rawData: RawDataCard(booking: booking)
         }
     }

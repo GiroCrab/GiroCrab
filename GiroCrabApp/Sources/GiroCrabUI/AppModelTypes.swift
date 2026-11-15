@@ -115,6 +115,40 @@ enum Period: Hashable, Identifiable {
     }
 }
 
+extension Period {
+    /// Relative, launch-independent form for per-category defaults (#425):
+    /// "this year" stays "this year" next January. `nil` for `.custom`.
+    func storageKey(now: Date = Date()) -> String? {
+        let menu = Period.menu(now: now)
+        switch self {
+        case .all: return "all"
+        case .days(let n): return "days:\(n)"
+        case .months12: return "months12"
+        case .sinceSalary: return "sinceSalary"
+        case .custom: return nil
+        case .month: return menu[2].firstIndex(of: self).map { "month:\($0)" }
+        case .quarter: return menu[3].firstIndex(of: self).map { "quarter:\($0)" }
+        case .year: return menu[4].firstIndex(of: self).map { "year:\($0)" }
+        }
+    }
+
+    init?(storageKey: String, now: Date = Date()) {
+        let menu = Period.menu(now: now)
+        let parts = storageKey.split(separator: ":")
+        let n = parts.count == 2 ? Int(parts[1]) : nil
+        switch (parts.first.map(String.init), n) {
+        case ("all", _): self = .all
+        case ("months12", _): self = .months12
+        case ("sinceSalary", _): self = .sinceSalary
+        case ("days", let n?) where n > 0: self = .days(n)
+        case ("month", let i?) where menu[2].indices.contains(i): self = menu[2][i]
+        case ("quarter", let i?) where menu[3].indices.contains(i): self = menu[3][i]
+        case ("year", let i?) where menu[4].indices.contains(i): self = menu[4][i]
+        default: return nil
+        }
+    }
+}
+
 extension BookingDirection: @retroactive Identifiable {
     public var id: Self { self }
 
@@ -437,5 +471,22 @@ extension Result where Failure == Error {
     /// Async counterpart of `Result(catching:)`.
     init(catchingAsync body: () async throws -> Success) async {
         do { self = .success(try await body()) } catch { self = .failure(error) }
+    }
+}
+
+/// Account kinds the user can pick (import, „Kontoart ändern …“), on Mac and iPhone.
+extension AccountKind {
+    static let importChoices: [AccountKind] = [.checking, .savings, .creditCard, .paymentService, .brokerage, .cash, .loan]
+
+    var label: String {
+        switch self {
+        case .checking: return String(localized: "Girokonto")
+        case .savings: return String(localized: "Tagesgeld / Sparen")
+        case .creditCard: return String(localized: "Kreditkarte")
+        case .paymentService: return String(localized: "Zahlungsdienst")
+        case .brokerage: return String(localized: "Depot")
+        case .cash: return String(localized: "Bargeld")
+        case .loan: return String(localized: "Darlehen")
+        }
     }
 }

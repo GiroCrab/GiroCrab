@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// One card of the booking inspector (right-hand column) that the user can move or hide (#448).
+/// The case order is the standard layout: the merchant history, whose stats load asynchronously
+/// and grow the card, comes after the interactive category and document cards (#492).
 enum InspectorSection: String, CaseIterable, Identifiable, Sendable {
-    case receipt, note, salary, recurring, merchantHistory, categories, documents, rawData
+    case receipt, note, salary, recurring, categories, documents, merchantHistory, rawData
 
     var id: String { rawValue }
 
