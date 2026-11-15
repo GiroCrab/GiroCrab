@@ -77,10 +77,14 @@ struct StandingOrderSheet: View {
         @Bindable var model = model
         return Form {
             Section {
-                Picker("Von Konto", selection: $model.standingDraft.accountID) {
-                    ForEach(model.standingOrderAccounts) { a in
-                        Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
+                LabeledContent("Von Konto") {
+                    Picker("Von Konto", selection: $model.standingDraft.accountID) {
+                        ForEach(model.standingOrderAccounts) { a in
+                            Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
+                        }
                     }
+                    .labelsHidden()
+                    .sensitive() // shows the selected account and its IBAN
                 }
                 .disabled(draft.action == .change)
             }
