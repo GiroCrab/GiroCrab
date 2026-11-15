@@ -14,8 +14,6 @@ struct BugReportView: View {
     @Environment(\.dismiss) private var dismiss
     #if os(iOS)
     @State private var markingUp = false
-    #else
-    @Environment(\.openWindow) private var openWindow
     #endif
 
     @State private var options = BugReport.Options()
@@ -69,7 +67,12 @@ struct BugReportView: View {
             } header: {
                 Text("Screenshot")
             } footer: {
+                #if os(macOS)
+                // #384: the main window stays usable next to this one
+                Text("Aufgenommen wird das Hauptfenster, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle dort zur betroffenen Ansicht und wähle dann „Neu aufnehmen“. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
+                #else
                 Text("Aufgenommen wird die Hauptansicht, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
+                #endif
             }
 
             Section {
@@ -203,29 +206,27 @@ struct BugReportView: View {
                 .disabled(!canExport)
             #endif
             Spacer()
+            #if os(iOS)
+            // macOS needs none: the report is a window beside the main one
             Button("Andere Ansicht aufnehmen …", systemImage: "rectangle.on.rectangle") { pickView() }
                 .disabled(!model.isUnlocked || capturing)
-                .help("Schließt den Bericht, damit du zur betroffenen Ansicht wechseln und sie dort aufnehmen kannst.")
+            #endif
             Button("Neu aufnehmen", systemImage: "camera") { captureRun += 1 }
                 .disabled(capturing)
         }
         .buttonStyle(.borderless)
     }
 
-    /// Closes the report (and on iOS Settings, which hosts it) and shows the
-    /// capture bar in the main window; it opens a new report from there.
+    #if os(iOS)
+    /// Closes the report (and Settings, which hosts it) and shows the capture
+    /// bar in the main view; it opens a new report from there.
     private func pickView() {
         model.reportPick = options
-        #if os(macOS)
-        // closed with ⌘W while the vault stays open: open it again
-        if !BugReport.revealMainWindow() { openWindow(id: "main") }
-        dismiss()
-        #else
         // Settings takes its nested sheets (Hilfe, this report) with it; a
         // second dismissal in the same pass could be dropped.
         if model.showSettings { model.showSettings = false } else { dismiss() }
-        #endif
     }
+    #endif
 
     @ViewBuilder
     private var screenshot: some View {
@@ -575,29 +576,22 @@ struct BugReportSheet: View {
 }
 #endif
 
-/// "Andere Ansicht aufnehmen" (#384): floats over every main window while
-/// the user moves to the view to report (on a Mac or an iPad that may be any
-/// of them); "Hier aufnehmen" opens a new report, which captures the window
-/// tapped (now the front one). No personal data in it.
+#if os(iOS)
+/// "Andere Ansicht aufnehmen" (#384, iOS: the report is a sheet that covers
+/// the main view): floats over the main view while the user moves to the view
+/// to report (on an iPad over every scene); "Hier aufnehmen" opens a new
+/// report, which captures the scene tapped. No personal data in it.
 ///
 /// The bar stays until that report appears (`onAppear` ends the pick), so a
-/// report that cannot be presented (iOS: another sheet is open) loses nothing
-/// and the bar says what is in the way. The report captures only after that
+/// report that cannot be presented (another sheet is open) loses nothing and
+/// the bar says what is in the way. The report captures only after that
 /// `onAppear`, and the bar also hides while any capture redraws the window.
 struct ReportPickBar: View {
     @Environment(AppModel.self) private var model
-    #if os(macOS)
-    @Environment(\.openWindow) private var openWindow
-    #else
     /// The report sheet of this scene (iPad: only the scene tapped presents it).
     let openReport: () -> Void
-    #endif
-    #if os(iOS)
     /// The report did not open (a sheet of the main view is in the way).
     @State private var blocked = false
-    #else
-    private let blocked = false // openWindow always opens it
-    #endif
 
     var body: some View {
         HStack(spacing: 12) {
@@ -611,11 +605,9 @@ struct ReportPickBar: View {
             }
             .buttonStyle(.borderedProminent)
             .fixedSize()
-            // no Escape shortcut: the main window's editors and search use it
             Button("Abbrechen", systemImage: "xmark") { model.reportPick = nil }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
-                .help("Abbrechen")
         }
         .padding(.leading, 16)
         .padding(.trailing, 12)
@@ -627,9 +619,6 @@ struct ReportPickBar: View {
     }
 
     private func capture() {
-        #if os(macOS)
-        openWindow(id: "bug-report")
-        #else
         blocked = false
         openReport()
         Task { @MainActor in
@@ -637,9 +626,9 @@ struct ReportPickBar: View {
             // still picking: the report never appeared
             if model.reportPick != nil { blocked = true }
         }
-        #endif
     }
 }
+#endif
 
 /// Opens the bug report: a window on macOS, a sheet on iOS.
 struct BugReportButton: View {

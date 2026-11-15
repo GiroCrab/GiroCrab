@@ -4110,6 +4110,17 @@
         }
       }
     },
+    "Aufgenommen wird das Hauptfenster, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle dort zur betroffenen Ansicht und wähle dann „Neu aufnehmen“. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The main window is captured, without open dialogs. If the problem is elsewhere, go to the affected view there and choose “Retake”. A new capture discards the markings, as the content may have moved."
+          }
+        }
+      }
+    },
     "Aufgenommen wird die Hauptansicht, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20708,17 +20719,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Close"
-          }
-        }
-      }
-    },
-    "Schließt den Bericht, damit du zur betroffenen Ansicht wechseln und sie dort aufnehmen kannst." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Closes the report so you can go to the affected view and capture it there."
           }
         }
       }

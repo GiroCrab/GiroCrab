@@ -108,20 +108,6 @@ enum BugReport {
         return snapshot(window, hideSearch: redaction.contains(.personal)).map(CaptureResult.image) ?? .noWindow
     }
 
-    #if os(macOS)
-    /// Brings a window that shows the vault to the front, for "Andere Ansicht
-    /// aufnehmen" (#384). False if there is none (closed, locked). iOS needs
-    /// none: the report is a sheet of the main view's own scene.
-    @MainActor
-    static func revealMainWindow() -> Bool {
-        // a minimized one counts (it comes back); ordered-out ones do not
-        guard let window = mainWindow() ?? trackedWindows().first(where: \.isMiniaturized) else { return false }
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil)
-        return true
-    }
-    #endif
-
     /// Every window that shows `MainSplitView` and has content to draw,
     /// whatever its state.
     @MainActor
