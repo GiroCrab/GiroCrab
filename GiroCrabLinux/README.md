@@ -135,7 +135,7 @@ von der nativen Installation wechselt, kopiert `tresor.girocrab` in den neuen Or
 | AccountGroupsUI › Dialoge, GroupManagerSheet | AccountGroupDialogs.qml, GroupManagerSheet.qml | Neue Gruppe/Untergruppe, Umbenennen, Löschen, Zusammenführen, Konto archivieren/löschen, Gruppen bearbeiten |
 | Announcements | – | offen |
 | SyncFolder, CloudSyncManager | – | offen: Ordner-Sync (Nextcloud/Syncthing) statt iCloud |
-| LanguagePreference | GeneralSettings.qml, cpp/translator.cpp, src/i18n.rs | siehe „Sprache“. Fehlt: Sprachauswahl vor dem Entsperren, wenn die Systemsprache weder Deutsch noch Englisch ist (dann Englisch), und der Hinweis bei geänderter Systemsprache |
+| LanguagePreference | GeneralSettings.qml, LanguagePromptView.qml, Main.qml, cpp/translator.cpp, src/i18n.rs | siehe „Sprache“ |
 | AppUpdates (Sparkle), DockBadge, DesktopFrame, MacFrame, Perf, AnimatedCrabLogoView, MerchantLogoTip, SyncDeviceID, ViewLayout, SVGPath, BankingVersion, BalanceBars | – | entfällt (macOS-spezifisch) |
 
 ## Sprache
@@ -143,7 +143,10 @@ von der nativen Installation wechselt, kopiert `tresor.girocrab` in den neuen Or
 Deutsch und Englisch wie in der Mac-App. Einstellungen › Allgemein › Sprache: „Systemsprache“, „Deutsch“ oder
 „English“; gespeichert als `language` in `~/.config/GiroCrab/GiroCrab.conf` und nach „Neu starten“ wirksam, damit ein
 Lauf nie Sprachen mischt. „Systemsprache“ nimmt den ersten deutschen oder englischen Eintrag aus `LANGUAGE` / `LC_ALL` /
-`LC_MESSAGES` / `LANG` (`QLocale::system().uiLanguages()`), sonst Englisch.
+`LC_MESSAGES` / `LANG` (`QLocale::system().uiLanguages()`), sonst Deutsch. Wie auf dem Mac fragt die App nur, wenn sich
+die Systemsprache seit dem letzten Start geändert hat (`language.lastSystemLanguage`): Spricht das System keine der beiden
+Sprachen, erscheint vor dem Entsperren „Sprache wählen“ (LanguagePromptView); wechselt das System weg von einer
+ausdrücklich gewählten Sprache, bietet ein Hinweis einmal den Wechsel an.
 
 - Quelltexte sind deutsch (`qsTr("…")` in QML, `QCoreApplication::translate` in C++, `i18n::tr` in Rust).
 - Das Englische kommt beim Bauen aus dem String-Katalog der Mac-App (`GiroCrabApp/Xcode/App/Localizable.xcstrings`):

@@ -17,11 +17,15 @@ const EN_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/en.json"));
 static ENGLISH: AtomicBool = AtomicBool::new(false);
 static RELAUNCH: AtomicBool = AtomicBool::new(false);
 
+static QUESTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 extern "C" {
     fn girocrab_language_choice() -> *const c_char;
     fn girocrab_set_language_choice(choice: *const c_char);
     fn girocrab_system_language() -> *const c_char;
     fn girocrab_apply_language(code: *const c_char);
+    fn girocrab_language_question() -> *const c_char;
+    fn girocrab_acknowledge_system_language();
 }
 
 fn english_map() -> &'static HashMap<String, CString> {
@@ -103,6 +107,10 @@ pub fn set_choice(choice: &str) -> Result<(), String> {
 /// Called once after the application object exists and before the QML engine loads:
 /// QML translator, default locale and the core's language follow the stored choice.
 pub fn setup() {
+    // LanguagePreference.startupQuestion, decided once per process like RootView on the Mac.
+    // SAFETY: plain query of QSettings / QLocale; the application object exists.
+    let question = c_str(unsafe { girocrab_language_question() });
+    let _ = QUESTION.set(question);
     let code = match choice().as_str() {
         "system" => system_language(),
         chosen => chosen.to_string(),
@@ -112,6 +120,17 @@ pub fn setup() {
     // SAFETY: the application object exists; c lives for the call.
     unsafe { girocrab_apply_language(c.as_ptr()) };
     girocrab_core::i18n::set_language(code);
+}
+
+/// What to ask at start-up: "none", "choose" or "changed:<code>" (see `setup`).
+pub fn question() -> &'static str {
+    QUESTION.get().map(String::as_str).unwrap_or("none")
+}
+
+/// "Deutsch beibehalten" / language chosen on the start screen: asked once per change.
+pub fn acknowledge_system_language() {
+    // SAFETY: plain QSettings write on the GUI thread.
+    unsafe { girocrab_acknowledge_system_language() };
 }
 
 /// "Neu starten": QML quits, `main` starts a new instance once the old one is gone.

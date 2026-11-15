@@ -19,7 +19,15 @@ ApplicationWindow {
     title: AppModel.isUnlocked ? AppModel.title + " – GiroCrab" : "GiroCrab"
     color: Theme.canvas
 
-    Component.onCompleted: Qt.callLater(AppModel.bootstrap)
+    // LanguagePreference.startupQuestion (RootView on the Mac): decided once at start-up.
+    readonly property string languageQuestion: (AppModel.run(() => AppModel.core("language_state")) || { question: "none" }).question
+    property bool languagePromptDone: false
+    readonly property bool showLanguagePrompt: languageQuestion === "choose" && !languagePromptDone
+    Component.onCompleted: {
+        if (showLanguagePrompt) return   // the vault opens after the language screen
+        Qt.callLater(AppModel.bootstrap)
+        if (languageQuestion.startsWith("changed:")) Qt.callLater(systemLanguageChanged.open)
+    }
     /// Bearbeiten › Suchen …: after the menu has closed (it hands the focus back to the
     /// item that had it before), so the search field keeps it.
     function focusSearch() {
@@ -331,6 +339,53 @@ ApplicationWindow {
             }
         }
     }
+    // LanguagePromptView: before the vault opens, only when the system speaks neither language.
+    Loader {
+        anchors.fill: parent
+        z: 1000
+        active: window.showLanguagePrompt
+        sourceComponent: Component {
+            LanguagePromptView {
+                onDone: { window.languagePromptDone = true; Qt.callLater(AppModel.bootstrap) }
+            }
+        }
+    }
+    // SystemLanguageChangedAlert: the system language moved away from the chosen app language.
+    Sheet {
+        id: systemLanguageChanged
+        readonly property string newCode: window.languageQuestion.startsWith("changed:") ? window.languageQuestion.slice(8) : ""
+        readonly property string newName: ({ de: "Deutsch", en: "English" })[newCode] || newCode
+        readonly property string currentName: ({ de: "Deutsch", en: "English" })[(AppModel.run(() => AppModel.core("language_state")) || { running: "de" }).running] || ""
+        sheetWidth: 420
+        ColumnLayout {
+            width: systemLanguageChanged.availableWidth
+            spacing: 12
+            Text { text: qsTr("Die Systemsprache wurde geändert"); font.pixelSize: Theme.body + 2; font.weight: Font.Bold; color: Theme.text; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text {
+                text: qsTr("Ihr Computer verwendet jetzt %1, GiroCrab ist auf %2 eingestellt. Zum Wechseln startet GiroCrab neu.")
+                      .arg(systemLanguageChanged.newName).arg(systemLanguageChanged.currentName)
+                font.pixelSize: Theme.body; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: qsTr("%1 beibehalten").arg(systemLanguageChanged.currentName)
+                    onClicked: { AppModel.run(() => AppModel.core("acknowledge_system_language")); systemLanguageChanged.close() }
+                }
+                Button {
+                    text: qsTr("Zu %1 wechseln").arg(systemLanguageChanged.newName)
+                    highlighted: true; focus: true
+                    onClicked: {
+                        AppModel.run(() => AppModel.core("set_language_choice", { choice: "system" }))
+                        AppModel.run(() => AppModel.core("request_relaunch"))
+                        Qt.quit()
+                    }
+                }
+            }
+        }
+    }
+
     // Printing: QtWebEngine lays the report out (optional at runtime, loaded per job).
     Loader {
         active: AppModel.printJob !== null

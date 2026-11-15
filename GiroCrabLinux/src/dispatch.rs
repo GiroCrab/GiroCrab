@@ -197,7 +197,12 @@ fn call(method: &str, a: &Value) -> R {
             "choice": crate::i18n::choice(),
             "system": crate::i18n::system_language(),
             "running": crate::i18n::running(),
+            "question": crate::i18n::question(),
         })),
+        "acknowledge_system_language" => {
+            crate::i18n::acknowledge_system_language();
+            ok(())
+        }
         "set_language_choice" => ok(crate::i18n::set_choice(&arg::<String>(a, "choice")?)?),
         "request_relaunch" => {
             crate::i18n::request_relaunch();
