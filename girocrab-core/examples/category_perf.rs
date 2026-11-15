@@ -11,8 +11,8 @@
 //!   list_rules                      0.6 ms (84 ms before the covering indexes)
 //!   investment_dashboard           150 ms
 //!   merchant_stats / selection_flow ~150 ms each (a full pass over all bookings)
-//!   local_api transactions(limit 100)  ~1.5 ms (first page, cursor page, single account; 2026-11-15)
-//!   local_api summary                  ~2 ms per year (range capped at three years)
+//!   local_api transactions(limit 100)  ~1.2 ms (first page, cursor page, single account; 2026-11-15)
+//!   local_api summary                  ~1.2 ms per year, 2.4 ms for the three-year maximum
 //! RULE_INDEX=1 creates the covering indexes by hand on a vault that lacks them.
 use girocrab_core::models::{BookingFilter, BookingScope};
 use girocrab_core::vault::Vault;

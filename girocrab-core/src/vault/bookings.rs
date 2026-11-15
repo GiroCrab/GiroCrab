@@ -157,16 +157,22 @@ fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Booking)> {
 
 /// Everything a raw booking row needs to read like the booking list: category
 /// names, merchant, flow (salary, own transfers, loans), domain overrides.
+/// With `visible` accounts (local interface, #136), a payment linked to a loan
+/// outside them reads as a transfer: the loan itself must not show.
 pub(super) struct BookingFinisher {
     paths: std::collections::HashMap<i64, (String, String, String, String)>,
     salary_ibans: std::collections::HashSet<String>,
     overrides: std::collections::HashMap<String, String>,
     own_ibans: std::collections::HashSet<String>,
     loan_links: std::collections::HashMap<i64, i64>,
+    visible: Option<std::collections::HashSet<i64>>,
 }
 
 impl BookingFinisher {
-    pub(super) fn load(db: &rusqlite::Connection) -> Result<Self, CoreError> {
+    pub(super) fn load(
+        db: &rusqlite::Connection,
+        visible: Option<&[i64]>,
+    ) -> Result<Self, CoreError> {
         let paths = Vault::category_paths(db)?;
         let loan_links = crate::loans::link_map(db)?;
         let salary_ibans = crate::salary::marked_salary_ibans(db)?;
@@ -188,6 +194,7 @@ impl BookingFinisher {
             overrides,
             own_ibans,
             loan_links,
+            visible: visible.map(|v| v.iter().copied().collect()),
         })
     }
 
@@ -217,8 +224,11 @@ impl BookingFinisher {
             t.merchant.domain_source = "override".into();
             t.merchant_domain = Some(d.clone());
         }
-        if self.loan_links.contains_key(&t.id) {
-            t.flow = FlowKind::Loan;
+        if let Some(loan) = self.loan_links.get(&t.id) {
+            t.flow = match &self.visible {
+                Some(v) if !v.contains(loan) => FlowKind::Transfer,
+                _ => FlowKind::Loan,
+            };
         }
     }
 }
@@ -438,19 +448,21 @@ impl Vault {
     /// enriches the whole filter on every page). `scope`, `merchant_key`, `limit`,
     /// `offset` and `whole_days` of `filter` are ignored. `only_accounts` is a hard
     /// limit on the booking's own account: the loan view behind
-    /// `filter.account_ids` also pulls in bookings of other accounts.
+    /// `filter.account_ids` also pulls in bookings of other accounts. `visible`:
+    /// the accounts the caller may see (`BookingFinisher`). Takes the caller's
+    /// connection, so several reads can share one lock.
     pub(crate) fn booking_page_after(
-        &self,
+        db: &rusqlite::Connection,
         filter: &BookingFilter,
         only_accounts: &[i64],
+        visible: &[i64],
         after: Option<(&str, i64)>,
         limit: u32,
     ) -> Result<Vec<Booking>, CoreError> {
         if only_accounts.is_empty() {
             return Ok(Vec::new());
         }
-        let db = self.db()?;
-        let (cte, mut where_sql, mut args, share_sql) = Self::filter_clauses(&db, filter)?;
+        let (cte, mut where_sql, mut args, share_sql) = Self::filter_clauses(db, filter)?;
         let ph: Vec<String> = only_accounts
             .iter()
             .map(|id| {
@@ -479,7 +491,7 @@ impl Vault {
             "{cte}SELECT {} {BOOKING_FROM_SQL} WHERE {where_sql} ORDER BY t.booking_date DESC, t.id DESC{limit_sql}",
             booking_columns(&share_sql)
         );
-        let finisher = BookingFinisher::load(&db)?;
+        let finisher = BookingFinisher::load(db, Some(visible))?;
         let mut stmt = db.prepare(&sql)?;
         let rows = stmt.query_map(
             params_from_iter(args.iter().map(|b| b.as_ref())),
@@ -598,7 +610,7 @@ impl Vault {
             booking_from_row,
         )?;
         let mut txs = Vec::new();
-        let finisher = BookingFinisher::load(&db)?;
+        let finisher = BookingFinisher::load(&db, None)?;
         let (mut income, mut expense, mut consumption, mut investment, mut perk) =
             (0i64, 0i64, 0i64, 0i64, 0i64);
         let mut flow = SelectionFlow::default();

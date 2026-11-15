@@ -10,7 +10,9 @@
 //!   writes user data, no connection logins, credentials, keys or documents
 //!   (`list_accounts` may refresh stale derived asset values, as on every app reload).
 //! - Only the accounts in the scope are visible, also through search, loan views
-//!   and sums. IBANs / account numbers and notes are off by default;
+//!   and sums: a payment linked to an unshared loan reads as `transfer`. A
+//!   booking to an unshared *own* account stays a `transfer` too (else savings
+//!   would count as spending); that tells "to an own account", never which. IBANs / account numbers and notes are off by default;
 //!   counterparty and purpose can be switched off.
 //!
 //! The wire types (`Api*`) are their own, versioned structs: internal models
@@ -316,25 +318,18 @@ impl Vault {
             }
             serde_json::from_value(v).map_err(|e| ApiError::invalid(e.to_string()))
         }
-        if !matches!(
-            req.method.as_str(),
-            "info" | "accounts" | "categories" | "transactions" | "summary"
-        ) {
-            return Err(ApiError::new(
-                ApiErrorCode::UnknownMethod,
-                format!("unknown method: {}", req.method),
-            ));
-        }
-        // Read once per request, used by every method.
-        let shared = self.shared_accounts(&scope)?;
         let value = match req.method.as_str() {
-            "info" => to_value(api_info(&scope, &shared)),
-            "accounts" => to_value(shared),
+            "info" => to_value(api_info(&scope, &self.shared_accounts(&scope)?)),
+            "accounts" => to_value(self.shared_accounts(&scope)?),
             "categories" => to_value(self.api_categories()?),
-            "transactions" => {
-                to_value(self.api_transactions(&scope, &shared, params(req.params)?)?)
+            "transactions" => to_value(self.api_transactions(&scope, params(req.params)?)?),
+            "summary" => to_value(self.api_summary(&scope, params(req.params)?)?),
+            other => {
+                return Err(ApiError::new(
+                    ApiErrorCode::UnknownMethod,
+                    format!("unknown method: {other}"),
+                ))
             }
-            _ => to_value(self.api_summary(&shared, params(req.params)?)?),
         };
         Ok(value)
     }
@@ -385,15 +380,29 @@ impl Vault {
             .map_err(CoreError::from)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(CoreError::from)?;
+        let parents: HashMap<i64, Option<i64>> = rows.iter().copied().collect();
+        // Steps up the parent chain (a name may contain " › " itself); bounded
+        // against a broken, cyclic tree.
+        let depth = |mut id: i64| {
+            let mut d = 0u32;
+            while let Some(Some(p)) = parents.get(&id) {
+                if d >= 64 {
+                    break;
+                }
+                d += 1;
+                id = *p;
+            }
+            d
+        };
         let mut out: Vec<ApiCategory> = rows
-            .into_iter()
-            .filter_map(|(id, parent_id)| {
+            .iter()
+            .filter_map(|&(id, parent_id)| {
                 let (name, path, _, _) = paths.get(&id)?;
                 Some(ApiCategory {
                     id,
                     parent_id,
                     name: crate::i18n::display_name(name),
-                    depth: path.matches(" › ").count() as u32,
+                    depth: depth(id),
                     path: crate::i18n::display_path(path),
                 })
             })
@@ -405,10 +414,11 @@ impl Vault {
     fn api_transactions(
         &self,
         scope: &ShareScope,
-        shared: &[ApiAccount],
         p: TransactionParams,
     ) -> ApiResult<ApiTransactionPage> {
-        let accounts = requested_accounts(shared, &p.account_ids)?;
+        let db = self.db()?;
+        let shared = shared_account_ids(&db, scope)?;
+        let accounts = requested_accounts(&shared, &p.account_ids)?;
         let search = check_search(scope, p.search)?;
         let direction = match p.direction.as_deref() {
             None | Some("all") => BookingDirection::All,
@@ -431,9 +441,11 @@ impl Vault {
         let after = p.cursor.as_deref().map(parse_cursor).transpose()?;
         let limit = p.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
         // One extra row tells whether another page follows.
-        let mut rows = self.booking_page_after(
+        let mut rows = Vault::booking_page_after(
+            &db,
             &filter,
             &accounts,
+            &shared,
             after.as_ref().map(|(d, id)| (d.as_str(), *id)),
             limit + 1,
         )?;
@@ -443,23 +455,13 @@ impl Vault {
         } else {
             None
         };
-        // A payment linked to a loan that is not shared reads as a transfer: the
-        // flow would tell that the loan exists.
-        let loans = crate::loans::link_map(&*self.db()?)?;
-        let shared_ids: HashSet<i64> = shared.iter().map(|a| a.id).collect();
-        for t in rows.iter_mut().filter(|t| t.flow == FlowKind::Loan) {
-            if loans.get(&t.id).is_some_and(|l| !shared_ids.contains(l)) {
-                t.flow = FlowKind::Transfer;
-            }
-        }
         Ok(ApiTransactionPage {
             transactions: rows.iter().map(|t| api_transaction(scope, t)).collect(),
             next_cursor,
         })
     }
 
-    fn api_summary(&self, shared: &[ApiAccount], p: SummaryParams) -> ApiResult<ApiSummary> {
-        let accounts = requested_accounts(shared, &p.account_ids)?;
+    fn api_summary(&self, scope: &ShareScope, p: SummaryParams) -> ApiResult<ApiSummary> {
         let from = check_date(Some(p.date_from), "date_from")?
             .ok_or_else(|| ApiError::invalid("date_from is required"))?;
         let to = check_date(Some(p.date_to), "date_to")?
@@ -477,6 +479,10 @@ impl Vault {
                 )));
             }
         }
+        // One lock for both reads, so totals and categories see the same vault.
+        let db = self.db()?;
+        let shared = shared_account_ids(&db, scope)?;
+        let accounts = requested_accounts(&shared, &p.account_ids)?;
         // Totals: the enriched bookings (flow decides the KPI side), like the
         // app's tiles and `cashflow_by_period`.
         let filter = BookingFilter {
@@ -485,7 +491,7 @@ impl Vault {
             ..Default::default()
         };
         let mut totals: BTreeMap<String, ApiCurrencyTotals> = BTreeMap::new();
-        for t in self.booking_page_after(&filter, &accounts, None, 0)? {
+        for t in Vault::booking_page_after(&db, &filter, &accounts, &shared, None, 0)? {
             let e = totals
                 .entry(t.currency.clone())
                 .or_insert_with(|| ApiCurrencyTotals {
@@ -503,7 +509,6 @@ impl Vault {
         }
         // Per category: one split-aware SQL sum over the same bookings; a deleted
         // category reads as none, like in `transactions`.
-        let db = self.db()?;
         let paths = Vault::category_paths(&db)?;
         let ph: Vec<String> = (0..accounts.len()).map(|i| format!("?{}", i + 3)).collect();
         let sql = format!(
@@ -578,16 +583,28 @@ fn api_info(scope: &ShareScope, shared: &[ApiAccount]) -> ApiInfo {
     }
 }
 
+/// Ids of the shared accounts that still exist: what bookings and sums need,
+/// without the balances and counts of `list_accounts`.
+fn shared_account_ids(db: &rusqlite::Connection, scope: &ShareScope) -> ApiResult<Vec<i64>> {
+    let wanted: HashSet<i64> = scope.account_ids.iter().copied().collect();
+    let mut stmt = db
+        .prepare("SELECT id FROM accounts WHERE deleted_ms IS NULL ORDER BY sort_order, id")
+        .map_err(CoreError::from)?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, i64>(0))
+        .map_err(CoreError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(CoreError::from)?;
+    Ok(ids.into_iter().filter(|id| wanted.contains(id)).collect())
+}
+
 /// Requested accounts, all of them shared (an unknown id reads as not shared,
 /// so the answer never tells which accounts exist); empty = all shared.
-fn requested_accounts(shared: &[ApiAccount], requested: &[i64]) -> ApiResult<Vec<i64>> {
+fn requested_accounts(shared: &[i64], requested: &[i64]) -> ApiResult<Vec<i64>> {
     if requested.is_empty() {
-        return Ok(shared.iter().map(|a| a.id).collect());
+        return Ok(shared.to_vec());
     }
-    if let Some(id) = requested
-        .iter()
-        .find(|id| !shared.iter().any(|a| a.id == **id))
-    {
+    if let Some(id) = requested.iter().find(|id| !shared.contains(id)) {
         return Err(ApiError::new(
             ApiErrorCode::NotShared,
             format!("account {id} is not shared"),
@@ -611,13 +628,16 @@ fn flow_str(flow: FlowKind) -> &'static str {
     }
 }
 
-/// `YYYY-MM-DD` or nothing ("" = nothing).
+/// A date as stored (`YYYY-MM-DD`, zero-padded: SQL compares the text) or
+/// nothing ("" = nothing). `2025-1-5` reads as `2025-01-05`.
 fn check_date(date: Option<String>, name: &str) -> ApiResult<Option<String>> {
     match date.filter(|d| !d.is_empty()) {
         None => Ok(None),
         Some(d) => chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")
-            .map(|_| Some(d))
-            .map_err(|_| ApiError::invalid(format!("{name} must be YYYY-MM-DD"))),
+            .ok()
+            .filter(|day| (1000..=9999).contains(&chrono::Datelike::year(day)))
+            .map(|day| Some(day.format("%Y-%m-%d").to_string()))
+            .ok_or_else(|| ApiError::invalid(format!("{name} must be YYYY-MM-DD"))),
     }
 }
 
@@ -649,10 +669,12 @@ fn check_search(scope: &ShareScope, search: Option<String>) -> ApiResult<Option<
 }
 
 /// Text field as shared: `None` when switched off. Unless account numbers are
-/// shared, IBANs and every run of 8+ digits (account, card and customer numbers,
-/// also with single spaces) are masked; shorter numbers (amounts, dates) stay.
+/// shared, IBANs and every run of 8+ digits are masked (account, card, customer
+/// and contract numbers, also grouped by single spaces, `-`, `/` or `.`); a lone
+/// date (`15.11.2026`, `2026-11-15`) and shorter numbers (amounts) stay.
 fn shared_text(scope: &ShareScope, on: bool, text: &str) -> Option<String> {
     static LONG_NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static DATE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     if !on {
         return None;
     }
@@ -660,8 +682,21 @@ fn shared_text(scope: &ShareScope, on: bool, text: &str) -> Option<String> {
         return Some(text.to_string());
     }
     let text = crate::sync_log::replace_ibans(text, |_| "[IBAN]".into());
-    let long = crate::sync_log::re(&LONG_NUMBER, r"\d(?: ?\d){7,}");
-    Some(long.replace_all(&text, "[number]").into_owned())
+    let long = crate::sync_log::re(&LONG_NUMBER, r"\d(?:[ \t\u{00A0}\u{202F}\-/.]?\d){7,}");
+    let date = crate::sync_log::re(
+        &DATE,
+        r"^(?:\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})$",
+    );
+    Some(
+        long.replace_all(&text, |c: &regex::Captures<'_>| {
+            if date.is_match(&c[0]) {
+                c[0].to_string()
+            } else {
+                "[number]".to_string()
+            }
+        })
+        .into_owned(),
+    )
 }
 
 fn api_transaction(scope: &ShareScope, t: &Booking) -> ApiTransaction {

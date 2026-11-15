@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_support::TempDir;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn demo() -> (TempDir, Arc<Vault>) {
@@ -309,7 +310,9 @@ fn search_cannot_probe_hidden_fields() {
 fn summary_matches_the_app_tiles() {
     let (_d, v) = demo();
     let giro = account_id(&v, "Musterbank Girokonto");
-    share(&v, &[giro], |_| {});
+    // Everything visible, as in the app (the demo pays its loan from the Girokonto).
+    let all: Vec<i64> = v.list_accounts().unwrap().iter().map(|a| a.id).collect();
+    share(&v, &all, |_| {});
     let (from, to) = summary_range();
     let page = v
         .list_transactions(BookingFilter {
@@ -319,7 +322,11 @@ fn summary_matches_the_app_tiles() {
             ..Default::default()
         })
         .unwrap();
-    let s = ok(&v, "summary", json!({ "date_from": from, "date_to": to }));
+    let s = ok(
+        &v,
+        "summary",
+        json!({ "account_ids": [giro], "date_from": from, "date_to": to }),
+    );
     let totals = s["totals"].as_array().unwrap();
     assert_eq!(totals.len(), 1, "demo Girokonto is EUR only");
     assert_eq!(totals[0]["currency"], "EUR");
@@ -474,6 +481,30 @@ fn unshared_loan_payments_read_as_transfers() {
     };
     assert_eq!(flow(&[giro]), "transfer");
     assert_eq!(flow(&[giro, loan]), "loan");
+    // `summary` follows the same rule: the unshared loan's payment is neutral.
+    let (from, to) = summary_range();
+    let expense = |accounts: &[i64]| {
+        share(&v, accounts, |_| {});
+        ok(
+            &v,
+            "summary",
+            json!({ "account_ids": [giro], "date_from": from, "date_to": to }),
+        )["totals"][0]["expense_cents"]
+            .as_i64()
+            .unwrap()
+    };
+    let amount = v
+        .list_transactions(BookingFilter {
+            account_ids: vec![giro],
+            ..Default::default()
+        })
+        .unwrap()
+        .transactions
+        .into_iter()
+        .find(|t| t.id == linked)
+        .unwrap()
+        .amount_cents;
+    assert_eq!(expense(&[giro, loan]) - expense(&[giro]), -amount);
 }
 
 #[test]
@@ -484,4 +515,66 @@ fn cursor_carries_the_stored_date() {
     );
     assert!(parse_cursor(":5").is_err());
     assert!(parse_cursor("2024-01-01:x").is_err());
+}
+
+#[test]
+fn dates_are_zero_padded_for_the_text_compare() {
+    assert_eq!(
+        check_date(Some("2025-1-5".into()), "d").unwrap().as_deref(),
+        Some("2025-01-05")
+    );
+    assert!(check_date(Some("25-01-01".into()), "d").is_err());
+    assert!(check_date(Some("2025-02-30".into()), "d").is_err());
+    assert_eq!(check_date(Some(String::new()), "d").unwrap(), None);
+}
+
+#[test]
+fn grouped_numbers_are_masked_but_dates_stay() {
+    let scope = ShareScope::default();
+    let masked = |t: &str| shared_text(&scope, true, t).unwrap();
+    assert_eq!(
+        masked("Karte 4111-1111-1111-1111 Vertrag 1234/5678/90 BLZ 370.400.44"),
+        "Karte [number] Vertrag [number] BLZ [number]"
+    );
+    assert_eq!(masked("Kd-Nr 1234\u{00A0}5678"), "Kd-Nr [number]");
+    assert_eq!(
+        masked("Rechnung vom 15.11.2026, faellig 2026-12-01, 1.234,56 EUR"),
+        "Rechnung vom 15.11.2026, faellig 2026-12-01, 1.234,56 EUR"
+    );
+    let open = ShareScope {
+        share_account_numbers: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        shared_text(&open, true, "4111-1111-1111-1111").unwrap(),
+        "4111-1111-1111-1111"
+    );
+}
+
+#[test]
+fn depth_follows_the_parent_chain() {
+    let (_d, v) = demo();
+    share(&v, &[account_id(&v, "Musterbank Girokonto")], |_| {});
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET name = 'Haus › Garten' WHERE parent_id IS NULL AND id = (SELECT MIN(id) FROM categories WHERE parent_id IS NULL AND deleted_ms IS NULL)",
+            [],
+        )
+        .unwrap();
+    let cats = ok(&v, "categories", Value::Null);
+    let cats = cats.as_array().unwrap();
+    let top = cats.iter().find(|c| c["name"] == "Haus › Garten").unwrap();
+    assert_eq!(top["depth"], 0);
+    let by_id: HashMap<i64, &Value> = cats
+        .iter()
+        .map(|c| (c["id"].as_i64().unwrap(), c))
+        .collect();
+    for c in cats {
+        let expected = match c["parent_id"].as_i64() {
+            None => 0,
+            Some(p) => by_id[&p]["depth"].as_u64().unwrap() + 1,
+        };
+        assert_eq!(c["depth"].as_u64().unwrap(), expected);
+    }
 }
