@@ -45,6 +45,12 @@ struct PlannedPaymentsView: View {
                 .labelsHidden()
                 .frame(maxWidth: 140)
                 Spacer(minLength: 0)
+                if model.canEditStandingOrders {
+                    Button { model.newStandingOrder() } label: {
+                        Label("Dauerauftrag anlegen …", systemImage: "plus")
+                    }
+                    .help("Legt bei der Bank einen neuen Dauerauftrag an (mit TAN).")
+                }
             }
             .padding(.horizontal, 20)
             totals.padding(.horizontal, 20)
@@ -218,6 +224,15 @@ struct PlannedActions: View {
     let payment: PlannedPayment
 
     var body: some View {
+        if let order = model.standingOrder(for: payment), model.canEditStandingOrders {
+            if order.canChange {
+                Button("Dauerauftrag ändern …", systemImage: "pencil") { model.editStandingOrder(order) }
+            }
+            if order.canDelete {
+                Button("Dauerauftrag löschen …", systemImage: "trash", role: .destructive) { model.deleteStandingOrder(order) }
+            }
+            Divider()
+        }
         Button("Konto anzeigen", systemImage: "building.columns") {
             model.sidebarSelection = .account(payment.accountId)
         }

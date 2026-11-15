@@ -398,6 +398,13 @@ public final class AppModel {
     var showBatchSheet = false
     var batchDraft = BatchDraft()
     var activeTransferIsBatch = false
+    /// Standing orders (#496): sheet, the order being edited, the bank's orders, and whether the running session is one.
+    var showStandingSheet = false
+    var standingDraft = StandingDraft()
+    var standingOrders: [StandingOrderInfo] = []
+    var activeTransferIsStanding = false
+    /// Set when the bank's answer to a standing-order request was unclear (alert text).
+    var standingUnknown: String?
     /// Bumped whenever a sync wrote a row to the Abrufprotokoll (#238); the log window reloads on it.
     var syncLogVersion = 0
     var csvExport = CSVFileDocument(data: Data())
@@ -646,6 +653,13 @@ public final class AppModel {
             batchDraft.rows = BatchRow.samples(50)
             openBatchTransfer()
             if name == "batch-transfer-scheduled" { batchDraft.scheduled = true }
+        case "standing-order":
+            newStandingOrder()
+            standingDraft.name = "Stadtwerke München"
+            standingDraft.iban = BatchRow.grouped("DE89370400440532013000")
+            standingDraft.amountText = Money.plain(8500)
+            standingDraft.purpose = "Abschlag Strom Kd-Nr 482910"
+            standingDraft.execDay = 3
         case "transfer", "transfer-confirm":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
             openTransfer()
@@ -1173,11 +1187,15 @@ public final class AppModel {
         transferBusy = false
         showTransferSheet = false
         showBatchSheet = false
+        showStandingSheet = false
         activeTransferIsBatch = false
         activeTransferIsDebit = false
+        activeTransferIsStanding = false
         debitRun = nil
         transferDraft.pin = ""
         batchDraft.pin = ""
+        standingDraft = StandingDraft()
+        standingOrders = []
         Task {
             await session?.cancel()
             _ = await transfer?.cancel()  // result cannot be shown once locked
