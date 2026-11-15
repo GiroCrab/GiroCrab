@@ -10928,6 +10928,17 @@
         }
       }
     },
+    "Jeder Teil braucht einen Betrag ungleich 0." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Every part needs a non-zero amount."
+          }
+        }
+      }
+    },
     "Jedes Jahr am %@" : {
       "extractionState" : "manual",
       "localizations" : {
