@@ -8,6 +8,21 @@ fn main() {
         .unwrap_or(0);
     println!("cargo::rustc-env=GIROCRAB_BUILD_UNIX={now}");
     println!("cargo::rerun-if-changed=../policy/banking-policy.json");
+    // The app carries the version of the GiroCrab workspace (core and Mac app), so a new release
+    // upstream needs no edit here. A changed layout of Cargo.toml stops the build.
+    let workspace = std::fs::read_to_string("../Cargo.toml").expect("../Cargo.toml");
+    let version = workspace
+        .split("[workspace.package]")
+        .nth(1)
+        .and_then(|section| {
+            section
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("version = "))
+        })
+        .map(|v| v.trim_matches('"').to_owned())
+        .expect("version in [workspace.package] of ../Cargo.toml");
+    println!("cargo::rustc-env=GIROCRAB_VERSION={version}");
+    println!("cargo::rerun-if-changed=../Cargo.toml");
     // QML files live in qml/ but are registered at the root of module
     // `GiroCrab` (qrc:/qt/qml/GiroCrab/Main.qml): the build runs inside qml/,
     // so the implicit directory import of every file *is* the module and the

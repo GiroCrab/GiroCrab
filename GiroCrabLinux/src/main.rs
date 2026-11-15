@@ -41,7 +41,7 @@ fn main() {
             .collect(),
     ));
     let argc = (argv.len() - 1) as c_int;
-    let version = CString::new(env!("CARGO_PKG_VERSION")).unwrap_or_default();
+    let version = CString::new(env!("GIROCRAB_VERSION")).unwrap_or_default();
     // SAFETY: argv is leaked (valid for the program's lifetime) and null-terminated.
     unsafe { girocrab_create_app(argc, argv.as_mut_ptr(), version.as_ptr()) };
     // Settings › Allgemein › Sprache: translator, locale and core texts before any QML loads.

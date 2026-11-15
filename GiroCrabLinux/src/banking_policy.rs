@@ -191,7 +191,7 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// BankingPolicyEvaluation.gate for this build (`linux`, channel from the version).
 fn evaluate(doc: &Document) -> Option<Gate> {
-    evaluate_for(doc, env!("CARGO_PKG_VERSION"))
+    evaluate_for(doc, env!("GIROCRAB_VERSION"))
 }
 
 fn evaluate_for(doc: &Document, version: &str) -> Option<Gate> {
