@@ -848,6 +848,48 @@ pub struct BatchTransferRequest {
     pub execution_date: Option<String>,
 }
 
+/// What to do with a standing order at the bank (#496).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum StandingOrderAction {
+    /// New order (HKCDE).
+    Create,
+    /// Replace the data of the order `order_row_id` (HKCDN).
+    Change,
+    /// Delete the order `order_row_id` (HKCDL). Only the account and the id count.
+    Delete,
+}
+
+/// Create, change or delete a standing order (Dauerauftrag, HKCDE/HKCDN/HKCDL).
+/// For `Change` and `Delete` the order is the stored one (`order_row_id`, from
+/// `list_standing_orders`); the bank's order id and, for a deletion, the data
+/// to send come from the vault, not from the caller.
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StandingOrderRequest {
+    pub account_id: i64,
+    pub action: StandingOrderAction,
+    /// `standing_orders.id` of the order to change or delete.
+    pub order_row_id: Option<i64>,
+    pub recipient_name: String,
+    pub recipient_iban: String,
+    pub recipient_bic: Option<String>,
+    /// Must be > 0.
+    pub amount_cents: i64,
+    /// Verwendungszweck, max. 140 characters.
+    pub purpose: String,
+    /// First execution `YYYY-MM-DD`, in the future.
+    pub first_date: String,
+    /// Last execution `YYYY-MM-DD`; `None` = until cancelled.
+    pub last_date: Option<String>,
+    /// `M` (months) or `W` (weeks).
+    pub time_unit: String,
+    /// Every n-th month / week (1–99).
+    pub interval: u32,
+    /// Day of the month (1–31, 31 = last day) or weekday (1 = Monday … 7).
+    pub exec_day: u32,
+}
+
 /// Recipient suggested from past bookings (auto-completion).
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
