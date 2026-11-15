@@ -191,6 +191,11 @@ pub struct Vault {
             (crate::models::ConnectorKind, crate::connectors::FetchResult),
         >,
     >,
+    /// EquatePlus PDF import: the stored slots a download of the current run has already matched
+    /// (`connection id, group` → source keys), so identical entries claim different slots. Reset
+    /// when a run lists its pending documents.
+    pub(crate) equateplus_doc_claims:
+        Mutex<std::collections::HashMap<(i64, String), std::collections::HashSet<String>>>,
     path: String,
     /// Flow kinds of all bookings for the list (see `bookings::FlowCache`).
     pub(crate) flow_cache: bookings::FlowCache,
@@ -448,6 +453,7 @@ impl Vault {
         Ok(Arc::new(Vault {
             conn: Mutex::new(conn),
             pending_account_fetches: Mutex::new(std::collections::HashMap::new()),
+            equateplus_doc_claims: Mutex::new(std::collections::HashMap::new()),
             path,
             flow_cache: bookings::FlowCache::default(),
             key: Mutex::new(key),
