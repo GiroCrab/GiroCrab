@@ -76,10 +76,10 @@ private struct TangibleAssetSheets: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var store = model.assetStore
         content
-            .sheet(item: $store.editor) { req in
+            .capturableSheet(item: $store.editor) { req in
                 AssetEditorSheet(request: req).environment(model)
             }
-            .sheet(item: $store.action) { req in
+            .capturableSheet(item: $store.action) { req in
                 Group {
                     if let item = model.assetItem(req.itemId) {
                         switch req.kind {
@@ -276,7 +276,7 @@ struct AssetEditorSheet: View {
         .buttonStyle(.plain)
         .help("Symbol wählen")
         .accessibilityLabel(AssetSymbols.name(of: shown))
-        .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
+        .capturablePopover(isPresented: $showSymbols, arrowEdge: .bottom) {
             AssetSymbolPicker(selection: $symbol, current: shown)
         }
     }
@@ -324,6 +324,7 @@ struct AssetEditorSheet: View {
                 if let other = otherPrice {
                     LabeledContent(priceMode == .total ? "Kaufpreis je Stück" : "Kaufpreis gesamt", value: Money.format(other))
                         .foregroundStyle(Theme.secondary)
+                        .sensitive()
                 }
             } footer: {
                 if automatic {
@@ -616,6 +617,7 @@ private struct ValueEntryRows: View {
         if let other {
             LabeledContent(mode == .total ? "Wert je Stück" : "Wert gesamt", value: Money.format(other))
                 .foregroundStyle(Theme.secondary)
+                .sensitive()
         }
     }
 
@@ -711,6 +713,7 @@ struct AssetValuesSheet: View {
         AssetQuickSheet(title: "Bewertungen bearbeiten", saveTitle: nil, canSave: true, error: error, save: { true }) {
             Section {
                 LabeledContent("Sachwert", value: item.setup.name)
+                    .sensitive()
             }
             Section {
                 ForEach(item.values.reversed(), id: \.date) { p in
@@ -718,11 +721,12 @@ struct AssetValuesSheet: View {
                         Text(DateText.medium(p.date)).monospacedDigit()
                         Spacer()
                         // per piece; with several pieces then what they were worth together
-                        Text(Money.format(p.valueCents)).monospacedDigit()
+                        Text(Money.format(p.valueCents)).monospacedDigit().sensitive()
                         let held = item.heldQuantity(on: p.date)
                         if held > 0, held != 1 {
                             Text("gesamt \(Money.format(Int64((Double(p.valueCents) * held).rounded())))")
                                 .monospacedDigit().foregroundStyle(Theme.secondary)
+                                .sensitive()
                         }
                         if p.date != item.setup.purchaseDate {
                             AssetRemoveButton { change { try $0.deleteAssetValue(itemId: item.id, date: p.date) } }
@@ -756,6 +760,7 @@ struct AssetQuantitiesSheet: View {
         AssetQuickSheet(title: "Anzahl bearbeiten", saveTitle: nil, canSave: true, error: error, save: { true }) {
             Section {
                 LabeledContent("Sachwert", value: item.setup.name)
+                    .sensitive()
             }
             Section {
                 ForEach(item.quantities.reversed(), id: \.date) { q in
@@ -764,6 +769,7 @@ struct AssetQuantitiesSheet: View {
                         Spacer()
                         Text(q.date == item.setup.purchaseDate ? String(localized: "Kauf: \(NumberText.format(q.quantity))") : String(localized: "ab hier: \(NumberText.format(q.quantity))"))
                             .monospacedDigit()
+                            .sensitive()
                         if q.date != item.setup.purchaseDate {
                             AssetRemoveButton { change { try $0.deleteAssetQuantity(itemId: item.id, date: q.date) } }
                         }
@@ -821,6 +827,7 @@ struct AssetSellSheet: View {
                         canSave: count != nil && price != nil, error: error, save: save) {
             Section {
                 LabeledContent("Sachwert", value: item.setup.name)
+                    .sensitive()
                 DatePicker("Verkauft am", selection: $date, in: firstSaleDay...Date(), displayedComponents: .date)
                 TextField("Anzahl", text: $countText, prompt: Text(NumberText.format(held)))
                 if manual {
@@ -830,6 +837,7 @@ struct AssetSellSheet: View {
                 FormFooter(held > 0
                     ? "Bestand an diesem Tag: \(NumberText.format(held)). Verkaufte Sachwerte stehen danach unter „Ehemalige Positionen“; ihr Wert bis zum Verkauf bleibt im Verlauf."
                     : "An diesem Tag ist kein Bestand vorhanden.")
+                    .sensitive()
             }
         }
         .onChange(of: DateText.iso(date), initial: true) { prefill() }

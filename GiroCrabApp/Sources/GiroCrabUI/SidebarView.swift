@@ -197,7 +197,7 @@ struct SidebarView: View {
             default: EmptyView()
             }
         }
-        .sheet(item: $budgetCategory) { box in BudgetEditorSheet(categoryID: box.id).environment(model) }
+        .capturableSheet(item: $budgetCategory) { box in BudgetEditorSheet(categoryID: box.id).environment(model) }
     }
 
     /// "Nach Kontoart": the fixed kind sections.
@@ -295,7 +295,7 @@ struct SidebarView: View {
                 .contextMenu {
                     UserGroupMenu(group: group)
                 }
-                .popover(isPresented: model.iconColorBinding(.group(group.uuid)), arrowEdge: .trailing) {
+                .capturablePopover(isPresented: model.iconColorBinding(.group(group.uuid)), arrowEdge: .trailing) {
                     IconColorPopover(target: .group(group.uuid)).environment(model)
                 }
                 // no custom preview: the drag shows the row itself, like MoneyMoney
@@ -379,7 +379,7 @@ struct SidebarView: View {
             .listRowInsets(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 6))
             .tag(SidebarItem.account(account.id))
             .contextMenu { accountMenu(account) }
-            .popover(isPresented: model.iconColorBinding(.account(account.id)), arrowEdge: .trailing) {
+            .capturablePopover(isPresented: model.iconColorBinding(.account(account.id)), arrowEdge: .trailing) {
                 IconColorPopover(target: .account(account.id)).environment(model)
             }
             #if os(iOS)
@@ -825,7 +825,7 @@ private struct CategoryIconColorPopover: ViewModifier {
     let id: Int64
 
     func body(content: Content) -> some View {
-        content.popover(isPresented: model.iconColorBinding(.category(id)), arrowEdge: .trailing) {
+        content.capturablePopover(isPresented: model.iconColorBinding(.category(id)), arrowEdge: .trailing) {
             IconColorPopover(target: .category(id)).environment(model)
         }
     }

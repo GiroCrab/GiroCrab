@@ -96,10 +96,17 @@ macOS has no Dynamic Type; the app scales text itself (Einstellungen › Allgeme
 - Check visually: `swift build -q` in `GiroCrabApp/`, then
   `.build/debug/GiroCrabMac --screenshot <png> --text-size larger [--demo-sheet …|--demo-settings …]`
   next to `--text-size standard` (`--screenshot` alone always renders standard).
-## Sensitive UI (bug report screenshots, #301)
-"Problem melden" captures the main window (macOS: the window showing `MainSplitView`; iOS: the root view, without
-presented sheets) with personal data covered, so every new or changed view inside it must mark what it shows. Sheets,
-popovers, other windows and print output are never captured:
+## Sensitive UI (bug report screenshots, #301/#384)
+"Problem melden" captures the main window (macOS: the window showing `MainSplitView`; iOS: the root view) and the
+sheet or popover over it, with personal data covered, so every new or changed view in there must mark what it shows.
+Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captured:
+- Sheets and popovers are presented with `.capturableSheet` / `.capturablePopover` instead of `.sheet` / `.popover`
+  (`GiroCrabUI/ReportDialogs.swift`; `scripts/lint-report-dialogs.sh` fails otherwise). Their content is redacted like
+  the main window and drawn into the picture at its place; text fields, text editors and pop-up menus are covered by
+  the capture itself. An alert or a non-capturable presentation leaves the picture without it and the report says so.
+  A view that must never be captured (the report itself) carries `// report: not captured (<why>)`.
+  macOS closes an open popover when the report window takes the focus, so only a sheet (or a popover over a
+  window that keeps the focus) is in the picture there; iOS/iPadOS keep it.
 - `.sensitive()` on anything personal or financial: amounts, balances, chart axis values and readouts, IBANs, account
   names and numbers, owners, counterparties, merchant names/initials/guessed domains, purposes, references, notes,
   documents and their previews, loan figures. `.sensitive(.labels)` for category, group, budget and security names
@@ -111,6 +118,8 @@ popovers, other windows and print output are never captured:
   `BookingStreamView`). AppKit/UIKit-drawn search fields are handled in `BugReport` – new platform text controls
   outside SwiftUI need the same.
 - Check a view: `swift run GiroCrabMac --demo-seed --redact --screenshot /tmp/r.png` (`--redact=labels` for labels).
+  A dialog in the picture: `--demo-seed --demo-sheet report:<sheet>` (e.g. `report:transfer`, `report:category`)
+  opens the report over that demo sheet.
 - Text that goes into a public issue (log lines, messages) only via `sanitize_report_text` with the vault's known
   terms; never paste raw log or bank text. New log/diagnostic fields get a test in `report_sanitizer.rs` or
   `BugReportTests`.

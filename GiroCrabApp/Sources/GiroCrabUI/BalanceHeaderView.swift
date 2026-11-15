@@ -161,7 +161,7 @@ struct StreamHeaderCard: View {
                     #endif
                 }
                 depotRow
-                    .popover(isPresented: $model.showCustomPeriod, arrowEdge: .bottom) {
+                    .capturablePopover(isPresented: $model.showCustomPeriod, arrowEdge: .bottom) {
                         CustomPeriodForm()
                     }
             } else {
@@ -218,7 +218,7 @@ struct StreamHeaderCard: View {
                     Label("Dokumente", systemImage: "doc.text")
                 }
                 .buttonStyle(.borderless)
-                .sheet(isPresented: $showDocuments) { AccountDocumentsSheet(account: a) }
+                .capturableSheet(isPresented: $showDocuments) { AccountDocumentsSheet(account: a) }
             }
             Spacer()
             if let a = account, model.isTangible(a.id) {
@@ -327,7 +327,7 @@ struct StreamHeaderCard: View {
             }
         }
         // Outside ViewThatFits: its candidates must not each carry the popover.
-        .popover(isPresented: $model.showCustomPeriod, arrowEdge: .bottom) {
+        .capturablePopover(isPresented: $model.showCustomPeriod, arrowEdge: .bottom) {
             CustomPeriodForm()
         }
     }
@@ -444,7 +444,7 @@ struct StreamHeaderCard: View {
                             #endif
                     }
                     .buttonStyle(.borderless)
-                    .sheet(isPresented: $showDocuments) { AccountDocumentsSheet(account: a) }
+                    .capturableSheet(isPresented: $showDocuments) { AccountDocumentsSheet(account: a) }
                 }
                 Spacer()
                 #if os(iOS)

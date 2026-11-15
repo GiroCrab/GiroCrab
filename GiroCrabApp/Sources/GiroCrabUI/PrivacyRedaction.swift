@@ -15,6 +15,12 @@ public struct ReportRedaction: OptionSet, Sendable, Hashable {
     /// Category, group, budget and security names (off by default: they help
     /// to find a bug and say nothing about a person).
     public static let labels = ReportRedaction(rawValue: 1 << 1)
+
+    /// `text`, or a placeholder while `kind` is hidden: for a name inside a
+    /// longer text ("Konten auswählen – <Zugang>"), so the rest stays readable.
+    func masking(_ text: String, _ kind: ReportRedaction = .personal) -> String {
+        isDisjoint(with: kind) || text.isEmpty ? text : "•••"
+    }
 }
 
 private struct ReportRedactionKey: EnvironmentKey {

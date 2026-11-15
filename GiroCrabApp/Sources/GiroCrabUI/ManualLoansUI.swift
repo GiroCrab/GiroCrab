@@ -218,7 +218,7 @@ private struct ManualLoanSheets: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var store = model.loanStore
         content
-            .sheet(item: $store.editor) { req in
+            .capturableSheet(item: $store.editor) { req in
                 LoanEditorSheet(request: req).environment(model)
             }
             .task {
@@ -430,9 +430,9 @@ struct LoanEditorSheet: View {
                 ForEach(p.matches, id: \.id) { b in
                     HStack {
                         Text(DateText.medium(b.bookingDate)).monospacedDigit().foregroundStyle(Theme.secondary)
-                        Text(b.merchant.name.isEmpty ? b.counterparty : b.merchant.name).lineLimit(1)
+                        Text(b.merchant.name.isEmpty ? b.counterparty : b.merchant.name).lineLimit(1).sensitive()
                         Spacer()
-                        Text(Money.format(b.amountCents)).monospacedDigit()
+                        Text(Money.format(b.amountCents)).monospacedDigit().sensitive()
                     }
                     .appFont(.callout)
                     .accessibilityElement(children: .combine)
@@ -449,13 +449,17 @@ struct LoanEditorSheet: View {
         if let s = preview?.status {
             if isAnchor, let old = existing?.status {
                 LabeledContent("Restschuld bisher", value: Money.format(-old.remainingCents))
+                    .sensitive()
             }
             LabeledContent("Restschuld", value: Money.format(-s.remainingCents))
                 .appFont(.headline)
+                .sensitive()
             LabeledContent("Stand vom", value: DateText.medium(s.asOfDate))
             LabeledContent("Raten seit Stichtag", value: "\(s.paymentCount) · \(Money.format(s.paidCents))")
+                .sensitive()
             if s.interestCents > 0 {
                 LabeledContent("davon Zinsen / Tilgung", value: "\(Money.format(s.interestCents)) / \(Money.format(s.principalCents))")
+                    .sensitive()
             }
             if s.beforeAnchorCount > 0 {
                 LabeledContent("Ältere Buchungen (nicht gezählt)", value: "\(s.beforeAnchorCount)")

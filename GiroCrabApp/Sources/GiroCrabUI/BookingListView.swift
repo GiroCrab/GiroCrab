@@ -176,7 +176,7 @@ struct BookingStreamView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { columnWidth = $0 }
             #if os(iOS)
             // iPhone: the detail column is not reachable by tapping, so show it as a sheet.
-            .sheet(isPresented: Binding(
+            .capturableSheet(isPresented: Binding(
                 get: { hSize == .compact && model.showBookingSheet && model.selectedBookingID != nil },
                 set: { if !$0 { model.showBookingSheet = false } }
             )) {
@@ -267,8 +267,8 @@ struct BookingStreamView: View {
         #if os(iOS)
         .modifier(WindowTitle(title: model.title))
         #endif
-        .sheet(isPresented: $model.showPrintSheet) { PrintSheet() }
-        .sheet(isPresented: $model.showExportSheet) { ExportSheet() }
+        .capturableSheet(isPresented: $model.showPrintSheet) { PrintSheet() }
+        .capturableSheet(isPresented: $model.showExportSheet) { ExportSheet() }
         .fileExporter(
             isPresented: $model.showCSVExporter,
             document: model.csvExport,

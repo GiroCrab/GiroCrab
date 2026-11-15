@@ -185,7 +185,7 @@ struct ImportFileRow: View {
                                 .accessibilityHidden(true)
                         }
                         #endif
-                        Text(name).lineLimit(1).truncationMode(.middle)
+                        Text(name).lineLimit(1).truncationMode(.middle).sensitive() // file names often carry a name
                     }
                     .help(url?.path ?? name)
                 }
@@ -223,6 +223,7 @@ struct ImportAssistantHeader: View {
 /// assistant: 1. the file, 2. target account and what to take over.
 struct MoneyMoneyExportImportView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.reportRedaction) private var redaction
     @Environment(\.dismiss) private var dismiss
     /// Tells the sheet that an import is running (it locks the source switch).
     @Binding var running: Bool
@@ -349,7 +350,7 @@ struct MoneyMoneyExportImportView: View {
                 Toggle("Notizen übernehmen", isOn: $keepNotes)
             } footer: {
                 if target == nil, let p = preview {
-                    footerText(String(localized: "Neues Archivkonto „\(p.suggestedAccountName)“ – der Saldo ist die Summe der Umsätze."))
+                    footerText(String(localized: "Neues Archivkonto „\(redaction.masking(p.suggestedAccountName))“ – der Saldo ist die Summe der Umsätze."))
                 } else if let t = target, t == preview?.suggestedAccountId {
                     footerText(String(localized: "Vorgewählt, weil die Datei zu diesem Konto passt. Bereits vorhandene Buchungen werden nicht doppelt übernommen."))
                 }
@@ -365,6 +366,7 @@ struct MoneyMoneyExportImportView: View {
                         LabeledContent("Kategorien") {
                             Text(p.detectedCategories.prefix(6).joined(separator: ", ") + (p.detectedCategories.count > 6 ? " …" : ""))
                                 .lineLimit(2).multilineTextAlignment(.trailing)
+                                .sensitive(.labels)
                         }
                     }
                 } header: {

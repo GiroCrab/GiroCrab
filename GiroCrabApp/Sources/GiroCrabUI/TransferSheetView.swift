@@ -182,10 +182,14 @@ struct TransferSheetView: View {
     private func form(draft: Binding<TransferDraft>) -> some View {
         Form {
             Section {
-                Picker("Von Konto", selection: draft.accountID) {
-                    ForEach(model.transferFormAccounts) { a in
-                        Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id)).sensitive()
+                LabeledContent("Von Konto") {
+                    Picker("Von Konto", selection: draft.accountID) {
+                        ForEach(model.transferFormAccounts) { a in
+                            Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
+                        }
                     }
+                    .labelsHidden()
+                    .sensitive() // shows the selected account and its IBAN
                 }
             } footer: {
                 if account != nil && !canSend { noDirectTransferNote }
@@ -402,9 +406,11 @@ struct TransferSheetView: View {
                     }
                 }
                 .frame(width: 200, height: 200)
+                .sensitive() // the code carries name, IBAN, amount and purpose
                 VStack(alignment: .leading, spacing: 8) {
                     Text(Money.format(-(cents ?? 0)).replacingOccurrences(of: "-", with: ""))
                         .appFont(.largeTitle, weight: .semibold, monospacedDigit: true)
+                        .sensitive()
                     summaryRow("An", d.name)
                     summaryRow("IBAN", d.iban)
                     if !bicText.isEmpty { summaryRow("BIC", bicText.uppercased()) }
@@ -430,6 +436,7 @@ struct TransferSheetView: View {
             Section {
                 Text(Money.format(-(cents ?? 0)).replacingOccurrences(of: "-", with: ""))
                     .appFont(.largeTitle, weight: .semibold, monospacedDigit: true)
+                    .sensitive()
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
             }
@@ -446,7 +453,7 @@ struct TransferSheetView: View {
                 reviewRow("Ausführung", sendsInstant
                     ? String(localized: "Sofort (Echtzeitüberweisung)")
                     : d.executionDateISO.map { String(format: String(localized: "Am %@ (Terminüberweisung)"), $0) }
-                        ?? String(localized: "Heute (SEPA-Überweisung)"))
+                        ?? String(localized: "Heute (SEPA-Überweisung)"), sensitive: false)
             } header: {
                 Text("Zahlung").appSectionHeader()
             } footer: {
@@ -456,20 +463,14 @@ struct TransferSheetView: View {
         .formStyle(.grouped)
     }
 
-    private func reviewRow(_ label: LocalizedStringKey, _ value: String, monospaced: Bool = false) -> some View {
+    private func reviewRow(_ label: LocalizedStringKey, _ value: String, monospaced: Bool = false,
+                           sensitive: Bool = true) -> some View {
         LabeledContent(label) {
             Text(value)
                 .appFont(.body, design: monospaced ? .monospaced : .default)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
-        }
-    }
-
-    private func summaryRow(_ k: LocalizedStringKey, _ v: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(k).foregroundStyle(Theme.secondary).frame(width: 90 * textScale, alignment: .leading)
-            Text(v).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+                .sensitive(sensitive ? .personal : [])
         }
     }
 

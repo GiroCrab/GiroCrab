@@ -12,6 +12,11 @@ struct BugReportView: View {
     @Environment(\.undoManager) private var undoManager
     /// Closes the window (macOS) or the sheet (iOS).
     @Environment(\.dismiss) private var dismiss
+    /// iOS: set when UIKit presents the report (from the capture bar, over
+    /// any sheet); SwiftUI's `dismiss` does not reach that presentation.
+    var onClose: (() -> Void)?
+    /// The capture left out a dialog over the main window (an alert).
+    @State private var dialogOmitted = false
     #if os(iOS)
     @State private var markingUp = false
     #endif
@@ -69,9 +74,9 @@ struct BugReportView: View {
             } footer: {
                 #if os(macOS)
                 // #384: the main window stays usable next to this one
-                Text("Aufgenommen wird das Hauptfenster, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle dort zur betroffenen Ansicht und wähle dann „Neu aufnehmen“. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
+                Text("Aufgenommen wird das Hauptfenster samt geöffnetem Dialog. Liegt das Problem woanders, wechsle dort zur betroffenen Ansicht oder öffne den Dialog und wähle dann „Neu aufnehmen“. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
                 #else
-                Text("Aufgenommen wird die Hauptansicht, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
+                Text("Aufgenommen wird, was unter diesem Bericht liegt, samt geöffneter Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
                 #endif
             }
 
@@ -120,7 +125,7 @@ struct BugReportView: View {
         #else
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Abbrechen") { dismiss() }
+                Button("Abbrechen") { close() }
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Issue öffnen") { send() }
@@ -142,7 +147,7 @@ struct BugReportView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $markingUp) {
+        .fullScreenCover(isPresented: $markingUp) { // report: not captured (part of the report)
             if let base {
                 MaskEditorScreen(image: base, masks: masks, canUndo: canUndo,
                                  onAdd: addMask, onUndo: { undoManager?.undo(); undoTick &+= 1 })
@@ -224,12 +229,22 @@ struct BugReportView: View {
         model.reportPick = options
         // Settings takes its nested sheets (Hilfe, this report) with it; a
         // second dismissal in the same pass could be dropped.
-        if model.showSettings { model.showSettings = false } else { dismiss() }
+        if model.showSettings { model.showSettings = false } else { close() }
     }
     #endif
 
+    private func close() {
+        if let onClose { onClose() } else { dismiss() }
+    }
+
     @ViewBuilder
     private var screenshot: some View {
+        if base != nil, dialogOmitted, !capturing {
+            Label("Ein geöffneter Hinweis oder Bestätigungsdialog wird nicht aufgenommen; das Bild zeigt, was darunter liegt.",
+                  systemImage: "info.circle")
+                .appFont(.callout)
+                .foregroundStyle(.secondary)
+        }
         if let base {
             #if os(macOS)
             MaskCanvas(image: base, masks: masks, onAdd: addMask)
@@ -284,8 +299,12 @@ struct BugReportView: View {
             // the newer capture updates the picture; not stuck "busy" if none follows
             capturing = false
             return
-        case .noWindow: base = nil
-        case .image(let image): base = image
+        case .noWindow:
+            base = nil
+            dialogOmitted = false
+        case .image(let image, let omitted):
+            base = image
+            dialogOmitted = omitted
         }
         // Unit rectangles drawn on the old picture may now cover something
         // else (the list scrolled, the window was resized): start over.
@@ -345,7 +364,7 @@ struct BugReportView: View {
         openURL(url)
         // Done: the picture is on the clipboard and the issue body says how to
         // paste it, so the report closes like any finished task.
-        dismiss()
+        close()
     }
 }
 
@@ -465,57 +484,6 @@ private struct MaskCanvas: View {
     }
 }
 
-/// Registers the window that shows `MainSplitView` for the bug report
-/// (`BugReport.mainWindow()`), and with it the redaction its views were last
-/// built with – per window, so a capture checks the window it captures. Gone
-/// with the view (window closed, vault locked): nothing left to capture.
-#if os(macOS)
-struct MainWindowTracker: NSViewRepresentable {
-    @Environment(\.reportRedaction) private var redaction
-
-    func makeNSView(context: Context) -> TrackingView { TrackingView() }
-
-    func updateNSView(_ view: TrackingView, context: Context) {
-        view.renderedRedaction = redaction
-    }
-
-    final class TrackingView: NSView {
-        var renderedRedaction: ReportRedaction = []
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if window != nil { BugReport.track(self) } else { BugReport.untrack(self) }
-        }
-    }
-}
-#else
-struct MainWindowTracker: UIViewRepresentable {
-    @Environment(\.reportRedaction) private var redaction
-
-    func makeUIView(context: Context) -> TrackingView { TrackingView() }
-
-    func updateUIView(_ view: TrackingView, context: Context) {
-        view.renderedRedaction = redaction
-    }
-
-    final class TrackingView: UIView {
-        var renderedRedaction: ReportRedaction = []
-
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            isUserInteractionEnabled = false
-        }
-
-        required init?(coder: NSCoder) { fatalError("not used") }
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            if window != nil { BugReport.track(self) } else { BugReport.untrack(self) }
-        }
-    }
-}
-#endif
-
 #if os(macOS)
 
 /// The report is a one-off task: its window is not reopened at the next launch.
@@ -568,39 +536,44 @@ private struct MaskEditorScreen: View {
     }
 }
 
-/// iOS/iPadOS: Einstellungen › Problem melden.
+/// iOS/iPadOS: Einstellungen › Problem melden. Marked, so a capture stops
+/// below it: the report is never part of its own picture.
 struct BugReportSheet: View {
+    var onClose: (() -> Void)?
+
     var body: some View {
-        NavigationStack { BugReportView() }
+        NavigationStack { BugReportView(onClose: onClose) }
+            .background(ReportWindowTracker(role: .report))
     }
 }
 #endif
 
 #if os(iOS)
 /// "Andere Ansicht aufnehmen" (#384, iOS: the report is a sheet that covers
-/// the main view): floats over the main view while the user moves to the view
-/// to report (on an iPad over every scene); "Hier aufnehmen" opens a new
-/// report, which captures the scene tapped. No personal data in it.
-///
-/// The bar stays until that report appears (`onAppear` ends the pick), so a
-/// report that cannot be presented (another sheet is open) loses nothing and
-/// the bar says what is in the way. The report captures only after that
-/// `onAppear`, and the bar also hides while any capture redraws the window.
+/// the main view): floats over the main view and its sheets
+/// (`ReportPickOverlay`) while the user moves to the view or dialog to
+/// report; "Hier aufnehmen" opens a new report over it, which captures the
+/// scene tapped. No personal data in it. The bar stays until that report
+/// appears (`onAppear` ends the pick).
 struct ReportPickBar: View {
     @Environment(AppModel.self) private var model
-    /// The report sheet of this scene (iPad: only the scene tapped presents it).
+    /// Presents the report over whatever the scene shows on top.
     let openReport: () -> Void
-    /// The report did not open (a sheet of the main view is in the way).
-    @State private var blocked = false
 
     var body: some View {
+        VStack {
+            Spacer()
+            bar
+        }
+    }
+
+    private var bar: some View {
         HStack(spacing: 12) {
-            Text(blocked ? "Schließe zuerst den geöffneten Dialog und wähle dann erneut „Hier aufnehmen“."
-                         : "Wechsle zur betroffenen Ansicht und nimm sie dann auf.")
+            Text("Wechsle zur betroffenen Ansicht oder öffne den Dialog und nimm ihn dann auf.")
                 .appFont(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button { capture() } label: {
+            Button(action: openReport) {
                 Label("Hier aufnehmen", systemImage: "camera")
             }
             .buttonStyle(.borderedProminent)
@@ -616,16 +589,6 @@ struct ReportPickBar: View {
         .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
         .padding(.horizontal, 16)
         .padding(.bottom, 24)
-    }
-
-    private func capture() {
-        blocked = false
-        openReport()
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
-            // still picking: the report never appeared
-            if model.reportPick != nil { blocked = true }
-        }
     }
 }
 #endif
@@ -649,7 +612,7 @@ struct BugReportButton: View {
         Button { showing = true } label: {
             Label("Problem melden", systemImage: "ladybug")
         }
-        .sheet(isPresented: $showing) { BugReportSheet().environment(model) }
+        .sheet(isPresented: $showing) { BugReportSheet().environment(model) } // report: not captured (the report itself)
         #endif
     }
 }

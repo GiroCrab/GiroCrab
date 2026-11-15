@@ -38,7 +38,7 @@ struct DepotPositionsView: View {
                 classified = assets
             }
         }
-        .sheet(item: $editingClassification) { request in AssetClassificationSheet(request: request).environment(model) }
+        .capturableSheet(item: $editingClassification) { request in AssetClassificationSheet(request: request).environment(model) }
         .onChange(of: account.id) { model.selectAssetItem(nil) }
         .confirmationDialog("„\(deleting?.setup.name ?? "")“ löschen?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {

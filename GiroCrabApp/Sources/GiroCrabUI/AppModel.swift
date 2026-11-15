@@ -318,12 +318,21 @@ public final class AppModel {
     var showCommandPalette = false
     /// Set while the bug report takes its screenshot (#301): the main window
     /// draws `.sensitive()` content as placeholders.
-    var reportRedaction: ReportRedaction = []
+    var reportRedaction: ReportRedaction = [] {
+        // dialogs read it there: a sheet does not reliably get the main window's environment
+        didSet { ReportRedactionState.shared.current = reportRedaction }
+    }
     /// "Andere Ansicht aufnehmen" (#384, iOS): the report is closed and the
     /// main view shows a floating capture button until the user picks a view.
     /// Non-nil while picking, with the report's choices for the report it
     /// opens. Ended by that report, or by locking (no bar after the next unlock).
-    var reportPick: BugReport.Options?
+    var reportPick: BugReport.Options? {
+        didSet {
+            #if os(iOS)
+            if (oldValue == nil) != (reportPick == nil) { ReportPickOverlay.sync(model: self) }
+            #endif
+        }
+    }
     /// The balance chart has keyboard focus (Return there jumps to its day,
     /// instead of editing the selected booking's note).
     @ObservationIgnored var chartHasKeyboardFocus = false
@@ -600,9 +609,11 @@ public final class AppModel {
                 selectAssetItem(item.id)
             }
             if let sheet = options.demoSheet {
+                // --demo-sheet report:<sheet> opens the bug report over that sheet
+                let name = sheet.hasPrefix("report:") ? String(sheet.dropFirst("report:".count)) : sheet
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 600_000_000)
-                    self?.presentDemoSheet(sheet)
+                    self?.presentDemoSheet(name)
                 }
             }
             if let settings = options.demoSettings {
@@ -724,7 +735,8 @@ public final class AppModel {
         case let n where n == "add-bank" || n.hasPrefix("add-bank:"):
             // the original spelling (LaunchOptions lowercases --demo-sheet): "Sparkasse Köln"
             let args = CommandLine.arguments
-            let raw = args.firstIndex(of: "--demo-sheet").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? n
+            var raw = args.firstIndex(of: "--demo-sheet").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? n
+            if raw.lowercased().hasPrefix("report:") { raw = String(raw.dropFirst("report:".count)) }
             demoAddBank = String(raw.dropFirst("add-bank".count)).trimmingCharacters(in: CharacterSet(charactersIn: ":"))
             showAddBank = true
         case "moneymoney-db":

@@ -386,7 +386,7 @@ struct WealthView: View {
         // sync (last sync time per login) or a new balance date reloads them as well
         // loaded for all owners: switching the owner filters what is already there
         .task(id: positionsKey(allSummary) + ":\(model.assetClassificationVersion)") { await loadPositions(allSummary.depots, tangibles: allSummary.tangibles) }
-        .sheet(item: $editingClassification) { request in AssetClassificationSheet(request: request).environment(model) }
+        .capturableSheet(item: $editingClassification) { request in AssetClassificationSheet(request: request).environment(model) }
         .task(id: historyKey(s)) { await loadHistory(s.cash.map(\.id)) }
         .onAppear {
             // (developer) `--demo-filter wealth:<slice id>`: a selected donut slice for screenshots

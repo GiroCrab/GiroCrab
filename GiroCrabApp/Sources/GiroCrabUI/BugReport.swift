@@ -38,7 +38,10 @@ enum BugReport {
     // MARK: Screenshot
 
     enum CaptureResult {
-        case image(CGImage)
+        /// `dialogOmitted`: a dialog over the main window is not in the
+        /// picture (an alert, or one whose redaction was not confirmed); it
+        /// shows what lies under it.
+        case image(CGImage, dialogOmitted: Bool)
         /// No main window showing the vault (closed, minimized, locked), or
         /// the redacted view was not confirmed as built: no picture rather
         /// than an unredacted one.
@@ -57,32 +60,38 @@ enum BugReport {
     #else
     typealias PlatformWindow = UIWindow
     #endif
+    typealias Tracker = ReportWindowTracker.TrackingView
 
-    /// Trackers of the windows currently showing `MainSplitView` – the only
-    /// view that gets `reportRedaction`. Any other window (Hilfe,
-    /// Abruf-Protokoll, a locked main window) is never captured.
-    @MainActor private static let trackers = NSHashTable<MainWindowTracker.TrackingView>.weakObjects()
+    /// Trackers of the windows showing `MainSplitView` (the only window a
+    /// capture starts from), of the dialogs over them and (iOS) of the report
+    /// sheet. Any other window (Hilfe, Abruf-Protokoll, a locked main
+    /// window) is never captured.
+    @MainActor private static let trackers = NSHashTable<Tracker>.weakObjects()
 
-    @MainActor static func track(_ tracker: MainWindowTracker.TrackingView) { trackers.add(tracker) }
-    @MainActor static func untrack(_ tracker: MainWindowTracker.TrackingView) { trackers.remove(tracker) }
+    @MainActor static func track(_ tracker: Tracker) { trackers.add(tracker) }
+    @MainActor static func untrack(_ tracker: Tracker) { trackers.remove(tracker) }
+
+    @MainActor private static func trackers(_ role: ReportWindowTracker.Role) -> [Tracker] {
+        trackers.allObjects.filter { $0.role == role && $0.window != nil }
+    }
 
     /// Some window shows the vault (closed and locked ones do not).
-    @MainActor static var hasMainWindow: Bool { !trackedWindows().isEmpty }
+    @MainActor static var hasMainWindow: Bool { !mainWindows().isEmpty }
 
-    /// The redaction `window`'s views were last built with (per window: on a
-    /// Mac or an iPad several main windows can be open).
+    /// The redaction `window`'s main views were last built with (per window:
+    /// on a Mac or an iPad several main windows can be open).
     @MainActor
     static func renderedRedaction(in window: PlatformWindow) -> ReportRedaction {
-        trackers.allObjects.first { $0.window === window }?.renderedRedaction ?? []
+        trackers(.main).first { $0.window === window }?.renderedRedaction ?? []
     }
 
     /// How long a capture waits for the redacted views to be built.
     static let renderTimeout: Duration = .seconds(2)
 
-    /// Redraws the main window with `redaction`, captures it and restores the
-    /// normal view. A later call wins: an earlier one that is still waiting
-    /// returns `.superseded`, so it can never reset the redaction under a
-    /// newer capture.
+    /// Redraws the main window and the dialogs over it with `redaction`,
+    /// captures them and restores the normal view. A later call wins: an
+    /// earlier one that is still waiting returns `.superseded`, so it can
+    /// never reset the redaction under a newer capture.
     @MainActor
     static func captureMainWindow(model: AppModel, redaction: ReportRedaction,
                                   settle: Duration = .milliseconds(180)) async -> CaptureResult {
@@ -94,25 +103,36 @@ enum BugReport {
         try? await Task.sleep(for: settle)
         // Fail closed: capture only once the views of the very window that is
         // captured report the redaction (a minimized window, a second main
-        // window or a slow machine may not have rebuilt them yet).
+        // window or a slow machine may not have rebuilt them yet), and draw a
+        // dialog only once its own views do.
         guard !Task.isCancelled, captureToken == token else { return .superseded }
         guard let window = mainWindow() else { return .noWindow }
-        let rendered = { renderedRedaction(in: window) }
-        let deadline = ContinuousClock.now + renderTimeout
         // `isSuperset`: `--redact` may add more than this capture asked for.
-        while !rendered().isSuperset(of: redaction), ContinuousClock.now < deadline, !Task.isCancelled {
+        let ready = { (r: ReportRedaction) in r.isSuperset(of: redaction) }
+        let allReady = {
+            ready(renderedRedaction(in: window))
+                && dialogLayers(over: window).allSatisfy { $0.tracker.map { ready($0.renderedRedaction) } ?? true }
+        }
+        let deadline = ContinuousClock.now + renderTimeout
+        while !allReady(), ContinuousClock.now < deadline, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(30))
         }
         guard !Task.isCancelled, captureToken == token, model.reportRedaction == redaction else { return .superseded }
-        guard rendered().isSuperset(of: redaction) else { return .noWindow }
-        return snapshot(window, hideSearch: redaction.contains(.personal)).map(CaptureResult.image) ?? .noWindow
+        guard ready(renderedRedaction(in: window)) else { return .noWindow }
+        // Bottom up; the first dialog that cannot be drawn ends the stack
+        // (anything above it would sit on top of it).
+        let layers = dialogLayers(over: window)
+        let drawable = Array(layers.prefix { $0.tracker.map { ready($0.renderedRedaction) } ?? false })
+        guard let image = snapshot(window, dialogs: drawable, hideSearch: redaction.contains(.personal)) else {
+            return .noWindow
+        }
+        return .image(image, dialogOmitted: drawable.count < layers.count)
     }
 
-    /// Every window that shows `MainSplitView` and has content to draw,
-    /// whatever its state.
+    /// The main windows with content to draw, whatever their state.
     @MainActor
-    private static func trackedWindows() -> [PlatformWindow] {
-        let windows = trackers.allObjects.compactMap(\.window)
+    static func mainWindows() -> [PlatformWindow] {
+        let windows = trackers(.main).compactMap(\.window)
         #if os(macOS)
         return windows.filter { $0.contentView != nil }
         #else
@@ -120,30 +140,95 @@ enum BugReport {
         #endif
     }
 
+    /// Opaque box over a text input or pop-up menu of a dialog: what the user
+    /// typed or picked there is personal more often than not.
+    private static let inputCover = CGColor(gray: 0.56, alpha: 1)
+
     #if os(macOS)
     /// The frontmost window that shows the vault. A minimized or hidden one
     /// does not count: it may not redraw before the capture.
     @MainActor
     static func mainWindow() -> NSWindow? {
         guard let app = NSApp else { return nil } // nil in unit tests
-        let windows = trackedWindows().filter { $0.isVisible && !$0.isMiniaturized }
+        let windows = mainWindows().filter { $0.isVisible && !$0.isMiniaturized }
         return app.orderedWindows.first { windows.contains($0) }
     }
 
+    struct DialogLayer {
+        let window: NSWindow
+        /// nil: not a capturable dialog (alert, system popover).
+        let tracker: Tracker?
+    }
+
+    /// The sheets over `main` (a sheet can carry a sheet), then the popovers
+    /// of `main` and of those sheets, bottom up.
+    @MainActor
+    private static func dialogLayers(over main: NSWindow) -> [DialogLayer] {
+        var hosts = [main]
+        while let sheet = hosts.last?.attachedSheet { hosts.append(sheet) }
+        let popovers = hosts.flatMap { host in
+            (host.childWindows ?? []).filter { $0.isVisible && !hosts.contains($0) && "\(type(of: $0))".contains("Popover") }
+        }
+        let dialogs = trackers(.dialog)
+        return (hosts.dropFirst() + popovers).map { w in
+            DialogLayer(window: w, tracker: dialogs.first { $0.window === w })
+        }
+    }
 
     /// `hideSearch`: search fields are drawn by AppKit, so `.sensitive()`
     /// cannot cover them. Every `NSSearchField` in the window (toolbar or
     /// not, whichever way SwiftUI hosts `.searchable`) shows a placeholder for
     /// the snapshot only; setting `stringValue` sends no action or
     /// text-change notification, so the search binding and the list stay.
+    /// `dialogs` are drawn at their place over the window (sheets and
+    /// popovers are windows of their own), with their inputs covered.
     @MainActor
-    private static func snapshot(_ window: NSWindow, hideSearch: Bool) -> CGImage? {
+    private static func snapshot(_ window: NSWindow, dialogs: [DialogLayer], hideSearch: Bool) -> CGImage? {
         guard window.isVisible, !window.isMiniaturized else { return nil }
         let fields = hideSearch ? searchFields(in: window) : []
         let saved = fields.map(\.stringValue)
         for f in fields where !f.stringValue.isEmpty { f.stringValue = searchPlaceholder }
         defer { for (f, text) in zip(fields, saved) where f.stringValue != text { f.stringValue = text } }
-        return WindowScreenshot.bitmap(of: window)?.cgImage
+        guard let base = WindowScreenshot.bitmap(of: window)?.cgImage else { return nil }
+        guard !dialogs.isEmpty else { return base }
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        let scale = CGFloat(base.width) / window.frame.width
+        // Screen and CoreGraphics both count y from the bottom.
+        func place(_ r: CGRect) -> CGRect {
+            CGRect(x: (r.minX - window.frame.minX) * scale, y: (r.minY - window.frame.minY) * scale,
+                   width: r.width * scale, height: r.height * scale)
+        }
+        ctx.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
+        for layer in dialogs {
+            let w = layer.window
+            guard let image = WindowScreenshot.bitmap(of: w)?.cgImage else { return nil } // fail closed
+            ctx.draw(image, in: place(w.frame))
+            ctx.setFillColor(inputCover)
+            for r in inputRects(in: w) {
+                ctx.fill(place(r.offsetBy(dx: w.frame.minX, dy: w.frame.minY)))
+            }
+        }
+        return ctx.makeImage()
+    }
+
+    /// Text fields (search fields included), text views and pop-up menus of
+    /// `window`, in window coordinates.
+    @MainActor
+    private static func inputRects(in window: NSWindow) -> [CGRect] {
+        func walk(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(walk) }
+        guard let root = window.contentView?.superview ?? window.contentView else { return [] }
+        return walk(root).compactMap { v in
+            let isInput = (v as? NSTextField)?.isEditable == true || v is NSTextView || v is NSPopUpButton
+            guard isInput, !v.isHiddenOrHasHiddenAncestor else { return nil }
+            // `visibleRect` is the whole window for controls SwiftUI hosts:
+            // clip the bounds to the scroll view they sit in instead
+            var r = v.convert(v.bounds, to: nil)
+            if let clip = v.enclosingScrollView { r = r.intersection(clip.convert(clip.bounds, to: nil)) }
+            return r.isEmpty ? nil : r
+        }
     }
 
     @MainActor
@@ -159,16 +244,39 @@ enum BugReport {
     /// first one in a foreground scene (an iPad may show several).
     @MainActor
     static func mainWindow() -> UIWindow? {
-        let windows = trackedWindows()
+        let windows = mainWindows()
             .filter { $0.windowScene?.activationState == .foregroundActive }
         return windows.first(where: \.isKeyWindow) ?? windows.first
     }
 
-    /// `hideSearch`: UIKit draws the search field. It gets an opaque cover
-    /// for the snapshot instead of new text, so `.searchable` never sees a change.
+    struct DialogLayer {
+        let controller: UIViewController
+        /// nil: not a capturable dialog (alert, system sheet).
+        let tracker: Tracker?
+    }
+
+    /// The view controllers presented over the main view, bottom up, up to
+    /// the report sheet (it and anything above it are never drawn).
     @MainActor
-    private static func snapshot(_ window: UIWindow, hideSearch: Bool) -> CGImage? {
-        // The root view only: presented sheets (Settings, this report) are not part of it.
+    private static func dialogLayers(over window: UIWindow) -> [DialogLayer] {
+        let dialogs = trackers(.dialog), reports = trackers(.report)
+        var layers: [DialogLayer] = []
+        var current = window.rootViewController
+        while let next = current?.presentedViewController {
+            guard let view = next.viewIfLoaded else { break }
+            if reports.contains(where: { $0.isDescendant(of: view) }) { break }
+            layers.append(DialogLayer(controller: next, tracker: dialogs.first { $0.isDescendant(of: view) }))
+            current = next
+        }
+        return layers
+    }
+
+    /// `hideSearch`: UIKit draws the search field. It gets an opaque cover
+    /// for the snapshot instead of new text, so `.searchable` never sees a
+    /// change. `dialogs` are drawn over the main view (dimmed, as on
+    /// screen), with their inputs covered.
+    @MainActor
+    private static func snapshot(_ window: UIWindow, dialogs: [DialogLayer], hideSearch: Bool) -> CGImage? {
         guard let view = window.rootViewController?.view else { return nil }
         let covers: [UIView] = hideSearch ? searchFields(in: view).compactMap { field in
             guard !(field.text ?? "").isEmpty, field.window != nil else { return nil }
@@ -181,10 +289,28 @@ enum BugReport {
         defer { covers.forEach { $0.removeFromSuperview() } }
         let format = UIGraphicsImageRendererFormat()
         format.scale = window.screen.scale
-        let image = UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { _ in
-            view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { ctx in
+            view.drawHierarchy(in: view.convert(view.bounds, to: window), afterScreenUpdates: true)
+            for layer in dialogs {
+                let dialog = layer.controller.view!
+                UIColor.black.withAlphaComponent(0.2).setFill()
+                ctx.fill(window.bounds)
+                dialog.drawHierarchy(in: dialog.convert(dialog.bounds, to: window), afterScreenUpdates: true)
+                ctx.cgContext.setFillColor(inputCover)
+                for r in inputRects(in: dialog, window: window) { ctx.cgContext.fill(r) }
+            }
         }
         return image.cgImage
+    }
+
+    /// Text fields (search fields included) and text views in `view`, in
+    /// `window` coordinates.
+    private static func inputRects(in view: UIView, window: UIWindow) -> [CGRect] {
+        func walk(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(walk) }
+        return walk(view).compactMap { v in
+            guard v is UITextField || v is UITextView, !v.isHidden, v.alpha > 0, v.window != nil else { return nil }
+            return v.convert(v.bounds, to: window)
+        }
     }
 
     private static func searchFields(in view: UIView) -> [UISearchTextField] {

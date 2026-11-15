@@ -66,7 +66,7 @@ private struct OpeningBalanceSheetModifier: ViewModifier {
     @Bindable var model: AppModel
 
     func body(content: Content) -> some View {
-        content.sheet(item: $model.openingBalanceRequest) { req in
+        content.capturableSheet(item: $model.openingBalanceRequest) { req in
             OpeningBalanceSheet(request: req).environment(model)
         }
     }
@@ -105,6 +105,7 @@ struct OpeningBalanceSheet: View {
                     Text(account.name)
                         .appFont(.callout)
                         .foregroundStyle(Theme.secondary)
+                        .sensitive()
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -185,11 +186,14 @@ struct OpeningBalanceSheet: View {
     private var previewRows: some View {
         if let account {
             LabeledContent("Kontostand bisher", value: Money.format(account.balanceCents, currency: currency))
+                .sensitive()
         }
         if let preview, let amount {
             LabeledContent("Kontostand danach", value: Money.format(amount + preview.sumCents, currency: currency))
                 .appFont(.headline)
+                .sensitive()
             LabeledContent("Umsätze ab Stichtag", value: "\(preview.counted) · \(Money.format(preview.sumCents, currency: currency))")
+                .sensitive()
             if preview.older > 0 {
                 LabeledContent("Ältere Umsätze (im Startsaldo enthalten)", value: "\(preview.older)")
             }

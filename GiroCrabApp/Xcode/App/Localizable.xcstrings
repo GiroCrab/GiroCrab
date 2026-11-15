@@ -4110,24 +4110,24 @@
         }
       }
     },
-    "Aufgenommen wird das Hauptfenster, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle dort zur betroffenen Ansicht und wähle dann „Neu aufnehmen“. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
+    "Aufgenommen wird das Hauptfenster samt geöffnetem Dialog. Liegt das Problem woanders, wechsle dort zur betroffenen Ansicht oder öffne den Dialog und wähle dann „Neu aufnehmen“. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The main window is captured, without open dialogs. If the problem is elsewhere, go to the affected view there and choose “Retake”. A new capture discards the markings, as the content may have moved."
+            "value" : "The main window is captured together with the open dialog. If the problem is elsewhere, go to the affected view there or open the dialog, then choose “Retake”. A new capture discards the markings, as the content may have moved."
           }
         }
       }
     },
-    "Aufgenommen wird die Hauptansicht, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
+    "Aufgenommen wird, was unter diesem Bericht liegt, samt geöffneter Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The main view is captured, without open dialogs. If the problem is elsewhere, go there with “Capture Another View …”. A new capture discards the markings, as the content may have moved."
+            "value" : "What lies beneath this report is captured, including open dialogs. If the problem is elsewhere, go there with “Capture Another View …”. A new capture discards the markings, as the content may have moved."
           }
         }
       }
@@ -9427,6 +9427,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Another device is still using an older GiroCrab version and writes to the old folder. Please update all devices."
+          }
+        }
+      }
+    },
+    "Ein geöffneter Hinweis oder Bestätigungsdialog wird nicht aufgenommen; das Bild zeigt, was darunter liegt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An open notice or confirmation dialog is not captured; the picture shows what lies beneath it."
           }
         }
       }
@@ -20701,17 +20712,6 @@
         }
       }
     },
-    "Schließe zuerst den geöffneten Dialog und wähle dann erneut „Hier aufnehmen“." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Close the open dialog first, then choose “Capture Here” again."
-          }
-        }
-      }
-    },
     "Schließen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24355,13 +24355,13 @@
         }
       }
     },
-    "Wechsle zur betroffenen Ansicht und nimm sie dann auf." : {
+    "Wechsle zur betroffenen Ansicht oder öffne den Dialog und nimm ihn dann auf." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Go to the affected view, then capture it."
+            "value" : "Go to the affected view or open the dialog, then capture it."
           }
         }
       }

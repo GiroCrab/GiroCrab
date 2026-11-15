@@ -284,7 +284,7 @@ struct RecurringSheet: View {
                 .foregroundStyle(item.booked ? Theme.inflow : Theme.tertiary)
                 .accessibilityLabel(item.booked ? "Gebucht" : "Offen")
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.series.name).lineLimit(1)
+                Text(item.series.name).lineLimit(1).sensitive()
                 Text(item.booked ? "Gebucht am \(DateText.medium(item.dueDate))" : "Fällig am \(DateText.medium(item.dueDate))")
                     .appFont(.caption)
                     .foregroundStyle(Theme.secondary)
@@ -315,7 +315,7 @@ struct RecurringSheet: View {
                 .help(s.source == .manual ? "Manuell markiert" : "Automatisch erkannt")
                 .accessibilityLabel(s.source == .manual ? "Manuell markiert" : "Automatisch erkannt")
             VStack(alignment: .leading, spacing: 1) {
-                Text(s.name).lineLimit(1)
+                Text(s.name).lineLimit(1).sensitive()
                 Text("\(s.intervalText) · nächste am \(DateText.medium(s.nextDue))")
                     .appFont(.caption)
                     .foregroundStyle(Theme.secondary)
@@ -358,7 +358,7 @@ struct RecurringSheet: View {
                 .foregroundStyle(Theme.tertiary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
-                Text(h.name).lineLimit(1).foregroundStyle(Theme.secondary)
+                Text(h.name).lineLimit(1).foregroundStyle(Theme.secondary).sensitive()
                 Text("Zuletzt am \(DateText.medium(h.lastDate))")
                     .appFont(.caption)
                     .foregroundStyle(Theme.tertiary)
