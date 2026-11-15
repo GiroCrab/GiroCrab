@@ -184,6 +184,15 @@ fn english_strings(manifest: &std::path::Path) {
     };
     let mut map: BTreeMap<String, String> = BTreeMap::new();
     for (key, entry) in strings {
+        // Not meant to be translated (Xcode: "shouldTranslate": false, since
+        // #533 e.g. "0,00", "Aktien", "DE00 …"): they carry no `localizations`
+        // by design. Qt shows the German source, like the entries without an
+        // `en` translation below.
+        if entry.get("localizations").is_none()
+            && entry.get("shouldTranslate").and_then(Value::as_bool) == Some(false)
+        {
+            continue;
+        }
         let localizations = entry["localizations"].as_object().unwrap_or_else(|| {
             panic!("Localizable.xcstrings: {key:?} has no `localizations`, extend build.rs")
         });
