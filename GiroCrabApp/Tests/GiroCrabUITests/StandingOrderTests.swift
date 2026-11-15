@@ -101,4 +101,35 @@ final class StandingOrderTests: XCTestCase {
         XCTAssertEqual(d.execDay, 3)
         XCTAssertGreaterThanOrEqual(d.firstDate, StandingDraft.tomorrow.addingTimeInterval(-86_400))
     }
+
+    func testNextOccurrenceUsesTheLastDayInShortMonths() throws {
+        let cal = Calendar.current
+        func date(_ y: Int, _ m: Int, _ d: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: d))! }
+        XCTAssertEqual(StandingDraft.nextOccurrence(ofDay: 15, after: date(2026, 11, 10)), date(2026, 11, 15))
+        XCTAssertEqual(StandingDraft.nextOccurrence(ofDay: 15, after: date(2026, 11, 15)), date(2026, 12, 15), "never today")
+        XCTAssertEqual(StandingDraft.nextOccurrence(ofDay: 31, after: date(2027, 1, 31)), date(2027, 2, 28))
+        XCTAssertEqual(StandingDraft.nextOccurrence(ofDay: 1, after: date(2026, 12, 20)), date(2027, 1, 1))
+    }
+
+    func testDraftFromBookingRepeatsIt() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        var b = try XCTUnwrap(model.bookings.first)
+        b.counterparty = "Vermieter GmbH"
+        b.counterpartyIban = "DE89370400440532013000"
+        b.amountCents = -85_000
+        b.purpose = "Miete November"
+        b.bookingDate = "2026-11-03"
+        let today = try XCTUnwrap(DateText.date("2026-11-10"))
+        let d = StandingDraft(booking: b, series: nil, accountID: 5, today: today)
+        XCTAssertEqual(d.action, .create)
+        XCTAssertEqual(d.accountID, 5)
+        XCTAssertEqual(d.name, "Vermieter GmbH")
+        XCTAssertEqual(d.cents, 85_000)
+        XCTAssertTrue(d.ibanValid)
+        XCTAssertEqual(d.purpose, "Miete November")
+        XCTAssertEqual(d.interval, 1)
+        XCTAssertEqual(d.execDay, 3)
+        XCTAssertEqual(DateText.iso(d.firstDate), "2026-12-03")
+        XCTAssertTrue(d.isValid)
+    }
 }

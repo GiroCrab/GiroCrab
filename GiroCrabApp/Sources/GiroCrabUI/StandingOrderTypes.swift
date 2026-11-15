@@ -57,6 +57,41 @@ struct StandingDraft {
         execDay = Int(o.execDay)
     }
 
+    /// A draft that repeats an outgoing booking: same recipient, amount and purpose, the rhythm of
+    /// its recurring series (monthly when none is known), on the booking's day of the month.
+    init(booking b: Booking, series: RecurringSeries?, accountID: Int64?, today: Date = Date()) {
+        self.init()
+        self.accountID = accountID
+        name = b.counterparty.isEmpty ? b.merchantName : b.counterparty
+        iban = BatchRow.grouped(b.counterpartyIban)
+        amountText = Money.plain(abs(b.amountCents))
+        purpose = String(b.purpose.prefix(140))
+        switch series?.interval {
+        case .quarterly: interval = 3
+        case .halfYearly: interval = 6
+        case .yearly: interval = 12
+        default: interval = 1
+        }
+        let cal = Calendar.current
+        let day = DateText.date(b.bookingDate).map { cal.component(.day, from: $0) } ?? cal.component(.day, from: today)
+        execDay = day >= 31 ? 31 : day
+        firstDate = Self.nextOccurrence(ofDay: day, after: today)
+        lastDate = cal.date(byAdding: .year, value: 1, to: firstDate) ?? firstDate
+    }
+
+    /// The first date after `today` on `day` of a month; in a shorter month the last day.
+    static func nextOccurrence(ofDay day: Int, after today: Date) -> Date {
+        let cal = Calendar.current
+        let startOfMonth = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
+        for m in 0..<3 {
+            guard let month = cal.date(byAdding: .month, value: m, to: startOfMonth),
+                  let length = cal.range(of: .day, in: .month, for: month)?.count,
+                  let date = cal.date(byAdding: .day, value: min(day, length) - 1, to: month) else { continue }
+            if date > cal.startOfDay(for: today) { return date }
+        }
+        return tomorrow
+    }
+
     init() {}
 
     func request(demo: Bool) -> StandingOrderRequest? {

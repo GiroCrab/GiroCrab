@@ -35,6 +35,19 @@ extension AppModel {
         openStandingSheet(draft)
     }
 
+    /// Outgoing bookings with an IBAN can become a standing order.
+    func canMakeStandingOrder(from b: Booking) -> Bool {
+        canEditStandingOrders && b.amountCents < 0 && validateIban(iban: b.counterpartyIban)
+    }
+
+    /// Opens the form filled from a booking (the booking's account when it can place orders).
+    func newStandingOrder(from b: Booking) {
+        guard canMakeStandingOrder(from: b) else { return }
+        let offered = standingOrderAccounts
+        let account = offered.contains(where: { $0.id == b.accountId }) ? b.accountId : offered.first?.id
+        openStandingSheet(StandingDraft(booking: b, series: recurringSeries(for: b), accountID: account))
+    }
+
     func editStandingOrder(_ order: StandingOrderInfo) {
         guard canEditStandingOrders, order.canChange else { return }
         openStandingSheet(StandingDraft(order: order, action: .change))

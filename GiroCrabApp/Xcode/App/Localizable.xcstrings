@@ -3022,6 +3022,17 @@
         }
       }
     },
+    "Als Dauerauftrag anlegen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create Standing Order…"
+          }
+        }
+      }
+    },
     "Als Gehalt / Rente zählen" : {
       "extractionState" : "manual",
       "localizations" : {
