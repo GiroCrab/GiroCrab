@@ -70,6 +70,41 @@ struct StandingDraft {
             interval: UInt32(interval), execDay: UInt32(execDay))
     }
 
+    /// Intervals the bank offers for the chosen unit (empty = any 1…99).
+    func allowedIntervals(_ l: StandingOrderLimits?) -> [Int] {
+        (unit == "W" ? l?.weeks : l?.months)?.map(Int.init) ?? []
+    }
+
+    /// Execution days the bank offers for the chosen unit (empty = any).
+    func allowedDays(_ l: StandingOrderLimits?) -> [Int] {
+        (unit == "W" ? l?.weekdays : l?.daysOfMonth)?.map(Int.init) ?? []
+    }
+
+    /// Earliest and latest first execution the bank accepts (never before tomorrow).
+    func firstDateRange(_ l: StandingOrderLimits?) -> ClosedRange<Date> {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: Date())
+        let from = cal.date(byAdding: .day, value: max(1, Int(l?.minDaysAhead ?? 1)), to: start) ?? Self.tomorrow
+        let to = (l?.maxDaysAhead ?? 0) > 0
+            ? cal.date(byAdding: .day, value: Int(l?.maxDaysAhead ?? 0), to: start) ?? .distantFuture
+            : .distantFuture
+        return from...max(from, to)
+    }
+
+    /// Moves values the bank does not allow to the nearest allowed one, so the form never shows a combination it would refuse.
+    mutating func conform(to l: StandingOrderLimits?) {
+        let intervals = allowedIntervals(l)
+        if !intervals.isEmpty, !intervals.contains(interval) { interval = intervals[0] }
+        let days = allowedDays(l)
+        if !days.isEmpty, !days.contains(execDay) {
+            execDay = days.min { abs($0 - execDay) < abs($1 - execDay) } ?? days[0]
+        }
+        let range = firstDateRange(l)
+        if firstDate < range.lowerBound { firstDate = range.lowerBound }
+        if firstDate > range.upperBound { firstDate = range.upperBound }
+        if lastDate < firstDate { lastDate = firstDate }
+    }
+
     /// "monatlich", "alle 2 Wochen" …, the same words as the planned list.
     var rhythmText: String {
         if unit == "W" {

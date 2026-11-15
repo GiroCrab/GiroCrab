@@ -47,8 +47,23 @@ extension AppModel {
 
     private func openStandingSheet(_ draft: StandingDraft) {
         standingDraft = draft
+        standingLimits = nil
         transferError = nil
         showStandingSheet = true
+        refreshStandingLimits()
+    }
+
+    /// Loads what the account's bank allows for the order being edited and fits the draft to it.
+    func refreshStandingLimits() {
+        guard let account = standingDraft.accountID else { return }
+        let action = standingDraft.action
+        Task {
+            let limits = try? await vaultOffMain { try $0.standingOrderLimits(accountId: account, action: action) }
+            // The sheet may have moved on to another account meanwhile.
+            guard standingDraft.accountID == account, standingDraft.action == action else { return }
+            standingLimits = limits ?? nil
+            standingDraft.conform(to: standingLimits)
+        }
     }
 
     func cancelStandingSheet() {

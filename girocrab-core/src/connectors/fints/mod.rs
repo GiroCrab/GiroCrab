@@ -45,6 +45,7 @@ pub mod product_id;
 pub mod sepa;
 mod standing;
 mod standing_order;
+pub(crate) use standing_order::limits_from_state as standing_limits_from_state;
 pub mod syntax;
 
 use std::collections::{HashMap, HashSet};
@@ -3838,6 +3839,28 @@ mod tests {
         let text =
             String::from_utf8_lossy(&c.order_payload(Vop::None).unwrap().concat()).to_string();
         assert!(!text.contains("EUR+"), "{text}");
+    }
+
+    #[test]
+    fn standing_order_limits_come_from_the_stored_state() {
+        use crate::models::StandingOrderAction as A;
+        let raw = b"HICDES:12:1:3+1+1+0+1:2:90:010203:00:00:0'\
+                    HICDNS:13:1:3+1+1+0+1:2:90:J:J:J:J:J:J:J:J:J:010612:010515:00:135'";
+        let mut c = FinTsConnector::new("20041111");
+        c.learn_bpd(&reply(raw));
+        let state = serde_json::to_value(&c.st).unwrap();
+        let create = standing_limits_from_state(&state, A::Create).unwrap();
+        assert_eq!((create.min_days_ahead, create.max_days_ahead), (2, 90));
+        assert_eq!(create.months, [1, 2, 3]);
+        assert!(create.days_of_month.is_empty() && create.weeks.is_empty());
+        assert!(create.weekdays.is_empty(), "0 = every weekday");
+        let change = standing_limits_from_state(&state, A::Change).unwrap();
+        assert_eq!(change.months, [1, 6, 12]);
+        assert_eq!(change.days_of_month, [1, 5, 15]);
+        assert_eq!(change.weekdays, [1, 3, 5]);
+        assert!(standing_limits_from_state(&state, A::Delete).is_none());
+        // Not a FinTS state, or none of the parameters seen yet.
+        assert!(standing_limits_from_state(&serde_json::json!({}), A::Create).is_none());
     }
 
     #[test]

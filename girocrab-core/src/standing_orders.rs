@@ -3,7 +3,7 @@
 //! executions for the "Geplant" page. Read-only; nothing is sent from here.
 
 use chrono::{Datelike, Duration, NaiveDate};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::connectors::{RemoteStandingOrder, StandingOrderJob};
 use crate::error::CoreResult;
@@ -309,6 +309,33 @@ impl Vault {
             }
         }
         Ok(out)
+    }
+
+    /// What the account's bank allows for a new or changed standing order, from the
+    /// parameters it sent at the last synchronisation. `None` when it stated none
+    /// (not a FinTS account, or not synchronised since this was added): the form
+    /// then offers everything and the check happens when sending.
+    pub fn standing_order_limits(
+        &self,
+        account_id: i64,
+        action: crate::models::StandingOrderAction,
+    ) -> Result<Option<crate::models::StandingOrderLimits>, crate::error::CoreError> {
+        let db = self.db()?;
+        let state: Option<String> = db
+            .query_row(
+                "SELECT c.state_json FROM accounts a JOIN bank_connections c ON c.id = a.connection_id
+                 WHERE a.id = ?1 AND a.deleted_ms IS NULL AND c.deleted_ms IS NULL",
+                [account_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(state) = state.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        else {
+            return Ok(None);
+        };
+        Ok(crate::connectors::fints::standing_limits_from_state(
+            &state, action,
+        ))
     }
 }
 

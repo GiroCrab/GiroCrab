@@ -890,6 +890,22 @@ pub struct StandingOrderRequest {
     pub exec_day: u32,
 }
 
+/// What the bank allows when creating or changing a standing order, as far as its
+/// parameters (BPD) say. An empty list means "no restriction" or "not known".
+#[derive(Debug, Clone, Default, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StandingOrderLimits {
+    /// The first execution must lie at least / at most this many days ahead (0 = no limit).
+    pub min_days_ahead: u32,
+    pub max_days_ahead: u32,
+    /// Allowed intervals in months / weeks.
+    pub months: Vec<u32>,
+    pub weeks: Vec<u32>,
+    /// Allowed days of the month (31 = last day) / weekdays (1 = Monday … 7).
+    pub days_of_month: Vec<u32>,
+    pub weekdays: Vec<u32>,
+}
+
 /// Recipient suggested from past bookings (auto-completion).
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

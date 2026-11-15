@@ -81,6 +81,46 @@ fn allowed_in(list: &str, width: usize, value: u32) -> bool {
     list.as_bytes().chunks(width).any(|c| c == want.as_bytes())
 }
 
+/// The numbers in `list` (`width` digits each); empty for "no restriction".
+fn numbers_in(list: &str, width: usize) -> Vec<u32> {
+    let list = list.trim();
+    if list.is_empty() || list.bytes().all(|b| b == b'0') {
+        return Vec::new();
+    }
+    list.as_bytes()
+        .chunks(width)
+        .filter_map(|c| std::str::from_utf8(c).ok()?.parse().ok())
+        .collect()
+}
+
+impl StandingRules {
+    fn limits(&self) -> crate::models::StandingOrderLimits {
+        crate::models::StandingOrderLimits {
+            min_days_ahead: self.min_pretime,
+            max_days_ahead: self.max_pretime,
+            months: numbers_in(&self.turnus_months, 2),
+            weeks: numbers_in(&self.turnus_weeks, 2),
+            days_of_month: numbers_in(&self.days_per_month, 2),
+            weekdays: numbers_in(&self.days_per_week, 1),
+        }
+    }
+}
+
+/// The limits stored in a FinTS connection's state for creating or changing
+/// (`None` = the bank stated none, or the state is not FinTS).
+pub(crate) fn limits_from_state(
+    state: &serde_json::Value,
+    action: StandingOrderAction,
+) -> Option<crate::models::StandingOrderLimits> {
+    let st: super::FinTsState = serde_json::from_value(state.clone()).ok()?;
+    let rules = match action {
+        StandingOrderAction::Create => st.standing_params.create,
+        StandingOrderAction::Change => st.standing_params.change,
+        StandingOrderAction::Delete => None,
+    }?;
+    Some(rules.limits())
+}
+
 /// Checks the schedule of `job` against the bank's rules before anything is sent.
 pub(super) fn check_schedule(
     rules: &StandingRules,

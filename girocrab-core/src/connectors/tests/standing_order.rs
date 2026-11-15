@@ -179,3 +179,16 @@ fn listing_filters_by_account_and_finds_one_by_row_id() {
     assert_eq!(v.standing_order(first.id).unwrap().unwrap(), first);
     assert!(v.standing_order(9_999).unwrap().is_none());
 }
+
+#[test]
+fn limits_are_unknown_without_parameters_from_the_bank() {
+    let (vault, account_id) = vault_with_order();
+    assert!(vault
+        .standing_order_limits(account_id, Action::Create)
+        .unwrap()
+        .is_none());
+    assert!(vault
+        .standing_order_limits(9999, Action::Change)
+        .unwrap()
+        .is_none());
+}

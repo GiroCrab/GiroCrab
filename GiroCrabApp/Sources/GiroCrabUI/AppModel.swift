@@ -402,6 +402,8 @@ public final class AppModel {
     var showStandingSheet = false
     var standingDraft = StandingDraft()
     var standingOrders: [StandingOrderInfo] = []
+    /// What the bank of the order being edited allows (nil = unknown, the form offers everything).
+    var standingLimits: StandingOrderLimits?
     var activeTransferIsStanding = false
     /// Set when the bank's answer to a standing-order request was unclear (alert text).
     var standingUnknown: String?

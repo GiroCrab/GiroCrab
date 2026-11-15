@@ -53,8 +53,7 @@ struct StandingOrderSheet: View {
 
     // MARK: editor
 
-    private var intervalText: String {
-        let n = draft.interval
+    private func intervalText(_ n: Int) -> String {
         if draft.unit == "W" { return n == 1 ? String(localized: "1 Woche") : String(localized: "\(n) Wochen") }
         return n == 1 ? String(localized: "1 Monat") : String(localized: "\(n) Monate")
     }
@@ -94,26 +93,33 @@ struct StandingOrderSheet: View {
                     Text("Monate").tag("M")
                     Text("Wochen").tag("W")
                 }
-                Stepper(value: $model.standingDraft.interval, in: 1...99) {
-                    HStack {
-                        Text("Alle")
-                        Spacer()
-                        Text(intervalText)
-                            .monospacedDigit().foregroundStyle(Theme.secondary)
+                let intervals = draft.allowedIntervals(model.standingLimits)
+                if intervals.isEmpty {
+                    Stepper(value: $model.standingDraft.interval, in: 1...99) {
+                        HStack {
+                            Text("Alle")
+                            Spacer()
+                            Text(intervalText(draft.interval)).monospacedDigit().foregroundStyle(Theme.secondary)
+                        }
+                    }
+                } else {
+                    Picker("Alle", selection: $model.standingDraft.interval) {
+                        ForEach(intervals, id: \.self) { Text(intervalText($0)).tag($0) }
                     }
                 }
+                let days = draft.allowedDays(model.standingLimits)
                 if draft.unit == "W" {
                     Picker("Wochentag", selection: $model.standingDraft.execDay) {
-                        ForEach(1...7, id: \.self) { Text(StandingDraft.weekdayName($0)).tag($0) }
+                        ForEach(days.isEmpty ? Array(1...7) : days, id: \.self) { Text(StandingDraft.weekdayName($0)).tag($0) }
                     }
                 } else {
                     Picker("Ausführungstag", selection: $model.standingDraft.execDay) {
-                        ForEach(1...30, id: \.self) { Text("\($0).").tag($0) }
-                        Text("Letzter Tag des Monats").tag(31)
+                        ForEach(days.isEmpty ? Array(1...30) : days.filter { $0 < 31 }, id: \.self) { Text("\($0).").tag($0) }
+                        if days.isEmpty || days.contains(31) { Text("Letzter Tag des Monats").tag(31) }
                     }
                 }
                 DatePicker("Erste Ausführung", selection: $model.standingDraft.firstDate,
-                           in: StandingDraft.tomorrow..., displayedComponents: .date)
+                           in: draft.firstDateRange(model.standingLimits), displayedComponents: .date)
                 Toggle("Mit Enddatum", isOn: $model.standingDraft.hasEnd)
                 if draft.hasEnd {
                     DatePicker("Letzte Ausführung", selection: $model.standingDraft.lastDate,
@@ -122,6 +128,8 @@ struct StandingOrderSheet: View {
             }
         }
         .formStyle(.grouped)
+        .onChange(of: draft.accountID) { model.refreshStandingLimits() }
+        .onChange(of: draft.unit) { model.standingDraft.conform(to: model.standingLimits) }
         .frame(minHeight: 420)
     }
 

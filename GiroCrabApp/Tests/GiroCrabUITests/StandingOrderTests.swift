@@ -71,4 +71,34 @@ final class StandingOrderTests: XCTestCase {
         XCTAssertNil(model.standingOrder(for: row("standing-8-2026-12-03")))
         XCTAssertNil(model.standingOrder(for: row("transfer-7", kind: .scheduledTransfer)))
     }
+
+    func testFormFollowsTheBanksLimits() {
+        let limits = StandingOrderLimits(
+            minDaysAhead: 3, maxDaysAhead: 60, months: [1, 3, 6, 12], weeks: [], daysOfMonth: [1, 15, 31], weekdays: [])
+        var d = StandingDraft(order: order(), action: .change)
+        d.interval = 2
+        d.execDay = 10
+        XCTAssertEqual(d.allowedIntervals(limits), [1, 3, 6, 12])
+        XCTAssertEqual(d.allowedDays(limits), [1, 15, 31])
+        d.conform(to: limits)
+        XCTAssertEqual(d.interval, 1)
+        XCTAssertEqual(d.execDay, 15, "the nearest allowed day")
+        let range = d.firstDateRange(limits)
+        XCTAssertGreaterThanOrEqual(d.firstDate, range.lowerBound)
+        XCTAssertLessThanOrEqual(d.firstDate, range.upperBound)
+        let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()), to: range.lowerBound).day
+        XCTAssertEqual(days, 3)
+        // Weekly: the lists of the monthly rhythm do not apply.
+        d.unit = "W"
+        XCTAssertTrue(d.allowedIntervals(limits).isEmpty)
+        XCTAssertTrue(d.allowedDays(limits).isEmpty)
+    }
+
+    func testUnknownLimitsOfferEverything() {
+        var d = StandingDraft(order: order(), action: .change)
+        d.conform(to: nil)
+        XCTAssertEqual(d.interval, 1)
+        XCTAssertEqual(d.execDay, 3)
+        XCTAssertGreaterThanOrEqual(d.firstDate, StandingDraft.tomorrow.addingTimeInterval(-86_400))
+    }
 }
