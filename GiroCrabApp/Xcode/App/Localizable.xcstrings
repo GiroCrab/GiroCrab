@@ -6851,17 +6851,6 @@
         }
       }
     },
-    "Bewertungsverlauf noch nicht verfügbar" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Valuation history not available yet"
-          }
-        }
-      }
-    },
     "Bezahldienst" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8790,6 +8779,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Depot value as reported by the bank. The clearing account's balance is not included."
+          }
+        }
+      }
+    },
+    "Depotwert von %@ am %@ auf %@ am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Depot value from %@ on %@ to %@ on %@"
           }
         }
       }
@@ -20989,6 +20989,17 @@
         }
       }
     },
+    "Noch kein Verlauf: der Wert wird ab dem ersten Abruf festgehalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No history yet: the value is kept from the first fetch on"
+          }
+        }
+      }
+    },
     "Noch keine Abrufe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26356,6 +26367,17 @@
         }
       }
     },
+    "Teilsumme · %lld von %lld Depots" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Partial sum · %lld of %lld depots"
+          }
+        }
+      }
+    },
     "Teilverkauf oder Zukauf: die neue Gesamtanzahl ab einem Datum. 0 = alles verkauft. Der Verlauf davor bleibt erhalten. Wird sofort gespeichert." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28672,6 +28694,17 @@
         }
       }
     },
+    "Werte ab %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Values from %@"
+          }
+        }
+      }
+    },
     "Wertgegenstand" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28745,6 +28778,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Value date"
+          }
+        }
+      }
+    },
+    "Wertänderung, keine Rendite: Käufe, Verkäufe und Übertragungen verändern den Wert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change in value, not a return: purchases, sales and transfers change the value."
           }
         }
       }

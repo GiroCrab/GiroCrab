@@ -37,6 +37,7 @@
 //!
 //! - 26: native currency of a depot position and its prices (#625): `holdings.currency`, `native_*_cents`.
 //! - 27: built-in category and account-group identities, separate from names (#678).
+//! - 28: `depot_values`: value of a securities depot per day, one point per fetch.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -80,6 +81,7 @@ const STEPS: &[Step] = &[
     Step::Sql(TX_AMOUNT_DATE),                                 // 25
     Step::Hook(holding_native_currency),                       // 26
     Step::Hook(builtin_roles),                                 // 27 (#678)
+    Step::Sql(crate::depot_values::SCHEMA),                    // 28: depot value history
 ];
 
 /// Step 26 (#625): native currency of a position and its price/value in it
@@ -833,7 +835,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 27);
+        assert_eq!(SCHEMA_VERSION, 28);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
