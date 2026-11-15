@@ -268,6 +268,7 @@
       }
     },
     "%@ · %@ · %lld Lastschriften · %@" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -725,6 +726,7 @@
       }
     },
     "%lld Lastschriften · %@" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -952,6 +954,7 @@
       }
     },
     "%lld aktiv, %lld inaktiv" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1780,6 +1783,7 @@
       }
     },
     ", %lld nicht übernommen (Zeile %@)" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2274,6 +2278,7 @@
       }
     },
     "Aktivieren" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2911,6 +2916,7 @@
       }
     },
     "Als eingezogen markieren" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2976,6 +2982,7 @@
       }
     },
     "Alternativ reichst du die Dateien selbst bei deiner Bank ein (Banking-Portal, Datei-Upload) und markierst die Mandate danach als eingezogen, damit der nächste Einzug als Folgeeinzug läuft." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3438,6 +3445,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t Use Sign-In"
+          }
+        }
+      }
+    },
+    "Anpassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Customize"
           }
         }
       }
@@ -3984,6 +4002,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Spending in sub-categories counts too."
+          }
+        }
+      }
+    },
+    "Ausgeblendet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hidden"
           }
         }
       }
@@ -4754,6 +4783,7 @@
       }
     },
     "Basislastschrift" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4781,6 +4811,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Edit…"
+          }
+        }
+      }
+    },
+    "Bearbeitung der Seitenleiste beenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finish customizing the sidebar"
           }
         }
       }
@@ -4874,6 +4915,7 @@
       }
     },
     "Bei der Bank einreichen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5132,6 +5174,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Needs a free Enable Banking application of your own"
+          }
+        }
+      }
+    },
+    "Bereiche hierher ziehen oder mit ⊖ ausblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag sections here or hide them with ⊖"
+          }
+        }
+      }
+    },
+    "Bereiche hierher ziehen, um sie einzublenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag sections here to show them"
           }
         }
       }
@@ -5396,6 +5460,7 @@
       }
     },
     "Betrag (optional)" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5890,6 +5955,7 @@
       }
     },
     "Buchungen zu diesem Mandat" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6043,6 +6109,7 @@
       }
     },
     "CAMT.053 ist für Darlehenskonten nicht verfügbar." : {
+      "extractionState" : "manual",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6081,6 +6148,7 @@
       }
     },
     "COR1" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6146,6 +6214,7 @@
       }
     },
     "CSV-Mitgliederliste oder SEPA-Lastschriftdatei (pain.008)" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6486,6 +6555,7 @@
       }
     },
     "Das Mandat „%@“ wird entfernt. Bereits eingereichte Einzüge bleiben unverändert." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6562,6 +6632,7 @@
       }
     },
     "Dateien" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6572,6 +6643,7 @@
       }
     },
     "Dateien erzeugen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6703,6 +6775,7 @@
       }
     },
     "Deaktivieren" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7318,6 +7391,7 @@
       }
     },
     "Die B2B-Mandate sind bei den Banken der Zahlungspflichtigen hinterlegt" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7345,6 +7419,7 @@
       }
     },
     "Die Bank hat einen Einzug zurückgegeben. Prüfe die Angaben des Mandats, bevor du erneut einziehst." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8731,6 +8806,7 @@
       }
     },
     "Einmalig" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8741,6 +8817,7 @@
       }
     },
     "Einmaliges Mandat" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8916,6 +8993,7 @@
       }
     },
     "Einzug vorbereiten" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8926,6 +9004,7 @@
       }
     },
     "Einzug vorbereiten …" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9299,6 +9378,7 @@
       }
     },
     "Erster Einzug" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9931,6 +10011,7 @@
       }
     },
     "Firmenlastschrift" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10029,6 +10110,7 @@
       }
     },
     "Folgeeinzug" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10193,6 +10275,7 @@
       }
     },
     "Fälligkeit" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10896,6 +10979,7 @@
       }
     },
     "GiroCrab reicht jede Datei bei der Bank ein; du bestätigst jede mit einer TAN. Danach stehen die Einzüge unter „Geplant“ und die Mandate laufen als Folgeeinzug weiter. Die Bank prüft Mandate und Gläubiger-ID selbst." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11093,6 +11177,7 @@
       }
     },
     "Gläubigerkonto" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -12139,6 +12224,7 @@
       }
     },
     "Importieren …" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -12292,6 +12378,7 @@
       }
     },
     "Inaktiv" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -13127,6 +13214,7 @@
       }
     },
     "Kein Konto zum Einziehen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -13148,6 +13236,7 @@
       }
     },
     "Kein Mandat ausgewählt" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -13411,6 +13500,7 @@
       }
     },
     "Keine Mandate" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -13542,6 +13632,7 @@
       }
     },
     "Keine Zahlung ausgewählt" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14086,6 +14177,7 @@
       }
     },
     "Konto anzeigen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14624,6 +14716,7 @@
       }
     },
     "Lastschrift" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14634,6 +14727,7 @@
       }
     },
     "Lastschriften" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14644,6 +14738,7 @@
       }
     },
     "Lastschriften eingereicht und unter „Geplant“ vorgemerkt" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14654,6 +14749,7 @@
       }
     },
     "Lastschriften ziehst du von einem Girokonto mit IBAN ein." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14675,6 +14771,7 @@
       }
     },
     "Lege ein Mandat an oder importiere eine Mitgliederliste (CSV) oder eine SEPA-Lastschriftdatei." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14685,6 +14782,7 @@
       }
     },
     "Lege ein Mandat an oder importiere eine Mitgliederliste (CSV)." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -14794,6 +14892,7 @@
       }
     },
     "Letzter Einzug" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -15002,6 +15101,7 @@
       }
     },
     "Mandat" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -15012,6 +15112,7 @@
       }
     },
     "Mandat hinzufügen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -15022,6 +15123,7 @@
       }
     },
     "Mandat löschen?" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -15032,6 +15134,7 @@
       }
     },
     "Mandate" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -15042,6 +15145,7 @@
       }
     },
     "Mandate verwalten und Einzüge als SEPA-Lastschrift-Datei (pain.008) vorbereiten. Dateien lassen sich hierher ziehen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -15052,6 +15156,7 @@
       }
     },
     "Mandatsreferenz" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -16966,6 +17071,7 @@
       }
     },
     "Notiz (optional)" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -17103,6 +17209,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Errors Only"
+          }
+        }
+      }
+    },
+    "Nur bei Einnahmen sichtbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only shown for income"
           }
         }
       }
@@ -17251,6 +17368,7 @@
       }
     },
     "Ob die Bank den Einzug angenommen hat, ist unklar. Bitte erst im Online-Banking prüfen und die Einzüge nicht erneut einreichen, bevor das geklärt ist." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -18682,6 +18800,7 @@
       }
     },
     "Reiche die Dateien bei deiner Bank ein (Banking-Portal, Datei-Upload). Danach markierst du die Mandate als eingezogen, damit der nächste Einzug als Folgeeinzug läuft." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -18698,6 +18817,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Order"
+          }
+        }
+      }
+    },
+    "Reihenfolge der Bereiche ändern und Bereiche ausblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reorder or hide sections"
           }
         }
       }
@@ -18890,6 +19020,7 @@
       }
     },
     "Rücklastschrift" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -18900,6 +19031,7 @@
       }
     },
     "Rücklastschrift – bitte prüfen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -19516,6 +19648,7 @@
       }
     },
     "Setzt den Folgetyp FNAL; danach wird das Mandat deaktiviert." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -20176,6 +20309,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Standard"
+          }
+        }
+      }
+    },
+    "Standard-Reihenfolge wiederherstellen und alle Bereiche einblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore the default order and show all sections"
           }
         }
       }
@@ -21721,6 +21865,7 @@
       }
     },
     "Unterschrieben am" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -22177,6 +22322,7 @@
       }
     },
     "Verwendungszweck (optional)" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -22330,6 +22476,7 @@
       }
     },
     "Vorgaben für den Einzug" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -23176,6 +23323,7 @@
       }
     },
     "Wähle ein Mandat, um Details zu sehen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -23208,6 +23356,7 @@
       }
     },
     "Wählen Sie eine geplante Zahlung, um Details zu sehen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -23284,6 +23433,7 @@
       }
     },
     "Zahlungspflichtiger" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -23425,6 +23575,17 @@
         }
       }
     },
+    "Ziehen zum Verschieben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag to reorder"
+          }
+        }
+      }
+    },
     "Ziel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23481,6 +23642,7 @@
       }
     },
     "Zuerst die Gläubiger-ID eintragen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -23546,6 +23708,7 @@
       }
     },
     "Zuletzt eingezogen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -24107,6 +24270,7 @@
       }
     },
     "noch nie eingezogen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -24359,6 +24523,7 @@
       }
     },
     "z. B. DE98ZZZ09999999999" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -24446,6 +24611,7 @@
       }
     },
     "zuletzt %@" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -24818,6 +24984,17 @@
         }
       }
     },
+    "„%@“ ausblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide “%@”"
+          }
+        }
+      }
+    },
     "„%@“ ausklappen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24836,6 +25013,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Assigned “%1$@” to the loan “%2$@”"
+          }
+        }
+      }
+    },
+    "„%@“ einblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show “%@”"
           }
         }
       }
@@ -25012,6 +25200,7 @@
       }
     },
     "„%@“ übernehmen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -25022,6 +25211,7 @@
       }
     },
     "„%@“: %lld neu, %lld aktualisiert" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
