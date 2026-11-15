@@ -286,6 +286,12 @@
             "state" : "new",
             "value" : "%1$@ · %2$@ · %3$u Lastschriften · %4$@"
           }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %u direct debits · %@"
+          }
         }
       }
     },
@@ -1012,6 +1018,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$lld Zahlungen · %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld payments · %@"
           }
         }
       }
@@ -2335,7 +2347,14 @@
     },
     "Aktien" : {
       "extractionState" : "manual",
-      "shouldTranslate" : false
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stocks"
+          }
+        }
+      }
     },
     "Aktion" : {
       "extractionState" : "manual",
@@ -3478,7 +3497,14 @@
     },
     "Anleihen" : {
       "extractionState" : "manual",
-      "shouldTranslate" : false
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bonds"
+          }
+        }
+      }
     },
     "Anmelden & Abrufen" : {
       "extractionState" : "manual",
@@ -6367,7 +6393,14 @@
     },
     "CSV importieren …" : {
       "extractionState" : "manual",
-      "shouldTranslate" : false
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import CSV…"
+          }
+        }
+      }
     },
     "CSV speichern%@" : {
       "extractionState" : "manual",
@@ -10447,7 +10480,14 @@
     },
     "Fonds" : {
       "extractionState" : "manual",
-      "shouldTranslate" : false
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Funds"
+          }
+        }
+      }
     },
     "Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein." : {
       "extractionState" : "manual",
@@ -25898,6 +25938,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "„%1$@“: %2$u neu, %3$u aktualisiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@”: %u new, %u updated"
           }
         }
       }
