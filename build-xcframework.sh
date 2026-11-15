@@ -183,7 +183,17 @@ export PATH="$SHIM_DIR:$PATH"
 trap 'rm -rf "$SHIM_DIR"' EXIT
 
 if command -v rustup >/dev/null 2>&1; then
-  rustup target add "${TARGETS[@]}"
+  # Already installed targets need no network access (including offline builds).
+  installed_targets="$(rustup target list --installed)"
+  missing_targets=()
+  for t in "${TARGETS[@]}"; do
+    if ! printf '%s\n' "$installed_targets" | /usr/bin/grep -Fxq "$t"; then
+      missing_targets+=("$t")
+    fi
+  done
+  if (( ${#missing_targets[@]} )); then
+    rustup target add "${missing_targets[@]}"
+  fi
 fi
 
 echo "==> Building $CRATE ($PROFILE) for: ${TARGETS[*]}"
