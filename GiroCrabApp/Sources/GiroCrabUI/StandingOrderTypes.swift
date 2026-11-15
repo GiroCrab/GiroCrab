@@ -65,7 +65,7 @@ struct StandingDraft {
         name = b.counterparty.isEmpty ? b.merchantName : b.counterparty
         iban = BatchRow.grouped(b.counterpartyIban)
         amountText = Money.plain(abs(b.amountCents))
-        purpose = String(b.purpose.prefix(140))
+        purpose = String(Self.recurringPurpose(b.purpose).prefix(140))
         switch series?.interval {
         case .quarterly: interval = 3
         case .halfYearly: interval = 6
@@ -77,6 +77,35 @@ struct StandingDraft {
         execDay = day >= 31 ? 31 : day
         firstDate = Self.nextOccurrence(ofDay: day, after: today)
         lastDate = cal.date(byAdding: .year, value: 1, to: firstDate) ?? firstDate
+    }
+
+    /// The purpose of a booking without what changes from payment to payment: dates, month names
+    /// and years ("Miete November 2026" becomes "Miete"). Customer and contract numbers stay, the
+    /// recipient needs them. If nothing is left, the original text is kept.
+    static func recurringPurpose(_ text: String) -> String {
+        let months = "januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember"
+            + "|january|february|march|may|june|july|october|december"
+        let patterns = [
+            #"\b\d{4}-\d{2}-\d{2}\b"#,                 // 2026-11-03
+            #"\b\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})?(?!\d)"#, // 03.11.2026, 03.11.26, 03.11.
+            #"\b\d{1,2}/\d{4}\b"#,                       // 11/2026
+            #"\b\d{1,2}\.\d{4}\b"#,                     // 11.2026
+            #"\b(?:\#(months))\b"#,                       // November
+            #"\b20\d{2}\b"#,                              // 2026
+        ]
+        var out = text
+        for pattern in patterns {
+            guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: " ")
+        }
+        out = out.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let edge = CharacterSet(charactersIn: " -–,.;:/+")
+        out = out.trimmingCharacters(in: edge)
+        // A preposition that pointed at the dropped date ("… vom 03.11.").
+        if let re = try? NSRegularExpression(pattern: #"\s+(?:vom|am|für|zum|im|ab|bis|per|für den|for|on)$"#, options: [.caseInsensitive]) {
+            out = re.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "")
+        }
+        return out.isEmpty ? text.trimmingCharacters(in: .whitespaces) : out
     }
 
     /// The first date after `today` on `day` of a month; in a shorter month the last day.

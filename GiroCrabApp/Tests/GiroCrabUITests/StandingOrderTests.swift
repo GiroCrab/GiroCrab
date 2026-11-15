@@ -126,10 +126,20 @@ final class StandingOrderTests: XCTestCase {
         XCTAssertEqual(d.name, "Vermieter GmbH")
         XCTAssertEqual(d.cents, 85_000)
         XCTAssertTrue(d.ibanValid)
-        XCTAssertEqual(d.purpose, "Miete November")
+        XCTAssertEqual(d.purpose, "Miete", "the month is dropped")
         XCTAssertEqual(d.interval, 1)
         XCTAssertEqual(d.execDay, 3)
         XCTAssertEqual(DateText.iso(d.firstDate), "2026-12-03")
         XCTAssertTrue(d.isValid)
+    }
+
+    func testRecurringPurposeDropsWhatChanges() {
+        let clean = StandingDraft.recurringPurpose
+        XCTAssertEqual(clean("Miete November 2026"), "Miete")
+        XCTAssertEqual(clean("Abschlag Strom Kd-Nr 482910 vom 03.11.2026"), "Abschlag Strom Kd-Nr 482910")
+        XCTAssertEqual(clean("Beitrag 11/2026 Mitgl. 4711"), "Beitrag Mitgl. 4711")
+        XCTAssertEqual(clean("Rate 2026-11-03 Vertrag 20457781"), "Rate Vertrag 20457781", "long numbers stay")
+        XCTAssertEqual(clean("Mai 2026"), "Mai 2026", "nothing left: keep the original")
+        XCTAssertEqual(clean("Wohnung Mainzer Str. 5, Dezember"), "Wohnung Mainzer Str. 5")
     }
 }
