@@ -269,10 +269,14 @@ public struct GiroCrabScenes: Scene {
         .defaultSize(width: 640, height: 720)
         Settings {
             // HIG: the Settings window fits each tab (SettingsView sizes them).
+            // `reportCapturable`: "Problem melden" draws the Settings window
+            // (a window of its own, like a sheet) over the main window, so its
+            // views get the same redaction and mark personal data.
             SettingsView()
                 .environment(model)
                 .appTextSize(textSize.effective)
                 .preferredColorScheme(appearance.colorScheme)
+                .reportCapturable()
         }
         #endif
     }

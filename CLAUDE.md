@@ -97,8 +97,9 @@ macOS has no Dynamic Type; the app scales text itself (Einstellungen › Allgeme
   `.build/debug/GiroCrabMac --screenshot <png> --text-size larger [--demo-sheet …|--demo-settings …]`
   next to `--text-size standard` (`--screenshot` alone always renders standard).
 ## Sensitive UI (bug report screenshots, #301/#384)
-"Problem melden" captures the main window (macOS: the window showing `MainSplitView`; iOS: the root view) and the
-sheet or popover over it, with personal data covered, so every new or changed view in there must mark what it shows.
+"Problem melden" captures the main window (macOS: the window showing `MainSplitView`; iOS: the root view), the
+sheet or popover over it and, on macOS, the tracked windows in front of it (the Settings window and its sheets),
+with personal data covered, so every new or changed view in there must mark what it shows.
 Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captured:
 - Sheets and popovers are presented with `.capturableSheet` / `.capturablePopover` instead of `.sheet` / `.popover`
   (`GiroCrabUI/ReportDialogs.swift`; `scripts/lint-report-dialogs.sh` fails otherwise). Their content is redacted like
@@ -108,6 +109,9 @@ Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captur
   A view that must never be captured (the report itself) carries `// report: not captured (<why>)`.
   macOS closes an open popover when the report window takes the focus, so only a sheet (or a popover over a
   window that keeps the focus) is in the picture there; iOS/iPadOS keep it.
+- A macOS window of its own is captured only when tracked: the `Settings` scene carries `.reportCapturable()`,
+  so its views get the redaction environment and its window (with its sheets) is drawn over the main window.
+  A window that must never be captured (the report itself) carries no tracker or one with role `.report`.
 - `.sensitive()` on anything personal or financial: amounts, balances, chart axis values and readouts, IBANs, account
   names and numbers, owners, counterparties, merchant names/initials/guessed domains, purposes, references, notes,
   documents and their previews, loan figures. `.sensitive(.labels)` for category, group, budget and security names

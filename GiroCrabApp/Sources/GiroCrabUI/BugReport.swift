@@ -161,18 +161,42 @@ enum BugReport {
     }
 
     /// The sheets over `main` (a sheet can carry a sheet), then the popovers
-    /// of `main` and of those sheets, bottom up.
+    /// of `main` and of those sheets, bottom up, then the registered dialogs
+    /// in windows of their own in front of `main` (Settings), each with its
+    /// sheets. A dialog window of its own comes to the front when opened, so
+    /// it lies above the main window and its sheets; drawing it last matches.
     @MainActor
     private static func dialogLayers(over main: NSWindow) -> [DialogLayer] {
+        let dialogs = trackers(.dialog)
+        func tracked(_ w: NSWindow) -> Tracker? { dialogs.first { $0.window === w } }
+
         var hosts = [main]
         while let sheet = hosts.last?.attachedSheet { hosts.append(sheet) }
         let popovers = hosts.flatMap { host in
             (host.childWindows ?? []).filter { $0.isVisible && !hosts.contains($0) && "\(type(of: $0))".contains("Popover") }
         }
-        let dialogs = trackers(.dialog)
-        return (hosts.dropFirst() + popovers).map { w in
-            DialogLayer(window: w, tracker: dialogs.first { $0.window === w })
+        var layers = (hosts.dropFirst() + popovers).map { DialogLayer(window: $0, tracker: tracked($0)) }
+
+        // `orderedWindows` runs front to back; draw back to front. Sheets of a
+        // dialog window follow it (e.g. "Passwort vorschlagen" over Settings).
+        var seen = Set(hosts.map(ObjectIdentifier.init))
+        var separate: [NSWindow] = []
+        for w in NSApp?.orderedWindows ?? [] {
+            if w === main { break }
+            guard w.isVisible, !w.isMiniaturized, !seen.contains(ObjectIdentifier(w)),
+                  tracked(w) != nil else { continue }
+            separate.append(w)
         }
+        for w in separate.reversed() {
+            var host = w
+            repeat {
+                seen.insert(ObjectIdentifier(host))
+                layers.append(DialogLayer(window: host, tracker: tracked(host)))
+                guard let sheet = host.attachedSheet else { break }
+                host = sheet
+            } while true
+        }
+        return layers
     }
 
     /// `hideSearch`: search fields are drawn by AppKit, so `.sensitive()`
@@ -191,17 +215,21 @@ enum BugReport {
         defer { for (f, text) in zip(fields, saved) where f.stringValue != text { f.stringValue = text } }
         guard let base = WindowScreenshot.bitmap(of: window)?.cgImage else { return nil }
         guard !dialogs.isEmpty else { return base }
+        // A dialog window of its own (Settings) can stand beside the main
+        // window: the canvas covers all of them, or it would be cut off.
+        let area = dialogs.reduce(window.frame) { $0.union($1.window.frame) }
+        let scale = CGFloat(base.width) / window.frame.width
+        let width = Int(ceil(area.width * scale)), height = Int(ceil(area.height * scale))
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
+              let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
-        let scale = CGFloat(base.width) / window.frame.width
         // Screen and CoreGraphics both count y from the bottom.
         func place(_ r: CGRect) -> CGRect {
-            CGRect(x: (r.minX - window.frame.minX) * scale, y: (r.minY - window.frame.minY) * scale,
+            CGRect(x: (r.minX - area.minX) * scale, y: (r.minY - area.minY) * scale,
                    width: r.width * scale, height: r.height * scale)
         }
-        ctx.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
+        ctx.draw(base, in: place(window.frame))
         for layer in dialogs {
             let w = layer.window
             guard let image = WindowScreenshot.bitmap(of: w)?.cgImage else { return nil } // fail closed
