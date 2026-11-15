@@ -316,6 +316,9 @@ public final class AppModel {
     var ruleDraft: Rule?
     var showSettings = false
     var showCommandPalette = false
+    /// macOS: the "Problem melden" window is open. Greys out its menu item
+    /// (a second report would silently discard the markings of this one).
+    var isReportOpen = false
     /// Set while the bug report takes its screenshot (#301): the main window
     /// draws `.sensitive()` content as placeholders.
     var reportRedaction: ReportRedaction = [] {

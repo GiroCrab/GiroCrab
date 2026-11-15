@@ -154,6 +154,11 @@ struct BugReportView: View {
             }
         }
         #endif
+        // macOS: grey out the help menu's "Problem melden …" while this window
+        // is open (its "Neu aufnehmen" refreshes the picture; a new report
+        // would silently discard the markings made here).
+        .onAppear { model.isReportOpen = true }
+        .onDisappear { model.isReportOpen = false }
         // a report opened again (menu, capture bar) ends a pending pick and
         // takes over its choices
         .onAppear {

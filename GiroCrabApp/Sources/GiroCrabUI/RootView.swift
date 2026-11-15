@@ -178,8 +178,11 @@ public struct GiroCrabScenes: Scene {
                     Button("Mitteilungen …") { openWindow(id: "announcements") }
                     Divider()
                     // #301: redacted screenshot + scrubbed diagnostics, then a prefilled issue.
+                    // While the report window is open, its "Neu aufnehmen" is
+                    // the way to refresh the picture (markings would be lost).
                     Button("Problem melden …") { openWindow(id: "bug-report") }
                         .keyboardShortcut("b", modifiers: [.command, .option])
+                        .disabled(model.isReportOpen)
                     Divider()
                     Link("Webseite & Dokumentation (girocrab.de)", destination: HelpLinks.website)
                     Link("Fehler melden / Issue erstellen (GitHub)", destination: HelpLinks.issues)
