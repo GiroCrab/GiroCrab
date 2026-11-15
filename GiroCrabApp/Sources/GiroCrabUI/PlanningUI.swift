@@ -417,14 +417,23 @@ struct SplitSheet: View {
                 }
                 .buttonStyle(.borderless)
                 Spacer()
-                Text("Rest: \(Money.format(remaining))")
-                    .appFont(.callout, monospacedDigit: true)
+                Text("Restbetrag: \(Money.format(remaining))")
+                    .appFont(.callout, weight: .semibold, monospacedDigit: true)
                     .foregroundStyle(remaining == 0 ? Theme.inflow : Theme.warning)
+                    .sensitive()
+                if remaining > 0, let last = parts.indices.last {
+                    // one click: the rest goes into the last part (#427)
+                    Button("Rest zuweisen") {
+                        let others = parts.indices.filter { $0 != last }.reduce(0) { $0 + cents(parts[$1]) }
+                        parts[last].amount = Money.plain(total - others)
+                    }
+                    .help("Trägt den Restbetrag im letzten Teil ein")
+                }
             }
             // Why "Speichern" is greyed out (#383): say so instead of leaving it silent.
             if !valid, !parts.isEmpty, error == nil {
                 Text(remaining != 0
-                    ? "Die Teilbeträge müssen zusammen \(Money.format(total)) ergeben, erst dann lässt sich speichern."
+                    ? "Die Teilbeträge müssen zusammen \(Money.format(total)) ergeben (Restbetrag: \(Money.format(remaining))), erst dann lässt sich speichern."
                     : "Jeder Teil braucht einen Betrag größer als 0.")
                     .appFont(.callout).foregroundStyle(Theme.secondary)
             }
