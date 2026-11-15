@@ -102,8 +102,9 @@ sheet or popover over it, with personal data covered, so every new or changed vi
 Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captured:
 - Sheets and popovers are presented with `.capturableSheet` / `.capturablePopover` instead of `.sheet` / `.popover`
   (`GiroCrabUI/ReportDialogs.swift`; `scripts/lint-report-dialogs.sh` fails otherwise). Their content is redacted like
-  the main window and drawn into the picture at its place; text fields, text editors and pop-up menus are covered by
-  the capture itself. An alert or a non-capturable presentation leaves the picture without it and the report says so.
+  the main window and drawn into the picture at its place; text fields and text editors are covered by the
+  capture itself, on macOS also pop-up menus. An iOS menu-style `Picker`/`Menu` draws its value itself, so mark
+  it `.sensitive()`. An alert or a non-capturable presentation leaves the picture without it and the report says so.
   A view that must never be captured (the report itself) carries `// report: not captured (<why>)`.
   macOS closes an open popover when the report window takes the focus, so only a sheet (or a popover over a
   window that keeps the focus) is in the picture there; iOS/iPadOS keep it.

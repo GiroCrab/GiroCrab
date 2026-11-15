@@ -213,6 +213,7 @@ struct CustomDatesSheet: View {
 /// "Fixkosten" sheet: what is booked / still due this month, all series, hidden ones.
 struct RecurringSheet: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.reportRedaction) private var redaction
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -238,8 +239,7 @@ struct RecurringSheet: View {
                     } header: {
                         Text("Diesen Monat")
                     } footer: {
-                        Text("Noch offen: \(Money.format(-m.openExpenseCents)) Ausgaben, \(Money.format(m.openIncomeCents)) Einnahmen · bereits gebucht: \(Money.format(-m.bookedExpenseCents))")
-                            .sensitive()
+                        Text("Noch offen: \(redaction.masking(Money.format(-m.openExpenseCents))) Ausgaben, \(redaction.masking(Money.format(m.openIncomeCents))) Einnahmen · bereits gebucht: \(redaction.masking(Money.format(-m.bookedExpenseCents)))")
                             .appFont(.caption)
                             .foregroundStyle(Theme.secondary)
                             .leadingFooter()

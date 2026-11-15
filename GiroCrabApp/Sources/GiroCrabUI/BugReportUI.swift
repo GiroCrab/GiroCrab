@@ -557,8 +557,11 @@ struct BugReportSheet: View {
 /// appears (`onAppear` ends the pick).
 struct ReportPickBar: View {
     @Environment(AppModel.self) private var model
-    /// Presents the report over whatever the scene shows on top.
-    let openReport: () -> Void
+    /// Presents the report over whatever the scene shows on top; `false`
+    /// when an alert blocks it.
+    let openReport: () -> Bool
+    /// Shown after "Hier aufnehmen" hit an alert.
+    @State private var blocked = false
 
     var body: some View {
         VStack {
@@ -568,24 +571,32 @@ struct ReportPickBar: View {
     }
 
     private var bar: some View {
-        HStack(spacing: 12) {
-            Text("Wechsle zur betroffenen Ansicht oder öffne den Dialog und nimm ihn dann auf.")
-                .appFont(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: openReport) {
-                Label("Hier aufnehmen", systemImage: "camera")
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                Text("Wechsle zur betroffenen Ansicht oder öffne den Dialog und nimm ihn dann auf.")
+                    .appFont(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { blocked = !openReport() } label: {
+                    Label("Hier aufnehmen", systemImage: "camera")
+                }
+                .buttonStyle(.borderedProminent)
+                .fixedSize()
+                Button("Abbrechen", systemImage: "xmark") { model.reportPick = nil }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderedProminent)
-            .fixedSize()
-            Button("Abbrechen", systemImage: "xmark") { model.reportPick = nil }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
+            if blocked {
+                Text("Schließe zuerst den geöffneten Hinweis, dann wähle erneut „Hier aufnehmen“.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.leading, 16)
         .padding(.trailing, 12)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
         .padding(.horizontal, 16)
         .padding(.bottom, 24)

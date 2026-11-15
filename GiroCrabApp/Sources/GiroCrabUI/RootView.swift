@@ -302,6 +302,8 @@ public struct GiroCrabRootView: View {
     @State private var splashHold = true
     #else
     @State private var splashHold = false
+    /// `--demo-sheet report`: the report window was opened (see `MainSplitView`).
+    @State private var demoReportShown = false
     #endif
 
     @AppStorage(AppAppearance.defaultsKey) private var appearance: AppAppearance = .system
@@ -340,11 +342,12 @@ public struct GiroCrabRootView: View {
                     .environment(\.reportRedaction, model.reportRedaction.union(LaunchOptions.current.redaction))
                     .onAppear { StartupClock.mark("MainSplitView appear") }
                     #if os(macOS)
-                    // screenshots: --demo-sheet report | report:<sheet> captures
-                    // the open view or demo sheet, as "Problem melden" would
+                    // screenshots: --demo-sheet report[:<sheet>] captures the open
+                    // view or demo sheet, as "Problem melden" would; once, also
+                    // after a lock/unlock brings this view back
                     .task(id: model.options.demoSheet) {
-                        guard let sheet = model.options.demoSheet,
-                              sheet == "report" || sheet.hasPrefix("report:") else { return }
+                        guard model.options.demoSheetOpensReport, !demoReportShown else { return }
+                        demoReportShown = true
                         try? await Task.sleep(for: .milliseconds(2400))
                         openWindow(id: "bug-report")
                     }

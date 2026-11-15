@@ -464,6 +464,7 @@ struct SplitSheet: View {
                         ForEach(model.categories, id: \.id) { c in Text(c.path).tag(Int64?.some(c.id)) }
                     }
                     .labelsHidden().frame(maxWidth: 190)
+                    .sensitive(.labels)
                     TextField(Money.plain(0), text: $p.amount)
                         .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
                         .appFont(.body, monospacedDigit: true).frame(width: 90)

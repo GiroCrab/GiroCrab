@@ -20712,6 +20712,17 @@
         }
       }
     },
+    "Schließe zuerst den geöffneten Hinweis, dann wähle erneut „Hier aufnehmen“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close the open notice first, then choose “Capture Here” again."
+          }
+        }
+      }
+    },
     "Schließen" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -93,7 +93,7 @@ private struct TangibleAssetSheets: ViewModifier {
             }
             .task {
                 // screenshots: --demo-sheet asset (new item) | asset-edit | asset-values | asset-quantities (the car)
-                guard let sheet = model.options.demoSheet, sheet.hasPrefix("asset"),
+                guard let sheet = model.options.demoSheetName, sheet.hasPrefix("asset"),
                       let account = model.assetStore.accountIDs.first else { return }
                 try? await Task.sleep(for: .milliseconds(300))
                 let car = model.assetItems(account).first { $0.setup.symbol == "car.side.fill" }
@@ -322,9 +322,10 @@ struct AssetEditorSheet: View {
                 }
                 // the other way round, read-only: per piece for a total and vice versa
                 if let other = otherPrice {
-                    LabeledContent(priceMode == .total ? "Kaufpreis je Stück" : "Kaufpreis gesamt", value: Money.format(other))
-                        .foregroundStyle(Theme.secondary)
-                        .sensitive()
+                    LabeledContent(priceMode == .total ? "Kaufpreis je Stück" : "Kaufpreis gesamt") {
+                        Text(Money.format(other)).sensitive()
+                    }
+                    .foregroundStyle(Theme.secondary)
                 }
             } footer: {
                 if automatic {
@@ -372,8 +373,11 @@ struct AssetEditorSheet: View {
             }
             if let w = weight {
                 let fine = w.grams * w.purity / 1000
-                LabeledContent("Feingold je Stück", value: "\(NumberText.format(fine, digits: 3)) g · \(NumberText.format(fine / NumberText.troyOunceGrams, digits: 4)) oz")
-                    .foregroundStyle(Theme.secondary)
+                LabeledContent("Feingold je Stück") {
+                    Text("\(NumberText.format(fine, digits: 3)) g · \(NumberText.format(fine / NumberText.troyOunceGrams, digits: 4)) oz")
+                        .sensitive() // how much gold the user owns
+                }
+                .foregroundStyle(Theme.secondary)
             }
         } footer: {
             FormFooter(denomination == customDenomination
@@ -615,9 +619,10 @@ private struct ValueEntryRows: View {
             text = Money.plain(Int64((new == .total ? Double(c) * held : Double(c) / held).rounded()))
         }
         if let other {
-            LabeledContent(mode == .total ? "Wert je Stück" : "Wert gesamt", value: Money.format(other))
-                .foregroundStyle(Theme.secondary)
-                .sensitive()
+            LabeledContent(mode == .total ? "Wert je Stück" : "Wert gesamt") {
+                Text(Money.format(other)).sensitive()
+            }
+            .foregroundStyle(Theme.secondary)
         }
     }
 
@@ -712,8 +717,7 @@ struct AssetValuesSheet: View {
     var body: some View {
         AssetQuickSheet(title: "Bewertungen bearbeiten", saveTitle: nil, canSave: true, error: error, save: { true }) {
             Section {
-                LabeledContent("Sachwert", value: item.setup.name)
-                    .sensitive()
+                LabeledContent("Sachwert") { Text(item.setup.name).sensitive() }
             }
             Section {
                 ForEach(item.values.reversed(), id: \.date) { p in
@@ -759,8 +763,7 @@ struct AssetQuantitiesSheet: View {
     var body: some View {
         AssetQuickSheet(title: "Anzahl bearbeiten", saveTitle: nil, canSave: true, error: error, save: { true }) {
             Section {
-                LabeledContent("Sachwert", value: item.setup.name)
-                    .sensitive()
+                LabeledContent("Sachwert") { Text(item.setup.name).sensitive() }
             }
             Section {
                 ForEach(item.quantities.reversed(), id: \.date) { q in
@@ -802,6 +805,7 @@ private struct AssetRemoveButton: View {
 /// in the chart.
 struct AssetSellSheet: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.reportRedaction) private var redaction
     let item: AssetItem
     @State private var date = Date()
     @State private var countText = ""
@@ -826,8 +830,7 @@ struct AssetSellSheet: View {
         AssetQuickSheet(title: "Sachwert verkaufen", saveTitle: "Verkaufen",
                         canSave: count != nil && price != nil, error: error, save: save) {
             Section {
-                LabeledContent("Sachwert", value: item.setup.name)
-                    .sensitive()
+                LabeledContent("Sachwert") { Text(item.setup.name).sensitive() }
                 DatePicker("Verkauft am", selection: $date, in: firstSaleDay...Date(), displayedComponents: .date)
                 TextField("Anzahl", text: $countText, prompt: Text(NumberText.format(held)))
                 if manual {
@@ -835,9 +838,8 @@ struct AssetSellSheet: View {
                 }
             } footer: {
                 FormFooter(held > 0
-                    ? "Bestand an diesem Tag: \(NumberText.format(held)). Verkaufte Sachwerte stehen danach unter „Ehemalige Positionen“; ihr Wert bis zum Verkauf bleibt im Verlauf."
+                    ? "Bestand an diesem Tag: \(redaction.masking(NumberText.format(held))). Verkaufte Sachwerte stehen danach unter „Ehemalige Positionen“; ihr Wert bis zum Verkauf bleibt im Verlauf."
                     : "An diesem Tag ist kein Bestand vorhanden.")
-                    .sensitive()
             }
         }
         .onChange(of: DateText.iso(date), initial: true) { prefill() }

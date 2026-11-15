@@ -298,8 +298,9 @@ struct MoneyMoneyExportImportView: View {
         case .file:
             return String(localized: "Wählen Sie, woher die Daten kommen. Die Originaldaten bleiben unverändert.")
         case .options:
-            guard let p = preview else { return fileName }
-            return [fileName, String(localized: "\(p.newBookings.formatted()) neue Buchungen"), yearSpan(p)]
+            let name = redaction.masking(fileName) // file names often carry a name
+            guard let p = preview else { return name }
+            return [name, String(localized: "\(p.newBookings.formatted()) neue Buchungen"), yearSpan(p)]
                 .compactMap { $0 }.joined(separator: " · ")
         }
     }
@@ -346,6 +347,7 @@ struct MoneyMoneyExportImportView: View {
                     Text("Neues Konto aus der Datei").tag(Int64?.none)
                     ForEach(model.allAccounts) { a in Text("\(a.name) · \(a.bankName)").tag(Int64?.some(a.id)) }
                 }
+                .sensitive(target == nil ? [] : .personal) // shows the selected account name
                 Toggle("Kategorien übernehmen", isOn: $keepCategories)
                 Toggle("Notizen übernehmen", isOn: $keepNotes)
             } footer: {

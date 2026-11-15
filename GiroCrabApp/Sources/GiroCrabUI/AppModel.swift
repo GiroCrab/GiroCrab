@@ -572,7 +572,7 @@ public final class AppModel {
         }
         if options.demoSeed {
             openDemoVault()
-            if options.demoSheet == "account-selection" || options.demoSettings == "banks:select" {
+            if options.demoSheetName == "account-selection" || options.demoSettings == "banks:select" {
                 // a second login reaching accounts the first one delivers (#346)
                 _ = try? vault?.seedDemoAccountSelection()
                 reloadAll()
@@ -608,12 +608,11 @@ public final class AppModel {
                let item = assetItems(id).first(where: { $0.setup.name.lowercased().contains(q) }) {
                 selectAssetItem(item.id)
             }
-            if let sheet = options.demoSheet {
+            if let sheet = options.demoSheetName {
                 // --demo-sheet report:<sheet> opens the bug report over that sheet
-                let name = sheet.hasPrefix("report:") ? String(sheet.dropFirst("report:".count)) : sheet
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 600_000_000)
-                    self?.presentDemoSheet(name)
+                    self?.presentDemoSheet(sheet)
                 }
             }
             if let settings = options.demoSettings {

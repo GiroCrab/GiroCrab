@@ -272,6 +272,7 @@ struct RuleForm: View {
                             Text(String(repeating: "    ", count: Int(c.depth)) + c.name).tag(c.id)
                         }
                     }
+                    .sensitive(.labels)
                     Toggle("Aktiv", isOn: $rule.enabled)
                 } header: { Text("Regel").appSectionHeader() }
                 Section {

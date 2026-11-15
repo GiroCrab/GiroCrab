@@ -185,15 +185,12 @@ struct OpeningBalanceSheet: View {
     @ViewBuilder
     private var previewRows: some View {
         if let account {
-            LabeledContent("Kontostand bisher", value: Money.format(account.balanceCents, currency: currency))
-                .sensitive()
+            LabeledContent("Kontostand bisher") { Text(Money.format(account.balanceCents, currency: currency)).sensitive() }
         }
         if let preview, let amount {
-            LabeledContent("Kontostand danach", value: Money.format(amount + preview.sumCents, currency: currency))
+            LabeledContent("Kontostand danach") { Text(Money.format(amount + preview.sumCents, currency: currency)).sensitive() }
                 .appFont(.headline)
-                .sensitive()
-            LabeledContent("Umsätze ab Stichtag", value: "\(preview.counted) · \(Money.format(preview.sumCents, currency: currency))")
-                .sensitive()
+            LabeledContent("Umsätze ab Stichtag") { Text("\(preview.counted) · \(Money.format(preview.sumCents, currency: currency))").sensitive() }
             if preview.older > 0 {
                 LabeledContent("Ältere Umsätze (im Startsaldo enthalten)", value: "\(preview.older)")
             }

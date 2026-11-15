@@ -4,6 +4,7 @@ import GiroCrabCore
 /// ⌘K command palette: views, actions, accounts, categories, merchants.
 struct CommandPaletteView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.reportRedaction) private var redaction
     @Environment(\.dismiss) private var dismiss
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
@@ -98,7 +99,7 @@ struct CommandPaletteView: View {
         }
         if case .account(let id) = model.sidebarSelection, let a = model.account(for: id) {
             for g in model.namedUserGroups where g.uuid != a.userGroupUuid {
-                out.append(Item(title: String(localized: "„\(a.name)“ nach „\(g.name)“ verschieben"), subtitle: action, symbol: "folder", hides: .personal) { model.moveAccount(a.id, to: g.uuid) })
+                out.append(Item(title: String(localized: "„\(redaction.masking(a.name))“ nach „\(g.name)“ verschieben"), subtitle: action, symbol: "folder", hides: .labels) { model.moveAccount(a.id, to: g.uuid) })
             }
         }
         for a in model.allAccounts {

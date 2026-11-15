@@ -119,7 +119,7 @@ struct TransferSheetView: View {
             buttons.padding(14)
         }
         .macFrame(width: 560, height: 700)
-        .task { if model.options.demoSheet == "transfer-confirm" { confirming = true } } // screenshots
+        .task { if model.options.demoSheetName == "transfer-confirm" { confirming = true } } // screenshots
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6]))
@@ -471,6 +471,15 @@ struct TransferSheetView: View {
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
                 .sensitive(sensitive ? .personal : [])
+        }
+    }
+
+    /// Rows of the GiroCode review: all of them are personal.
+    private func summaryRow(_ k: LocalizedStringKey, _ v: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(k).foregroundStyle(Theme.secondary).frame(width: 90 * textScale, alignment: .leading)
+            Text(v).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).sensitive()
+            Spacer(minLength: 0)
         }
     }
 

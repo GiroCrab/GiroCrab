@@ -73,6 +73,14 @@ public struct LaunchOptions: Sendable {
     public var inspectorEdit = false
     /// (demo) "transfer", "moneymoney", "moneymoney-db" or "print": open that sheet with fictional data
     public var demoSheet: String?
+    /// `demoSheet` without the `report:` prefix (#384): `--demo-sheet report:transfer`
+    /// opens the same sheet as `--demo-sheet transfer`, with the bug report over it.
+    public var demoSheetName: String? {
+        guard let demoSheet else { return nil }
+        return demoSheet.hasPrefix("report:") ? String(demoSheet.dropFirst("report:".count)) : demoSheet
+    }
+    /// `--demo-sheet report[:<sheet>]`: open the bug report over the view or sheet.
+    public var demoSheetOpensReport: Bool { demoSheet == "report" || demoSheet?.hasPrefix("report:") == true }
     /// (demo) "income" or "expense": start with that booking list filter
     public var demoFilter: String?
     /// (demo) Settings tab to open on start, e.g. "banks" or "banks:edit"

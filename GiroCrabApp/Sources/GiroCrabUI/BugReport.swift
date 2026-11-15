@@ -304,13 +304,25 @@ enum BugReport {
     }
 
     /// Text fields (search fields included) and text views in `view`, in
-    /// `window` coordinates.
+    /// `window` coordinates. A field inside a hidden or fully transparent
+    /// container is not on screen and must not get a box over other content.
     private static func inputRects(in view: UIView, window: UIWindow) -> [CGRect] {
         func walk(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(walk) }
         return walk(view).compactMap { v in
-            guard v is UITextField || v is UITextView, !v.isHidden, v.alpha > 0, v.window != nil else { return nil }
+            guard v is UITextField || v is UITextView, v.window != nil, !isEffectivelyHidden(v) else { return nil }
             return v.convert(v.bounds, to: window)
         }
+    }
+
+    /// Hidden, or inside a hidden/transparent ancestor (UIKit has no
+    /// `isHiddenOrHasHiddenAncestor` as AppKit does).
+    private static func isEffectivelyHidden(_ view: UIView) -> Bool {
+        var node: UIView? = view
+        while let v = node {
+            if v.isHidden || v.alpha == 0 { return true }
+            node = v.superview
+        }
+        return false
     }
 
     private static func searchFields(in view: UIView) -> [UISearchTextField] {

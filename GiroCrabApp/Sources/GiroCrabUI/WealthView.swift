@@ -1154,7 +1154,7 @@ struct WealthView: View {
             tangiblePreviousUnit = previousUnits
             income = WealthIncome.make(transactions, since: since)
             // (developer) `--demo-sheet classification`: the assign queue of the open positions
-            if model.options.demoSheet == "classification", editingClassification == nil {
+            if model.options.demoSheetName == "classification", editingClassification == nil {
                 let open = ClassificationEditRequest(entries: assets.values.flatMap { $0 }
                     .filter { $0.classification.assetClass == .unclassified }
                     .map { .init(name: $0.holding.name, classification: $0.classification) })

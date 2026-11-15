@@ -223,7 +223,7 @@ private struct ManualLoanSheets: ViewModifier {
             }
             .task {
                 // screenshots: --demo-sheet loan | loan-edit | loan-anchor
-                guard let sheet = model.options.demoSheet, sheet.hasPrefix("loan") else { return }
+                guard let sheet = model.options.demoSheetName, sheet.hasPrefix("loan") else { return }
                 try? await Task.sleep(for: .milliseconds(300))
                 let car = model.loanStore.loans.first
                 switch sheet {
@@ -448,18 +448,14 @@ struct LoanEditorSheet: View {
     private var previewRows: some View {
         if let s = preview?.status {
             if isAnchor, let old = existing?.status {
-                LabeledContent("Restschuld bisher", value: Money.format(-old.remainingCents))
-                    .sensitive()
+                LabeledContent("Restschuld bisher") { Text(Money.format(-old.remainingCents)).sensitive() }
             }
-            LabeledContent("Restschuld", value: Money.format(-s.remainingCents))
+            LabeledContent("Restschuld") { Text(Money.format(-s.remainingCents)).sensitive() }
                 .appFont(.headline)
-                .sensitive()
             LabeledContent("Stand vom", value: DateText.medium(s.asOfDate))
-            LabeledContent("Raten seit Stichtag", value: "\(s.paymentCount) · \(Money.format(s.paidCents))")
-                .sensitive()
+            LabeledContent("Raten seit Stichtag") { Text("\(s.paymentCount) · \(Money.format(s.paidCents))").sensitive() }
             if s.interestCents > 0 {
-                LabeledContent("davon Zinsen / Tilgung", value: "\(Money.format(s.interestCents)) / \(Money.format(s.principalCents))")
-                    .sensitive()
+                LabeledContent("davon Zinsen / Tilgung") { Text("\(Money.format(s.interestCents)) / \(Money.format(s.principalCents))").sensitive() }
             }
             if s.beforeAnchorCount > 0 {
                 LabeledContent("Ältere Buchungen (nicht gezählt)", value: "\(s.beforeAnchorCount)")

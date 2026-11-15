@@ -1111,6 +1111,7 @@ struct GroupDetailEditor: View {
                             Text(verbatim: c.indentedName).tag(c.uuid)
                         }
                     }
+                    .sensitive(.labels) // another group's name
                 } footer: {
                     Text("Summe, Buchungsliste und Saldoverlauf einer Gruppe enthalten auch ihre Untergruppen.").leadingFooter()
                 }

@@ -11,8 +11,10 @@ import UIKit
 /// (`scripts/lint-report-dialogs.sh`): the content is redacted like the main
 /// window while a report is taken, and registers its window, so the capture
 /// can draw it over the main window. Its content must mark personal data with
-/// `.sensitive()` like any view in the main window; text fields, text editors
-/// and pop-up menus in a dialog are covered by the capture itself.
+/// `.sensitive()` like any view in the main window; text fields and text
+/// editors are covered by the capture itself, on macOS also pop-up menus. An
+/// iOS menu-style `Picker` or `Menu` draws its value itself and is not
+/// covered — mark it `.sensitive()`.
 /// Alerts and confirmation dialogs are system-drawn and never captured: the
 /// report then shows what lies under them and says so.
 extension View {
@@ -133,7 +135,12 @@ enum ReportPickOverlay {
     /// Shows the bar while `model.reportPick` is set, hides it otherwise.
     static func sync(model: AppModel) {
         guard model.reportPick != nil else {
-            windows.values.forEach { $0.isHidden = true }
+            // detach: the scene holds its windows strongly, hiding alone would
+            // leave a full hosting tree per pick until the scene ends
+            for window in windows.values {
+                window.isHidden = true
+                window.windowScene = nil
+            }
             windows.removeAll()
             return
         }
@@ -141,7 +148,7 @@ enum ReportPickOverlay {
             guard let scene = main.windowScene, windows[ObjectIdentifier(scene)] == nil else { continue }
             let window = PassThroughWindow(windowScene: scene)
             let host = UIHostingController(rootView: ReportPickBar { [weak main] in
-                if let main { presentReport(over: main, model: model) }
+                main.map { presentReport(over: $0, model: model) } ?? false
             }.environment(model))
             host.view.backgroundColor = .clear
             window.rootViewController = host
@@ -153,14 +160,18 @@ enum ReportPickOverlay {
 
     /// A new report over whatever `window` shows on top, sheets included
     /// (a SwiftUI sheet of the main view could not be presented over them).
-    private static func presentReport(over window: UIWindow, model: AppModel) {
+    /// `false`: an alert is on top — it cannot be covered by a second modal,
+    /// and the bar tells the user instead.
+    @discardableResult
+    private static func presentReport(over window: UIWindow, model: AppModel) -> Bool {
         var top = window.rootViewController
         while let next = top?.presentedViewController, !next.isBeingDismissed { top = next }
-        guard let top, !(top is UIAlertController) else { return }
+        guard let top, !(top is UIAlertController) else { return false }
         let host = UIHostingController(rootView: AnyView(EmptyView()))
         host.rootView = AnyView(BugReportSheet(onClose: { [weak host] in host?.dismiss(animated: true) })
             .environment(model))
         top.present(host, animated: true)
+        return true
     }
 
     /// Touches outside the bar reach the main window below.
