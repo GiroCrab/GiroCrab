@@ -102,6 +102,7 @@
   "Zum Drucken fehlt das PDF-Modul von Qt (Paket „qt6-image-formats-plugin-pdf“).": "Printing requires Qt’s PDF module (package “qt6-image-formats-plugin-pdf”).",
   "Zurück zum eigenen Tresor": "Back to Your Own Vault",
   "Zurück zur Demo": "Back to the Demo",
+  "ca. %1": "approx. %1",
   "gerade eben": "just now",
   "keine gespeichert": "none stored",
   "nächste am %1": "next on %1",

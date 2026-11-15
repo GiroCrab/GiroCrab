@@ -105,7 +105,7 @@ von der nativen Installation wechselt, kopiert `tresor.girocrab` in den neuen Or
 | AppModel, AccountGroupsModel | AppModel.qml | Auswahl, Zeitraum, Filter, Laden, Tagesgruppen, Marker, KPIs, Bearbeiten, Abruf, Überweisung, Import |
 | Formatting | Theme.qml, Fmt.qml | Tokens, Money, DateText, IBAN |
 | SidebarView, AccountGroupsUI | SidebarView.qml, SidebarRow.qml, AccountRow.qml, AccountsSectionHeader.qml, DropSlot.qml | Übersicht, Belege, Gruppen/Kontoart, Konten, Kategorienbaum, Fußzeile, Drag & Drop, Kontextmenüs |
-| BookingListView | BookingStreamView.qml | Tageskarten, Zeilen, Chips, Mehrfachauswahl, Kontextmenü, Tastatur (Pfeile, C, R), „Weitere Buchungen laden“ |
+| BookingListView | BookingStreamView.qml | Tageskarten, Zeilen, Chips, Mehrfachauswahl, Kontextmenü, Tastatur (Pfeile, C, R), „Weitere Buchungen laden“. Nur unter Linux: Beim Scrollen zeigt eine Blase am Griff den Tag der obersten Buchung, im noch nicht geladenen Bereich geschätzt („ca. März 2021“) |
 | BalanceHeaderView | StreamHeaderCard.qml, KPI.qml, BalanceChart.qml, HoldingsCard.qml | Titel, Saldo, Linien-Chart, KPIs, Filterzeile, Depot-Positionen. Balken-Stil entfällt. |
 | PlanningUI | CashflowCard.qml, BudgetProgressCard.qml, BudgetEditorSheet.qml, SplitSheet.qml, CustomPeriodForm.qml | Karten, Budget-Editor, Umsatz aufteilen, eigener Zeitraum (QSettings `period/customFrom`, `period/customTo`) |
 | BookingDetailView | InspectorView.qml | Beleg, Notiz, Gehalt, Wiederkehrend, Händler-Historie, Kategorie-Raster, Rohdaten, Belege, Mehrfachauswahl |
