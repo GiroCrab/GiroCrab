@@ -286,6 +286,27 @@ fn info_from(r: &rusqlite::Row) -> rusqlite::Result<StandingOrderInfo> {
     })
 }
 
+/// Whether `first` is a day the schedule runs on: the execution day of the month (31 = last
+/// day; a day beyond the month's end means its last day) or the weekday (1 = Monday).
+pub(crate) fn first_date_fits(first: NaiveDate, unit: &str, exec_day: u32) -> bool {
+    if unit == "W" {
+        return first.weekday().number_from_monday() == exec_day;
+    }
+    let (y, m) = (first.year(), first.month());
+    let next_month = if m == 12 {
+        NaiveDate::from_ymd_opt(y + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(y, m + 1, 1)
+    };
+    let month_end = next_month
+        .and_then(|d| d.pred_opt())
+        .map_or(31, |d| d.day());
+    if exec_day >= 31 {
+        return first.day() == month_end;
+    }
+    first.day() == exec_day || (exec_day > month_end && first.day() == month_end)
+}
+
 #[uniffi::export]
 impl Vault {
     /// The stored standing orders of the given accounts (empty = all), oldest
@@ -429,3 +450,25 @@ impl Vault {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod day_tests {
+    use super::*;
+
+    #[test]
+    fn first_date_must_match_the_execution_day() {
+        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        assert!(first_date_fits(d(2026, 12, 3), "M", 3));
+        assert!(!first_date_fits(d(2026, 11, 16), "M", 3));
+        assert!(first_date_fits(d(2027, 2, 28), "M", 31), "31 = last day");
+        assert!(!first_date_fits(d(2027, 2, 27), "M", 31));
+        assert!(
+            first_date_fits(d(2027, 2, 28), "M", 30),
+            "30 in a short month"
+        );
+        assert!(first_date_fits(d(2026, 11, 30), "M", 31));
+        assert!(first_date_fits(d(2026, 11, 16), "W", 1), "a Monday");
+        assert!(!first_date_fits(d(2026, 11, 17), "W", 1));
+        assert!(first_date_fits(d(2026, 11, 22), "W", 7), "a Sunday");
+    }
+}

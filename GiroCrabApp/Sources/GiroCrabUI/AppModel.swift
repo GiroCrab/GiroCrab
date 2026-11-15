@@ -665,6 +665,7 @@ public final class AppModel {
             standingDraft.amountText = Money.plain(8500)
             standingDraft.purpose = "Abschlag Strom Kd-Nr 482910"
             standingDraft.execDay = 3
+            standingDraft.syncDate(to: nil)
         case "transfer", "transfer-confirm":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
             openTransfer()

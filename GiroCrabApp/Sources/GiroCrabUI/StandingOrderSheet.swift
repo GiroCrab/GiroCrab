@@ -99,7 +99,7 @@ struct StandingOrderSheet: View {
                         HStack {
                             Text("Alle")
                             Spacer()
-                            Text(intervalText(draft.interval)).monospacedDigit().foregroundStyle(Theme.secondary)
+                            Text(intervalText(draft.interval)).appFont(.body, monospacedDigit: true).foregroundStyle(Theme.secondary)
                         }
                     }
                 } else {
@@ -130,6 +130,9 @@ struct StandingOrderSheet: View {
         .formStyle(.grouped)
         .onChange(of: draft.accountID) { model.refreshStandingLimits() }
         .onChange(of: draft.unit) { model.standingDraft.conform(to: model.standingLimits) }
+        // The first execution and the execution day describe the same schedule: the one changed last wins.
+        .onChange(of: draft.firstDate) { model.standingDraft.syncDay(to: model.standingLimits) }
+        .onChange(of: draft.execDay) { model.standingDraft.syncDate(to: model.standingLimits) }
         .frame(minHeight: 420)
     }
 
@@ -192,8 +195,9 @@ struct StandingOrderSheet: View {
             if reviewing || isDelete {
                 if !isDelete { Button("Zurück") { reviewing = false; model.transferError = nil } }
                 if isDelete {
+                    // HIG: a destructive action is never the default button (Return does nothing here)
                     Button("Dauerauftrag löschen", role: .destructive) { model.startStandingOrder() }
-                        .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(.red)
+                        .buttonStyle(.borderedProminent).tint(.red)
                 } else {
                     Button("Jetzt mit TAN freigeben") { model.startStandingOrder() }
                         .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)

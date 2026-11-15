@@ -7047,6 +7047,17 @@
         }
       }
     },
+    "Dauerauftrag abgebrochen – es wurde nichts gesendet, solange die TAN nicht bestätigt wurde." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standing order cancelled – nothing was sent as long as the TAN was not confirmed."
+          }
+        }
+      }
+    },
     "Dauerauftrag angelegt" : {
       "extractionState" : "manual",
       "localizations" : {

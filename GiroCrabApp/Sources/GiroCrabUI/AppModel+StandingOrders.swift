@@ -7,10 +7,7 @@ import GiroCrabCore
 extension AppModel {
     /// FinTS accounts a standing order can be placed on (HKCDE; not bunq or the other connectors).
     var standingOrderAccounts: [Account] {
-        allAccounts.filter {
-            [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric].contains($0.connector)
-                && canSendTransfer(from: $0.id) && bankingGate(forAccount: $0.id) == nil
-        }
+        transferAccounts.filter { $0.connector != .bunq && bankingGate(forAccount: $0.id) == nil }
     }
 
     var canEditStandingOrders: Bool { canTransfer && !standingOrderAccounts.isEmpty && activeTransfer == nil }
@@ -156,6 +153,14 @@ extension AppModel {
         plannedVersion += 1
         standingUnknown = reason
         reloadAll()
+    }
+
+    /// The user cancelled while the bank waited for the TAN: nothing was sent, back to the sheet.
+    func cancelStandingOrderRun() {
+        activeTransferIsStanding = false
+        standingDraft.pin = ""
+        transferError = String(localized: "Dauerauftrag abgebrochen – es wurde nichts gesendet, solange die TAN nicht bestätigt wurde.")
+        showStandingSheet = true
     }
 
     /// An error before the bank accepted anything: back to the sheet, nothing is lost.

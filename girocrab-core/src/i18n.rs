@@ -387,6 +387,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Rhythmus muss Monate oder Wochen sein." => "The schedule must be in months or weeks.",
         "Der Rhythmus muss zwischen 1 und 99 liegen." => "The interval must be between 1 and 99.",
         "Der Ausführungstag ist ungültig." => "The execution day is invalid.",
+        "Die erste Ausführung passt nicht zum Ausführungstag." => "The first execution does not match the execution day.",
         "Die Bank erlaubt nicht, diesen Dauerauftrag zu löschen." => "The bank does not allow deleting this standing order.",
         "Der Dauerauftrag ist nicht mehr vorhanden. Bitte die Konten neu abrufen." => "The standing order no longer exists. Please refresh the accounts.",
         "Die Bank hat für diesen Dauerauftrag keine Auftragsnummer gemeldet. Bitte in der Banking-App ändern." => "The bank did not report an order number for this standing order. Please change it in the banking app.",

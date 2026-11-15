@@ -142,4 +142,40 @@ final class StandingOrderTests: XCTestCase {
         XCTAssertEqual(clean("Mai 2026"), "Mai 2026", "nothing left: keep the original")
         XCTAssertEqual(clean("Wohnung Mainzer Str. 5, Dezember"), "Wohnung Mainzer Str. 5")
     }
+
+    func testFirstDateAndExecutionDayStayConsistent() throws {
+        let cal = Calendar.current
+        var d = StandingDraft(order: order(), action: .change)
+        XCTAssertTrue(d.firstDateMatchesDay, "a change starts on the next date of its day, not on the stored start")
+        XCTAssertGreaterThan(d.firstDate, cal.startOfDay(for: Date()))
+        XCTAssertEqual(cal.component(.day, from: d.firstDate), 3)
+        // the day picker moves the date
+        d.execDay = 20
+        XCTAssertFalse(d.firstDateMatchesDay)
+        d.syncDate(to: nil)
+        XCTAssertTrue(d.firstDateMatchesDay)
+        XCTAssertEqual(cal.component(.day, from: d.firstDate), 20)
+        // the date picker moves the day
+        d.firstDate = try XCTUnwrap(cal.date(byAdding: .day, value: 40, to: d.firstDate))
+        d.syncDay(to: nil)
+        XCTAssertTrue(d.firstDateMatchesDay)
+        XCTAssertEqual(d.execDay, cal.component(.day, from: d.firstDate))
+        // weekly: the weekday follows
+        d.unit = "W"
+        d.syncDay(to: nil)
+        XCTAssertTrue(d.firstDateMatchesDay)
+        XCTAssertEqual(d.execDay, (cal.component(.weekday, from: d.firstDate) + 5) % 7 + 1)
+        XCTAssertTrue(d.isValid)
+    }
+
+    func testBankLimitsNeverLeaveAMismatch() {
+        let limits = StandingOrderLimits(
+            minDaysAhead: 2, maxDaysAhead: 0, months: [], weeks: [], daysOfMonth: [1, 15], weekdays: [])
+        var d = StandingDraft(order: order(), action: .change)
+        d.firstDate = Calendar.current.date(byAdding: .day, value: 10, to: Date()) ?? Date()
+        d.syncDay(to: limits)
+        XCTAssertTrue([1, 15].contains(d.execDay))
+        XCTAssertTrue(d.firstDateMatchesDay)
+        XCTAssertGreaterThanOrEqual(d.firstDate, d.firstDateRange(limits).lowerBound)
+    }
 }

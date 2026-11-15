@@ -35,7 +35,7 @@ struct StandingDraft {
         let n = name.trimmingCharacters(in: .whitespaces)
         let lastOK = !hasEnd || lastDate >= firstDate
         return accountID != nil && !n.isEmpty && n.count <= 70 && ibanValid && cents != nil
-            && purpose.count <= 140 && lastOK && (1...99).contains(interval)
+            && purpose.count <= 140 && lastOK && (1...99).contains(interval) && firstDateMatchesDay
     }
 
     /// An existing order as a draft (change or delete).
@@ -55,6 +55,7 @@ struct StandingDraft {
         unit = o.timeUnit
         interval = Int(o.interval)
         execDay = Int(o.execDay)
+        if action == .change { syncDate(to: nil) }  // the stored start lies in the past: the next date on the order's day
     }
 
     /// A draft that repeats an outgoing booking: same recipient, amount and purpose, the rhythm of
@@ -134,6 +135,45 @@ struct StandingDraft {
             interval: UInt32(interval), execDay: UInt32(execDay))
     }
 
+    /// Whether the first execution falls on the execution day (the bank refuses a schedule that does not add up).
+    var firstDateMatchesDay: Bool {
+        let cal = Calendar.current
+        if unit == "W" { return (cal.component(.weekday, from: firstDate) + 5) % 7 + 1 == execDay }
+        let day = cal.component(.day, from: firstDate)
+        let length = cal.range(of: .day, in: .month, for: firstDate)?.count ?? 31
+        if execDay >= 31 { return day == length }
+        return day == execDay || (execDay > length && day == length)
+    }
+
+    /// The date picker changed: the execution day follows it.
+    mutating func syncDay(to l: StandingOrderLimits?) {
+        guard !firstDateMatchesDay else { return }
+        let cal = Calendar.current
+        if unit == "W" {
+            execDay = (cal.component(.weekday, from: firstDate) + 5) % 7 + 1
+        } else {
+            execDay = cal.component(.day, from: firstDate)
+        }
+        // a day the bank does not allow moves to the nearest allowed one, and the date after it
+        conform(to: l)
+    }
+
+    /// The execution day changed: the first execution moves to the next date on it.
+    mutating func syncDate(to l: StandingOrderLimits?) {
+        guard !firstDateMatchesDay else { return }
+        let lower = firstDateRange(l).lowerBound
+        let cal = Calendar.current
+        let before = cal.date(byAdding: .day, value: -1, to: lower) ?? lower
+        if unit == "W" {
+            for i in 1...7 {
+                guard let d = cal.date(byAdding: .day, value: i, to: before) else { continue }
+                if (cal.component(.weekday, from: d) + 5) % 7 + 1 == execDay { firstDate = d; return }
+            }
+        } else {
+            firstDate = Self.nextOccurrence(ofDay: execDay, after: before)
+        }
+    }
+
     /// Intervals the bank offers for the chosen unit (empty = any 1…99).
     func allowedIntervals(_ l: StandingOrderLimits?) -> [Int] {
         (unit == "W" ? l?.weeks : l?.months)?.map(Int.init) ?? []
@@ -166,6 +206,9 @@ struct StandingDraft {
         let range = firstDateRange(l)
         if firstDate < range.lowerBound { firstDate = range.lowerBound }
         if firstDate > range.upperBound { firstDate = range.upperBound }
+        if !firstDateMatchesDay {
+            syncDate(to: l)  // the execution day (snapped above) decides; the date moves onto it
+        }
         if lastDate < firstDate { lastDate = firstDate }
     }
 

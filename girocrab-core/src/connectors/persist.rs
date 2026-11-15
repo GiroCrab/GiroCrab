@@ -1310,6 +1310,15 @@ impl Vault {
                 if !(1..=max_day).contains(&request.exec_day) {
                     return Err(bad(tr("Der Ausführungstag ist ungültig.")));
                 }
+                if !crate::standing_orders::first_date_fits(
+                    first,
+                    &request.time_unit,
+                    request.exec_day,
+                ) {
+                    return Err(bad(tr(
+                        "Die erste Ausführung passt nicht zum Ausführungstag.",
+                    )));
+                }
                 let order_id = if request.action == Action::Change {
                     self.stored_order(&request)?.order_id
                 } else {
