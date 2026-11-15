@@ -3389,6 +3389,17 @@
         }
       }
     },
+    "Andere Ansicht aufnehmen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capture Another View …"
+          }
+        }
+      }
+    },
     "Andere Datei …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4095,6 +4106,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Register an application on enablebanking.com: choose “Production”, let the browser generate the key, and enter this redirect URL:"
+          }
+        }
+      }
+    },
+    "Aufgenommen wird die Hauptansicht, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The main view is captured, without open dialogs. If the problem is elsewhere, go there with “Capture Another View …”. A new capture discards the markings, as the content may have moved."
           }
         }
       }
@@ -9464,17 +9486,6 @@
         }
       }
     },
-    "Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A new capture discards the marks, since the content may have moved."
-          }
-        }
-      }
-    },
     "Einfügen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12574,6 +12585,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Today, %@"
+          }
+        }
+      }
+    },
+    "Hier aufnehmen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capture Here"
           }
         }
       }
@@ -20668,6 +20690,17 @@
         }
       }
     },
+    "Schließe zuerst den geöffneten Dialog und wähle dann erneut „Hier aufnehmen“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close the open dialog first, then choose “Capture Here” again."
+          }
+        }
+      }
+    },
     "Schließen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20675,6 +20708,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Close"
+          }
+        }
+      }
+    },
+    "Schließt den Bericht, damit du zur betroffenen Ansicht wechseln und sie dort aufnehmen kannst." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closes the report so you can go to the affected view and capture it there."
           }
         }
       }
@@ -24307,6 +24351,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Website & Documentation (girocrab.de)"
+          }
+        }
+      }
+    },
+    "Wechsle zur betroffenen Ansicht und nimm sie dann auf." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Go to the affected view, then capture it."
           }
         }
       }

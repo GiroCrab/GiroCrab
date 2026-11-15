@@ -126,6 +126,24 @@ final class BugReportTests: XCTestCase {
         XCTAssertEqual(model.reportRedaction, [], "restored after the last capture")
     }
 
+    func testOptionsRedactPersonalDataOutsideTheDemo() {
+        // #384 carries these through "Andere Ansicht aufnehmen"; the own
+        // vault is always redacted, whatever the demo-only switch says.
+        let off = BugReport.Options(autoRedact: false, hideLabels: true, includeLog: false)
+        XCTAssertEqual(off.redaction(demo: false), [.personal, .labels])
+        XCTAssertEqual(off.redaction(demo: true), [.labels])
+        XCTAssertEqual(BugReport.Options().redaction(demo: true), .personal)
+    }
+
+    @MainActor
+    func testLockingEndsAPendingPick() {
+        // #384: the capture bar must not come back after the next unlock.
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.reportPick = BugReport.Options(hideLabels: true)
+        model.releaseVaultState()
+        XCTAssertNil(model.reportPick)
+    }
+
     /// Red channel of the pixel at (x, y), origin top left.
     private func pixel(_ image: CGImage, x: Int, y: Int) -> UInt8 {
         var data = [UInt8](repeating: 0, count: 4)

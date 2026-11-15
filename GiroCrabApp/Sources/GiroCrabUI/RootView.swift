@@ -336,6 +336,14 @@ public struct GiroCrabRootView: View {
                     .background(MainWindowTracker())
                     .environment(\.reportRedaction, model.reportRedaction.union(LaunchOptions.current.redaction))
                     .onAppear { StartupClock.mark("MainSplitView appear") }
+                    .onDisappear {
+                        // #384: a pick with no window left to pick in ends, so no
+                        // window opened much later shows the bar. Checked after
+                        // this update, once the closed window's views are gone.
+                        Task { @MainActor in
+                            if model.reportPick != nil, !BugReport.hasMainWindow { model.reportPick = nil }
+                        }
+                    }
                     // Asked only once the vault is open, so it never competes with Touch ID.
                     .modifier(SystemLanguageChangedAlert(newLanguage: Binding(
                         get: { if case .systemChanged(let to) = languageQuestion { to } else { nil } },
@@ -594,6 +602,8 @@ struct MainSplitView: View {
     @Environment(\.openSettings) private var openSettings
     #else
     @State private var columns: NavigationSplitViewVisibility = .automatic
+    /// The bug report reopened from the capture bar (#384); per scene.
+    @State private var showBugReport = false
     #endif
 
     private var sidebar: some View {
@@ -694,6 +704,23 @@ struct MainSplitView: View {
     var body: some View {
         @Bindable var model = model
         splitView
+        // "Andere Ansicht aufnehmen" (#384): an inset, not an overlay, so the
+        // last rows and bottom bars stay reachable under it
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // hidden while any capture redraws the window (iPad: another scene's report)
+            if model.reportPick != nil, model.reportRedaction.isEmpty {
+                #if os(macOS)
+                ReportPickBar()
+                #else
+                ReportPickBar {
+                    // a presentation SwiftUI dropped leaves the flag set:
+                    // reset it, so the next tap tries again
+                    showBugReport = false
+                    Task { @MainActor in showBugReport = true }
+                }
+                #endif
+            }
+        }
         .quickLookPreview($model.quickLookURL)
         .accountGroupDialogs($model.groupDialog)
         .newCategoryDialog()
@@ -806,6 +833,11 @@ struct MainSplitView: View {
         #if os(iOS)
         .sheet(isPresented: $model.showSettings) {
             NavigationStack { SettingsView() }
+                .environment(model)
+        }
+        // reopened from the capture bar (#384), with Settings closed
+        .sheet(isPresented: $showBugReport) {
+            BugReportSheet()
                 .environment(model)
         }
         #endif

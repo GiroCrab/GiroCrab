@@ -14,14 +14,17 @@ struct BugReportView: View {
     @Environment(\.dismiss) private var dismiss
     #if os(iOS)
     @State private var markingUp = false
+    #else
+    @Environment(\.openWindow) private var openWindow
     #endif
 
-    /// Off only in the demo vault (fictitious data).
-    @State private var autoRedact = true
-    @State private var hideLabels = false
-    @State private var includeLog = true
+    @State private var options = BugReport.Options()
     @State private var base: CGImage?
-    @State private var capturing = false
+    /// Starts true: the first capture follows right after `started`.
+    @State private var capturing = true
+    /// Set in `onAppear`, after a pending pick's choices were taken over: the
+    /// capture and the diagnostics never run with the defaults first.
+    @State private var started = false
     @State private var captureRun = 0
     /// Extra black boxes, unit rectangles with the origin top left.
     @State private var masks: [CGRect] = []
@@ -35,18 +38,14 @@ struct BugReportView: View {
     @State private var exporting = false
     @State private var export = PNGFileDocument(data: Data())
 
-    private var redaction: ReportRedaction {
-        var r: ReportRedaction = autoRedact || !model.isDemo ? .personal : []
-        if hideLabels { r.insert(.labels) }
-        return r
-    }
+    private var redaction: ReportRedaction { options.redaction(demo: model.isDemo) }
 
-    private var captureKey: CaptureKey { CaptureKey(redaction: redaction, run: captureRun) }
+    private var captureKey: CaptureKey { CaptureKey(redaction: redaction, run: captureRun, started: started) }
 
     /// Reload when the log option changes, or the vault opens, locks or is
     /// swapped (demo ↔ own). A new screenshot leaves the diagnostics alone.
     private var diagnosticsKey: DiagnosticsKey {
-        DiagnosticsKey(includeLog: includeLog, unlocked: model.isUnlocked, demo: model.isDemo)
+        DiagnosticsKey(includeLog: options.includeLog, unlocked: model.isUnlocked, demo: model.isDemo, started: started)
     }
 
     private var canUndo: Bool {
@@ -55,6 +54,7 @@ struct BugReportView: View {
     }
 
     private var canSend: Bool { !capturing && prepared != nil }
+    private var canExport: Bool { !capturing && base != nil }
 
     var body: some View {
         Form {
@@ -69,16 +69,16 @@ struct BugReportView: View {
             } header: {
                 Text("Screenshot")
             } footer: {
-                Text("Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
+                Text("Aufgenommen wird die Hauptansicht, ohne geöffnete Dialoge. Liegt das Problem woanders, wechsle mit „Andere Ansicht aufnehmen …“ dorthin. Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.")
             }
 
             Section {
                 if model.isDemo {
-                    Toggle("Persönliche Daten schwärzen", isOn: $autoRedact)
+                    Toggle("Persönliche Daten schwärzen", isOn: $options.autoRedact)
                 } else {
                     Label("Persönliche Daten werden geschwärzt", systemImage: "eye.slash")
                 }
-                Toggle("Kategorien ausblenden", isOn: $hideLabels)
+                Toggle("Kategorien ausblenden", isOn: $options.hideLabels)
             } footer: {
                 Text(model.isDemo
                      ? "Beträge, IBANs, Namen, Kontonamen, Verwendungszwecke und Belege werden abgedeckt; „Kategorien ausblenden“ deckt auch Kategorien, Gruppen und Wertpapiernamen ab. Im Demo-Tresor sind alle Daten erfunden, deshalb lässt sich die Schwärzung hier abschalten."
@@ -86,9 +86,9 @@ struct BugReportView: View {
             }
 
             Section {
-                Toggle("Abruf-Protokoll anhängen", isOn: $includeLog)
+                Toggle("Abruf-Protokoll anhängen", isOn: $options.includeLog)
                 if let prepared {
-                    Text(verbatim: BugReport.render(prepared.info, log: prepared.log))
+                    Text(verbatim: prepared.text)
                         .appFont(.caption, design: .monospaced)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -125,7 +125,18 @@ struct BugReportView: View {
             }
             ToolbarItem(placement: .bottomBar) {
                 Button("Als PNG sichern …", systemImage: "square.and.arrow.down") { startExport() }
-                    .disabled(base == nil || capturing)
+                    .disabled(!canExport)
+            }
+            ToolbarItem(placement: .bottomBar) {
+                // #384: the GitHub app often takes no pasted picture; "Bild
+                // sichern" puts it in Photos, where its editor can pick it.
+                // with the diagnostics, like "Issue öffnen"; no thumbnail: the
+                // raw picture lacks the user's own boxes
+                if canSend, let base, let prepared {
+                    ShareLink(item: ReportImage(base: base, masks: masks),
+                              message: Text(verbatim: prepared.text),
+                              preview: SharePreview(String(localized: "GiroCrab-Fehlerbericht")))
+                }
             }
         }
         .fullScreenCover(isPresented: $markingUp) {
@@ -135,6 +146,19 @@ struct BugReportView: View {
             }
         }
         #endif
+        // a report opened again (menu, capture bar) ends a pending pick and
+        // takes over its choices
+        .onAppear {
+            // only on the first appearance: on iOS it fires again after the
+            // mask editor or the share sheet, and must not take another
+            // scene's pick then
+            guard !started else { return }
+            if let pick = model.reportPick {
+                options = pick
+                model.reportPick = nil
+            }
+            started = true
+        }
         .task(id: captureKey) { await capture() }
         .task(id: diagnosticsKey) { await prepareDiagnostics() }
         .fileExporter(isPresented: $exporting, document: export, contentType: .png,
@@ -147,7 +171,7 @@ struct BugReportView: View {
             Divider()
             HStack {
                 Button("Als PNG sichern …") { startExport() }
-                    .disabled(base == nil || capturing)
+                    .disabled(!canExport)
                 Spacer()
                 Button { send() } label: {
                     Label("Issue auf GitHub öffnen", systemImage: "arrow.up.right.square")
@@ -176,13 +200,31 @@ struct BugReportView: View {
             .disabled(masks.isEmpty)
             #else
             Button("Bereiche schwärzen …", systemImage: "rectangle.dashed") { markingUp = true }
-                .disabled(base == nil || capturing)
+                .disabled(!canExport)
             #endif
             Spacer()
+            Button("Andere Ansicht aufnehmen …", systemImage: "rectangle.on.rectangle") { pickView() }
+                .disabled(!model.isUnlocked || capturing)
+                .help("Schließt den Bericht, damit du zur betroffenen Ansicht wechseln und sie dort aufnehmen kannst.")
             Button("Neu aufnehmen", systemImage: "camera") { captureRun += 1 }
                 .disabled(capturing)
         }
         .buttonStyle(.borderless)
+    }
+
+    /// Closes the report (and on iOS Settings, which hosts it) and shows the
+    /// capture bar in the main window; it opens a new report from there.
+    private func pickView() {
+        model.reportPick = options
+        #if os(macOS)
+        // closed with ⌘W while the vault stays open: open it again
+        if !BugReport.revealMainWindow() { openWindow(id: "main") }
+        dismiss()
+        #else
+        // Settings takes its nested sheets (Hilfe, this report) with it; a
+        // second dismissal in the same pass could be dropped.
+        if model.showSettings { model.showSettings = false } else { dismiss() }
+        #endif
     }
 
     @ViewBuilder
@@ -232,6 +274,7 @@ struct BugReportView: View {
     }
 
     private func capture() async {
+        guard started else { return }
         capturing = true
         let result = await BugReport.captureMainWindow(model: model, redaction: redaction)
         guard !Task.isCancelled else { return }
@@ -254,11 +297,12 @@ struct BugReportView: View {
     /// Log entries and payee names load together, or the log is left out:
     /// without the names a log line could carry a payee into the issue.
     private func prepareDiagnostics() async {
+        guard started else { return }
         prepared = nil
         var entries: [SyncLogEntry] = []
         var counterparties: [String] = []
         var logUnavailable = false
-        if includeLog {
+        if options.includeLog {
             let filter = SyncLogFilter(connectionId: nil, onlyErrors: false, search: nil, limit: BugReport.logEntries)
             let limit = BugReport.maxCounterpartyTerms
             if let (log, names) = try? await model.vaultOffMain({ v in (try v.listSyncLog(filter: filter), try v.counterpartyNames(limit: limit)) }) {
@@ -274,13 +318,16 @@ struct BugReportView: View {
         let terms = BugReport.knownTerms(model: model, counterparties: counterparties, catalog: catalog)
         let lines = info.logLines
         // thousands of terms: compiling and matching them can take well over a frame
-        let log = await Task.detached(priority: .userInitiated) { BugReport.sanitizedLog(lines, knownTerms: terms) }.value
+        let (log, text) = await Task.detached(priority: .userInitiated) {
+            let log = BugReport.sanitizedLog(lines, knownTerms: terms)
+            return (log, BugReport.render(info, log: log))
+        }.value
         guard !Task.isCancelled else { return }
-        prepared = PreparedDiagnostics(info: info, log: log, logUnavailable: logUnavailable)
+        prepared = PreparedDiagnostics(info: info, log: log, text: text, logUnavailable: logUnavailable)
     }
 
     private func finalPNG() -> Data? {
-        base.flatMap { BugReport.compose($0, masks: masks) }.flatMap(BugReport.png)
+        base.flatMap { BugReport.finalPNG(base: $0, masks: masks) }
     }
 
     private func startExport() {
@@ -303,21 +350,43 @@ struct BugReportView: View {
 
 private final class MaskUndoTarget {}
 
+#if os(iOS)
+/// The picture as shared (#384): composed only when the share sheet asks.
+private struct ReportImage: Transferable {
+    let base: CGImage
+    let masks: [CGRect]
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(exportedContentType: .png) { item in
+            guard let png = BugReport.finalPNG(base: item.base, masks: item.masks) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            return png
+        }
+        .suggestedFileName(String(localized: "GiroCrab-Fehlerbericht") + ".png")
+    }
+}
+#endif
+
 private struct CaptureKey: Hashable {
     var redaction: ReportRedaction
     var run: Int
+    var started: Bool
 }
 
 private struct DiagnosticsKey: Hashable {
     var includeLog: Bool
     var unlocked: Bool
     var demo: Bool
+    var started: Bool
 }
 
 private struct PreparedDiagnostics {
     var info: BugReport.Info
     /// Already sanitized.
     var log: [String]
+    /// The diagnostics block as shown (and shared on iOS); built once.
+    var text: String
     /// The log was asked for but could not be loaded with its payee names.
     var logUnavailable: Bool
 }
@@ -505,6 +574,72 @@ struct BugReportSheet: View {
     }
 }
 #endif
+
+/// "Andere Ansicht aufnehmen" (#384): floats over every main window while
+/// the user moves to the view to report (on a Mac or an iPad that may be any
+/// of them); "Hier aufnehmen" opens a new report, which captures the window
+/// tapped (now the front one). No personal data in it.
+///
+/// The bar stays until that report appears (`onAppear` ends the pick), so a
+/// report that cannot be presented (iOS: another sheet is open) loses nothing
+/// and the bar says what is in the way. The report captures only after that
+/// `onAppear`, and the bar also hides while any capture redraws the window.
+struct ReportPickBar: View {
+    @Environment(AppModel.self) private var model
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #else
+    /// The report sheet of this scene (iPad: only the scene tapped presents it).
+    let openReport: () -> Void
+    #endif
+    #if os(iOS)
+    /// The report did not open (a sheet of the main view is in the way).
+    @State private var blocked = false
+    #else
+    private let blocked = false // openWindow always opens it
+    #endif
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(blocked ? "Schließe zuerst den geöffneten Dialog und wähle dann erneut „Hier aufnehmen“."
+                         : "Wechsle zur betroffenen Ansicht und nimm sie dann auf.")
+                .appFont(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { capture() } label: {
+                Label("Hier aufnehmen", systemImage: "camera")
+            }
+            .buttonStyle(.borderedProminent)
+            .fixedSize()
+            // no Escape shortcut: the main window's editors and search use it
+            Button("Abbrechen", systemImage: "xmark") { model.reportPick = nil }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Abbrechen")
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 24)
+    }
+
+    private func capture() {
+        #if os(macOS)
+        openWindow(id: "bug-report")
+        #else
+        blocked = false
+        openReport()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            // still picking: the report never appeared
+            if model.reportPick != nil { blocked = true }
+        }
+        #endif
+    }
+}
 
 /// Opens the bug report: a window on macOS, a sheet on iOS.
 struct BugReportButton: View {

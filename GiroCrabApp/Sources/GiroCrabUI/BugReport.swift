@@ -20,6 +20,21 @@ enum BugReport {
     /// Abrufprotokoll entries in the diagnostics.
     static let logEntries: UInt32 = 15
 
+    /// The report's choices. Carried through "Andere Ansicht aufnehmen"
+    /// (#384), so the report reopened there captures with the same ones.
+    struct Options: Equatable, Sendable {
+        /// Off only in the demo vault (fictitious data).
+        var autoRedact = true
+        var hideLabels = false
+        var includeLog = true
+
+        func redaction(demo: Bool) -> ReportRedaction {
+            var r: ReportRedaction = autoRedact || !demo ? .personal : []
+            if hideLabels { r.insert(.labels) }
+            return r
+        }
+    }
+
     // MARK: Screenshot
 
     enum CaptureResult {
@@ -50,6 +65,9 @@ enum BugReport {
 
     @MainActor static func track(_ tracker: MainWindowTracker.TrackingView) { trackers.add(tracker) }
     @MainActor static func untrack(_ tracker: MainWindowTracker.TrackingView) { trackers.remove(tracker) }
+
+    /// Some window shows the vault (closed and locked ones do not).
+    @MainActor static var hasMainWindow: Bool { !trackedWindows().isEmpty }
 
     /// The redaction `window`'s views were last built with (per window: on a
     /// Mac or an iPad several main windows can be open).
@@ -91,13 +109,38 @@ enum BugReport {
     }
 
     #if os(macOS)
+    /// Brings a window that shows the vault to the front, for "Andere Ansicht
+    /// aufnehmen" (#384). False if there is none (closed, locked). iOS needs
+    /// none: the report is a sheet of the main view's own scene.
+    @MainActor
+    static func revealMainWindow() -> Bool {
+        // a minimized one counts (it comes back); ordered-out ones do not
+        guard let window = mainWindow() ?? trackedWindows().first(where: \.isMiniaturized) else { return false }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+    #endif
+
+    /// Every window that shows `MainSplitView` and has content to draw,
+    /// whatever its state.
+    @MainActor
+    private static func trackedWindows() -> [PlatformWindow] {
+        let windows = trackers.allObjects.compactMap(\.window)
+        #if os(macOS)
+        return windows.filter { $0.contentView != nil }
+        #else
+        return windows.filter { $0.rootViewController != nil } // what `snapshot` draws
+        #endif
+    }
+
+    #if os(macOS)
     /// The frontmost window that shows the vault. A minimized or hidden one
     /// does not count: it may not redraw before the capture.
     @MainActor
     static func mainWindow() -> NSWindow? {
         guard let app = NSApp else { return nil } // nil in unit tests
-        let windows = trackers.allObjects.compactMap(\.window)
-            .filter { $0.contentView != nil && $0.isVisible && !$0.isMiniaturized }
+        let windows = trackedWindows().filter { $0.isVisible && !$0.isMiniaturized }
         return app.orderedWindows.first { windows.contains($0) }
     }
 
@@ -130,7 +173,7 @@ enum BugReport {
     /// first one in a foreground scene (an iPad may show several).
     @MainActor
     static func mainWindow() -> UIWindow? {
-        let windows = trackers.allObjects.compactMap(\.window)
+        let windows = trackedWindows()
             .filter { $0.windowScene?.activationState == .foregroundActive }
         return windows.first(where: \.isKeyWindow) ?? windows.first
     }
@@ -182,6 +225,12 @@ enum BugReport {
         return ctx.makeImage()
     }
 
+    /// The picture as it leaves the app (issue, file, share sheet): the
+    /// redacted capture with the user's own boxes.
+    static func finalPNG(base: CGImage, masks: [CGRect]) -> Data? {
+        compose(base, masks: masks).flatMap(png)
+    }
+
     static func png(_ image: CGImage) -> Data? {
         let data = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
@@ -210,7 +259,7 @@ enum BugReport {
     }
 
     /// What the diagnostics block shows.
-    struct Info: Equatable {
+    struct Info: Equatable, Sendable {
         var appVersion: String
         var system: String
         var architecture: String

@@ -319,6 +319,11 @@ public final class AppModel {
     /// Set while the bug report takes its screenshot (#301): the main window
     /// draws `.sensitive()` content as placeholders.
     var reportRedaction: ReportRedaction = []
+    /// "Andere Ansicht aufnehmen" (#384): the report is closed and the main
+    /// window shows a floating capture button until the user picks a view.
+    /// Non-nil while picking, with the report's choices for the report it
+    /// opens. Ended by that report, or by locking (no bar after the next unlock).
+    var reportPick: BugReport.Options?
     /// The balance chart has keyboard focus (Return there jumps to its day,
     /// instead of editing the selected booking's note).
     @ObservationIgnored var chartHasKeyboardFocus = false
@@ -639,6 +644,9 @@ public final class AppModel {
                     if name == "collection-files" { self.buildCollection(dueDate: Date().addingTimeInterval(5 * 86_400)) }
                 }
             }
+        case "report-pick":
+            // the floating "Hier aufnehmen" bar of the bug report (#384)
+            reportPick = BugReport.Options()
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.last
@@ -1192,6 +1200,7 @@ public final class AppModel {
 
     /// Cancels every task, drops the vault and clears what it loaded (shared by `lock()` and the app reset).
     func releaseVaultState() {
+        reportPick = nil
         scopeLoadTask?.cancel()
         categoryRefreshTask?.cancel()
         dashboardTask?.cancel()
