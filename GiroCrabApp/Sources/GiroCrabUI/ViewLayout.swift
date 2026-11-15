@@ -18,8 +18,31 @@ enum ViewLayout {
         defaults.object(forKey: budgetsKey) as? Bool ?? true
     }
 
+    /// Which cards go above the list where analyses show (overview, or an
+    /// account with „Auswertungen“ opened): each follows its own switch, so
+    /// the budgets stay when the analyses are off.
+    static func cards(statistics: Bool, budgets: Bool) -> (cashflow: Bool, budgets: Bool, any: Bool) {
+        (statistics, budgets, statistics || budgets)
+    }
+
     /// The header shows in full until minimised (Ansicht › Kopfbereich minimieren).
     static func compactHeader(_ defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: compactHeaderKey)
+    }
+
+    /// Accounts that hide the category chip in booking rows (GitHub #336).
+    static let hiddenCategoryChipAccountsKey = "hiddenCategoryChipAccounts"
+
+    static func showsCategoryChip(for accountID: Int64, _ defaults: UserDefaults = .standard) -> Bool {
+        let raw = defaults.string(forKey: hiddenCategoryChipAccountsKey) ?? ""
+        let hidden = Set(raw.split(separator: ",").compactMap { Int64($0) })
+        return !hidden.contains(accountID)
+    }
+
+    static func setShowsCategoryChip(_ show: Bool, for accountID: Int64, _ defaults: UserDefaults = .standard) {
+        let raw = defaults.string(forKey: hiddenCategoryChipAccountsKey) ?? ""
+        var hidden = Set(raw.split(separator: ",").compactMap { Int64($0) })
+        if show { hidden.remove(accountID) } else { hidden.insert(accountID) }
+        defaults.set(hidden.sorted().map(String.init).joined(separator: ","), forKey: hiddenCategoryChipAccountsKey)
     }
 }

@@ -290,7 +290,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ · %@ · %u direct debits · %@"
+            "value" : "%1$@ · %2$@ · %3$u direct debits · %4$@"
           }
         }
       }
@@ -1023,7 +1023,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld payments · %@"
+            "value" : "%1$lld payments · %2$@"
           }
         }
       }
@@ -25943,7 +25943,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“%@”: %u new, %u updated"
+            "value" : "“%1$@”: %2$u new, %3$u updated"
           }
         }
       }
