@@ -653,7 +653,7 @@ public final class AppModel {
             batchDraft.rows = BatchRow.samples(50)
             openBatchTransfer()
             if name == "batch-transfer-scheduled" { batchDraft.scheduled = true }
-        case "standing-order":
+        case "standing-order", "standing-order-confirm":
             newStandingOrder()
             standingDraft.name = "Stadtwerke München"
             standingDraft.iban = BatchRow.grouped("DE89370400440532013000")

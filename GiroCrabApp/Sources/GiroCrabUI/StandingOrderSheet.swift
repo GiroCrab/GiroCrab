@@ -45,7 +45,10 @@ struct StandingOrderSheet: View {
         #if os(macOS)
         .frame(width: 520 * textScale)
         #endif
-        .task { reviewing = reviewing || isDelete }
+        .task {
+            reviewing = reviewing || isDelete
+            if model.options.demoSheet == "standing-order-confirm" { reviewing = true } // screenshots
+        }
     }
 
     // MARK: editor
