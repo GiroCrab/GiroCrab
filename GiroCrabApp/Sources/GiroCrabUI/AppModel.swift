@@ -655,6 +655,9 @@ public final class AppModel {
             batchDraft.rows = BatchRow.samples(50)
             openBatchTransfer()
             if name == "batch-transfer-scheduled" { batchDraft.scheduled = true }
+        case "standing-order-delete":
+            // the demo orders cannot be changed at the bank; the draft only shows what would be deleted
+            if let o = try? vault?.listStandingOrders(accountIds: []).first { openStandingDemo(StandingDraft(order: o, action: .delete)) }
         case "standing-order", "standing-order-confirm":
             newStandingOrder()
             standingDraft.name = "Stadtwerke München"

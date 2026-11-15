@@ -58,6 +58,9 @@ extension AppModel {
         openStandingSheet(StandingDraft(order: order, action: .delete))
     }
 
+    /// Screenshots only (`--demo-sheet`): opens the sheet for a draft without the bank checks.
+    func openStandingDemo(_ draft: StandingDraft) { openStandingSheet(draft) }
+
     private func openStandingSheet(_ draft: StandingDraft) {
         standingDraft = draft
         standingLimits = nil
