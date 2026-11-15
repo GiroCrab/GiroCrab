@@ -82,6 +82,11 @@ struct FinTsState {
     /// camt descriptors from HICAZS, best first.
     #[serde(default)]
     camt_formats: Vec<String>,
+    /// Receipt codes (hex) of statements stored with this state; acknowledged
+    /// with HKQTG at the next statements fetch, so the bank stops re-sending
+    /// them. Saved in the same transaction as the PDFs (`store_fetch`).
+    #[serde(default)]
+    pending_receipts: Vec<String>,
     /// The bank accepted the TAN medium only as `SO:<name>` (BestSign security
     /// object); the user enters the plain device name.
     #[serde(default)]
@@ -144,6 +149,7 @@ const IMPLEMENTED: &[(&str, &[u32])] = &[
     ("HKTAB", &[4, 5]),
     ("HKEKA", &[3, 4, 5]),
     ("HKEKP", &[1, 2]),
+    ("HKQTG", &[1]),
     ("HKWPD", &[5, 6]),
     ("HKKKU", &[1]),
 ];
@@ -414,6 +420,30 @@ fn segment_layout(s: &syntax::Segment) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Receipt code of a statement (HIEKP/HIEKA): the binary field that is not the
+/// PDF (DKB: the last field, 36 bytes), as hex for the persisted state.
+fn receipt_code(s: &syntax::Segment) -> Option<String> {
+    s.elements
+        .iter()
+        .flatten()
+        .filter_map(|v| match v {
+            syntax::Value::Binary(b) if !b.is_empty() && !b.starts_with(b"%PDF") => Some(b),
+            _ => None,
+        })
+        .next_back()
+        .map(|b| b.iter().map(|x| format!("{x:02x}")).collect())
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 /// FNV-1a 64 over raw bytes (stable id for a statement PDF).
@@ -1773,12 +1803,43 @@ impl FinTsConnector {
             .find(|tx| self.bank_supports(tx))
     }
 
+    /// Acknowledges the statements stored by earlier fetches (HKQTG). A receipt
+    /// the bank rejects is dropped (it would fail again); one lost to a network
+    /// error stays for the next fetch. Never fails the statements fetch.
+    async fn send_pending_receipts(&mut self, ctx: &ConnectContext) {
+        if self.st.pending_receipts.is_empty() || !self.bank_supports("HKQTG") {
+            return;
+        }
+        let v = self.version("HKQTG");
+        let mut kept = Vec::new();
+        let mut sent = 0;
+        for code in std::mem::take(&mut self.st.pending_receipts) {
+            let Some(bytes) = hex_decode(&code) else {
+                continue;
+            };
+            let seg = SegmentBuilder::new("HKQTG", 3, v).binary(&bytes).build();
+            match self.request(ctx, "HKQTG", seg).await {
+                Ok(_) => sent += 1,
+                Err(CoreError::Bank { code: c, .. }) => {
+                    crate::depot_debug::log(&format!("statements: HKQTG rejected ({c}), dropped"));
+                }
+                Err(_) => kept.push(code),
+            }
+        }
+        self.st.pending_receipts = kept;
+        crate::depot_debug::log(&format!(
+            "statements: HKQTG sent {sent} receipt(s), {} pending",
+            self.st.pending_receipts.len()
+        ));
+    }
+
     async fn statements_pdf(
         &mut self,
         ctx: &ConnectContext,
         acc: &SepaAccount,
         label: &str,
     ) -> CoreResult<Vec<crate::documents::RemoteDocument>> {
+        self.send_pending_receipts(ctx).await;
         let tx = self.statement_tx().unwrap_or("HKEKA");
         let v = self.version(tx);
         let pdf_only = tx == "HKEKP";
@@ -1811,6 +1872,11 @@ impl FinTsConnector {
                 ));
                 // the bank's own file name (e.g. DKB), else one of ours
                 let bank_file_name = statement_file_name(s);
+                if let Some(code) = receipt_code(s) {
+                    if !self.st.pending_receipts.contains(&code) {
+                        self.st.pending_receipts.push(code);
+                    }
+                }
                 let (stmt_label, period, date) = if pdf_only {
                     hiekp_details(s)
                 } else {
@@ -3546,6 +3612,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_receipts_are_sent_once_and_rejected_ones_dropped() {
+        let state = serde_json::json!({"system_id": "123", "sec_func": "999", "tan_method_name": "", "tan_medium": "", "versions": {"HKQTG": [1]}, "tan_required": {}, "pending_receipts": ["0102", "0304"]});
+        const REJECT: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+9050::Teilweise fehlerhaft.'HIRMS:3:2:3+9210::Quittung unbekannt.'";
+        let (url, seen) = mock_bank(vec![ACCEPT, REJECT]);
+        let mut c = two_step_connector(&url, state);
+        c.send_pending_receipts(&test_ctx()).await;
+        assert!(
+            c.st.pending_receipts.is_empty(),
+            "{:?}",
+            c.st.pending_receipts
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen.iter().all(|ids| ids.iter().any(|i| i == "HKQTG")),
+            "{seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn receipts_wait_when_the_bank_offers_no_hkqtg() {
+        let state = serde_json::json!({"system_id": "123", "sec_func": "999", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}, "pending_receipts": ["0102"]});
+        let (url, seen) = mock_bank(vec![ACCEPT]);
+        let mut c = two_step_connector(&url, state);
+        c.send_pending_receipts(&test_ctx()).await;
+        assert_eq!(c.st.pending_receipts, vec!["0102".to_string()]);
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn dialog_init_9010_with_stale_system_id_does_not_fall_back() {
         let (url, seen) = mock_bank(vec![STALE_SYSTEM_ID]);
         let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
@@ -3742,6 +3838,22 @@ mod tests {
             statement_file_name(path.all("HIEKP").next().unwrap()).as_deref(),
             Some("Auszug.PDF")
         );
+    }
+
+    #[test]
+    fn receipt_code_is_the_non_pdf_binary_field() {
+        let r = reply(b"HIEKP:5:2:4+@8@%PDF-1.7+20261105:20261105+20261105+2026+11+DE02+BIC++++Auszug.pdf+@4@\x01\xab\x00Z'");
+        let s = r.all("HIEKP").next().unwrap();
+        let code = receipt_code(s).unwrap();
+        assert_eq!(code, "01ab005a");
+        assert_eq!(hex_decode(&code).unwrap(), vec![0x01, 0xab, 0x00, 0x5a]);
+        // no receipt field: nothing to acknowledge
+        let r = reply(b"HIEKP:5:2:4+@8@%PDF-1.7+20261105:20261105'");
+        assert_eq!(receipt_code(r.all("HIEKP").next().unwrap()), None);
+        assert_eq!(hex_decode("abc"), None);
+        // state saved by an older version (no field) still loads
+        let st: FinTsState = serde_json::from_value(serde_json::json!({"system_id": "1", "sec_func": "999", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}})).unwrap();
+        assert!(st.pending_receipts.is_empty());
     }
 
     #[test]
