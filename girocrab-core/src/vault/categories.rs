@@ -30,7 +30,7 @@ impl Vault {
         Ok(rows)
     }
 
-    pub(super) fn category_paths(
+    pub(crate) fn category_paths(
         conn: &Connection,
     ) -> CoreResult<HashMap<i64, (String, String, String, String)>> {
         // id -> (name, path, color, symbol)
