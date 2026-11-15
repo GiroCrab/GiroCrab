@@ -81,7 +81,7 @@ impl Vault {
                 "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
                  WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
                  GROUP BY category_id",
-                crate::planning::EFFECTIVE_SQL
+                crate::planning::effective_sql("", "")
             ))?;
             let it = stmt.query_map(params![date_from, date_to], |r| {
                 Ok((

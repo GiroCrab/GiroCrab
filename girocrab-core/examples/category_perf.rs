@@ -12,7 +12,7 @@
 //!   investment_dashboard           150 ms
 //!   merchant_stats / selection_flow ~150 ms each (a full pass over all bookings)
 //!   local_api transactions(limit 100)  ~1.5 ms (first page, cursor page, single account; 2026-11-15)
-//!   local_api summary                  ~2 ms per year, ~100–150 ms over all bookings (full enrichment)
+//!   local_api summary                  ~2 ms per year (range capped at three years)
 //! RULE_INDEX=1 creates the covering indexes by hand on a vault that lacks them.
 use girocrab_core::models::{BookingFilter, BookingScope};
 use girocrab_core::vault::Vault;
@@ -208,10 +208,13 @@ fn main() {
             r#"{"method":"summary","params":{"date_from":"2025-01-01","date_to":"2025-12-31"}}"#,
         )
     });
-    time("local_api summary (all)", || {
-        vault.local_api_request(
-            r#"{"method":"summary","params":{"date_from":"1900-01-01","date_to":"2999-12-31"}}"#,
-        )
+    let to = chrono::Local::now().date_naive();
+    let three = format!(
+        r#"{{"method":"summary","params":{{"date_from":"{}","date_to":"{to}"}}}}"#,
+        to - chrono::Duration::days(3 * 366)
+    );
+    time("local_api summary (three years, the maximum)", || {
+        vault.local_api_request(&three)
     });
     let _ = std::fs::remove_dir_all(&tmp);
 }

@@ -52,6 +52,13 @@ fn err_code(v: &Vault, method: &str, params: Value) -> String {
         .to_string()
 }
 
+/// The longest summary range, ending a few days from now.
+fn summary_range() -> (String, String) {
+    let to = chrono::Local::now().date_naive() + chrono::Duration::days(5);
+    let from = to - chrono::Duration::days(MAX_SUMMARY_DAYS);
+    (from.to_string(), to.to_string())
+}
+
 /// Every booking of `params` across all pages of `limit`.
 fn all_pages(v: &Vault, mut params: Value, limit: u32) -> Vec<Value> {
     params["limit"] = json!(limit);
@@ -213,13 +220,10 @@ fn loan_view_does_not_pull_in_other_accounts() {
     let rows = all_pages(&v, json!({ "account_ids": [loan] }), 50);
     assert!(rows.iter().all(|t| t["account_id"] == loan), "{rows:?}");
     share(&v, &[loan], |_| {});
-    let rows = all_pages(&v, json!({}), 50);
+    let (from, to) = summary_range();
+    let rows = all_pages(&v, json!({ "date_from": from, "date_to": to }), 50);
     assert!(rows.iter().all(|t| t["account_id"] == loan), "{rows:?}");
-    let summary = ok(
-        &v,
-        "summary",
-        json!({ "date_from": "1900-01-01", "date_to": "2999-12-31" }),
-    );
+    let summary = ok(&v, "summary", json!({ "date_from": from, "date_to": to }));
     let count: u64 = summary["totals"]
         .as_array()
         .unwrap()
@@ -279,19 +283,26 @@ fn filters_and_cursor_are_validated() {
 fn search_cannot_probe_hidden_fields() {
     let (_d, v) = demo();
     let giro = account_id(&v, "Musterbank Girokonto");
-    share(&v, &[giro], |_| {});
-    ok(&v, "transactions", json!({ "search": "Miete" }));
-    assert_eq!(
-        err_code(&v, "transactions", json!({ "search": "DE89" })),
-        "not_shared"
-    );
-    share(&v, &[giro], |s| s.share_purpose = false);
-    assert_eq!(
-        err_code(&v, "transactions", json!({ "search": "Miete" })),
-        "not_shared"
-    );
+    // "INGB" / "DE89" would match hidden IBANs, "Miete" hidden purposes.
+    for hidden in [
+        |s: &mut ShareScope| s.share_account_numbers = false,
+        |s: &mut ShareScope| s.share_purpose = false,
+        |s: &mut ShareScope| s.share_counterparty = false,
+    ] {
+        share(&v, &[giro], |s| {
+            s.share_account_numbers = true;
+            hidden(s);
+        });
+        for q in ["Miete", "INGB", "DE89"] {
+            assert_eq!(
+                err_code(&v, "transactions", json!({ "search": q })),
+                "not_shared"
+            );
+        }
+    }
     share(&v, &[giro], |s| s.share_account_numbers = true);
     ok(&v, "transactions", json!({ "search": "DE89" }));
+    ok(&v, "transactions", json!({ "search": "Miete" }));
 }
 
 #[test]
@@ -299,12 +310,12 @@ fn summary_matches_the_app_tiles() {
     let (_d, v) = demo();
     let giro = account_id(&v, "Musterbank Girokonto");
     share(&v, &[giro], |_| {});
-    let (from, to) = ("2000-01-01", "2999-12-31");
+    let (from, to) = summary_range();
     let page = v
         .list_transactions(BookingFilter {
             account_ids: vec![giro],
-            date_from: Some(from.into()),
-            date_to: Some(to.into()),
+            date_from: Some(from.clone()),
+            date_to: Some(to.clone()),
             ..Default::default()
         })
         .unwrap();
@@ -339,4 +350,138 @@ fn categories_are_the_tree() {
             assert!(c["depth"].as_u64().unwrap() >= 1);
         }
     }
+}
+
+#[test]
+fn long_numbers_and_payment_method_follow_the_scope() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    let booking = v
+        .list_transactions(BookingFilter {
+            account_ids: vec![giro],
+            limit: 1,
+            ..Default::default()
+        })
+        .unwrap()
+        .transactions[0]
+        .id;
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET purpose = 'Kto 0532013000 BLZ 3704 0044 Karte 4111 1111 Rate 12,50 am 15.11.' WHERE id = ?1",
+            [booking],
+        )
+        .unwrap();
+    share(&v, &[giro], |_| {});
+    let rows = all_pages(&v, json!({}), 100);
+    let row = rows.iter().find(|t| t["id"] == booking).unwrap();
+    assert_eq!(
+        row["purpose"],
+        "Kto [number] BLZ [number] Karte [number] Rate 12,50 am 15.11."
+    );
+    assert!(rows.iter().any(|t| t["payment_method"] != ""));
+    share(&v, &[giro], |s| s.share_purpose = false);
+    let rows = all_pages(&v, json!({}), 100);
+    assert!(rows.iter().all(|t| t["payment_method"] == ""));
+}
+
+#[test]
+fn balances_match_the_sidebar() {
+    let (_d, v) = demo();
+    let all: Vec<_> = v.list_accounts().unwrap();
+    share(&v, &all.iter().map(|a| a.id).collect::<Vec<_>>(), |_| {});
+    let api = ok(&v, "accounts", Value::Null);
+    for a in &all {
+        let row = api
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == a.id)
+            .unwrap();
+        assert_eq!(row["balance_cents"], a.balance_cents, "{}", a.name);
+    }
+}
+
+#[test]
+fn summary_counts_deleted_categories_as_none_and_is_bounded() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    share(&v, &[giro], |_| {});
+    let (from, to) = summary_range();
+    let s = ok(&v, "summary", json!({ "date_from": from, "date_to": to }));
+    let used = s["by_category"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|c| c["category_id"].as_i64())
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute("UPDATE categories SET deleted_ms = 1 WHERE id = ?1", [used])
+        .unwrap();
+    let s = ok(&v, "summary", json!({ "date_from": from, "date_to": to }));
+    let cats = s["by_category"].as_array().unwrap();
+    assert!(cats.iter().all(|c| c["category_id"] != used));
+    let listed: HashSet<i64> = ok(&v, "categories", Value::Null)
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_i64().unwrap())
+        .collect();
+    assert!(cats
+        .iter()
+        .filter_map(|c| c["category_id"].as_i64())
+        .all(|id| listed.contains(&id)));
+    assert_eq!(
+        err_code(
+            &v,
+            "summary",
+            json!({ "date_from": "2020-01-01", "date_to": "2026-01-01" })
+        ),
+        "invalid_params"
+    );
+}
+
+#[test]
+fn unshared_loan_payments_read_as_transfers() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    let loan = account_id(&v, "Immobilien-Darlehen");
+    let linked = v
+        .list_transactions(BookingFilter {
+            account_ids: vec![giro],
+            direction: BookingDirection::Expense,
+            limit: 1,
+            ..Default::default()
+        })
+        .unwrap()
+        .transactions[0]
+        .id;
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO loan_links(transaction_id, loan_account_id, source) VALUES (?1, ?2, 'manual')",
+            [linked, loan],
+        )
+        .unwrap();
+    let flow = |accounts: &[i64]| {
+        share(&v, accounts, |_| {});
+        all_pages(&v, json!({ "account_ids": [giro] }), 100)
+            .into_iter()
+            .find(|t| t["id"] == linked)
+            .unwrap()["flow"]
+            .clone()
+    };
+    assert_eq!(flow(&[giro]), "transfer");
+    assert_eq!(flow(&[giro, loan]), "loan");
+}
+
+#[test]
+fn cursor_carries_the_stored_date() {
+    assert_eq!(
+        parse_cursor("2024-01-01T00:00:00:123").unwrap(),
+        ("2024-01-01T00:00:00".to_string(), 123)
+    );
+    assert!(parse_cursor(":5").is_err());
+    assert!(parse_cursor("2024-01-01:x").is_err());
 }

@@ -49,7 +49,7 @@ fn is_account_number_query(compact: &str) -> bool {
 }
 
 /// WHERE clause "booking `t` belongs to the categories `cat_match`" (e.g. `= ?3`,
-/// `IS NULL`), split-aware like `planning::EFFECTIVE_SQL`: an unsplit booking by
+/// `IS NULL`), split-aware like `planning::effective_sql`: an unsplit booking by
 /// its own category, a split booking only by the categories of its parts.
 fn category_match_sql(cat_match: &str) -> String {
     format!(
@@ -287,7 +287,7 @@ impl Vault {
             ));
             wh.push(format!("({clause})"));
         }
-        // Category filters follow `planning::EFFECTIVE_SQL`: a split booking belongs
+        // Category filters follow `planning::effective_sql`: a split booking belongs
         // to the categories of its parts (never to its own category), and only the
         // parts of the filtered category count in the KPI sums (`share_sql`).
         let cat_match: Option<String> = if filter.uncategorized_only {
