@@ -8,12 +8,17 @@
 //!   read on every request, so revoking takes effect at once.
 //! - Strictly read-only: the handler only knows the read methods below, nothing
 //!   writes user data, no connection logins, credentials, keys or documents
-//!   (`list_accounts` may refresh stale derived asset values, as on every app reload).
+//!   (`accounts` uses `list_accounts`, which may refresh stale derived asset
+//!   values, as on every app reload).
 //! - Only the accounts in the scope are visible, also through search, loan views
 //!   and sums: a payment linked to an unshared loan reads as `transfer`. A
 //!   booking to an unshared *own* account stays a `transfer` too (else savings
-//!   would count as spending); that tells "to an own account", never which. IBANs / account numbers and notes are off by default;
-//!   counterparty and purpose can be switched off.
+//!   would count as spending); that tells "to an own account", never which.
+//! - IBANs / account numbers and notes are off by default; counterparty and
+//!   purpose can be switched off. Categories (names, tree, a booking's category)
+//!   and the coarse `flow` are always shared: without them the data says
+//!   little, and both can reflect hidden fields (a rule on a counterparty, a
+//!   salary IBAN).
 //!
 //! The wire types (`Api*`) are their own, versioned structs: internal models
 //! change between releases, `v1` stays stable.
@@ -153,8 +158,9 @@ pub struct ApiTransactionPage {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ApiCurrencyTotals {
     pub currency: String,
-    /// Same definition as the app's income / expense tiles: transfers between
-    /// own accounts are neutral, refunds reduce the expenses.
+    /// Same definition as the app's income / expense tiles (transfers between
+    /// own accounts are neutral, refunds reduce the expenses), except that a
+    /// payment to an unshared loan is neutral too.
     pub income_cents: i64,
     /// Positive amount of money spent.
     pub expense_cents: i64,
@@ -166,7 +172,9 @@ pub struct ApiCategoryTotal {
     pub category_id: Option<i64>,
     pub category_path: String,
     pub currency: String,
-    /// Net sum (split bookings count with their parts).
+    /// Net sum of every booking in the category, like the app's category list:
+    /// transfers and loan payments included (unlike `totals`), split bookings
+    /// with their parts.
     pub net_cents: i64,
 }
 
@@ -319,7 +327,7 @@ impl Vault {
             serde_json::from_value(v).map_err(|e| ApiError::invalid(e.to_string()))
         }
         let value = match req.method.as_str() {
-            "info" => to_value(api_info(&scope, &self.shared_accounts(&scope)?)),
+            "info" => to_value(self.api_info(&scope)?),
             "accounts" => to_value(self.shared_accounts(&scope)?),
             "categories" => to_value(self.api_categories()?),
             "transactions" => to_value(self.api_transactions(&scope, params(req.params)?)?),
@@ -360,10 +368,46 @@ impl Vault {
                     .and_then(|c| last_sync.get(&c).copied().flatten()),
                 iban: numbers(a.iban),
                 account_number: numbers(a.account_number),
-                name: a.name,
+                // Names can carry the account number ("Girokonto 1234567").
+                name: shared_text(scope, true, &a.name).unwrap_or_default(),
                 bank_name: a.bank_name,
             })
             .collect())
+    }
+
+    /// Counts and flags only: one small query, no `list_accounts` (clients poll it).
+    fn api_info(&self, scope: &ShareScope) -> ApiResult<ApiInfo> {
+        let db = self.db()?;
+        let shared: HashSet<i64> = shared_account_ids(&db, scope)?.into_iter().collect();
+        let mut stmt = db
+            .prepare(
+                "SELECT a.id, c.last_sync_unix FROM accounts a
+                   JOIN bank_connections c ON c.id = a.connection_id AND c.deleted_ms IS NULL
+                  WHERE a.deleted_ms IS NULL",
+            )
+            .map_err(CoreError::from)?;
+        let mut last_sync: Option<i64> = None;
+        for row in stmt
+            .query_map([], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+            })
+            .map_err(CoreError::from)?
+        {
+            let (id, ts) = row.map_err(CoreError::from)?;
+            if shared.contains(&id) {
+                last_sync = last_sync.max(ts);
+            }
+        }
+        Ok(ApiInfo {
+            api_version: API_VERSION,
+            core_version: crate::core_version(),
+            account_count: shared.len() as u32,
+            shares_account_numbers: scope.share_account_numbers,
+            shares_counterparty: scope.share_counterparty,
+            shares_purpose: scope.share_purpose,
+            shares_notes: scope.share_notes,
+            last_sync_unix: last_sync,
+        })
     }
 
     /// The category tree. Category names are no account data and are shared whole.
@@ -380,15 +424,16 @@ impl Vault {
             .map_err(CoreError::from)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(CoreError::from)?;
-        let parents: HashMap<i64, Option<i64>> = rows.iter().copied().collect();
+        // A deleted parent is not listed: the child reads as top level.
+        let parents: HashMap<i64, Option<i64>> = rows
+            .iter()
+            .map(|&(id, p)| (id, p.filter(|p| paths.contains_key(p))))
+            .collect();
         // Steps up the parent chain (a name may contain " › " itself); bounded
         // against a broken, cyclic tree.
         let depth = |mut id: i64| {
             let mut d = 0u32;
-            while let Some(Some(p)) = parents.get(&id) {
-                if d >= 64 {
-                    break;
-                }
+            while let Some(Some(p)) = parents.get(&id).filter(|_| d < 64) {
                 d += 1;
                 id = *p;
             }
@@ -396,11 +441,11 @@ impl Vault {
         };
         let mut out: Vec<ApiCategory> = rows
             .iter()
-            .filter_map(|&(id, parent_id)| {
+            .filter_map(|&(id, _)| {
                 let (name, path, _, _) = paths.get(&id)?;
                 Some(ApiCategory {
                     id,
-                    parent_id,
+                    parent_id: parents.get(&id).copied().flatten(),
                     name: crate::i18n::display_name(name),
                     depth: depth(id),
                     path: crate::i18n::display_path(path),
@@ -570,19 +615,6 @@ impl Vault {
     }
 }
 
-fn api_info(scope: &ShareScope, shared: &[ApiAccount]) -> ApiInfo {
-    ApiInfo {
-        api_version: API_VERSION,
-        core_version: crate::core_version(),
-        account_count: shared.len() as u32,
-        shares_account_numbers: scope.share_account_numbers,
-        shares_counterparty: scope.share_counterparty,
-        shares_purpose: scope.share_purpose,
-        shares_notes: scope.share_notes,
-        last_sync_unix: shared.iter().filter_map(|a| a.last_sync_unix).max(),
-    }
-}
-
 /// Ids of the shared accounts that still exist: what bookings and sums need,
 /// without the balances and counts of `list_accounts`.
 fn shared_account_ids(db: &rusqlite::Connection, scope: &ShareScope) -> ApiResult<Vec<i64>> {
@@ -669,12 +701,12 @@ fn check_search(scope: &ShareScope, search: Option<String>) -> ApiResult<Option<
 }
 
 /// Text field as shared: `None` when switched off. Unless account numbers are
-/// shared, IBANs and every run of 8+ digits are masked (account, card, customer
-/// and contract numbers, also grouped by single spaces, `-`, `/` or `.`); a lone
-/// date (`15.11.2026`, `2026-11-15`) and shorter numbers (amounts) stay.
+/// shared, IBANs and every run of 6+ digits are masked, like in the sync log
+/// (account, card, customer and contract numbers, also grouped by single
+/// spaces, `-`, `/` or `.`); a real calendar date (`15.11.2026`, `15.11.26`,
+/// `2026-11-15`) and shorter numbers stay.
 fn shared_text(scope: &ShareScope, on: bool, text: &str) -> Option<String> {
     static LONG_NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    static DATE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     if !on {
         return None;
     }
@@ -682,14 +714,10 @@ fn shared_text(scope: &ShareScope, on: bool, text: &str) -> Option<String> {
         return Some(text.to_string());
     }
     let text = crate::sync_log::replace_ibans(text, |_| "[IBAN]".into());
-    let long = crate::sync_log::re(&LONG_NUMBER, r"\d(?:[ \t\u{00A0}\u{202F}\-/.]?\d){7,}");
-    let date = crate::sync_log::re(
-        &DATE,
-        r"^(?:\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})$",
-    );
+    let long = crate::sync_log::re(&LONG_NUMBER, r"\d(?:[ \t\u{00A0}\u{202F}\-/.]?\d){5,}");
     Some(
         long.replace_all(&text, |c: &regex::Captures<'_>| {
-            if date.is_match(&c[0]) {
+            if is_calendar_date(&c[0]) {
                 c[0].to_string()
             } else {
                 "[number]".to_string()
@@ -697,6 +725,15 @@ fn shared_text(scope: &ShareScope, on: bool, text: &str) -> Option<String> {
         })
         .into_owned(),
     )
+}
+
+/// A whole date of a plausible year, not just something shaped like one
+/// (`1234-56-78` is a number).
+fn is_calendar_date(s: &str) -> bool {
+    ["%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d/%m/%Y"]
+        .iter()
+        .filter_map(|f| chrono::NaiveDate::parse_from_str(s, f).ok())
+        .any(|d| (1900..=2100).contains(&chrono::Datelike::year(&d)))
 }
 
 fn api_transaction(scope: &ShareScope, t: &Booking) -> ApiTransaction {

@@ -578,3 +578,65 @@ fn depth_follows_the_parent_chain() {
         assert_eq!(c["depth"].as_u64().unwrap(), expected);
     }
 }
+
+#[test]
+fn six_digit_numbers_and_date_shaped_numbers_are_masked() {
+    let scope = ShareScope::default();
+    let masked = |t: &str| shared_text(&scope, true, t).unwrap();
+    assert_eq!(
+        masked("Kto 1234567 Kundennr. 654321 Ref 1234-56-78 Nr 12.34.5678"),
+        "Kto [number] Kundennr. [number] Ref [number] Nr [number]"
+    );
+    assert_eq!(
+        masked("vom 15.11.26 bis 31.12.2026, Rate 12345,67"),
+        "vom 15.11.26 bis 31.12.2026, Rate 12345,67"
+    );
+}
+
+#[test]
+fn account_names_hide_numbers_and_info_stays_light() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    v.rename_account(giro, "Giro 0532013000".into()).unwrap();
+    share(&v, &[giro], |_| {});
+    assert_eq!(ok(&v, "accounts", Value::Null)[0]["name"], "Giro [number]");
+    let info = ok(&v, "info", Value::Null);
+    assert_eq!(info["account_count"], 1);
+    share(&v, &[giro], |s| s.share_account_numbers = true);
+    assert_eq!(
+        ok(&v, "accounts", Value::Null)[0]["name"],
+        "Giro 0532013000"
+    );
+}
+
+#[test]
+fn children_of_deleted_categories_read_as_top_level() {
+    let (_d, v) = demo();
+    share(&v, &[account_id(&v, "Musterbank Girokonto")], |_| {});
+    let parent: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT parent_id FROM categories WHERE parent_id IS NOT NULL AND deleted_ms IS NULL LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET deleted_ms = 1 WHERE id = ?1",
+            [parent],
+        )
+        .unwrap();
+    let cats = ok(&v, "categories", Value::Null);
+    let cats = cats.as_array().unwrap();
+    let ids: HashSet<i64> = cats.iter().map(|c| c["id"].as_i64().unwrap()).collect();
+    assert!(!ids.contains(&parent));
+    for c in cats {
+        match c["parent_id"].as_i64() {
+            Some(p) => assert!(ids.contains(&p), "dangling parent {p}"),
+            None => assert_eq!(c["depth"], 0),
+        }
+    }
+}
