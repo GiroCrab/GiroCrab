@@ -474,7 +474,7 @@ Rectangle {
             }
             Button { text: qsTr("Bank suchen und hinzufügen …"); icon.name: SF.icon("magnifyingglass"); highlighted: true
                      Layout.fillWidth: true; implicitHeight: 34; onClicked: AppModel.showAddBank = true }
-            Button { text: qsTr("Aus MoneyMoney importieren …"); icon.name: SF.icon("square.and.arrow.down.on.square"); highlighted: true
+            Button { text: qsTr("Vorhandene Daten importieren …"); icon.name: SF.icon("square.and.arrow.down.on.square"); highlighted: true
                      Layout.fillWidth: true; implicitHeight: 34; onClicked: AppModel.openMoneyMoneyImport() }
             Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.border }
             RowLayout {

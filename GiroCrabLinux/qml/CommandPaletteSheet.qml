@@ -33,7 +33,7 @@ Sheet {
             add(qsTr("„%1“ kategorisieren").arg(b.merchant_name), action + " · C", "tag", () => m.showCategorizer = true)
             add(qsTr("Regel für „%1“ erstellen").arg(b.merchant_name), action + " · R", "wand.and.stars", () => m.openRuleEditor(b))
         }
-        add(qsTr("MoneyMoney Historie & Kategorien importieren"), action, "square.and.arrow.down.on.square", () => m.openMoneyMoneyImport())
+        add(qsTr("Historie & Kategorien importieren"), action, "square.and.arrow.down.on.square", () => m.openMoneyMoneyImport())
         add(qsTr("Regeln jetzt anwenden"), action, "play", () => m.applyAllRules())
         add(qsTr("Einstellungen"), action + " · " + Fmt.keys("Strg+,"), "gearshape", () => m.openSettings())
         add(qsTr("Übersicht"), qsTr("Konten"), "square.grid.2x2", () => m.sidebarSelection = "all")

@@ -49,7 +49,7 @@ ApplicationWindow {
             Action { text: qsTr("Neues Darlehen …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.openLoanEditor("create") }
             Action { text: qsTr("Neue Hauptkategorie …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.newCategoryRequest = { parent: null } }
             AppMenuSeparator {}
-            Action { text: qsTr("Aus MoneyMoney importieren …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.openMoneyMoneyImport() }
+            Action { text: qsTr("Vorhandene Daten importieren …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.openMoneyMoneyImport() }
             Action { text: qsTr("Buchungen als CSV exportieren …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.exportFilteredBookingsCSV() }
             AppMenuSeparator {}
             Action { text: qsTr("Drucken …"); shortcut: "Ctrl+P"; enabled: AppModel.isUnlocked; onTriggered: AppModel.showPrintSheet = true }
