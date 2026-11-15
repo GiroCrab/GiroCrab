@@ -35,6 +35,7 @@ fn main() {
     );
     print_web_assets(&manifest);
     english_strings(&manifest);
+    help_catalog(&manifest);
     CxxQtBuilder::new_qml_module(QmlModule::new("GiroCrab").qml_files(qml))
         .qt_module("Quick")
         .qt_module("QuickControls2")
@@ -259,4 +260,142 @@ fn qt_placeholders(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// The help & FAQ of the Mac app (HelpView.swift `HelpCatalog`: topics in German and English,
+/// keyboard shortcut labels), so the Linux help window shows the same texts in both languages.
+/// Written to OUT_DIR/help.json; fails the build if the Swift file no longer has that shape.
+fn help_catalog(manifest: &std::path::Path) {
+    let swift = manifest.join("../GiroCrabApp/Sources/GiroCrabUI/HelpView.swift");
+    println!("cargo::rerun-if-changed={}", swift.display());
+    let text = std::fs::read_to_string(&swift)
+        .unwrap_or_else(|e| panic!("{}: {e} (help catalog of the Mac app)", swift.display()));
+    fn fail(what: &str) -> ! {
+        panic!("HelpView.swift: {what} – the file changed shape, extend build.rs (help_catalog)")
+    }
+
+    // A Swift string literal starting at `s` (`"…"` or a `"""` block): its value and the rest.
+    fn literal(s: &str) -> Option<(String, &str)> {
+        let s = s.trim_start();
+        if let Some(rest) = s.strip_prefix("\"\"\"") {
+            let rest = rest.strip_prefix('\n')?;
+            let end = rest.find("\"\"\"")?;
+            let block = &rest[..end];
+            // indentation of the closing delimiter is removed from every line
+            let indent = block.rsplit('\n').next().unwrap_or("").len();
+            let body: Vec<&str> = block
+                .trim_end_matches(' ')
+                .trim_end_matches('\n')
+                .lines()
+                .collect();
+            let value = body
+                .iter()
+                .map(|l| {
+                    if l.len() >= indent {
+                        &l[indent..]
+                    } else {
+                        l.trim_start()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Some((unescape(&value)?, &rest[end + 3..]));
+        }
+        let rest = s.strip_prefix('"')?;
+        let mut end = 0;
+        let bytes = rest.as_bytes();
+        while end < bytes.len() {
+            match bytes[end] {
+                b'\\' => end += 2,
+                b'"' => break,
+                _ => end += 1,
+            }
+        }
+        Some((unescape(&rest[..end])?, &rest[end + 1..]))
+    }
+    fn unescape(s: &str) -> Option<String> {
+        if s.contains("\\(") {
+            return None; // Swift interpolation: not a plain text any more
+        }
+        Some(
+            s.replace("\\\"", "\"")
+                .replace("\\n", "\n")
+                .replace("\\\\", "\\"),
+        )
+    }
+    // `key: ["de": "…", "en": "…"]` → (de, en)
+    fn pair<'a>(s: &'a str, key: &str) -> Option<(String, String, &'a str)> {
+        let s = &s[s.find(&format!("{key}: ["))? + key.len() + 3..];
+        let s = &s[s.find("\"de\":")? + 5..];
+        let (de, s) = literal(s)?;
+        let s = &s[s.find("\"en\":")? + 5..];
+        let (en, s) = literal(s)?;
+        Some((de, en, s))
+    }
+
+    let topics_at = text
+        .find("static let topics: [HelpTopic] = [")
+        .unwrap_or_else(|| fail("`static let topics` not found"));
+    let topics_end = topics_at
+        + text[topics_at..]
+            .find("\n    ]\n")
+            .unwrap_or_else(|| fail("end of topics"));
+    let mut topics = Vec::new();
+    for chunk in text[topics_at..topics_end].split("HelpTopic(").skip(1) {
+        let field = |name: &str| -> Option<String> {
+            let at = chunk.find(&format!("{name}: \""))? + name.len() + 2;
+            literal(&chunk[at..]).map(|(v, _)| v)
+        };
+        let Some(id) = field("id") else { break };
+        let icon = field("icon").unwrap_or_else(|| fail("topic without icon"));
+        let (title_de, title_en, rest) =
+            pair(chunk, "title").unwrap_or_else(|| fail("topic title"));
+        let (body_de, body_en, rest) = pair(rest, "body").unwrap_or_else(|| fail("topic body"));
+        let kw = &rest[rest.find("keywords: [").unwrap_or_else(|| fail("keywords")) + 11..];
+        let kw = &kw[..kw.find(']').unwrap_or_else(|| fail("keywords end"))];
+        let keywords: Vec<String> = kw
+            .split(',')
+            .filter_map(|k| literal(k).map(|(v, _)| v))
+            .collect();
+        topics.push(serde_json::json!({
+            "id": id, "icon": icon,
+            "title": { "de": title_de, "en": title_en },
+            "body": { "de": body_de, "en": body_en },
+            "keywords": keywords,
+        }));
+    }
+    if topics.len() < 3 {
+        fail("fewer than three topics found");
+    }
+
+    let sc_at = text
+        .find("static let shortcuts:")
+        .unwrap_or_else(|| fail("`static let shortcuts` not found"));
+    let sc_end = sc_at
+        + text[sc_at..]
+            .find("\n    ]")
+            .unwrap_or_else(|| fail("end of shortcuts"));
+    let mut shortcuts = serde_json::Map::new();
+    for line in text[sc_at..sc_end]
+        .lines()
+        .filter(|l| l.trim_start().starts_with("(\""))
+    {
+        let mut parts = Vec::new();
+        let mut rest = line.trim_start().strip_prefix('(').unwrap_or_default();
+        while let Some((v, r)) = literal(rest) {
+            parts.push(v);
+            rest = r.trim_start().strip_prefix(',').unwrap_or(r);
+        }
+        if parts.len() != 3 {
+            fail(&format!("shortcut line `{}`", line.trim()));
+        }
+        shortcuts.insert(
+            parts[1].clone(),
+            serde_json::Value::String(parts[2].clone()),
+        );
+    }
+
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("help.json");
+    let json = serde_json::json!({ "topics": topics, "shortcuts": shortcuts });
+    std::fs::write(out, json.to_string()).expect("write help.json");
 }

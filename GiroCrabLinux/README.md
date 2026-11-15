@@ -126,7 +126,7 @@ von der nativen Installation wechselt, kopiert `tresor.girocrab` in den neuen Or
 | AppModel.exportFilteredBookingsCSV | Main.qml (FileDialog), AppModel.qml | „GiroCrab-Buchungen.csv“ |
 | SettingsView, AutoReview | SettingsWindow.qml, GeneralSettings.qml, BankConnectionsSettings.qml, SecuritySettings.qml, SettingsFormSection.qml, SettingsFormRow.qml | eigenes Fenster (Strg+,): Allgemein (mit Sprache), Banken, Sicherheit. Entfällt: Mitteilungen, Saldoverlauf-Stil, Händler-Logos, Dokumente-Ordner, Updates, Touch ID, iCloud-Sync |
 | SyncLog | SyncLogWindow.qml | Fenster › Abruf-Protokoll: Suche, Konto-Filter, „Nur Fehler“, Sortierung, CSV-Export, Leeren |
-| HelpView | HelpWindow.qml | Hilfe › GiroCrab-Hilfe (Strg+?), Tastaturkürzel für Linux. Nur deutsch: die englischen Hilfetexte von HelpView.swift fehlen noch |
+| HelpView | HelpWindow.qml | Hilfe › GiroCrab-Hilfe (Strg+?). Themen und Kürzel-Beschriftungen (de/en) liest `build.rs` direkt aus HelpView.swift; Tresor-Thema und Tastaturkürzel für Linux angepasst |
 | Screenshot, LaunchOptions | Main.qml, AppModel.qml, cpp/prepare.cpp | siehe „Demo- und Screenshot-Optionen“ |
 | ManualLoansUI | LoanEditorSheet.qml, LoanAssignMenu.qml, ManualLoanDetails.qml, LoanProgressCard.qml, AppModel.qml | Neues Darlehen (Ablage), Darlehen bearbeiten, Stand neu setzen, Live-Vorschau, Buchung › Darlehen zuordnen, „Neues Darlehen aus dieser Buchung …“. Fehlt: Widerrufen |
 | OpeningBalanceUI | OpeningBalanceSheet.qml, AppModel.qml | Startsaldo, Stichtag, Kalibrieren, Vorschau, Entfernen. Fehlt: Widerrufen |
@@ -156,8 +156,9 @@ Lauf nie Sprachen mischt. „Systemsprache“ nimmt den ersten deutschen oder en
   ohne Eintrag bleibt der deutsche Text stehen. Zahlen und Datumsangaben folgen wie am Mac der Sprache mit der Region
   des Systems (`QLocale::setDefault`, z. B. `en_DE`); der Kern bekommt die Sprache über `i18n::set_language`.
 - `python3 -I scripts/i18n-report.py` listet Texte ohne Englisch und endet dann mit Fehler (läuft in der CI).
-- Nicht übersetzt: die Hilfetexte (HelpWindow.qml), Demo-Inhalte (Regel-, Konto- und Buchungsnamen) und Texte der
-  Banken. Datei-Dialoge und Druckdialog kommen von der Arbeitsumgebung bzw. Qt.
+- Die Hilfe (HelpWindow.qml) kommt zweisprachig direkt aus `HelpView.swift` (`build.rs`, `help.json`); nur das
+  Tresor-Thema ist für Linux eigen (Secret Service statt Schlüsselbund von macOS, kein iCloud-Sync).
+- Nicht übersetzt: Demo-Inhalte (Regel-, Konto- und Buchungsnamen) und Texte der Banken. Datei-Dialoge und Druckdialog kommen von der Arbeitsumgebung bzw. Qt.
 
 ## Demo- und Screenshot-Optionen
 

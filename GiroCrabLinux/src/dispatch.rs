@@ -188,6 +188,11 @@ fn call(method: &str, a: &Value) -> R {
     match method {
         "core_version" => ok(girocrab_core::core_version()),
         // --- Settings › Allgemein › Sprache (LanguagePreference.swift) ---
+        // HelpView.swift › HelpCatalog, read by build.rs: topics (de/en) and shortcut labels.
+        "help_content" => {
+            serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/help.json")))
+                .map_err(|e| e.to_string())
+        }
         "language_state" => ok(json!({
             "choice": crate::i18n::choice(),
             "system": crate::i18n::system_language(),
