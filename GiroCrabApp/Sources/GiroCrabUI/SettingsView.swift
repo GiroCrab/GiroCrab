@@ -59,6 +59,7 @@ struct GeneralSettings: View {
     @AppStorage(ViewLayout.budgetsKey) private var showBudgets = true
     @AppStorage(AppTextSize.defaultsKey) private var textSize: AppTextSize = .standard
     @AppStorage(AppAppearance.defaultsKey) private var appearance: AppAppearance = .system
+    @AppStorage(BookingDensity.defaultsKey) private var bookingDensity: BookingDensity = .standard
 
     var body: some View {
         @Bindable var model = model
@@ -79,6 +80,11 @@ struct GeneralSettings: View {
                     ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
                 }
                 Text("Hell oder Dunkel gilt nur für GiroCrab; „System“ folgt der Einstellung des Systems.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+                Picker("Buchungsdichte", selection: $bookingDensity) {
+                    ForEach(BookingDensity.allCases) { Text($0.title).appFont(.body).tag($0) }
+                }
+                Text("Kompakt öffnet die aktive Buchung mit allen Details. Standard zeigt einen kurzen Verwendungszweck. Großzügig zeigt alle Buchungen ausführlich.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 #if os(macOS)
                 // iOS: the system's Dynamic Type setting (Einstellungen › Anzeige & Helligkeit).

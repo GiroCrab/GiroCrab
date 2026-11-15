@@ -390,6 +390,17 @@
         }
       }
     },
+    "%@: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: %@"
+          }
+        }
+      }
+    },
     "%@: %lld neue Kontoauszüge" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5630,6 +5641,17 @@
         }
       }
     },
+    "Buchungsdichte" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction density"
+          }
+        }
+      }
+    },
     "Buchungstext" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10565,6 +10587,17 @@
         }
       }
     },
+    "Großzügig" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spacious"
+          }
+        }
+      }
+    },
     "Grundstück" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13030,6 +13063,28 @@
         }
       }
     },
+    "Kompakt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compact"
+          }
+        }
+      }
+    },
+    "Kompakt öffnet die aktive Buchung mit allen Details. Standard zeigt einen kurzen Verwendungszweck. Großzügig zeigt alle Buchungen ausführlich." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compact expands the active transaction to show all details. Standard shows a short payment description. Spacious shows every transaction in detail."
+          }
+        }
+      }
+    },
     "Komplette Historie, Kategorien und Notizen – ohne Duplikate bei späteren Abrufen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13795,6 +13850,17 @@
         }
       }
     },
+    "Kundenreferenz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Customer reference"
+          }
+        }
+      }
+    },
     "Kunst" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14187,6 +14253,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "MREF (mandate reference)"
+          }
+        }
+      }
+    },
+    "Mandatsreferenz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mandate reference"
           }
         }
       }
@@ -17544,6 +17621,17 @@
         }
       }
     },
+    "Referenz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reference"
+          }
+        }
+      }
+    },
     "Regel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20495,6 +20583,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copy Transaction"
+          }
+        }
+      }
+    },
+    "Umsatzart" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction type"
           }
         }
       }
