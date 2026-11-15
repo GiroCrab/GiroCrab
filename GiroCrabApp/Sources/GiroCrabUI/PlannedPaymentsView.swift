@@ -45,12 +45,9 @@ struct PlannedPaymentsView: View {
                 .labelsHidden()
                 .frame(maxWidth: 140)
                 Spacer(minLength: 0)
-                if model.canEditStandingOrders {
-                    Button { model.newStandingOrder() } label: {
-                        Label("Dauerauftrag anlegen …", systemImage: "plus")
-                    }
-                    .help("Legt bei der Bank einen neuen Dauerauftrag an (mit TAN).")
-                }
+                #if os(macOS)
+                newStandingOrderButton
+                #endif
             }
             .padding(.horizontal, 20)
             totals.padding(.horizontal, 20)
@@ -99,8 +96,23 @@ struct PlannedPaymentsView: View {
         }
         .padding(.top, 16)
         .background(Theme.canvas)
+        #if os(iOS)
+        // iPhone: the filters need the width of the row, so the action goes to the navigation bar (HIG)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { newStandingOrderButton }
+        }
+        #endif
         .task(id: ReloadKey(account: model.plannedAccountFilter, horizon: model.plannedHorizon, version: model.plannedVersion)) {
             await model.reloadPlanned()
+        }
+    }
+
+    @ViewBuilder private var newStandingOrderButton: some View {
+        if model.canEditStandingOrders {
+            Button { model.newStandingOrder() } label: {
+                Label("Dauerauftrag anlegen …", systemImage: "plus")
+            }
+            .help("Legt bei der Bank einen neuen Dauerauftrag an (mit TAN).")
         }
     }
 

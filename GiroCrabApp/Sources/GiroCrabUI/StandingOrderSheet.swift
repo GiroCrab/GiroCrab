@@ -32,6 +32,9 @@ struct StandingOrderSheet: View {
                 .padding(.horizontal, 20).padding(.vertical, 14)
             Divider()
             if reviewing || isDelete { review } else { editor }
+            #if os(iOS)
+            Spacer(minLength: 0)  // a tall sheet keeps the title and the content at the top
+            #endif
             if let e = model.transferError {
                 Label(e, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red).appFont(.callout)
@@ -70,23 +73,41 @@ struct StandingOrderSheet: View {
                 .disabled(draft.action == .change)
             }
             Section {
-                TextField("Empfänger", text: $model.standingDraft.name, prompt: Text("Name"))
-                    .sensitive()
-                HStack {
-                    TextField("IBAN", text: $model.standingDraft.iban, prompt: Text("DE00 …"))
-                        .appFont(.body, design: .monospaced)
+                // LabeledContent keeps the field names on iOS, where a TextField in a Form shows only its prompt
+                LabeledContent("Empfänger") {
+                    TextField("Empfänger", text: $model.standingDraft.name, prompt: Text("Name"))
+                        .labelsHidden().multilineTextAlignment(.trailing)
                         .sensitive()
-                    if !draft.iban.isEmpty && !draft.ibanValid {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.negative)
-                            .help("IBAN ungültig (Prüfsumme/Länge)")
-                            .accessibilityLabel("IBAN ungültig")
+                }
+                LabeledContent("IBAN") {
+                    HStack {
+                        TextField("IBAN", text: $model.standingDraft.iban, prompt: Text("DE00 …"))
+                            .labelsHidden().multilineTextAlignment(.trailing)
+                            .appFont(.body, design: .monospaced)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                            #endif
+                            .sensitive()
+                        if !draft.iban.isEmpty && !draft.ibanValid {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.negative)
+                                .help("IBAN ungültig (Prüfsumme/Länge)")
+                                .accessibilityLabel("IBAN ungültig")
+                        }
                     }
                 }
-                TextField("Betrag", text: $model.standingDraft.amountText, prompt: Text("0,00"))
-                    .multilineTextAlignment(.trailing).appFont(.body, monospacedDigit: true)
-                    .sensitive()
-                TextField("Verwendungszweck", text: $model.standingDraft.purpose, prompt: Text("optional"))
-                    .sensitive()
+                LabeledContent("Betrag") {
+                    TextField("Betrag", text: $model.standingDraft.amountText, prompt: Text("0,00"))
+                        .labelsHidden().multilineTextAlignment(.trailing).appFont(.body, monospacedDigit: true)
+                        #if os(iOS)
+                        .keyboardType(.decimalPad)
+                        #endif
+                        .sensitive()
+                }
+                LabeledContent("Verwendungszweck") {
+                    TextField("Verwendungszweck", text: $model.standingDraft.purpose, prompt: Text("optional"))
+                        .labelsHidden().multilineTextAlignment(.trailing)
+                        .sensitive()
+                }
             }
             Section {
                 Picker("Rhythmus", selection: $model.standingDraft.unit) {
