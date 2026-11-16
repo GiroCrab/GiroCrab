@@ -69,6 +69,18 @@ Funktionsumfang der Oberfläche.
   Dateimanager (Dolphin, Nautilus, …) mit der entschlüsselten Kopie ausgewählt; ohne
   passenden Dateimanager öffnet sich der Ordner.
 
+### Commerzbank mit HBCI-Schlüsseldatei (RAH-10)
+
+- **Bank hinzufügen › „Commerzbank · Schlüsseldatei“** (unter „Nicht gefunden?“) übernimmt eine
+  bestehende HBCI-Schlüsseldatei mit Profil 10 als Kopie in den verschlüsselten Tresor; die
+  Originaldatei bleibt unverändert. Zuerst die FinTS-Produktregistrierung, dann Datei,
+  Anzeigename und Passwort; „Datei prüfen“ prüft Passwort und Datei ohne Netz.
+- Fehlen die öffentlichen Bankschlüssel, ruft „Öffentliche Bankschlüssel abrufen“ sie ab. Sie
+  werden erst übernommen, wenn für beide Schlüssel der SHA-256-Prüfwert aus der offiziellen
+  Commerzbank-Quelle eingetragen ist und übereinstimmt.
+- Danach startet der erste Abruf. Beim Abruf fragt GiroCrab nach dem „Passwort der
+  Schlüsseldatei“ statt nach einer PIN; vorerst nur Konten, Salden und Umsätze.
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus
