@@ -121,6 +121,7 @@ QtObject {
         }
         function onDemoActiveChanged() { sm.loadExpanded(); sm.reloadVaultState() }
         function onVaultStateChanged() { sm.reloadVaultState() }
+        function onVaultReplaced() { sm.reloadVaultState() }
         // accounts reload after a sync, an import or an edit: the counts may have changed too
         function onGroupsChanged() { sm.refreshCounts() }
     }

@@ -49,6 +49,12 @@ QtObject {
         focus = null
         back = null
     }
+    /// Another vault's data (demo ↔ own, unlock, restore): its merchant list ends without
+    /// restoring anything – the selection is set to "all" anyway (no change event then).
+    property Connections vaultWatch: Connections {
+        target: AppModel
+        function onVaultReplaced() { mf.focus = null; mf.back = null }
+    }
     function applySelection(selection) {
         applying = true
         if (AppModel.sidebarSelection === selection) AppModel.reloadSelection(false)

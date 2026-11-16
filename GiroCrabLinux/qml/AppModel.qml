@@ -248,6 +248,9 @@ QtObject {
     property var pendingNoteFocus: null
     /// Hands keyboard focus back to the booking list (Esc in the note field).
     signal focusList()
+    /// The data behind the UI was replaced (demo ↔ own vault, unlock, backup restore): singletons
+    /// holding per-vault state (tags undo, merchant list, sidebar settings, standing orders) reset.
+    signal vaultReplaced()
     /// Day card the stream should scroll to (click in the balance chart).
     signal scrollToDay(string day)
     /// The start-up preselection must not scroll the list (SwiftUI sets it before the view appears).
@@ -458,6 +461,7 @@ QtObject {
         merchantStatsTimer.stop()
         merchantStatsCache = ({})
         merchantStatsKey = ""
+        vaultReplaced()
     }
     /// Switch to the demo data (own vault stays unlocked in the background).
     function showDemo() { if (!demoActive) openDemo() }
@@ -2590,7 +2594,10 @@ QtObject {
         if (!c0) return
         const c = Object.assign({}, c0)
         change(c)
-        run(() => core("update_category", { id: c.id, name: c.name, parent_id: c.parent_id, sf_symbol: c.sf_symbol, color_hex: c.color_hex }))
+        if (!run(() => { core("update_category", { id: c.id, name: c.name, parent_id: c.parent_id, sf_symbol: c.sf_symbol, color_hex: c.color_hex }); return true })) return
+        // categories reload off the GUI thread: patch the local copy at once, so a second quick
+        // edit (symbol, then colour) starts from this one and does not write the old value back
+        categories = categories.map(x => x.id === c.id ? Object.assign({}, x, { name: c.name, parent_id: c.parent_id, sf_symbol: c.sf_symbol, color_hex: c.color_hex }) : x)
         reloadCategories()
         reloadBookings() // the booking list shows a category's name, symbol and colour
         reloadPlanning() // budget cards show name, symbol, colour and the parent
@@ -2679,6 +2686,8 @@ QtObject {
         try {
             const id = core("save_rule", { rule: rule })
             core("apply_rules", { only_uncategorized: false })
+            // the editor reads the saved rule (its new id) right away: rules now, the rest async
+            reloadRulesNow()
             reloadAll()
             return id
         } catch (e) {

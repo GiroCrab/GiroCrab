@@ -75,10 +75,13 @@ ColumnLayout {
             AppModel.coreAsync("add_rah10_connection_with_bank_keys", args, id => {
                 busy = false
                 password.text = ""; path = ""
-                AppModel.reloadSettings(); AppModel.reloadAccounts()
+                AppModel.reloadSettings()
                 if (form.host) form.host.close()
-                const c = AppModel.connections.find(x => x.id === id)
-                if (c) AppModel.startSync(c, secret)
+                // the first sync needs the new connection, which the async reload brings
+                AppModel.reloadAccounts(() => {
+                    const c = AppModel.connections.find(x => x.id === id)
+                    if (c) AppModel.startSync(c, secret)
+                })
             }, err => {
                 busy = false
                 AppModel.errorMessage = AppModel.parseCoreError(err).message

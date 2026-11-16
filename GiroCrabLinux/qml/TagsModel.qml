@@ -30,6 +30,8 @@ QtObject {
         target: AppModel
         function onVaultStateChanged() { tm.undoStack = []; tm.redoStack = []; tm.reload() }
         function onDemoActiveChanged() { tm.undoStack = []; tm.redoStack = []; tm.reload() }
+        // also a restored backup in the same vault: undo ids would point at replaced data
+        function onVaultReplaced() { tm.undoStack = []; tm.redoStack = []; tm.reload() }
     }
 
     // MARK: names (same rules as the core)

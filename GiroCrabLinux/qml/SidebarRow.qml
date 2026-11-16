@@ -25,6 +25,12 @@ Item {
     HoverHandler { id: hover }
     TapHandler {
         onTapped: {
+            // a click on the row already selected („Alle Konten“ under the merchant list) ends
+            // that list like the Mac's didSet, which fires on every assignment
+            if (AppModel.sidebarSelection === row.selectionKey && MerchantFocus.focus !== null) {
+                MerchantFocus.sidebarChanged()
+                AppModel.reloadSelection(false)
+            }
             AppModel.sidebarSelection = row.selectionKey
             // the sidebar takes the keyboard (↑/↓) like a clicked List
             if (row.ListView.view && row.ListView.view.takeKeyFocus) row.ListView.view.takeKeyFocus()

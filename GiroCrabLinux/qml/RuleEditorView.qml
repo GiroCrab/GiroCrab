@@ -78,6 +78,8 @@ Sheet {
             })
             AppModel.core("apply_rules", { only_uncategorized: false })
         })
+        // the next move and the draft below need the new order now (reloadAll is async)
+        AppModel.reloadRulesNow()
         AppModel.reloadAll()
         // the open draft gets the new priority, so saving it keeps the place
         if (selection !== null && draft !== null && draft.id === selection) {

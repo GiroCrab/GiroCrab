@@ -597,6 +597,12 @@ QtObject {
         showStandingSheet = true
     }
 
+    /// Another vault's data (demo ↔ own, restore): its standing orders are not this vault's.
+    property Connections vaultWatch: Connections {
+        target: AppModel
+        function onVaultReplaced() { p.standingOrders = []; p.standingUnknown = null }
+    }
+
     /// endBankDialogsForLock: no sheet stays open, no PIN stays in memory, no order list.
     function endForLock() {
         showBatchSheet = false
