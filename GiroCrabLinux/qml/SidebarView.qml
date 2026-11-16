@@ -136,12 +136,13 @@ Rectangle {
             }
             // Mouse drags move accounts and groups (like the Mac sidebar); the wheel scrolls –
             // over the rows (handler on the ListView, which as a non-interactive Flickable does
-            // not pass the wheel on) and over the accounts header (this one).
+            // not pass the wheel on) and over the accounts header (this one). All devices: the
+            // default filter (mouse, touchpad) let no wheel through under Wayland.
             function scrollBy(e) {
                 const max = Math.max(0, list.contentHeight - list.height + list.topMargin + list.bottomMargin)
                 list.contentY = Math.max(-list.topMargin, Math.min(max - list.topMargin, list.contentY - e.angleDelta.y / 120 * 48))
             }
-            WheelHandler { onWheel: e => keyNav.scrollBy(e) }
+            WheelHandler { acceptedDevices: PointerDevice.AllDevices; onWheel: e => keyNav.scrollBy(e) }
         ListView {
             id: list
             anchors.fill: parent
@@ -151,7 +152,7 @@ Rectangle {
             model: sidebar.rows
             boundsBehavior: Flickable.StopAtBounds
             interactive: false
-            WheelHandler { onWheel: e => keyNav.scrollBy(e) }
+            WheelHandler { acceptedDevices: PointerDevice.AllDevices; onWheel: e => keyNav.scrollBy(e) }
             /// A click on a row gives the sidebar the keyboard (SidebarRow).
             function takeKeyFocus() { keyNav.forceActiveFocus(Qt.MouseFocusReason) }
             ScrollBar.vertical: AppScrollBar {}
