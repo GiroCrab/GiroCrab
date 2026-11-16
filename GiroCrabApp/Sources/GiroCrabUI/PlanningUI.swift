@@ -103,6 +103,11 @@ struct BudgetBar: View {
             }
         }
         .frame(height: 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Budgetverbrauch"))
+        .accessibilityValue(percent > 100
+            ? Text("\(Int(percent.rounded())) % des Budgets verbraucht, überschritten")
+            : Text("\(Int(percent.rounded())) % des Budgets verbraucht"))
     }
 }
 
@@ -358,11 +363,24 @@ struct CashflowCard: View {
                 }
             }
             .frame(height: 160)
+            .accessibilityLabel("Cashflow")
+            .accessibilityChartDescriptor(BarChartDescriptor(
+                title: String(localized: "Cashflow"),
+                summary: String(localized: "Einnahmen und Ausgaben je Zeitraum"),
+                categoryTitle: String(localized: "Zeitraum"),
+                categories: rows.map { label($0.key) },
+                valueTitle: String(localized: "Betrag"),
+                series: [
+                    .init(name: income, values: rows.map { Double($0.incomeCents) / 100 }),
+                    .init(name: expense, values: rows.map { Double($0.expenseCents) / 100 }),
+                ]
+            ))
             HStack(spacing: 14) {
                 legendDot(palette.incomeDot, income)
                 legendDot(palette.expenseDot, expense)
             }
             .appFont(.caption).foregroundStyle(Theme.secondary)
+            .accessibilityHidden(true)   // the chart descriptor names both series
             }
         }
         .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))

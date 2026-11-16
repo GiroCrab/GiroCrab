@@ -104,6 +104,14 @@ struct CategorySumChart: View {
                 }
             }
             .accessibilityLabel("Summen der Kategorie")
+            .accessibilityChartDescriptor(BarChartDescriptor(
+                title: String(localized: "Summen der Kategorie"),
+                summary: String(localized: "Summe je \(model.effectiveCategoryBarUnit.title)", comment: "Chart summary; the argument is the bar unit (Tag/Monat/Jahr)"),
+                categoryTitle: String(localized: "Zeitraum"),
+                categories: bars.map { $0.start.formatted(Self.tooltipFormat(unit)) },
+                valueTitle: String(localized: "Summe"),
+                series: [.init(name: String(localized: "Summe"), values: bars.map { Double($0.cents) / 100 })]
+            ))
             .overlay(alignment: .topLeading) { unitMenu }
             .contextMenu { unitPicker }
         }

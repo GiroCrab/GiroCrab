@@ -540,7 +540,9 @@ struct WealthView: View {
                 }
             }
             .frame(height: 6)
+            .accessibilityHidden(true)   // the share bar only repeats the title and amount
         }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: composition donut

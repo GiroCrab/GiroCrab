@@ -583,7 +583,7 @@ struct AccountRow: View {
                             .overlay(Capsule().strokeBorder(.background, lineWidth: 1.5))
                             .fixedSize()
                             .offset(x: 5, y: -4)
-                            .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
+                            .accessibilityHidden(true)   // read as the row's value instead
                     }
                 }
             VStack(alignment: .leading, spacing: 1) {
@@ -597,10 +597,12 @@ struct AccountRow: View {
                             .appFont(.caption2)
                             .foregroundStyle(.orange)
                             .help("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.")
+                            .accessibilityLabel(Text("Zugriff entzogen"))
                     }
                     Spacer(minLength: 4)
                     if syncing {
                         ProgressView().controlSize(.mini)
+                            .accessibilityLabel(Text("Wird synchronisiert"))
                     }
                 }
                 // row 2: bank / loan progress left, balance right
@@ -636,6 +638,9 @@ struct AccountRow: View {
         }
         .padding(.vertical, 1)
         .opacity(account.isArchived ? 0.55 : 1)
+        // one element per account: name, bank / progress, balance; unread count as its value
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(account.newCount > 0 ? Text("\(Int(account.newCount)) neue Buchungen") : Text(verbatim: ""))
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
