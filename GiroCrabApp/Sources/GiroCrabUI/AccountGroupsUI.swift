@@ -92,7 +92,7 @@ struct AccountsSectionHeader: View {
                 Image(systemName: "magnifyingglass")
                     .appFont(.caption)
                     .foregroundStyle(Theme.tertiary)
-                TextField("Name, Kontoinhaber, IBAN …", text: $model.sidebarAccountSearch)
+                TextField("Suchen…", text: $model.sidebarAccountSearch)
                     .textFieldStyle(.plain)
                     .sensitive() // typed owner names / IBANs (#301)
                     .appFont(.caption)

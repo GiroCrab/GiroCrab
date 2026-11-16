@@ -54,8 +54,6 @@ struct SidebarView: View {
                     case .byKind: kindGroupRows
                     }
                 }
-                // one step right of „Alle Konten“
-                .padding(.leading, 14)
             }
             // payments and documents are used less often: below the accounts, each under its heading
             SidebarCaption("Zahlungen")
@@ -320,8 +318,8 @@ struct SidebarView: View {
                     }, perform: { items, edge in
                         handleDrop(items, into: group, row: i, edge: edge)
                     }, intoKey: "g:" + group.uuid))
-                        // one step right of their group, at every nesting level
-                        .padding(.leading, indent + 14)
+                        // slightly right of their group, at every nesting level
+                        .padding(.leading, indent + 8)
                         .draggable(GroupDrag.account(account.id))
                 }
             }
@@ -539,10 +537,6 @@ struct AccountRow: View {
     let account: Account
     var syncing: Bool = false
 
-    private var ownerInitials: String {
-        account.owner.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
-    }
-
     private var repaid: Double? {
         guard account.kind == .loan, let p = account.initialBalanceCents, p > 0 else { return nil }
         return max(0, min(1, 1 - Double(-account.balanceCents) / Double(p)))
@@ -551,18 +545,12 @@ struct AccountRow: View {
     var body: some View {
         HStack(spacing: 9) {
             // tinted like the account's marker in the booking list
-            AccountSignet(account: account, size: 24, color: model.accountColor(account.id), onSelection: onSelection)
+            AccountSignet(account: account, size: 22, color: model.accountColor(account.id), onSelection: onSelection)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
+                    // the owner no longer takes room in the title line: tooltip only
                     Text(account.name).lineLimit(1).sensitive()
-                    if !account.owner.isEmpty {
-                        Text(ownerInitials)
-                            .appFont(.caption2, weight: .semibold)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
-                            .background(.secondary.opacity(0.15), in: Capsule())
-                            .sensitive()
-                    }
+                        .help(account.owner.isEmpty ? "" : account.owner)
                     if account.accessRevoked {
                         Image(systemName: "lock.slash")
                             .appFont(.caption2)
