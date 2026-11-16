@@ -48,7 +48,7 @@ Funktionsumfang der Oberfläche.
 - **„Tresor wiederherstellen …“** ersetzt alle Daten des eigenen Tresors durch eine Sicherung und
   zeigt danach den eigenen Tresor, auch wenn vorher die Demo zu sehen war.
 - **„Vorhandene Daten importieren“ › Datenbank** bietet jetzt auch die GiroCrab-Sicherung an
-  (Art: GiroCrab oder MoneyMoney). Bei leerem Tresor ist sie vorgewählt; enthält der Tresor schon
+  (neben der Datenbank anderer Programme). Bei leerem Tresor ist sie vorgewählt; enthält der Tresor schon
   Konten, fragt „Tresor ersetzen?“ nach.
 
 ### Belege & PostBox
