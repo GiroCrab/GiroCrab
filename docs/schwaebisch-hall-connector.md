@@ -23,7 +23,8 @@ die das Portal selbst lädt. Unten stehen nur Pfade, Feldnamen und Regeln, keine
   (Benutzername, Passwort und gegebenenfalls ein zweiter Faktor) läuft im eingebetteten Browser
   auf den Seiten der Bausparkasse.
 * Die Sitzungs-Cookies bleiben wie bei den anderen Portal-Anbindungen im Browser-Datenspeicher
-  der App; das Portal beendet die Sitzung nach einiger Zeit selbst.
+  der App; das Portal beendet die Sitzung nach einiger Zeit selbst. „Web-Sitzung (Cookies)
+  löschen …“ in den Einstellungen der Verbindung entfernt sie sofort.
 
 ## Ablauf
 
@@ -36,25 +37,40 @@ die das Portal selbst lädt. Unten stehen nur Pfade, Feldnamen und Regeln, keine
 | 5 | `GET /bin/bshweb/postbox/attachment?id={id}` | PDF-Anhang. |
 
 Die Abrufe laufen als Skript in der angemeldeten Seite (gleiche Herkunft, `credentials:
-same-origin`, keine Weiterleitungen). An die App gehen nur die oben genannten Vertragsfelder
-und die PDFs, keine Cookies, Namen, Adressen oder Lastschriftkonten.
+same-origin`, keine Weiterleitungen), und zwar in einer eigenen JavaScript-Welt der App
+(`WKContentWorld.defaultClient`): Skripte Dritter auf der Portalseite (z. B. ein Tag-Manager)
+können ihr `fetch` nicht umleiten und die Daten nicht mitlesen. An die App gehen nur die oben
+genannten Vertragsfelder und die PDFs, keine Cookies, Namen, Adressen oder Lastschriftkonten.
+Die Skripte lesen nur (GET); ob das Portal eine Nachricht beim Laden des Anhangs als gelesen
+markiert, ist nicht bekannt.
 
 ## Regeln
 
-* **Konten:** ein Konto je Vertrag, Kennung `bsh:{vtn}`, Name aus Vertragsart und
-  Vertragsnummer (`bsn`). Sparphase → Sparkonto; Verträge mit „Darlehen“ in Art oder Phase →
-  Darlehen mit negativem Saldo.
+* **Konten:** ein Konto je Vertrag, Kennung `bsh:{vtn}`, Name aus Vertragsart ohne Phase und
+  Vertragsnummer (`bsn`), z. B. „Bausparvertrag 217111 D 01“. Sparphase → Sparkonto; Verträge
+  mit „Darlehen“ in Art oder Phase → Darlehen mit negativem Saldo. Wechselt ein Vertrag in die
+  Darlehensphase, wird das bestehende Konto zum Darlehen; der Name bleibt.
+* **Vollständige Liste:** Die Vertragsliste gilt als vollständig. Ein Vertrag, der nicht mehr
+  geliefert wird (z. B. ausgezahlt), wird als „nicht mehr geliefert“ markiert, statt seinen
+  letzten Saldo zu behalten.
 * **Beträge:** formatierte Zeichenketten wie `&#43; 1.234,56`; HTML-Entities werden dekodiert,
-  Rechnen nur in Cent.
-* **Datum:** Jahr und Monat kommen aus der Gruppierung (Schlüssel wie `2025`/`Dezember` oder
-  Felder `year`/`month`), der Tag aus `day`. Steht im Tag ein volles Datum, gilt dieses.
+  Rechnen nur in Cent. Erlaubt sind nur Vorzeichen vorn, Ziffern, Trennzeichen und `€`/`EUR`;
+  ein Soll/Haben-Kennzeichen (`S`/`H`) oder ein nachgestelltes Minus verwirft den Abruf, statt
+  das Vorzeichen zu verlieren.
+* **Datum:** Jahr und Monat kommen aus der Gruppierung (Schlüssel wie `2025`/`Dezember`/`03`
+  oder Felder `year`/`month`), der Tag aus `day`. Steht im Tag ein volles Datum, gilt dieses.
+  Monatsnamen gelten nur exakt (keine Wortanfänge), Zahlen als Schlüssel nur zweistellig.
+* **Summen:** `saldo`, `summe`, `total` werden übersprungen. Ein Eintrag mit Betrag und Datum,
+  aber ohne `subject`, verwirft den Abruf.
 * **Buchungs-IDs:** Das Portal liefert keine. Buchungen bekommen Inhalts-IDs (Datum, Betrag,
   Buchungstext); zwei gleiche Buchungen am selben Tag bleiben zwei.
 * **Unvollständige Antworten:** Eine Buchung ohne erkennbares Datum oder mit unlesbarem Betrag
   verwirft den ganzen Abruf, statt Teildaten zu speichern.
 * **Dokumente:** Ein PDF wird dem Vertrag zugeordnet, dessen Nummer in der Nachricht steht
-  (genau einer), sonst dem ersten Vertrag der Verbindung. Bereits geladene Anhänge werden
-  nicht erneut geladen. Nur PDFs werden gespeichert.
+  (genau einer), sonst dem ersten Vertrag der Verbindung. Ist der genannte Vertrag nicht
+  übernommen (Kontoauswahl offen, abgewählt, archiviert), wird das PDF nicht geladen und nie
+  einem anderen Vertrag zugeordnet. Die Kontoauswahl wird deshalb vor dem Postfach abgefragt.
+  Bereits geladene Anhänge werden nicht erneut geladen. Nur PDFs bis 25 MB werden gespeichert.
 * Hintergrund-Abrufe sind nicht möglich: Die Anmeldung braucht das Browserfenster.
 
 ## Offene Punkte (bitte mit echtem Vertrag prüfen)

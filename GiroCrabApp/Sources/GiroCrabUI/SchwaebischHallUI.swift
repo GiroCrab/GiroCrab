@@ -7,7 +7,11 @@ import GiroCrabCore
 /// below then call the portal's own JSON endpoints in the signed-in page with
 /// its session cookies. Cookies and credentials stay in the web view: only the
 /// contract fields the core needs and the PDF attachments cross to Swift.
-/// Read-only: no message is marked, deleted or sent. Scripts are tested in
+/// The scripts only read (GET); they never delete or send anything. Whether the
+/// portal marks a message as read when its attachment is downloaded is not
+/// known. They run in their own JavaScript world (`.defaultClient`): the
+/// portal's third-party scripts (tag manager) cannot hook their `fetch` or read
+/// the data, while the page's cookies still apply. Tested in
 /// `scripts/test-schwaebisch-hall-portal.cjs`.
 enum SchwaebischHallScripts {
     static let origin = "https://www.schwaebisch-hall.de"
@@ -146,6 +150,9 @@ struct SchwaebischHallWebSheet: View {
     @State private var progress = ""
     @State private var notice: String?
     @State private var task: Task<Void, Never>?
+    /// Contracts another login already delivers: asked before the documents are downloaded (#346).
+    @State private var choosing = false
+    @State private var askedInFlow = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -165,6 +172,12 @@ struct SchwaebischHallWebSheet: View {
             }.padding(14)
             Divider()
             PortalWebView(browser: browser).macFrame(minWidth: 760, minHeight: 620)
+                .overlay {
+                    if choosing {
+                        AccountSelectionPanel(connection: connection) { choosing = false }
+                            .background(.background)
+                    }
+                }
             Divider()
             HStack {
                 Button("Schließen", role: .cancel) { task?.cancel(); close() }.keyboardShortcut(.cancelAction)
@@ -193,7 +206,7 @@ struct SchwaebischHallWebSheet: View {
     private func run(_ script: String, arguments: [String: Any] = [:]) async throws -> String {
         try Task.checkCancellation()
         let result = try await browser.webView.callAsyncJavaScript(SchwaebischHallScripts.prelude + "\n" + script,
-            arguments: arguments, in: nil, contentWorld: .page)
+            arguments: arguments, in: nil, contentWorld: .defaultClient)
         try Task.checkCancellation()
         guard let string = result as? String else { throw SchwaebischHallError.unreadable }
         return string
@@ -212,6 +225,14 @@ struct SchwaebischHallWebSheet: View {
                 let summary = try await pin.run { try $0.importSchwaebischHallSnapshot(connectionId: connectionId, snapshotJson: snapshot) }
                 var downloaded = 0
                 var failed = 0
+                // Held-back contracts: ask now, so their documents are fetched (or skipped) accordingly.
+                let open = try await pin.run { try $0.pendingAccountSelectionConnections() }
+                if open.contains(connectionId) {
+                    askedInFlow = true
+                    progress = String(localized: "Auswahl der Konten …")
+                    choosing = true
+                    while choosing { try await Task.sleep(nanoseconds: 200_000_000) }
+                }
                 if includeDocuments {
                     progress = String(localized: "Postfach auflisten …")
                     let list = try await run(SchwaebischHallScripts.documents)
@@ -250,10 +271,12 @@ struct SchwaebischHallWebSheet: View {
             // PDFs are committed one by one: flush them on success, cancellation and partial failure.
             await pin.checkpoint()
             running = false
+            choosing = false
             model.documentsVersion += 1
             model.reloadAll()
-            // accounts another login already delivers wait for a choice (#346)
-            model.checkPendingAccountSelection()
+            // Skipped ("Später") contracts were already offered in this run.
+            if !askedInFlow { model.checkPendingAccountSelection() }
+            askedInFlow = false
         }
     }
 

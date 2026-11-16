@@ -306,6 +306,19 @@ struct ConnectionEditSheet: View {
                         }
                     }
                 }
+                // Browser-only portals keep their session cookies in the app's web
+                // store: offer to remove them like for the card portals above.
+                if connection.connector == .schwaebischHall {
+                    Section {
+                        Button {
+                            save()
+                            dismiss()
+                            model.webLoginConnection = model.connections.first { $0.id == connection.id } ?? connection
+                        } label: { Label("Anmelden & Abrufen", systemImage: "safari") }
+                            .buttonStyle(.borderedProminent)
+                        Button("Web-Sitzung (Cookies) löschen …", role: .destructive) { confirmClear = .portal }
+                    } header: { Text("Direkt-Login (Web-Session)").appSectionHeader() }
+                }
                 if isComdirect {
                     Section {
                         LabeledContent("Abrufweg", value: connection.connector == .comdirect

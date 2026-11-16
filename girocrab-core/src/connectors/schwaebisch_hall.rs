@@ -34,7 +34,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rusqlite::{params, OptionalExtension};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use super::{store_fetch, FetchResult, RemoteAccount, RemoteTransaction, SyncSummary};
 use crate::{
@@ -83,16 +83,22 @@ fn vtn(v: &Value) -> CoreResult<String> {
 }
 
 /// Portal amount (`&#43; 1.234,56`, `- 12,00 €`, `−5,00`, or a JSON number) in cents.
+/// Strict: anything but a leading sign, digits, separators, spaces and a
+/// currency (`€`/`EUR`) is rejected, so a debit/credit marker such as a
+/// trailing `S`/`H` or `-` can never be dropped and flip the sign.
 fn amount(v: &Value) -> CoreResult<i64> {
     match v {
         Value::Number(_) => crate::money::json_number_to_cents_rounded(v),
         Value::String(s) => {
             let decoded = decode_html_entities(s).replace(['\u{2212}', '\u{2013}'], "-");
-            let cleaned: String = decoded
-                .chars()
-                .filter(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | ',' | '.'))
-                .collect();
-            if !cleaned.bytes().any(|b| b.is_ascii_digit()) {
+            let mut t = decoded.trim();
+            for currency in ["EUR", "eur", "€"] {
+                t = t.strip_suffix(currency).unwrap_or(t).trim_end();
+                t = t.strip_prefix(currency).unwrap_or(t).trim_start();
+            }
+            let cleaned: String = t.chars().filter(|c| !c.is_whitespace()).collect();
+            let allowed = |c: char| c.is_ascii_digit() || matches!(c, '+' | '-' | ',' | '.');
+            if !cleaned.chars().all(allowed) || !cleaned.bytes().any(|b| b.is_ascii_digit()) {
                 return Err(invalid());
             }
             crate::money::parse_cents(&cleaned).map_err(|_| invalid())
@@ -116,43 +122,54 @@ fn year_of(v: &Value) -> Option<i32> {
     (1950..=2200).contains(&n).then_some(n as i32)
 }
 
+/// Month names and abbreviations (German, English), matched exactly.
 const MONTHS: [&[&str]; 12] = [
-    &["jan"],
-    &["feb"],
-    &["mär", "mae", "mrz", "mar"],
-    &["apr"],
+    &["januar", "jänner", "january", "jan"],
+    &["februar", "february", "feb"],
+    &["märz", "maerz", "march", "mär", "mrz", "mar"],
+    &["april", "apr"],
     &["mai", "may"],
-    &["jun"],
-    &["jul"],
-    &["aug"],
-    &["sep"],
-    &["okt", "oct"],
-    &["nov"],
-    &["dez", "dec"],
+    &["juni", "june", "jun"],
+    &["juli", "july", "jul"],
+    &["august", "aug"],
+    &["september", "sept", "sep"],
+    &["oktober", "october", "okt", "oct"],
+    &["november", "nov"],
+    &["dezember", "december", "dez", "dec"],
 ];
 
-/// Month as 1–12 from a number, `"03"` or a German (or English) month name.
+fn month_name(s: &str) -> Option<u32> {
+    let s = s.trim().trim_end_matches('.').to_lowercase();
+    MONTHS
+        .iter()
+        .position(|names| names.contains(&s.as_str()))
+        .map(|i| i as u32 + 1)
+}
+
+/// Month of a `month`/`monat` field: 1–12 as number or string, or a month name.
 fn month_of(v: &Value) -> Option<u32> {
     let n = match v {
         Value::Number(n) => n.as_u64()?,
         Value::String(s) => {
-            let s = s.trim().trim_end_matches('.').to_lowercase();
-            if s.bytes().all(|b| b.is_ascii_digit()) && !s.is_empty() && s.len() <= 2 {
-                s.parse().ok()?
+            let t = s.trim();
+            if !t.is_empty() && t.len() <= 2 && t.bytes().all(|b| b.is_ascii_digit()) {
+                t.parse().ok()?
             } else {
-                let i = MONTHS
-                    .iter()
-                    .position(|names| names.iter().any(|m| s.starts_with(m)))?;
-                // "mai…" / "märz…" but not words that merely start like one.
-                if s.chars().count() > 9 {
-                    return None;
-                }
-                i as u64 + 1
+                return month_name(t);
             }
         }
         _ => return None,
     };
     (1..=12).contains(&n).then_some(n as u32)
+}
+
+/// Month of an object key: a month name or exactly two digits (`"03"`). A
+/// bare `"3"` is not taken: it may just be a list index.
+fn month_of_key(k: &str) -> Option<u32> {
+    if k.len() == 2 && k.bytes().all(|b| b.is_ascii_digit()) {
+        return k.parse().ok().filter(|m| (1..=12).contains(m));
+    }
+    month_name(k)
 }
 
 /// Year/month an object states in its own fields (`year`/`jahr`, `month`/`monat`).
@@ -202,9 +219,18 @@ fn day_parts(v: &Value) -> (Option<u32>, Option<u32>, Option<i32>) {
     (day, month, year)
 }
 
-/// A booking: an object with an amount and a day or date.
+/// A booking: an object with an amount and a day or date. It must also carry
+/// a `subject`; one without is rejected (see `collect_bookings`), so a total
+/// that looks like a booking can never be imported as one.
 fn is_booking(obj: &Map<String, Value>) -> bool {
     obj.contains_key("amount") && (obj.contains_key("day") || obj.contains_key("date"))
+}
+
+/// Keys of year/month totals, never bookings.
+fn is_total_key(k: &str) -> bool {
+    ["saldo", "summe", "sum", "total", "gesamt"]
+        .iter()
+        .any(|t| k.eq_ignore_ascii_case(t))
 }
 
 struct Booking {
@@ -215,7 +241,7 @@ struct Booking {
 
 /// Walks the `transactions` tree of a contract (years › months › bookings in
 /// whatever shape: objects keyed by year/month, arrays of groups with
-/// `year`/`month` fields, or both). `saldo` entries are year totals, not bookings.
+/// `year`/`month` fields, or both). Totals (`saldo`, `summe`, `total` …) are skipped.
 fn collect_bookings(
     v: &Value,
     key: Option<&str>,
@@ -228,8 +254,7 @@ fn collect_bookings(
     }
     // The key this value hangs under ("2025", "Dezember", "03") dates it too.
     let from_key = key.map_or((None, None), |k| {
-        let k = Value::String(k.into());
-        (year_of(&k), month_of(&k))
+        (year_of(&Value::String(k.into())), month_of_key(k))
     });
     let (year, month) = narrow((year, month), from_key);
     match v {
@@ -239,6 +264,9 @@ fn collect_bookings(
             }
         }
         Value::Object(obj) if is_booking(obj) => {
+            if !obj.get("subject").is_some_and(Value::is_string) {
+                return Err(invalid());
+            }
             let (year, month) = narrow((year, month), level_date(obj));
             let field = obj.get("day").or_else(|| obj.get("date"));
             let (day, d_month, d_year) = field.map_or((None, None, None), day_parts);
@@ -255,7 +283,7 @@ fn collect_bookings(
         Value::Object(obj) => {
             let (year, month) = narrow((year, month), level_date(obj));
             for (k, child) in obj {
-                if k.eq_ignore_ascii_case("saldo") || !(child.is_object() || child.is_array()) {
+                if is_total_key(k) || !(child.is_object() || child.is_array()) {
                     continue;
                 }
                 collect_bookings(child, Some(k), year, month, out)?;
@@ -281,6 +309,22 @@ fn account_kind(contract: &Value, details: &Value) -> AccountKind {
     }
 }
 
+/// Account name part of a contract type without its phase ("Bausparvertrag
+/// Sparphase" → "Bausparvertrag"): the name stays the same when the contract
+/// moves on to the loan phase (the kind changes instead).
+fn contract_label(contract_type: &str) -> String {
+    let label = contract_type
+        .split_whitespace()
+        .filter(|w| !w.to_lowercase().ends_with("phase"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if label.is_empty() {
+        "Bausparvertrag".into()
+    } else {
+        label
+    }
+}
+
 /// Parses the browser script's snapshot (`version: 1`).
 fn snapshot(json: &str, today: &str) -> CoreResult<FetchResult> {
     let root: Value = serde_json::from_str(json).map_err(|_| invalid())?;
@@ -290,6 +334,9 @@ fn snapshot(json: &str, today: &str) -> CoreResult<FetchResult> {
     let contracts = root["contracts"].as_array().ok_or_else(invalid)?;
     let mut result = FetchResult {
         bank_name: Some("Schwäbisch Hall".into()),
+        // The contract list is complete: a paid-out contract that disappears
+        // is marked as no longer delivered instead of keeping its last balance.
+        accounts_complete: true,
         ..Default::default()
     };
     let mut seen = HashSet::new();
@@ -309,9 +356,7 @@ fn snapshot(json: &str, today: &str) -> CoreResult<FetchResult> {
             balance = -balance;
         }
         let bsn = text(c, "bsn");
-        let label = Some(text(c, "type"))
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "Bausparvertrag".into());
+        let label = contract_label(&text(c, "type"));
         let account = RemoteAccount {
             external_ref: format!("{REF_PREFIX}{vtn}"),
             name: format!("{label} {bsn}").trim().to_string(),
@@ -361,9 +406,15 @@ fn attachment_id(doc: &Value) -> CoreResult<String> {
     Ok(id.to_string())
 }
 
-/// `YYYY-MM-DD` of a postbox date (`dd.mm.yyyy`, ISO or epoch milliseconds).
+/// `YYYY-MM-DD` of a postbox date (`dd.mm.yyyy`, ISO, or Unix time in
+/// seconds or milliseconds: below 10^11 it is seconds, i.e. before 5138).
 fn document_date(v: &Value) -> Option<String> {
-    if let Some(ms) = v.as_i64() {
+    if let Some(n) = v.as_i64() {
+        let ms = if n.abs() < 100_000_000_000 {
+            n.checked_mul(1000)?
+        } else {
+            n
+        };
         return chrono::DateTime::from_timestamp_millis(ms)
             .map(|d| d.date_naive().format("%Y-%m-%d").to_string());
     }
@@ -376,6 +427,38 @@ fn document_date(v: &Value) -> Option<String> {
     }
     let (d, m, y) = day_parts(&Value::String(s.into()));
     chrono::NaiveDate::from_ymd_opt(y?, m?, d?).map(|d| d.format("%Y-%m-%d").to_string())
+}
+
+/// Account a postbox attachment belongs to: the contract the message names
+/// (`vtn`), else the connection's first contract. `None` when that contract is
+/// not imported (held back for the account choice, skipped, archived, deleted).
+fn document_account(
+    db: &rusqlite::Connection,
+    connection_id: i64,
+    doc: &Value,
+) -> CoreResult<Option<i64>> {
+    let active = "connection_id = ?1 AND deleted_ms IS NULL AND archived_unix IS NULL";
+    match &doc["vtn"] {
+        Value::Null => Ok(db
+            .query_row(
+                &format!(
+                    "SELECT id FROM accounts WHERE {active} AND external_ref LIKE ?2 ORDER BY id LIMIT 1"
+                ),
+                params![connection_id, format!("{REF_PREFIX}%")],
+                |r| r.get(0),
+            )
+            .optional()?),
+        v => {
+            let vtn = vtn(&json!({ "vtn": v }))?;
+            Ok(db
+                .query_row(
+                    &format!("SELECT id FROM accounts WHERE {active} AND external_ref = ?2"),
+                    params![connection_id, format!("{REF_PREFIX}{vtn}")],
+                    |r| r.get(0),
+                )
+                .optional()?)
+        }
+    }
 }
 
 fn document_source(connection_id: i64, id: &str) -> String {
@@ -400,6 +483,9 @@ impl Vault {
         snapshot_json: String,
     ) -> CoreResult<SyncSummary> {
         self.check_schwaebisch_hall(connection_id)?;
+        if snapshot_json.len() > super::MAX_TEXT_BYTES {
+            return Err(invalid());
+        }
         let summary = store_fetch(
             &self,
             ConnectorKind::SchwaebischHall,
@@ -411,13 +497,18 @@ impl Vault {
     }
 
     /// Postbox attachments (`[{id, date, title, vtn?}]`) not stored yet, as
-    /// validated JSON objects; known ids are skipped before any download.
+    /// validated JSON objects; known ids are skipped before any download, and
+    /// so are those of a contract that is not imported (held back for the
+    /// account choice, skipped, archived or deleted) – like FNZ.
     pub fn pending_schwaebisch_hall_documents(
         self: Arc<Self>,
         connection_id: i64,
         documents_json: String,
     ) -> CoreResult<Vec<String>> {
         self.check_schwaebisch_hall(connection_id)?;
+        if documents_json.len() > super::MAX_TEXT_BYTES {
+            return Err(invalid());
+        }
         let docs: Vec<Value> = serde_json::from_str(&documents_json).map_err(|_| invalid())?;
         let db = self.db()?;
         let mut known = db.prepare("SELECT 1 FROM booking_documents WHERE source_url = ?1")?;
@@ -425,6 +516,9 @@ impl Vault {
         let mut pending = Vec::new();
         for doc in docs {
             let id = attachment_id(&doc)?;
+            if document_account(&db, connection_id, &doc)?.is_none() {
+                continue;
+            }
             if seen.insert(id.clone())
                 && known
                     .query_row([document_source(connection_id, &id)], |_| Ok(()))
@@ -438,7 +532,8 @@ impl Vault {
     }
 
     /// Stores one downloaded attachment (PDF only) with the contract it names,
-    /// or else the connection's first contract. Returns false if it was known.
+    /// or – when it names none – the connection's first contract. Returns
+    /// false if it was known.
     pub fn import_schwaebisch_hall_document(
         self: Arc<Self>,
         connection_id: i64,
@@ -446,7 +541,7 @@ impl Vault {
         bytes: Vec<u8>,
     ) -> CoreResult<bool> {
         self.check_schwaebisch_hall(connection_id)?;
-        if !bytes.starts_with(b"%PDF-") {
+        if bytes.len() > super::MAX_DOC_BYTES || !bytes.starts_with(b"%PDF-") {
             return Err(invalid());
         }
         let doc: Value = serde_json::from_str(&document_json).map_err(|_| invalid())?;
@@ -455,21 +550,9 @@ impl Vault {
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| tr("Schwäbisch Hall Dokument").into());
         let date = document_date(&doc["date"]).unwrap_or_else(super::today);
-        let named = doc["vtn"]
-            .as_str()
-            .map(|v| format!("{REF_PREFIX}{v}"))
-            .unwrap_or_default();
         let db = self.db()?;
-        let account_id: i64 = db
-            .query_row(
-                "SELECT id FROM accounts WHERE connection_id = ?1 AND deleted_ms IS NULL
-                   AND archived_unix IS NULL AND external_ref LIKE ?2
-                 ORDER BY (external_ref = ?3) DESC, id LIMIT 1",
-                params![connection_id, format!("{REF_PREFIX}%"), named],
-                |r| r.get(0),
-            )
-            .optional()?
-            .ok_or_else(invalid)?;
+        // A named contract that is not imported never falls back to another one.
+        let account_id = document_account(&db, connection_id, &doc)?.ok_or_else(invalid)?;
         Ok(crate::documents::insert_doc(
             &db,
             None,
@@ -541,8 +624,24 @@ mod tests {
         assert_eq!(amount(&json!("\u{2212}12,30 EUR")).unwrap(), -1_230);
         assert_eq!(amount(&json!("&minus; 7,05")).unwrap(), -705);
         assert_eq!(amount(&json!(12.5)).unwrap(), 1_250);
+        assert_eq!(amount(&json!("EUR 3,10")).unwrap(), 310);
+        assert_eq!(
+            amount(&json!("&#43;&nbsp;1&nbsp;000,00 EUR")).unwrap(),
+            100_000
+        );
         assert!(amount(&json!("")).is_err());
         assert!(amount(&json!("n/a")).is_err());
+        // debit/credit markers must never be dropped (the sign would flip)
+        for bad in [
+            "12,00 S",
+            "5,00 H",
+            "1.234,56-",
+            "+ -5,00",
+            "--5,00",
+            "5,00 USD",
+        ] {
+            assert!(amount(&json!(bad)).is_err(), "{bad}");
+        }
         assert!(amount(&Value::Null).is_err());
     }
 
@@ -556,6 +655,50 @@ mod tests {
         assert_eq!(month_of(&json!("13")), None);
         assert_eq!(month_of(&json!("Saldo")), None);
         assert_eq!(month_of(&json!("Septemberzinsen")), None);
+        assert_eq!(month_of(&json!("3")), Some(3));
+        // only exact names: no words that merely start like a month
+        for word in ["marketing", "Maintal", "Augen", "Junior", "decimal"] {
+            assert_eq!(month_of(&json!(word)), None, "{word}");
+            assert_eq!(month_of_key(word), None, "{word}");
+        }
+        // keys: names or two digits, never a bare list index
+        assert_eq!(month_of_key("Mai"), Some(5));
+        assert_eq!(month_of_key("07"), Some(7));
+        assert_eq!(month_of_key("7"), None);
+        assert_eq!(month_of_key("13"), None);
+    }
+
+    #[test]
+    fn totals_and_bookings_without_subject_are_not_bookings() {
+        let tx = json!({"2025": {"saldo": {"amount": "+ 9,00", "date": "31.12.2025"},
+                                 "Summe": {"amount": "+ 9,00", "day": 31},
+                                 "Mai": [{"day": 3, "subject": "Rate", "amount": "+ 9,00"}]}});
+        let r = parse(json!([contract(
+            "0012345600101",
+            "Bausparvertrag",
+            "+ 9,00",
+            tx
+        )]))
+        .unwrap();
+        assert_eq!(r.transactions.len(), 1);
+        // an unknown amount+date object without subject stops the import
+        let tx = json!({"2025": {"Mai": [{"day": 3, "amount": "+ 9,00"}]}});
+        assert!(parse(json!([contract(
+            "0012345600101",
+            "Bausparvertrag",
+            "+ 9,00",
+            tx
+        )]))
+        .is_err());
+        // bookings under a bare list index have no month: rejected, not January
+        let tx = json!({"2025": {"1": {"day": 3, "subject": "a", "amount": "+ 1,00"}}});
+        assert!(parse(json!([contract(
+            "0012345600101",
+            "Bausparvertrag",
+            "+ 1,00",
+            tx
+        )]))
+        .is_err());
     }
 
     #[test]
@@ -578,7 +721,7 @@ mod tests {
         assert_eq!(r.accounts.len(), 1);
         let a = &r.accounts[0];
         assert_eq!(a.external_ref, "bsh:0012345600101");
-        assert_eq!(a.name, "Bausparvertrag Sparphase 123456 A 01");
+        assert_eq!(a.name, "Bausparvertrag 123456 A 01");
         assert_eq!(a.account_number, "123456 A 01");
         assert_eq!(a.kind, AccountKind::Savings);
         assert_eq!((a.balance_cents, a.balance_date.as_str()), (109_050, TODAY));
@@ -783,6 +926,55 @@ mod tests {
         let named = accounts.iter().find(|a| a.balance_cents == 0).map(|a| a.id);
         assert_eq!(docs[0].account_id, named);
 
+        // A contract that is not imported (held back, skipped, archived) gets
+        // none of its documents, and they never fall back to another contract.
+        let unknown = json!({"id": "att-2", "title": "Fremd", "vtn": "0099999900101"}).to_string();
+        assert!(vault
+            .clone()
+            .pending_schwaebisch_hall_documents(connection, format!("[{unknown}]"))
+            .unwrap()
+            .is_empty());
+        assert!(vault
+            .clone()
+            .import_schwaebisch_hall_document(connection, unknown, b"%PDF-1.7 x".to_vec())
+            .is_err());
+        vault.set_account_archived(named.unwrap(), true).unwrap();
+        let archived = json!({"id": "att-3", "vtn": "0012345600202"}).to_string();
+        assert!(vault
+            .clone()
+            .pending_schwaebisch_hall_documents(connection, format!("[{archived}]"))
+            .unwrap()
+            .is_empty());
+        // without a named contract: the first imported one
+        let plain = json!({"id": "att-4", "date": 1_767_225_600_i64}).to_string();
+        assert_eq!(
+            vault
+                .clone()
+                .pending_schwaebisch_hall_documents(connection, format!("[{plain}]"))
+                .unwrap()
+                .len(),
+            1
+        );
+        // malformed vtn, oversized input
+        let bad = json!({"id": "att-5", "vtn": "1 OR 1=1"}).to_string();
+        assert!(vault
+            .clone()
+            .pending_schwaebisch_hall_documents(connection, format!("[{bad}]"))
+            .is_err());
+        let mut huge = b"%PDF-".to_vec();
+        huge.resize(super::super::MAX_DOC_BYTES + 1, b' ');
+        assert!(vault
+            .clone()
+            .import_schwaebisch_hall_document(connection, plain, huge)
+            .is_err());
+        assert!(vault
+            .clone()
+            .import_schwaebisch_hall_snapshot(
+                connection,
+                " ".repeat(super::super::MAX_TEXT_BYTES + 1)
+            )
+            .is_err());
+
         // another connector's login is refused
         let wrong = vault
             .add_bank_connection(ConnectorKind::PayPal, "Other".into(), "test".into())
@@ -791,6 +983,70 @@ mod tests {
             .clone()
             .import_schwaebisch_hall_snapshot(wrong, "{}".into())
             .is_err());
+    }
+
+    #[test]
+    fn loan_phase_turns_the_stored_savings_account_into_a_loan() {
+        let dir = crate::test_support::TempDir::new("schwaebisch_hall_phase");
+        let vault =
+            Vault::open(dir.join("vault.db").to_string_lossy().into(), vec![6; 32]).unwrap();
+        let connection = vault
+            .add_bank_connection(ConnectorKind::SchwaebischHall, "BSH".into(), "test".into())
+            .unwrap();
+        let import = |contracts: Value| {
+            vault
+                .clone()
+                .import_schwaebisch_hall_snapshot(
+                    connection,
+                    json!({"version": 1, "contracts": contracts}).to_string(),
+                )
+                .unwrap()
+        };
+        let other = contract(
+            "0012345600202",
+            "Bausparvertrag Sparphase",
+            "+ 5,00",
+            Value::Null,
+        );
+        import(json!([
+            contract(
+                "0012345600101",
+                "Bausparvertrag Sparphase",
+                "+ 40.000,00",
+                Value::Null
+            ),
+            other
+        ]));
+        let mut loan = contract(
+            "0012345600101",
+            "Bausparvertrag Darlehensphase",
+            "&#43; 30.000,00",
+            Value::Null,
+        );
+        loan["details"]["contractphase"] = json!("Darlehensphase");
+        // the second contract was paid out: no longer in the list
+        let summary = import(json!([loan]));
+        assert_eq!(summary.revoked_accounts.len(), 1);
+        let accounts = vault.list_accounts().unwrap();
+        let a = accounts
+            .iter()
+            .find(|a| a.account_number == "123456 A 01" && !a.access_revoked)
+            .unwrap();
+        assert_eq!(a.kind, AccountKind::Loan);
+        assert_eq!(a.balance_cents, -3_000_000);
+        assert_eq!(a.name, "Bausparvertrag 123456 A 01");
+        assert_eq!(accounts.iter().filter(|a| a.access_revoked).count(), 1);
+    }
+
+    #[test]
+    fn contract_names_drop_the_phase() {
+        assert_eq!(contract_label("Bausparvertrag Sparphase"), "Bausparvertrag");
+        assert_eq!(
+            contract_label("Wohn-Riester Bausparvertrag Darlehensphase"),
+            "Wohn-Riester Bausparvertrag"
+        );
+        assert_eq!(contract_label(""), "Bausparvertrag");
+        assert_eq!(contract_label("Sparphase"), "Bausparvertrag");
     }
 
     #[test]
@@ -805,6 +1061,11 @@ mod tests {
         );
         assert_eq!(
             document_date(&json!(1_767_225_600_000_i64)).as_deref(),
+            Some("2026-01-01")
+        );
+        // Unix seconds, not 1970
+        assert_eq!(
+            document_date(&json!(1_767_225_600_i64)).as_deref(),
             Some("2026-01-01")
         );
         assert_eq!(document_date(&json!("gestern")), None);
