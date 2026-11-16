@@ -567,6 +567,15 @@ fn english(de: &str) -> Option<&'static str> {
         "App-Code (Demo)" => "App code (demo)",
         "Demo: beliebigen 6-stelligen Code eingeben." => "Demo: enter any 6-digit code.",
         "SMS-TAN (Demo)" => "SMS TAN (demo)",
+        // ------------------------------------------------------------ connectors/volkswagen_bank.rs
+        "Online-Banking-Portal (Direkt-Login, photoTAN/pushTAN)" => "Online banking portal (direct login, photoTAN/pushTAN)",
+        "Passwort / PIN" => "Password / PIN",
+        "Volkswagen Bank: In Entwicklung, noch nicht nutzbar. Vorgesehen sind Konten, Salden und Umsätze; die Freigabe erfolgt per photoTAN oder pushTAN. Interne Portal-API; Änderungen sind möglich." => "Volkswagen Bank: under development, not usable yet. Planned: accounts, balances and transactions; approval via photoTAN or pushTAN. Internal portal API; subject to change.",
+        "Volkswagen Bank: Die Anbindung an das Online-Banking ({0}) ist noch nicht fertiggestellt. Es wurden keine Daten abgerufen." => "Volkswagen Bank: the online banking connection ({0}) is not finished yet. No data was retrieved.",
+        "Bitte die Grafik mit der photoTAN-App scannen und den angezeigten Code eingeben." => "Please scan the graphic with the photoTAN app and enter the code it shows.",
+        "Bitte den Auftrag in der Volkswagen-Bank-App per pushTAN freigeben." => "Please approve the request with pushTAN in the Volkswagen Bank app.",
+        "Bitte die photoTAN eingeben." => "Please enter the photoTAN.",
+        "Volkswagen Bank: Unerwartete Antwort auf die TAN-Abfrage." => "Volkswagen Bank: unexpected answer to the TAN request.",
         // ------------------------------------------------------------ connectors/easybank.rs (catalog)
         "Online-Banking-API (Direkt-Login)" => "Online banking API (direct login)",
         "Benutzername" => "User name",
