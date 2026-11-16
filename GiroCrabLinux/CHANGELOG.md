@@ -144,6 +144,29 @@ Funktionsumfang der Oberfläche.
   öffnet wieder das eigene Formular mit Hinweis; die nächste Einzelüberweisung läuft wieder als
   Einzelüberweisung (#533).
 
+### Geplant
+
+- **„Geplant“** (#240) zeigt alle bei der Bank beauftragten, noch nicht gebuchten Zahlungen
+  (Terminüberweisungen, Daueraufträge, eingereichte Lastschriften) in Monatskarten wie die
+  Buchungsliste, mit Konto- und Zeitraumfilter (30 Tage, 3 Monate, 12 Monate, Alles) und den
+  Summen abgehend und eingehend.
+- Eigene rechte Seitenleiste für die gewählte Zahlung; ↑/↓ wählen, Esc hebt die Auswahl auf.
+  Kontextmenü und Seitenleiste: Dauerauftrag ändern oder löschen, Konto anzeigen, IBAN kopieren.
+  „Dauerauftrag anlegen …“ oben rechts.
+
+### Lastschriften
+
+- **„Lastschriften“** (#143): Mandate je Gläubigerkonto mit Gläubiger-ID (Vorschlag aus
+  vorhandenen Daten), Mandat anlegen, bearbeiten (auch per Doppelklick), aktivieren,
+  deaktivieren und löschen; ↑/↓ und Esc in der Liste.
+- **Import und Export:** CSV-Mitgliederliste (UTF-8 oder Windows-1252) oder SEPA-Lastschriftdatei
+  (pain.008) per Dateidialog oder Datei ins Fenster ziehen; Export der Mandate als CSV.
+- **Einzug vorbereiten:** Betrag und Zweck je Mandat, „Letzter Einzug“ (FNAL), Fälligkeit; die
+  pain.008-Dateien (je Art und Folgetyp eine) lassen sich sichern, als eingezogen markieren oder
+  per FinTS bei der Bank einreichen – eine TAN je Datei, danach stehen die Einzüge unter „Geplant“.
+- Rücklastschriften erscheinen in der Liste und in der rechten Seitenleiste („Als geprüft
+  markieren“), dazu die Buchungen zum Mandat.
+
 ### Buchungsliste und rechte Seitenleiste
 
 - **Tags vergeben (#228):** Die rechte Seitenleiste hat eine Karte „Tags“ unter der Notiz: Chips

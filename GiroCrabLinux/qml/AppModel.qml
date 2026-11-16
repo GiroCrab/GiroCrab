@@ -3099,6 +3099,8 @@ QtObject {
     /// single transfer: its own sheet comes back and its own ending runs.
     property bool activeTransferIsBatch: false
     property bool activeTransferIsStanding: false
+    /// … or a collection run of „Lastschriften“ (DirectDebits.qml, AppModel+DirectDebitSubmit.swift).
+    property bool activeTransferIsDebit: false
 
     /// ConnectorKind.offersInstantChoice: FinTS banks; bunq decides on its own.
     function offersInstantChoice(connector) { return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(connector) >= 0 }
@@ -3157,6 +3159,7 @@ QtObject {
         transferBusy = true
         activeTransferIsBatch = kind === "batch"
         activeTransferIsStanding = kind === "standing"
+        activeTransferIsDebit = kind === "debit"
         activeTransfer = session
         coreAsync("session_start", { session: session }, step => { if (activeTransfer === session) handleTransfer(step, connection) },
                   err => { if (activeTransfer === session) finishTransfer(err) })
@@ -3218,6 +3221,7 @@ QtObject {
         } else if (step.Finished) {
             pollTimer.stop()
             activeChallenge = null; activeTransfer = null; transferBusy = false
+            if (activeTransferIsDebit) { activeTransferIsDebit = false; DirectDebits.finishGroup(); return }
             if (activeTransferIsStanding) {
                 activeTransferIsStanding = false
                 Payments.finishStandingOrder()
@@ -3242,6 +3246,7 @@ QtObject {
             // cannot be resent with one click, and say so clearly.
             pollTimer.stop()
             activeChallenge = null; activeTransfer = null; transferBusy = false
+            if (activeTransferIsDebit) { activeTransferIsDebit = false; DirectDebits.outcomeUnknown(step.OutcomeUnknown.reason); reloadAll(); return }
             if (activeTransferIsStanding) {
                 activeTransferIsStanding = false
                 Payments.standingOrderOutcomeUnknown(step.OutcomeUnknown.reason)
@@ -3272,6 +3277,13 @@ QtObject {
         const t = activeTransfer
         activeTransfer = null; activeChallenge = null; transferBusy = false
         transferError = ""
+        // A collection run: its sheet comes back with a notice (AppModel+Sync.swift › cancelSync).
+        if (activeTransferIsDebit) {
+            activeTransferIsDebit = false
+            DirectDebits.cancelRun()
+            cancelTransferSession(t, null)
+            return
+        }
         // A batch or a standing order (#533): its own sheet comes back (the rows are still
         // there), and the flag must not make the next single transfer end as one of them.
         if (activeTransferIsBatch || activeTransferIsStanding) {
@@ -3338,6 +3350,12 @@ QtObject {
         if (!pending) return
         const t = activeTransfer
         payeeCheck = null; activeTransfer = null; transferBusy = false
+        if (activeTransferIsDebit) {
+            activeTransferIsDebit = false
+            DirectDebits.failRun(qsTr("Überweisung abgebrochen – es wurde nichts gesendet."))
+            if (t !== null) cancelTransferSession(t, null)
+            return
+        }
         // Linux: a batch or standing order goes back to its own sheet (the Mac reopens the transfer form)
         if (activeTransferIsBatch || activeTransferIsStanding) {
             const batch = activeTransferIsBatch
@@ -3361,7 +3379,8 @@ QtObject {
         payeeCheck = null; activeChallenge = null; activeTransfer = null; transferBusy = false
         setDraft({ pin: "" })
         transferError = parseCoreError(err).message
-        if (activeTransferIsStanding) { activeTransferIsStanding = false; Payments.failStandingOrder() }
+        if (activeTransferIsDebit) { activeTransferIsDebit = false; transferError = ""; DirectDebits.failRun(parseCoreError(err).message) }
+        else if (activeTransferIsStanding) { activeTransferIsStanding = false; Payments.failStandingOrder() }
         else if (activeTransferIsBatch) { activeTransferIsBatch = false; Payments.failBatch() }
         else showTransferSheet = true
     }
@@ -3371,9 +3390,10 @@ QtObject {
         const t = activeTransfer
         if (t !== null) activeChallenge = null
         activeTransfer = null; payeeCheck = null; transferBusy = false; showTransferSheet = false
-        activeTransferIsBatch = false; activeTransferIsStanding = false
+        activeTransferIsBatch = false; activeTransferIsStanding = false; activeTransferIsDebit = false
         setDraft({ pin: "" })
         Payments.endForLock()
+        DirectDebits.endForLock()
         if (t !== null) coreAsync("session_cancel", { session: t }, null, () => {})
     }
 
@@ -3677,6 +3697,8 @@ QtObject {
         case "vermoegen-cash": sidebarSelection = "wealth"; wealthScope = "cash"; break
         case "vermoegen-wertpapiere": sidebarSelection = "wealth"; wealthScope = "securities"; break
         case "vermoegen-sachwerte": sidebarSelection = "wealth"; wealthScope = "tangibles"; break
+        case "geplant": case "planned": sidebarSelection = "planned"; break
+        case "lastschriften": case "debits": sidebarSelection = "directDebits"; break
         }
         const q = launchValue("--select")
         const account = q ? allAccounts.find(a => a.name.toLowerCase().includes(q)) : null
@@ -3722,7 +3744,7 @@ QtObject {
                 screenshotWindow = qsTr("Einstellungen")
             }
         }
-        if (demoSheet !== "" && !Payments.presentDemoSheet(demoSheet)) presentDemoSheet(demoSheet)
+        if (demoSheet !== "" && !Payments.presentDemoSheet(demoSheet) && !DirectDebits.presentDemoSheet(demoSheet)) presentDemoSheet(demoSheet)
     }
     /// The one switch for `--demo-sheet <name>` (AppModel.swift › presentDemoSheet):
     /// opens that sheet pre-filled with fictional data.

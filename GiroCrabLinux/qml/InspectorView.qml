@@ -16,7 +16,9 @@ Rectangle {
     property var cardBooking: AppModel.selectedBooking
     onBChanged: if (b !== null) cardBooking = b
     /// The single-booking cards are shown, so their layout can be edited.
-    readonly property bool showsBookingCards: AppModel.sidebarSelection !== "planned" && AppModel.sidebarSelection !== "directDebits"
+    /// BookingDetailView.swift: „Geplant“ and „Lastschriften“ show their own inspector instead of the booking cards.
+    readonly property bool bookingPage: AppModel.sidebarSelection !== "planned" && AppModel.sidebarSelection !== "directDebits"
+    readonly property bool showsBookingCards: bookingPage
                                               && !AppModel.isMultiSelection && b !== null
     /// `--demo-inspector-edit` (LaunchOptions.swift) opens the edit mode, for screenshots.
     property bool editingLayout: Qt.application.arguments.indexOf("--demo-inspector-edit") >= 0
@@ -34,6 +36,8 @@ Rectangle {
     property Component categoriesCard: Component { CategoryGridCard { booking: inspector.cardBooking } }
     property Component documentsCard: Component { DocumentsCard { booking: inspector.cardBooking } }
     property Component rawDataCard: Component { RawDataCard { booking: inspector.cardBooking } }
+    property Component plannedInspector: Component { PlannedInspector {} }
+    property Component mandateInspector: Component { MandateInspector {} }
     function cardComponent(section, placeholderWhenEmpty) {
         switch (section) {
         case "receipt": return receiptCard
@@ -74,7 +78,7 @@ Rectangle {
 
             // Keine Buchung ausgewählt
             Card {
-                visible: !AppModel.isMultiSelection && inspector.b === null
+                visible: inspector.bookingPage && !AppModel.isMultiSelection && inspector.b === null
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
                 ColumnLayout {
                     width: parent.width; spacing: 10
@@ -88,7 +92,7 @@ Rectangle {
             // MultiSelectionCard
             Card {
                 id: multi
-                visible: AppModel.isMultiSelection
+                visible: inspector.bookingPage && AppModel.isMultiSelection
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
                 readonly property real income: AppModel.selectedBookings.filter(x => x.amount_cents > 0).reduce((s, x) => s + x.amount_cents, 0)
                 readonly property real expense: AppModel.selectedBookings.filter(x => x.amount_cents < 0).reduce((s, x) => s + x.amount_cents, 0)
@@ -116,12 +120,19 @@ Rectangle {
             }
 
             Loader {
-                active: !AppModel.isMultiSelection && inspector.b !== null
+                active: inspector.bookingPage && !AppModel.isMultiSelection && inspector.b !== null
                 visible: active
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
                 // edit mode: room on top for the ⊖ / ⊕ buttons on the cards' corners
                 Layout.topMargin: inspector.editingLayout ? 8 : 0
                 sourceComponent: inspector.editingLayout ? layoutEditor : sectionCards
+            }
+            // PlannedInspector / MandateInspector
+            Loader {
+                active: !inspector.bookingPage
+                visible: active
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+                sourceComponent: AppModel.sidebarSelection === "planned" ? plannedInspector : mandateInspector
             }
             Item { implicitHeight: 2 }
         }
