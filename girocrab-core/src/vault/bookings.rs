@@ -311,6 +311,32 @@ impl BookingFinisher {
     }
 }
 
+/// The filters that depend on the enriched booking (scope, merchant, and
+/// "Ohne Kategorie" leaving out detected own transfers, #302); the SQL of
+/// `filter_clauses` covers all others.
+fn keeps(filter: &BookingFilter, t: &Booking) -> bool {
+    let scope = match filter.scope {
+        BookingScope::All => true,
+        BookingScope::Everyday => !matches!(t.flow, FlowKind::Investment | FlowKind::Perk),
+        BookingScope::Investments => matches!(t.flow, FlowKind::Investment | FlowKind::Perk),
+    };
+    scope
+        && filter
+            .merchant_key
+            .as_ref()
+            .map(|k| *k == t.merchant.key)
+            .unwrap_or(true)
+        && !(filter.uncategorized_only && t.flow == FlowKind::Transfer)
+}
+
+/// Whether `filter` needs the enriched booking (`keeps`), so plain SQL
+/// aggregates cannot answer it.
+pub(crate) fn needs_enrichment(filter: &BookingFilter) -> bool {
+    !matches!(filter.scope, BookingScope::All)
+        || filter.merchant_key.is_some()
+        || filter.uncategorized_only
+}
+
 impl Vault {
     /// WHERE clause (plus optional CTE, bound arguments and the KPI share
     /// expression) of a `BookingFilter`; shared by the list and bulk updates.
@@ -520,6 +546,34 @@ impl Vault {
         Ok((cte, where_sql, args, share_sql))
     }
 
+    /// `(booking id, KPI share)` of every booking `filter` keeps, enriched like
+    /// the list; for aggregates whose filter `needs_enrichment`.
+    pub(crate) fn kept_shares(
+        db: &rusqlite::Connection,
+        filter: &BookingFilter,
+    ) -> Result<Vec<(i64, i64)>, CoreError> {
+        let (cte, where_sql, args, share_sql) = Self::filter_clauses(db, filter)?;
+        let sql = format!(
+            "{cte}SELECT {} {BOOKING_FROM_SQL} WHERE {where_sql}",
+            booking_columns(&share_sql)
+        );
+        let mut stmt = db.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params_from_iter(args.iter().map(|b| b.as_ref())),
+            booking_from_row,
+        )?;
+        let finisher = BookingFinisher::load(db, None)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (share, mut t) = row?;
+            finisher.finish(&mut t);
+            if keeps(filter, &t) {
+                out.push((t.id, share));
+            }
+        }
+        Ok(out)
+    }
+
     fn set_checked_ids(
         tx: &rusqlite::Connection,
         ids: &[i64],
@@ -671,10 +725,7 @@ impl Vault {
     /// and merchant depend on the enriched booking: those filters take the list;
     /// so does "Ohne Kategorie", which leaves out detected own transfers (#302).
     pub fn count_transactions(&self, filter: BookingFilter) -> Result<u32, CoreError> {
-        if !matches!(filter.scope, BookingScope::All)
-            || filter.merchant_key.is_some()
-            || filter.uncategorized_only
-        {
+        if needs_enrichment(&filter) {
             return Ok(self
                 .list_transactions(BookingFilter {
                     limit: 1,
@@ -719,19 +770,7 @@ impl Vault {
         for row in rows {
             let (share, mut t) = row?;
             finisher.finish(&mut t);
-            let keep = match filter.scope {
-                BookingScope::All => true,
-                BookingScope::Everyday => !matches!(t.flow, FlowKind::Investment | FlowKind::Perk),
-                BookingScope::Investments => {
-                    matches!(t.flow, FlowKind::Investment | FlowKind::Perk)
-                }
-            } && filter
-                .merchant_key
-                .as_ref()
-                .map(|k| *k == t.merchant.key)
-                .unwrap_or(true);
-            // Detected own transfers are no open work for "Ohne Kategorie" (#302).
-            if !keep || (filter.uncategorized_only && t.flow == FlowKind::Transfer) {
+            if !keeps(&filter, &t) {
                 continue;
             }
             // One KPI definition (`kpi_side`) for the page sums and `SelectionFlow`;

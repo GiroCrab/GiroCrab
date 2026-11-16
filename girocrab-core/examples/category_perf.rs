@@ -15,6 +15,9 @@
 //!   merchant_history                32 ms (total + own account; was 2 × merchant_stats)
 //!   local_api transactions(limit 100)  ~1.2 ms (first page, cursor page, single account; 2026-11-15)
 //!   local_api summary                  ~1.2 ms per year, 2.4 ms for the three-year maximum
+//!   tag_totals (#228, a third of the bookings tagged, 2026-11-16)  ~80 ms (SQL; off main),
+//!     150 ms with a scope filter (enriched pass); tag_account_counts ~20 ms (incl. the
+//!     linked loans); list_tags 58 ms
 //! RULE_INDEX=1 creates the covering indexes by hand on a vault that lacks them.
 //! STEP_DAYS (default 183) is the shift between copies: 7 with COPIES=600 spans ~11.5 years.
 //! PAYPAL=n adds a payment-service account with n uncategorised bookings, half of them
@@ -185,6 +188,40 @@ fn main() {
         "'Ohne Kategorie': + selection_flow (reloadSelectionKPIs)",
         || vault.selection_flow(vec![], None, None),
     );
+    // Tags (#228, part 3): a third of the bookings carry one of the demo tags.
+    let tags = vault.list_tags().unwrap();
+    if !tags.is_empty() {
+        for (i, tag) in tags.iter().enumerate() {
+            let ids: Vec<i64> = all
+                .transactions
+                .iter()
+                .skip(i)
+                .step_by(3 * tags.len())
+                .map(|b| b.id)
+                .collect();
+            vault.add_tag_to_bookings(ids, tag.id).unwrap();
+        }
+        time("tag_totals (all accounts, all dates)", || {
+            vault.tag_totals(BookingFilter::default())
+        });
+        time("tag_totals (category, with subcategories)", || {
+            vault.tag_totals(BookingFilter {
+                category_id: Some(c1),
+                include_subcategories: true,
+                ..Default::default()
+            })
+        });
+        time("tag_totals (scope Alltag: enriched pass)", || {
+            vault.tag_totals(BookingFilter {
+                scope: BookingScope::Everyday,
+                ..Default::default()
+            })
+        });
+        time("tag_account_counts", || {
+            vault.tag_account_counts(tags[0].id)
+        });
+        time("list_tags", || vault.list_tags());
+    }
     // Local read-only interface (#136): keyset pages enrich only their rows.
     let accounts: Vec<i64> = vault
         .list_accounts()

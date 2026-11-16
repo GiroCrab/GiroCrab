@@ -2085,6 +2085,17 @@
         }
       }
     },
+    "(verknüpft)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(linked)"
+          }
+        }
+      }
+    },
     "+%lld" : {
       "extractionState" : "manual",
       "shouldTranslate" : false
@@ -3918,6 +3929,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Signed in – “Fetch orders” reads your order history."
+          }
+        }
+      }
+    },
+    "Angezeigt: %lld Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shown: %lld bookings"
           }
         }
       }
@@ -7115,6 +7137,17 @@
         }
       }
     },
+    "Buchungen nach Konten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bookings by account"
+          }
+        }
+      }
+    },
     "Buchungen zu diesem Mandat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9632,6 +9665,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This bank code isn’t in the directory. Enter your bank’s FinTS address yourself."
+          }
+        }
+      }
+    },
+    "Diese Buchungen in der Liste zeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show these bookings in the list"
           }
         }
       }
@@ -16626,6 +16670,17 @@
         }
       }
     },
+    "Klick auf ein Konto zeigt seine Buchungen mit diesem Tag." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Click an account to list its bookings with this tag."
+          }
+        }
+      }
+    },
     "Kommt in Sekunden an und ist nicht rückholbar. Bietet die Bank sie nicht an, wird nichts gesendet; Sie können sie dann als normale Überweisung senden." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18392,6 +18447,17 @@
         }
       }
     },
+    "Mehrere Tags: nur Buchungen, die alle tragen. Anzahl und Summe gelten für den Zeitraum und die übrigen Filter der Liste." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Several tags: only bookings carrying all of them. Count and sum follow the period and the list's other filters."
+          }
+        }
+      }
+    },
     "Meine eigene behalten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19103,6 +19169,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Filter by status or by income and expenses"
+          }
+        }
+      }
+    },
+    "Nach Tags filtern" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter by tags"
           }
         }
       }
@@ -21061,6 +21138,17 @@
         }
       }
     },
+    "Ohne Tag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Untagged"
+          }
+        }
+      }
+    },
     "Ohne Zugriff" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22229,6 +22317,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Payments since balance date"
+          }
+        }
+      }
+    },
+    "Raten von anderen Konten, die mit dem Kredit verknüpft sind." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rates from other accounts that are linked to the loan."
           }
         }
       }
@@ -25278,6 +25377,17 @@
         }
       }
     },
+    "Tags: %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tags: %lld"
+          }
+        }
+      }
+    },
     "Tanken" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26055,6 +26165,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unknown format"
+          }
+        }
+      }
+    },
+    "Unbekanntes Konto" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unknown account"
           }
         }
       }
@@ -30508,13 +30629,13 @@
         }
       }
     },
-    "⌘N Neuer Tag · ↩ Umbenennen · ⌫ Löschen · esc Auswahl aufheben" : {
+    "⌘N Neuer Tag · ↩ Umbenennen · ⌫ Löschen · esc Auswahl aufheben · Zahl: je Konto" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "⌘N New Tag · ↩ Rename · ⌫ Delete · esc Deselect"
+            "value" : "⌘N New Tag · ↩ Rename · ⌫ Delete · esc Deselect · Count: by account"
           }
         }
       }
