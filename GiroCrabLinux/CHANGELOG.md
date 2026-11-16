@@ -21,6 +21,15 @@ Funktionsumfang der Oberfläche.
 - **Eigene Domain:** Im Beleg setzt der Stift neben der Domain eine eigene Domain für das Logo,
   „Automatische Erkennung wiederherstellen“ entfernt sie wieder.
 
+### Mitteilungen
+
+- **Mitteilungen des GiroCrab-Projekts:** Neuigkeiten erscheinen als ruhiges Banner über der
+  Buchungsliste, höchstens eines zugleich, nie während einer Sicherheitssperre. Das Banner lässt
+  sich ausblenden (es kommt nicht wieder); „Mehr erfahren“ zeigt den ganzen Text. Alles, was gilt,
+  bleibt unter Hilfe › Mitteilungen … lesbar. GiroCrab lädt dazu höchstens alle sechs Stunden eine
+  signierte Textdatei von GitHub, ohne Kennung und ohne Tracking; Einstellungen › Allgemein ›
+  Mitteilungen schaltet das samt Netzabruf ab.
+
 ### Anlageklassen im Vermögen
 
 - **Anlageklassen und Instrumente:** Wertpapiere und Sachwerte zeigen ihre Anlageklasse (Aktien,

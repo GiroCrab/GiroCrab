@@ -483,6 +483,17 @@ fn call(method: &str, a: &Value) -> R {
         "banking_policy_refresh" => ok(crate::banking_policy::refresh(
             arg::<Option<bool>>(a, "force")?.unwrap_or(false),
         )),
+        // --- Mitteilungen (Announcements.swift → src/announcements.rs) ---
+        "announcements_load" => ok(crate::announcements::load(
+            &arg::<Option<String>>(a, "json")?.unwrap_or_default(),
+            &arg::<Option<String>>(a, "signature")?.unwrap_or_default(),
+        )),
+        // network (at most every 6 h, only when switched on): called with Core.callAsync
+        "announcements_refresh" => ok(crate::announcements::refresh(
+            arg::<Option<bool>>(a, "enabled")?.unwrap_or(false),
+            arg::<Option<bool>>(a, "force")?.unwrap_or(false),
+            arg(a, "last_check_ms")?,
+        )),
         "grab_window" => {
             let path =
                 std::ffi::CString::new(arg::<String>(a, "path")?).map_err(|e| e.to_string())?;
@@ -2793,6 +2804,37 @@ mod tests {
             32
         );
         assert!(crate::vault_key::parse_key("AAAA").is_err());
+    }
+
+    /// Mitteilungen: switched off (or checked recently) no request is made; a stored
+    /// file that does not verify is no document. No network in tests.
+    #[test]
+    fn announcements_calls() {
+        let off = call_ok(
+            "announcements_refresh",
+            json!({ "enabled": false, "force": true, "last_check_ms": null }),
+        );
+        assert_eq!(off, json!({ "fetched": false }));
+        let fresh = call_ok(
+            "announcements_refresh",
+            json!({ "enabled": true, "force": false, "last_check_ms": now_ms() }),
+        );
+        assert_eq!(fresh, json!({ "fetched": false }));
+        assert_eq!(
+            call_ok(
+                "announcements_load",
+                json!({ "json": "e30=", "signature": "" })
+            ),
+            Value::Null
+        );
+        assert_eq!(call_ok("announcements_load", json!({})), Value::Null);
+    }
+
+    fn now_ms() -> f64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as f64
     }
 }
 

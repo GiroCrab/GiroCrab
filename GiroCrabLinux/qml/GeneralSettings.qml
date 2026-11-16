@@ -2,8 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// SettingsView.swift › GeneralSettings. Mitteilungen and Saldoverlauf (bars) are not on
-// Linux yet (no announcement feed, line chart only).
+// SettingsView.swift › GeneralSettings.
 ScrollView {
     ScrollBar.vertical: ScrollViewBar {}
     id: pane
@@ -43,6 +42,17 @@ ScrollView {
                     onClicked: { AppModel.run(() => AppModel.core("request_relaunch")); Qt.quit() }
                 }
             }
+        }
+        // SettingsView.swift › AnnouncementsSettingsSection: one switch, on by default (quiet banner only)
+        SettingsFormSection {
+            title: qsTr("Mitteilungen")
+            CheckBox {
+                text: qsTr("Mitteilungen des GiroCrab-Projekts anzeigen")
+                checked: Announcements.isEnabled
+                onToggled: Announcements.setEnabled(checked)
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.callout; color: Theme.secondary
+                   text: qsTr("Gelegentliche Neuigkeiten, unabhängig von Updates. GiroCrab lädt dazu eine signierte Textdatei von GitHub, ohne Kennung und ohne Tracking. Mitteilungen erscheinen nie als Fenster und lassen sich jederzeit ausblenden. Sicherheitswarnungen sind davon unabhängig.") }
         }
         SettingsFormSection {
             title: qsTr("Ansicht")

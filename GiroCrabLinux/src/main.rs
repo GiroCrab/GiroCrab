@@ -3,6 +3,7 @@
 //! The QML views mirror the SwiftUI views of `GiroCrabApp/Sources/GiroCrabUI`
 //! file by file (RootView.swift → Main.qml, SidebarView.swift → SidebarView.qml, …).
 
+mod announcements;
 mod banking_policy;
 mod bridge;
 mod bug_report;

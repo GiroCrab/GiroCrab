@@ -58,6 +58,7 @@ Rectangle {
         spacing: 0
 
         BankingPolicyBanner { Layout.fillWidth: true }
+        AnnouncementBanner { Layout.fillWidth: true }
         MerchantFocusBar { visible: MerchantFocus.focus !== null; Layout.fillWidth: true }
 
         // header(isOverview:emptyVault:scope:)

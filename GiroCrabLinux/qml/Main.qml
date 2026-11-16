@@ -190,6 +190,9 @@ ApplicationWindow {
             title: qsTr("&Hilfe")
             Action { text: qsTr("GiroCrab-Hilfe"); shortcut: "Ctrl+?"; onTriggered: AppModel.showHelp = true }
             AppMenuSeparator {}
+            // Hilfe › Mitteilungen …: ellipsis because a window opens (AnnouncementsWindow.qml)
+            Action { text: qsTr("Mitteilungen …"); onTriggered: Announcements.showWindow = true }
+            AppMenuSeparator {}
             // #301: redacted screenshot + scrubbed diagnostics, then a prefilled issue.
             Action { text: qsTr("Problem melden …"); shortcut: "Ctrl+Alt+B"; onTriggered: AppModel.showBugReport = true }
             AppMenuSeparator {}
@@ -385,6 +388,7 @@ ApplicationWindow {
              onLoaded: { item.reload(); item.requestActivate(); item.raise() } }
     Loader { active: AppModel.showHelp; sourceComponent: Component { HelpWindow {} }
              onLoaded: { item.requestActivate(); item.raise(); item.focusSearch() } }
+    Loader { active: Announcements.showWindow; sourceComponent: Component { AnnouncementsWindow {} } }
     // BugReportView: its own window, so the main window stays free to be captured.
     Loader { active: AppModel.showBugReport
              sourceComponent: Component { BugReportWindow { mainWindow: window; captureItem: rootLayout } }
