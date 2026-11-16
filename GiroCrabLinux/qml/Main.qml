@@ -73,6 +73,13 @@ ApplicationWindow {
         }
         AppMenu {
             title: qsTr("&Bearbeiten")
+            // Undo of tag changes (AppModel+Tags.swift registers them with the window's undo
+            // manager); text fields keep their own Strg+Z
+            Action { text: TagsModel.undoName ? qsTr("Rückgängig: %1").arg(TagsModel.undoName) : qsTr("Rückgängig")
+                     shortcut: StandardKey.Undo; enabled: TagsModel.undoName !== ""; onTriggered: TagsModel.undo() }
+            Action { text: TagsModel.redoName ? qsTr("Wiederholen: %1").arg(TagsModel.redoName) : qsTr("Wiederholen")
+                     shortcut: StandardKey.Redo; enabled: TagsModel.redoName !== ""; onTriggered: TagsModel.redo() }
+            AppMenuSeparator {}
             Action { id: findAction; text: qsTr("Suchen …"); shortcut: StandardKey.Find; enabled: AppModel.isUnlocked; onTriggered: Qt.callLater(window.focusSearch) }
             Action { text: qsTr("Alles auswählen"); shortcut: StandardKey.SelectAll
                      enabled: AppModel.isUnlocked && AppModel.sidebarSelection !== "documents"; onTriggered: AppModel.selectAllBookings() }
@@ -130,6 +137,7 @@ ApplicationWindow {
             Action { text: qsTr("Alle Buchungen als gelesen markieren"); shortcut: "Ctrl+Shift+Alt+U"; enabled: AppModel.canMarkAllChecked
                      onTriggered: AppModel.markAllChecked() }
             Action { text: qsTr("Notiz bearbeiten"); enabled: AppModel.selectedBooking !== null; onTriggered: AppModel.editNote(AppModel.selectedBooking) }
+            Action { text: qsTr("Tags bearbeiten"); enabled: AppModel.selectedBooking !== null; onTriggered: TagsModel.editTags(AppModel.selectedBooking) }
             // like the Finder (Strg+Y); Space in the list does the same
             Action { text: qsTr("Beleg in Quick Look anzeigen"); shortcut: "Ctrl+Y"
                      enabled: AppModel.selectedBooking !== null && AppModel.documents(AppModel.selectedBooking).length > 0
