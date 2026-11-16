@@ -39,8 +39,9 @@ struct SidebarView: View {
                 AccountsSectionHeader()
             }
             // the root of the account tree
+            // no system badge here: it took the room of the name („All…“); „Neue Umsätze“ and the accounts show the count
             AllAccountsRow()
-                .badge(model.newCount) // system sidebar badge (hidden at 0)
+                .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
                 .tag(SidebarItem.allAccounts)
                 .contextMenu {
                     Button("Alle als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: model.allAccounts.map(\.id)) }
@@ -318,8 +319,8 @@ struct SidebarView: View {
                     }, perform: { items, edge in
                         handleDrop(items, into: group, row: i, edge: edge)
                     }, intoKey: "g:" + group.uuid))
-                        // slightly right of their group, at every nesting level
-                        .padding(.leading, indent + 8)
+                        // flush with the group header's chevron column: no extra indent
+                        .padding(.leading, indent)
                         .draggable(GroupDrag.account(account.id))
                 }
             }
@@ -364,6 +365,7 @@ struct SidebarView: View {
     private func accountRow(_ account: Account, drop: DropSlot? = nil) -> some View {
         AccountRow(account: account, syncing: model.syncingConnectionID != nil && model.syncingConnectionID == account.connectionId)
             .dropSlot(drop)
+            .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
             .tag(SidebarItem.account(account.id))
             .contextMenu { accountMenu(account) }
             .popover(isPresented: model.iconColorBinding(.account(account.id)), arrowEdge: .trailing) {
@@ -518,7 +520,7 @@ struct SectionHeader: View {
             Spacer()
             Text(Money.format(balanceCents))
                 .sensitive()
-                .appFont(.callout, weight: .semibold) // same size as the account balances
+                .appFont(.footnote, weight: .semibold) // same size as the account balances
                 .monospacedDigit()
                 .fixedSize() // the name truncates, never the balance (#343)
                 .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(balanceCents < 0 && isLoanGroup ? Theme.loan : (balanceCents < 0 ? Theme.negative : Theme.secondary)))
@@ -543,13 +545,13 @@ struct AccountRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 6) {
             // tinted like the account's marker in the booking list
-            AccountSignet(account: account, size: 22, color: model.accountColor(account.id), onSelection: onSelection)
+            AccountSignet(account: account, size: 20, color: model.accountColor(account.id), onSelection: onSelection)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     // the owner no longer takes room in the title line: tooltip only
-                    Text(account.name).lineLimit(1).sensitive()
+                    Text(account.name).appFont(.callout).lineLimit(1).sensitive()
                         .help(account.owner.isEmpty ? "" : account.owner)
                     if account.accessRevoked {
                         Image(systemName: "lock.slash")
@@ -592,7 +594,7 @@ struct AccountRow: View {
             VStack(alignment: .trailing, spacing: 1) {
                 Text(Money.format(account.balanceCents, currency: account.currency))
                     .sensitive()
-                    .appFont(.callout, monospacedDigit: true)
+                    .appFont(.footnote, monospacedDigit: true)
                     .fixedSize() // the name truncates, never the balance (#343)
                     .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
                 if let repaid {

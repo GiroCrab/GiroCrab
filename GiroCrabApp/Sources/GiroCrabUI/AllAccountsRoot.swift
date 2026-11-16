@@ -58,7 +58,7 @@ struct AllAccountsRow: View {
     var body: some View {
         let hasAccounts = !model.allAccounts.isEmpty
         let open = model.showsAccountTree
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             if hasAccounts {
                 Button {
                     withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.allAccountsCollapsed.toggle() }
@@ -80,7 +80,7 @@ struct AllAccountsRow: View {
             ForEach(AllAccountsTotal.totals(of: model.allAccounts), id: \.currency) { total in
                 Text(Money.format(total.cents, currency: total.currency))
                     .sensitive()
-                    .appFont(.callout, weight: .semibold, monospacedDigit: true)
+                    .appFont(.footnote, weight: .semibold, monospacedDigit: true)
                     .foregroundStyle(total.cents < 0 ? Theme.negative : Theme.secondary)
                     .lineLimit(1)
                     // amounts never truncate; the name gives way (#343)
