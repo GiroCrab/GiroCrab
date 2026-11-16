@@ -67,3 +67,46 @@ Schlüsselprüfung beantwortet.
 Daten im Format `YYYY-MM-DD`, Beträge in Cent (`amount_cents`, negativ = Ausgang). Buchungs-IDs bleiben
 für die Lebensdauer einer Buchung gleich. Die Suche steht nur zur Verfügung, wenn Empfänger,
 Verwendungszweck und Kontonummern geteilt sind, weil sie auch diese Felder durchsucht.
+
+## MCP-Adapter (`girocrab-mcp`)
+
+Für KI-Assistenten und andere MCP-Clients gibt es einen kleinen Adapter, den der Client selbst startet
+und über stdio anspricht (JSON-RPC 2.0, eine Nachricht pro Zeile). Er leitet jeden Tool-Aufruf als
+Anfrage an den Socket weiter; den Tresor öffnet er nie und er hängt nicht vom Core ab.
+
+Bauen (im PoC noch nicht Teil der App):
+
+```
+cargo build --release -p girocrab-mcp    # → target/release/girocrab-mcp
+```
+
+Eintrag in der Konfiguration des MCP-Clients (Form je nach Client):
+
+```json
+{
+  "mcpServers": {
+    "girocrab": {
+      "command": "/Pfad/zu/girocrab-mcp",
+      "env": { "GIROCRAB_API_TOKEN": "gcapi_…" }
+    }
+  }
+}
+```
+
+Den Schlüssel nie als Argument übergeben (die Befehlszeile ist für andere Programme sichtbar):
+`GIROCRAB_API_TOKEN` im Client-Eintrag oder `--token-file <Datei>` (Datei nur für Sie lesbar). Der
+Socket-Pfad lässt sich mit `--socket` oder `GIROCRAB_API_SOCKET` ändern.
+
+| Tool | Methode | Hinweis |
+|---|---|---|
+| `get_info` | `info` | |
+| `list_accounts` | `accounts` | Ergebnis als `items` in `structuredContent` |
+| `list_categories` | `categories` | Ergebnis als `items` in `structuredContent` |
+| `list_transactions` | `transactions` | gleiche Parameter wie die Methode |
+| `get_summary` | `summary` | `date_from` und `date_to` sind Pflicht |
+
+Alle Tools sind als nur lesend markiert (`readOnlyHint`). Ist GiroCrab gesperrt, ausgeschaltet oder nicht
+gestartet, oder passt der Schlüssel nicht, liefert der Tool-Aufruf einen lesbaren Fehler (`isError`),
+den der Assistent weitergeben kann. Ein `busy` wartet der Adapter kurz ab; schließt die App eine
+ruhende Verbindung, baut er sie neu auf. Unterstützte MCP-Versionen: 2025-06-18, 2025-03-26, 2024-11-05.
+
