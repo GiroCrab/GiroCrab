@@ -182,7 +182,7 @@ struct BudgetProgressCard: View {
                 }
             } }
         }
-        .card(padding: ViewLayout.cardPadding)
+        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))
         .task(id: token) {
             let now = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: Date())
             if let loaded = await model.budgetProgress(year: now.year ?? 2025, month: now.month ?? 1) { items = loaded }
@@ -363,7 +363,7 @@ struct CashflowCard: View {
             .appFont(.caption).foregroundStyle(Theme.secondary)
             }
         }
-        .card(padding: ViewLayout.cardPadding)
+        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))
         .task(id: "\(granularity)#\(model.bookings.count)") {
             if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6) { rows = loaded }
         }

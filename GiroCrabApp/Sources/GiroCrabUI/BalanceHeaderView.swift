@@ -108,6 +108,10 @@ struct StreamHeaderCard: View {
                 .buttonStyle(.plain)
                 .help(compactHeaderTitle)
                 .accessibilityLabel(compactHeaderTitle)
+                // Folded: period and status filters share the title row (GitHub #603).
+                if compactHeader && !isDepot {
+                    filterRow
+                }
                 #if os(iOS)
                 // long-press is invisible on iPhone/iPad: show an explicit entry too
                 if let a = account {
@@ -209,10 +213,10 @@ struct StreamHeaderCard: View {
                 #endif
                 }
 
-                filterRow
+                if !compactHeader { filterRow }
             }
         }
-        .card(padding: ViewLayout.cardPadding)
+        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: compactHeader))
     }
 
     /// Depot: no cash-flow KPIs or booking filters – the period, documents and a hint.
