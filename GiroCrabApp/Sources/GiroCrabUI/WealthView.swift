@@ -1031,6 +1031,7 @@ struct WealthView: View {
                                     Button { editingClassification = ClassificationEditRequest(name: row.name, classification: row.classification) } label: {
                                         Image(systemName: "pencil")
                                     }.buttonStyle(.borderless).help("Klassifizierung bearbeiten")
+                                        .accessibilityLabel("Klassifizierung bearbeiten")
                                 }
                             }
                         }

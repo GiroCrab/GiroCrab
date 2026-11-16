@@ -323,6 +323,7 @@ struct CashflowCard: View {
                 }
                 .menuStyle(.borderlessButton).fixedSize()
                 .help(Text("Farbschema"))
+                .accessibilityLabel(Text("Farbschema"))
                 Picker("Zeitraum", selection: $granularity) {
                     Text("Monat").tag(PeriodGranularity.month)
                     Text("Quartal").tag(PeriodGranularity.quarter)
