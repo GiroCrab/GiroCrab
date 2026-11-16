@@ -1,4 +1,10 @@
 import { Button, ListView, LineEdit, Palette, ComboBox, CheckBox, TextEdit, Switch, ScrollView } from "std-widgets.slint";
+import { TagRow, SplitRow, BudgetRow, TemplateRow, TagsPanel, SplitsPanel, BudgetsPanel, TemplatesPanel } from "tags_dialog.slint";
+export { TagRow, SplitRow, BudgetRow, TemplateRow }
+import { RecLine, RecurringPanel } from "recurring_dialog.slint";
+import { GroupsState, GroupsPanel } from "groups_dialog.slint";
+export { GroupsState }
+export { RecLine }
 
 export struct AccountRow { id: int, name: string, bank: string, iban: string, header: string, monogram: string, dot: color, balance: string, currency: string, negative: bool, archived: bool }
 export struct CategoryRow { id: int, name: string, depth: int, color: color }
@@ -646,6 +652,103 @@ export component MainWindow inherits Window {
     in property <string> link-status;
     callback link-search(string);
     callback link-pick(int);
+    // ---- recurring, planned, salary (recurring_ui.rs; panel in recurring_dialog.slint)
+    in-out property <bool> rc-open: false;
+    in-out property <int> rc-tab: 0;
+    in property <string> rc-status;
+    in property <string> rc-salary-cycle;
+    in property <bool> rc-has-booking: false;
+    in property <string> rc-booking-title;
+    in property <string> rc-series-text;
+    in property <string> rc-salary-state;
+    in property <bool> rc-can-salary: false;
+    in property <bool> rc-has-series: false;
+    in property <[string]> rc-interval-names;
+    in-out property <int> rc-interval: 0;
+    in-out property <string> rc-custom-dates;
+    in property <string> rc-month-summary;
+    in property <[RecLine]> rc-month-rows;
+    in property <[RecLine]> rc-ignored-rows;
+    in property <string> rc-planned-summary;
+    in property <[RecLine]> rc-planned-rows;
+    in property <[RecLine]> rc-standing-rows;
+    in property <string> rc-limits;
+    callback rc-request();
+    callback rc-tab-changed(int);
+    callback rc-mark(int, string);
+    callback rc-ignore();
+    callback rc-reset();
+    callback rc-salary(int);
+    callback rc-restore(int);
+    callback rc-standing-select(int);
+    callback rc-refresh();
+    // ---- tags, splits, budgets, templates (tags_ui.rs; panels in tags_dialog.slint)
+    in-out property <bool> tags-open: false;
+    in property <[TagRow]> tg-rows;
+    in property <[color]> tg-palette;
+    in property <[string]> tg-merge-names;
+    in property <string> tg-booking-title;
+    in property <bool> tg-has-booking: false;
+    in property <string> tg-status;
+    in property <bool> tg-armed: false;
+    in-out property <int> tg-selected: -1;
+    in-out property <string> tg-name;
+    in-out property <int> tg-color: -1;
+    in-out property <int> tg-merge: 0;
+    callback tags-request();
+    callback tag-select(int);
+    callback tag-create(string, int);
+    callback tag-save(string, int);
+    callback tag-delete();
+    callback tag-move(int);
+    callback tag-merge(int);
+    callback tag-assign();
+    callback tag-unassign();
+    callback tag-clear-booking();
+    in property <string> inspector-tags;
+    in-out property <bool> splits-open: false;
+    in property <string> sp-title;
+    in property <string> sp-amount;
+    in property <string> sp-remaining;
+    in property <[string]> sp-category-names;
+    in property <[SplitRow]> sp-rows;
+    in property <string> sp-status;
+    callback splits-request();
+    callback split-amount(int, string);
+    callback split-note(int, string);
+    callback split-category(int, int);
+    callback split-add();
+    callback split-remove-row(int);
+    callback split-fill(int);
+    callback split-save();
+    callback split-clear();
+    in-out property <bool> budgets-open: false;
+    in property <string> bg-month;
+    in property <[BudgetRow]> bg-rows;
+    in property <[string]> bg-category-names;
+    in property <string> bg-status;
+    in-out property <int> bg-category: 0;
+    in-out property <string> bg-amount;
+    callback budgets-request();
+    callback budget-pick(int);
+    callback budget-set(int, string);
+    callback budget-clear(int);
+    in-out property <bool> templates-open: false;
+    in property <[TemplateRow]> tp-rows;
+    in property <string> tp-status;
+    in property <bool> tp-armed: false;
+    in-out property <int> tp-selected: -1;
+    in-out property <string> tp-name;
+    in-out property <string> tp-recipient;
+    in-out property <string> tp-iban;
+    in-out property <string> tp-bic;
+    in-out property <string> tp-amount;
+    in-out property <string> tp-purpose;
+    callback templates-request();
+    callback template-select(int);
+    callback template-new();
+    callback template-save(string, string, string, string, string, string);
+    callback template-delete();
     in-out property <bool> rules-open: false;
     in property <[RuleItem]> rule-items;
     in property <[string]> rule-category-names;
@@ -846,6 +949,11 @@ export component MainWindow inherits Window {
                 GhostButton { text: "Regeln anwenden"; enabled: !root.busy; clicked => { root.apply-rules(); } }
                 GhostButton { text: "Kategorien"; clicked => { root.categories-open(); } }
                 GhostButton { text: "Regeln …"; clicked => { root.rules-request(); } }
+                GhostButton { text: "Tags …"; clicked => { root.tags-request(); } }
+                GhostButton { text: "Gruppen …"; enabled: !root.busy; clicked => { GroupsState.request(); } }
+                GhostButton { text: "Budgets …"; clicked => { root.budgets-request(); } }
+                GhostButton { text: "Vorlagen …"; clicked => { root.templates-request(); } }
+                GhostButton { text: "Wiederkehrend …"; clicked => { root.rc-request(); } }
                 GhostButton { text: "Info"; clicked => { root.about-open = true; } }
                 Rectangle { horizontal-stretch: 1; }
                 PillToggle {
@@ -1158,6 +1266,22 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
+                        // tags and split
+                        Rectangle {
+                            height: 44px;
+                            background: Theme.surface;
+                            border-radius: 12px;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 10px;
+                                spacing: 6px;
+                                Text { text: root.inspector-tags == "" ? "Keine Tags" : root.inspector-tags; font-size: 11px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                GhostButton { text: "Tags …"; enabled: !root.inspector.read-only; clicked => { root.tags-request(); } }
+                                GhostButton { text: "Aufteilen …"; enabled: !root.inspector.read-only; clicked => { root.splits-request(); } }
+                            }
+                        }
                         // recurring
                         Rectangle {
                             height: 44px;
@@ -1170,6 +1294,7 @@ export component MainWindow inherits Window {
                                 padding-right: 14px;
                                 Text { text: "Wiederkehrend"; font-size: 12px; font-weight: 700; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
                                 Text { text: root.inspector.recurring ? "Erkannt" : "Nicht erkannt"; font-size: 11px; color: root.inspector.recurring ? Theme.positive : Theme.muted; vertical-alignment: center; }
+                                GhostButton { text: "Ändern …"; enabled: !root.inspector.read-only; clicked => { root.rc-request(); } }
                             }
                         }
                         // category tiles
@@ -1484,6 +1609,104 @@ export component MainWindow inherits Window {
             Button { text: root.rule-armed ? "Wirklich löschen?" : "Löschen"; enabled: root.rule-selected >= 0; clicked => { root.rule-delete(); } }
             Rectangle { horizontal-stretch: 1; }
             Button { text: "Schließen"; clicked => { root.rules-open = false; root.refocus(); } }
+        }
+    }
+
+    // ---- account groups and account settings (groups_ui.rs; panel in groups_dialog.slint)
+    if GroupsState.open: Dialog {
+        dialog-width: 860px;
+        GroupsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent; negative: Theme.negative;
+            close() => { GroupsState.open = false; root.refocus(); }
+        }
+    }
+
+    // ---- tags / splits / budgets / templates dialogs
+    if tags-open: Dialog {
+        dialog-width: 600px;
+        TagsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent; negative: Theme.negative;
+            tags: root.tg-rows; palette: root.tg-palette; merge-names: root.tg-merge-names;
+            booking-title: root.tg-booking-title; has-booking: root.tg-has-booking;
+            status: root.tg-status; armed: root.tg-armed;
+            selected <=> root.tg-selected; name <=> root.tg-name; color-choice <=> root.tg-color; merge-index <=> root.tg-merge;
+            select(i) => { root.tag-select(i); }
+            create(n, c) => { root.tag-create(n, c); }
+            save(n, c) => { root.tag-save(n, c); }
+            remove() => { root.tag-delete(); }
+            move(d) => { root.tag-move(d); }
+            merge(i) => { root.tag-merge(i); }
+            assign() => { root.tag-assign(); }
+            unassign() => { root.tag-unassign(); }
+            clear-booking() => { root.tag-clear-booking(); }
+            close() => { root.tags-open = false; root.refocus(); }
+        }
+    }
+    if splits-open: Dialog {
+        dialog-width: 640px;
+        SplitsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; negative: Theme.negative;
+            booking-title: root.sp-title; booking-amount: root.sp-amount; remaining: root.sp-remaining;
+            category-names: root.sp-category-names; rows: root.sp-rows; status: root.sp-status;
+            amount-edited(i, t) => { root.split-amount(i, t); }
+            note-edited(i, t) => { root.split-note(i, t); }
+            category-picked(i, c) => { root.split-category(i, c); }
+            add-row() => { root.split-add(); }
+            remove-row(i) => { root.split-remove-row(i); }
+            fill-rest(i) => { root.split-fill(i); }
+            save() => { root.split-save(); }
+            remove-split() => { root.split-clear(); }
+            close() => { root.splits-open = false; root.refocus(); }
+        }
+    }
+    if budgets-open: Dialog {
+        dialog-width: 560px;
+        BudgetsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent; negative: Theme.negative;
+            month-title: root.bg-month; rows: root.bg-rows; category-names: root.bg-category-names; status: root.bg-status;
+            category <=> root.bg-category; amount <=> root.bg-amount;
+            pick(i) => { root.budget-pick(i); }
+            set(c, a) => { root.budget-set(c, a); }
+            clear(c) => { root.budget-clear(c); }
+            close() => { root.budgets-open = false; root.refocus(); }
+        }
+    }
+    if templates-open: Dialog {
+        dialog-width: 600px;
+        TemplatesPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent; negative: Theme.negative;
+            rows: root.tp-rows; status: root.tp-status; armed: root.tp-armed;
+            selected <=> root.tp-selected; name <=> root.tp-name; recipient <=> root.tp-recipient;
+            iban <=> root.tp-iban; bic <=> root.tp-bic; amount <=> root.tp-amount; purpose <=> root.tp-purpose;
+            select(i) => { root.template-select(i); }
+            new-template() => { root.template-new(); }
+            save(a, b, c, d, e, f) => { root.template-save(a, b, c, d, e, f); }
+            remove() => { root.template-delete(); }
+            close() => { root.templates-open = false; root.refocus(); }
+        }
+    }
+
+    // ---- recurring / planned / salary dialog
+    if rc-open: Dialog {
+        dialog-width: 640px;
+        RecurringPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent; negative: Theme.negative;
+            tab <=> root.rc-tab; status: root.rc-status; salary-cycle: root.rc-salary-cycle;
+            has-booking: root.rc-has-booking; booking-title: root.rc-booking-title; series-text: root.rc-series-text;
+            salary-state: root.rc-salary-state; can-salary: root.rc-can-salary; has-series: root.rc-has-series;
+            interval-names: root.rc-interval-names; interval-index <=> root.rc-interval; custom-dates <=> root.rc-custom-dates;
+            month-summary: root.rc-month-summary; month-rows: root.rc-month-rows; ignored-rows: root.rc-ignored-rows;
+            planned-summary: root.rc-planned-summary; planned-rows: root.rc-planned-rows;
+            standing-rows: root.rc-standing-rows; limits-text: root.rc-limits;
+            tab-changed(t) => { root.rc-tab-changed(t); }
+            mark(i, d) => { root.rc-mark(i, d); }
+            ignore() => { root.rc-ignore(); }
+            reset() => { root.rc-reset(); }
+            salary(c) => { root.rc-salary(c); }
+            restore(i) => { root.rc-restore(i); }
+            standing-select(i) => { root.rc-standing-select(i); }
+            refresh() => { root.rc-refresh(); }
+            close() => { root.rc-open = false; root.refocus(); }
         }
     }
 
