@@ -1,0 +1,90 @@
+import { Button, ListView, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct AccountRow { id: int, name: string, bank: string, balance: string, negative: bool }
+export struct BookingRow { date: string, counterparty: string, purpose: string, amount: string, negative: bool }
+
+export component MainWindow inherits Window {
+    title: "GiroCrab";
+    min-width: 900px;
+    min-height: 560px;
+
+    // "locked" shows the unlock screen, otherwise the main view.
+    in property <bool> unlocked: false;
+    in property <bool> first-run: false;
+    in property <string> message;
+    in property <string> sync-status;
+    in property <string> total;
+    in property <bool> busy: false;
+    in property <[AccountRow]> accounts;
+    in property <[BookingRow]> bookings;
+    in-out property <int> selected: -1;
+
+    callback unlock();
+    callback demo();
+    callback select-account(int);
+    callback sync();
+
+    if !unlocked: VerticalBox {
+        alignment: center;
+        Text { text: "GiroCrab"; font-size: 32px; horizontal-alignment: center; }
+        Text {
+            text: first-run ? "Neuen Tresor anlegen. Der Schlüssel liegt in der Windows-Anmeldeinformationsverwaltung."
+                            : "Tresor entsperren (Schlüssel aus der Windows-Anmeldeinformationsverwaltung).";
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 12px;
+            Button { text: first-run ? "Tresor anlegen" : "Entsperren"; primary: true; clicked => { root.unlock(); } }
+            Button { text: "Demo-Modus"; clicked => { root.demo(); } }
+        }
+        Text { text: root.message; color: #c0392b; horizontal-alignment: center; wrap: word-wrap; }
+    }
+
+    if unlocked: HorizontalLayout {
+        VerticalLayout {
+            width: 300px;
+            padding: 8px;
+            spacing: 6px;
+            Text { text: "Konten  ·  " + root.total; font-weight: 700; }
+            ListView {
+                for a[i] in root.accounts: Rectangle {
+                    height: 48px;
+                    background: root.selected == a.id ? #3478f633 : transparent;
+                    TouchArea { clicked => { root.select-account(a.id); } }
+                    HorizontalLayout {
+                        padding: 6px;
+                        VerticalLayout {
+                            Text { text: a.name; overflow: elide; }
+                            Text { text: a.bank; font-size: 11px; opacity: 0.6; overflow: elide; }
+                        }
+                        Text { text: a.balance; color: a.negative ? #c0392b : #1e8449; vertical-alignment: center; horizontal-alignment: right; }
+                    }
+                }
+            }
+            Button { text: root.busy ? "Abruf läuft …" : "Jetzt abrufen"; enabled: !root.busy; clicked => { root.sync(); } }
+            Text { text: root.sync-status; wrap: word-wrap; font-size: 11px; }
+        }
+        VerticalLayout {
+            padding: 8px;
+            Text { text: "Umsätze"; font-weight: 700; }
+            ListView {
+                for b in root.bookings: Rectangle {
+                    height: 44px;
+                    HorizontalLayout {
+                        padding: 4px;
+                        spacing: 8px;
+                        Text { text: b.date; width: 90px; vertical-alignment: center; }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: b.counterparty; overflow: elide; }
+                            Text { text: b.purpose; font-size: 11px; opacity: 0.6; overflow: elide; }
+                        }
+                        Text { text: b.amount; color: b.negative ? #c0392b : #1e8449; vertical-alignment: center; horizontal-alignment: right; width: 110px; }
+                    }
+                }
+            }
+        }
+    }
+}
