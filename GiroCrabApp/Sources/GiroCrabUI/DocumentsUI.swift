@@ -165,7 +165,6 @@ struct DocumentsCard: View {
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(targeted ? Theme.accent : Theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
             .dropDestination(for: URL.self) { urls, _ in
                 model.attach(urls, to: booking)
-                return !urls.isEmpty
             } isTargeted: { targeted = $0 }
             Button {
                 chooseExportFolder(model: model, fallback: $exporting)
@@ -375,7 +374,6 @@ struct DocumentsView: View {
         }
         .dropDestination(for: URL.self) { urls, _ in
             model.dropAnywhere(urls)
-            return !urls.isEmpty
         } isTargeted: { targeted = $0 }
         .fileImporter(isPresented: $exporting, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportAllDocuments(to: url) }
