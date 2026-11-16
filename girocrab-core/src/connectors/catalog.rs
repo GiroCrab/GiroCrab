@@ -133,7 +133,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             login_label: tr("Benutzername").into(),
             secret_label: tr("Passwort / PIN").into(),
             required_settings: vec![],
-            note: tr("Volkswagen Bank: In Entwicklung, noch nicht nutzbar. Vorgesehen sind Konten, Salden und Umsätze; die Freigabe erfolgt per photoTAN oder pushTAN. Interne Portal-API; Änderungen sind möglich.").into(),
+            note: tr("Volkswagen Bank: Konten, Salden und Umsätze; die Anmeldung wird per pushTAN in der Volkswagen-Bank-App freigegeben. photoTAN wird noch nicht unterstützt. Interne Portal-API; Änderungen sind möglich.").into(),
         },
         ConnectorKind::Fnz => BankDescriptor {
             kind,

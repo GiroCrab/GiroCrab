@@ -1,38 +1,60 @@
-//! Volkswagen Bank online banking (`banking.volkswagenbank.de`), photoTAN and
-//! pushTAN. No PSD2 access is wired in.
+//! Volkswagen Bank online banking (`banking.volkswagenbank.de`) with pushTAN.
+//! No PSD2 access is wired in.
 //!
-//! **Status: scaffold.** The sign-in dialogue (two-phase `begin`/`respond`,
-//! photoTAN image challenge, pushTAN polling) and the connector plumbing are
-//! done and unit-tested against a scripted portal. The portal itself is a
-//! single-page app whose endpoints have not been analysed yet, so
-//! [`HttpPortal`] – the only place that talks to the bank – still returns a
-//! clear "not finished" error. Fill in its four methods from a browser
-//! network capture of a real sign-in (see `docs/volkswagen-bank-connector.md`);
-//! nothing else in this file needs to change.
+//! The portal is a single-page app on top of a JSON API at
+//! `services.banking.volkswagenbank.de`. The flow below follows a browser
+//! network capture of two real pushTAN sign-ins:
+//!
+//! 1. `POST AuthenticationService/authentication/check` with user name and
+//!    password. `SecondFactorAuthenticationRequired` comes with the offered
+//!    second factors in the `X-CHALLENGES` header (`PhotoTan`, `PushTan`).
+//! 2. `POST TransactionAuthorizationService/pushtan/transaction/authorize`
+//!    starts the pushTAN, `…/checkstate` is polled until `TransactionConfirmed`.
+//! 3. `POST AuthenticationService/authentication/execute` (header
+//!    `X-REQUEST-KEY`) finishes the sign-in.
+//! 4. `GET AccountListService/accountlist`, then per account
+//!    `POST CashFlowService/cashflow/list/get` for the bookings.
+//!
+//! Every response carries a fresh `Authorization: bearer …` header; the newest
+//! one is sent with the next request. The browser capture hides request
+//! headers with credentials, so sending that token back as `Authorization` is
+//! an assumption until a live test confirms it.
+//!
+//! photoTAN is part of the dialogue (`LoginStep::PhotoTan`) but not wired to
+//! the portal: the capture only holds pushTAN sign-ins, and the photoTAN
+//! graphic is built from `ImageCreationChallenge` by the portal's JavaScript.
+//! When pushTAN is offered it is always chosen.
 //!
 //! Rules that carry over from the other portal connectors: money is `i64`
 //! cents, debits are negative, secrets are never logged, and bookings without
 //! a stable bank id leave `external_id` empty so `store_fetch` derives a
 //! content id.
 use async_trait::async_trait;
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Utc, Weekday};
+use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER};
+use serde_json::{json, Value};
 
 use super::{
-    BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, FetchResult, Phase,
+    http_client, BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext,
+    FetchResult, Phase, RemoteAccount, RemoteTransaction,
 };
 use crate::{
     error::{CoreError, CoreResult},
     i18n::{tr, trf},
+    models::AccountKind,
 };
 
 const BASE: &str = "https://banking.volkswagenbank.de";
+const API: &str = "https://services.banking.volkswagenbank.de";
 
 /// What the portal answered to a sign-in step.
 #[derive(Debug)]
 pub(crate) enum LoginStep {
-    /// Signed in (client recognised, or the TAN was accepted).
+    /// Signed in.
     Authenticated,
     /// The portal wants a photoTAN: scan the image with the photoTAN app and
-    /// type the code the app shows.
+    /// type the code the app shows. Not produced by [`HttpPortal`] yet.
+    #[allow(dead_code)]
     PhotoTan { image: Vec<u8> },
     /// The portal sent a pushTAN: approve it in the banking app.
     PushTan,
@@ -45,7 +67,8 @@ pub(crate) enum LoginStep {
 #[async_trait]
 pub(crate) trait Portal: Send {
     /// User name + password → first sign-in step. `state` is the connection
-    /// state saved by the last sync (e.g. a "known device" cookie).
+    /// state saved by the last sync (unused: the portal asks for a second
+    /// factor on every sign-in).
     async fn start_login(
         &mut self,
         user: &str,
@@ -62,56 +85,441 @@ pub(crate) trait Portal: Send {
     async fn logout(&mut self) {}
 }
 
-fn not_finished() -> CoreError {
+fn bad_response() -> CoreError {
     CoreError::Protocol {
+        message: tr("Volkswagen Bank: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen.").into(),
+    }
+}
+
+fn rejected(status: &str) -> CoreError {
+    CoreError::Authentication {
         message: trf(
-            "Volkswagen Bank: Die Anbindung an das Online-Banking ({0}) ist noch nicht fertiggestellt. Es wurden keine Daten abgerufen.",
-            &[BASE],
+            "Volkswagen Bank: Anmeldung abgelehnt (Status: {0}).",
+            &[&status],
         ),
     }
 }
 
-/// Talks to `banking.volkswagenbank.de`. Not implemented yet: every call
-/// fails with [`not_finished`] before anything is sent.
+fn text<'a>(v: &'a Value, key: &str) -> &'a str {
+    v.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+/// Talks to `services.banking.volkswagenbank.de`.
 #[derive(Default)]
-struct HttpPortal;
+struct HttpPortal {
+    client: Option<reqwest::Client>,
+    /// Newest `Authorization` header the portal sent.
+    token: Option<String>,
+    /// `X-REQUEST-KEY` of the running sign-in, sent with `execute`.
+    request_key: Option<String>,
+    /// `PushTan.AuthorizationChallengeKey` of the running pushTAN.
+    push_key: Option<String>,
+}
+
+impl HttpPortal {
+    fn client(&mut self) -> CoreResult<reqwest::Client> {
+        if self.client.is_none() {
+            self.client = Some(http_client()?);
+        }
+        self.client.clone().ok_or_else(bad_response)
+    }
+
+    /// One call to the services API. `body: None` on a POST sends an empty
+    /// body. The newest `Authorization` response header is kept for the next
+    /// call.
+    async fn call(
+        &mut self,
+        post: bool,
+        path: &str,
+        body: Option<Value>,
+        request_key: Option<&str>,
+    ) -> CoreResult<(Value, HeaderMap)> {
+        let client = self.client()?;
+        let url = format!("{API}/{path}");
+        let mut req = if post {
+            client.post(url)
+        } else {
+            client.get(url)
+        };
+        req = req
+            .header(ACCEPT, "application/json")
+            .header(ORIGIN, BASE)
+            .header(REFERER, format!("{BASE}/"))
+            .header("X-CLIENT-INFO", r#"{"ClientType":"Browser"}"#);
+        if let Some(token) = &self.token {
+            req = req.header(AUTHORIZATION, token.as_str());
+        }
+        if let Some(key) = request_key {
+            req = req.header("X-REQUEST-KEY", key);
+        }
+        req = match body {
+            Some(b) => req.json(&b),
+            None if post => req.header(CONTENT_TYPE, "application/json").body(""),
+            None => req.header(CONTENT_TYPE, "application/json"),
+        };
+        let resp = req.send().await?;
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        if let Some(token) = headers
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .filter(|t| !t.is_empty())
+        {
+            self.token = Some(token.to_string());
+        }
+        let raw = resp.text().await?;
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            return Err(CoreError::Authentication {
+                message: trf(
+                    "Volkswagen Bank: Zugriff abgelehnt (HTTP {0}).",
+                    &[&status.as_u16()],
+                ),
+            });
+        }
+        if !status.is_success() {
+            return Err(CoreError::Protocol {
+                message: trf(
+                    "Volkswagen Bank: Unerwartete Antwort (HTTP {0}).",
+                    &[&status.as_u16()],
+                ),
+            });
+        }
+        let value: Value = serde_json::from_str(&raw).map_err(|_| bad_response())?;
+        Ok((value, headers))
+    }
+
+    /// Finishes the sign-in after the second factor was confirmed.
+    async fn execute(&mut self) -> CoreResult<LoginStep> {
+        let key = self.request_key.clone().unwrap_or_default();
+        let (body, _) = self
+            .call(
+                true,
+                "AuthenticationService/authentication/execute",
+                None,
+                Some(&key),
+            )
+            .await?;
+        match text(&body, "Status") {
+            "Success" => Ok(LoginStep::Authenticated),
+            other => Err(rejected(other)),
+        }
+    }
+}
 
 #[async_trait]
 impl Portal for HttpPortal {
-    // TODO(portal): open the sign-in page, collect the cookies/tokens the SPA
-    // sends, post user name + password, map the answer to a `LoginStep`
-    // (photoTAN image → `PhotoTan`, pushTAN → `PushTan`, no second factor →
-    // `Authenticated`). Restore a "known device" cookie from `state` if the
-    // portal offers one, and surface a captcha as `CoreError::Authentication`.
     async fn start_login(
         &mut self,
-        _user: &str,
-        _password: &str,
+        user: &str,
+        password: &str,
         _state: &serde_json::Value,
     ) -> CoreResult<LoginStep> {
-        Err(not_finished())
+        self.token = None;
+        self.request_key = None;
+        self.push_key = None;
+        let (body, headers) = self
+            .call(
+                true,
+                "AuthenticationService/authentication/check",
+                Some(json!({ "UserName": user, "Password": password })),
+                None,
+            )
+            .await?;
+        let status = text(&body, "Status");
+        if status != "SecondFactorAuthenticationRequired" {
+            return Err(rejected(status));
+        }
+        let challenges: Value = headers
+            .get("X-CHALLENGES")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(Value::Null);
+        let Some(key) = challenges
+            .pointer("/PushTan/AuthorizationChallengeKey")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            return Err(CoreError::Protocol {
+                message: tr("Volkswagen Bank: photoTAN wird noch nicht unterstützt. Bitte pushTAN in der Volkswagen-Bank-App einrichten.").into(),
+            });
+        };
+        self.request_key = headers
+            .get("X-REQUEST-KEY")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .or_else(|| Some(key.clone()));
+        self.push_key = Some(key.clone());
+        let (resp, _) = self
+            .call(
+                true,
+                "TransactionAuthorizationService/pushtan/transaction/authorize",
+                Some(json!({ "RequestKey": key, "WaitForUserInteraction": false })),
+                None,
+            )
+            .await?;
+        match text(&resp, "Status") {
+            "AuthorizationPending" => Ok(LoginStep::PushTan),
+            "TransactionConfirmed" => self.execute().await,
+            other => Err(rejected(other)),
+        }
     }
 
-    // TODO(portal): query the pending pushTAN; map "waiting" to `PushPending`
-    // and "approved" to `Authenticated`; a rejection or timeout is a
-    // `CoreError::Authentication`.
     async fn poll_push(&mut self) -> CoreResult<LoginStep> {
-        Err(not_finished())
+        let Some(key) = self.push_key.clone() else {
+            return Err(CoreError::SessionClosed);
+        };
+        let (resp, _) = self
+            .call(
+                true,
+                "TransactionAuthorizationService/pushtan/transaction/checkstate",
+                Some(json!({ "RequestKey": key })),
+                None,
+            )
+            .await?;
+        match text(&resp, "Status") {
+            "AuthorizationPending" => Ok(LoginStep::PushPending),
+            "TransactionConfirmed" => self.execute().await,
+            other => Err(CoreError::Authentication {
+                message: trf(
+                    "Volkswagen Bank: Die pushTAN wurde abgelehnt oder ist abgelaufen (Status: {0}).",
+                    &[&other],
+                ),
+            }),
+        }
     }
 
-    // TODO(portal): send the photoTAN code; a wrong code is a
-    // `CoreError::Authentication`, never a retry loop.
     async fn submit_photo_tan(&mut self, _tan: &str) -> CoreResult<LoginStep> {
-        Err(not_finished())
+        Err(CoreError::Protocol {
+            message: tr("Volkswagen Bank: photoTAN wird noch nicht unterstützt. Bitte pushTAN in der Volkswagen-Bank-App einrichten.").into(),
+        })
     }
 
-    // TODO(portal): list the accounts (kind, IBAN, balance) and page through
-    // the bookings. Debit = negative cents; use the booking date as
-    // `booking_date`; leave `external_id` empty if the portal's ids are not
-    // stable across sessions. Return the state to keep in `FetchResult::state`.
-    async fn load(&mut self, _ctx: &ConnectContext) -> CoreResult<FetchResult> {
-        Err(not_finished())
+    async fn load(&mut self, ctx: &ConnectContext) -> CoreResult<FetchResult> {
+        let today = berlin_today();
+        let (list, _) = self
+            .call(false, "AccountListService/accountlist", None, None)
+            .await?;
+        let accounts = parse_accounts(&list, today)?;
+        let mut out = FetchResult::default();
+        for account in accounts {
+            if account.cash_flow {
+                let from = ctx
+                    .since_by_account
+                    .get(&account.remote.external_ref)
+                    .unwrap_or(&ctx.since);
+                let (flow, _) = self
+                    .call(
+                        true,
+                        "CashFlowService/cashflow/list/get",
+                        Some(json!({
+                            "accountNumber": account.remote.account_number,
+                            "dateFrom": format!("{from}Z"),
+                            "dateTo": format!("{today}Z"),
+                        })),
+                        None,
+                    )
+                    .await?;
+                out.transactions
+                    .extend(parse_cashflow(&flow, &account.remote.external_ref)?);
+            }
+            out.accounts.push(account.remote);
+        }
+        Ok(out)
     }
+}
+
+struct PortalAccount {
+    remote: RemoteAccount,
+    /// The portal offers a booking list for this account.
+    cash_flow: bool,
+}
+
+fn account_kind(category: &str) -> AccountKind {
+    let c = category.to_ascii_lowercase();
+    if c.contains("creditcard") || c.contains("cardaccount") {
+        AccountKind::CreditCard
+    } else if c.contains("current") || c.contains("giro") || c.contains("checking") {
+        AccountKind::Checking
+    } else if c.contains("loan") || c.contains("installment") || c.contains("credit") {
+        AccountKind::Loan
+    } else {
+        // CallMoneyAccount (Tagesgeld), SavingAccount (Sparbrief), …
+        AccountKind::Savings
+    }
+}
+
+/// `AccountListService/accountlist` → accounts. Any missing field fails the
+/// whole call so a changed portal never imports half a picture.
+fn parse_accounts(v: &Value, today: NaiveDate) -> CoreResult<Vec<PortalAccount>> {
+    let list = v
+        .get("Accounts")
+        .and_then(Value::as_array)
+        .ok_or_else(bad_response)?;
+    let mut out = Vec::new();
+    for a in list {
+        let number = text(a, "AccountNumber").trim();
+        let iban = text(a, "Iban").trim();
+        if number.is_empty() {
+            return Err(bad_response());
+        }
+        let balance_cents = parse_cents(text(a, "Balance")).ok_or_else(bad_response)?;
+        let owner = a
+            .get("Owners")
+            .and_then(Value::as_array)
+            .and_then(|o| o.first())
+            .map(|o| {
+                format!("{} {}", text(o, "FirstName"), text(o, "LastName"))
+                    .trim()
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let name = match text(a, "ProductName").trim() {
+            "" => text(a, "Description").trim(),
+            n => n,
+        };
+        let currency = match text(a, "Currency").trim() {
+            "" => "EUR",
+            c => c,
+        };
+        out.push(PortalAccount {
+            remote: RemoteAccount {
+                external_ref: if iban.is_empty() { number } else { iban }.to_string(),
+                name: name.to_string(),
+                owner,
+                iban: iban.to_string(),
+                account_number: number.to_string(),
+                currency: currency.to_string(),
+                kind: account_kind(text(a, "Category")),
+                balance_cents,
+                balance_date: portal_date(text(a, "DateOfAccountBalance"))
+                    .unwrap_or(today)
+                    .to_string(),
+            },
+            cash_flow: a
+                .pointer("/Features/CashFlow")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+    Ok(out)
+}
+
+/// `CashFlowService/cashflow/list/get` → bookings of one account.
+fn parse_cashflow(v: &Value, account_ref: &str) -> CoreResult<Vec<RemoteTransaction>> {
+    if text(v, "Status") != "Success" {
+        return Err(bad_response());
+    }
+    let list = v
+        .get("CashflowList")
+        .and_then(Value::as_array)
+        .ok_or_else(bad_response)?;
+    let mut out = Vec::new();
+    for it in list {
+        let posting = portal_date(text(it, "PostingDate")).ok_or_else(bad_response)?;
+        let value = portal_date(text(it, "ValueDate")).unwrap_or(posting);
+        let credit = amount_or_zero(text(it, "CreditAmount")).ok_or_else(bad_response)?;
+        let debit = amount_or_zero(text(it, "DebitAmount")).ok_or_else(bad_response)?;
+        let reference = it.get("ReferenceAccount").unwrap_or(&Value::Null);
+        let purpose = it
+            .get("PaymentNotes")
+            .and_then(Value::as_array)
+            .map(|notes| {
+                notes
+                    .iter()
+                    .map(|n| text(n, "Text").trim())
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        out.push(RemoteTransaction {
+            account_ref: account_ref.to_string(),
+            // `DocumentNumber` can repeat within one document; the content id
+            // from `store_fetch` is the safer key.
+            external_id: String::new(),
+            booking_date: posting.to_string(),
+            value_date: value.to_string(),
+            amount_cents: credit - debit,
+            currency: match text(it, "Currency").trim() {
+                "" => "EUR".to_string(),
+                c => c.to_string(),
+            },
+            counterparty: text(reference, "AccountHolder").trim().to_string(),
+            counterparty_iban: text(reference, "Iban").trim().to_string(),
+            purpose,
+            booking_text: text(it, "TransactionTypeDescription").trim().to_string(),
+            mandate_id: text(it, "MandateId").trim().to_string(),
+            creditor_id: text(it, "UniqueCreditorId").trim().to_string(),
+            ..Default::default()
+        });
+    }
+    Ok(out)
+}
+
+/// `"71.01"` → 7101. Plain decimal with a dot, optional minus sign.
+fn parse_cents(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let (negative, rest) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s),
+    };
+    let (int, frac) = rest.split_once('.').unwrap_or((rest, ""));
+    if int.is_empty()
+        || frac.len() > 2
+        || !int.bytes().all(|b| b.is_ascii_digit())
+        || !frac.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let int: i64 = int.parse().ok()?;
+    let frac_cents: i64 = match frac.len() {
+        0 => 0,
+        1 => frac.parse::<i64>().ok()? * 10,
+        _ => frac.parse::<i64>().ok()?,
+    };
+    let cents = int.checked_mul(100)?.checked_add(frac_cents)?;
+    Some(if negative { -cents } else { cents })
+}
+
+/// The booking list leaves the unused side of credit/debit empty.
+fn amount_or_zero(s: &str) -> Option<i64> {
+    if s.trim().is_empty() {
+        Some(0)
+    } else {
+        parse_cents(s)
+    }
+}
+
+fn last_sunday(year: i32, month: u32) -> Option<NaiveDate> {
+    let mut d = NaiveDate::from_ymd_opt(year, month + 1, 1)?.pred_opt()?;
+    while d.weekday() != Weekday::Sun {
+        d = d.pred_opt()?;
+    }
+    Some(d)
+}
+
+/// Hours Berlin is ahead of UTC: +2 from the last Sunday of March 01:00 UTC to
+/// the last Sunday of October 01:00 UTC, otherwise +1.
+fn berlin_offset_hours(utc: NaiveDateTime) -> i64 {
+    let start = last_sunday(utc.year(), 3).and_then(|d| d.and_hms_opt(1, 0, 0));
+    let end = last_sunday(utc.year(), 10).and_then(|d| d.and_hms_opt(1, 0, 0));
+    match (start, end) {
+        (Some(s), Some(e)) if utc >= s && utc < e => 2,
+        _ => 1,
+    }
+}
+
+/// Portal timestamps are UTC (`2026-10-22T22:00:00.0000000Z`) but mark a
+/// Berlin calendar day (that one is 23 October), so convert before cutting
+/// off the time.
+fn portal_date(s: &str) -> Option<NaiveDate> {
+    let utc = NaiveDateTime::parse_from_str(s.get(..19)?, "%Y-%m-%dT%H:%M:%S").ok()?;
+    Some((utc + Duration::hours(berlin_offset_hours(utc))).date())
+}
+
+fn berlin_today() -> NaiveDate {
+    let now = Utc::now().naive_utc();
+    (now + Duration::hours(berlin_offset_hours(now))).date()
 }
 
 fn photo_tan_challenge(image: Vec<u8>) -> Challenge {
@@ -432,13 +840,149 @@ mod tests {
         assert_eq!(c.stage, Stage::Idle);
     }
 
-    #[tokio::test]
-    async fn the_real_portal_is_honest_about_not_being_finished() {
-        let mut c = VolkswagenBankConnector::new();
-        let err = c.begin(&ctx("demo", "geheim")).await.err().unwrap();
-        let CoreError::Protocol { message } = err else {
-            panic!("expected a protocol error");
-        };
-        assert!(message.contains("Volkswagen Bank") && message.contains(BASE));
+    #[test]
+    fn decimal_strings_become_cents() {
+        assert_eq!(parse_cents("71.01"), Some(7101));
+        assert_eq!(parse_cents("80000.00"), Some(8_000_000));
+        assert_eq!(parse_cents("5.6"), Some(560));
+        assert_eq!(parse_cents("-0.31"), Some(-31));
+        assert_eq!(parse_cents("7"), Some(700));
+        for bad in ["", "-", "1,00", "1.005", "abc", ".5", "1.0.0"] {
+            assert_eq!(parse_cents(bad), None, "{bad:?}");
+        }
+        assert_eq!(amount_or_zero(""), Some(0));
+        assert_eq!(amount_or_zero(" "), Some(0));
+        assert_eq!(amount_or_zero("5.66"), Some(566));
+        assert_eq!(amount_or_zero("x"), None);
+    }
+
+    #[test]
+    fn portal_timestamps_are_converted_to_the_berlin_day() {
+        let day = |s: &str| portal_date(s).map(|d| d.to_string());
+        // 22:00/23:00 UTC is already the next day in Berlin.
+        assert_eq!(
+            day("2026-10-22T22:00:00.0000000Z").as_deref(),
+            Some("2026-10-23")
+        );
+        assert_eq!(
+            day("2026-10-24T22:00:00.0000000Z").as_deref(),
+            Some("2026-10-25")
+        );
+        assert_eq!(
+            day("2026-02-10T23:00:00.0000000Z").as_deref(),
+            Some("2026-02-11")
+        );
+        assert_eq!(
+            day("2026-11-16T09:17:30.0000000Z").as_deref(),
+            Some("2026-11-16")
+        );
+        // Daylight saving switches: 29 March 2026 and 25 October 2026, 01:00 UTC.
+        assert_eq!(day("2026-03-28T23:30:00Z").as_deref(), Some("2026-03-29"));
+        assert_eq!(day("2026-03-29T22:30:00Z").as_deref(), Some("2026-03-30"));
+        assert_eq!(day("2026-10-25T00:30:00Z").as_deref(), Some("2026-10-25"));
+        assert_eq!(day("2026-10-25T23:30:00Z").as_deref(), Some("2026-10-26"));
+        assert_eq!(day("x"), None);
+        assert_eq!(day(""), None);
+    }
+
+    #[test]
+    fn account_categories_map_to_kinds() {
+        assert!(matches!(
+            account_kind("CallMoneyAccount"),
+            AccountKind::Savings
+        ));
+        assert!(matches!(
+            account_kind("SavingAccount"),
+            AccountKind::Savings
+        ));
+        assert!(matches!(
+            account_kind("CurrentAccount"),
+            AccountKind::Checking
+        ));
+        assert!(matches!(
+            account_kind("CreditCardAccount"),
+            AccountKind::CreditCard
+        ));
+        assert!(matches!(account_kind("InstallmentLoan"), AccountKind::Loan));
+    }
+
+    #[test]
+    fn account_list_is_parsed_strictly() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 16).unwrap();
+        let v = json!({"Accounts": [
+            {"AccountNumber": "123", "Iban": "DE00123", "Balance": "71.01",
+             "ProductName": "Plus Konto online", "Currency": "EUR",
+             "Category": "CallMoneyAccount",
+             "Owners": [{"FirstName": "Erika", "LastName": "Mustermann"}],
+             "DateOfAccountBalance": "2026-11-16T09:17:30.0000000Z",
+             "Features": {"CashFlow": true}},
+            {"AccountNumber": "456", "Iban": "", "Balance": "1000.00",
+             "ProductName": "", "Description": "Sparbrief",
+             "Category": "SavingAccount", "Features": {"CashFlow": false}},
+        ]});
+        let accounts = parse_accounts(&v, today).unwrap();
+        assert_eq!(accounts.len(), 2);
+        let a = &accounts[0];
+        assert_eq!(a.remote.external_ref, "DE00123");
+        assert_eq!(a.remote.account_number, "123");
+        assert_eq!(a.remote.name, "Plus Konto online");
+        assert_eq!(a.remote.owner, "Erika Mustermann");
+        assert_eq!(a.remote.balance_cents, 7101);
+        assert_eq!(a.remote.balance_date, "2026-11-16");
+        assert!(a.cash_flow);
+        let b = &accounts[1];
+        assert_eq!(b.remote.external_ref, "456");
+        assert_eq!(b.remote.name, "Sparbrief");
+        assert_eq!(b.remote.currency, "EUR");
+        assert_eq!(b.remote.balance_date, "2026-11-16");
+        assert!(!b.cash_flow);
+
+        assert!(parse_accounts(&json!({}), today).is_err());
+        let no_balance = json!({"Accounts": [{"AccountNumber": "1", "Features": {}}]});
+        assert!(parse_accounts(&no_balance, today).is_err());
+        let no_number = json!({"Accounts": [{"Balance": "1.00"}]});
+        assert!(parse_accounts(&no_number, today).is_err());
+    }
+
+    #[test]
+    fn cash_flow_becomes_signed_bookings() {
+        let v = json!({"Status": "Success", "CashflowList": [
+            {"PostingDate": "2026-10-22T22:00:00.0000000Z",
+             "ValueDate": "2026-10-24T22:00:00.0000000Z",
+             "TransactionTypeDescription": "Habenzinsen",
+             "ReferenceAccount": {"AccountHolder": "", "Iban": ""},
+             "PaymentNotes": [{"Text": "25.09.26 - 25.10.26"}, {"Text": "Zinssatz 2,5 %"}],
+             "CreditAmount": "156.92", "DebitAmount": "", "Currency": "EUR"},
+            {"PostingDate": "2026-02-10T23:00:00.0000000Z",
+             "ValueDate": "2026-02-10T23:00:00.0000000Z",
+             "TransactionTypeDescription": "Lastschrift",
+             "ReferenceAccount": {"AccountHolder": "Muster GmbH", "Iban": "DE99"},
+             "MandateId": "M-1", "UniqueCreditorId": "DE98ZZZ0",
+             "PaymentNotes": [], "CreditAmount": "", "DebitAmount": "5.66"},
+        ]});
+        let tx = parse_cashflow(&v, "DE00123").unwrap();
+        assert_eq!(tx.len(), 2);
+        assert_eq!(tx[0].account_ref, "DE00123");
+        assert_eq!(tx[0].amount_cents, 15_692);
+        assert_eq!(tx[0].booking_date, "2026-10-23");
+        assert_eq!(tx[0].value_date, "2026-10-25");
+        assert_eq!(tx[0].purpose, "25.09.26 - 25.10.26 Zinssatz 2,5 %");
+        assert_eq!(tx[0].booking_text, "Habenzinsen");
+        assert_eq!(tx[0].currency, "EUR");
+        assert!(tx[0].external_id.is_empty());
+        assert_eq!(tx[1].amount_cents, -566);
+        assert_eq!(tx[1].booking_date, "2026-02-11");
+        assert_eq!(tx[1].counterparty, "Muster GmbH");
+        assert_eq!(tx[1].counterparty_iban, "DE99");
+        assert_eq!(tx[1].mandate_id, "M-1");
+        assert_eq!(tx[1].creditor_id, "DE98ZZZ0");
+
+        assert!(parse_cashflow(&json!({"Status": "Error"}), "x").is_err());
+        assert!(parse_cashflow(&json!({"Status": "Success"}), "x").is_err());
+        let bad_amount = json!({"Status": "Success", "CashflowList": [
+            {"PostingDate": "2026-02-10T23:00:00Z", "CreditAmount": "1,00"}]});
+        assert!(parse_cashflow(&bad_amount, "x").is_err());
+        let no_date = json!({"Status": "Success", "CashflowList": [{"CreditAmount": "1.00"}]});
+        assert!(parse_cashflow(&no_date, "x").is_err());
     }
 }
