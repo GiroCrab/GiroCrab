@@ -490,16 +490,13 @@ struct SidebarView: View {
                 .tag(SidebarItem.category(node.id))
             } else {
                 CategoryRow(category: node.category)
-<<<<<<< HEAD
                     .padding(.leading, leafInset)
-=======
                     #if os(macOS)
                     // only leaves take dragged bookings, as only leaves are assigned
                     .modifier(DropSlot(key: "c:\(node.id)", inset: 0, line: $dropLine, edge: { _ in .into }, perform: { items, _ in
                         model.dropBookings(items, onCategory: node.id)
                     }, takesBookings: true))
                     #endif
->>>>>>> origin/main
                     .tag(SidebarItem.category(node.id))
                     .contextMenu { categoryMenu(node.category) }
                     .modifier(CategoryIconColorPopover(id: node.id))
