@@ -526,6 +526,7 @@ ApplicationWindow {
     // Sachwerte (TangibleAssetsUI.swift › tangibleAssetSheets)
     AssetEditorSheet {}
     AssetActionSheet {}
+    AssetClassificationSheet {}
     OpeningBalanceSheet {}
 
     // MARK: account groups & command palette (AccountGroupsUI.swift, CommandPalette.swift)

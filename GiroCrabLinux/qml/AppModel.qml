@@ -3544,6 +3544,7 @@ QtObject {
         case "sparplaene": case "sparpläne": case "investments": scope = "Investments"; break
         case "belege": case "documents": sidebarSelection = "documents"; break
         case "vermoegen": case "vermögen": case "wealth": sidebarSelection = "wealth"; break
+        case "vermoegen-cash": sidebarSelection = "wealth"; wealthScope = "cash"; break
         case "vermoegen-wertpapiere": sidebarSelection = "wealth"; wealthScope = "securities"; break
         case "vermoegen-sachwerte": sidebarSelection = "wealth"; wealthScope = "tangibles"; break
         }

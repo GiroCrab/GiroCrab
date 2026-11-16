@@ -10,6 +10,19 @@ Funktionsumfang der Oberfläche.
 
 ## Nächster Stand (in Arbeit)
 
+### Anlageklassen im Vermögen
+
+- **Anlageklassen und Instrumente:** Wertpapiere und Sachwerte zeigen ihre Anlageklasse (Aktien,
+  Anleihen, Immobilien …) und ihr Instrument (Einzeltitel, ETF, Fonds …) in der Positionszeile.
+  „Klassifizierung bearbeiten“ (Kontextmenü, Stift in der Vermögensübersicht) setzt eine eigene
+  Zuordnung; „Automatisch“ setzt das jeweilige Merkmal zurück. Offene Positionen lassen sich mit
+  „Jetzt zuordnen“ nacheinander zuordnen.
+- **Vermögen gruppieren:** Neben „Nach Konto“ gibt es „Nach Anlageklasse“ und im Tab Wertpapiere
+  „Nach Instrument“. Ring und Legende filtern die Karten darunter (in jeder Ansicht);
+  Nicht klassifizierte Werte lassen sich im Diagramm ausblenden, direkt gehaltene Immobilien aus der
+  ganzen Ansicht („Nettovermögen ohne Immobilien“). Bei mehreren Kontoinhabern filtert eine Auswahl
+  die gesamte Ansicht nach Inhaber.
+
 ### Seitenleiste, Kategorien, Regeln
 
 - **Seitenleiste mit Abschnitten:** „Neue Umsätze“ und „Vermögen“ stehen ganz oben. Darunter
