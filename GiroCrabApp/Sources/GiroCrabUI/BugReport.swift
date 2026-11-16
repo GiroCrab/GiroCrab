@@ -140,9 +140,16 @@ enum BugReport {
         #endif
     }
 
-    /// Opaque box over a text input or pop-up menu of a dialog: what the user
-    /// typed or picked there is personal more often than not.
+    /// Background of the smudge over a text input or pop-up menu of a dialog
+    /// (what the user typed or picked there is personal more often than not)
+    /// when the field's own colour cannot be read.
     private static let inputCover = CGColor(gray: 0.56, alpha: 1)
+
+    /// The colour just inside the top left corner of `rect` (points, origin
+    /// top left) of `image`, drawn at `scale`: the field's own background.
+    private static func inputBackground(_ image: CGImage, _ rect: CGRect, scale: CGFloat) -> CGColor {
+        RedactionSmudge.color(of: image, at: CGPoint(x: (rect.minX + 2) * scale, y: (rect.minY + 2) * scale)) ?? inputCover
+    }
 
     #if os(macOS)
     /// The frontmost window that shows the vault. A minimized or hidden one
@@ -234,9 +241,12 @@ enum BugReport {
             let w = layer.window
             guard let image = WindowScreenshot.bitmap(of: w)?.cgImage else { return nil } // fail closed
             ctx.draw(image, in: place(w.frame))
-            ctx.setFillColor(inputCover)
+            let s = CGFloat(image.width) / w.frame.width
             for r in inputRects(in: w) {
-                ctx.fill(place(r.offsetBy(dx: w.frame.minX, dy: w.frame.minY)))
+                // `r` counts y from the bottom, the bitmap from the top.
+                let top = CGRect(x: r.minX, y: w.frame.height - r.maxY, width: r.width, height: r.height)
+                RedactionSmudge.draw(in: ctx, rect: place(r.offsetBy(dx: w.frame.minX, dy: w.frame.minY)),
+                                     background: inputBackground(image, top, scale: s))
             }
         }
         return ctx.makeImage()
@@ -308,9 +318,9 @@ enum BugReport {
         guard let view = window.rootViewController?.view else { return nil }
         let covers: [UIView] = hideSearch ? searchFields(in: view).compactMap { field in
             guard !(field.text ?? "").isEmpty, field.window != nil else { return nil }
-            let cover = UIView(frame: field.convert(field.bounds, to: view))
-            cover.backgroundColor = .systemGray
+            let cover = SmudgeView(frame: field.convert(field.bounds, to: view))
             cover.layer.cornerRadius = 6
+            cover.clipsToBounds = true
             view.addSubview(cover)
             return cover
         } : []
@@ -324,8 +334,11 @@ enum BugReport {
                 UIColor.black.withAlphaComponent(0.2).setFill()
                 ctx.fill(window.bounds)
                 dialog.drawHierarchy(in: dialog.convert(dialog.bounds, to: window), afterScreenUpdates: true)
-                ctx.cgContext.setFillColor(inputCover)
-                for r in inputRects(in: dialog, window: window) { ctx.cgContext.fill(r) }
+                let drawn = ctx.currentImage.cgImage
+                for r in inputRects(in: dialog, window: window) {
+                    let bg = drawn.map { inputBackground($0, r, scale: format.scale) } ?? inputCover
+                    RedactionSmudge.draw(in: ctx.cgContext, rect: r, background: bg)
+                }
             }
         }
         return image.cgImage
@@ -351,6 +364,22 @@ enum BugReport {
             node = v.superview
         }
         return false
+    }
+
+    /// The smudge over a search field while the snapshot is drawn, on the
+    /// background the field stands on.
+    private final class SmudgeView: UIView {
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isOpaque = true
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func draw(_ rect: CGRect) {
+            guard let ctx = UIGraphicsGetCurrentContext() else { return }
+            RedactionSmudge.draw(in: ctx, rect: bounds, background: UIColor.systemBackground.resolvedColor(with: traitCollection).cgColor)
+        }
     }
 
     private static func searchFields(in view: UIView) -> [UISearchTextField] {

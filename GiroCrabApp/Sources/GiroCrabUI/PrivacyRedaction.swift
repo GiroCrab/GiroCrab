@@ -60,13 +60,9 @@ private struct SensitiveContent: ViewModifier {
     @Environment(\.reportRedaction) private var redaction
     let kind: ReportRedaction
 
-    /// Fixed, so a smudge says nothing about the text below it.
-    private static let smudge: [Gradient.Stop] = zip([0, 0.5, 0.3, 0.55, 0.25, 0.5, 0.35, 0.6, 0.3, 0.5, 0], 0...)
-        .map { .init(color: Color.primary.opacity($0.0), location: Double($0.1) / 10) }
-    private static let fade: [Gradient.Stop] = [
-        .init(color: .clear, location: 0), .init(color: .black.opacity(0.6), location: 0.3), .init(color: .black, location: 0.5),
-        .init(color: .black.opacity(0.6), location: 0.7), .init(color: .clear, location: 1),
-    ]
+    private static let smudge: [Gradient.Stop] = RedactionSmudge.ink.enumerated()
+        .map { .init(color: Color.primary.opacity($0.element), location: Double($0.offset) / Double(RedactionSmudge.ink.count - 1)) }
+    private static let fade: [Gradient.Stop] = RedactionSmudge.fade.map { .init(color: .black.opacity($0.alpha), location: $0.at) }
 
     func body(content: Content) -> some View {
         let hidden = !redaction.effective.isDisjoint(with: kind)
@@ -93,5 +89,65 @@ private struct SensitiveContent: ViewModifier {
                         .accessibilityHidden(true)
                 }
             }
+    }
+}
+
+/// The smudge that stands for hidden content: drawn by `.sensitive()` and,
+/// over text inputs the report covers itself, by `draw(in:rect:background:)`.
+enum RedactionSmudge {
+    /// Ink opacity from left to right, evenly spaced. Fixed, so a smudge says
+    /// nothing about the text below it.
+    static let ink: [Double] = [0, 0.5, 0.3, 0.55, 0.25, 0.5, 0.35, 0.6, 0.3, 0.5, 0]
+    /// Vertical fade (top to bottom) towards the edges.
+    static let fade: [(at: Double, alpha: Double)] = [(0, 0), (0.3, 0.6), (0.5, 1), (0.7, 0.6), (1, 0)]
+
+    /// Covers `rect` of `ctx` opaquely with `background` and draws the smudge
+    /// on it, in ink that contrasts with the background (dark on light).
+    static func draw(in ctx: CGContext, rect: CGRect, background: CGColor) {
+        guard rect.width >= 1, rect.height >= 1, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let bg = background.converted(to: space, intent: .defaultIntent, options: nil),
+              let c = bg.components, c.count >= 3
+        else {
+            ctx.setFillColor(CGColor(gray: 0.56, alpha: 1)) // fail closed: still opaque
+            ctx.fill(rect)
+            return
+        }
+        let opaque = CGColor(colorSpace: space, components: [c[0], c[1], c[2], 1])!
+        let ink: CGFloat = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2] > 0.5 ? 0 : 1
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.setFillColor(opaque)
+        ctx.fill(rect)
+        // The vertical fade as a mask; CoreGraphics counts y from the bottom,
+        // the fade is symmetric, so its direction does not matter.
+        let h = max(1, Int(rect.height.rounded(.up)))
+        guard let gray = CGColorSpace(name: CGColorSpace.linearGray),
+              let maskCtx = CGContext(data: nil, width: 1, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: gray, bitmapInfo: CGImageAlphaInfo.none.rawValue),
+              let fadeGradient = CGGradient(colorsSpace: gray, colors: fade.map { CGColor(gray: $0.alpha, alpha: 1) } as CFArray,
+                                            locations: fade.map { CGFloat($0.at) }),
+              let inkGradient = CGGradient(colorsSpace: space,
+                                           colors: Self.ink.map { CGColor(colorSpace: space, components: [ink, ink, ink, $0])! } as CFArray,
+                                           locations: Self.ink.indices.map { CGFloat($0) / CGFloat(Self.ink.count - 1) })
+        else { return }
+        maskCtx.drawLinearGradient(fadeGradient, start: .zero, end: CGPoint(x: 0, y: h), options: [])
+        guard let mask = maskCtx.makeImage() else { return }
+        ctx.clip(to: rect, mask: mask)
+        ctx.drawLinearGradient(inkGradient, start: CGPoint(x: rect.minX, y: rect.midY),
+                               end: CGPoint(x: rect.maxX, y: rect.midY), options: [])
+    }
+
+    /// The colour of pixel `point` (pixels, origin top left) of `image`: the
+    /// background a cover takes over, so it blends into the field around it.
+    static func color(of image: CGImage, at point: CGPoint) -> CGColor? {
+        let x = min(max(0, Int(point.x)), image.width - 1), y = min(max(0, Int(point.y)), image.height - 1)
+        guard let pixel = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        ctx.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard let p = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        return CGColor(colorSpace: space, components: [CGFloat(p[0]) / 255, CGFloat(p[1]) / 255, CGFloat(p[2]) / 255, 1])
     }
 }
