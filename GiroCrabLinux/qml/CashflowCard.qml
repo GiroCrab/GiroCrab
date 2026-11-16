@@ -16,11 +16,13 @@ Card {
     /// Off the GUI thread: every published booking list asks again (a load still running
     /// would otherwise hold the GUI thread at the vault mutex).
     function load() {
-        if (!AppModel.isUnlocked) return
+        // hidden (Auswertungen off, budgets alone above the list, #544): nothing to load
+        if (!AppModel.isUnlocked || !visible) return
         AppModel.loadOffMain("cashflow", () => [["cashflow_by_period", { granularity: card.granularity, count: card.granularity === "Year" ? 5 : 6 }]],
                              r => { card.rows = r[0] })
     }
     onGranularityChanged: load()
+    onVisibleChanged: if (visible) load()
     Connections { target: AppModel; function onBookingsChanged() { card.load() } }
     Component.onCompleted: load()
     function label(key) {

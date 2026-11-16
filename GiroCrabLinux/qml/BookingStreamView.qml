@@ -11,8 +11,9 @@ Rectangle {
     readonly property bool isOverview: AppModel.sidebarSelection === "all"
     readonly property bool isNewBookings: AppModel.sidebarSelection === "newBookings"
     /// Cashflow and budget cards: overview always, a single account only when toggled on; never in „Neue Umsätze“
-    /// and never for a depot (BookingListView.swift, #611).
-    readonly property bool showsAnalytics: AppModel.showStatistics && !isNewBookings && AppModel.allAccounts.length > 0
+    /// and never for a depot (BookingListView.swift, #611). Each card follows its own switch
+    /// (ViewLayout.cards, #544): the budgets stay when „Auswertungen anzeigen“ is off.
+    readonly property bool showsAnalytics: (AppModel.showStatistics || AppModel.showBudgets) && !isNewBookings && AppModel.allAccounts.length > 0
                                            && (isOverview || showAnalytics) && AppModel.scope !== "Investments" && !isDepot
     readonly property bool isDepot: AppModel.selectedAccount !== null
         && (AppModel.selectedAccount.kind === "Brokerage" || AppModel.selectedAccount.name.toLowerCase().indexOf("depot") >= 0)
@@ -123,7 +124,7 @@ Rectangle {
                     sourceComponent: Component { InvestmentDashboardView {} }
                 }
                 CashflowCard {
-                    visible: stream.showsAnalytics
+                    visible: stream.showsAnalytics && AppModel.showStatistics
                     Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                 }
                 BudgetProgressCard {
