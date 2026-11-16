@@ -287,11 +287,20 @@ ApplicationWindow {
                 current: AppModel.wealthScope
                 onActivated: id => AppModel.wealthScope = id
             }
+            // DocumentsScopePicker (DocumentsUI.swift, #526) in „Belege & PostBox“
             Segmented {
-                visible: AppModel.sidebarSelection !== "wealth"
+                visible: AppModel.sidebarSelection === "documents"
+                options: DocumentsScope.options
+                current: DocumentsScope.current
+                onActivated: id => DocumentsScope.current = id
+                HoverHandler { id: docScopeHover }
+                ToolTip.text: qsTr("Alle Dokumente, eigene Belege oder Bankdokumente anzeigen"); ToolTip.visible: docScopeHover.hovered; ToolTip.delay: 600
+            }
+            Segmented {
+                visible: AppModel.sidebarSelection !== "wealth" && AppModel.sidebarSelection !== "documents"
                 options: AppModel.scopes
                 current: AppModel.scope
-                enabled: AppModel.sidebarSelection !== "documents" && AppModel.sidebarSelection !== "newBookings"
+                enabled: AppModel.sidebarSelection !== "newBookings"
                 onActivated: id => AppModel.scope = id
                 ToolTip.text: qsTr("Ansicht wählen (Strg+1, Strg+2, Strg+3)")
             }

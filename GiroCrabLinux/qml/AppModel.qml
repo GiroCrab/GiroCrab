@@ -1833,7 +1833,19 @@ QtObject {
             errorMessage = e.message
         }
     }
-    function linkDocument(d, bookingID) { run(() => core("link_document", { doc_id: d.id, booking_id: bookingID })); documentsChanged() }
+    /// „Im Finder anzeigen“ (#622) → „Im Dateimanager anzeigen“: the private copy, selected in
+    /// the desktop's file manager (org.freedesktop.FileManager1); without one, its folder.
+    function showInFileManager(d) {
+        const path = run(() => core("document_temp_file", { doc_id: d.id, mime_type: d.mime_type }))
+        if (!path) return
+        const folder = () => Qt.openUrlExternally("file://" + path.slice(0, path.lastIndexOf("/")))
+        coreAsync("show_in_file_manager", { path: path }, shown => { if (!shown) folder() }, () => folder())
+    }
+    function linkDocument(d, bookingID) {
+        const linked = run(() => { core("link_document", { doc_id: d.id, booking_id: bookingID }); return true })
+        documentsChanged()
+        if (linked && bookingID === null) toast = qsTr("Zuordnung aufgehoben")
+    }
     function deleteDocument(d) { run(() => core("delete_document", { doc_id: d.id })); documentsChanged() }
     function exportAllDocuments(folderPath) {
         const n = run(() => core("export_all_documents", { dest_dir: folderPath }))

@@ -51,6 +51,24 @@ Funktionsumfang der Oberfläche.
   (Art: GiroCrab oder MoneyMoney). Bei leerem Tresor ist sie vorgewählt; enthält der Tresor schon
   Konten, fragt „Tresor ersetzen?“ nach.
 
+### Belege & PostBox
+
+- **Filter oben in der Symbolleiste:** „Alle Dokumente“, „Belege“ (selbst hinzugefügte
+  Rechnungen, Kassenbons, Fotos) oder „PostBox“ (Dokumente der Bank) – unabhängig davon, ob ein
+  Dokument einem Umsatz zugeordnet ist. Überschrift und Erklärung folgen der Auswahl, darunter
+  steht die Zahl der Dokumente.
+- **„Beleg hinzufügen …“** wählt PDFs oder Fotos per Dateidialog und sucht den passenden Umsatz,
+  wie beim Hineinziehen.
+- Jede Zeile nennt Herkunft und Konto („Beleg · Girokonto“) und den zugeordneten Umsatz oder
+  „Ohne zugeordneten Umsatz“. „Nur ohne zugeordneten Umsatz“ ersetzt „Nur ohne Buchung“.
+- „Belege & PostBox“ beginnt wieder mit „Alle Konten“, wenn man den Bereich verlässt und später
+  zurückkehrt. Findet ein Filter nichts, führt „Alle Dokumente anzeigen“ zurück.
+- **„Zuordnung aufheben“** (vorher „Verknüpfung lösen“) ist bei Dokumenten ohne Umsatz
+  ausgegraut und bestätigt sich mit einem Hinweis.
+- **„Im Dateimanager anzeigen“** im Kontextmenü und im Beleg-Menü der Detailspalte öffnet den
+  Dateimanager (Dolphin, Nautilus, …) mit der entschlüsselten Kopie ausgewählt; ohne
+  passenden Dateimanager öffnet sich der Ordner.
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus

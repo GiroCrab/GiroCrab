@@ -554,7 +554,9 @@ Rectangle {
                     }
                     TapHandler { onTapped: dc.selectedDoc = dc.selectedDoc && dc.selectedDoc.id === modelData.id ? null : modelData }
                     AppMenu { id: docMenu
-                        AppMenuItem { text: qsTr("In PostBox verschieben (Verknüpfung lösen)"); onTriggered: AppModel.linkDocument(modelData, null) }
+                        AppMenuItem { text: qsTr("Im Dateimanager anzeigen"); onTriggered: AppModel.showInFileManager(modelData) }
+                        AppMenuItem { text: qsTr("Zuordnung aufheben"); enabled: modelData.booking_id !== null && modelData.booking_id !== undefined
+                                      onTriggered: AppModel.linkDocument(modelData, null) }
                         AppMenuSeparator {}
                         AppMenuItem { text: qsTr("Beleg löschen …"); onTriggered: dc.docToDelete = modelData } }
                 }

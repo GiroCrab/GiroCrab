@@ -29,6 +29,7 @@ extern "C" {
         out: *const std::os::raw::c_char,
     ) -> bool;
     fn girocrab_copy_image(path: *const std::os::raw::c_char) -> bool;
+    fn girocrab_show_in_file_manager(path: *const std::os::raw::c_char) -> bool;
 }
 
 /// The vault on screen (demo or personal) – `AppModel.vault`. `None` = locked.
@@ -673,6 +674,14 @@ fn call(method: &str, a: &Value) -> R {
                 .map_err(|e| e.to_string())?)
         }
         "document_temp_file" => document_temp_file(arg(a, "doc_id")?, arg(a, "mime_type")?),
+        // „Im Dateimanager anzeigen“ (AppModel.showInFinder): false = no file manager answered.
+        // May wait for the bus to start one: called with Core.callAsync.
+        "show_in_file_manager" => {
+            let path =
+                std::ffi::CString::new(arg::<String>(a, "path")?).map_err(|e| e.to_string())?;
+            // SAFETY: a blocking D-Bus call on its own connection; the string outlives it.
+            ok(unsafe { girocrab_show_in_file_manager(path.as_ptr()) })
+        }
         "session_start" | "session_submit" | "session_poll" | "session_confirm_payee" => {
             session_step(method, a)
         }
