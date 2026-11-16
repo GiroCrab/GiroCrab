@@ -66,7 +66,7 @@ struct StreamHeaderCard: View {
 
     var body: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: ViewLayout.cardSpacing) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(headerTitle).sensitive(account == nil ? .labels : .personal).appFont(compactHeader ? .headline : .title2, weight: .semibold).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
@@ -212,7 +212,7 @@ struct StreamHeaderCard: View {
                 filterRow
             }
         }
-        .card()
+        .card(padding: ViewLayout.cardPadding)
     }
 
     /// Depot: no cash-flow KPIs or booking filters – the period, documents and a hint.
