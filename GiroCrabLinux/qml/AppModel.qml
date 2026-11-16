@@ -101,7 +101,8 @@ QtObject {
 
     // MARK: UI state
     property string sidebarSelection: "all"
-    onSidebarSelectionChanged: { listLimit = defaultListLimit; reloadSelection(false) }
+    // any other sidebar choice ends the merchant list (#495) before the list reloads
+    onSidebarSelectionChanged: { MerchantFocus.sidebarChanged(); listLimit = defaultListLimit; reloadSelection(false) }
     property string scope: "All"               // BookingScope
     onScopeChanged: { listLimit = defaultListLimit; if (scope === "Investments") reloadDashboard(); reloadBookings() }
     property string period: "all"
@@ -790,7 +791,7 @@ QtObject {
             date_from: r[0], date_to: r[1],
             limit: listLimit, offset: 0,
             scope: scope,
-            merchant_key: null,
+            merchant_key: MerchantFocus.key,   // the merchant list (#495)
             direction: directionFilter,
             checked: statusFilter === "all" ? null : statusFilter === "checked",
             whole_days: true
@@ -3257,6 +3258,8 @@ QtObject {
         const p = launchValue("--pick")
         const pick = p ? bookings.find(b => (b.merchant_name || "").toLowerCase().includes(p) || (b.counterparty || "").toLowerCase().includes(p)) : null
         if (pick) selectedBookingID = pick.id
+        // --merchant-list: with --pick, open the list of that booking's merchant (#495)
+        if (pick && launchArgs.indexOf("--merchant-list") >= 0) MerchantFocus.focusMerchant(pick)
         // Sachwerte (#87): --pick also selects an item by name
         const item = p && account && isTangible(account.id) ? assetItems(account.id).find(i => i.setup.name.toLowerCase().includes(p)) : null
         if (item) selectAssetItem(item.id)
