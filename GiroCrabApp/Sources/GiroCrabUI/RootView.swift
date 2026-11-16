@@ -401,7 +401,7 @@ struct SplashView: View {
                 ProgressView().tint(.white).offset(y: BrandBackdrop.logoSize * 0.5 + 44)
             } else {
                 MacLaunchBackground()
-                VStack(spacing: 28) {
+                VStack(spacing: 20) {
                     MacHeroIcon(phase: .idle)
                     ProgressView()
                 }
@@ -532,9 +532,9 @@ struct LockView: View {
     }
 
     private var standardBody: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 16) {
             MacHeroIcon(phase: crabPhase)
-                .padding(.bottom, -6)
+                .padding(.bottom, -22)
             Text("GiroCrab ist gesperrt")
                 .appFont(.title, weight: .bold)
             Text("Ihre Buchungen liegen in einem verschlüsselten Tresor.\nDer Schlüssel verlässt nie den Schlüsselbund dieses Geräts.")
@@ -894,10 +894,10 @@ struct MacLaunchBackground: View {
 }
 
 /// Hero icon for start and lock screen in a Mac window: the cut-out crab (no app-icon squircle),
-/// about 190 pt wide, with a soft contact shadow; in Dark Mode with a subtle ambient glow.
+/// 270 pt wide, with a soft contact shadow; in Dark Mode with a subtle ambient glow.
 struct MacHeroIcon: View {
     var phase: AnimatedCrabLogoView.Phase
-    var size: CGFloat = 190
+    var size: CGFloat = 270
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -912,8 +912,8 @@ struct MacHeroIcon: View {
                     .allowsHitTesting(false)
             }
             AnimatedCrabLogoView(size: size, phase: phase, showBackgroundSquircle: false)
-                .shadow(color: .black.opacity(dark ? 0.45 : 0.20), radius: 14, x: 0, y: 12)
-                .shadow(color: .black.opacity(dark ? 0.30 : 0.10), radius: 3, x: 0, y: 2)
+                .shadow(color: .black.opacity(dark ? 0.45 : 0.20), radius: size * 0.074, x: 0, y: size * 0.063)
+                .shadow(color: .black.opacity(dark ? 0.30 : 0.10), radius: size * 0.016, x: 0, y: size * 0.011)
         }
         .frame(width: size * 1.3, height: size * 1.3)
     }
