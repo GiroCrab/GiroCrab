@@ -8,6 +8,34 @@ Verhalten und Texte kommen dabei 1:1 aus der Mac-App, auf Deutsch und Englisch. 
 Einstellungen › Sicherheit steht deshalb „Kern-Version“: Die Nummer gehört zum Kern, nicht zum
 Funktionsumfang der Oberfläche.
 
+## Nächster Stand (in Arbeit)
+
+### Seitenleiste, Kategorien, Regeln
+
+- **Seitenleiste mit Abschnitten:** „Neue Umsätze“ und „Vermögen“ stehen ganz oben. Darunter
+  folgen einklappbare Abschnitte **Konten**, **Zahlungen** (Geplant, Lastschriften – mit Zählern),
+  **Dokumente** und **Kategorien**; der Zustand bleibt über Neustarts erhalten. Alle Pfeile und
+  Symbole liegen auf einer gemeinsamen Achse, Unterkategorien und Konten rücken einheitlich ein.
+- **Konto-Zeilen** kompakter: Zahl neuer Buchungen am Kontosymbol, Kontoinhaber als Tooltip,
+  Saldo in der zweiten Zeile; archivierte Konten zeigen keinen Saldo mehr („Archiviert – wird
+  nicht mehr abgerufen“).
+- **„+“ unten** öffnet ein Menü: Neues Konto, Neue Kontengruppe, Neue Kategorie (unter der
+  gewählten), Neue Kategoriengruppe.
+- **Konto bearbeiten …** im Kontextmenü: Name, Kontoinhaber, Kontoart und eine **Konto-Notiz**,
+  die unter dem Kontonamen erscheint. „… abrufen“ nennt das Konto statt des Bankzugangs.
+- Einheitliche Dialoge zum Archivieren und Löschen von Konten und Kategorien (Name im Titel).
+  Konten-Auswertungen erscheinen nicht mehr bei Depots.
+- **„Ohne Kategorie“** lässt sich umbenennen (Rechtsklick › Umbenennen …, „Standardbezeichnung“
+  stellt den Namen zurück); die Bezeichnung gilt auch in Titel, Buchungsliste und Aufteilen.
+- **Kategorie duplizieren** samt Unterkategorien („… Kopie“).
+- **Aufgeklappte Kategorien** werden gemerkt, getrennt für Demo und eigenen Tresor.
+- **Regeln:** auf mehrere Konten einschränken (Konten als Chips, „Konto hinzufügen“),
+  Reihenfolge per Drag & Drop oder Kontextmenü („An den Anfang“, „Nach oben“, „Nach unten“,
+  „Ans Ende“), Filter über der Liste mit `*` und `?` (z. B. „deu*b“), Rang vor jeder Regel.
+  Das Feld „Priorität“ entfällt wie in der Mac-App: Es zählt die Reihenfolge der Liste.
+- Bankzugang bearbeiten: Easybank und Alte Leipziger speichern das Passwort, die Volkswagen Bank
+  die PIN im Tresor.
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus

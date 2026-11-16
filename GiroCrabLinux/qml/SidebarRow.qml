@@ -10,6 +10,8 @@ Item {
     property int topGap: 0
     property int rowHeight: 30
     readonly property bool selected: AppModel.sidebarSelection === selectionKey
+    /// Takes the keyboard on a click when the row is not in a ListView (the sidebar's header rows).
+    property Item focusTarget: null
     width: ListView.view ? ListView.view.width : 200
     height: rowHeight + topGap
 
@@ -26,6 +28,7 @@ Item {
             AppModel.sidebarSelection = row.selectionKey
             // the sidebar takes the keyboard (↑/↓) like a clicked List
             if (row.ListView.view && row.ListView.view.takeKeyFocus) row.ListView.view.takeKeyFocus()
+            else if (row.focusTarget) row.focusTarget.forceActiveFocus(Qt.MouseFocusReason)
         }
     }
     Item {

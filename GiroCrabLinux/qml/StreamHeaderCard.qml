@@ -46,6 +46,16 @@ Card {
                     font.pixelSize: Theme.caption; color: Theme.secondary
                     Sensitive { when: card.account !== null }   // IBAN
                 }
+                // BalanceHeaderView.swift: the account note (AccountEditSheet, #605)
+                Text {
+                    readonly property string note: card.account ? SidebarModel.accountNote(card.account.id) : ""
+                    visible: note !== ""
+                    text: note; font.pixelSize: Theme.caption; color: Theme.secondary
+                    wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true
+                    HoverHandler { id: noteHover }
+                    ToolTip.visible: noteHover.hovered && truncated; ToolTip.delay: 600; ToolTip.text: note
+                    Sensitive {}
+                }
                 // AccountCopyMenu on the title
                 TapHandler {
                     acceptedButtons: Qt.RightButton

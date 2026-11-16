@@ -10,9 +10,10 @@ Rectangle {
     color: Theme.canvas
     readonly property bool isOverview: AppModel.sidebarSelection === "all"
     readonly property bool isNewBookings: AppModel.sidebarSelection === "newBookings"
-    /// Cashflow and budget cards: overview always, a single account only when toggled on; never in „Neue Umsätze“.
+    /// Cashflow and budget cards: overview always, a single account only when toggled on; never in „Neue Umsätze“
+    /// and never for a depot (BookingListView.swift, #611).
     readonly property bool showsAnalytics: AppModel.showStatistics && !isNewBookings && AppModel.allAccounts.length > 0
-                                           && (isOverview || showAnalytics) && AppModel.scope !== "Investments"
+                                           && (isOverview || showAnalytics) && AppModel.scope !== "Investments" && !isDepot
     readonly property bool isDepot: AppModel.selectedAccount !== null
         && (AppModel.selectedAccount.kind === "Brokerage" || AppModel.selectedAccount.name.toLowerCase().indexOf("depot") >= 0)
     readonly property bool isTangible: AppModel.selectedAccount !== null && AppModel.isTangible(AppModel.selectedAccount.id)
@@ -721,8 +722,8 @@ Rectangle {
         readonly property color tint: none ? Theme.warning : Theme.readable(booking.category_color_hex)
         spacing: 3
         SFIcon { symbol: none ? "questionmark.folder" : (booking.category_symbol || "tag.fill"); size: 11; color: parent.tint }
-        Text { text: none ? qsTr("Ohne Kategorie") : booking.category_name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: parent.tint; elide: Text.ElideRight
-               Sensitive { labels: true; when: !parent.parent.none } }   // parent: the Text, its parent the label
+        Text { text: none ? SidebarModel.uncategorizedLabel : booking.category_name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: parent.tint; elide: Text.ElideRight
+               Sensitive { labels: true } }   // also a custom „Ohne Kategorie“ label (#597)
     }
 
     // Onboarding.swift › EmptyVaultCard: the personal vault has no accounts yet.

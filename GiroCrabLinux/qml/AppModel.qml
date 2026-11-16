@@ -973,7 +973,7 @@ QtObject {
         if (sel === "all") return qsTr("Alle Konten")
         if (sel === "newBookings") return qsTr("Neue Umsätze")
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.name : qsTr("Bank") }
-        if (sel === "uncategorized") return qsTr("Ohne Kategorie")
+        if (sel === "uncategorized") return SidebarModel.uncategorizedLabel
         if (sel === "documents") return qsTr("Belege & PostBox")
         if (sel === "wealth") return qsTr("Vermögen")
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.name : qsTr("Gruppe") }
@@ -2291,7 +2291,7 @@ QtObject {
     /// "Verschieben nach ▸": under another category, or to the top level (null).
     function moveCategory(id, parent) {
         editCategory(id, c => { c.parent_id = parent })
-        if (parent !== null && !expandedCategories[parent]) toggleExpandedCategory(parent) // keep it in view
+        if (parent !== null) SidebarModel.expandCategoryPath(parent) // keep it in view, also inside a folded main category (#633)
     }
     function setCategorySymbol(id, symbol) { editCategory(id, c => { c.sf_symbol = symbol }) }
     function setCategoryColor(id, hex) { editCategory(id, c => { c.color_hex = hex }) }

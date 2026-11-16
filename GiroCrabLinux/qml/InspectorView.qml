@@ -456,7 +456,7 @@ Rectangle {
             width: parent.width; spacing: 10
             RowLayout {
                 CardTitle { text: qsTr("Kategorie"); Layout.fillWidth: true }
-                Text { text: cg.booking.category_path || qsTr("Ohne Kategorie"); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.maximumWidth: 160
+                Text { text: cg.booking.category_path || SidebarModel.uncategorizedLabel; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.maximumWidth: 160
                        Sensitive { labels: true; when: cg.booking.category_path !== "" } }
             }
             ChipGrid { card: cg; Layout.fillWidth: true; nodes: AppModel.categoryTree; selectedId: cg.path.length ? cg.path[0] : -1; level: 0; minimum: 104 }
