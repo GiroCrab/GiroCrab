@@ -183,13 +183,7 @@ struct TransferSheetView: View {
         Form {
             Section {
                 LabeledContent("Von Konto") {
-                    Picker("Von Konto", selection: draft.accountID) {
-                        ForEach(model.transferFormAccounts) { a in
-                            Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .sensitive() // shows the selected account and its IBAN
+                    SourceAccountPicker(selection: draft.accountID, accounts: model.transferFormAccounts)
                 }
             } footer: {
                 if account != nil && !canSend { noDirectTransferNote }
@@ -453,7 +447,7 @@ struct TransferSheetView: View {
                 reviewRow("Ausführung", sendsInstant
                     ? String(localized: "Sofort (Echtzeitüberweisung)")
                     : d.executionDateISO.map { String(format: String(localized: "Am %@ (Terminüberweisung)"), $0) }
-                        ?? String(localized: "Heute (SEPA-Überweisung)"), sensitive: false)
+                        ?? String(localized: "Heute (SEPA-Überweisung)"), hides: [])
             } header: {
                 Text("Zahlung").appSectionHeader()
             } footer: {
@@ -464,13 +458,13 @@ struct TransferSheetView: View {
     }
 
     private func reviewRow(_ label: LocalizedStringKey, _ value: String, monospaced: Bool = false,
-                           sensitive: Bool = true) -> some View {
+                           hides: ReportRedaction = .personal) -> some View {
         LabeledContent(label) {
             Text(value)
                 .appFont(.body, design: monospaced ? .monospaced : .default)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
-                .sensitive(sensitive ? .personal : [])
+                .sensitive(hides)
         }
     }
 
@@ -572,5 +566,23 @@ struct TransferSheetView: View {
         let u = Array(s.uppercased())
         guard u.count == 8 || u.count == 11 else { return false }
         return u[..<6].allSatisfy { $0.isASCII && $0.isLetter } && u[6...].allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+    }
+}
+
+/// "Von Konto" of the transfer, standing order and batch forms: the picker
+/// draws the selected account's name and IBAN itself (an iOS menu picker),
+/// so it is covered as a whole; the label beside it stays readable.
+struct SourceAccountPicker: View {
+    let selection: Binding<Int64?>
+    let accounts: [Account]
+
+    var body: some View {
+        Picker("Von Konto", selection: selection) {
+            ForEach(accounts) { a in
+                Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
+            }
+        }
+        .labelsHidden()
+        .sensitive()
     }
 }

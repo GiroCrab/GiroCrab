@@ -95,7 +95,6 @@ struct TwoFactorSheet: View {
                     if let consent {
                         // Bank login inside GiroCrab; closes itself on the redirect.
                         ConsentWebView(browser: consent)
-                            .sensitive() // the bank page lists accounts and IBANs
                             // banks lay their consent pages out for a desktop
                             // browser: a narrower view cuts off the account list
                             .desktopFrame(minWidth: 820, idealWidth: 880, minHeight: 420, idealHeight: 620, maxHeight: .infinity)

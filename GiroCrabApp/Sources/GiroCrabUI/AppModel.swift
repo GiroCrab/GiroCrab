@@ -737,8 +737,8 @@ public final class AppModel {
         case let n where n == "add-bank" || n.hasPrefix("add-bank:"):
             // the original spelling (LaunchOptions lowercases --demo-sheet): "Sparkasse Köln"
             let args = CommandLine.arguments
-            var raw = args.firstIndex(of: "--demo-sheet").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? n
-            if raw.lowercased().hasPrefix("report:") { raw = String(raw.dropFirst("report:".count)) }
+            let raw = LaunchOptions.droppingReportPrefix(
+                args.firstIndex(of: "--demo-sheet").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? n)
             demoAddBank = String(raw.dropFirst("add-bank".count)).trimmingCharacters(in: CharacterSet(charactersIn: ":"))
             showAddBank = true
         case "moneymoney-db":

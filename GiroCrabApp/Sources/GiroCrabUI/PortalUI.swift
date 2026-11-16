@@ -468,7 +468,6 @@ struct PortalWebSheet: View {
             .padding(14)
             Divider()
             PortalWebView(browser: browser)
-                .sensitive() // the portal shows names, card numbers and bookings
                 .macFrame(minWidth: 760, minHeight: 520)
             Divider()
             HStack {

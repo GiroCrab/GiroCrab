@@ -53,8 +53,6 @@ enum BugReport {
 
     @MainActor private static var captureToken = 0
 
-    /// Stands in for search text in the captured window.
-    static let searchPlaceholder = "•••"
 
     #if os(macOS)
     typealias PlatformWindow = NSWindow
@@ -142,15 +140,13 @@ enum BugReport {
         #endif
     }
 
-    /// Background of the smudge over a text input or pop-up menu of a dialog
-    /// (what the user typed or picked there is personal more often than not)
-    /// when the field's own colour cannot be read.
-    private static let inputCover = CGColor(gray: 0.56, alpha: 1)
-
-    /// The colour just inside the top left corner of `rect` (points, origin
-    /// top left) of `image`, drawn at `scale`: the field's own background.
+    /// Background of the smudge over a text input, pop-up menu or web page of
+    /// a dialog (what the user typed or picked there is personal more often
+    /// than not): the colour just inside the top left corner of `rect`
+    /// (points, origin top left) of `image`, drawn at `scale`.
     private static func inputBackground(_ image: CGImage, _ rect: CGRect, scale: CGFloat) -> CGColor {
-        RedactionSmudge.color(of: image, at: CGPoint(x: (rect.minX + 2) * scale, y: (rect.minY + 2) * scale)) ?? inputCover
+        RedactionSmudge.color(of: image, at: CGPoint(x: (rect.minX + 2) * scale, y: (rect.minY + 2) * scale))
+            ?? RedactionSmudge.fallback
     }
 
     #if os(macOS)
@@ -190,8 +186,14 @@ enum BugReport {
             }
         }
 
-        var hosts = [main]
-        while let sheet = hosts.last?.attachedSheet { hosts.append(sheet) }
+        /// `w` and the sheets over it (a sheet can carry a sheet).
+        func sheetChain(from w: NSWindow) -> [NSWindow] {
+            var chain = [w]
+            while let sheet = chain.last?.attachedSheet { chain.append(sheet) }
+            return chain
+        }
+
+        let hosts = sheetChain(from: main)
         var layers = (hosts.dropFirst() + popovers(of: hosts)).map { DialogLayer(window: $0, tracker: tracked($0)) }
 
         // `orderedWindows` runs front to back; draw back to front. Sheets of a
@@ -205,8 +207,7 @@ enum BugReport {
             separate.append(w)
         }
         for w in separate.reversed() {
-            var chain = [w]
-            while let sheet = chain.last?.attachedSheet { chain.append(sheet) }
+            let chain = sheetChain(from: w)
             chain.forEach { seen.insert(ObjectIdentifier($0)) }
             layers += (chain + popovers(of: chain)).map { DialogLayer(window: $0, tracker: tracked($0)) }
         }
@@ -226,7 +227,7 @@ enum BugReport {
         guard window.isVisible, !window.isMiniaturized else { return nil }
         let fields = hideSearch ? searchFields(in: window) : []
         let saved = fields.map(\.stringValue)
-        for f in fields where !f.stringValue.isEmpty { f.stringValue = searchPlaceholder }
+        for f in fields where !f.stringValue.isEmpty { f.stringValue = ReportRedaction.placeholder }
         defer { for (f, text) in zip(fields, saved) where f.stringValue != text { f.stringValue = text } }
         guard let base = WindowScreenshot.bitmap(of: window)?.cgImage else { return nil }
         guard !dialogs.isEmpty else { return base }
@@ -264,9 +265,7 @@ enum BugReport {
     /// pages (a bank or portal login) of `window`, in window coordinates.
     @MainActor
     private static func inputRects(in window: NSWindow) -> [CGRect] {
-        func walk(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(walk) }
-        guard let root = window.contentView?.superview ?? window.contentView else { return [] }
-        return walk(root).compactMap { v in
+        views(of: window).compactMap { v in
             let isInput = (v as? NSTextField)?.isEditable == true || v is NSTextView || v is NSPopUpButton || v is WKWebView
             guard isInput, !v.isHiddenOrHasHiddenAncestor else { return nil }
             // `visibleRect` is the whole window for controls SwiftUI hosts:
@@ -279,11 +278,19 @@ enum BugReport {
 
     @MainActor
     static func searchFields(in window: NSWindow) -> [NSSearchField] {
-        func walk(_ v: NSView) -> [NSSearchField] { ((v as? NSSearchField).map { [$0] } ?? []) + v.subviews.flatMap(walk) }
         let toolbar = window.toolbar?.items.compactMap { ($0 as? NSSearchToolbarItem)?.searchField } ?? []
-        let tree = (window.contentView?.superview ?? window.contentView).map(walk) ?? []
+        let tree = views(of: window).compactMap { $0 as? NSSearchField }
         var seen = Set<ObjectIdentifier>()
         return (toolbar + tree).filter { seen.insert(ObjectIdentifier($0)).inserted }
+    }
+
+    /// Every view of `window`, title bar included (the frame view).
+    @MainActor
+    private static func views(of window: NSWindow) -> [NSView] {
+        var out: [NSView] = []
+        func visit(_ v: NSView) { out.append(v); v.subviews.forEach(visit) }
+        (window.contentView?.superview ?? window.contentView).map(visit)
+        return out
     }
     #else
     /// The window that shows the vault in a foreground scene (an iPad may
@@ -351,7 +358,7 @@ enum BugReport {
                 guard !rects.isEmpty else { continue }
                 let drawn = ctx.currentImage.cgImage
                 for r in rects {
-                    let bg = drawn.map { inputBackground($0, r, scale: format.scale) } ?? inputCover
+                    let bg = drawn.map { inputBackground($0, r, scale: format.scale) } ?? RedactionSmudge.fallback
                     RedactionSmudge.draw(in: ctx.cgContext, rect: r, background: bg)
                 }
             }
@@ -371,8 +378,7 @@ enum BugReport {
     /// must not cover it). A field inside a hidden or fully transparent
     /// container is not on screen and must not get a box over other content.
     private static func inputRects(in view: UIView, window: UIWindow) -> [CGRect] {
-        func walk(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(walk) }
-        return walk(view).compactMap { v in
+        descendants(of: view).compactMap { v in
             guard v is UITextField || v is UITextView || v is WKWebView, v.window != nil, !isEffectivelyHidden(v)
             else { return nil }
             var r = v.convert(v.bounds, to: window)
@@ -414,7 +420,15 @@ enum BugReport {
     }
 
     private static func searchFields(in view: UIView) -> [UISearchTextField] {
-        (view as? UISearchTextField).map { [$0] } ?? view.subviews.flatMap(searchFields(in:))
+        descendants(of: view).compactMap { $0 as? UISearchTextField }
+    }
+
+    /// `view` and every view below it.
+    private static func descendants(of view: UIView) -> [UIView] {
+        var out: [UIView] = []
+        func visit(_ v: UIView) { out.append(v); v.subviews.forEach(visit) }
+        visit(view)
+        return out
     }
     #endif
 

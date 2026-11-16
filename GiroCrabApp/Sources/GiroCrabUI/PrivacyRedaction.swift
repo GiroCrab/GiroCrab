@@ -26,10 +26,14 @@ public struct ReportRedaction: OptionSet, Sendable, Hashable {
         contains(.personal) ? union(.amounts) : self
     }
 
+    /// Stands in for a hidden name inside a text, and for search text in
+    /// the captured window.
+    static let placeholder = "•••"
+
     /// `text`, or a placeholder while `kind` is hidden: for a name inside a
     /// longer text ("Konten auswählen – <Zugang>"), so the rest stays readable.
     func masking(_ text: String, _ kind: ReportRedaction = .personal) -> String {
-        effective.isDisjoint(with: kind) || text.isEmpty ? text : "•••"
+        effective.isDisjoint(with: kind) || text.isEmpty ? text : Self.placeholder
     }
 }
 
@@ -60,8 +64,8 @@ private struct SensitiveContent: ViewModifier {
     @Environment(\.reportRedaction) private var redaction
     let kind: ReportRedaction
 
-    private static let smudge: [Gradient.Stop] = RedactionSmudge.ink.enumerated()
-        .map { .init(color: Color.primary.opacity($0.element), location: Double($0.offset) / Double(RedactionSmudge.ink.count - 1)) }
+    private static let smudge: [Gradient.Stop] = zip(RedactionSmudge.ink, RedactionSmudge.inkLocations)
+        .map { .init(color: Color.primary.opacity($0), location: $1) }
     private static let fade: [Gradient.Stop] = RedactionSmudge.fade.map { .init(color: .black.opacity($0.alpha), location: $0.at) }
 
     func body(content: Content) -> some View {
@@ -98,6 +102,10 @@ enum RedactionSmudge {
     /// Ink opacity from left to right, evenly spaced. Fixed, so a smudge says
     /// nothing about the text below it.
     static let ink: [Double] = [0, 0.5, 0.3, 0.55, 0.25, 0.5, 0.35, 0.6, 0.3, 0.5, 0]
+    static let inkLocations: [Double] = ink.indices.map { Double($0) / Double(ink.count - 1) }
+    /// The cover where no field colour can be read, or the smudge cannot be
+    /// drawn: opaque, so it still hides.
+    static let fallback = CGColor(gray: 0.56, alpha: 1)
     /// Vertical fade (top to bottom) towards the edges.
     static let fade: [(at: Double, alpha: Double)] = [(0, 0), (0.3, 0.6), (0.5, 1), (0.7, 0.6), (1, 0)]
 
@@ -108,7 +116,7 @@ enum RedactionSmudge {
               let bg = background.converted(to: space, intent: .defaultIntent, options: nil),
               let c = bg.components, c.count >= 3
         else {
-            ctx.setFillColor(CGColor(gray: 0.56, alpha: 1)) // fail closed: still opaque
+            ctx.setFillColor(fallback) // fail closed: still opaque
             ctx.fill(rect)
             return
         }
@@ -128,7 +136,7 @@ enum RedactionSmudge {
                                             locations: fade.map { CGFloat($0.at) }),
               let inkGradient = CGGradient(colorsSpace: space,
                                            colors: Self.ink.map { CGColor(colorSpace: space, components: [ink, ink, ink, $0])! } as CFArray,
-                                           locations: Self.ink.indices.map { CGFloat($0) / CGFloat(Self.ink.count - 1) })
+                                           locations: inkLocations.map { CGFloat($0) })
         else { return }
         maskCtx.drawLinearGradient(fadeGradient, start: .zero, end: CGPoint(x: 0, y: h), options: [])
         guard let mask = maskCtx.makeImage() else { return }

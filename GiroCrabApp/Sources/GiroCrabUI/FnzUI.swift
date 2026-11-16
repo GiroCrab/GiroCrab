@@ -204,7 +204,7 @@ struct FnzWebSheet: View {
                 if running || browser.loading { ProgressView().controlSize(.small) }
             }.padding(14)
             Divider()
-            PortalWebView(browser: browser).sensitive().macFrame(minWidth: 760, minHeight: 620) // a bank page
+            PortalWebView(browser: browser).macFrame(minWidth: 760, minHeight: 620)
                 .overlay {
                     if choosing {
                         AccountSelectionPanel(connection: connection) { choosing = false }

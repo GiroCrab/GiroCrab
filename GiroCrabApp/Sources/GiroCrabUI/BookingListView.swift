@@ -116,7 +116,7 @@ struct BookingStreamView: View {
                             ContentUnavailableView(
                                 model.searchText.isEmpty ? "Keine Buchungen" : "Keine Treffer",
                                 systemImage: model.searchText.isEmpty ? "tray" : "magnifyingglass",
-                                description: Text(model.searchText.isEmpty ? "Konto abrufen oder anderen Zeitraum wählen." : "Nichts passt zu „\(redaction.contains(.personal) ? BugReport.searchPlaceholder : model.searchText)“.")
+                                description: Text(model.searchText.isEmpty ? "Konto abrufen oder anderen Zeitraum wählen." : "Nichts passt zu „\(redaction.masking(model.searchText))“.")
                             )
                             .padding(.top, 40)
                         }

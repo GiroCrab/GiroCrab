@@ -94,13 +94,7 @@ struct BatchTransferSheet: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 16) {
                 labeled("Von Konto") {
-                    Picker("Von Konto", selection: $draft.accountID) {
-                        ForEach(model.batchAccounts) { a in
-                            Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .sensitive() // shows the selected account and its IBAN
+                    SourceAccountPicker(selection: $draft.accountID, accounts: model.batchAccounts)
                 }
                 labeled("Buchung auf dem Kontoauszug") {
                     Picker("Buchung", selection: $draft.singleBookings) {

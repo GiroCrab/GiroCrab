@@ -216,6 +216,12 @@ struct RecurringSheet: View {
     @Environment(\.reportRedaction) private var redaction
     @Environment(\.dismiss) private var dismiss
 
+    /// An amount inside the footer text: masked while the report hides
+    /// amounts, so the rest of the sentence stays readable.
+    private func amount(_ cents: Int64) -> String {
+        redaction.masking(Money.format(cents), .amounts)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -239,7 +245,7 @@ struct RecurringSheet: View {
                     } header: {
                         Text("Diesen Monat")
                     } footer: {
-                        Text("Noch offen: \(redaction.masking(Money.format(-m.openExpenseCents), .amounts)) Ausgaben, \(redaction.masking(Money.format(m.openIncomeCents), .amounts)) Einnahmen · bereits gebucht: \(redaction.masking(Money.format(-m.bookedExpenseCents), .amounts))")
+                        Text("Noch offen: \(amount(-m.openExpenseCents)) Ausgaben, \(amount(m.openIncomeCents)) Einnahmen · bereits gebucht: \(amount(-m.bookedExpenseCents))")
                             .appFont(.caption)
                             .foregroundStyle(Theme.secondary)
                             .leadingFooter()

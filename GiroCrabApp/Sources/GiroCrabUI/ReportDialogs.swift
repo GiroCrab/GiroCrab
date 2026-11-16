@@ -162,13 +162,12 @@ enum ReportPickOverlay {
     /// (a SwiftUI sheet of the main view could not be presented over them).
     /// `false`: an alert is on top — it cannot be covered by a second modal,
     /// and the bar tells the user instead.
-    @discardableResult
     private static func presentReport(over window: UIWindow, model: AppModel) -> Bool {
         var top = window.rootViewController
         while let next = top?.presentedViewController, !next.isBeingDismissed { top = next }
         guard let top, !(top is UIAlertController) else { return false }
-        let host = UIHostingController(rootView: AnyView(EmptyView()))
-        host.rootView = AnyView(BugReportSheet(onClose: { [weak host] in host?.dismiss(animated: true) })
+        // The presenter dismisses what it presented: the report.
+        let host = UIHostingController(rootView: BugReportSheet(onClose: { [weak top] in top?.dismiss(animated: true) })
             .environment(model))
         top.present(host, animated: true)
         return true

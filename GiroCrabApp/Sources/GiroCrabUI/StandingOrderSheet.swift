@@ -78,13 +78,7 @@ struct StandingOrderSheet: View {
         return Form {
             Section {
                 LabeledContent("Von Konto") {
-                    Picker("Von Konto", selection: $model.standingDraft.accountID) {
-                        ForEach(model.standingOrderAccounts) { a in
-                            Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .sensitive() // shows the selected account and its IBAN
+                    SourceAccountPicker(selection: $model.standingDraft.accountID, accounts: model.standingOrderAccounts)
                 }
                 .disabled(draft.action == .change)
             }
