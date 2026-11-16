@@ -9,7 +9,7 @@ use std::path::PathBuf;
 const USAGE: &str = "\
 girocrab-mcp: MCP server (stdio) for GiroCrab's read-only local interface
 
-Usage: girocrab-mcp [--socket <path>] [--token-file <path>]
+Usage: girocrab-mcp [--socket <path>] [--token-file <path>] [--check]
 
 The access key comes from GiroCrab (Settings › Analysis). Pass it in the
 environment as GIROCRAB_API_TOKEN, or as a file with --token-file; never as an
@@ -18,11 +18,14 @@ argument (other programs can read the command line).
   --socket <path>      socket of the app (default: GIROCRAB_API_SOCKET, or
                        ~/Library/Application Support/GiroCrab/local-api/girocrab.sock)
   --token-file <path>  file holding the access key (should be readable only by you)
+  --check              test the connection and the key, print the result and exit
+                       (0 works, 3 not reachable, 4 no key, 5 key not accepted,
+                       6 turned off, 7 locked, 8 busy, 1 other)
   --version            print the version
 ";
 
 fn main() {
-    let config = match config(std::env::args().skip(1).collect()) {
+    let (config, check) = match config(std::env::args().skip(1).collect()) {
         Ok(c) => c,
         Err(message) => {
             eprintln!("{message}");
@@ -34,6 +37,19 @@ fn main() {
         eprintln!("girocrab-mcp: {problem}");
     }
     let mut adapter = Adapter::new(config);
+    if check {
+        std::process::exit(match adapter.check() {
+            Ok(info) => {
+                let accounts = &info["account_count"];
+                println!("OK: GiroCrab answers and accepts the key; shared accounts: {accounts}.");
+                0
+            }
+            Err(e) => {
+                println!("{}", e.message);
+                e.problem.exit_code()
+            }
+        });
+    }
     let mut stdin = BufReader::new(std::io::stdin().lock());
     let mut stdout = std::io::stdout().lock();
     let mut line = Vec::new();
@@ -63,9 +79,11 @@ fn main() {
     }
 }
 
-fn config(args: Vec<String>) -> Result<Config, String> {
+/// The configuration and whether `--check` was asked for.
+fn config(args: Vec<String>) -> Result<(Config, bool), String> {
     let mut socket = std::env::var_os("GIROCRAB_API_SOCKET").map(PathBuf::from);
     let mut token = std::env::var("GIROCRAB_API_TOKEN").map_err(|_| no_token());
+    let mut check = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -74,6 +92,7 @@ fn config(args: Vec<String>) -> Result<Config, String> {
                 let path = args.next().ok_or("--token-file needs a path")?;
                 token = read_token_file(&path);
             }
+            "--check" => check = true,
             "--version" => {
                 println!("girocrab-mcp {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
@@ -96,7 +115,7 @@ fn config(args: Vec<String>) -> Result<Config, String> {
             Ok(t)
         }
     });
-    Ok(Config { socket, token })
+    Ok((Config { socket, token }, check))
 }
 
 /// The key, or a message for the user (the adapter still starts, see `main`).

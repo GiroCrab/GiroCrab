@@ -151,24 +151,77 @@ fn summary_schema() -> Value {
     })
 }
 
+/// What went wrong, for `girocrab-mcp --check` and the app's connection test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Problem {
+    /// No socket: the app is not running, locked, or the interface is off.
+    Unreachable,
+    NoKey,
+    KeyRejected,
+    Disabled,
+    Locked,
+    Busy,
+    Other,
+}
+
+impl Problem {
+    /// Exit code of `--check` (0 = works, 2 = wrong arguments). The app's
+    /// settings pane maps these to its own texts.
+    pub fn exit_code(self) -> i32 {
+        match self {
+            Problem::Other => 1,
+            Problem::Unreachable => 3,
+            Problem::NoKey => 4,
+            Problem::KeyRejected => 5,
+            Problem::Disabled => 6,
+            Problem::Locked => 7,
+            Problem::Busy => 8,
+        }
+    }
+}
+
 /// A failed tool call, worded for the user; sent as a tool result with `isError`.
 #[derive(Debug, PartialEq)]
-pub struct ToolError(pub String);
+pub struct ToolError {
+    pub problem: Problem,
+    pub message: String,
+}
+
+impl ToolError {
+    fn new(problem: Problem, message: impl Into<String>) -> Self {
+        Self {
+            problem,
+            message: message.into(),
+        }
+    }
+}
 
 const SETTINGS: &str = "Settings › Analysis, German: Einstellungen › Analyse";
 
 /// The socket answer of a refused request, as something the user can act on.
 fn api_error(code: &str, message: &str) -> ToolError {
-    ToolError(match code {
-        "locked" => "GiroCrab is locked. Unlock it to continue.".into(),
-        "disabled" => format!("External analysis is turned off in GiroCrab ({SETTINGS})."),
-        "unauthorized" => format!(
-            "GiroCrab did not accept the access key. Create a new key in GiroCrab \
-             ({SETTINGS}) and update this program's configuration."
+    match code {
+        "locked" => ToolError::new(
+            Problem::Locked,
+            "GiroCrab is locked. Unlock it to continue.",
         ),
-        "busy" => "GiroCrab is busy with other programs. Try again shortly.".into(),
-        _ => format!("{code}: {message}"),
-    })
+        "disabled" => ToolError::new(
+            Problem::Disabled,
+            format!("External analysis is turned off in GiroCrab ({SETTINGS})."),
+        ),
+        "unauthorized" => ToolError::new(
+            Problem::KeyRejected,
+            format!(
+                "GiroCrab did not accept the access key. Create a new key in GiroCrab \
+                 ({SETTINGS}) and update this program's configuration."
+            ),
+        ),
+        "busy" => ToolError::new(
+            Problem::Busy,
+            "GiroCrab is busy with other programs. Try again shortly.",
+        ),
+        _ => ToolError::new(Problem::Other, format!("{code}: {message}")),
+    }
 }
 
 /// Why one exchange brought no answer.
@@ -181,21 +234,29 @@ enum NoAnswer {
 
 fn connect_error(socket: &Path, e: std::io::Error) -> ToolError {
     let socket = socket.display();
-    ToolError(match e.kind() {
-        ErrorKind::NotFound | ErrorKind::ConnectionRefused => format!(
-            "GiroCrab is not reachable: it is not running, the vault is locked, or \
-             external analysis is turned off ({SETTINGS}). Socket: {socket}"
-        ),
-        ErrorKind::PermissionDenied => format!(
-            "GiroCrab's socket cannot be opened (permission denied): it belongs to \
+    if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) {
+        return ToolError::new(
+            Problem::Unreachable,
+            format!(
+                "GiroCrab is not reachable: it is not running, the vault is locked, or \
+                 external analysis is turned off ({SETTINGS}). Socket: {socket}"
+            ),
+        );
+    }
+    ToolError::new(
+        Problem::Other,
+        match e.kind() {
+            ErrorKind::PermissionDenied => format!(
+                "GiroCrab's socket cannot be opened (permission denied): it belongs to \
              another user, or --socket points to the wrong place. Socket: {socket}"
-        ),
-        // sun_path holds 104 bytes on macOS (108 on Linux).
-        ErrorKind::InvalidInput => {
-            format!("The socket path is too long for a Unix socket: {socket}")
-        }
-        _ => format!("Cannot connect to GiroCrab ({socket}): {e}"),
-    })
+            ),
+            // sun_path holds 104 bytes on macOS (108 on Linux).
+            ErrorKind::InvalidInput => {
+                format!("The socket path is too long for a Unix socket: {socket}")
+            }
+            _ => format!("Cannot connect to GiroCrab ({socket}): {e}"),
+        },
+    )
 }
 
 /// One request on a fresh connection: the protocol keeps no state on a
@@ -210,7 +271,7 @@ fn exchange(socket: &Path, line: &str) -> Result<Value, NoAnswer> {
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     let _ = writeln!(&stream, "{line}");
     let mut answer = String::new();
-    let fail = |text: String| NoAnswer::Fail(ToolError(text));
+    let fail = |text: String| NoAnswer::Fail(ToolError::new(Problem::Other, text));
     match BufReader::new(&stream).read_line(&mut answer) {
         Ok(n) if n > 0 => serde_json::from_str(&answer)
             .map_err(|e| fail(format!("GiroCrab sent an unreadable answer: {e}"))),
@@ -304,18 +365,43 @@ impl Adapter {
                 }
                 out
             }
-            Err(ToolError(text)) => tool_result(text, true),
+            Err(e) => tool_result(e.message, true),
         })
     }
 
     /// One request on the socket; `busy` and a dropped connection are tried
     /// again after a short wait.
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, ToolError> {
-        let token = self
-            .config
-            .token
-            .as_deref()
-            .map_err(|e| ToolError(e.clone()))?;
+        let token = self.config.token.clone();
+        let token = token.map_err(|e| ToolError::new(Problem::NoKey, e))?;
+        self.request_with(&token, method, params)
+    }
+
+    /// `--check`: the info call with the configured key. Without one, the app
+    /// is still asked (with no key), so the answer tells whether it is reachable.
+    pub fn check(&mut self) -> Result<Value, ToolError> {
+        match self.config.token.clone() {
+            Ok(_) => self.request("info", json!({})),
+            Err(missing) => match self.request_with("", "info", json!({})) {
+                Err(e) if e.problem == Problem::KeyRejected => Err(ToolError::new(
+                    Problem::NoKey,
+                    format!("GiroCrab is reachable. {missing}"),
+                )),
+                Err(e) => Err(e),
+                Ok(_) => Err(ToolError::new(
+                    Problem::Other,
+                    "GiroCrab answered without a key.",
+                )),
+            },
+        }
+    }
+
+    fn request_with(
+        &mut self,
+        token: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, ToolError> {
         let line = json!({ "v": API_VERSION, "token": token, "method": method, "params": params })
             .to_string();
         let mut retries = RETRIES;
@@ -336,11 +422,17 @@ impl Adapter {
                         error
                     }
                 },
-                Ok(_) => return Err(ToolError("GiroCrab sent an unreadable answer.".into())),
-                Err(NoAnswer::Fail(e)) => return Err(e),
-                Err(NoAnswer::Retry) => {
-                    ToolError("GiroCrab closed the connection without an answer.".into())
+                Ok(_) => {
+                    return Err(ToolError::new(
+                        Problem::Other,
+                        "GiroCrab sent an unreadable answer.",
+                    ))
                 }
+                Err(NoAnswer::Fail(e)) => return Err(e),
+                Err(NoAnswer::Retry) => ToolError::new(
+                    Problem::Other,
+                    "GiroCrab closed the connection without an answer.",
+                ),
             };
             if retries == 0 {
                 return Err(refused);

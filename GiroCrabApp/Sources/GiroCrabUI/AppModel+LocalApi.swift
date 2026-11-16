@@ -21,6 +21,104 @@ extension AppModel {
         return base.appendingPathComponent("GiroCrab/local-api/girocrab.sock").path
     }()
 
+    /// The MCP adapter for AI assistants (`girocrab-mcp`): in the app at
+    /// `Contents/Helpers/girocrab-mcp`, in a developer build the repository's
+    /// `target/release` (or `debug`) build. nil = not built.
+    nonisolated static var localApiHelperURL: URL? { localApiHelperOverride ?? foundLocalApiHelper }
+
+    /// Tests: the helper built in the repository (the test runner is no app bundle).
+    nonisolated(unsafe) static var localApiHelperOverride: URL?
+
+    nonisolated private static let foundLocalApiHelper: URL? = {
+        let fm = FileManager.default
+        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/girocrab-mcp")
+        if fm.isExecutableFile(atPath: bundled.path) { return bundled }
+        #if DEBUG
+        // swift build / swift run: walk up from .build/… to the workspace root.
+        var dir = Bundle.main.executableURL?.deletingLastPathComponent()
+        while let d = dir, d.path != "/" {
+            if fm.fileExists(atPath: d.appendingPathComponent("girocrab-mcp/Cargo.toml").path) {
+                for profile in ["release", "debug"] {
+                    let built = d.appendingPathComponent("target/\(profile)/girocrab-mcp")
+                    if fm.isExecutableFile(atPath: built.path) { return built }
+                }
+                return nil
+            }
+            dir = d.deletingLastPathComponent()
+        }
+        #endif
+        return nil
+    }()
+
+    /// The entry for an MCP client's configuration (the common `mcpServers`
+    /// form), with the helper's path and `token` (or a placeholder).
+    nonisolated static func localApiClientConfig(helper: URL, token: String?) -> String {
+        func quoted(_ s: String) -> String {
+            let data = try? JSONSerialization.data(withJSONObject: s, options: [.fragmentsAllowed, .withoutEscapingSlashes])
+            return data.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        }
+        return """
+        {
+          "mcpServers": {
+            "girocrab": {
+              "command": \(quoted(helper.path)),
+              "env": { "GIROCRAB_API_TOKEN": \(quoted(token ?? "gcapi_…")) }
+            }
+          }
+        }
+        """
+    }
+
+    /// Runs the helper's `--check` against this app's socket, the way an MCP
+    /// client reaches GiroCrab: with the key just created if it is still shown,
+    /// otherwise without one (then only reachability is known).
+    func checkLocalApiConnection() async -> LocalApiCheck {
+        guard let helper = Self.localApiHelperURL else { return .helperMissing }
+        let (code, output) = await Self.runHelperCheck(helper, socket: Self.localApiSocketPath, token: localApiNewToken)
+        switch code {
+        case 0: return .works
+        case 3: return .notReachable
+        case 4: return .reachableWithoutKey
+        case 5: return .keyRejected
+        case 6: return .turnedOff
+        case 7: return .locked
+        case 8: return .busy
+        default: return .failed(output)
+        }
+    }
+
+    /// Exit code and first output line of `girocrab-mcp --check` (stdout or, for
+    /// a usage error, stderr; killed after 20 s).
+    nonisolated private static func runHelperCheck(_ helper: URL, socket: String, token: String?) async -> (Int32, String) {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = helper
+            process.arguments = ["--check"]
+            var env = ProcessInfo.processInfo.environment
+            env["GIROCRAB_API_SOCKET"] = socket
+            env["GIROCRAB_API_TOKEN"] = token
+            process.environment = env
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = output
+            process.standardInput = FileHandle.nullDevice
+            process.terminationHandler = { p in
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                let line = String(decoding: data, as: UTF8.self).split(separator: "\n").first.map(String.init) ?? ""
+                continuation.resume(returning: (p.terminationStatus, line))
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(returning: (-1, error.localizedDescription))
+                return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+                if process.isRunning { process.terminate() }
+            }
+        }
+    }
+
     /// Tests: a short path outside Application Support (`sun_path` holds 104 bytes).
     nonisolated(unsafe) static var localApiSocketPathOverride: String?
 

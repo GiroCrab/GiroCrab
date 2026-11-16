@@ -180,6 +180,45 @@ fn the_apps_connection_limit_is_waited_out() {
     // Held for good: the user is told GiroCrab is busy.
     let _held = hold();
     let err = mcp.request("info", json!({})).unwrap_err();
-    assert!(err.0.contains("busy"), "{}", err.0);
+    assert!(err.message.contains("busy"), "{}", err.message);
     app.server.stop();
+}
+
+/// `girocrab-mcp --check`, as the app's settings pane runs it.
+fn check(socket: &std::path::Path, token: Option<&str>) -> (i32, String) {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_girocrab-mcp"));
+    cmd.arg("--check")
+        .env("GIROCRAB_API_SOCKET", socket)
+        .env_remove("GIROCRAB_API_TOKEN");
+    if let Some(t) = token {
+        cmd.env("GIROCRAB_API_TOKEN", t);
+    }
+    let out = cmd.output().unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+#[test]
+fn check_tells_each_case_apart() {
+    let dir = ShortDir::new();
+    let app = serve(&dir);
+    let (code, out) = check(&app.socket, Some(&app.token));
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("shared accounts: 1"), "{out}");
+    assert_eq!(check(&app.socket, Some("gcapi_wrong")).0, 5);
+    let (code, out) = check(&app.socket, None);
+    assert_eq!(code, 4);
+    assert!(out.starts_with("GiroCrab is reachable."), "{out}");
+    let scope = app.vault.local_api_scope().unwrap();
+    app.vault
+        .set_local_api_scope(ShareScope {
+            enabled: false,
+            ..scope
+        })
+        .unwrap();
+    assert_eq!(check(&app.socket, Some(&app.token)).0, 6);
+    app.server.stop();
+    assert_eq!(check(&app.socket, Some(&app.token)).0, 3);
 }

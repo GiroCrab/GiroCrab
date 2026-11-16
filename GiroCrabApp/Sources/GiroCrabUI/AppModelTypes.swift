@@ -538,6 +538,22 @@ extension AccountKind {
     }
 }
 
+/// Result of the connection test in Einstellungen › Analyse (`girocrab-mcp --check`).
+enum LocalApiCheck: Equatable {
+    /// The helper reached GiroCrab and the key was accepted.
+    case works
+    /// Reachable; no key was at hand to test (only the newly created one is).
+    case reachableWithoutKey
+    case notReachable
+    case keyRejected
+    case turnedOff
+    case locked
+    case busy
+    /// The helper is not part of this build.
+    case helperMissing
+    case failed(String)
+}
+
 /// The running socket and the vault it serves (`reconcileLocalApiServer`).
 struct RunningLocalApi {
     let server: LocalApiServer

@@ -44,10 +44,17 @@ echo "==> Building Swift app (release)"
 (cd GiroCrabApp && swift build -c release --product GiroCrabMac)
 BIN_DIR="$(cd GiroCrabApp && swift build -c release --product GiroCrabMac --show-bin-path)"
 
+# MCP adapter for AI assistants (#136): a small stdio helper the user's MCP client
+# starts. Shipped in Contents/Helpers, signed by sign-app.sh like any nested Mach-O.
+echo "==> Building MCP adapter (release)"
+cargo build --release -q -p girocrab-mcp
+
 echo "==> Assembling $APP"
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/GiroCrabMac" "$APP/Contents/MacOS/GiroCrabMac"
+mkdir -p "$APP/Contents/Helpers"
+cp "${CARGO_TARGET_DIR:-target}/release/girocrab-mcp" "$APP/Contents/Helpers/girocrab-mcp"
 
 echo "==> Embedding Sparkle.framework"
 SPARKLE_SRC=""

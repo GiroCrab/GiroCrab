@@ -74,11 +74,12 @@ Für KI-Assistenten und andere MCP-Clients gibt es einen kleinen Adapter, den de
 und über stdio anspricht (JSON-RPC 2.0, eine Nachricht pro Zeile). Er leitet jeden Tool-Aufruf als
 Anfrage an den Socket weiter; den Tresor öffnet er nie und er hängt nicht vom Core ab.
 
-Bauen (im PoC noch nicht Teil der App):
-
-```
-cargo build --release -p girocrab-mcp    # → target/release/girocrab-mcp
-```
+Der Adapter liegt der App bei: `GiroCrab.app/Contents/Helpers/girocrab-mcp` (signiert und notarisiert
+mit der App). Einstellungen › Analyse › „Für KI-Assistenten“ zeigt den fertigen Eintrag für die
+MCP-Konfiguration mit diesem Pfad, direkt nach dem Erzeugen eines Schlüssels auch mit dem Schlüssel, und
+kopiert ihn auf Knopfdruck (mit Schlüssel wird die Zwischenablage nach 60 Sekunden geleert).
+„Verbindung testen“ startet das Hilfsprogramm so, wie es der Client tut, und meldet, ob Socket und
+Schlüssel passen. In Entwickler-Builds: `cargo build --release -p girocrab-mcp` (→ `target/release/`).
 
 Eintrag in der Konfiguration des MCP-Clients (Form je nach Client):
 
@@ -92,6 +93,10 @@ Eintrag in der Konfiguration des MCP-Clients (Form je nach Client):
   }
 }
 ```
+
+Verbindung von der Kommandozeile prüfen: `girocrab-mcp --check` (Exit-Code 0 = funktioniert, 3 = nicht
+erreichbar, 4 = kein Schlüssel, 5 = Schlüssel abgelehnt, 6 = ausgeschaltet, 7 = gesperrt, 8 = belegt,
+1 = Sonstiges).
 
 Den Schlüssel nie als Argument übergeben (die Befehlszeile ist für andere Programme sichtbar):
 `GIROCRAB_API_TOKEN` im Client-Eintrag oder `--token-file <Datei>` (Datei nur für Sie lesbar). Der

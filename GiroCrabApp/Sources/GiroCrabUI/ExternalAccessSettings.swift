@@ -9,6 +9,8 @@ import GiroCrabCore
 struct ExternalAccessSettings: View {
     @Environment(AppModel.self) private var model
     @State private var confirmRevoke = false
+    @State private var checking = false
+    @State private var checkResult: LocalApiCheck?
 
     var body: some View {
         Form {
@@ -23,11 +25,15 @@ struct ExternalAccessSettings: View {
                     accountsSection
                     fieldsSection
                     tokenSection
+                    if hasToken { assistantSection }
                 }
             }
         }
         .formStyle(.grouped)
         .onDisappear { model.forgetNewLocalApiToken() }
+        // A new or revoked key makes an earlier test result stale.
+        .onChange(of: model.localApiNewToken) { checkResult = nil }
+        .onChange(of: hasToken) { checkResult = nil }
         .confirmationDialog("Zugriff widerrufen?", isPresented: $confirmRevoke, titleVisibility: .visible) {
             Button("Widerrufen", role: .destructive) {
                 Task {
@@ -138,6 +144,65 @@ struct ExternalAccessSettings: View {
     }
 
     /// Shown at once; if the write did not happen, the pane goes back to what is stored.
+    /// Setup for an MCP client (#136): the bundled helper, a ready entry for
+    /// the client's configuration and a test of the whole path.
+    private var assistantSection: some View {
+        Section {
+            Text("Für KI-Assistenten und andere MCP-Clients liegt GiroCrab ein Hilfsprogramm bei. Tragen Sie den folgenden Eintrag in die MCP-Konfiguration Ihres Programms ein; es startet das Hilfsprogramm dann selbst.")
+                .appFont(.callout).foregroundStyle(.secondary)
+            if let helper = AppModel.localApiHelperURL {
+                let token = model.localApiNewToken
+                let config = AppModel.localApiClientConfig(helper: helper, token: token)
+                Text(config)
+                    .appFont(.caption, design: .monospaced)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if token == nil {
+                    Text("Den Schlüssel sehen Sie nur direkt nach dem Erzeugen: Ersetzen Sie „gcapi_…“ durch Ihren Schlüssel, oder erzeugen Sie einen neuen, dann steht er bereits im Eintrag.")
+                        .appFont(.callout).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Eintrag kopieren") {
+                        // With the key in it: cleared from the clipboard after 60 s.
+                        if token != nil { VaultKeyManager.copyToPasteboard(config) } else { copyToPasteboard(config) }
+                    }
+                    Button("Programmpfad kopieren") { copyToPasteboard(helper.path) }
+                    Button("Verbindung testen") {
+                        Task {
+                            checking = true
+                            checkResult = await model.checkLocalApiConnection()
+                            checking = false
+                        }
+                    }
+                    .disabled(checking)
+                }
+                if checking {
+                    ProgressView().controlSize(.small)
+                } else if let checkResult {
+                    Label(checkText(checkResult), systemImage: checkResult == .works ? "checkmark.circle" : "exclamationmark.triangle")
+                        .appFont(.callout)
+                }
+            } else {
+                Text("Dieser Entwickler-Build enthält das Hilfsprogramm nicht. Bauen Sie es mit „cargo build --release -p girocrab-mcp“.")
+                    .appFont(.callout).foregroundStyle(.secondary)
+            }
+        } header: { Text("Für KI-Assistenten").appSectionHeader() }
+    }
+
+    private func checkText(_ result: LocalApiCheck) -> String {
+        switch result {
+        case .works: String(localized: "Die Verbindung funktioniert: Das Hilfsprogramm erreicht GiroCrab, und der Schlüssel wird angenommen.")
+        case .reachableWithoutKey: String(localized: "GiroCrab ist erreichbar. Den Schlüssel kann der Test nur direkt nach dem Erzeugen prüfen; ein falscher Schlüssel zeigt sich sonst beim ersten Abruf Ihres Programms.")
+        case .notReachable: String(localized: "Nicht erreichbar: Die Schnittstelle läuft gerade nicht (siehe Status oben).")
+        case .keyRejected: String(localized: "Der Schlüssel wird nicht angenommen. Erzeugen Sie einen neuen.")
+        case .turnedOff: String(localized: "Die externe Analyse ist ausgeschaltet.")
+        case .locked: String(localized: "GiroCrab ist gesperrt.")
+        case .busy: String(localized: "Alle Verbindungen sind belegt. Versuchen Sie es gleich noch einmal.")
+        case .helperMissing: String(localized: "Das Hilfsprogramm fehlt in diesem Build.")
+        case .failed(let output): String(localized: "Der Test ist fehlgeschlagen: \(output)")
+        }
+    }
+
     private var hasToken: Bool { !(model.localApiScope?.tokenSha256 ?? "").isEmpty }
 
     private func save(_ s: ShareScope) {

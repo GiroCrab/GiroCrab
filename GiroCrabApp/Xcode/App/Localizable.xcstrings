@@ -2958,6 +2958,17 @@
         }
       }
     },
+    "Alle Verbindungen sind belegt. Versuchen Sie es gleich noch einmal." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All connections are in use. Try again in a moment."
+          }
+        }
+      }
+    },
     "Alle abbrechen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7151,6 +7162,17 @@
         }
       }
     },
+    "Das Hilfsprogramm fehlt in diesem Build." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The helper is missing from this build."
+          }
+        }
+      }
+    },
     "Das Konto gehört nicht zum eingegebenen Namen. Wenn Sie trotzdem senden, kann das Geld beim falschen Empfänger landen und lässt sich womöglich nicht zurückholen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7723,6 +7745,17 @@
         }
       }
     },
+    "Den Schlüssel sehen Sie nur direkt nach dem Erzeugen: Ersetzen Sie „gcapi_…“ durch Ihren Schlüssel, oder erzeugen Sie einen neuen, dann steht er bereits im Eintrag." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The key is shown only right after it is created: replace “gcapi_…” with your key, or create a new one and it is already in the entry."
+          }
+        }
+      }
+    },
     "Depot" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7899,6 +7932,17 @@
         }
       }
     },
+    "Der Schlüssel wird nicht angenommen. Erzeugen Sie einen neuen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The key is not accepted. Create a new one."
+          }
+        }
+      }
+    },
     "Der Schlüssel wird nur jetzt angezeigt. Tragen Sie ihn im Programm ein, das zugreifen soll. Kopiert bleibt er 60 Sekunden in der Zwischenablage." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7928,6 +7972,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The daily balance is the account balance at the end of the day, regardless of the selection."
+          }
+        }
+      }
+    },
+    "Der Test ist fehlgeschlagen: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The test failed: %@"
           }
         }
       }
@@ -8631,6 +8686,17 @@
         }
       }
     },
+    "Die Verbindung funktioniert: Das Hilfsprogramm erreicht GiroCrab, und der Schlüssel wird angenommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The connection works: the helper reaches GiroCrab, and the key is accepted."
+          }
+        }
+      }
+    },
     "Die Webseite meldet:" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8693,6 +8759,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your choice applies to this tangible asset. Automatic resets only the respective field."
+          }
+        }
+      }
+    },
+    "Die externe Analyse ist ausgeschaltet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "External analysis is turned off."
           }
         }
       }
@@ -8869,6 +8946,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This beta build does not include GiroCrab’s FinTS registration. Please report this to the developers."
+          }
+        }
+      }
+    },
+    "Dieser Entwickler-Build enthält das Hilfsprogramm nicht. Bauen Sie es mit „cargo build --release -p girocrab-mcp“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This developer build does not include the helper. Build it with “cargo build --release -p girocrab-mcp”."
           }
         }
       }
@@ -9959,6 +10047,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Settings… (⌘,)"
+          }
+        }
+      }
+    },
+    "Eintrag kopieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Entry"
           }
         }
       }
@@ -11443,6 +11542,28 @@
         }
       }
     },
+    "Für KI-Assistenten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For AI Assistants"
+          }
+        }
+      }
+    },
+    "Für KI-Assistenten und andere MCP-Clients liegt GiroCrab ein Hilfsprogramm bei. Tragen Sie den folgenden Eintrag in die MCP-Konfiguration Ihres Programms ein; es startet das Hilfsprogramm dann selbst." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab includes a helper for AI assistants and other MCP clients. Add the following entry to your program's MCP configuration; it then starts the helper itself."
+          }
+        }
+      }
+    },
     "Für Kredite ohne eigenes Konto bei der Bank, z. B. einen Autokredit, den Sie vom Girokonto abbezahlen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12081,6 +12202,17 @@
         }
       }
     },
+    "GiroCrab ist erreichbar. Den Schlüssel kann der Test nur direkt nach dem Erzeugen prüfen; ein falscher Schlüssel zeigt sich sonst beim ersten Abruf Ihres Programms." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab is reachable. The test can check the key only right after it is created; otherwise a wrong key shows up on your program's first request."
+          }
+        }
+      }
+    },
     "GiroCrab ist gesperrt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12088,6 +12220,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GiroCrab Is Locked"
+          }
+        }
+      }
+    },
+    "GiroCrab ist gesperrt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab is locked."
           }
         }
       }
@@ -18261,6 +18404,17 @@
         }
       }
     },
+    "Nicht erreichbar: Die Schnittstelle läuft gerade nicht (siehe Status oben)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not reachable: the interface is not running right now (see the status above)."
+          }
+        }
+      }
+    },
     "Nicht für Darlehen und Depots" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20171,6 +20325,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Programs such as AI assistants may send the shared data to a cloud service. Share only what may be processed there."
+          }
+        }
+      }
+    },
+    "Programmpfad kopieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Program Path"
           }
         }
       }
@@ -24179,6 +24344,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Connection for %@"
+          }
+        }
+      }
+    },
+    "Verbindung testen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Test Connection"
           }
         }
       }

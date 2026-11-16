@@ -226,4 +226,36 @@ final class LocalApiServerTests: XCTestCase {
         XCTAssertNil(model.localApiScope, "nothing while the demo is shown")
         model.showOwnVault()
     }
+
+    func testTheConnectionTestRunsTheHelperAgainstTheSocket() async throws {
+        // Tests/GiroCrabUITests/<file> → the repository root.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let built = root.appendingPathComponent("target/release/girocrab-mcp")
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: built.path),
+                          "girocrab-mcp not built (cargo build --release -p girocrab-mcp)")
+        AppModel.localApiHelperOverride = built
+        defer { AppModel.localApiHelperOverride = nil }
+        try await enable()
+        _ = await model.createLocalApiToken()
+        try await awaitRunning(true)
+        let works = await model.checkLocalApiConnection()
+        XCTAssertEqual(works, .works)
+        model.forgetNewLocalApiToken() // pane closed: no key at hand any more
+        let reachable = await model.checkLocalApiConnection()
+        XCTAssertEqual(reachable, .reachableWithoutKey)
+        model.lock()
+        let gone = await model.checkLocalApiConnection()
+        XCTAssertEqual(gone, .notReachable)
+    }
+
+    func testTheClientEntryIsValidJSONWithPathAndKey() throws {
+        let helper = URL(fileURLWithPath: "/Applications/Giro \"Crab\".app/Contents/Helpers/girocrab-mcp")
+        let entry = AppModel.localApiClientConfig(helper: helper, token: "gcapi_abc")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(entry.utf8)) as? [String: Any])
+        let server = try XCTUnwrap((json["mcpServers"] as? [String: Any])?["girocrab"] as? [String: Any])
+        XCTAssertEqual(server["command"] as? String, helper.path)
+        XCTAssertEqual((server["env"] as? [String: String])?["GIROCRAB_API_TOKEN"], "gcapi_abc")
+        XCTAssertTrue(AppModel.localApiClientConfig(helper: helper, token: nil).contains("gcapi_…"))
+    }
 }
