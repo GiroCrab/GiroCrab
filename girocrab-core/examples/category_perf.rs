@@ -29,6 +29,8 @@
 //! (was 5.3), preview_rule with hits 0.7 ms (4.2), count_transactions(uncategorized)
 //! 18 ms (58), merchant_history 1.4 ms (33; the first one after a write still resolves
 //! every booking). investment_dashboard still finishes every booking (~220 ms).
+//! Running balances (#577, 41,469 bookings, 2026-11-17): page of 300 35 ms → 35 ms at the top,
+//!   34 ms → 61 ms at offset 25,000 (one SQL sum over the newer bookings; load-more runs off main).
 //! OUT=<file> writes the vault with the app's demo key and stops (open it with
 //! GIROCRAB_DEMO_VAULT=<file> .build/debug/GiroCrabMac --demo-seed).
 //!   tag_totals (#228, a third of the bookings tagged, 2026-11-16)  ~80 ms (SQL; off main),
@@ -209,6 +211,28 @@ fn main() {
             })
         },
     );
+    // running balances (#577): first page and a deep page, all accounts
+    for (label, offset, balances) in [
+        ("list page 300, no balances", 0, false),
+        ("list page 300 + running balances", 0, true),
+        ("list page 300 at offset 25000, no balances", 25_000, false),
+        (
+            "list page 300 at offset 25000 + running balances",
+            25_000,
+            true,
+        ),
+    ] {
+        time(label, || {
+            vault.list_transactions(BookingFilter {
+                scope: BookingScope::All,
+                limit: 300,
+                offset,
+                whole_days: true,
+                with_balances: balances,
+                ..Default::default()
+            })
+        });
+    }
     time(
         "'Ohne Kategorie': list_transactions(uncategorized, 3000)",
         || {
