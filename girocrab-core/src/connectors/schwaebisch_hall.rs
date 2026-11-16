@@ -430,7 +430,8 @@ fn document_date(v: &Value) -> Option<String> {
 }
 
 /// Account a postbox attachment belongs to: the contract the message names
-/// (`vtn`), else the connection's first contract. `None` when that contract is
+/// (`vtn`), else the connection's first contract that is still delivered (not
+/// a paid-out one, see `accounts_complete`). `None` when that contract is
 /// not imported (held back for the account choice, skipped, archived, deleted).
 fn document_account(
     db: &rusqlite::Connection,
@@ -442,7 +443,8 @@ fn document_account(
         Value::Null => Ok(db
             .query_row(
                 &format!(
-                    "SELECT id FROM accounts WHERE {active} AND external_ref LIKE ?2 ORDER BY id LIMIT 1"
+                    "SELECT id FROM accounts WHERE {active} AND external_ref LIKE ?2
+                     ORDER BY access_revoked, id LIMIT 1"
                 ),
                 params![connection_id, format!("{REF_PREFIX}%")],
                 |r| r.get(0),
@@ -983,6 +985,44 @@ mod tests {
             .clone()
             .import_schwaebisch_hall_snapshot(wrong, "{}".into())
             .is_err());
+    }
+
+    #[test]
+    fn unnamed_documents_skip_paid_out_contracts() {
+        let dir = crate::test_support::TempDir::new("schwaebisch_hall_revoked");
+        let vault =
+            Vault::open(dir.join("vault.db").to_string_lossy().into(), vec![8; 32]).unwrap();
+        let connection = vault
+            .add_bank_connection(ConnectorKind::SchwaebischHall, "BSH".into(), "test".into())
+            .unwrap();
+        let import = |contracts: Value| {
+            vault
+                .clone()
+                .import_schwaebisch_hall_snapshot(
+                    connection,
+                    json!({"version": 1, "contracts": contracts}).to_string(),
+                )
+                .unwrap()
+        };
+        // the first contract (lowest id) is paid out and no longer delivered
+        let first = contract("0012345600101", "Bausparvertrag", "+ 1,00", Value::Null);
+        let mut second = contract("0012345600202", "Bausparvertrag", "+ 2,00", Value::Null);
+        second["bsn"] = json!("123456 A 02");
+        import(json!([first, second.clone()]));
+        assert_eq!(import(json!([second])).revoked_accounts.len(), 1);
+        let doc = json!({"id": "att-x", "title": "Info"}).to_string();
+        assert!(vault
+            .clone()
+            .import_schwaebisch_hall_document(connection, doc, b"%PDF-1.7 x".to_vec())
+            .unwrap());
+        let docs = vault.list_all_documents(Default::default()).unwrap();
+        let delivered = vault
+            .list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| !a.access_revoked)
+            .map(|a| a.id);
+        assert_eq!(docs[0].account_id, delivered);
     }
 
     #[test]

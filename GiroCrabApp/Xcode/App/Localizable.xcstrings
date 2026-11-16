@@ -23374,6 +23374,39 @@
         }
       }
     },
+    "Schwäbisch Hall: Abruf fehlgeschlagen (HTTP %lld). Bitte erneut anmelden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schwäbisch Hall: Request failed (HTTP %lld). Please sign in again."
+          }
+        }
+      }
+    },
+    "Schwäbisch Hall: Das Portal antwortet nicht. Bitte erneut versuchen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schwäbisch Hall: The portal is not responding. Please try again."
+          }
+        }
+      }
+    },
+    "Schwäbisch Hall: Der Download ist kein PDF." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schwäbisch Hall: The download is not a PDF."
+          }
+        }
+      }
+    },
     "Schwäbisch Hall: Die Portalantwort konnte nicht gelesen werden." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23381,6 +23414,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Schwäbisch Hall: The portal response could not be read."
+          }
+        }
+      }
+    },
+    "Schwäbisch Hall: Dokument zu groß (über 25 MB)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schwäbisch Hall: Document too large (over 25 MB)."
+          }
+        }
+      }
+    },
+    "Schwäbisch Hall: Sitzung abgelaufen oder nicht angemeldet. Bitte erneut anmelden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schwäbisch Hall: Session expired or not signed in. Please sign in again."
           }
         }
       }

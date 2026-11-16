@@ -61,7 +61,7 @@ test('probe is true only with a session on the portal', async () => {
     response({status: 'error', errors: [{message: 'Session has a timeout', code: 'timeout'}]})});
   assert.equal(await run('probe', expired), 'false');
   assert.equal(await run('probe', async () => { throw new TypeError('redirect'); }), 'false');
-  await assert.rejects(run('probe', portal([]), {origin: 'https://login.schwaebisch-hall.de'}), /erneut anmelden/);
+  await assert.rejects(run('probe', portal([]), {origin: 'https://login.schwaebisch-hall.de'}), /^Error: bsh:session$/);
 });
 
 test('snapshot reads every contract and passes only the needed fields', async () => {
@@ -74,17 +74,30 @@ test('snapshot reads every contract and passes only the needed fields', async ()
   assert.deepEqual(Object.keys(snap.contracts[0].details).sort(), ['contractphase', 'contracttype', 'transactions']);
   assert.equal(snap.contracts[1].accountBalance, '&#43; 1.234,56');
   assert.ok(!JSON.stringify(snap).includes('DO NOT EXPORT'));
+  // only the fields the core reads
+  assert.deepEqual(Object.keys(snap.contracts[0]).sort(), ['accountBalance', 'bsn', 'details', 'type', 'vtn']);
 });
 
 test('snapshot unwraps a data envelope and stops on errors', async () => {
   const wrapped = portal([], {[DETAILS]: () => response({status: 'success', data: {contracttype: 'X', transactions: []}})});
   const snap = JSON.parse(await run('snapshot', wrapped));
   assert.deepEqual(snap.contracts[0].details, {contracttype: 'X', transactions: []});
-  await assert.rejects(run('snapshot', portal([], {[DETAILS]: () => response({}, {status: 500})})), /HTTP 500/);
+  await assert.rejects(run('snapshot', portal([], {[DETAILS]: () => response({}, {status: 500})})), /^Error: bsh:http:500$/);
   await assert.rejects(run('snapshot', portal([], {'/bin/bshweb/accountcontracts': () =>
-    response({status: 'error', errors: [{code: 'timeout'}]})})), /Sitzung abgelaufen/);
+    response({status: 'error', errors: [{code: 'timeout'}]})})), /^Error: bsh:session$/);
   await assert.rejects(run('snapshot', portal([], {'/bin/bshweb/accountcontracts': () =>
-    response({status: 'success', data: {contracts: [{vtn: '12;x'}]}})})), /gültige Kennung/);
+    response({status: 'success', data: {contracts: [{vtn: '12;x'}]}})})), /^Error: bsh:invalid$/);
+});
+
+test('scripts throw only fixed codes, never browser or parser texts', async () => {
+  // a redirect to the sign-in (redirect:'error') and an HTML page instead of JSON
+  await assert.rejects(run('snapshot', async () => { throw new TypeError('Load failed'); }), /^Error: bsh:session$/);
+  const html = portal([], {[DETAILS]: () => ({ok: true, status: 200, headers: {get: () => null},
+    json: async () => JSON.parse('<html>Max Muster</html>')})});
+  await assert.rejects(run('snapshot', html), e => e.message === 'bsh:session' && !e.message.includes('Muster'));
+  await assert.rejects(run('snapshot', async () => { const e = new Error('The operation was aborted.'); e.name = 'AbortError'; throw e; }),
+    /^Error: bsh:timeout$/);
+  await assert.rejects(run('documents', portal([], {[POSTBOX]: () => response({nothing: true})})), /^Error: bsh:invalid$/);
 });
 
 test('documents find attachment ids in forms, links and fields, once each', async () => {
@@ -94,8 +107,9 @@ test('documents find attachment ids in forms, links and fields, once each', asyn
   assert.equal(docs[0].vtn, '0030022200102');
   assert.equal(docs[1].vtn, undefined);
   assert.equal(docs[2].vtn, undefined);
-  assert.deepEqual([docs[0].date, docs[0].title, docs[0].messageId], ['31.01.2026', 'Jahreskontoauszug 300222 A 02', 'm1']);
-  assert.ok(docs.every(d => !('text' in d)));
+  assert.deepEqual([docs[0].date, docs[0].title], ['31.01.2026', 'Jahreskontoauszug 300222 A 02']);
+  // only what the core reads
+  assert.ok(docs.every(d => Object.keys(d).every(k => ['id', 'date', 'title', 'vtn'].includes(k))));
 });
 
 test('pdf downloads one attachment and rejects anything else', async () => {
@@ -105,8 +119,30 @@ test('pdf downloads one attachment and rejects anything else', async () => {
   assert.equal(new URL(calls[0].url).searchParams.get('id'), 'att 2');
   const html = portal([], {'/bin/bshweb/postbox/attachment': () =>
     response(new TextEncoder().encode('<html>login</html>').buffer)});
-  await assert.rejects(run('pdf', html, {args: {id: 'x'}}), /kein PDF/);
-  await assert.rejects(run('pdf', portal([]), {args: {id: ''}}), /Ungültige Dokument-ID/);
+  await assert.rejects(run('pdf', html, {args: {id: 'x'}}), /^Error: bsh:not-pdf$/);
+  await assert.rejects(run('pdf', portal([]), {args: {id: ''}}), /^Error: bsh:invalid$/);
+  const declared = portal([], {'/bin/bshweb/postbox/attachment': () =>
+    response(new ArrayBuffer(8), {headers: {'content-length': String(26 * 1024 * 1024)}})});
+  await assert.rejects(run('pdf', declared, {args: {id: 'x'}}), /^Error: bsh:too-large$/);
+});
+
+test('pdf reads in chunks and stops at 25 MB without a length', async () => {
+  const chunk = new Uint8Array(1024 * 1024);
+  chunk.set(new TextEncoder().encode('%PDF-'));
+  let delivered = 0, cancelled = false;
+  const endless = portal([], {'/bin/bshweb/postbox/attachment': () => ({ok: true, status: 200, headers: {get: () => null},
+    arrayBuffer: async () => { throw new Error('must stream, not buffer'); },
+    body: {getReader: () => ({
+      read: async () => { delivered += chunk.length; return {done: false, value: chunk}; },
+      cancel: async () => { cancelled = true; }})}})});
+  await assert.rejects(run('pdf', endless, {args: {id: 'x'}}), /^Error: bsh:too-large$/);
+  assert.ok(cancelled);
+  assert.ok(delivered <= 26 * 1024 * 1024, `read ${delivered} bytes`);
+  // a stream within the limit is joined in order
+  const parts = ['%PDF-1.7 ', 'part two'].map(t => new TextEncoder().encode(t));
+  const small = portal([], {'/bin/bshweb/postbox/attachment': () => ({ok: true, status: 200, headers: {get: () => null},
+    body: {getReader: () => ({read: async () => parts.length ? {done: false, value: parts.shift()} : {done: true}, cancel: async () => {}})}})});
+  assert.equal(Buffer.from(await run('pdf', small, {args: {id: 'x'}}), 'base64').toString(), '%PDF-1.7 part two');
 });
 
 test('the Linux flow runs exactly the scripts of the Swift file', () => {

@@ -45,6 +45,10 @@ können ihr `fetch` nicht umleiten und die Daten nicht mitlesen. An die App gehe
 genannten Vertragsfelder und die PDFs, keine Cookies, Namen, Adressen oder Lastschriftkonten.
 Die Skripte lesen nur (GET); ob das Portal eine Nachricht beim Laden des Anhangs als gelesen
 markiert, ist nicht bekannt.
+Fehler melden die Skripte nur als feste Codes (`bsh:session`, `bsh:timeout`, `bsh:http:<Status>`,
+`bsh:too-large`, `bsh:not-pdf`, `bsh:invalid`); App und Linux-Frontend zeigen dafür feste,
+übersetzte Meldungen, nie Text aus dem Browser oder von der Portalseite. PDFs werden in
+Stücken gelesen und beim Überschreiten von 25 MB sofort abgebrochen.
 
 ## Regeln
 

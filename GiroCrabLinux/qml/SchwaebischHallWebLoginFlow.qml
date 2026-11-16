@@ -39,30 +39,38 @@ WebLoginFlow {
     readonly property var cancelled: ({ schwaebischHall: "cancelled" })
 
     // BEGIN generated: SchwaebischHallScripts (SchwaebischHallUI.swift)
-    readonly property string prelude: `if (location.origin !== 'https://www.schwaebisch-hall.de') throw new Error('Schwäbisch Hall: Bitte erneut anmelden.');
+    readonly property string prelude: `const fail = code => { throw new Error('bsh:' + code); };
+if (location.origin !== 'https://www.schwaebisch-hall.de') fail('session');
 const origin = 'https://www.schwaebisch-hall.de';
 const get = async (path, accept = 'application/json') => {
-  if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Schwäbisch Hall: Ungültiger Abruf.');
+  if (!path.startsWith('/') || path.startsWith('//')) fail('invalid');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30000);
+  let r;
   try {
-    const r = await fetch(origin + path, {credentials:'same-origin', redirect:'error',
+    r = await fetch(origin + path, {credentials:'same-origin', redirect:'error',
       headers:{'Accept':accept}, signal:controller.signal});
-    if (!r.ok) throw new Error('Schwäbisch Hall: Abruf fehlgeschlagen (HTTP ' + r.status + '). Bitte erneut anmelden.');
-    return r;
+  } catch (e) {
+    // a redirect (to the sign-in) is a network error with redirect:'error'
+    fail(e?.name === 'AbortError' ? 'timeout' : 'session');
   } finally { clearTimeout(timer); }
+  if (!r.ok) fail('http:' + (Number.isInteger(r.status) ? r.status : 0));
+  return r;
 };
 const json = async path => {
-  const data = await (await get(path)).json();
-  if (data && data.status === 'error') throw new Error('Schwäbisch Hall: Sitzung abgelaufen. Bitte erneut anmelden.');
+  let data;
+  // HTML instead of JSON: the portal shows its sign-in page.
+  try { data = await (await get(path)).json(); }
+  catch (e) { if (String(e?.message).startsWith('bsh:')) throw e; fail('session'); }
+  if (data && data.status === 'error') fail('session');
   return data;
 };
 const contractList = async () => {
   const list = await json('/bin/bshweb/accountcontracts');
   const contracts = list?.data?.contracts;
-  if (list?.status !== 'success' || !Array.isArray(contracts)) throw new Error('Schwäbisch Hall: Keine Verträge erkannt. Bitte erneut anmelden.');
+  if (list?.status !== 'success' || !Array.isArray(contracts)) fail('invalid');
   for (const c of contracts)
-    if (typeof c?.vtn !== 'string' || !/^\\d{6,24}$/.test(c.vtn)) throw new Error('Schwäbisch Hall: Vertrag ohne gültige Kennung.');
+    if (typeof c?.vtn !== 'string' || !/^\\d{6,24}$/.test(c.vtn)) fail('invalid');
   return contracts;
 };
 const pick = (o, keys) => Object.fromEntries(keys.filter(k => o?.[k] !== undefined).map(k => [k, o[k]]));`
@@ -80,15 +88,16 @@ for (const c of await contractList()) {
   // Some portal answers wrap the payload in \`data\` like the contract list.
   if (d?.data && typeof d.data === 'object' && !Array.isArray(d.data)
       && ('transactions' in d.data || 'contracttype' in d.data)) d = d.data;
-  if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('Schwäbisch Hall: Unvollständige Vertragsdaten.');
-  out.push({...pick(c, ['type','bsn','accountBalance','coreid','contractletter','contractnumber','vtn']),
+  if (!d || typeof d !== 'object' || Array.isArray(d)) fail('invalid');
+  // only what the core reads (schwaebisch_hall.rs › snapshot)
+  out.push({...pick(c, ['type','bsn','accountBalance','vtn']),
     details:pick(d, ['contracttype','contractphase','transactions'])});
 }
 return JSON.stringify({version:1, contracts:out});`
     readonly property string documents: `const contracts = await contractList();
 const data = await json('/content/bshweb/startseite/mein-konto/nachrichten.bin.postboxmessage?command=getmessages');
 const messages = [data, data?.messages, data?.data, data?.data?.messages].find(Array.isArray);
-if (!messages) throw new Error('Schwäbisch Hall: Postfach nicht lesbar.');
+if (!messages) fail('invalid');
 const decode = s => String(s).replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 const attr = (tag, name) => {
   const m = tag.match(new RegExp('\\\\b' + name + '\\\\s*=\\\\s*(?:"([^"]*)"|\\'([^\\']*)\\'|([^\\\\s>]+))', 'i'));
@@ -116,18 +125,37 @@ for (const m of messages) {
     const id = raw === null || raw === undefined ? '' : String(raw).trim();
     if (!id || id.length > 256 || seen.has(id)) continue;
     seen.add(id);
-    out.push({id, messageId:String(m.id ?? ''), date:m.date ?? null,
+    out.push({id, date:m.date ?? null,
       title:String(m.title || m.typeName || ''), ...(named.length === 1 ? {vtn:named[0].vtn} : {})});
   }
 }
 return JSON.stringify(out);`
-    readonly property string pdf: `if (typeof id !== 'string' || !id) throw new Error('Schwäbisch Hall: Ungültige Dokument-ID.');
+    readonly property string pdf: `if (typeof id !== 'string' || !id) fail('invalid');
 const r = await get('/bin/bshweb/postbox/attachment?id=' + encodeURIComponent(id), 'application/pdf,*/*');
-const length = Number(r.headers.get('content-length') || 0);
-if (length > 25 * 1024 * 1024) throw new Error('Schwäbisch Hall: Dokument zu groß.');
-const buf = new Uint8Array(await r.arrayBuffer());
-if (buf.length > 25 * 1024 * 1024 || String.fromCharCode(...buf.subarray(0, 5)) !== '%PDF-')
-  throw new Error('Schwäbisch Hall: Der Download ist kein PDF.');
+const max = 25 * 1024 * 1024;
+if (Number(r.headers.get('content-length') || 0) > max) fail('too-large');
+// Read in chunks and stop at the limit: a body without a length never fills memory.
+const parts = [];
+let size = 0;
+if (r.body?.getReader) {
+  const reader = r.body.getReader();
+  for (;;) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > max) { reader.cancel().catch(() => {}); fail('too-large'); }
+    parts.push(value);
+  }
+} else {
+  const all = new Uint8Array(await r.arrayBuffer());
+  size = all.length;
+  if (size > max) fail('too-large');
+  parts.push(all);
+}
+const buf = new Uint8Array(size);
+let offset = 0;
+for (const p of parts) { buf.set(p, offset); offset += p.length; }
+if (String.fromCharCode(...buf.subarray(0, 5)) !== '%PDF-') fail('not-pdf');
 let bin = '';
 for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
 return btoa(bin);`
@@ -165,13 +193,28 @@ return btoa(bin);`
     }
     function cancel() { if (!running) close(false) }
 
+    /// SchwaebischHallScripts.errorMessage(for:): the scripts' fixed codes (`bsh:…`) as
+    /// messages; anything else is never shown itself (it can quote the portal page).
+    function errorText(e) {
+        if (e === null) return qsTr("Schwäbisch Hall: Sitzung abgelaufen oder nicht angemeldet. Bitte erneut anmelden.")
+        const m = /bsh:[a-z-]+(:[0-9]{1,3})?/.exec(String(e))
+        const code = m ? m[0] : ""
+        if (code === "bsh:session") return qsTr("Schwäbisch Hall: Sitzung abgelaufen oder nicht angemeldet. Bitte erneut anmelden.")
+        if (code === "bsh:timeout") return qsTr("Schwäbisch Hall: Das Portal antwortet nicht. Bitte erneut versuchen.")
+        if (code === "bsh:too-large") return qsTr("Schwäbisch Hall: Dokument zu groß (über 25 MB).")
+        if (code === "bsh:not-pdf") return qsTr("Schwäbisch Hall: Der Download ist kein PDF.")
+        if (code.indexOf("bsh:http:") === 0)
+            return qsTr("Schwäbisch Hall: Abruf fehlgeschlagen (HTTP %1). Bitte erneut anmelden.").arg(parseInt(code.slice(9), 10) || 0)
+        return unreadable
+    }
+
     function run(script, args, gen) {
         if (gen !== generation) return Promise.reject(cancelled)
         return browser.runAsync(prelude + "\n" + script, args || {}, browser.appWorld).then(r => {
             if (gen !== generation) throw cancelled
             if (typeof r !== "string") throw new Error(unreadable)
             return r
-        }, e => { throw gen !== generation ? cancelled : new Error(e === null ? qsTr("Schwäbisch Hall: Bitte erneut anmelden.") : e) })
+        }, e => { throw gen !== generation ? cancelled : new Error(errorText(e)) })
     }
 
     function start() {
