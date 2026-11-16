@@ -98,6 +98,25 @@ Funktionsumfang der Oberfläche.
   Wie „Kern-Version“ in Sicherheit ist es die Nummer des Kerns, auf dem die Linux-Oberfläche
   gebaut ist.
 
+### Überweisungen, Sammelüberweisung und Daueraufträge
+
+- **Überweisungsformular neu geordnet** wie in der Mac-App: „Von Konto“ steht oben, darunter
+  Empfänger, Zahlung und „Ausführung“. Normale Überweisung, Terminüberweisung und
+  Echtzeitüberweisung sind eine Auswahl statt zweier Häkchen; die Prüfansicht zeigt Betrag,
+  Empfänger und Zahlung im selben Stil.
+- **Umbuchung zwischen eigenen Konten:** „Überweisung | Umbuchung“ im Formular; das eigene
+  Zielkonto füllt Name und IBAN aus (#547).
+- **Sammelüberweisung** (#240): „Einzeln | Sammelüberweisung“ unter dem Titel. Viele Zahlungen
+  von einem Konto mit einer TAN, als Tabelle zum Bearbeiten, mit CSV-Import (Knopf oder Datei ins
+  Fenster ziehen; UTF-8 oder Windows-1252, höchstens 2 MB), Hinweis auf mögliche Doppelte, Zeilen
+  entfernen mit Entf und Strg+Z, eine Sammelbuchung oder Einzelbuchungen, Terminüberweisung.
+- **Daueraufträge anlegen, ändern und löschen** per FinTS (#496), mit den Grenzen der Bank
+  (Rhythmus, Ausführungstag, frühester Termin). Kontextmenü einer Buchung › „Als Dauerauftrag
+  anlegen …“ übernimmt Empfänger, Betrag, Zweck (ohne Datum) und Rhythmus.
+- **TAN abgebrochen:** Eine abgebrochene Sammelüberweisung oder ein abgebrochener Dauerauftrag
+  öffnet wieder das eigene Formular mit Hinweis; die nächste Einzelüberweisung läuft wieder als
+  Einzelüberweisung (#533).
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus

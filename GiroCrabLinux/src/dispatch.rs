@@ -260,6 +260,44 @@ fn read_text_file(a: &Value) -> R {
     ok(std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
 }
 
+/// Largest payment list the batch import reads (AppModel+Batch.swift › batchCsvMaxBytes).
+const BATCH_CSV_MAX_BYTES: i64 = 2_000_000;
+
+/// AppModel+Batch.swift › importBatchCSV (file part): the chosen or dropped CSV as UTF-8,
+/// else Windows-1252 (spreadsheet exports), parsed by the core. Refuses big files unread.
+fn read_batch_csv(a: &Value) -> R {
+    let path = local_path(arg(a, "path")?);
+    let size = file_size(std::path::Path::new(&path));
+    if size > BATCH_CSV_MAX_BYTES {
+        return Err(crate::i18n::tr("Die Datei ist zu groß (höchstens 2 MB)."));
+    }
+    let bytes = std::fs::read(&path)
+        .ok()
+        .filter(|b| b.len() as i64 <= BATCH_CSV_MAX_BYTES)
+        .ok_or_else(|| crate::i18n::tr("Die Datei konnte nicht gelesen werden."))?;
+    ok(girocrab_core::batch_csv::parse_batch_csv(decode_text(
+        bytes,
+    )))
+}
+
+/// UTF-8, else Windows-1252 (`String(data:encoding: .utf8) ?? .windowsCP1252`).
+fn decode_text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| {
+        const HIGH: [char; 32] = [
+            '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž',
+            '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ',
+            '\u{9d}', 'ž', 'Ÿ',
+        ];
+        e.into_bytes()
+            .into_iter()
+            .map(|b| match b {
+                0x80..=0x9f => HIGH[(b - 0x80) as usize],
+                _ => char::from(b),
+            })
+            .collect()
+    })
+}
+
 /// CSV export of the Abruf-Protokoll (file dialog → path).
 fn write_text_file(a: &Value) -> R {
     let path: String = arg(a, "path")?;
@@ -538,6 +576,7 @@ fn call(method: &str, a: &Value) -> R {
         }
         // --- Sammelüberweisung / Lastschriften: CSV import (free functions) ---
         "parse_batch_csv" => ok(girocrab_core::batch_csv::parse_batch_csv(arg(a, "text")?)),
+        "read_batch_csv" => read_batch_csv(a),
         "parse_mandate_csv" => ok(girocrab_core::mandates::parse_mandate_csv(arg(a, "text")?)),
         // --- Portal: offene Vormerkungen (PortalUI); `self: Arc<Self>` ---
         "portal_open_holds" => ok(vault()?
@@ -2334,6 +2373,19 @@ mod tests {
             json!({ "text": "Name;IBAN;Betrag;Verwendungszweck\nMia Beispiel;DE89370400440532013000;12,50;Test\n" }),
         );
         assert_eq!(batch["rows"].as_array().unwrap().len(), 1, "{batch}");
+        // … from a file in Windows-1252 (spreadsheet export): „ü“ survives
+        let csv = std::env::temp_dir().join(format!("girocrab-batch-{}.csv", std::process::id()));
+        std::fs::write(
+            &csv,
+            b"Name;IBAN;Betrag;Verwendungszweck\nJ\xfcrgen M\x80ller;DE89370400440532013000;12,50;Beitrag\n",
+        )
+        .unwrap();
+        let read = call_ok(
+            "read_batch_csv",
+            json!({ "path": format!("file://{}", csv.display()) }),
+        );
+        assert_eq!(read["rows"][0]["name"], json!("Jürgen M€ller"), "{read}");
+        let _ = std::fs::remove_file(&csv);
         drop(v);
         let _ = std::fs::remove_file(path);
     }

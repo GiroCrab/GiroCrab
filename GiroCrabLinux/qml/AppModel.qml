@@ -2665,6 +2665,10 @@ QtObject {
     property var activeTransfer: null
     /// Name check (Verification of Payee) awaiting the user's decision: { connection, check, busy }.
     property var payeeCheck: null
+    /// The running session is a Sammelüberweisung / a Dauerauftrag (Payments.qml), not the
+    /// single transfer: its own sheet comes back and its own ending runs.
+    property bool activeTransferIsBatch: false
+    property bool activeTransferIsStanding: false
 
     /// ConnectorKind.offersInstantChoice: FinTS banks; bunq decides on its own.
     function offersInstantChoice(connector) { return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(connector) >= 0 }
@@ -2714,6 +2718,18 @@ QtObject {
         setDraft({ name: b.counterparty === "" ? b.merchant_name : b.counterparty, iban: groupedIBAN(b.counterparty_iban), bic: "",
                    amountText: Fmt.plain(Math.abs(b.amount_cents)), purpose: (b.purpose || "").slice(0, 140) })
         openTransfer()
+    }
+    /// Sammelüberweisung / Dauerauftrag (Payments.qml): the TransferSession `session` of the
+    /// core runs through the same steps as a single transfer. `kind` = "batch" | "standing".
+    function runPaymentSession(session, connection, kind) {
+        transferError = ""
+        transferInstantDeclined = null
+        transferBusy = true
+        activeTransferIsBatch = kind === "batch"
+        activeTransferIsStanding = kind === "standing"
+        activeTransfer = session
+        coreAsync("session_start", { session: session }, step => { if (activeTransfer === session) handleTransfer(step, connection) },
+                  err => { if (activeTransfer === session) finishTransfer(err) })
     }
     function suggestRecipients(query) { try { return core("suggest_recipients", { query: query, limit: 6 }) } catch (e) { return [] } }
 
@@ -2772,7 +2788,15 @@ QtObject {
         } else if (step.Finished) {
             pollTimer.stop()
             activeChallenge = null; activeTransfer = null; transferBusy = false
+            if (activeTransferIsStanding) {
+                activeTransferIsStanding = false
+                Payments.finishStandingOrder()
+                reloadAll()
+                return
+            }
+            Payments.plannedVersion++ // a scheduled transfer now shows under „Geplant“
             transferDraft = newTransferDraft(transferDraft.account_id)
+            if (activeTransferIsBatch) { activeTransferIsBatch = false; Payments.resetBatchDraft() }
             toast = step.Finished.outcome.instant ? qsTr("Echtzeitüberweisung freigegeben und vorgemerkt")
                                                   : qsTr("Überweisung freigegeben und vorgemerkt")
             reloadAll()
@@ -2788,7 +2812,14 @@ QtObject {
             // cannot be resent with one click, and say so clearly.
             pollTimer.stop()
             activeChallenge = null; activeTransfer = null; transferBusy = false
+            if (activeTransferIsStanding) {
+                activeTransferIsStanding = false
+                Payments.standingOrderOutcomeUnknown(step.OutcomeUnknown.reason)
+                reloadAll()
+                return
+            }
             transferDraft = newTransferDraft(transferDraft.account_id)
+            if (activeTransferIsBatch) { activeTransferIsBatch = false; Payments.resetBatchDraft() }
             transferUnknown = { reason: step.OutcomeUnknown.reason, end_to_end_id: step.OutcomeUnknown.end_to_end_id }
             reloadAll()
         }
@@ -2811,6 +2842,15 @@ QtObject {
         const t = activeTransfer
         activeTransfer = null; activeChallenge = null; transferBusy = false
         transferError = ""
+        // A batch or a standing order (#533): its own sheet comes back (the rows are still
+        // there), and the flag must not make the next single transfer end as one of them.
+        if (activeTransferIsBatch || activeTransferIsStanding) {
+            const batch = activeTransferIsBatch
+            activeTransferIsBatch = false; activeTransferIsStanding = false
+            if (batch) Payments.cancelBatchRun(); else Payments.cancelStandingOrderRun()
+            cancelTransferSession(t, null)
+            return
+        }
         // The bank has to confirm: a bunq draft stays approvable until it is rejected.
         cancelTransferSession(t, qsTr("Überweisung abgebrochen – es wurde nichts gesendet, solange die TAN nicht bestätigt wurde."))
     }
@@ -2868,6 +2908,15 @@ QtObject {
         if (!pending) return
         const t = activeTransfer
         payeeCheck = null; activeTransfer = null; transferBusy = false
+        // Linux: a batch or standing order goes back to its own sheet (the Mac reopens the transfer form)
+        if (activeTransferIsBatch || activeTransferIsStanding) {
+            const batch = activeTransferIsBatch
+            activeTransferIsBatch = false; activeTransferIsStanding = false
+            transferError = qsTr("Überweisung abgebrochen – es wurde nichts gesendet.")
+            if (batch) Payments.failBatch(); else Payments.failStandingOrder()
+            if (t !== null) cancelTransferSession(t, null)
+            return
+        }
         if (useBankName && pending.check.bank_name) {
             setDraft({ name: pending.check.bank_name })
             transferError = qsTr("Name des Kontoinhabers übernommen – bitte prüfen und erneut freigeben. Es wurde nichts gesendet.")
@@ -2882,7 +2931,9 @@ QtObject {
         payeeCheck = null; activeChallenge = null; activeTransfer = null; transferBusy = false
         setDraft({ pin: "" })
         transferError = parseCoreError(err).message
-        showTransferSheet = true
+        if (activeTransferIsStanding) { activeTransferIsStanding = false; Payments.failStandingOrder() }
+        else if (activeTransferIsBatch) { activeTransferIsBatch = false; Payments.failBatch() }
+        else showTransferSheet = true
     }
     /// endBankDialogsForLock (transfer part): no session keeps running, no PIN stays in memory.
     function endTransferForLock() {
@@ -2890,7 +2941,9 @@ QtObject {
         const t = activeTransfer
         if (t !== null) activeChallenge = null
         activeTransfer = null; payeeCheck = null; transferBusy = false; showTransferSheet = false
+        activeTransferIsBatch = false; activeTransferIsStanding = false
         setDraft({ pin: "" })
+        Payments.endForLock()
         if (t !== null) coreAsync("session_cancel", { session: t }, null, () => {})
     }
 
@@ -3231,7 +3284,7 @@ QtObject {
                 screenshotWindow = qsTr("Einstellungen")
             }
         }
-        if (demoSheet !== "") presentDemoSheet(demoSheet)
+        if (demoSheet !== "" && !Payments.presentDemoSheet(demoSheet)) presentDemoSheet(demoSheet)
     }
     /// The one switch for `--demo-sheet <name>` (AppModel.swift › presentDemoSheet):
     /// opens that sheet pre-filled with fictional data.
@@ -3264,7 +3317,7 @@ QtObject {
             period = previousMonthPeriod()
             showPrintSheet = true
             break
-        case "transfer":
+        case "transfer": case "transfer-confirm":
             if (transferAccounts.length) sidebarSelection = "account:" + transferAccounts[0].id
             openTransfer()
             setDraft({ name: "Stadtwerke München", iban: groupedIBAN("DE89370400440532013000"), amountText: Fmt.plain(8500),

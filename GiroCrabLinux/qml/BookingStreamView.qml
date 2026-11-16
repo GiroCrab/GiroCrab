@@ -530,6 +530,8 @@ Rectangle {
         }
         AppMenuItem { text: qsTr("Neue Überweisung aus Buchung …"); icon.name: SF.icon("paperplane"); enabled: AppModel.canTransfer
                    onTriggered: AppModel.openTransferFrom(stream.menuBooking) }
+        AppMenuItem { text: qsTr("Als Dauerauftrag anlegen …"); icon.name: SF.icon("repeat"); enabled: Payments.canMakeStandingOrder(stream.menuBooking)
+                   onTriggered: Payments.openStandingOrder("fromBooking", stream.menuBooking) }
         AppMenuItem { text: qsTr("Umsatz kopieren"); icon.name: SF.icon("doc.on.doc")
                    onTriggered: AppModel.copyToClipboard(AppModel.clipboardLine(stream.menuBooking)) }
         // exportMenuButton(for:)

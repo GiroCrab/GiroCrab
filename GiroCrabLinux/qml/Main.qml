@@ -510,6 +510,9 @@ ApplicationWindow {
 
     TransferSheet {}
     PayeeCheckSheet {}
+    // Sammelüberweisung, Dauerauftrag (RootView: showBatchSheet, showStandingSheet, standingUnknown)
+    BatchTransferSheet {}
+    StandingOrderSheet {}
     // MARK: manual loans / Startsaldo: .manualLoanSheets(model), .openingBalanceSheet(model)
     LoanEditorSheet {}
     // Sachwerte (TangibleAssetsUI.swift › tangibleAssetSheets)
