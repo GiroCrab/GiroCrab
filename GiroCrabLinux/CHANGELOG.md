@@ -23,6 +23,20 @@ Funktionsumfang der Oberfläche.
   ganzen Ansicht („Nettovermögen ohne Immobilien“). Bei mehreren Kontoinhabern filtert eine Auswahl
   die gesamte Ansicht nach Inhaber.
 
+### Kopfbereich und Kategorie-Ansichten
+
+- **Kopfbereich minimieren:** Ein Pfeil neben dem Titel (oder Darstellung › Kopfbereich
+  minimieren) reduziert die Kopfkarte auf Titel, Saldo und Filterzeile; die Einstellung bleibt
+  gespeichert.
+- **Budgets unabhängig von „Auswertungen anzeigen“:** Die Budget-Karte folgt nur noch ihrem
+  eigenen Schalter.
+- **Kategorien zeigen ihre Monatssummen** als Balkendiagramm (mit Unterkategorien) statt des
+  Kontoverlaufs.
+- **Kategorie-Ansichten auf Konten eingrenzen:** Bei einer Kategorie oder „Ohne Kategorie“ hat
+  die Filterzeile das Menü „Konten: Alle“.
+- **Zeitraum je Kategorie:** Der zuletzt für eine Kategorie gewählte Zeitraum gilt beim nächsten
+  Öffnen wieder.
+
 ### Seitenleiste, Kategorien, Regeln
 
 - **Seitenleiste mit Abschnitten:** „Neue Umsätze“ und „Vermögen“ stehen ganz oben. Darunter

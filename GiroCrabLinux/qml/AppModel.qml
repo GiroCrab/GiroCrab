@@ -165,6 +165,9 @@ QtObject {
     property var page: null
     property var selectionFlow: null
     property var history: []
+    /// AppModel.swift › categoryHistory: monthly sums of the selected category incl.
+    /// subcategories (chart above its bookings, #502).
+    property var categoryHistory: []
     property var connections: []
     property var recurring: []
     property var recurringMonth: null
@@ -177,7 +180,14 @@ QtObject {
     // MARK: UI state
     property string sidebarSelection: "all"
     // any other sidebar choice ends the merchant list (#495) before the list reloads
-    onSidebarSelectionChanged: { MerchantFocus.sidebarChanged(); listLimit = defaultListLimit; reloadSelection(false) }
+    onSidebarSelectionChanged: {
+        MerchantFocus.sidebarChanged(); listLimit = defaultListLimit
+        // AppModel.swift › sidebarSelection: a category with its own default period switches
+        // to it; that load covers the selection too (#425).
+        const saved = sidebarSelection.startsWith("category:") ? categoryPeriod(Number(sidebarSelection.slice(9))) : null
+        if (saved !== null && saved !== period) { selectionNeeds.recurring = true; period = saved; return }
+        reloadSelection(false)
+    }
     property string scope: "All"               // BookingScope
     onScopeChanged: { listLimit = defaultListLimit; if (scope === "Investments") reloadDashboard(); reloadBookings() }
     property string period: "all"
@@ -630,6 +640,7 @@ QtObject {
         if (then) afterBookingsQueue.push(then)
         if (selectionLoadTakes(null)) return
         if (whenAccountsLoaded("bookings", () => reloadBookings())) return
+        reloadCategoryHistory()
         dropPendingPage()
         loadOffMain("bookings", () => {
             const f = currentFilter()
@@ -809,10 +820,30 @@ QtObject {
     function reloadHistory() {
         if (!isUnlocked || selectionLoadTakes(null)) return
         if (whenAccountsLoaded("history", () => reloadHistory())) return
+        reloadCategoryHistory()
         loadOffMain("history", () => {
             const req = historyRequest()
             return { calls: [["balance_history", { account_ids: req.ids, days: req.days }]], ctx: periodRange() }
         }, (r, range) => { history = trimHistory(r[0], range) }, () => {})
+    }
+    /// AppModel+Loading.swift › categoryHistoryRequest: null unless a category is selected.
+    function categoryHistoryCall() {
+        const sel = sidebarSelection
+        if (!sel.startsWith("category:")) return null
+        const r = periodRange()
+        return ["category_history_by_unit", { category_id: Number(sel.slice(9)), account_ids: categoryAccountIDs,
+                                              date_from: r[0], date_to: r[1], key_length: 7 }]
+    }
+    /// AppModel+Loading.swift › reloadCategoryHistory (cheap SQL aggregate, still off the GUI
+    /// thread). Callers check `selectionLoadTakes` first: a running selection load brings it.
+    function reloadCategoryHistory() {
+        if (categoryHistoryCall() === null) {
+            cancelLoad("categoryHistory")
+            if (categoryHistory.length) categoryHistory = []
+            return
+        }
+        loadOffMain("categoryHistory", () => { const c = categoryHistoryCall(); return c ? [c] : null },
+                    r => { categoryHistory = r[0] }, () => {})
     }
     function trimHistory(pts, r) {
         if (r[1]) pts = pts.filter(p => p.date <= r[1])
@@ -947,7 +978,7 @@ QtObject {
         if (whenAccountsLoaded("selection", () => requestSelectionLoad({}, quiet))) return
         // loads of a single part still running belong to the old selection: this one takes them over
         for (const ch of ["recurring", "categories"]) if (isLoadPending(ch)) { cancelLoad(ch); selectionNeeds[ch] = true }
-        for (const ch of ["bookings", "history", "salary"]) cancelLoad(ch)
+        for (const ch of ["bookings", "history", "categoryHistory", "salary"]) cancelLoad(ch)
         dropPendingPage()
         selectionLoadRunning = true
         if (!quiet) {
@@ -987,7 +1018,10 @@ QtObject {
             if (parts.recurring) calls.push(recurringCall())
             if (parts.categories) calls.push(["list_categories", { date_from: r[0], date_to: r[1] }])
             calls.push(["balance_history", { account_ids: h.ids, days: h.days }])
-            return { calls: calls, ctx: { withCycle: withCycle, flowInPage: flowInPage, parts: parts, range: r } }
+            const categoryChart = categoryHistoryCall()
+            if (categoryChart) calls.push(categoryChart)
+            return { calls: calls, ctx: { withCycle: withCycle, flowInPage: flowInPage, parts: parts, range: r,
+                                          categoryChart: categoryChart !== null } }
         }, (res, ctx) => {
             let i = 0
             if (ctx.withCycle) salaryCycle = res[i++]
@@ -996,12 +1030,14 @@ QtObject {
             const rec = ctx.parts.recurring ? res[i++] : null
             const cats = ctx.parts.categories ? res[i++] : null
             const pts = res[i++]
+            const categorySums = ctx.categoryChart ? res[i++] : []
             endSelectionLoad()
             publish(page)
             applySelectionFlow(page, flow)
             if (rec) { applyRecurring(rec); selectionNeeds.recurring = false }
             if (cats) { applyCategories(cats); selectionNeeds.categories = false }
             history = trimHistory(pts, ctx.range)
+            categoryHistory = categorySums
             if (selectFirstBookingOnLoad) {
                 selectFirstBookingOnLoad = false
                 if (selectedBookingID === null && bookings.length) selectedBookingID = bookings[0].id
@@ -1022,6 +1058,7 @@ QtObject {
     function showSelectionPlaceholder() {
         isLoadingSelection = true
         history = []
+        categoryHistory = []
     }
     function endSelectionLoad() {
         selectionPlaceholderTimer.stop()
@@ -1058,6 +1095,80 @@ QtObject {
         if (sel.startsWith("userGroup:")) return userGroupAccountIDs(sel.slice(10))
         return []
     }
+    // MARK: category views narrowed to accounts (AppModel+Loading.swift, #406)
+    /// AppModel.swift › categoryAccountFilter: accounts whose bookings the category views show
+    /// („Ohne Kategorie“ and a category) as `{ id: true }`; empty = all. Kept while the app runs.
+    property var categoryAccountFilter: ({})
+    readonly property bool showsCategoryAccountFilter: sidebarSelection.startsWith("category:") || sidebarSelection === "uncategorized"
+    /// The chosen accounts that still exist, in sidebar order; empty = all accounts.
+    readonly property var categoryAccountIDs: Object.keys(categoryAccountFilter).length
+        ? allAccounts.map(a => a.id).filter(id => categoryAccountFilter[id]) : []
+    function setCategoryAccountFilter(ids) {
+        const next = {}
+        for (const id of ids) next[id] = true
+        const same = Object.keys(next).length === Object.keys(categoryAccountFilter).length
+            && Object.keys(next).every(k => categoryAccountFilter[k])
+        if (same) return
+        categoryAccountFilter = next
+        if (!showsCategoryAccountFilter) return
+        listLimit = defaultListLimit
+        requestSelectionLoad({})
+    }
+    /// Adds or removes one account; choosing every account is the same as no filter.
+    function toggleCategoryAccount(id) {
+        const next = categoryAccountIDs.slice()
+        const at = next.indexOf(id)
+        if (at >= 0) next.splice(at, 1); else next.push(id)
+        setCategoryAccountFilter(next.length === allAccounts.length ? [] : next)
+    }
+    /// Label of the account menu; never names an account (the header is part of bug report screenshots).
+    readonly property string categoryAccountFilterTitle: categoryAccountIDs.length === 0
+        ? qsTr("Konten: Alle") : qsTr("Konten: %1 von %2").arg(categoryAccountIDs.length).arg(allAccounts.length)
+
+    // MARK: period per category (AppModel+Selection.swift, AppModelTypes.swift › Period.storageKey, #425)
+    /// Relative, launch-independent form: "this year" stays "this year" next January. null for custom.
+    function periodStorageKey(p, now) {
+        const kind = p.split(":")[0]
+        if (kind === "all" || kind === "months12" || kind === "sinceSalary" || kind === "days") return p
+        const section = ({ month: 2, quarter: 3, year: 4 })[kind]
+        if (section === undefined) return null
+        const i = periodMenu(now)[section].indexOf(p)
+        return i >= 0 ? kind + ":" + i : null
+    }
+    function periodFromStorageKey(key, now) {
+        const parts = String(key).split(":")
+        const n = parts.length === 2 ? Number(parts[1]) : NaN
+        switch (parts[0]) {
+        case "all": case "months12": case "sinceSalary": return parts.length === 1 ? parts[0] : null
+        case "days": return Number.isInteger(n) && n > 0 ? "days:" + n : null
+        }
+        const section = ({ month: 2, quarter: 3, year: 4 })[parts[0]]
+        if (section === undefined || !Number.isInteger(n)) return null
+        const menu = periodMenu(now)[section]
+        return n >= 0 && n < menu.length ? menu[n] : null
+    }
+    /// QSettings `period/byCategory` (UserDefaults `period.byCategory`): category id → storage key.
+    function categoryPeriods() {
+        try { return JSON.parse(defaults.value("period/byCategory", "{}")) || {} } catch (e) { return {} }
+    }
+    /// The period the user last chose for this category; null = follows the current one.
+    function categoryPeriod(id) {
+        const key = categoryPeriods()[String(id)]
+        return key ? periodFromStorageKey(key) : null
+    }
+    function setCategoryPeriod(p, id) {
+        const key = periodStorageKey(p)
+        if (key === null) return
+        const map = categoryPeriods()
+        map[String(id)] = key
+        defaults.setValue("period/byCategory", JSON.stringify(map))
+    }
+    /// AppModel.swift › interactivePeriod: the user's choice becomes the default of the selected category.
+    function choosePeriod(p) {
+        period = p
+        if (sidebarSelection.startsWith("category:")) setCategoryPeriod(p, Number(sidebarSelection.slice(9)))
+    }
+
     function currentFilter() {
         const r = periodRange()
         const sel = sidebarSelection
@@ -1067,7 +1178,8 @@ QtObject {
                      search: null, date_from: null, date_to: null, limit: listLimit, offset: 0, scope: "All",
                      merchant_key: null, direction: "All", checked: false, whole_days: true }
         return {
-            account_ids: selectionAccountIDs(),
+            // AppModel+Loading.swift › currentFilter: the category views follow the account menu (#406)
+            account_ids: showsCategoryAccountFilter ? categoryAccountIDs : selectionAccountIDs(),
             category_id: sel.startsWith("category:") ? Number(sel.slice(9)) : null,
             include_subcategories: true,
             uncategorized_only: sel === "uncategorized",
@@ -1274,7 +1386,12 @@ QtObject {
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
-        if (sel.startsWith("category:")) { const c = categories.find(c => "category:" + c.id === sel); return c ? { label: qsTr("Summe im Zeitraum"), cents: c.total_cents } : null }
+        // The category total covers all accounts: no figure while accounts are filtered (#406).
+        if (sel.startsWith("category:")) {
+            if (categoryAccountIDs.length) return null
+            const c = categories.find(c => "category:" + c.id === sel)
+            return c ? { label: qsTr("Summe im Zeitraum"), cents: c.total_cents } : null
+        }
         return null
     }
     readonly property string lastSyncText: {

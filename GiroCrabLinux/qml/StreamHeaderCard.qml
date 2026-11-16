@@ -132,10 +132,20 @@ Card {
 
         BalanceChart {
             visible: !card.compact && (!card.isDepot || card.isTangible) && AppModel.showStatistics && AppModel.scope !== "Investments"
+                     && !AppModel.sidebarSelection.startsWith("category:")
             Layout.fillWidth: true
             Layout.preferredHeight: 72
             points: card.chartPoints
             onSelectDay: day => AppModel.jumpToDay(day)
+        }
+
+        // A category: its monthly sums instead of the balance (CategorySumChart.swift, #502).
+        CategorySumChart {
+            visible: !card.compact && !card.isDepot && AppModel.showStatistics && AppModel.scope !== "Investments"
+                     && AppModel.sidebarSelection.startsWith("category:")
+            Layout.fillWidth: true
+            Layout.preferredHeight: 72
+            sums: AppModel.categoryHistory
         }
 
         RowLayout {
@@ -169,7 +179,7 @@ Card {
                 // because the named months, quarters and years count back from today.
                 Component { id: periodEntry
                     AppMenuItem { property string periodID; text: AppModel.periodTitleOf(periodID); checkable: true
-                                  checked: AppModel.period === periodID; onTriggered: AppModel.period = periodID } }
+                                  checked: AppModel.period === periodID; onTriggered: AppModel.choosePeriod(periodID) } }
                 Component { id: periodDivider; AppMenuSeparator {} }
                 AppMenu {
                     id: periodMenu
@@ -212,6 +222,32 @@ Card {
                     }
                 }
             }
+            // Category views: only the bookings of the chosen accounts (GitHub #406).
+            MenuLabel {
+                visible: AppModel.showsCategoryAccountFilter && AppModel.allAccounts.length > 1
+                symbol: AppModel.categoryAccountIDs.length ? "building.columns.fill" : "building.columns"
+                text: AppModel.categoryAccountFilterTitle
+                onClicked: accountMenu.popup()
+                ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Nur Buchungen ausgewählter Konten anzeigen")
+                AppMenu {
+                    id: accountMenu
+                    AppMenuItem { text: qsTr("Alle Konten"); checkable: true
+                                  checked: AppModel.categoryAccountIDs.length === 0
+                                  onTriggered: { checked = Qt.binding(() => AppModel.categoryAccountIDs.length === 0); AppModel.setCategoryAccountFilter([]) } }
+                    AppMenuSeparator {}
+                    Repeater {
+                        model: AppModel.allAccounts
+                        AppMenuItem {
+                            required property var modelData
+                            text: !modelData.bank_name || modelData.name.toLowerCase().indexOf(modelData.bank_name.toLowerCase()) >= 0
+                                  ? modelData.name : modelData.name + " · " + modelData.bank_name
+                            checkable: true
+                            checked: AppModel.categoryAccountIDs.indexOf(modelData.id) >= 0
+                            onTriggered: { checked = Qt.binding(() => AppModel.categoryAccountIDs.indexOf(modelData.id) >= 0); AppModel.toggleCategoryAccount(modelData.id) }
+                        }
+                    }
+                }
+            }
             MenuLabel { visible: card.account !== null; symbol: "doc.text"; text: qsTr("Dokumente"); chevron: false
                         onClicked: AppModel.openAccountDocuments(card.account) }
             Item { Layout.fillWidth: true }
@@ -246,6 +282,7 @@ Card {
         property string symbol
         property string text
         property bool chevron: true
+        readonly property bool hovered: mlArea.containsMouse
         signal clicked()
         implicitWidth: r.implicitWidth; implicitHeight: 22
         RowLayout {
@@ -256,6 +293,6 @@ Card {
             Text { text: ml.text; font.pixelSize: Theme.body; color: Theme.text }
             SFIcon { visible: ml.chevron; symbol: "chevron.down"; size: 9; color: Theme.text }
         }
-        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: ml.clicked() }
+        MouseArea { id: mlArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: ml.clicked() }
     }
 }
