@@ -33,6 +33,7 @@ jobs:
     outputs:
       rust: ${{ steps.f.outputs.rust }}
       swift: ${{ steps.f.outputs.swift }}
+      winpkg: ${{ steps.f.outputs.winpkg }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,16 +41,20 @@ jobs:
           persist-credentials: false
       - id: f
         run: |
-          rust=true; swift=true
+          rust=true; swift=true; winpkg=true
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
             # Rust core, MCP adapter, workspace manifests, Linux and Windows front ends, CI itself
             echo "$files" | grep -qE '^(girocrab-core/|girocrab-mcp/|GiroCrabLinux/|GiroCrabWindows/|Cargo\.(toml|lock)$|\.github/|build-xcframework\.sh$)' || rust=false
             # Swift app, the core behind it (bindings), CI itself
             echo "$files" | grep -qE '^(GiroCrabApp/|girocrab-core/|Cargo\.(toml|lock)$|\.github/|build-xcframework\.sh$)' || swift=false
+            # Windows release build + installer (2-10 min): only when the Windows front end,
+            # its packaging or CI itself changes; pushes to main always build it.
+            echo "$files" | grep -qE '^(GiroCrabWindows/|scripts/package-windows\.ps1$|\.github/)' || winpkg=false
           fi
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
           echo "swift=$swift" >> "$GITHUB_OUTPUT"
+          echo "winpkg=$winpkg" >> "$GITHUB_OUTPUT"
 
   # Known vulnerabilities / unmaintained crates in Cargo.lock (RustSec). Warnings fail the job;
   # accepted exceptions live in `.cargo/audit.toml` with a reason.
@@ -60,8 +65,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # Prebuilt binary instead of `cargo install` (compiling it took 2.5-3 min on every run).
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: cargo audit
         run: cargo audit --deny warnings
 
@@ -161,13 +169,13 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
       - run: cargo test --manifest-path GiroCrabWindows/Cargo.toml
-      - if: runner.os == 'Windows'
+      - if: runner.os == 'Windows' && needs.changes.outputs.winpkg == 'true'
         run: cargo build --release --manifest-path GiroCrabWindows/Cargo.toml
-      - if: runner.os == 'Windows'
+      - if: runner.os == 'Windows' && needs.changes.outputs.winpkg == 'true'
         name: Package portable zip + installer
         shell: pwsh
         run: ./scripts/package-windows.ps1
-      - if: runner.os == 'Windows'
+      - if: runner.os == 'Windows' && needs.changes.outputs.winpkg == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: girocrab-windows-x86_64
