@@ -1265,7 +1265,9 @@ impl Vault {
                     settings.insert(tm_key, SecretString::new(v));
                 }
             }
-            if !demo {
+            // PayPal via API signature needs no REST app.
+            let nvp = kind == ConnectorKind::PayPal && super::paypal::nvp_configured(&settings);
+            if !demo && !nvp {
                 for key in descriptor(kind).required_settings {
                     if !settings.contains_key(&key) {
                         return Err(CoreError::MissingSetting { key });

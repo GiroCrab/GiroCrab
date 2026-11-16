@@ -148,6 +148,8 @@ struct AddBankSheet: View {
         guard let s = selected else { return [] }
         let kind = s.connector ?? (s.mode == .finTs ? .finTsGeneric : .enableBanking)
         guard let d = bankCatalog().first(where: { $0.kind == kind }) else { return [] }
+        // PayPal via API signature (classic NVP API) needs no REST app.
+        if kind == .payPal, model.settingEntry("paypal.api_signature")?.hasValue == true { return [] }
         return model.userRequiredKeys(for: d).filter { key in !(model.settingEntry(key)?.hasValue ?? false) }
     }
 

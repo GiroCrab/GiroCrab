@@ -147,6 +147,7 @@ extension AppModel {
     func missingSettings(for connection: BankConnection) -> [String] {
         if Self.isMagicDemoLogin(connection.loginName) { return [] }
         guard let d = bankCatalog().first(where: { $0.kind == connection.connector }) else { return [] }
+        if connection.connector == .payPal, settingEntry("paypal.api_signature")?.hasValue == true { return [] }
         return userRequiredKeys(for: d).filter { key in !(settingEntry(key)?.hasValue ?? false) }
     }
 

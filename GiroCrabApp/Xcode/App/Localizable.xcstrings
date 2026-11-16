@@ -12230,6 +12230,17 @@
         }
       }
     },
+    "Erweitert: API-Signatur (klassische NVP-API)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advanced: API Signature (Classic NVP API)"
+          }
+        }
+      }
+    },
     "Erweitert: Eigene PSD2/Enable-Banking API (Optional)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16003,6 +16014,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Open Issue"
+          }
+        }
+      }
+    },
+    "Ist die API-Signatur gesetzt, ruft GiroCrab per API-Benutzername, API-Passwort und Signatur ab; Client-ID und Secret werden dann nicht gebraucht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When the API signature is set, GiroCrab fetches with API username, API password and signature; client ID and secret are then not needed."
           }
         }
       }

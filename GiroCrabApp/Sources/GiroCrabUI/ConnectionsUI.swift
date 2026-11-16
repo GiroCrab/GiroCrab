@@ -181,6 +181,8 @@ struct ConnectionEditSheet: View {
     private var advancedKeys: [String] {
         switch connection.connector {
         case .americanExpress: return ["enablebanking.use.amex", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amex", "enablebanking.country.amex"]
+        // Prototype #156: classic NVP API instead of the REST app.
+        case .payPal: return ["paypal.api_username", "paypal.api_password", "paypal.api_signature"]
         case .amazonVisa: return ["enablebanking.use.amazonvisa", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amazonvisa", "enablebanking.country.amazonvisa"]
         default: return []
         }
@@ -284,6 +286,17 @@ struct ConnectionEditSheet: View {
                     Section {
                         ForEach(keys, id: \.self) { key in field(key) }
                     } header: { Text(sectionTitle).appSectionHeader() }
+                }
+                // Prototype #156: classic NVP API (API signature) instead of the REST app.
+                if connection.connector == .payPal {
+                    Section {
+                        DisclosureGroup("Erweitert: API-Signatur (klassische NVP-API)", isExpanded: $showAdvanced) {
+                            Text("Ist die API-Signatur gesetzt, ruft GiroCrab per API-Benutzername, API-Passwort und Signatur ab; Client-ID und Secret werden dann nicht gebraucht.")
+                                .appFont(.caption).foregroundStyle(Theme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ForEach(advancedKeys, id: \.self) { key in field(key) }
+                        }
+                    }
                 }
                 if isPortal {
                     Section {
