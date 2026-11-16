@@ -551,7 +551,7 @@ struct AccountRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     // the owner no longer takes room in the title line: tooltip only
-                    Text(account.name).appFont(.callout).lineLimit(1).sensitive()
+                    Text(account.name).appFont(.subheadline).lineLimit(1).minimumScaleFactor(0.92).sensitive()
                         .help(account.owner.isEmpty ? "" : account.owner)
                     if account.accessRevoked {
                         Image(systemName: "lock.slash")
@@ -559,9 +559,13 @@ struct AccountRow: View {
                             .foregroundStyle(.orange)
                             .help("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.")
                     }
-                    // a count bubble, not just a dot: how many are new (the balance
-                    // sits where a system `.badge` would go)
-                    NewCountBadge(count: Int(account.newCount), onSelection: onSelection)
+                    // a small dot only; the count sits in the subtitle ("Bank · 8 neu")
+                    if account.newCount > 0 {
+                        Circle()
+                            .fill(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Theme.accent))
+                            .frame(width: 6, height: 6)
+                            .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
+                    }
                 }
                 if let repaid {
                     // in a line as tall as the bank name of other accounts, so
@@ -580,7 +584,7 @@ struct AccountRow: View {
                         .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         .help("Archiviert – wird nicht mehr abgerufen")
                 } else {
-                    Text(searchAwareSubtitle)
+                    Text(subtitleWithNewCount)
                         .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
                         .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
                         .foregroundStyle(.secondary)
@@ -604,6 +608,13 @@ struct AccountRow: View {
         }
         .padding(.vertical, 1)
         .opacity(account.isArchived ? 0.55 : 1)
+    }
+
+    /// Bank name plus the number of new bookings ("Musterbank · 8 neu").
+    private var subtitleWithNewCount: String {
+        guard searchAwareSubtitle == account.bankName, account.newCount > 0,
+              let n = NewCountBadge.label(for: Int(account.newCount)) else { return searchAwareSubtitle }
+        return "\(searchAwareSubtitle) · \(n) neu"
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
