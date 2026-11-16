@@ -122,7 +122,7 @@ struct RuleEditorView: View {
                                 .appFont(.caption, monospacedDigit: true)
                                 .padding(.horizontal, 6).padding(.vertical, 1)
                                 .background(Capsule().fill(.quaternary))
-                                .accessibilityLabel(Text("\(rule.matchCount) Treffer"))
+                                .accessibilityLabel(Text("\(Int(rule.matchCount)) Treffer"))
                         }
                         .tag(rule.id)
                         .contextMenu {

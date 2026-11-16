@@ -105,9 +105,15 @@ struct BudgetBar: View {
         .frame(height: 6)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Budgetverbrauch"))
-        .accessibilityValue(percent > 100
-            ? Text("\(Int(percent.rounded())) % des Budgets verbraucht, überschritten")
-            : Text("\(Int(percent.rounded())) % des Budgets verbraucht"))
+        .accessibilityValue(Self.spokenValue(percent))
+    }
+
+    /// "85 % des Budgets verbraucht"; over budget (red bar) is never spoken as 100 %.
+    static func spokenValue(_ percent: Double) -> Text {
+        let rounded = Int(percent.rounded())
+        return percent > 100
+            ? Text("\(max(rounded, 101)) % des Budgets verbraucht, überschritten")
+            : Text("\(min(rounded, 100)) % des Budgets verbraucht")
     }
 }
 
@@ -176,6 +182,8 @@ struct BudgetProgressCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // the button merges its children; keep the bar's value
+                .accessibilityValue(BudgetBar.spokenValue(s.percent))
                 .onHover { inside in
                     if inside { hovered = s.categoryId } else if hovered == s.categoryId { hovered = nil }
                 }

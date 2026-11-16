@@ -4401,6 +4401,39 @@
         }
       }
     },
+    "Ausgaben je Jahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expenses per year"
+          }
+        }
+      }
+    },
+    "Ausgaben je Monat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expenses per month"
+          }
+        }
+      }
+    },
+    "Ausgaben je Tag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expenses per day"
+          }
+        }
+      }
+    },
     "Ausgeblendet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22527,13 +22560,35 @@
         }
       }
     },
-    "Summe je %@" : {
+    "Summe je Jahr" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sum per %@"
+            "value" : "Sum per year"
+          }
+        }
+      }
+    },
+    "Summe je Monat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sum per month"
+          }
+        }
+      }
+    },
+    "Summe je Tag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sum per day"
           }
         }
       }

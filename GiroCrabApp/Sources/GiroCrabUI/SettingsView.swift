@@ -255,6 +255,7 @@ struct BankConnectionsSettings: View {
                             .buttonStyle(.borderless)
                             .help(model.bankingGate(for: c)?.message ?? String(localized: "Jetzt abrufen"))
                             .accessibilityLabel("Jetzt abrufen")
+                            .accessibilityHint(Text(verbatim: model.bankingGate(for: c)?.message ?? ""))
                             .disabled(model.bankingGate(for: c) != nil)
                         Button(role: .destructive) { confirmRemove = c } label: { Label("Bankzugang entfernen …", systemImage: "trash") }
                             .labelStyle(.iconOnly)

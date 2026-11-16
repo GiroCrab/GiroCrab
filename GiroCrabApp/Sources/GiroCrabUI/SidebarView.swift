@@ -583,7 +583,7 @@ struct AccountRow: View {
                             .overlay(Capsule().strokeBorder(.background, lineWidth: 1.5))
                             .fixedSize()
                             .offset(x: 5, y: -4)
-                            .accessibilityHidden(true)   // read as the row's value instead
+                            .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
                     }
                 }
             VStack(alignment: .leading, spacing: 1) {
@@ -638,9 +638,8 @@ struct AccountRow: View {
         }
         .padding(.vertical, 1)
         .opacity(account.isArchived ? 0.55 : 1)
-        // one element per account: name, bank / progress, balance; unread count as its value
+        // one element per account: unread count, name, bank / loan progress, balance
         .accessibilityElement(children: .combine)
-        .accessibilityValue(account.newCount > 0 ? Text("\(Int(account.newCount)) neue Buchungen") : Text(verbatim: ""))
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
