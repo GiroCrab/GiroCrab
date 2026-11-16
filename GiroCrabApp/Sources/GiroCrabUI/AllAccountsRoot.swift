@@ -58,23 +58,21 @@ struct AllAccountsRow: View {
     var body: some View {
         let hasAccounts = !model.allAccounts.isEmpty
         let open = model.showsAccountTree
-        HStack(spacing: 2) {
+        HStack(spacing: DisclosureChevron.gap) {
             if hasAccounts {
                 Button {
                     withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.allAccountsCollapsed.toggle() }
                 } label: {
-                    Image(systemName: "chevron.right")
-                        .appFont(.caption2, weight: .bold)
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                        .frame(width: 10, height: 18)
-                        .contentShape(Rectangle())
+                    DisclosureChevron(open: open)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(open ? "Alle Konten einklappen" : "Alle Konten ausklappen")
                 .accessibilityValue(open ? "Ausgeklappt" : "Eingeklappt")
+            } else {
+                Color.clear.frame(width: DisclosureChevron.width, height: 18) // keeps the icon axis
             }
-            Image(systemName: "square.grid.2x2").foregroundStyle(Theme.secondary).frame(width: 18)
+            Image(systemName: "square.grid.2x2").foregroundStyle(Theme.secondary).frame(width: 20)
             Text("Alle Konten").fontWeight(.medium).lineLimit(1).appDefaultFont()
             Spacer(minLength: 2)
             ForEach(AllAccountsTotal.totals(of: model.allAccounts), id: \.currency) { total in

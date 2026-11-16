@@ -322,8 +322,8 @@ struct SidebarView: View {
                     }, perform: { items, edge in
                         handleDrop(items, into: group, row: i, edge: edge)
                     }, intoKey: "g:" + group.uuid))
-                        // flush with the group header's chevron column: no extra indent
-                        .padding(.leading, indent)
+                        // icon on the group header's icon axis (behind the chevron column)
+                        .padding(.leading, DisclosureChevron.iconInset + indent)
                         .draggable(GroupDrag.account(account.id))
                 }
             }
@@ -485,6 +485,25 @@ struct SidebarView: View {
     }
 }
 
+/// Disclosure arrow of every collapsible sidebar header: `chevron.right` when
+/// closed, turned to point down when open. One 12 pt column, so the icons of
+/// all headers and accounts share one vertical axis.
+struct DisclosureChevron: View {
+    static let width: CGFloat = 12
+    /// Gap between the chevron column and the icon (HStack spacing of the headers).
+    static let gap: CGFloat = 5
+    /// Leading offset of an account row: its icon sits on the headers' icon axis.
+    static let iconInset: CGFloat = width + gap
+    let open: Bool
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .appFont(.caption, weight: .bold)
+            .rotationEffect(.degrees(open ? 90 : 0))
+            .frame(width: Self.width, height: 18)
+            .contentShape(Rectangle())
+    }
+}
+
 struct SectionHeader: View {
     /// Selected header: hierarchical styles so macOS can draw them light on the
     /// accent-coloured selection (fixed theme colours stay dark there).
@@ -501,11 +520,7 @@ struct SectionHeader: View {
     var body: some View {
         HStack(spacing: 5) {
             Button(action: toggle) {
-                Image(systemName: "chevron.right")
-                    .appFont(.caption, weight: .bold)
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .frame(width: 12, height: 18)
-                    .contentShape(Rectangle())
+                DisclosureChevron(open: open)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -548,7 +563,7 @@ struct AccountRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DisclosureChevron.gap) {
             // tinted like the account's marker in the booking list
             AccountSignet(account: account, size: 20, color: model.accountColor(account.id), onSelection: onSelection)
                 .overlay(alignment: .topTrailing) {
@@ -834,11 +849,7 @@ private struct CategoriesHeader: View {
         HStack(spacing: 5) {
             // folds the category tree away (rarely used, takes room)
             Button(action: toggle) {
-                Image(systemName: "chevron.right")
-                    .appFont(.caption, weight: .bold)
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .frame(width: 12, height: 18)
-                    .contentShape(Rectangle())
+                DisclosureChevron(open: open)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(open ? "Kategorien einklappen" : "Kategorien ausklappen")

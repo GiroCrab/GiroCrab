@@ -135,11 +135,7 @@ struct UserGroupHeader: View {
     var body: some View {
         HStack(spacing: 5) {
             Button(action: toggle) {
-                Image(systemName: "chevron.right")
-                    .appFont(.caption, weight: .bold)
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .frame(width: 12, height: 18)
-                    .contentShape(Rectangle())
+                DisclosureChevron(open: open)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
