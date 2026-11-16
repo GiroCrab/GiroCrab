@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Window background = `Theme.canvas` (adaptive), so no white frame or flash around the start and lock screen.
+    /// Window background = launch background (#0B1120 dark / #F8FAFC light), so no white frame or flash around the start and lock screen.
     @MainActor
     static func applyWindowBackground() {
         let canvas = NSColor(name: nil) { appearance in

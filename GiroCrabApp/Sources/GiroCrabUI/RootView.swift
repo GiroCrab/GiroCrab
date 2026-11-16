@@ -400,7 +400,7 @@ struct SplashView: View {
                 BrandCrabLogo()
                 ProgressView().tint(.white).offset(y: BrandBackdrop.logoSize * 0.5 + 44)
             } else {
-                Theme.canvas.ignoresSafeArea()
+                MacLaunchBackground()
                 VStack(spacing: 28) {
                     MacHeroIcon(phase: .idle)
                     ProgressView()
@@ -534,10 +534,11 @@ struct LockView: View {
     private var standardBody: some View {
         VStack(spacing: 14) {
             MacHeroIcon(phase: crabPhase)
-                .padding(.bottom, 10)
+                .padding(.bottom, -6)
             Text("GiroCrab ist gesperrt")
                 .appFont(.title, weight: .bold)
             Text("Ihre Buchungen liegen in einem verschlüsselten Tresor.\nDer Schlüssel verlässt nie den Schlüsselbund dieses Geräts.")
+                .appFont(.body)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.secondary)
                 .padding(.bottom, 6)
@@ -577,7 +578,7 @@ struct LockView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.canvas.ignoresSafeArea())
+        .background(MacLaunchBackground())
     }
 }
 
@@ -876,33 +877,45 @@ struct MainSplitView: View {
     }
 }
 
-/// Hero icon for start and lock screen in a Mac window: the animated crab on its navy squircle,
-/// with an ambient glow, a thin inner rim and layered shadows. Adapts to Light and Dark Mode.
-struct MacHeroIcon: View {
-    var phase: AnimatedCrabLogoView.Phase
-    var size: CGFloat = 140
+/// Full-window background of the Mac start and lock screen: soft light surface (#F8FAFC to #EEF2F6)
+/// in Light Mode, deep slate navy (#0B1120 to #162033) in Dark Mode.
+struct MacLaunchBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let corner = size * 220 / 1024
+        LinearGradient(
+            colors: scheme == .dark
+                ? [Color(hex: 0x0B1120), Color(hex: 0x162033)]
+                : [Color(hex: 0xF8FAFC), Color(hex: 0xEEF2F6)],
+            startPoint: .top, endPoint: .bottom
+        )
+        .ignoresSafeArea()
+    }
+}
+
+/// Hero icon for start and lock screen in a Mac window: the cut-out crab (no app-icon squircle),
+/// about 190 pt wide, with a soft contact shadow; in Dark Mode with a subtle ambient glow.
+struct MacHeroIcon: View {
+    var phase: AnimatedCrabLogoView.Phase
+    var size: CGFloat = 190
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
         let dark = scheme == .dark
         ZStack {
-            Circle()
-                .fill(RadialGradient(
-                    colors: [Color(red: 0x3B / 255, green: 0x4C / 255, blue: 0x6B / 255).opacity(dark ? 0.45 : 0.30), Color(red: 0x3B / 255, green: 0x4C / 255, blue: 0x6B / 255).opacity(0)],
-                    center: .center, startRadius: size * 0.2, endRadius: size * 1.05))
-                .frame(width: size * 2.1, height: size * 2.1)
-                .allowsHitTesting(false)
-            AnimatedCrabLogoView(size: size, phase: phase)
-                .overlay {
-                    RoundedRectangle(cornerRadius: corner, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                        .allowsHitTesting(false)
-                }
-                .shadow(color: .black.opacity(dark ? 0.45 : 0.22), radius: 24, x: 0, y: 14)
-                .shadow(color: .black.opacity(dark ? 0.35 : 0.14), radius: 4, x: 0, y: 2)
+            if dark {
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Color(hex: 0x3B4C6B, opacity: 0.45), Color(hex: 0x3B4C6B, opacity: 0)],
+                        center: .center, startRadius: size * 0.1, endRadius: size * 0.95))
+                    .frame(width: size * 2, height: size * 2)
+                    .allowsHitTesting(false)
+            }
+            AnimatedCrabLogoView(size: size, phase: phase, showBackgroundSquircle: false)
+                .shadow(color: .black.opacity(dark ? 0.45 : 0.20), radius: 14, x: 0, y: 12)
+                .shadow(color: .black.opacity(dark ? 0.30 : 0.10), radius: 3, x: 0, y: 2)
         }
-        .frame(width: size * 1.5, height: size * 1.5)
+        .frame(width: size * 1.3, height: size * 1.3)
     }
 }
 
