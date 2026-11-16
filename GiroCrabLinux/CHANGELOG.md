@@ -8,62 +8,11 @@ Verhalten und Texte kommen dabei 1:1 aus der Mac-App, auf Deutsch und Englisch. 
 Einstellungen › Sicherheit steht deshalb „Kern-Version“: Die Nummer gehört zum Kern, nicht zum
 Funktionsumfang der Oberfläche.
 
-## Nächster Stand (in Arbeit)
+## Funktionsstand 0.7.5 (Kern 0.7.5)
 
-### Händler-Logos (#33)
-
-- **Logos aus dem Internet:** Einstellungen › Allgemein › „Händler-Logos“ wählt den Anbieter (Aus,
-  DuckDuckGo, Google) und leert den Logo-Cache. Standard bleibt „Aus“: Vorher wird nichts
-  angefragt, auch keine früher zwischengespeicherten Logos angezeigt. Übertragen wird nur die
-  Händler-Domain; die Favicons liegen verschlüsselt im Tresor.
-- **Hinweis in der Buchungsliste:** Sind echte Buchungen zu sehen und Logos aus, bietet ein Hinweis
-  einmalig „Mit DuckDuckGo laden“ oder „Einstellungen …“ an (nicht im Demo-Tresor).
-- **Eigene Domain:** Im Beleg setzt der Stift neben der Domain eine eigene Domain für das Logo,
-  „Automatische Erkennung wiederherstellen“ entfernt sie wieder.
-
-### Mitteilungen
-
-- **Mitteilungen des GiroCrab-Projekts:** Neuigkeiten erscheinen als ruhiges Banner über der
-  Buchungsliste, höchstens eines zugleich, nie während einer Sicherheitssperre. Das Banner lässt
-  sich ausblenden (es kommt nicht wieder); „Mehr erfahren“ zeigt den ganzen Text. Alles, was gilt,
-  bleibt unter Hilfe › Mitteilungen … lesbar. GiroCrab lädt dazu höchstens alle sechs Stunden eine
-  signierte Textdatei von GitHub, ohne Kennung und ohne Tracking; Einstellungen › Allgemein ›
-  Mitteilungen schaltet das samt Netzabruf ab.
-
-### Saldoverlauf als Balken
-
-- **Balken statt Linie:** Einstellungen › Allgemein › Saldoverlauf (oder Rechtsklick auf den
-  Verlauf) zeigt den durchschnittlichen Saldo je Tag, Monat oder Jahr als Balken („Balken je“:
-  automatisch, Tage, Monate, Jahre). Gestrichelte Linien markieren den Jahreswechsel; ein Klick
-  springt zu den Buchungen des letzten Tags des Balkens. Der Verlauf hat jetzt wie am Mac eine
-  schmale Achse mit Null, Höchst- und Tiefststand.
-
-### Anlageklassen im Vermögen
-
-- **Anlageklassen und Instrumente:** Wertpapiere und Sachwerte zeigen ihre Anlageklasse (Aktien,
-  Anleihen, Immobilien …) und ihr Instrument (Einzeltitel, ETF, Fonds …) in der Positionszeile.
-  „Klassifizierung bearbeiten“ (Kontextmenü, Stift in der Vermögensübersicht) setzt eine eigene
-  Zuordnung; „Automatisch“ setzt das jeweilige Merkmal zurück. Offene Positionen lassen sich mit
-  „Jetzt zuordnen“ nacheinander zuordnen.
-- **Vermögen gruppieren:** Neben „Nach Konto“ gibt es „Nach Anlageklasse“ und im Tab Wertpapiere
-  „Nach Instrument“. Ring und Legende filtern die Karten darunter (in jeder Ansicht);
-  Nicht klassifizierte Werte lassen sich im Diagramm ausblenden, direkt gehaltene Immobilien aus der
-  ganzen Ansicht („Nettovermögen ohne Immobilien“). Bei mehreren Kontoinhabern filtert eine Auswahl
-  die gesamte Ansicht nach Inhaber.
-
-### Kopfbereich und Kategorie-Ansichten
-
-- **Kopfbereich minimieren:** Ein Pfeil neben dem Titel (oder Darstellung › Kopfbereich
-  minimieren) reduziert die Kopfkarte auf Titel, Saldo und Filterzeile; die Einstellung bleibt
-  gespeichert.
-- **Budgets unabhängig von „Auswertungen anzeigen“:** Die Budget-Karte folgt nur noch ihrem
-  eigenen Schalter.
-- **Kategorien zeigen ihre Monatssummen** als Balkendiagramm (mit Unterkategorien) statt des
-  Kontoverlaufs.
-- **Kategorie-Ansichten auf Konten eingrenzen:** Bei einer Kategorie oder „Ohne Kategorie“ hat
-  die Filterzeile das Menü „Konten: Alle“.
-- **Zeitraum je Kategorie:** Der zuletzt für eine Kategorie gewählte Zeitraum gilt beim nächsten
-  Öffnen wieder.
+Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.5 kann – bis auf die
+kleinen Lücken am Ende. Einige Funktionen sind schon aus neueren Mac-Versionen übernommen, weil
+sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.5)* markiert.
 
 ### Seitenleiste, Kategorien, Regeln
 
@@ -71,6 +20,7 @@ Funktionsumfang der Oberfläche.
   folgen einklappbare Abschnitte **Konten**, **Zahlungen** (Geplant, Lastschriften – mit Zählern),
   **Dokumente** und **Kategorien**; der Zustand bleibt über Neustarts erhalten. Alle Pfeile und
   Symbole liegen auf einer gemeinsamen Achse, Unterkategorien und Konten rücken einheitlich ein.
+  *(Zähler in der Mac-App erst nach 0.7.5)*
 - **Konto-Zeilen** kompakter: Zahl neuer Buchungen am Kontosymbol, Kontoinhaber als Tooltip,
   Saldo in der zweiten Zeile; archivierte Konten zeigen keinen Saldo mehr („Archiviert – wird
   nicht mehr abgerufen“).
@@ -90,6 +40,134 @@ Funktionsumfang der Oberfläche.
   Das Feld „Priorität“ entfällt wie in der Mac-App: Es zählt die Reihenfolge der Liste.
 - Bankzugang bearbeiten: Easybank und Alte Leipziger speichern das Passwort, die Volkswagen Bank
   die PIN im Tresor.
+
+### Buchungsliste und rechte Seitenleiste
+
+- **Tags vergeben (#228):** Die rechte Seitenleiste hat eine Karte „Tags“ unter der Notiz: Chips
+  mit ✕, ein Eingabefeld mit Vorschlägen (die ersten 8, „+n weitere“ klappt alle auf, beim Tippen
+  alle passenden und ähnlichen) und einem Hinweis, was ↩ tut (neu anlegen, hinzufügen, schon
+  gesetzt, ähnlicher Tag vorhanden, zu lang). Bei der Mehrfachauswahl sind Tags, die nur einige
+  Buchungen tragen, gestrichelt; ein Klick gibt sie allen. Dazu das Untermenü „Tags“ im
+  Kontextmenü und Buchung › „Tags bearbeiten“. In der Liste stehen bis zu zwei Tags an der
+  Buchung, „+n“ zeigt beim Darüberfahren alle. Bearbeiten › Rückgängig (Strg+Z) nimmt eine
+  Änderung genau für die geänderten Buchungen zurück. *(Mac-App: erst nach 0.7.5)*
+- **Buchungsdichte (#542):** Einstellungen › Allgemein › „Buchungsdichte“: Kompakt (eine Zeile
+  je Buchung mit Datum, ohne Tageskarten; die aktive Buchung klappt mit allen Details auf, ein
+  zweiter Klick klappt sie zu), Standard (mit kurzem Verwendungszweck unter dem Namen) oder
+  Großzügig (alle Buchungen mit allen Details). *(Mac-App: erst nach 0.7.5)*
+- **Verwendungszweck in der Zeile (#497):** Der bereinigte Zweck steht einzeilig in der Zeile
+  (Standard: unter dem Namen, Kompakt: hinter dem Namen); wiederholt er nur Händler, Gegenpartei
+  oder Zahlungsart, entfällt er.
+- **Rechte Seitenleiste anpassbar (#448):** „Anpassen“ über den Karten schaltet in einen
+  Bearbeiten-Modus: Karten per Ziehen umsortieren (blaue Einfügelinie) oder mit ↑ / ↓, mit ⊖
+  ausblenden, unter „Ausgeblendet“ mit ⊕ wieder einblenden, „Zurücksetzen“ stellt die
+  Standard-Reihenfolge wieder her.
+- **Farbe negativer Beträge (#218, #571):** Einstellungen › Allgemein › „Negative Beträge“ wählt
+  Neutral (wie bisher), Rot (wie negative Salden in der Seitenleiste) oder Kontraststark (orange
+  und blau, auch bei Rot-Grün-Schwäche gut unterscheidbar). Das Vorzeichen bleibt immer sichtbar;
+  Bestellkonto-Zeilen zeigen jetzt ebenfalls Minus bzw. Plus.
+  *(„Kontraststark“ in der Mac-App erst nach 0.7.5)*
+- **Händler-Liste (#495):** Die Überschrift „Händler-Historie“ öffnet alle Buchungen des Händlers
+  im gewählten Zeitraum über alle Konten. Eine Leiste „Alle Buchungen von …“ führt mit „Zurück“
+  zur vorherigen Ansicht samt Filtern zurück.
+- **Kategorisieren per Kontextmenü und Drag & Drop (#366):** Das Kontextmenü einer Buchung hat
+  das Untermenü „Kategorie“ mit dem Kategorienbaum, „Kategorisieren …“ und „Kategorie entfernen“
+  (bei Mehrfachauswahl für alle markierten Buchungen). Buchungen lassen sich auf eine Kategorie
+  ohne Unterkategorien in der Seitenleiste ziehen. *(Mac-App: erst nach 0.7.5)*
+- **Wiederkehrende Buchungen:** Das Kontextmenü einer Serie in der Übersicht hat das Untermenü
+  „Wiederkehrend“ mit dem Intervall der ganzen Serie (#581). *(Mac-App: erst nach 0.7.5)*
+- **Kategorie je Konto ausblenden und Gegenkonto (#336, #523):** Im Kontomenü schaltet
+  „Kategorie in der Buchungszeile anzeigen“ den Kategorie-Chip für dieses Konto ab. Überweisungen
+  auf ein eigenes Konto oder einen Unterkonto-„Pocket“ nennen es in der Zeile („⇄ Name“) und in
+  der Seitenleiste mit IBAN.
+
+### Kopfbereich und Kategorie-Ansichten
+
+- **Kopfbereich minimieren:** Ein Pfeil neben dem Titel (oder Darstellung › Kopfbereich
+  minimieren) reduziert die Kopfkarte auf Titel, Saldo und Filterzeile; die Einstellung bleibt
+  gespeichert.
+- **Budgets unabhängig von „Auswertungen anzeigen“:** Die Budget-Karte folgt nur noch ihrem
+  eigenen Schalter.
+- **Kategorien zeigen ihre Monatssummen** als Balkendiagramm (mit Unterkategorien) statt des
+  Kontoverlaufs.
+- **Kategorie-Ansichten auf Konten eingrenzen:** Bei einer Kategorie oder „Ohne Kategorie“ hat
+  die Filterzeile das Menü „Konten: Alle“.
+- **Zeitraum je Kategorie:** Der zuletzt für eine Kategorie gewählte Zeitraum gilt beim nächsten
+  Öffnen wieder.
+
+### Saldoverlauf als Balken
+
+- **Balken statt Linie:** Einstellungen › Allgemein › Saldoverlauf (oder Rechtsklick auf den
+  Verlauf) zeigt den durchschnittlichen Saldo je Tag, Monat oder Jahr als Balken („Balken je“:
+  automatisch, Tage, Monate, Jahre). Gestrichelte Linien markieren den Jahreswechsel; ein Klick
+  springt zu den Buchungen des letzten Tags des Balkens. Der Verlauf hat jetzt wie am Mac eine
+  schmale Achse mit Null, Höchst- und Tiefststand.
+
+### Händler-Logos (#33)
+
+- **Logos aus dem Internet:** Einstellungen › Allgemein › „Händler-Logos“ wählt den Anbieter (Aus,
+  DuckDuckGo, Google) und leert den Logo-Cache. Standard bleibt „Aus“: Vorher wird nichts
+  angefragt, auch keine früher zwischengespeicherten Logos angezeigt. Übertragen wird nur die
+  Händler-Domain; die Favicons liegen verschlüsselt im Tresor.
+- **Hinweis in der Buchungsliste:** Sind echte Buchungen zu sehen und Logos aus, bietet ein Hinweis
+  einmalig „Mit DuckDuckGo laden“ oder „Einstellungen …“ an (nicht im Demo-Tresor).
+- **Eigene Domain:** Im Beleg setzt der Stift neben der Domain eine eigene Domain für das Logo,
+  „Automatische Erkennung wiederherstellen“ entfernt sie wieder.
+
+### Überweisungen, Sammelüberweisung und Daueraufträge
+
+- **Überweisungsformular neu geordnet** wie in der Mac-App: „Von Konto“ steht oben, darunter
+  Empfänger, Zahlung und „Ausführung“. Normale Überweisung, Terminüberweisung und
+  Echtzeitüberweisung sind eine Auswahl statt zweier Häkchen; die Prüfansicht zeigt Betrag,
+  Empfänger und Zahlung im selben Stil.
+- **Umbuchung zwischen eigenen Konten:** „Überweisung | Umbuchung“ im Formular; das eigene
+  Zielkonto füllt Name und IBAN aus (#547). *(Mac-App: erst nach 0.7.5)*
+- **Sammelüberweisung** (#240): „Einzeln | Sammelüberweisung“ unter dem Titel. Viele Zahlungen
+  von einem Konto mit einer TAN, als Tabelle zum Bearbeiten, mit CSV-Import (Knopf oder Datei ins
+  Fenster ziehen; UTF-8 oder Windows-1252, höchstens 2 MB), Hinweis auf mögliche Doppelte, Zeilen
+  entfernen mit Entf und Strg+Z, eine Sammelbuchung oder Einzelbuchungen, Terminüberweisung.
+- **Daueraufträge anlegen, ändern und löschen** per FinTS (#496), mit den Grenzen der Bank
+  (Rhythmus, Ausführungstag, frühester Termin). Kontextmenü einer Buchung › „Als Dauerauftrag
+  anlegen …“ übernimmt Empfänger, Betrag, Zweck (ohne Datum) und Rhythmus.
+- **TAN abgebrochen:** Eine abgebrochene Sammelüberweisung oder ein abgebrochener Dauerauftrag
+  öffnet wieder das eigene Formular mit Hinweis; die nächste Einzelüberweisung läuft wieder als
+  Einzelüberweisung (#533).
+
+### Geplant
+
+- **„Geplant“** (#240) zeigt alle bei der Bank beauftragten, noch nicht gebuchten Zahlungen
+  (Terminüberweisungen, Daueraufträge, eingereichte Lastschriften) in Monatskarten wie die
+  Buchungsliste, mit Konto- und Zeitraumfilter (30 Tage, 3 Monate, 12 Monate, Alles) und den
+  Summen abgehend und eingehend.
+- Eigene rechte Seitenleiste für die gewählte Zahlung; ↑/↓ wählen, Esc hebt die Auswahl auf.
+  Kontextmenü und Seitenleiste: Dauerauftrag ändern oder löschen, Konto anzeigen, IBAN kopieren.
+  „Dauerauftrag anlegen …“ oben rechts.
+
+### Lastschriften
+
+- **„Lastschriften“** (#143): Mandate je Gläubigerkonto mit Gläubiger-ID (Vorschlag aus
+  vorhandenen Daten), Mandat anlegen, bearbeiten (auch per Doppelklick), aktivieren,
+  deaktivieren und löschen; ↑/↓ und Esc in der Liste.
+- **Import und Export:** CSV-Mitgliederliste (UTF-8 oder Windows-1252) oder SEPA-Lastschriftdatei
+  (pain.008) per Dateidialog oder Datei ins Fenster ziehen; Export der Mandate als CSV.
+- **Einzug vorbereiten:** Betrag und Zweck je Mandat, „Letzter Einzug“ (FNAL), Fälligkeit; die
+  pain.008-Dateien (je Art und Folgetyp eine) lassen sich sichern, als eingezogen markieren oder
+  per FinTS bei der Bank einreichen – eine TAN je Datei, danach stehen die Einzüge unter „Geplant“.
+- Rücklastschriften erscheinen in der Liste und in der rechten Seitenleiste („Als geprüft
+  markieren“), dazu die Buchungen zum Mandat.
+
+### Anlageklassen im Vermögen
+
+- **Anlageklassen und Instrumente:** Wertpapiere und Sachwerte zeigen ihre Anlageklasse (Aktien,
+  Anleihen, Immobilien …) und ihr Instrument (Einzeltitel, ETF, Fonds …) in der Positionszeile.
+  „Klassifizierung bearbeiten“ (Kontextmenü, Stift in der Vermögensübersicht) setzt eine eigene
+  Zuordnung; „Automatisch“ setzt das jeweilige Merkmal zurück. Offene Positionen lassen sich mit
+  „Jetzt zuordnen“ nacheinander zuordnen.
+- **Vermögen gruppieren:** Neben „Nach Konto“ gibt es „Nach Anlageklasse“ und im Tab Wertpapiere
+  „Nach Instrument“. Ring und Legende filtern die Karten darunter (in jeder Ansicht);
+  Nicht klassifizierte Werte lassen sich im Diagramm ausblenden, direkt gehaltene Immobilien aus der
+  ganzen Ansicht („Nettovermögen ohne Immobilien“). Bei mehreren Kontoinhabern filtert eine Auswahl
+  die gesamte Ansicht nach Inhaber.
 
 ### Tresor sichern und wiederherstellen
 
@@ -142,10 +220,20 @@ Funktionsumfang der Oberfläche.
   gleicht sie mit der späteren Buchung ab. Ist eine Vormerkung nicht mehr offen, ihre Buchung
   aber noch nicht gefunden, bleibt das Fenster offen und weist auf den vorherigen
   Abrechnungszeitraum hin. Beim Schließen fragt „Vorgemerkte Umsätze nicht gefunden“, ob sie
-  verworfen werden („Weiter suchen“ / „Verwerfen und schließen“).
+  verworfen werden („Weiter suchen“ / „Verwerfen und schließen“). *(Mac-App: erst nach 0.7.5)*
 - **„Ältere Abrechnungen laden“** hält das Fenster offen, damit im Portal frühere
   Abrechnungszeiträume geöffnet werden können; „Umsätze übernehmen“ übernimmt dann alles
   Erkannte und schließt. Beim ersten Abruf eines Zugangs ist das schon eingeschaltet.
+  *(Mac-App: erst nach 0.7.5)*
+
+### Mitteilungen
+
+- **Mitteilungen des GiroCrab-Projekts:** Neuigkeiten erscheinen als ruhiges Banner über der
+  Buchungsliste, höchstens eines zugleich, nie während einer Sicherheitssperre. Das Banner lässt
+  sich ausblenden (es kommt nicht wieder); „Mehr erfahren“ zeigt den ganzen Text. Alles, was gilt,
+  bleibt unter Hilfe › Mitteilungen … lesbar. GiroCrab lädt dazu höchstens alle sechs Stunden eine
+  signierte Textdatei von GitHub, ohne Kennung und ohne Tracking; Einstellungen › Allgemein ›
+  Mitteilungen schaltet das samt Netzabruf ab.
 
 ### Einstellungen
 
@@ -153,91 +241,17 @@ Funktionsumfang der Oberfläche.
   Wie „Kern-Version“ in Sicherheit ist es die Nummer des Kerns, auf dem die Linux-Oberfläche
   gebaut ist.
 
-### Überweisungen, Sammelüberweisung und Daueraufträge
+### Noch nicht in der Linux-Oberfläche
 
-- **Überweisungsformular neu geordnet** wie in der Mac-App: „Von Konto“ steht oben, darunter
-  Empfänger, Zahlung und „Ausführung“. Normale Überweisung, Terminüberweisung und
-  Echtzeitüberweisung sind eine Auswahl statt zweier Häkchen; die Prüfansicht zeigt Betrag,
-  Empfänger und Zahlung im selben Stil.
-- **Umbuchung zwischen eigenen Konten:** „Überweisung | Umbuchung“ im Formular; das eigene
-  Zielkonto füllt Name und IBAN aus (#547).
-- **Sammelüberweisung** (#240): „Einzeln | Sammelüberweisung“ unter dem Titel. Viele Zahlungen
-  von einem Konto mit einer TAN, als Tabelle zum Bearbeiten, mit CSV-Import (Knopf oder Datei ins
-  Fenster ziehen; UTF-8 oder Windows-1252, höchstens 2 MB), Hinweis auf mögliche Doppelte, Zeilen
-  entfernen mit Entf und Strg+Z, eine Sammelbuchung oder Einzelbuchungen, Terminüberweisung.
-- **Daueraufträge anlegen, ändern und löschen** per FinTS (#496), mit den Grenzen der Bank
-  (Rhythmus, Ausführungstag, frühester Termin). Kontextmenü einer Buchung › „Als Dauerauftrag
-  anlegen …“ übernimmt Empfänger, Betrag, Zweck (ohne Datum) und Rhythmus.
-- **TAN abgebrochen:** Eine abgebrochene Sammelüberweisung oder ein abgebrochener Dauerauftrag
-  öffnet wieder das eigene Formular mit Hinweis; die nächste Einzelüberweisung läuft wieder als
-  Einzelüberweisung (#533).
-
-### Geplant
-
-- **„Geplant“** (#240) zeigt alle bei der Bank beauftragten, noch nicht gebuchten Zahlungen
-  (Terminüberweisungen, Daueraufträge, eingereichte Lastschriften) in Monatskarten wie die
-  Buchungsliste, mit Konto- und Zeitraumfilter (30 Tage, 3 Monate, 12 Monate, Alles) und den
-  Summen abgehend und eingehend.
-- Eigene rechte Seitenleiste für die gewählte Zahlung; ↑/↓ wählen, Esc hebt die Auswahl auf.
-  Kontextmenü und Seitenleiste: Dauerauftrag ändern oder löschen, Konto anzeigen, IBAN kopieren.
-  „Dauerauftrag anlegen …“ oben rechts.
-
-### Lastschriften
-
-- **„Lastschriften“** (#143): Mandate je Gläubigerkonto mit Gläubiger-ID (Vorschlag aus
-  vorhandenen Daten), Mandat anlegen, bearbeiten (auch per Doppelklick), aktivieren,
-  deaktivieren und löschen; ↑/↓ und Esc in der Liste.
-- **Import und Export:** CSV-Mitgliederliste (UTF-8 oder Windows-1252) oder SEPA-Lastschriftdatei
-  (pain.008) per Dateidialog oder Datei ins Fenster ziehen; Export der Mandate als CSV.
-- **Einzug vorbereiten:** Betrag und Zweck je Mandat, „Letzter Einzug“ (FNAL), Fälligkeit; die
-  pain.008-Dateien (je Art und Folgetyp eine) lassen sich sichern, als eingezogen markieren oder
-  per FinTS bei der Bank einreichen – eine TAN je Datei, danach stehen die Einzüge unter „Geplant“.
-- Rücklastschriften erscheinen in der Liste und in der rechten Seitenleiste („Als geprüft
-  markieren“), dazu die Buchungen zum Mandat.
-
-### Buchungsliste und rechte Seitenleiste
-
-- **Tags vergeben (#228):** Die rechte Seitenleiste hat eine Karte „Tags“ unter der Notiz: Chips
-  mit ✕, ein Eingabefeld mit Vorschlägen (die ersten 8, „+n weitere“ klappt alle auf, beim Tippen
-  alle passenden und ähnlichen) und einem Hinweis, was ↩ tut (neu anlegen, hinzufügen, schon
-  gesetzt, ähnlicher Tag vorhanden, zu lang). Bei der Mehrfachauswahl sind Tags, die nur einige
-  Buchungen tragen, gestrichelt; ein Klick gibt sie allen. Dazu das Untermenü „Tags“ im
-  Kontextmenü und Buchung › „Tags bearbeiten“. In der Liste stehen bis zu zwei Tags an der
-  Buchung, „+n“ zeigt beim Darüberfahren alle. Bearbeiten › Rückgängig (Strg+Z) nimmt eine
-  Änderung genau für die geänderten Buchungen zurück.
-- **Buchungsdichte (#542):** Einstellungen › Allgemein › „Buchungsdichte“: Kompakt (eine Zeile
-  je Buchung mit Datum, ohne Tageskarten; die aktive Buchung klappt mit allen Details auf, ein
-  zweiter Klick klappt sie zu), Standard (mit kurzem Verwendungszweck unter dem Namen) oder
-  Großzügig (alle Buchungen mit allen Details).
-- **Verwendungszweck in der Zeile (#497):** Der bereinigte Zweck steht einzeilig in der Zeile
-  (Standard: unter dem Namen, Kompakt: hinter dem Namen); wiederholt er nur Händler, Gegenpartei
-  oder Zahlungsart, entfällt er.
-- **Rechte Seitenleiste anpassbar (#448):** „Anpassen“ über den Karten schaltet in einen
-  Bearbeiten-Modus: Karten per Ziehen umsortieren (blaue Einfügelinie) oder mit ↑ / ↓, mit ⊖
-  ausblenden, unter „Ausgeblendet“ mit ⊕ wieder einblenden, „Zurücksetzen“ stellt die
-  Standard-Reihenfolge wieder her.
-- **Farbe negativer Beträge (#218, #571):** Einstellungen › Allgemein › „Negative Beträge“ wählt
-  Neutral (wie bisher), Rot (wie negative Salden in der Seitenleiste) oder Kontraststark (orange
-  und blau, auch bei Rot-Grün-Schwäche gut unterscheidbar). Das Vorzeichen bleibt immer sichtbar;
-  Bestellkonto-Zeilen zeigen jetzt ebenfalls Minus bzw. Plus.
-- **Händler-Liste (#495):** Die Überschrift „Händler-Historie“ öffnet alle Buchungen des Händlers
-  im gewählten Zeitraum über alle Konten. Eine Leiste „Alle Buchungen von …“ führt mit „Zurück“
-  zur vorherigen Ansicht samt Filtern zurück.
-- **Kategorisieren per Kontextmenü und Drag & Drop (#366):** Das Kontextmenü einer Buchung hat
-  das Untermenü „Kategorie“ mit dem Kategorienbaum, „Kategorisieren …“ und „Kategorie entfernen“
-  (bei Mehrfachauswahl für alle markierten Buchungen). Buchungen lassen sich auf eine Kategorie
-  ohne Unterkategorien in der Seitenleiste ziehen.
-- **Wiederkehrende Buchungen:** Das Kontextmenü einer Serie in der Übersicht hat das Untermenü
-  „Wiederkehrend“ mit dem Intervall der ganzen Serie (#581).
-- **Kategorie je Konto ausblenden und Gegenkonto (#336, #523):** Im Kontomenü schaltet
-  „Kategorie in der Buchungszeile anzeigen“ den Kategorie-Chip für dieses Konto ab. Überweisungen
-  auf ein eigenes Konto oder einen Unterkonto-„Pocket“ nennen es in der Zeile („⇄ Name“) und in
-  der Seitenleiste mit IBAN.
+- Tags verwalten (umbenennen, Farbe, zusammenführen)
+- QR-Codes in Bildern und PDFs beim Überweisen erkennen
+- „Widerrufen“ nach Änderungen an Darlehen und Startsaldo
+- RAH-10-Texte in „Bankzugang bearbeiten“
 
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus
-0.7.1 bis 0.7.5 noch fehlt, steht am Ende.
+0.7.1 bis 0.7.5 damals noch fehlte, kam mit dem Funktionsstand 0.7.5.
 
 ### Seitenleiste: alle Konten im Blick
 
@@ -351,13 +365,3 @@ Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann.
 - Namen in der Buchungsliste werden nicht mehr zu früh gekürzt („Tim Hoffma…“).
 - Neue Regeln lassen sich wieder speichern (das Feld heißt im Kern jetzt `account_ids`); Regeln,
   die in der Mac-App auf mehrere Konten eingeschränkt wurden, zeigt Linux als solche an.
-
-### Noch nicht in der Linux-Oberfläche (Mac 0.7.1 – 0.7.5)
-
-Diese Funktionen der Mac-App folgen in den nächsten Schritten, unter anderem:
-- Seiten **„Geplant“** (Termin- und Daueraufträge) und **„Lastschriften“** (Mandate, pain.008)
-- **Sammelüberweisung** und **Umbuchung** zwischen eigenen Konten
-- **Tags** für Buchungen, **Buchungsdichte** mit drei Ansichten, vorgemerkte Umsätze schraffiert
-- anpassbare rechte Seitenleiste, Seitenleiste mit Abschnitten
-- **Regeln für mehrere Konten** (Linux wählt vorerst ein Konto), Kategorie-Ansichten je Konto,
-  Kategorien duplizieren, Anlageklassen in der Vermögensübersicht
