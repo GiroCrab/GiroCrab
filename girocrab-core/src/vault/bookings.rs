@@ -9,19 +9,27 @@ use crate::merchants::{classify, clean_purpose, payment_method, FlowKind, Mercha
 use crate::models::*;
 use crate::money::parse_cents;
 
-/// Booking between two own accounts. A category segment that marks a transfer
-/// (MoneyMoney "Umbuchung", "Geldtransit" …) always wins. The counterparty-IBAN
-/// heuristic only applies to bookings the user has not categorised and that
-/// `classify()` did not already see as investment / perk: an explicit category
-/// ("Sonstige Einnahmen" on a child's account) or an ETF savings plan on a depot
-/// settlement account must keep its flow (Issue #94).
-fn is_own_transfer(t: &Booking, own_ibans: &std::collections::HashSet<String>) -> bool {
-    if t.category_path.split(" › ").any(|s| {
+/// A category segment that marks a transfer (MoneyMoney "Umbuchung",
+/// "Geldtransit" …).
+fn transfer_named(category_path: &str) -> bool {
+    category_path.split(" › ").any(|s| {
         matches!(
             s.trim().to_lowercase().as_str(),
             "umbuchung" | "umbuchungen" | "geldtransit" | "transfer" | "transfers"
         )
-    }) {
+    })
+}
+
+/// Booking between two own accounts. A transfer-named category always wins.
+/// Both transfer heuristics — the counterparty-IBAN check and `classify()`'s
+/// transfer wording in the booking text (MoneyMoney types internal transfers
+/// "Umbuchung", comdirect "Übertrag / Überweisung") — only apply to bookings
+/// the user has not categorised and that `classify()` did not already see as
+/// investment / perk: an explicit category ("Sonstige Einnahmen" on a child's
+/// account) or an ETF savings plan on a depot settlement account must keep its
+/// flow (Issue #94).
+fn is_own_transfer(t: &Booking, own_ibans: &std::collections::HashSet<String>) -> bool {
+    if transfer_named(&t.category_path) {
         return true;
     }
     if t.category_id.is_some() || matches!(t.flow, FlowKind::Investment | FlowKind::Perk) {
@@ -155,8 +163,25 @@ fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Booking)> {
             mandate_id: r.get(25)?,
             creditor_id: r.get(26)?,
             external_id: r.get(27)?,
+            tags: Vec::new(),
         },
     ))
+}
+
+/// Fills the tags of `bookings` with one query per 500 rows (never per row).
+pub(crate) fn attach_tags(
+    db: &rusqlite::Connection,
+    bookings: &mut [Booking],
+) -> Result<(), CoreError> {
+    if bookings.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<i64> = bookings.iter().map(|b| b.id).collect();
+    let mut tags = crate::tags::tags_for_bookings(db, &ids)?;
+    for b in bookings {
+        b.tags = tags.remove(&b.id).unwrap_or_default();
+    }
+    Ok(())
 }
 
 /// Everything a raw booking row needs to read like the booking list: category
@@ -215,6 +240,21 @@ impl BookingFinisher {
         // (comdirect: "Übertrag / Überweisung"); a transfer category still wins.
         if t.is_salary && t.flow == FlowKind::Transfer {
             t.flow = FlowKind::Income;
+        }
+        // An explicit category also beats the transfer wording of the booking
+        // text: MoneyMoney types internal transfers "Umbuchung" (Issue #94), so
+        // a categorised credit ("Sonstige Einnahmen") on the child's account
+        // must stay income instead of silently dropping out of the Einnahmen
+        // KPI. Uncategorised bookings keep the wording heuristic.
+        if t.flow == FlowKind::Transfer
+            && t.category_id.is_some()
+            && !transfer_named(&t.category_path)
+        {
+            t.flow = if t.amount_cents > 0 {
+                FlowKind::Income
+            } else {
+                FlowKind::Consumption
+            };
         }
         if is_own_transfer(t, &self.own_ibans) {
             t.flow = FlowKind::Transfer;
@@ -336,6 +376,25 @@ impl Vault {
         if let Some(to) = filter.date_to.as_ref().filter(|s| !s.is_empty()) {
             args.push(Box::new(to.clone()));
             wh.push(format!("t.booking_date <= ?{}", args.len()));
+        }
+        // tags (#228): every listed tag must be on the booking (AND)
+        if filter.untagged_only {
+            wh.push(
+                "NOT EXISTS (SELECT 1 FROM transaction_tags x JOIN tags g ON g.id = x.tag_id \
+                 WHERE x.transaction_id = t.id AND g.deleted_ms IS NULL)"
+                    .into(),
+            );
+        } else {
+            let mut tag_ids = filter.tag_ids.clone();
+            tag_ids.sort_unstable();
+            tag_ids.dedup();
+            for tag in tag_ids {
+                args.push(Box::new(tag));
+                wh.push(format!(
+                    "EXISTS (SELECT 1 FROM transaction_tags x WHERE x.transaction_id = t.id AND x.tag_id = ?{})",
+                    args.len()
+                ));
+            }
         }
         match filter.checked {
             None => {}
@@ -507,6 +566,7 @@ impl Vault {
             finisher.finish(&mut t);
             out.push(t);
         }
+        attach_tags(db, &mut out)?;
         Ok(out)
     }
 }
@@ -574,9 +634,13 @@ impl Vault {
 
     /// Number of bookings matching `filter` (`limit`/`offset` ignored) as one SQL
     /// count, without enriching every row like `list_transactions` (#266). Scope
-    /// and merchant depend on the enriched booking: those filters take the list.
+    /// and merchant depend on the enriched booking: those filters take the list;
+    /// so does "Ohne Kategorie", which leaves out detected own transfers (#302).
     pub fn count_transactions(&self, filter: BookingFilter) -> Result<u32, CoreError> {
-        if !matches!(filter.scope, BookingScope::All) || filter.merchant_key.is_some() {
+        if !matches!(filter.scope, BookingScope::All)
+            || filter.merchant_key.is_some()
+            || filter.uncategorized_only
+        {
             return Ok(self
                 .list_transactions(BookingFilter {
                     limit: 1,
@@ -632,7 +696,8 @@ impl Vault {
                 .as_ref()
                 .map(|k| *k == t.merchant.key)
                 .unwrap_or(true);
-            if !keep {
+            // Detected own transfers are no open work for "Ohne Kategorie" (#302).
+            if !keep || (filter.uncategorized_only && t.flow == FlowKind::Transfer) {
                 continue;
             }
             // One KPI definition (`kpi_side`) for the page sums and `SelectionFlow`;
@@ -667,7 +732,9 @@ impl Vault {
                 end += 1;
             }
         }
-        let txs: Vec<Booking> = txs.drain(start..end).collect();
+        let mut txs: Vec<Booking> = txs.drain(start..end).collect();
+        // only the returned page carries its tags
+        attach_tags(&db, &mut txs)?;
         Ok(BookingPage {
             transactions: txs,
             total_count: total,
@@ -782,7 +849,7 @@ impl Vault {
     /// with BOM, semicolon-separated, for Excel.
     pub fn export_bookings_csv(&self, filter: BookingFilter) -> Result<String, CoreError> {
         let mut out = String::from(
-            "\u{FEFF}Datum;Konto;Name;IBAN;Verwendungszweck;Kategorie;Betrag;Währung\r\n",
+            "\u{FEFF}Datum;Konto;Name;IBAN;Verwendungszweck;Kategorie;Betrag;Währung;Tags\r\n",
         );
         let page_size = 1000u32;
         let mut offset = 0u32;
@@ -802,6 +869,14 @@ impl Vault {
                     csv_field(&b.category_path, true),
                     csv_amount(b.amount_cents),
                     csv_field(&b.currency, false),
+                    csv_field(
+                        &b.tags
+                            .iter()
+                            .map(|t| t.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        true,
+                    ),
                 ];
                 out.push_str(&row.join(";"));
                 out.push_str("\r\n");
@@ -1083,6 +1158,29 @@ mod paging_tests {
     }
 
     #[test]
+    fn uncategorized_leaves_out_detected_own_transfers() {
+        let (v, p) = demo();
+        let all = v.list_transactions(BookingFilter::default()).unwrap();
+        let open: Vec<_> = all
+            .transactions
+            .iter()
+            .filter(|b| b.category_id.is_none() && b.flow != FlowKind::Transfer)
+            .collect();
+        let unc = BookingFilter {
+            uncategorized_only: true,
+            ..Default::default()
+        };
+        let page = v.list_transactions(unc.clone()).unwrap();
+        assert!(page
+            .transactions
+            .iter()
+            .all(|b| b.flow != FlowKind::Transfer));
+        assert_eq!(page.total_count as usize, open.len());
+        assert_eq!(v.count_transactions(unc).unwrap() as usize, open.len());
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
     fn search_finds_spaced_iban_and_own_account_number() {
         let (v, p) = demo();
         let accounts = v.list_accounts().unwrap();
@@ -1260,6 +1358,51 @@ mod own_transfer_tests {
         assert_eq!(f.income_cents, 500_00);
         let page = v.list_transactions(BookingFilter::default()).unwrap();
         assert_eq!(page.income_cents, 500_00);
+    }
+
+    /// Issue #94 follow-up (NiTRoeSE, 2026-11-15): MoneyMoney types internal
+    /// transfers "Umbuchung" (`unformatted_type` → booking text, comdirect
+    /// "Übertrag / Überweisung"). An explicit non-transfer category must keep
+    /// its flow despite that wording — otherwise the categorised credits on a
+    /// child's account silently drop out of the Einnahmen KPI.
+    #[test]
+    fn explicit_category_beats_umbuchung_booking_text() {
+        let (_d, v, ids) = vault_with(&[
+            ("Mama", 500_00, "Taschengeld", Some("Einnahmen/Sonstiges")),
+            ("Papa", -40_00, "Miete", Some("Wohnen")),
+        ]);
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET booking_text = CASE WHEN amount_cents > 0 \
+                 THEN 'Umbuchung' ELSE 'Übertrag / Überweisung' END",
+                [],
+            )
+            .unwrap();
+        assert_eq!(flow_of(&v, ids[0]), FlowKind::Income);
+        assert_eq!(flow_of(&v, ids[1]), FlowKind::Consumption);
+        let page = v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!(page.income_cents, 500_00);
+        assert_eq!(page.expense_cents, -40_00);
+    }
+
+    /// Without an explicit category the transfer wording of the booking text
+    /// still decides (comdirect books incoming transfers "Übertrag /
+    /// Überweisung") — the rescue above must not weaken that heuristic.
+    #[test]
+    fn uncategorised_transfer_wording_stays_a_transfer() {
+        let (_d, v, ids) = vault_with(&[("Mama", 500_00, "Taschengeld", None)]);
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET booking_text = 'Übertrag / Überweisung', \
+                 counterparty_iban = 'DE75512108001245126199'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(flow_of(&v, ids[0]), FlowKind::Transfer);
+        let page = v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!(page.income_cents, 0);
     }
 
     #[test]

@@ -34,6 +34,7 @@ struct BookingStreamView: View {
         let isOverview: Bool = { if case .allAccounts? = model.sidebarSelection { return true }; return false }()
         // „Neue Umsätze“: account cards instead of day cards, no charts
         let isNewBookings = model.sidebarSelection == .newBookings
+        let cards = ViewLayout.cards(statistics: showStatistics, budgets: showBudgets)
         let emptyVault = !model.demoActive && model.allAccounts.isEmpty
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
@@ -73,23 +74,29 @@ struct BookingStreamView: View {
                         }
                         if model.scope == .investments {
                             InvestmentDashboardView()
-                        } else if showStatistics, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
+                        } else if cards.any, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
                             // Overview: always; single account: only when toggled on.
                             #if os(iOS)
-                            DisclosureGroup("Cashflow-Analyse", isExpanded: $showCashflowIOS) {
-                                VStack(spacing: 14) {
-                                    CashflowCard()
-                                    if showBudgets { BudgetProgressCard() }
+                            if cards.cashflow {
+                                DisclosureGroup("Cashflow-Analyse", isExpanded: $showCashflowIOS) {
+                                    VStack(spacing: 14) {
+                                        CashflowCard()
+                                        if cards.budgets { BudgetProgressCard() }
+                                    }
+                                    .padding(.top, 8)
                                 }
-                                .padding(.top, 8)
+                                .appFont(.subheadline, weight: .medium)
+                                .padding(.horizontal, 14).padding(.vertical, 10)
+                                .frame(maxWidth: .infinity)
+                                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
+                            } else {
+                                BudgetProgressCard()
                             }
-                            .appFont(.subheadline, weight: .medium)
-                            .padding(.horizontal, 14).padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
                             #else
-                            CashflowCard().transition(Motion.slide(.top))
-                            if showBudgets {
+                            if cards.cashflow {
+                                CashflowCard().transition(Motion.slide(.top))
+                            }
+                            if cards.budgets {
                                 BudgetProgressCard().transition(Motion.slide(.top))
                             }
                             #endif
@@ -157,6 +164,7 @@ struct BookingStreamView: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
                 }
                 .frame(minHeight: 0, maxHeight: .infinity)
+                .scrollBounceBehavior(.basedOnSize)
                 #if os(iOS)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     // keeps the last booking clear of the floating search bar
@@ -523,6 +531,8 @@ struct DayCardRow: View {
         .disabled(b.counterparty.isEmpty && b.merchantName.isEmpty)
         Button("Neue Überweisung aus Buchung …", systemImage: "paperplane") { model.openTransfer(from: b) }
             .disabled(!model.canTransfer)
+        Button("Als Dauerauftrag anlegen …", systemImage: "repeat") { model.newStandingOrder(from: b) }
+            .disabled(!model.canMakeStandingOrder(from: b))
         Button("Umsatz kopieren", systemImage: "doc.on.doc") { copyToPasteboard(b.clipboardLine) }
         exportMenuButton(for: b)
         Divider()
@@ -583,6 +593,11 @@ struct BookingRow: View {
     /// Amazon orders: drill-down of all items (and the refunded order's items)
     /// below the row; collapsed rows keep the uniform list height.
     @State private var amazonExpanded = false
+    @AppStorage(ViewLayout.hiddenCategoryChipAccountsKey) private var hiddenCategoryChipAccountsRaw = ""
+
+    private var showsCategoryChip: Bool {
+        !hiddenCategoryChipAccountsRaw.split(separator: ",").compactMap { Int64($0) }.contains(booking.accountId)
+    }
 
     private var showsDetails: Bool {
         density.showsDetails(isActive: density == .compact && model.selectedBookingID == booking.id && !compactDetailsCollapsed)
@@ -650,7 +665,7 @@ struct BookingRow: View {
                             .help("Wiederkehrende Buchung")
                             .accessibilityLabel("Wiederkehrend")
                     }
-                    if isSingleLine {
+                    if isSingleLine && showsCategoryChip {
                         // Keep the name and amount first. Show the category only
                         // when its complete label fits; the purpose yields first.
                         ViewThatFits(in: .horizontal) {
@@ -681,8 +696,10 @@ struct BookingRow: View {
                         }
                         #endif
                         // category with the sidebar's icon and colour, then the payment method
-                        BookingCategoryLabel(booking: booking)
-                            .layoutPriority(1)
+                        if showsCategoryChip {
+                            BookingCategoryLabel(booking: booking)
+                                .layoutPriority(1)
+                        }
                         if let ref = amazonRef {
                             // Amazon order: what was ordered beats the "Bestellung" kind label.
                             // Refunds show the refunded order's items (joined via the order code).
@@ -737,6 +754,13 @@ struct BookingRow: View {
                             }
                         } else if density == .compact, !density.purpose(for: booking).isEmpty {
                             Text(density.purpose(for: booking))
+                                .sensitive()
+                                .appFont(.callout)
+                                .foregroundStyle(Theme.secondary)
+                                .lineLimit(1)
+                                .layoutPriority(-1)
+                        } else if let counter = model.counterAccount(for: booking) {
+                            Text("· ⇄ \(counter.name)")
                                 .sensitive()
                                 .appFont(.callout)
                                 .foregroundStyle(Theme.secondary)

@@ -11,12 +11,12 @@
 <p align="center">FinTS 3.0 · PSD2 · SEPA · Datenimport — 100&nbsp;% lokal verschlüsselt, kostenlos, Daten bleiben auf deinem Gerät.</p>
 
 <p align="center">
-  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.7.0 · Apple Silicon (.dmg)" width="260" height="56"></a>
+  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.7.5 · Apple Silicon (.dmg)" width="260" height="56"></a>
   &nbsp;
   <a href="https://testflight.apple.com/join/KBmvKVpT"><img src="docs/assets/download-ios.svg" alt="iOS &amp; iPadOS App – kostenlos via Apple TestFlight" width="260" height="56"></a>
 </p>
 
-<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.7.0</sub></p>
+<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.7.5</sub></p>
 
 <p align="center">
   <a href="https://github.com/GiroCrab/GiroCrab/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/GiroCrab/GiroCrab?label=release&color=2ea44f"></a>
@@ -33,6 +33,13 @@
 
 <p align="center"><sub>⭐ Gefällt dir GiroCrab? Ein <a href="https://github.com/GiroCrab/GiroCrab/stargazers">Stern auf GitHub</a> hilft anderen, das Projekt zu finden. · <i>A star helps others find the project.</i></sub></p>
 
+> ### 🛠️ Mitbauen in 4 Schritten · Contribute in 4 steps
+> In den ersten 7 Tagen: **265+ GitHub-Sterne**, **280+ gemergte Pull Requests**, **15 Mitwirkende** mit eigenen Commits – Stand 16.11.2026, direkt von GitHub.
+> Du brauchst **keine Swift- oder Rust-Erfahrung**: Mach aus deinem Funktionswunsch mit **Claude Code, Codex oder Cursor** und der [`CLAUDE.md`](CLAUDE.md) einen eigenen Pull Request.
+> 👉 [**Schritt-für-Schritt-Anleitung**](https://girocrab.de/girocrab_mitbau_anleitung.html) · [CONTRIBUTING.md](CONTRIBUTING.md)
+>
+> *In our first 7 days: 265+ stars, 280+ merged pull requests, 15 contributors with commits (as of 2026-11-16, from GitHub). No Swift or Rust experience needed – turn your own feature wish into a pull request with Claude Code, Codex or Cursor and [`CLAUDE.md`](CLAUDE.md). See the [step-by-step guide](https://girocrab.de/girocrab_mitbau_anleitung.html) and [CONTRIBUTING.md](CONTRIBUTING.md).*
+
 ---
 
 ## 🇩🇪 Deutsch
@@ -45,6 +52,12 @@ zu Ihren Banken per **FinTS 3.0 / HBCI** und **PSD2 (Enable Banking)** – ohne 
 ### Für wen ist GiroCrab?
 
 GiroCrab ist eine freie, quelloffene Banking-App (GPLv3) für macOS, Linux (Qt 6 / QML) und – derzeit als Beta über TestFlight – für iPhone und iPad. Alle Daten liegen verschlüsselt auf deinem Gerät. GiroCrab ist ein junges Community-Projekt: Die Bankenabdeckung wächst noch (siehe Bank-Tabelle), und PSD2-Zugänge laufen über einen eigenen, kostenlosen Enable-Banking-Zugang.
+
+### ✨ Neu in v0.7.5
+- **FinTS-Daueraufträge (#496):** Daueraufträge direkt per FinTS mit TAN-Freigabe anlegen, ändern und löschen (macOS & iOS, inkl. Anlage aus bestehenden Buchungen).
+- **C24-Pockets & Gegenkonten (#523):** Eigene Unterkonten/Pockets werden bei Umbuchungen direkt in der Buchungszeile und Detailkarte angezeigt.
+- **Kontoansicht & Listen-Komfort (#336, #512, #538):** Konto-Notizen erscheinen direkt im Kopfbereich, der Kategorie-Chip lässt sich pro Konto ausblenden und leere Scrollleisten entfallen.
+- **Budgets & Zuordnung (#544, #541, #540):** Monatsbudgets lassen sich unabhängig von Auswertungen einblenden, kategorisierte Einnahmen zählen trotz Umbuchungstext und der Abrufweg-Wechsel erzeugt keine doppelten Konten mehr.
 
 ### ✨ Neu in v0.7.0
 
@@ -220,7 +233,7 @@ Die Demo enthält fiktive Konten und erfundene Buchungen – keine echten Daten.
 ### 📦 Download (macOS)
 
 Das fertige Disk-Image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) gibt es unter [GitHub Releases](../../releases) – ohne Rust oder Xcode.
-Aktuelle Version: **v0.7.0**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
+Aktuelle Version: **v0.7.5**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
 **iPhone / iPad:** [TestFlight-Beta beitreten](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel-Macs:** Die offiziellen Binaries sind nur für Apple Silicon (`arm64`). Auf Intel-Macs lässt sich GiroCrab mit Swift/Xcode selbst aus dem Quellcode bauen (siehe [Schnellstart](#schnellstart)).
@@ -255,6 +268,12 @@ recognition, savings-plan view, loan repayment progress and direct connections t
 ### Who is GiroCrab for?
 
 GiroCrab is a free, open-source banking app (GPLv3) for macOS, Linux (Qt 6 / QML) and – currently in beta via TestFlight – for iPhone and iPad. All data stays encrypted on your device. GiroCrab is a young community project: bank coverage is still growing (see the bank table), and PSD2 access works through your own free Enable Banking account.
+
+### ✨ What's new in v0.7.5
+- **FinTS Standing Orders (#496):** Create, edit, and delete standing orders via FinTS with TAN approval on macOS and iOS (including creating from existing bookings).
+- **C24 Pockets & Counter-Accounts (#523):** Own sub-accounts/pockets are shown directly in the booking row and detail card for internal transfers.
+- **Account Header & List Polish (#336, #512, #538):** Account notes appear directly in the header, the category chip can be toggled per account, and unnecessary scrollbars are hidden.
+- **Budgets & Classification (#544, #541, #540):** Monthly budgets work independently of analytics, categorized income counts even with transfer wording, and switching fetch methods no longer duplicates accounts.
 
 ### ✨ What's new in v0.7.0
 
@@ -396,7 +415,7 @@ Adding a bank usually takes under 100 lines – start from
 ### Download (macOS)
 
 The pre-built disk image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) is available under
-[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.7.0**. Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
+[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.7.5**. Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
 **iPhone / iPad:** [join the TestFlight beta](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel Macs:** the official binaries are Apple Silicon (`arm64`) only. On Intel Macs you can build GiroCrab yourself from source with Swift/Xcode (see [Quickstart](#quickstart)).

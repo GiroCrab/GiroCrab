@@ -75,6 +75,15 @@ struct StreamHeaderCard: View {
                         if let a = account {
                             Text([a.bankName, a.iban.isEmpty ? "" : formatIBAN(a.iban)].filter { !$0.isEmpty }.joined(separator: " · "))
                                 .sensitive()
+                            let note = model.accountNote(for: a.id)
+                            if !note.isEmpty {
+                                Text(note)
+                                    .sensitive()
+                                    .appFont(.caption)
+                                    .foregroundStyle(Theme.secondary)
+                                    .lineLimit(2)
+                                    .help(note)
+                            }
                         } else {
                             Text(model.lastSyncText)
                         }
@@ -119,6 +128,14 @@ struct StreamHeaderCard: View {
                             .minimumScaleFactor(0.6)
                         if !compactHeader {
                             Text(hb.label).appFont(.caption).foregroundStyle(Theme.secondary)
+                        }
+                        if account == nil, let split = model.headerTotalSplit {
+                            Text("Zusätzlich: \(split.others.map { Money.format($0.cents, currency: $0.currency) }.joined(separator: " · "))")
+                                .sensitive()
+                                .appFont(.caption, monospacedDigit: true)
+                                .foregroundStyle(Theme.secondary)
+                                .lineLimit(1)
+                                .help("Weitere Währungen werden nicht umgerechnet und nicht in die Summe einbezogen.")
                         }
                     }
                     .contextMenu {

@@ -398,6 +398,15 @@ public final class AppModel {
     var showBatchSheet = false
     var batchDraft = BatchDraft()
     var activeTransferIsBatch = false
+    /// Standing orders (#496): sheet, the order being edited, the bank's orders, and whether the running session is one.
+    var showStandingSheet = false
+    var standingDraft = StandingDraft()
+    var standingOrders: [StandingOrderInfo] = []
+    /// What the bank of the order being edited allows (nil = unknown, the form offers everything).
+    var standingLimits: StandingOrderLimits?
+    var activeTransferIsStanding = false
+    /// Set when the bank's answer to a standing-order request was unclear (alert text).
+    var standingUnknown: String?
     /// Bumped whenever a sync wrote a row to the Abrufprotokoll (#238); the log window reloads on it.
     var syncLogVersion = 0
     var csvExport = CSVFileDocument(data: Data())
@@ -438,6 +447,8 @@ public final class AppModel {
     @ObservationIgnored var autoSyncTask: Task<Void, Never>?
     /// The running sync was started by the schedule: no login prompts, no error dialogs.
     var quietSyncConnectionID: Int64?
+    /// What the last scheduled fetch did, for the menu bar popover (GitHub #546).
+    var autoSyncStatus = AutoSyncStatus()
     var pollTask: Task<Void, Never>?
     var searchTask: Task<Void, Never>?
     var scopeLoadTask: Task<Void, Never>?
@@ -646,6 +657,17 @@ public final class AppModel {
             batchDraft.rows = BatchRow.samples(50)
             openBatchTransfer()
             if name == "batch-transfer-scheduled" { batchDraft.scheduled = true }
+        case "standing-order-delete":
+            // the demo orders cannot be changed at the bank; the draft only shows what would be deleted
+            if let o = try? vault?.listStandingOrders(accountIds: []).first { openStandingDemo(StandingDraft(order: o, action: .delete)) }
+        case "standing-order", "standing-order-confirm":
+            newStandingOrder()
+            standingDraft.name = "Stadtwerke München"
+            standingDraft.iban = BatchRow.grouped("DE89370400440532013000")
+            standingDraft.amountText = Money.plain(8500)
+            standingDraft.purpose = "Abschlag Strom Kd-Nr 482910"
+            standingDraft.execDay = 3
+            standingDraft.syncDate(to: nil)
         case "transfer", "transfer-confirm":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
             openTransfer()
@@ -1167,17 +1189,23 @@ public final class AppModel {
         webLoginConnection = nil
         syncingConnectionID = nil
         quietSyncConnectionID = nil
+        // the failure text may name a bank: gone with the vault
+        autoSyncStatus = AutoSyncStatus()
         statementsAccountID = nil
         syncGeneration &+= 1
         resetSyncBatch()
         transferBusy = false
         showTransferSheet = false
         showBatchSheet = false
+        showStandingSheet = false
         activeTransferIsBatch = false
         activeTransferIsDebit = false
+        activeTransferIsStanding = false
         debitRun = nil
         transferDraft.pin = ""
         batchDraft.pin = ""
+        standingDraft = StandingDraft()
+        standingOrders = []
         Task {
             await session?.cancel()
             _ = await transfer?.cancel()  // result cannot be shown once locked
@@ -1260,5 +1288,28 @@ struct VaultPin: Sendable {
     func checkpoint() async {
         let vault = vault
         await Task.detached(priority: .userInitiated) { try? vault.checkpoint() }.value
+    }
+}
+
+
+@MainActor
+extension AppModel {
+    /// Own account/pocket matching `booking.counterpartyIban`, if any (GitHub #523).
+    func counterAccount(for booking: Booking) -> Account? {
+        let raw = booking.counterpartyIban.filter { !$0.isWhitespace }.uppercased()
+        guard !raw.isEmpty else { return nil }
+        return allAccounts.first {
+            $0.id != booking.accountId &&
+            $0.iban.filter({ !$0.isWhitespace }).uppercased() == raw
+        }
+    }
+
+    /// Free-text note for an account stored in vault settings (GitHub #512).
+    func accountNote(for accountID: Int64) -> String {
+        settingEntry("account.note.\(accountID)")?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    func setAccountNote(_ note: String, for accountID: Int64) {
+        saveSetting("account.note.\(accountID)", note.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

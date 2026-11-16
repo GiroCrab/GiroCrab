@@ -133,6 +133,12 @@ pub(crate) fn category_uuid_for_path(path: &[&str]) -> String {
     Uuid::new_v5(&NAMESPACE, format!("category{SEP}{joined}").as_bytes()).to_string()
 }
 
+/// Same tag name (case-folded, whitespace collapsed) -> same uuid (#228).
+pub(crate) fn tag_uuid_for_name(name: &str) -> String {
+    let key = crate::tags::fold(name);
+    Uuid::new_v5(&NAMESPACE, format!("tag{SEP}{key}").as_bytes()).to_string()
+}
+
 /// Same content -> same uuid. `account_key` is the sync key of the account a
 /// rule is restricted to.
 #[allow(clippy::too_many_arguments)]
@@ -479,11 +485,30 @@ pub(crate) fn connection_key(conn: &Connection, id: i64) -> CoreResult<String> {
 }
 
 fn key_of_connection(connector: &str, login: &str, bank: &str) -> String {
+    // comdirect via its own API or via FinTS: „Abrufweg umstellen“ (#486)
+    // moves a login between the two, so every device must see one login (#537)
+    if is_comdirect_route(connector) {
+        let login = crate::connections::normalize_login(ConnectorKind::Comdirect, login);
+        return format!("{}|{login}|", ConnectorKind::Comdirect.as_str());
+    }
     let login = match ConnectorKind::from_str(connector) {
         Some(kind) => crate::connections::normalize_login(kind, login),
         None => login.trim().to_string(),
     };
     format!("{connector}|{login}|{bank}")
+}
+
+fn is_comdirect_route(connector: &str) -> bool {
+    connector == ConnectorKind::Comdirect.as_str()
+        || ConnectorKind::fints_blz(connector)
+            .is_some_and(|b| crate::connectors::fints_directory::COMDIRECT_BLZ.contains(&b))
+}
+
+/// An account reference without the mark „Abrufweg umstellen“ sets (#537).
+fn unmarked(external_ref: &str) -> &str {
+    external_ref
+        .strip_prefix(crate::connections::SWITCH_MARK)
+        .unwrap_or(external_ref)
 }
 
 /// `<connection key>|external_ref`, or `|external_ref` without a connection.
@@ -501,7 +526,7 @@ pub(crate) fn account_key(conn: &Connection, id: i64) -> CoreResult<String> {
         Some(c) => connection_key(conn, c)?,
         None => String::new(),
     };
-    Ok(format!("{prefix}|{external_ref}"))
+    Ok(format!("{prefix}|{}", unmarked(&external_ref)))
 }
 
 /// `<account key>|external_id`
@@ -1493,6 +1518,63 @@ pub(crate) fn merge_connections(conn: &Connection) -> CoreResult<HashMap<i64, i6
 /// to the account's bookings here (`recascade_account`). Returns other id ->
 /// local id and the ids of the accounts inserted (`accounts_added` counts the
 /// live ones).
+/// The other device's account `other_id` under another reference on the
+/// same login: that device fetches it another way (comdirect via FinTS
+/// there, via its API here, #537). Same IBAN and currency – else same
+/// account number – and kind. Each side keeps its own reference, which
+/// its next fetch looks for.
+fn same_account_on_login(
+    conn: &Connection,
+    connection_id: i64,
+    other_id: i64,
+) -> CoreResult<Option<i64>> {
+    #[allow(clippy::type_complexity)]
+    let (iban, number, currency, kind, ext, deleted): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT upper(replace(IFNULL(iban, ''), ' ', '')), IFNULL(account_number, ''),
+                    upper(IFNULL(currency, '')), kind, external_ref, deleted_ms
+               FROM other.accounts WHERE id = ?1",
+        [other_id],
+        |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        },
+    )?;
+    // live bank accounts only: tombstones and imported accounts follow the
+    // twin rules (`twins`), a tombstone must never delete a live account here
+    if deleted.is_some()
+        || ext.starts_with("moneymoney-db:")
+        || (iban.is_empty() && number.trim().is_empty())
+    {
+        return Ok(None);
+    }
+    Ok(conn
+        .query_row(
+            "SELECT id FROM main.accounts
+              WHERE connection_id = ?1 AND deleted_ms IS NULL AND kind = ?4
+                AND external_ref NOT LIKE 'moneymoney-db:%'
+                AND upper(IFNULL(currency, '')) = ?5
+                AND CASE WHEN ?2 <> '' THEN upper(replace(IFNULL(iban, ''), ' ', '')) = ?2
+                         ELSE trim(IFNULL(account_number, '')) = trim(?3) END
+              ORDER BY id LIMIT 1",
+            params![connection_id, iban, number, kind, currency],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 pub(crate) fn merge_accounts(
     conn: &Connection,
     conn_map: &HashMap<i64, i64>,
@@ -1536,14 +1618,20 @@ pub(crate) fn merge_accounts(
             let con = ocon.and_then(|c| conn_map.get(&c).copied());
             let existing: Option<i64> = conn
                 .query_row(
-                    // includes soft-deleted rows
-                    "SELECT id FROM accounts WHERE connection_id IS ?1 AND external_ref = ?2",
-                    params![con, ext],
+                    // includes soft-deleted rows; a reference marked by
+                    // „Abrufweg umstellen“ on one side is the same account (#537)
+                    "SELECT id FROM accounts WHERE connection_id IS ?1
+                       AND (external_ref = ?2 OR external_ref = ?3 || ?2 OR ?3 || external_ref = ?2)
+                     ORDER BY external_ref = ?2 DESC, id LIMIT 1",
+                    params![con, ext, crate::connections::SWITCH_MARK],
                     |r| r.get(0),
                 )
                 .optional()?;
             let existing = match (existing, con) {
-                (None, Some(c)) => twins::adopt_on_merge(conn, c, oid)?,
+                (None, Some(c)) => match twins::adopt_on_merge(conn, c, oid)? {
+                    Some(id) => Some(id),
+                    None => same_account_on_login(conn, c, oid)?,
+                },
                 (found, _) => found,
             };
             let id = match existing {
@@ -1632,6 +1720,9 @@ struct BookingFields {
     text_ms: i64,
     splits: Vec<SplitLine>,
     splits_ms: i64,
+    /// tag uuids, sorted (#228)
+    tags: crate::tags::merge::TagSet,
+    tags_ms: i64,
     deleted_ms: Option<i64>,
 }
 
@@ -1689,6 +1780,14 @@ impl BookingFields {
             o.splits_ms,
             Clone::clone,
         );
+        // the tag set as a whole; equal stamps: the larger set by value
+        take_ranked(
+            &mut self.tags,
+            &mut self.tags_ms,
+            &o.tags,
+            o.tags_ms,
+            Clone::clone,
+        );
         self.deleted_ms = self.deleted_ms.max(o.deleted_ms);
     }
 }
@@ -1721,6 +1820,8 @@ struct OtherBooking {
     account_id: i64,
     external_id: String,
     import_fp: String,
+    /// `import_fp`, or one computed from the booking (see `match_fingerprint`)
+    match_fp: String,
     /// booking_date .. salary_flag, copied as they are into a new row
     rest: Vec<rusqlite::types::Value>,
     /// end_to_end_id, mandate_id, creditor_id, item_refs
@@ -1737,7 +1838,7 @@ const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
         imported_unix, purpose_code, gvc, salary_flag,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-        end_to_end_id, mandate_id, creditor_id, item_refs
+        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms
      FROM other.transactions ORDER BY account_id, external_id";
 
 /// The id both sides keep for one booking known under two ids: the bank's
@@ -1756,6 +1857,25 @@ fn canonical_external_id<'a>(a: &'a str, b: &'a str) -> &'a str {
 /// field. A won manual clear makes the booking uncategorised and lets the
 /// rules refill it. Afterwards nothing points at a deleted category. Never
 /// stamps anything itself.
+/// The fingerprint a booking is paired by when the two sides know it under
+/// different ids: the stored one (MoneyMoney import, „Abrufweg umstellen“),
+/// else computed the same way from the booking. So a booking fetched over
+/// the bank's API on one device pairs with the same booking another device
+/// fetched via FinTS after switching (#537).
+fn match_fingerprint(
+    stored: String,
+    date: &str,
+    cents: i64,
+    iban: &str,
+    name: &str,
+    purpose: &str,
+) -> String {
+    if !stored.is_empty() {
+        return stored;
+    }
+    crate::importers::moneymoney_import::fingerprint(date, cents, iban, name, purpose)
+}
+
 pub(crate) fn merge_bookings(
     conn: &Connection,
     acc_map: &HashMap<i64, i64>,
@@ -1774,6 +1894,11 @@ pub(crate) fn merge_bookings(
     let other_uuid = |c: Option<i64>| c.and_then(|c| local_uuid(cat_map.get(&c).copied()));
     let cat_id = |u: &Option<String>| u.as_ref().and_then(|u| id_of_uuid.get(u).copied());
 
+    // tags: merged before the bookings, as uuids of live local tags
+    let tag_ids = crate::tags::merge::TagIds::load(conn)?;
+    let mut local_tags = tag_ids.sets(conn, "main")?;
+    let mut other_tags = tag_ids.sets(conn, "other")?;
+
     // local bookings, deleted ones included
     let mut local_splits = load_splits(conn, "main", local_uuid)?;
     let mut by_key: HashMap<(i64, String), i64> = HashMap::new();
@@ -1785,7 +1910,8 @@ pub(crate) fn merge_bookings(
             // includes soft-deleted rows
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
-                    text_ms, splits_ms, deleted_ms
+                    text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
+                    tags_ms
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
@@ -1794,10 +1920,15 @@ pub(crate) fn merge_bookings(
             let acc: i64 = r.get(1)?;
             let ext: String = r.get(2)?;
             by_key.insert((acc, ext.clone()), id);
-            let fp: String = r.get(3)?;
-            if !fp.is_empty() {
-                fp_rows.push(((acc, fp), (ext, id)));
-            }
+            let fp = match_fingerprint(
+                r.get(3)?,
+                &r.get::<_, String>(16)?,
+                r.get(17)?,
+                &r.get::<_, String>(18)?,
+                &r.get::<_, String>(11)?,
+                &r.get::<_, String>(12)?,
+            );
+            fp_rows.push(((acc, fp), (ext, id)));
             let source: String = r.get(5)?;
             let manual = if source == "manual" { r.get(4)? } else { None };
             local.insert(
@@ -1813,6 +1944,8 @@ pub(crate) fn merge_bookings(
                     text_ms: r.get(13)?,
                     splits: local_splits.remove(&id).unwrap_or_default(),
                     splits_ms: r.get(14)?,
+                    tags: local_tags.remove(&id).unwrap_or_default(),
+                    tags_ms: r.get(19)?,
                     deleted_ms: r.get(15)?,
                 },
             );
@@ -1831,6 +1964,14 @@ pub(crate) fn merge_bookings(
                 account_id: r.get(1)?,
                 external_id: r.get(2)?,
                 import_fp: r.get(3)?,
+                match_fp: match_fingerprint(
+                    r.get(3)?,
+                    &r.get::<_, String>(4)?,
+                    r.get(6)?,
+                    &r.get::<_, String>(8)?,
+                    &r.get::<_, String>(22)?,
+                    &r.get::<_, String>(23)?,
+                ),
                 rest: (4..14).map(|i| r.get(i)).collect::<Result<_, _>>()?,
                 sepa_refs: (27..31).map(|i| r.get(i)).collect::<Result<_, _>>()?,
                 category_id: cat,
@@ -1850,6 +1991,8 @@ pub(crate) fn merge_bookings(
                     text_ms: r.get(24)?,
                     splits: Vec::new(),
                     splits_ms: r.get(25)?,
+                    tags: Vec::new(),
+                    tags_ms: r.get(31)?,
                     deleted_ms: r.get(26)?,
                 },
                 category_source: source,
@@ -1910,9 +2053,10 @@ pub(crate) fn merge_bookings(
             other_acc_deleted.get(&o.account_id).copied().flatten(),
         );
         o.fields.splits = other_splits.remove(&o.id).unwrap_or_default();
+        o.fields.tags = other_tags.remove(&o.id).unwrap_or_default();
         let existing = match by_key.get(&(acc, o.external_id.clone())) {
             Some(&id) => Some((id, false)),
-            None => match by_fp.get_mut(&(acc, o.import_fp.clone())) {
+            None => match by_fp.get_mut(&(acc, o.match_fp.clone())) {
                 Some(bucket) if !bucket.is_empty() => {
                     let (ext, id) = bucket.remove(0);
                     let key = canonical_external_id(&ext, &o.external_id).to_string();
@@ -1943,7 +2087,7 @@ pub(crate) fn merge_bookings(
                     }
                     continue;
                 }
-                write_booking(conn, id, &old, &m, &cat_id, &mut cleared)?;
+                write_booking(conn, id, &old, &m, &cat_id, &tag_ids, &mut cleared)?;
                 local.insert(id, m);
                 stats.bookings_updated += 1;
             }
@@ -1983,18 +2127,22 @@ pub(crate) fn merge_bookings(
                     f.deleted_ms.into(),
                 ]);
                 p.extend(o.sepa_refs.iter().cloned());
+                p.push(f.tags_ms.into());
                 conn.execute(
                     "INSERT INTO transactions(account_id, external_id, import_fp,
                         booking_date, value_date, amount_cents, currency, counterparty_iban, booking_text,
                         imported_unix, purpose_code, gvc, salary_flag,
                         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
                         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-                        end_to_end_id, mandate_id, creditor_id, item_refs)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30)",
+                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31)",
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
                 insert_splits(conn, id, &f.splits, &cat_id)?;
+                if !f.tags.is_empty() {
+                    tag_ids.write(conn, id, &f.tags)?;
+                }
                 by_key.insert((acc, o.external_id), id);
                 local.insert(id, o.fields);
                 if local[&id].deleted_ms.is_none() {
@@ -2045,6 +2193,7 @@ fn write_booking(
     old: &BookingFields,
     m: &BookingFields,
     cat_id: &impl Fn(&Option<String>) -> Option<i64>,
+    tag_ids: &crate::tags::merge::TagIds,
     cleared: &mut HashSet<i64>,
 ) -> CoreResult<()> {
     if m.cat != old.cat {
@@ -2070,6 +2219,9 @@ fn write_booking(
         )?;
         insert_splits(conn, id, &m.splits, cat_id)?;
     }
+    if m.tags != old.tags {
+        tag_ids.write(conn, id, &m.tags)?;
+    }
     if m.deleted_ms.is_some() && old.deleted_ms.is_none() {
         // what a deletion does besides the stamp (see soft_delete_booking)
         conn.execute("DELETE FROM loan_links WHERE transaction_id = ?1", [id])?;
@@ -2077,7 +2229,7 @@ fn write_booking(
     conn.execute(
         "UPDATE transactions SET category_ms = ?2, note = ?3, note_ms = ?4, checked = ?5,
             checked_ms = ?6, counterparty = ?7, purpose = ?8, text_ms = ?9, splits_ms = ?10,
-            deleted_ms = ?11
+            deleted_ms = ?11, tags_ms = ?12
          WHERE id = ?1",
         params![
             id,
@@ -2090,7 +2242,8 @@ fn write_booking(
             m.text.1,
             m.text_ms,
             m.splits_ms,
-            m.deleted_ms
+            m.deleted_ms,
+            m.tags_ms
         ],
     )?;
     Ok(())
