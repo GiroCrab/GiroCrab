@@ -551,6 +551,21 @@ struct AccountRow: View {
         HStack(spacing: 6) {
             // tinted like the account's marker in the booking list
             AccountSignet(account: account, size: 20, color: model.accountColor(account.id), onSelection: onSelection)
+                .overlay(alignment: .topTrailing) {
+                    // unread count pinned to the icon's corner, so the subtitle stays untruncated
+                    if let text = NewCountBadge.label(for: Int(account.newCount)) {
+                        Text(verbatim: text)
+                            .appFont(.caption2, weight: .bold, monospacedDigit: true)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .frame(minWidth: 14, minHeight: 14)
+                            .background(Capsule().fill(Theme.accent))
+                            .overlay(Capsule().strokeBorder(.background, lineWidth: 1.5))
+                            .fixedSize()
+                            .offset(x: 5, y: -4)
+                            .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
+                    }
+                }
             VStack(alignment: .leading, spacing: 1) {
                 // row 1: the whole width for the name
                 HStack(spacing: 4) {
@@ -567,13 +582,6 @@ struct AccountRow: View {
                     if syncing {
                         ProgressView().controlSize(.mini)
                     }
-                    // a small dot only; the count sits in the subtitle ("Bank · 8 neu")
-                    if account.newCount > 0 {
-                        Circle()
-                            .fill(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Theme.accent))
-                            .frame(width: 6, height: 6)
-                            .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
-                    }
                 }
                 // row 2: bank / loan progress left, balance right
                 HStack(spacing: 6) {
@@ -582,7 +590,7 @@ struct AccountRow: View {
                             .progressViewStyle(.linear)
                             .tint(Theme.loan.opacity(0.7))
                             .controlSize(.mini)
-                            .frame(maxWidth: 80)
+                            .frame(maxWidth: 44)
                             .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
                         Text("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
                             .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -591,7 +599,7 @@ struct AccountRow: View {
                             .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
                             .help("Archiviert – wird nicht mehr abgerufen")
                     } else {
-                        Text(subtitleWithNewCount)
+                        Text(searchAwareSubtitle)
                             .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
                             .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
                             .foregroundStyle(.secondary)
@@ -608,13 +616,6 @@ struct AccountRow: View {
         }
         .padding(.vertical, 1)
         .opacity(account.isArchived ? 0.55 : 1)
-    }
-
-    /// Bank name plus the number of new bookings ("Musterbank · 8 neu").
-    private var subtitleWithNewCount: String {
-        guard searchAwareSubtitle == account.bankName, account.newCount > 0,
-              let n = NewCountBadge.label(for: Int(account.newCount)) else { return searchAwareSubtitle }
-        return "\(searchAwareSubtitle) · \(n) neu"
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
