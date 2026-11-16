@@ -1,0 +1,110 @@
+// Run the actual scripts embedded in SchwaebischHallUI.swift against a fake
+// portal (synthetic data only), as for FNZ and quirion.
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const {readFileSync} = require('node:fs');
+const vm = require('node:vm');
+const source = readFileSync(new URL('../GiroCrabApp/Sources/GiroCrabUI/SchwaebischHallUI.swift', `file://${__filename}`), 'utf8');
+const scripts = Object.fromEntries([...source.matchAll(/static let (\w+) = #"""\n([\s\S]*?)\n    """#/g)].map(m => [m[1], m[2]]));
+const ORIGIN = 'https://www.schwaebisch-hall.de';
+const DETAILS = '/content/bshweb/startseite/mein-konto/vertraege/_jcr_content/root/container/par/container/myaccount_accounts.account_details.json';
+const POSTBOX = '/content/bshweb/startseite/mein-konto/nachrichten.bin.postboxmessage';
+
+const response = (data, {status = 200, headers = {}} = {}) => ({ok: status >= 200 && status < 300, status,
+  json: async () => data, arrayBuffer: async () => data, headers: {get: k => headers[k.toLowerCase()] ?? null}});
+
+/// Runs `prelude + script` as WKWebView's callAsyncJavaScript does (an async function body).
+function run(name, fetch, {origin = ORIGIN, args = {}} = {}) {
+  const context = vm.createContext({fetch, location: {origin}, AbortController, setTimeout, clearTimeout,
+    URLSearchParams, btoa: s => Buffer.from(s, 'binary').toString('base64'), ...args});
+  return vm.runInContext(`(async()=>{${scripts.prelude}\n${scripts[name]}})()`, context);
+}
+
+const contracts = [
+  {type: 'Bausparvertrag Sparphase', bsn: '217111 D 01', accountBalance: '&#43; 0,00', coreid: '217111',
+   contractletter: 'D', contractnumber: '01', vtn: '0021711100101', owner: 'DO NOT EXPORT'},
+  {type: 'Bausparvertrag Sparphase', bsn: '300222 A 02', accountBalance: '&#43; 1.234,56', coreid: '300222',
+   contractletter: 'A', contractnumber: '02', vtn: '0030022200102'},
+];
+
+function portal(calls, overrides = {}) {
+  return async (url, options = {}) => {
+    calls.push({url, options});
+    const u = new URL(url);
+    assert.equal(u.origin, ORIGIN);
+    assert.equal(options.credentials, 'same-origin');
+    assert.equal(options.redirect, 'error');
+    if (overrides[u.pathname]) return overrides[u.pathname](u);
+    if (u.pathname === '/bin/bshweb/accountcontracts') return response({status: 'success', data: {contracts}});
+    if (u.pathname === DETAILS) return response({contracttype: 'Bausparvertrag', contractphase: 'Sparphase',
+      coredata: {name: 'DO NOT EXPORT', address: 'DO NOT EXPORT'}, debit: {iban: 'DO NOT EXPORT'},
+      transactions: {2026: {saldo: '&#43; 50,00', Januar: [{day: '15', subject: 'Sparrate', amount: '&#43; 50,00'}]}}});
+    if (u.pathname === POSTBOX) return response([
+      {id: 'm1', date: '31.01.2026', title: 'Jahreskontoauszug 300222 A 02', read: false, typeName: 'Kontoauszug',
+       text: '<p>Ihr Auszug</p><form target="_blank" method="get" action="/bin/bshweb/postbox/attachment"><input type="hidden" name="id" value="att-1"></form>'},
+      {id: 'm2', date: '01.02.2026', title: 'Vertragsinformationen', typeName: 'Info',
+       text: "<a href='/bin/bshweb/postbox/attachment?id=att%202&amp;x=1'>PDF</a> zu 217111 D 01 und 300222 A 02"},
+      {id: 'm3', date: '02.02.2026', title: 'Ohne Anhang', text: '<p>Hallo</p>'},
+      {id: 'm4', date: '03.02.2026', title: 'Doppelt', attachments: [{id: 'att-1'}, 'att-3']},
+    ]);
+    if (u.pathname === '/bin/bshweb/postbox/attachment') {
+      const pdf = new TextEncoder().encode('%PDF-1.7 synthetic ' + u.searchParams.get('id')).buffer;
+      return response(pdf, {headers: {'content-type': 'application/pdf'}});
+    }
+    return response({}, {status: 404});
+  };
+}
+
+test('probe is true only with a session on the portal', async () => {
+  assert.equal(await run('probe', portal([])), 'true');
+  const expired = portal([], {'/bin/bshweb/accountcontracts': () =>
+    response({status: 'error', errors: [{message: 'Session has a timeout', code: 'timeout'}]})});
+  assert.equal(await run('probe', expired), 'false');
+  assert.equal(await run('probe', async () => { throw new TypeError('redirect'); }), 'false');
+  await assert.rejects(run('probe', portal([]), {origin: 'https://login.schwaebisch-hall.de'}), /erneut anmelden/);
+});
+
+test('snapshot reads every contract and passes only the needed fields', async () => {
+  const calls = [];
+  const snap = JSON.parse(await run('snapshot', portal(calls)));
+  assert.equal(snap.version, 1);
+  assert.equal(snap.contracts.length, 2);
+  assert.deepEqual(calls.filter(c => c.url.includes(DETAILS)).map(c => new URL(c.url).searchParams.get('vtn')),
+    ['0021711100101', '0030022200102']);
+  assert.deepEqual(Object.keys(snap.contracts[0].details).sort(), ['contractphase', 'contracttype', 'transactions']);
+  assert.equal(snap.contracts[1].accountBalance, '&#43; 1.234,56');
+  assert.ok(!JSON.stringify(snap).includes('DO NOT EXPORT'));
+});
+
+test('snapshot unwraps a data envelope and stops on errors', async () => {
+  const wrapped = portal([], {[DETAILS]: () => response({status: 'success', data: {contracttype: 'X', transactions: []}})});
+  const snap = JSON.parse(await run('snapshot', wrapped));
+  assert.deepEqual(snap.contracts[0].details, {contracttype: 'X', transactions: []});
+  await assert.rejects(run('snapshot', portal([], {[DETAILS]: () => response({}, {status: 500})})), /HTTP 500/);
+  await assert.rejects(run('snapshot', portal([], {'/bin/bshweb/accountcontracts': () =>
+    response({status: 'error', errors: [{code: 'timeout'}]})})), /Sitzung abgelaufen/);
+  await assert.rejects(run('snapshot', portal([], {'/bin/bshweb/accountcontracts': () =>
+    response({status: 'success', data: {contracts: [{vtn: '12;x'}]}})})), /gültige Kennung/);
+});
+
+test('documents find attachment ids in forms, links and fields, once each', async () => {
+  const docs = JSON.parse(await run('documents', portal([])));
+  assert.deepEqual(docs.map(d => d.id), ['att-1', 'att 2', 'att-3']);
+  // one contract named -> vtn; two named or none -> no vtn
+  assert.equal(docs[0].vtn, '0030022200102');
+  assert.equal(docs[1].vtn, undefined);
+  assert.equal(docs[2].vtn, undefined);
+  assert.deepEqual([docs[0].date, docs[0].title, docs[0].messageId], ['31.01.2026', 'Jahreskontoauszug 300222 A 02', 'm1']);
+  assert.ok(docs.every(d => !('text' in d)));
+});
+
+test('pdf downloads one attachment and rejects anything else', async () => {
+  const calls = [];
+  const b64 = await run('pdf', portal(calls), {args: {id: 'att 2'}});
+  assert.match(Buffer.from(b64, 'base64').toString(), /^%PDF-1\.7 synthetic att 2$/);
+  assert.equal(new URL(calls[0].url).searchParams.get('id'), 'att 2');
+  const html = portal([], {'/bin/bshweb/postbox/attachment': () =>
+    response(new TextEncoder().encode('<html>login</html>').buffer)});
+  await assert.rejects(run('pdf', html, {args: {id: 'x'}}), /kein PDF/);
+  await assert.rejects(run('pdf', portal([]), {args: {id: ''}}), /Ungültige Dokument-ID/);
+});

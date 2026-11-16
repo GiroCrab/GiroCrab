@@ -167,7 +167,7 @@ struct ConnectionEditSheet: View {
         case .americanExpress, .amazonVisa: return []
         case .bunq: return ["bunq.environment"]
         case .enableBanking: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
-        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .easybank, .alteLeipziger, .volkswagenBank, .uberspace: return []
+        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall: return []
         }
     }
 

@@ -1,0 +1,266 @@
+import SwiftUI
+import WebKit
+import GiroCrabCore
+
+/// Bausparkasse Schwäbisch Hall, "Mein Konto" (#290). The user signs in in the
+/// embedded browser (Azure AD B2C at login.schwaebisch-hall.de); the scripts
+/// below then call the portal's own JSON endpoints in the signed-in page with
+/// its session cookies. Cookies and credentials stay in the web view: only the
+/// contract fields the core needs and the PDF attachments cross to Swift.
+/// Read-only: no message is marked, deleted or sent. Scripts are tested in
+/// `scripts/test-schwaebisch-hall-portal.cjs`.
+enum SchwaebischHallScripts {
+    static let origin = "https://www.schwaebisch-hall.de"
+    /// Starts the portal's B2C sign-in (302 to login.schwaebisch-hall.de).
+    static let loginURL = URL(string: "https://www.schwaebisch-hall.de/bin/bshweb/authentication")!
+
+    /// Prepended to every script: only the portal page itself may run them.
+    static let prelude = #"""
+    if (location.origin !== 'https://www.schwaebisch-hall.de') throw new Error('Schwäbisch Hall: Bitte erneut anmelden.');
+    const origin = 'https://www.schwaebisch-hall.de';
+    const get = async (path, accept = 'application/json') => {
+      if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Schwäbisch Hall: Ungültiger Abruf.');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      try {
+        const r = await fetch(origin + path, {credentials:'same-origin', redirect:'error',
+          headers:{'Accept':accept}, signal:controller.signal});
+        if (!r.ok) throw new Error('Schwäbisch Hall: Abruf fehlgeschlagen (HTTP ' + r.status + '). Bitte erneut anmelden.');
+        return r;
+      } finally { clearTimeout(timer); }
+    };
+    const json = async path => {
+      const data = await (await get(path)).json();
+      if (data && data.status === 'error') throw new Error('Schwäbisch Hall: Sitzung abgelaufen. Bitte erneut anmelden.');
+      return data;
+    };
+    const contractList = async () => {
+      const list = await json('/bin/bshweb/accountcontracts');
+      const contracts = list?.data?.contracts;
+      if (list?.status !== 'success' || !Array.isArray(contracts)) throw new Error('Schwäbisch Hall: Keine Verträge erkannt. Bitte erneut anmelden.');
+      for (const c of contracts)
+        if (typeof c?.vtn !== 'string' || !/^\d{6,24}$/.test(c.vtn)) throw new Error('Schwäbisch Hall: Vertrag ohne gültige Kennung.');
+      return contracts;
+    };
+    const pick = (o, keys) => Object.fromEntries(keys.filter(k => o?.[k] !== undefined).map(k => [k, o[k]]));
+    """#
+
+    /// Signed in: the contract list answers with `status: "success"` (without a
+    /// session it is `status: "error"`, code `timeout`).
+    static let probe = #"""
+    try {
+      const r = await fetch(origin + '/bin/bshweb/accountcontracts', {credentials:'same-origin', redirect:'error',
+        headers:{'Accept':'application/json'}});
+      if (!r.ok) return 'false';
+      const data = await r.json();
+      return String(data?.status === 'success' && Array.isArray(data?.data?.contracts));
+    } catch { return 'false'; }
+    """#
+
+    /// Contracts with their details (type, phase, bookings). Nothing else of
+    /// the detail response (personal data, debit account) is passed on.
+    static let snapshot = #"""
+    const details = '/content/bshweb/startseite/mein-konto/vertraege/_jcr_content/root/container/par/container/myaccount_accounts.account_details.json?vtn=';
+    const out = [];
+    for (const c of await contractList()) {
+      let d = await json(details + encodeURIComponent(c.vtn));
+      // Some portal answers wrap the payload in `data` like the contract list.
+      if (d?.data && typeof d.data === 'object' && !Array.isArray(d.data)
+          && ('transactions' in d.data || 'contracttype' in d.data)) d = d.data;
+      if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('Schwäbisch Hall: Unvollständige Vertragsdaten.');
+      out.push({...pick(c, ['type','bsn','accountBalance','coreid','contractletter','contractnumber','vtn']),
+        details:pick(d, ['contracttype','contractphase','transactions'])});
+    }
+    return JSON.stringify({version:1, contracts:out});
+    """#
+
+    /// Postbox attachments as `[{id, messageId, date, title, vtn?}]`. The
+    /// attachment id sits in the message's download form
+    /// (`<form action="/bin/bshweb/postbox/attachment"><input name="id">`) or a
+    /// link to it; `vtn` is set when exactly one contract number appears in the message.
+    static let documents = #"""
+    const contracts = await contractList();
+    const data = await json('/content/bshweb/startseite/mein-konto/nachrichten.bin.postboxmessage?command=getmessages');
+    const messages = [data, data?.messages, data?.data, data?.data?.messages].find(Array.isArray);
+    if (!messages) throw new Error('Schwäbisch Hall: Postfach nicht lesbar.');
+    const decode = s => String(s).replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    const attr = (tag, name) => {
+      const m = tag.match(new RegExp('\\b' + name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s>]+))', 'i'));
+      return m ? decode(m[1] ?? m[2] ?? m[3]) : null;
+    };
+    const squash = s => String(s ?? '').replace(/\s+/g, '');
+    const out = [], seen = new Set();
+    for (const m of messages) {
+      if (!m || typeof m !== 'object') continue;
+      const html = typeof m.text === 'string' ? m.text : '';
+      const ids = [];
+      for (const f of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)) {
+        if (!(attr(f[1], 'action') || '').includes('/bin/bshweb/postbox/attachment')) continue;
+        for (const i of f[2].matchAll(/<input\b[^>]*>/gi))
+          if ((attr(i[0], 'name') || '').toLowerCase() === 'id') ids.push(attr(i[0], 'value'));
+      }
+      for (const a of html.matchAll(/\/bin\/bshweb\/postbox\/attachment\?([^"'\s<>]+)/gi))
+        ids.push(new URLSearchParams(decode(a[1])).get('id'));
+      if (Array.isArray(m.attachments))
+        for (const a of m.attachments) ids.push(typeof a === 'string' ? a : a?.id ?? a?.attachmentId);
+      if (m.attachmentId !== undefined) ids.push(m.attachmentId);
+      const plain = squash((m.title ?? '') + ' ' + html.replace(/<[^>]*>/g, ' '));
+      const named = contracts.filter(c => plain.includes(c.vtn) || (c.bsn && plain.includes(squash(c.bsn))));
+      for (const raw of ids) {
+        const id = raw === null || raw === undefined ? '' : String(raw).trim();
+        if (!id || id.length > 256 || seen.has(id)) continue;
+        seen.add(id);
+        out.push({id, messageId:String(m.id ?? ''), date:m.date ?? null,
+          title:String(m.title || m.typeName || ''), ...(named.length === 1 ? {vtn:named[0].vtn} : {})});
+      }
+    }
+    return JSON.stringify(out);
+    """#
+
+    /// `id` is passed as an argument, never interpolated into JavaScript.
+    static let pdf = #"""
+    if (typeof id !== 'string' || !id) throw new Error('Schwäbisch Hall: Ungültige Dokument-ID.');
+    const r = await get('/bin/bshweb/postbox/attachment?id=' + encodeURIComponent(id), 'application/pdf,*/*');
+    const length = Number(r.headers.get('content-length') || 0);
+    if (length > 25 * 1024 * 1024) throw new Error('Schwäbisch Hall: Dokument zu groß.');
+    const buf = new Uint8Array(await r.arrayBuffer());
+    if (buf.length > 25 * 1024 * 1024 || String.fromCharCode(...buf.subarray(0, 5)) !== '%PDF-')
+      throw new Error('Schwäbisch Hall: Der Download ist kein PDF.');
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+    """#
+}
+
+struct SchwaebischHallWebSheet: View {
+    @Environment(\.reportRedaction) private var redaction
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let connection: BankConnection
+    @State private var browser = PortalBrowser(url: SchwaebischHallScripts.loginURL,
+        domains: PortalDomains(kind: .schwaebischHall), captureTraffic: false)
+    @State private var uiDelegate = AmazonUIDelegate()
+    @State private var ready = false
+    @State private var running = false
+    @State private var includeDocuments = true
+    @State private var progress = ""
+    @State private var notice: String?
+    @State private var task: Task<Void, Never>?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(redaction.masking(connection.displayName)) – Schwäbisch Hall").appFont(.headline)
+                    if running { Text(progress).appFont(.caption) }
+                    else if let notice { Text(notice).appFont(.caption).foregroundStyle(.orange) }
+                    else if let blocked = browser.blockedHost {
+                        Text("Unsichere Seite blockiert (\(blocked)) – nur HTTPS-Seiten werden geöffnet.").appFont(.caption).foregroundStyle(.orange)
+                    }
+                    else if ready { Text("Angemeldet – Bausparverträge, Umsätze und Postfach können abgerufen werden.").appFont(.caption) }
+                    else { Text("Melden Sie sich bei „Mein Konto“ von Schwäbisch Hall an.").appFont(.caption) }
+                }
+                Spacer()
+                if running || browser.loading { ProgressView().controlSize(.small) }
+            }.padding(14)
+            Divider()
+            PortalWebView(browser: browser).macFrame(minWidth: 760, minHeight: 620)
+            Divider()
+            HStack {
+                Button("Schließen", role: .cancel) { task?.cancel(); close() }.keyboardShortcut(.cancelAction)
+                Toggle("PDF-Dokumente aus dem Postfach", isOn: $includeDocuments).disabled(running)
+                Spacer()
+                Button("Verträge abrufen") { start() }.buttonStyle(.borderedProminent).disabled(!ready || running)
+            }.padding(12)
+        }
+        .webPageDialogs(uiDelegate)
+        .task {
+            browser.webView.uiDelegate = uiDelegate
+            while !Task.isCancelled {
+                if !running {
+                    let onPortal = browser.currentURL?.host?.lowercased() == "www.schwaebisch-hall.de" && !browser.loading
+                    let ok = onPortal ? ((try? await run(SchwaebischHallScripts.probe)) == "true") : false
+                    if ready != ok { ready = ok }
+                }
+                // Signed in: check rarely; the next fetch reports an expired session anyway.
+                try? await Task.sleep(nanoseconds: ready ? 10_000_000_000 : 2_000_000_000)
+            }
+        }
+        .onDisappear { task?.cancel(); browser.teardown() }
+        .interactiveDismissDisabled(running)
+    }
+
+    private func run(_ script: String, arguments: [String: Any] = [:]) async throws -> String {
+        try Task.checkCancellation()
+        let result = try await browser.webView.callAsyncJavaScript(SchwaebischHallScripts.prelude + "\n" + script,
+            arguments: arguments, in: nil, contentWorld: .page)
+        try Task.checkCancellation()
+        guard let string = result as? String else { throw SchwaebischHallError.unreadable }
+        return string
+    }
+
+    private func start() {
+        running = true
+        notice = nil
+        task = Task {
+            // Pinned: a lock or demo switch mid-run must not send later steps to another vault.
+            guard let pin = model.pinVault() else { running = false; return }
+            let connectionId = connection.id
+            do {
+                progress = String(localized: "Bausparverträge und Umsätze abrufen …")
+                let snapshot = try await run(SchwaebischHallScripts.snapshot)
+                let summary = try await pin.run { try $0.importSchwaebischHallSnapshot(connectionId: connectionId, snapshotJson: snapshot) }
+                var downloaded = 0
+                var failed = 0
+                if includeDocuments {
+                    progress = String(localized: "Postfach auflisten …")
+                    let list = try await run(SchwaebischHallScripts.documents)
+                    let pending = try await pin.run { try $0.pendingSchwaebischHallDocuments(connectionId: connectionId, documentsJson: list) }
+                    var streak = QuirionFailureStreak()
+                    for (index, metadata) in pending.enumerated() {
+                        try Task.checkCancellation()
+                        progress = String(localized: "PDF \(index + 1) von \(pending.count) …")
+                        do {
+                            guard let data = metadata.data(using: .utf8),
+                                  let doc = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                                  let id = doc["id"] as? String else { throw SchwaebischHallError.unreadable }
+                            let encoded = try await run(SchwaebischHallScripts.pdf, arguments: ["id": id])
+                            guard let bytes = Data(base64Encoded: encoded) else { throw SchwaebischHallError.unreadable }
+                            if try await pin.run({ try $0.importSchwaebischHallDocument(connectionId: connectionId, documentJson: metadata, bytes: bytes) }) {
+                                downloaded += 1
+                            }
+                            streak.succeeded()
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            failed += 1
+                            // A lost session must not cause hundreds of failed requests.
+                            if streak.failed() { failed += pending.count - index - 1; break }
+                        }
+                    }
+                }
+                let message = String(localized: "Schwäbisch Hall: \(summary.accountsUpdated) Verträge aktualisiert, \(summary.transactionsImported) neue Buchungen, \(downloaded) neue PDFs.")
+                model.toast = message
+                if failed == 0 { close() }
+                else { notice = message + " " + String(localized: "\(failed) PDFs nicht abrufbar. Ein erneuter Abruf lädt nur fehlende Dokumente.") }
+            } catch is CancellationError {
+            } catch {
+                notice = describe(error)
+                ready = false
+            }
+            // PDFs are committed one by one: flush them on success, cancellation and partial failure.
+            await pin.checkpoint()
+            running = false
+            model.documentsVersion += 1
+            model.reloadAll()
+            // accounts another login already delivers wait for a choice (#346)
+            model.checkPendingAccountSelection()
+        }
+    }
+
+    private func close() { model.webLoginConnection = nil; dismiss() }
+}
+
+private enum SchwaebischHallError: LocalizedError {
+    case unreadable
+    var errorDescription: String? { String(localized: "Schwäbisch Hall: Die Portalantwort konnte nicht gelesen werden.") }
+}
