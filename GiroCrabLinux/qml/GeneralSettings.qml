@@ -59,6 +59,19 @@ ScrollView {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Hell oder Dunkel gilt nur für GiroCrab; „System“ folgt der Einstellung des Systems.") }
+            // BookingDensity.swift (#542)
+            SettingsFormRow {
+                label: qsTr("Buchungsdichte")
+                AppComboBox {
+                    Layout.preferredWidth: 200 * Theme.textScale
+                    model: BookingPrefs.densities
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: BookingPrefs.densities.findIndex(d => d.id === BookingPrefs.density)
+                    onActivated: BookingPrefs.setDensity(currentValue)
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Kompakt öffnet die aktive Buchung mit allen Details. Standard zeigt einen kurzen Verwendungszweck. Großzügig zeigt alle Buchungen ausführlich.") }
             // TextSize.swift (#343): Schriftgröße
             SettingsFormRow {
                 label: qsTr("Schriftgröße")
@@ -87,6 +100,19 @@ ScrollView {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Wer keine Monatsbudgets nutzt, blendet die Budget-Karte und „Monatsbudget festlegen …“ ganz aus. Auch im Menü Ansicht umschaltbar.") }
+            // NegativeAmountStyle.swift (#218, #571)
+            SettingsFormRow {
+                label: qsTr("Negative Beträge")
+                AppComboBox {
+                    Layout.preferredWidth: 200 * Theme.textScale
+                    model: BookingPrefs.negativeStyles
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: BookingPrefs.negativeStyles.findIndex(s => s.id === BookingPrefs.negativeStyle)
+                    onActivated: BookingPrefs.setNegativeStyle(currentValue)
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Farbe von Abbuchungen in der Buchungsliste: neutral wie der übrige Text, rot wie negative Salden in der Seitenleiste oder kontraststark (orange und blau, auch bei Rot-Grün-Schwäche gut unterscheidbar). Das Vorzeichen bleibt immer sichtbar.") }
         }
         SettingsFormSection {
             title: qsTr("Buchungen")
