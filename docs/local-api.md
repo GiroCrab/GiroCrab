@@ -105,11 +105,7 @@ Socket-Pfad lässt sich mit `--socket` oder `GIROCRAB_API_SOCKET` ändern.
 | `list_transactions` | `transactions` | gleiche Parameter wie die Methode |
 | `get_summary` | `summary` | `date_from` und `date_to` sind Pflicht |
 
-Alle Tools sind als nur lesend markiert (`readOnlyHint`). Ist GiroCrab gesperrt, ausgeschaltet oder nicht
-gestartet, oder passt der Schlüssel nicht, liefert der Tool-Aufruf einen lesbaren Fehler (`isError`),
-den der Assistent weitergeben kann; das gilt auch für eine fehlende oder unlesbare Schlüsseldatei.
-Ein `busy` wartet der Adapter kurz ab; schließt die App eine ruhende Verbindung, baut er sie neu auf und
-sendet die Anfrage einmal neu. Antwortet die App nicht binnen 30 Sekunden oder unlesbar, wird nichts
-wiederholt. Ergebnisse kommen als kompaktes JSON im Textblock, ab MCP 2025-06-18 zusätzlich als
-`structuredContent`. Unterstützte MCP-Versionen: 2025-06-18, 2025-03-26, 2024-11-05.
-
+Alle Tools sind als nur lesend markiert (`readOnlyHint`); ihre Beschreibungen und Eingabeschemas liefert
+`tools/list`. Ist GiroCrab gesperrt, ausgeschaltet oder nicht gestartet, sind alle Verbindungen belegt
+(`busy`) oder passt bzw. fehlt der Schlüssel, liefert der Tool-Aufruf einen lesbaren Fehler (`isError`),
+den der Assistent weitergeben kann. Unterstützte MCP-Versionen: 2025-06-18, 2025-03-26, 2024-11-05.

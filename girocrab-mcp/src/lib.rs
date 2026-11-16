@@ -12,18 +12,24 @@
 use serde_json::{json, Map, Value};
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// MCP revisions this adapter speaks, newest first. A client asking for one of
 /// them gets it; any other request is answered with the newest.
 pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-/// Version of the socket protocol (`"v"` of every request).
-const API_VERSION: u32 = 1;
-/// `busy` (all connections of the app in use): tries after the first.
-const BUSY_RETRIES: u32 = 3;
-const BUSY_WAIT: Duration = Duration::from_millis(250);
+/// From this MCP revision on, results also carry `structuredContent` (MCP
+/// revisions are ISO dates, so they compare as text).
+const STRUCTURED_FROM: &str = "2025-06-18";
+
+/// Version of the socket protocol (`"v"` of every request); pinned to the
+/// core's by a test.
+pub const API_VERSION: u32 = 1;
+/// `busy` or no answer (app at its connection limit, closing): tries after
+/// the first. Every call is read-only, so asking again is harmless.
+const RETRIES: u32 = 3;
+const RETRY_WAIT: Duration = Duration::from_millis(250);
 /// One request on the socket, also while the app paces requests.
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -165,97 +171,77 @@ fn api_error(code: &str, message: &str) -> ToolError {
     })
 }
 
-struct Conn {
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
+/// Why one exchange brought no answer.
+enum NoAnswer {
+    /// Closed or reset before an answer line: worth another try.
+    Retry,
+    /// Told to the user as it is (cannot connect, timeout, unreadable answer).
+    Fail(ToolError),
 }
 
-/// Why one exchange on a connection brought no answer.
-enum Lost {
-    /// Closed before an answer (idle timeout of the app, app gone): worth one
-    /// new connection.
-    Closed,
-    /// Anything else: told to the user as it is, no repeat.
-    Failed(ToolError),
-}
-
-impl Conn {
-    fn open(config: &Config) -> Result<Self, ToolError> {
-        let socket = config.socket.display();
-        let stream = UnixStream::connect(&config.socket).map_err(|e| match e.kind() {
-            ErrorKind::NotFound | ErrorKind::ConnectionRefused => ToolError(format!(
-                "GiroCrab is not reachable: it is not running, the vault is locked, or \
-                 external analysis is turned off ({SETTINGS}). Socket: {socket}"
-            )),
-            ErrorKind::PermissionDenied => ToolError(format!(
-                "GiroCrab's socket cannot be opened (permission denied): it belongs to \
-                 another user, or --socket points to the wrong place. Socket: {socket}"
-            )),
-            // sun_path holds 104 bytes on macOS (108 on Linux).
-            ErrorKind::InvalidInput => ToolError(format!(
-                "The socket path is too long for a Unix socket: {socket}"
-            )),
-            _ => ToolError(format!("Cannot connect to GiroCrab ({socket}): {e}")),
-        })?;
-        let io = |e: std::io::Error| ToolError(format!("Cannot connect to GiroCrab: {e}"));
-        // Fails (EINVAL on macOS) only on a connection the app already closed,
-        // e.g. right after answering `busy`: the read below then returns that
-        // answer or EOF at once, so a missing timeout cannot block.
-        let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
-        let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-        Ok(Self {
-            writer: stream.try_clone().map_err(io)?,
-            reader: BufReader::new(stream),
-        })
-    }
-
-    /// One request line, one answer line. The answer is read even when the
-    /// write failed: a refused connection (`busy`) carries its answer although
-    /// the app closed it without reading the request.
-    fn round_trip(&mut self, line: &str) -> Result<Value, Lost> {
-        let written = writeln!(self.writer, "{line}");
-        let mut answer = String::new();
-        match self.reader.read_line(&mut answer) {
-            Ok(n) if n > 0 => serde_json::from_str(&answer).map_err(|e| {
-                Lost::Failed(ToolError(format!(
-                    "GiroCrab sent an unreadable answer: {e}"
-                )))
-            }),
-            Ok(_) => Err(Lost::Closed),
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                Err(Lost::Failed(ToolError(format!(
-                    "GiroCrab did not answer within {} seconds.",
-                    IO_TIMEOUT.as_secs()
-                ))))
-            }
-            Err(_) if written.is_err() => Err(Lost::Closed),
-            Err(e) => Err(Lost::Failed(ToolError(format!(
-                "Connection to GiroCrab failed: {e}"
-            )))),
+fn connect_error(socket: &Path, e: std::io::Error) -> ToolError {
+    let socket = socket.display();
+    ToolError(match e.kind() {
+        ErrorKind::NotFound | ErrorKind::ConnectionRefused => format!(
+            "GiroCrab is not reachable: it is not running, the vault is locked, or \
+             external analysis is turned off ({SETTINGS}). Socket: {socket}"
+        ),
+        ErrorKind::PermissionDenied => format!(
+            "GiroCrab's socket cannot be opened (permission denied): it belongs to \
+             another user, or --socket points to the wrong place. Socket: {socket}"
+        ),
+        // sun_path holds 104 bytes on macOS (108 on Linux).
+        ErrorKind::InvalidInput => {
+            format!("The socket path is too long for a Unix socket: {socket}")
         }
+        _ => format!("Cannot connect to GiroCrab ({socket}): {e}"),
+    })
+}
+
+/// One request on a fresh connection: the protocol keeps no state on a
+/// connection, and the app closes idle ones anyway. The answer is read even
+/// when the write failed, because the app answers `busy` without reading.
+fn exchange(socket: &Path, line: &str) -> Result<Value, NoAnswer> {
+    let stream =
+        UnixStream::connect(socket).map_err(|e| NoAnswer::Fail(connect_error(socket, e)))?;
+    // Fails (EINVAL on macOS) only on a connection the app already closed:
+    // the read below then returns at once.
+    let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+    let _ = writeln!(&stream, "{line}");
+    let mut answer = String::new();
+    let fail = |text: String| NoAnswer::Fail(ToolError(text));
+    match BufReader::new(&stream).read_line(&mut answer) {
+        Ok(n) if n > 0 => serde_json::from_str(&answer)
+            .map_err(|e| fail(format!("GiroCrab sent an unreadable answer: {e}"))),
+        Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+            Err(fail(format!(
+                "GiroCrab did not answer within {} seconds.",
+                IO_TIMEOUT.as_secs()
+            )))
+        }
+        // EOF or reset before an answer line.
+        _ => Err(NoAnswer::Retry),
     }
 }
 
 pub struct Adapter {
     config: Config,
-    /// Kept between calls; the app closes it after a minute without requests.
-    conn: Option<Conn>,
-    /// Negotiated in `initialize`; decides whether results carry `structuredContent`.
-    protocol: &'static str,
+    /// Negotiated in `initialize`: results carry `structuredContent`.
+    structured: bool,
 }
 
 impl Adapter {
     pub fn new(config: Config) -> Self {
         Self {
             config,
-            conn: None,
-            protocol: PROTOCOL_VERSIONS[0],
+            structured: true,
         }
     }
 
-    /// Answers one JSON-RPC message; None for notifications.
-    pub fn handle(&mut self, msg: &Value) -> Option<Value> {
-        let Some(obj) = msg.as_object() else {
+    /// Answers one JSON-RPC message; None for notifications and responses.
+    pub fn handle(&mut self, msg: Value) -> Option<Value> {
+        let Value::Object(mut msg) = msg else {
             // Batches were dropped from MCP in 2025-06-18.
             return Some(rpc_error(
                 Value::Null,
@@ -263,30 +249,26 @@ impl Adapter {
                 "expected one JSON-RPC object",
             ));
         };
-        let id = obj.get("id").cloned();
-        let Some(method) = obj.get("method").and_then(Value::as_str) else {
+        let id = msg.remove("id");
+        let Some(method) = msg.get("method").and_then(Value::as_str).map(str::to_owned) else {
             // A response (result or error) is never answered; we send no
             // requests, so it is dropped. Anything else is no valid message.
-            if obj.contains_key("result") || obj.contains_key("error") {
+            if msg.contains_key("result") || msg.contains_key("error") {
                 return None;
             }
             return id.map(|id| rpc_error(id, -32600, "invalid request"));
         };
         let id = id?; // notifications (initialized, cancelled, …) need no answer
-        let params = obj.get("params").cloned().unwrap_or(Value::Null);
-        Some(match method {
+        let params = msg.remove("params").unwrap_or(Value::Null);
+        Some(match method.as_str() {
             "initialize" => {
-                let result = initialize(&params);
-                self.protocol = PROTOCOL_VERSIONS
-                    .iter()
-                    .find(|v| result["protocolVersion"] == **v)
-                    .copied()
-                    .unwrap_or(PROTOCOL_VERSIONS[0]);
+                let (result, version) = initialize(&params);
+                self.structured = version >= STRUCTURED_FROM;
                 rpc_result(id, result)
             }
             "ping" => rpc_result(id, json!({})),
             "tools/list" => rpc_result(id, tools_list()),
-            "tools/call" => match self.call_tool(&params) {
+            "tools/call" => match self.call_tool(params) {
                 Ok(result) => rpc_result(id, result),
                 Err((code, message)) => rpc_error(id, code, &message),
             },
@@ -296,24 +278,24 @@ impl Adapter {
 
     /// A tool result (also for refused requests); Err only for a call that
     /// names no known tool.
-    fn call_tool(&mut self, params: &Value) -> Result<Value, (i64, String)> {
+    fn call_tool(&mut self, params: Value) -> Result<Value, (i64, String)> {
+        let Value::Object(mut params) = params else {
+            return Err((-32602, "tools/call needs params".into()));
+        };
         let name = params.get("name").and_then(Value::as_str).unwrap_or("");
         let tool = TOOLS
             .iter()
             .find(|t| t.name == name)
             .ok_or_else(|| (-32602, format!("unknown tool: {name}")))?;
-        let arguments = match params.get("arguments") {
+        let arguments = match params.remove("arguments") {
             None | Some(Value::Null) => Value::Object(Map::new()),
-            Some(a) => a.clone(),
+            Some(a) => a,
         };
         Ok(match self.request(tool.method, arguments) {
             Ok(result) => {
                 // Compact: the text block is what most clients hand to the model.
-                let text = result.to_string();
-                let mut out =
-                    json!({ "content": [{ "type": "text", "text": text }], "isError": false });
-                // Structured content exists from 2025-06-18 on (dates compare as text).
-                if self.protocol >= "2025-06-18" {
+                let mut out = tool_result(result.to_string(), false);
+                if self.structured {
                     // Lists are wrapped: structured content must be an object.
                     out["structuredContent"] = match result {
                         Value::Object(_) => result,
@@ -322,14 +304,12 @@ impl Adapter {
                 }
                 out
             }
-            Err(ToolError(text)) => {
-                json!({ "content": [{ "type": "text", "text": text }], "isError": true })
-            }
+            Err(ToolError(text)) => tool_result(text, true),
         })
     }
 
-    /// One request on the socket: reconnects once when the kept connection was
-    /// closed (read-only, so a repeat is harmless) and waits out `busy`.
+    /// One request on the socket; `busy` and a dropped connection are tried
+    /// again after a short wait.
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, ToolError> {
         let token = self
             .config
@@ -338,62 +318,52 @@ impl Adapter {
             .map_err(|e| ToolError(e.clone()))?;
         let line = json!({ "v": API_VERSION, "token": token, "method": method, "params": params })
             .to_string();
-        for attempt in 0..=BUSY_RETRIES {
-            let answer = self.round_trip(&line)?;
-            match answer.get("error") {
-                None => return Ok(answer.get("result").cloned().unwrap_or(Value::Null)),
-                Some(err) => {
-                    let code = err
-                        .get("code")
-                        .and_then(Value::as_str)
-                        .unwrap_or("internal");
-                    if code == "busy" && attempt < BUSY_RETRIES {
-                        self.conn = None; // the app closes a refused connection
-                        std::thread::sleep(BUSY_WAIT);
-                        continue;
+        let mut retries = RETRIES;
+        loop {
+            let refused = match exchange(&self.config.socket, &line) {
+                Ok(Value::Object(mut answer)) => match answer.remove("error") {
+                    None => return Ok(answer.remove("result").unwrap_or(Value::Null)),
+                    Some(err) => {
+                        let code = err
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .unwrap_or("internal");
+                        let message = err.get("message").and_then(Value::as_str).unwrap_or("");
+                        let error = api_error(code, message);
+                        if code != "busy" {
+                            return Err(error);
+                        }
+                        error
                     }
-                    let message = err.get("message").and_then(Value::as_str).unwrap_or("");
-                    return Err(api_error(code, message));
+                },
+                Ok(_) => return Err(ToolError("GiroCrab sent an unreadable answer.".into())),
+                Err(NoAnswer::Fail(e)) => return Err(e),
+                Err(NoAnswer::Retry) => {
+                    ToolError("GiroCrab closed the connection without an answer.".into())
                 }
+            };
+            if retries == 0 {
+                return Err(refused);
             }
-        }
-        unreachable!("the last attempt returns")
-    }
-
-    /// On the kept connection, or a new one when the kept one was closed (only
-    /// then is the request sent again; read-only, so that is harmless).
-    fn round_trip(&mut self, line: &str) -> Result<Value, ToolError> {
-        if let Some(conn) = self.conn.as_mut() {
-            match conn.round_trip(line) {
-                Ok(answer) => return Ok(answer),
-                Err(Lost::Closed) => {}
-                Err(Lost::Failed(e)) => {
-                    self.conn = None;
-                    return Err(e);
-                }
-            }
-        }
-        self.conn = None;
-        let mut conn = Conn::open(&self.config)?;
-        match conn.round_trip(line) {
-            Ok(answer) => {
-                self.conn = Some(conn);
-                Ok(answer)
-            }
-            Err(Lost::Closed) => Err(ToolError(
-                "GiroCrab closed the connection without an answer.".into(),
-            )),
-            Err(Lost::Failed(e)) => Err(e),
+            retries -= 1;
+            std::thread::sleep(RETRY_WAIT);
         }
     }
 }
 
-fn initialize(params: &Value) -> Value {
+fn tool_result(text: String, is_error: bool) -> Value {
+    json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
+}
+
+/// The answer to `initialize` and the MCP revision it settles on.
+fn initialize(params: &Value) -> (Value, &'static str) {
     let asked = params.get("protocolVersion").and_then(Value::as_str);
-    let version = asked
-        .filter(|v| PROTOCOL_VERSIONS.contains(v))
+    let version = PROTOCOL_VERSIONS
+        .iter()
+        .find(|v| Some(**v) == asked)
+        .copied()
         .unwrap_or(PROTOCOL_VERSIONS[0]);
-    json!({
+    let result = json!({
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": "girocrab-mcp", "title": "GiroCrab", "version": env!("CARGO_PKG_VERSION") },
@@ -401,7 +371,8 @@ fn initialize(params: &Value) -> Value {
             user shares in GiroCrab. Nothing can be changed or paid. Amounts are in cents. \
             If a tool reports that GiroCrab is locked or not reachable, ask the user to \
             unlock or start GiroCrab."
-    })
+    });
+    (result, version)
 }
 
 fn tools_list() -> Value {

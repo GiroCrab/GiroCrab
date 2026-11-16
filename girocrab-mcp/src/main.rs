@@ -49,7 +49,7 @@ fn main() {
             continue;
         }
         let answer = match serde_json::from_slice::<Value>(&line) {
-            Ok(msg) => adapter.handle(&msg),
+            Ok(msg) => adapter.handle(msg),
             Err(e) => Some(rpc_error(Value::Null, -32700, &format!("parse error: {e}"))),
         };
         if let Some(answer) = answer {
@@ -85,10 +85,9 @@ fn config(args: Vec<String>) -> Result<Config, String> {
             other => return Err(format!("unknown argument: {other}\n\n{USAGE}")),
         }
     }
-    let socket = match socket {
-        Some(s) => s,
-        None => default_socket().ok_or("no socket path: pass --socket or GIROCRAB_API_SOCKET")?,
-    };
+    let socket = socket
+        .or_else(default_socket)
+        .ok_or("no socket path: pass --socket or GIROCRAB_API_SOCKET")?;
     let token = token.and_then(|t| {
         let t = t.trim().to_string();
         if t.is_empty() {
