@@ -139,6 +139,33 @@ ScrollView {
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Eine ausgewählte Buchung gilt nach dieser Zeit als geprüft – wie eine gelesene E-Mail. Bei Mehrfachauswahl nie.") }
         }
+        // SettingsView.swift › BalanceChartSettingsSection (GitHub #203)
+        SettingsFormSection {
+            title: qsTr("Saldoverlauf")
+            SettingsFormRow {
+                label: qsTr("Darstellung")
+                AppComboBox {
+                    Layout.preferredWidth: 200 * Theme.textScale
+                    model: BalanceChartPrefs.styles
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: BalanceChartPrefs.styles.findIndex(s => s.id === BalanceChartPrefs.style)
+                    onActivated: BalanceChartPrefs.setStyle(currentValue)
+                }
+            }
+            SettingsFormRow {
+                visible: BalanceChartPrefs.style === "bars"
+                label: qsTr("Balken je")
+                AppComboBox {
+                    Layout.preferredWidth: 200 * Theme.textScale
+                    model: BalanceChartPrefs.units
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: BalanceChartPrefs.units.findIndex(u => u.id === BalanceChartPrefs.barUnit)
+                    onActivated: BalanceChartPrefs.setBarUnit(currentValue)
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Balken zeigen den durchschnittlichen Saldo je Monat (bei kurzen Zeiträumen je Tag, ab sechs Jahren je Jahr) und machen Trends und Jahre vergleichbar. Gestrichelte Linien markieren den Jahreswechsel. Auch per Rechtsklick auf den Saldoverlauf umschaltbar.") }
+        }
         // SettingsView.swift › MerchantLogoSettingsSection (GitHub #33); needs an open vault
         SettingsFormSection {
             title: qsTr("Händler-Logos")

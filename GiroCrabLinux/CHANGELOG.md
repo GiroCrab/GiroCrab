@@ -30,6 +30,14 @@ Funktionsumfang der Oberfläche.
   signierte Textdatei von GitHub, ohne Kennung und ohne Tracking; Einstellungen › Allgemein ›
   Mitteilungen schaltet das samt Netzabruf ab.
 
+### Saldoverlauf als Balken
+
+- **Balken statt Linie:** Einstellungen › Allgemein › Saldoverlauf (oder Rechtsklick auf den
+  Verlauf) zeigt den durchschnittlichen Saldo je Tag, Monat oder Jahr als Balken („Balken je“:
+  automatisch, Tage, Monate, Jahre). Gestrichelte Linien markieren den Jahreswechsel; ein Klick
+  springt zu den Buchungen des letzten Tags des Balkens. Der Verlauf hat jetzt wie am Mac eine
+  schmale Achse mit Null, Höchst- und Tiefststand.
+
 ### Anlageklassen im Vermögen
 
 - **Anlageklassen und Instrumente:** Wertpapiere und Sachwerte zeigen ihre Anlageklasse (Aktien,
