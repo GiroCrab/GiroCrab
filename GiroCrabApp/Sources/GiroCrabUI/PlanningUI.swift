@@ -65,8 +65,9 @@ extension AppModel {
 
 struct CardChevron: View {
     @Binding var collapsed: Bool
+    var customTitle: LocalizedStringKey? = nil
     var body: some View {
-        let title: LocalizedStringKey = collapsed ? "Einblenden" : "Ausblenden"
+        let title: LocalizedStringKey = customTitle ?? (collapsed ? "Einblenden" : "Ausblenden")
         Button {
             withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { collapsed.toggle() }
         } label: {
@@ -132,7 +133,7 @@ struct BudgetProgressCard: View {
                     if !items.isEmpty {
                         Text("\(Money.format(totalSpent)) / \(Money.format(totalBudget))")
                             .sensitive()
-                            .appFont(.caption, monospacedDigit: true).foregroundStyle(BudgetTone.color(totalPercent))
+                            .appFont(.subheadline, weight: .semibold, monospacedDigit: true).foregroundStyle(BudgetTone.color(totalPercent))
                             .fixedSize()
                         BudgetBar(percent: totalPercent).frame(width: 60)
                     }
@@ -307,7 +308,7 @@ struct CashflowCard: View {
                         let net = last.incomeCents - last.expenseCents
                         Text("\(label(last.key)): \(Money.format(net))")
                             .sensitive()
-                            .appFont(.caption, monospacedDigit: true)
+                            .appFont(.subheadline, weight: .semibold, monospacedDigit: true)
                             .foregroundStyle(net >= 0 ? Theme.inflow : Theme.outflow)
                             .fixedSize()
                     }
