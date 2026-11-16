@@ -362,6 +362,8 @@ Rectangle {
                     readonly property var c: modelData.category
                     selectionKey: "category:" + c.id
                     TapHandler { acceptedButtons: Qt.RightButton; onTapped: sidebar.openCategoryMenu(catRow.c, catRow) }
+                    // WP3 (#366): bookings dragged from the list onto a category (leaves only)
+                    BookingDropTarget { categoryID: catRow.c.id; enabled: !catRow.modelData.hasChildren }
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: SidebarModel.rowLeading + modelData.depth * SidebarModel.iconInset; anchors.rightMargin: SidebarModel.rowTrailing
                         spacing: SidebarModel.gap
@@ -572,6 +574,8 @@ Rectangle {
         AppMenuItem { text: qsTr("Konto bearbeiten …"); icon.name: SF.icon("square.and.pencil"); onTriggered: accountEditSheet.edit(accountMenu.a.id) }
         AppMenuItem { text: qsTr("Umbenennen …"); icon.name: SF.icon("pencil"); onTriggered: AppModel.groupDialog = { kind: "renameAccount", account: accountMenu.a } }
         AppMenuItem { text: qsTr("Symbol && Farbe …"); icon.name: SF.icon("paintpalette"); onTriggered: AppModel.iconColorTarget = { type: "account", id: accountMenu.a.id } }
+        // WP3: CategoryChipToggle (#336, #604) – the tick follows the stored value
+        CategoryChipToggle { account: accountMenu.a }
         AppMenu {
             id: kindMenu
             title: qsTr("Kontoart ändern …")
