@@ -71,8 +71,8 @@ component SideLine inherits Rectangle {
     height: r.kind == 1 ? 26px : r.kind == 2 ? 22px : all-card ? 34px : r.progress >= 0 ? 48px : subtitle ? 40px : 30px;
     border-radius: all-card ? 7px : 8px;
     border-width: all-card ? 1px : 0px;
-    border-color: all-card ? #262c36 : Theme.border;
-    background: active ? Theme.selected : all-card ? #161b22 : (ta.has-hover && r.kind != 1 && r.kind != 2) ? Theme.text.with-alpha(0.05) : transparent;
+    border-color: Theme.border;
+    background: active ? Theme.selected : all-card ? Theme.surface : (ta.has-hover && r.kind != 1 && r.kind != 2) ? Theme.text.with-alpha(0.05) : transparent;
     ta := TouchArea { clicked => { root.clicked(); } }
     HorizontalLayout {
         padding-left: all-card ? 10px : 6px + max(r.depth - 1, 0) * 14px;
@@ -539,8 +539,8 @@ export component MainWindow inherits Window {
                                 height: 28px;
                                 border-radius: 7px;
                                 border-width: 1px;
-                                border-color: #262c36;
-                                background: #161b22;
+                                border-color: Theme.border;
+                                background: Theme.surface;
                                 HorizontalLayout {
                                     spacing: 0px;
                                     SegButton { text: "Gruppen"; checked: root.group-mode == 0; clicked => { root.group-mode = 0; root.side-controls-changed(); } }
