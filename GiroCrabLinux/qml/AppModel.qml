@@ -211,6 +211,9 @@ QtObject {
     /// ViewLayout.swift › `@AppStorage("showBudgets")`: Darstellung › Budgets anzeigen
     property bool showBudgets: uiDefaults.showBudgets
     onShowBudgetsChanged: uiDefaults.showBudgets = showBudgets
+    /// ViewLayout.swift › `@AppStorage("compactHeader")`: Darstellung › Kopfbereich minimieren (#358)
+    property bool compactHeader: uiDefaults.compactHeader
+    onCompactHeaderChanged: uiDefaults.compactHeader = compactHeader
     /// Sidebar account search (AppModel.swift › sidebarAccountSearch, not persisted).
     property string sidebarAccountSearch: ""
     property var expandedCategories: ({})
@@ -2268,6 +2271,7 @@ QtObject {
         property bool showAccountAnalytics: false
         property string chartColorPalette: "girocrab"
         property bool showBudgets: true
+        property bool compactHeader: false
     }
     readonly property bool hasUserGroups: userGroups.some(g => !g.is_ungrouped)
     readonly property bool hasArchivedAccounts: allAccounts.some(a => a.archived_unix !== null)
