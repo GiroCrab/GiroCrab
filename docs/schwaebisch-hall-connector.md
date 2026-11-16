@@ -90,8 +90,12 @@ Geklärt mit anonymisierten Beispielen des Issue-Autors (#290): die Buchungsstru
 Darlehen melden ihren Saldo negativ (`"- 1111,11"`, Vertragsart z. B.
 „Tilgungsaussetzungsdarlehen“).
 
-Noch offen: ein vollständiger Abruf mit echtem Vertrag in GiroCrab, ob jeder `data`-Anhang ein
-PDF ist, und ob das Laden eines Anhangs die Nachricht als gelesen markiert.
+Ebenfalls bestätigt: Der Download eines `data`-Anhangs liefert `Content-Type: application/pdf`;
+andere Dateitypen sind bisher nicht aufgetreten.
+
+Noch offen: ein vollständiger Abruf mit echtem Vertrag in GiroCrab, und ob schon das Laden eines
+Anhangs die Nachricht im Portal als gelesen markiert (ließ sich mangels ungelesener Nachrichten
+noch nicht prüfen).
 
 ## Tests
 
