@@ -42,6 +42,8 @@ public final class AppModel {
     var accountsByID: [Int64: Account] = [:]
     var accountMarkers: [Int64: AccountMarker] = [:]
     var categories: [GiroCrabCore.Category] = []
+    /// Live tags in list order with their booking counts (#228).
+    var tags: [GiroCrabCore.Tag] = []
     var categoryTree: [CategoryNode] = []
     var bookings: [Booking] = [] { didSet { rebuildBookingIndex() } }
     /// Derived from `bookings` once per reload instead of on every view access.
@@ -308,7 +310,13 @@ public final class AppModel {
     var collectionFiles: [DebitFile] = []
     var mandateExport = CSVFileDocument(data: Data())
     var showMandateExport = false
-    var expandedCategories: Set<Int64> = []
+    /// Sidebar categories whose sub-categories are shown, kept across launches (#633).
+    /// Category ids are per vault, so the demo vault keeps its own set (swapped
+    /// in by `demoActive`). Deleted categories are only soft-deleted, so a stale
+    /// id never opens another category of the same vault.
+    var expandedCategories = AppModel.storedExpandedCategories(demo: false) {
+        didSet { UserDefaults.standard.set(Array(expandedCategories), forKey: Self.expandedCategoriesKey(demo: demoActive)) }
+    }
     var showRuleEditor = false {
         didSet { if showRuleEditor, rulesStale { reloadRules() } }
     }
@@ -331,6 +339,8 @@ public final class AppModel {
     /// Booking whose inspector note field should take focus (double-click / Return in the list).
     /// Carries the id because the NoteCard is recreated per booking and claims it on appear.
     var pendingNoteFocus: Booking.ID?
+    /// Booking whose tag field (inspector) should take the focus once shown (#228).
+    var pendingTagFocus: Booking.ID?
     /// Bumped to hand keyboard focus back to the booking list (e.g. Esc in the note field).
     var focusListToken = 0
     var showMoneyMoneyImport = false
@@ -356,7 +366,9 @@ public final class AppModel {
     /// Connector key per login (`fints:<BLZ>`, …) for the banking policy.
     var connectionKeys: [Int64: String] = [:]
     /// Showing the throw-away demo vault (also when the own vault is still empty).
-    var demoActive = false
+    var demoActive = false {
+        didSet { if demoActive != oldValue { expandedCategories = Self.storedExpandedCategories(demo: demoActive) } }
+    }
     /// Where the own Enable Banking application is shared between devices.
     @ObservationIgnored var enableBankingKeyStore: EnableBankingKeyStore = KeychainEnableBankingKeyStore()
     /// Taken over from another device; shown once unless the user turned it off.
@@ -1107,6 +1119,7 @@ public final class AppModel {
         // cheap, indexed calls; everything that scans bookings goes off the main thread
         reloadAccounts()
         reloadRules()
+        reloadTags()
         reloadSettings()
         mirrorDocumentsIfEnabled()
         startSelectionLoad()
@@ -1213,7 +1226,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
-        groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; connections = []; settings = []
+        groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; connections = []; settings = []
         page = nil; dashboard = nil; merchantStats = nil; merchantAccountStats = nil; logoCache = [:]
     }
 
