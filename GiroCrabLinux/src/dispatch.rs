@@ -205,6 +205,49 @@ fn set_connection_account_choices(v: &Arc<Vault>, a: &Value) -> R {
     ok(())
 }
 
+/// Sammelüberweisung / Dauerauftrag / Lastschrift: `self: Arc<Self>`, each returns
+/// an `Arc<TransferSession>` that goes into the session registry like "begin_transfer".
+fn begin_payment_session(v: &Arc<Vault>, method: &str, a: &Value) -> R {
+    let secret: String = arg(a, "secret")?;
+    let demo: bool = arg(a, "demo")?;
+    let v = v.clone();
+    let t = match method {
+        "begin_batch_transfer" => v.begin_batch_transfer(arg(a, "request")?, secret, demo),
+        "begin_standing_order" => v.begin_standing_order(arg(a, "request")?, secret, demo),
+        _ => v.begin_direct_debit(arg(a, "request")?, secret, demo),
+    }
+    .map_err(|e| e.to_string())?;
+    ok(crate::sessions::register(
+        crate::sessions::Session::Transfer(t),
+    ))
+}
+
+/// The unlocked own vault (`AppModel.ownVault`), independent of the demo in front.
+fn own_vault() -> Result<Arc<Vault>, String> {
+    OWN.lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| crate::i18n::tr("Tresor ist gesperrt"))
+}
+
+/// A path from a QML file dialog (`file://…` URL or plain path).
+fn local_path(path: String) -> String {
+    path.strip_prefix("file://").unwrap_or(&path).to_string()
+}
+
+/// RAH-10 key file: `path` (file dialog) or `bytes`; at most 1 MB.
+fn keyfile_bytes(a: &Value) -> Result<Vec<u8>, String> {
+    let Some(path) = arg::<Option<String>>(a, "path")? else {
+        return arg(a, "bytes");
+    };
+    let path = local_path(path);
+    let size = file_size(std::path::Path::new(&path));
+    if !(0..=1_048_576).contains(&size) {
+        return Err(crate::i18n::tr("Die Datei ist zu groß oder nicht lesbar."));
+    }
+    std::fs::read(&path).map_err(|e| format!("{path}: {e}"))
+}
+
 /// Text file chosen in a file dialog (Enable Banking .pem key); at most 1 MB.
 fn read_text_file(a: &Value) -> R {
     let path: String = arg(a, "path")?;
@@ -464,6 +507,76 @@ fn call(method: &str, a: &Value) -> R {
             ok(crate::sessions::register(
                 crate::sessions::Session::Transfer(t),
             ))
+        }
+        // Sammelüberweisung, Dauerauftrag, Lastschrift-Einreichung (AppModel+Batch,
+        // +StandingOrders, +DirectDebitSubmit): the same TransferSession as "begin_transfer",
+        // so the TAN/PIN flow of AppModel.qml drives them through session_start/…
+        "begin_batch_transfer" | "begin_standing_order" | "begin_direct_debit" => {
+            begin_payment_session(&vault()?, method, a)
+        }
+        // --- Sammelüberweisung / Lastschriften: CSV import (free functions) ---
+        "parse_batch_csv" => ok(girocrab_core::batch_csv::parse_batch_csv(arg(a, "text")?)),
+        "parse_mandate_csv" => ok(girocrab_core::mandates::parse_mandate_csv(arg(a, "text")?)),
+        // --- Portal: offene Vormerkungen (PortalUI); `self: Arc<Self>` ---
+        "portal_open_holds" => ok(vault()?
+            .portal_open_holds(arg(a, "connection_id")?, arg(a, "json_bodies")?)
+            .map_err(|e| e.to_string())?),
+        "discard_portal_holds" => ok(vault()?
+            .discard_portal_holds(arg(a, "connection_id")?, arg(a, "ids")?)
+            .map_err(|e| e.to_string())?),
+        "portal_schema_dump" => ok(girocrab_core::importers::portal_import::portal_schema_dump(
+            arg(a, "json_bodies")?,
+            arg(a, "dom_rows_json")?,
+        )),
+        // --- FinTS mit Schlüsseldatei (Rah10AddForm, AppModel+Rah) ---
+        // The key file comes as `path` (file dialog) or as `bytes` (JSON array).
+        "inspect_rah10_keyfile" => ok(
+            girocrab_core::connectors::fints::bank_keys::inspect_rah10_keyfile(
+                keyfile_bytes(a)?,
+                arg(a, "password")?,
+            )
+            .map_err(|e| e.to_string())?,
+        ),
+        "rah10_bank_key_candidates" => {
+            // anonymous first-key request over the network: called with Core.callAsync
+            let v = vault()?;
+            ok(crate::sessions::RUNTIME
+                .block_on(v.rah10_bank_key_candidates(arg(a, "blz")?))
+                .map_err(|e| e.to_string())?)
+        }
+        "add_rah10_connection" => ok(vault()?
+            .add_rah10_connection(
+                keyfile_bytes(a)?,
+                arg(a, "password")?,
+                arg(a, "display_name")?,
+            )
+            .map_err(|e| e.to_string())?),
+        "add_rah10_connection_with_bank_keys" => ok(vault()?
+            .add_rah10_connection_with_bank_keys(
+                keyfile_bytes(a)?,
+                arg(a, "password")?,
+                arg(a, "display_name")?,
+                arg::<Option<_>>(a, "bank_keys")?.unwrap_or_default(),
+                arg::<Option<_>>(a, "expected_fingerprints")?.unwrap_or_default(),
+            )
+            .map_err(|e| e.to_string())?),
+        // --- Tresor sichern / wiederherstellen (VaultBackupUI, AppModel+Backup) ---
+        // Always the own vault (`AppModel.ownVault`), also while the demo is shown.
+        "write_backup" => {
+            let own = own_vault()?;
+            own.write_backup(local_path(arg(a, "dest_path")?), arg(a, "password")?)
+                .map_err(|e| e.to_string())?;
+            ok(())
+        }
+        "restore_backup" => {
+            let Some(own) = OWN.lock().unwrap().clone() else {
+                return Err(crate::i18n::tr(
+                    "Bitte zuerst Ihren eigenen Tresor öffnen, dann die Sicherung wiederherstellen.",
+                ));
+            };
+            own.restore_backup(local_path(arg(a, "backup_path")?), arg(a, "password")?)
+                .map_err(|e| e.to_string())?;
+            ok(())
         }
         // --- import / export ---
         "preview_moneymoney_file" => {
@@ -1150,6 +1263,31 @@ vault_methods! {
     // --- account selection per login (AccountSelectionView.swift, #346) ---
     connection_account_choices(connection_id) pending_account_selection_connections()
     seed_demo_account_selection()
+    // --- Seitenleiste: Zähler und gefilterte Kategorien (AppModel+Loading/Selection) ---
+    count_planned_payments() count_active_mandates()
+    list_categories_filtered(date_from, date_to, account_ids, checked, direction)
+    category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
+    // --- Geplante Zahlungen (AppModel+Planned, PlannedPaymentsView) ---
+    list_planned_payments(from, to, account_ids) planned_payment_totals(from, to, account_ids)
+    // --- Daueraufträge (AppModel+StandingOrders, StandingOrderSheet) ---
+    list_standing_orders(account_ids) standing_order_limits(account_id, action)
+    // --- Lastschriften / Mandate (AppModel+Mandates, DirectDebitsView, MandateInspector) ---
+    list_mandates(account_id) save_mandate(id, input) delete_mandate(id)
+    import_mandate_rows(account_id, rows) import_pain008(account_id, xml)
+    export_mandates_csv(account_id)
+    creditor_id(account_id) set_creditor_id(account_id, creditor_id) suggested_creditor_id()
+    build_collection_files(account_id, items, collection_date)
+    mark_collected(mandate_ids, due_date)
+    mandate_bookings(mandate_id) open_mandate_returns(account_id)
+    acknowledge_mandate_returns(mandate_id)
+    // --- Tags (AppModel+Tags, TagsUI) ---
+    list_tags() create_tag(name, color_hex)
+    add_tag_to_bookings(booking_ids, tag_id) remove_tag_from_bookings(booking_ids, tag_id)
+    rename_tag(id, name) set_tag_color(id, color_hex) reorder_tags(ids) delete_tag(id)
+    merge_tag_into(source, target) set_booking_tags(booking_id, tag_ids)
+    // --- Anlageklassen (AssetClassificationUI, DepotMetrics) ---
+    classified_assets(account_id)
+    set_asset_class_override(security_key, value) set_instrument_override(security_key, value)
 }
 
 #[cfg(test)]
@@ -1980,6 +2118,210 @@ mod tests {
         assert!(url.contains("%2B1") && !url.contains('+'), "{url}");
         drop(v);
         let _ = std::fs::remove_file(path);
+    }
+
+    /// Calls of the features since v0.7.0 (Geplant, Daueraufträge, Lastschriften, Tags,
+    /// Anlageklassen, Seitenleisten-Zähler) on the seeded demo vault.
+    #[test]
+    fn feature_calls_since_v070() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-feat-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![9; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        // Seitenleiste: counters and the filtered category tree
+        assert!(call("count_planned_payments", json!({})).is_u64());
+        assert!(call("count_active_mandates", json!({})).as_u64().unwrap() > 0);
+        let cats = call(
+            "list_categories_filtered",
+            json!({ "date_from": null, "date_to": null, "account_ids": [], "checked": null,
+                    "direction": "All" }),
+        );
+        let cat = cats.as_array().unwrap()[0]["id"].clone();
+        assert!(call(
+            "category_history_by_unit",
+            json!({ "category_id": cat, "account_ids": [], "date_from": null, "date_to": null,
+                    "key_length": 7 }),
+        )
+        .is_array());
+        // Geplant
+        let range = json!({ "from": null, "to": null, "account_ids": [] });
+        assert!(call("list_planned_payments", range.clone()).is_array());
+        assert!(call("planned_payment_totals", range)["count"].is_u64());
+        // Daueraufträge
+        let orders = call("list_standing_orders", json!({ "account_ids": [] }));
+        assert!(
+            !orders.as_array().unwrap().is_empty(),
+            "demo standing orders"
+        );
+        let acc = orders[0]["account_id"].clone();
+        let limits = call(
+            "standing_order_limits",
+            json!({ "account_id": acc, "action": "Create" }),
+        );
+        assert!(limits.is_null() || limits.is_object());
+        // Lastschriften / Mandate
+        let mandates = call("list_mandates", json!({ "account_id": null }));
+        let first = mandates[0].clone();
+        let giro = first["account_id"].clone();
+        assert_eq!(
+            call("creditor_id", json!({ "account_id": giro })),
+            json!("DE98ZZZ09999999999")
+        );
+        assert_eq!(
+            call("suggested_creditor_id", json!({})),
+            json!("DE98ZZZ09999999999")
+        );
+        assert!(call("mandate_bookings", json!({ "mandate_id": first["id"] })).is_array());
+        assert!(call("open_mandate_returns", json!({ "account_id": null })).is_array());
+        let csv = call("export_mandates_csv", json!({ "account_id": giro }));
+        assert!(csv.as_str().unwrap().contains("M-2024-001"));
+        let parsed = call_ok("parse_mandate_csv", json!({ "text": csv }));
+        assert_eq!(
+            parsed["rows"].as_array().unwrap().len(),
+            mandates.as_array().unwrap().len()
+        );
+        let saved = call(
+            "save_mandate",
+            json!({ "id": null, "input": { "account_id": giro, "debtor_name": "Testverein",
+                "debtor_iban": "DE02120300000000202051", "debtor_bic": "", "reference": "WP0-1",
+                "signed_date": "2025-01-02", "scheme": "Core", "one_off": false,
+                "default_amount_cents": 500, "default_purpose": "Beitrag", "note": "",
+                "active": true } }),
+        );
+        assert_eq!(saved["reference"], "WP0-1");
+        call("delete_mandate", json!({ "id": saved["id"] }));
+        // Tags: create, assign, list, clear, rename, delete
+        let booking = call(
+            "list_transactions",
+            json!({ "filter": {
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 1, "offset": 0, "scope": "All", "merchant_key": null, "direction": "All",
+            "checked": null, "whole_days": false, "tag_ids": [], "untagged_only": false } }),
+        )["transactions"][0]["id"]
+            .clone();
+        let tag = call(
+            "create_tag",
+            json!({ "name": "Testlauf", "color_hex": "#FF9500" }),
+        );
+        let changed = call(
+            "add_tag_to_bookings",
+            json!({ "booking_ids": [booking], "tag_id": tag["id"] }),
+        );
+        assert_eq!(changed, json!([booking]));
+        let listed = call("list_tags", json!({}));
+        let row = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == tag["id"])
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            (row["name"].clone(), row["booking_count"].clone()),
+            (json!("Testlauf"), json!(1))
+        );
+        call(
+            "set_booking_tags",
+            json!({ "booking_id": booking, "tag_ids": [] }),
+        );
+        call("rename_tag", json!({ "id": tag["id"], "name": "Reise" }));
+        let listed = call("list_tags", json!({}));
+        let row = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == tag["id"])
+            .unwrap();
+        assert_eq!(
+            (row["name"].clone(), row["booking_count"].clone()),
+            (json!("Reise"), json!(0))
+        );
+        call("delete_tag", json!({ "id": tag["id"] }));
+        // Anlageklassen
+        for a in call("list_accounts", json!({})).as_array().unwrap() {
+            assert!(call("classified_assets", json!({ "account_id": a["id"] })).is_array());
+        }
+        // Sammelüberweisung: CSV import (free function)
+        let batch = call_ok(
+            "parse_batch_csv",
+            json!({ "text": "Name;IBAN;Betrag;Verwendungszweck\nMia Beispiel;DE89370400440532013000;12,50;Test\n" }),
+        );
+        assert_eq!(batch["rows"].as_array().unwrap().len(), 1, "{batch}");
+        drop(v);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Calls that use the vault slots: backup of the own vault (write, change, restore)
+    /// and a batch transfer session in the registry.
+    #[test]
+    fn backup_round_trip_and_payment_sessions() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("girocrab-backup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let v = Vault::open(dir.join("own.girocrab").display().to_string(), vec![7; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        *VAULT.lock().unwrap() = Some(v.clone());
+        *OWN.lock().unwrap() = Some(v.clone());
+        let backup = dir.join("sicherung.girocrab");
+        call_ok(
+            "write_backup",
+            json!({ "dest_path": format!("file://{}", backup.display()), "password": "geheim" }),
+        );
+        assert!(backup.exists());
+        let tag = call_ok(
+            "create_tag",
+            json!({ "name": "Nach Sicherung", "color_hex": "" }),
+        );
+        let wrong: Value = serde_json::from_str(&call_json(
+            "restore_backup",
+            &json!({ "backup_path": backup.display().to_string(), "password": "falsch" })
+                .to_string(),
+        ))
+        .unwrap();
+        assert!(wrong.get("err").is_some(), "wrong password must be refused");
+        call_ok(
+            "restore_backup",
+            json!({ "backup_path": backup.display().to_string(), "password": "geheim" }),
+        );
+        let tags = call_ok("list_tags", json!({}));
+        assert!(
+            !tags
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["id"] == tag["id"]),
+            "restored vault is the backed-up one"
+        );
+        // Sammelüberweisung on the demo FinTS account: a TransferSession in the registry
+        let mut session = None;
+        for a in call_ok("list_accounts", json!({})).as_array().unwrap() {
+            let r: Value = serde_json::from_str(&call_json(
+                "begin_batch_transfer",
+                &json!({ "request": { "account_id": a["id"], "batch_booking": true,
+                    "execution_date": null, "payments": [{ "name": "Mia Beispiel",
+                    "iban": "DE89370400440532013000", "bic": null, "amount_cents": 1250,
+                    "purpose": "Test" }] }, "secret": "", "demo": true })
+                .to_string(),
+            ))
+            .unwrap();
+            if let Some(id) = r["ok"].as_u64() {
+                session = Some(id);
+                break;
+            }
+        }
+        let id = session.expect("a demo account accepts a batch transfer");
+        assert!(crate::sessions::get(id).is_ok());
+        crate::sessions::remove(id);
+        *VAULT.lock().unwrap() = None;
+        *OWN.lock().unwrap() = None;
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

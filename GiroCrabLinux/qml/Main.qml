@@ -248,15 +248,17 @@ ApplicationWindow {
                 SplitView.minimumWidth: 240 * Theme.textScale; SplitView.preferredWidth: 260 * Theme.textScale; SplitView.maximumWidth: 480 * Theme.textScale
                 onWidthChanged: window.sidebarWidth = width
             }
-            // bookingColumn: Belege or Vermögen replace the booking list
+            // bookingColumn: Belege, Vermögen, Geplant or Lastschriften replace the booking list
             StackLayout {
                 SplitView.minimumWidth: Math.max(360, Math.min(560, window.width - sidebarPane.width - (AppModel.showInspector ? 280 : 0) - 2))
                 SplitView.fillWidth: true
-                currentIndex: AppModel.sidebarSelection === "documents" ? 1 : AppModel.sidebarSelection === "wealth" ? 2 : 0
+                currentIndex: ({ documents: 1, wealth: 2, planned: 3, directDebits: 4 })[AppModel.sidebarSelection] ?? 0
                 BookingStreamView {}
                 DocumentsView {}
                 // built only while shown (it loads the depot positions and the cash history)
                 Loader { active: AppModel.sidebarSelection === "wealth"; sourceComponent: Component { WealthView {} } }
+                Loader { active: AppModel.sidebarSelection === "planned"; sourceComponent: Component { PlannedPaymentsView {} } }
+                Loader { active: AppModel.sidebarSelection === "directDebits"; sourceComponent: Component { DirectDebitsView {} } }
             }
             InspectorView {
                 visible: AppModel.showInspector
