@@ -41,7 +41,7 @@ struct SidebarView: View {
             // the root of the account tree
             // no system badge here: it took the room of the name („All…“); „Neue Umsätze“ and the accounts show the count
             AllAccountsRow()
-                .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
+                .listRowInsets(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 6))
                 .tag(SidebarItem.allAccounts)
                 .contextMenu {
                     Button("Alle als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: model.allAccounts.map(\.id)) }
@@ -214,6 +214,7 @@ struct SidebarView: View {
                 open: open, toggle: toggle
             )
                 .padding(.top, 10)
+                .listRowInsets(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 6))
                 .groupHeaderTap(SidebarItem.group(group.id), toggle: toggle)
                 #if os(iOS)
                 .contextMenu {
@@ -247,6 +248,7 @@ struct SidebarView: View {
                     open: open, toggle: toggle
                 )
                 .padding(.top, 10)
+                .listRowInsets(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 6))
                 .groupHeaderTap(SidebarItem.bank(group.id), toggle: toggle)
                 #if os(iOS)
                 .contextMenu {
@@ -280,6 +282,7 @@ struct SidebarView: View {
                 }, freeLeading: 12))  // the expand/collapse arrow
                 .padding(.top, group.depth == 0 ? 10 : 4)
                 .padding(.leading, indent)
+                .listRowInsets(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 6))
                 .groupHeaderTap(SidebarItem.userGroup(group.uuid), toggle: toggle)
                 .contextMenu {
                     UserGroupMenu(group: group)
@@ -365,7 +368,7 @@ struct SidebarView: View {
     private func accountRow(_ account: Account, drop: DropSlot? = nil) -> some View {
         AccountRow(account: account, syncing: model.syncingConnectionID != nil && model.syncingConnectionID == account.connectionId)
             .dropSlot(drop)
-            .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
+            .listRowInsets(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 6))
             .tag(SidebarItem.account(account.id))
             .contextMenu { accountMenu(account) }
             .popover(isPresented: model.iconColorBinding(.account(account.id)), arrowEdge: .trailing) {
@@ -549,15 +552,20 @@ struct AccountRow: View {
             // tinted like the account's marker in the booking list
             AccountSignet(account: account, size: 20, color: model.accountColor(account.id), onSelection: onSelection)
             VStack(alignment: .leading, spacing: 1) {
+                // row 1: the whole width for the name
                 HStack(spacing: 4) {
-                    // the owner no longer takes room in the title line: tooltip only
-                    Text(account.name).appFont(.subheadline).lineLimit(1).minimumScaleFactor(0.92).sensitive()
+                    // the owner takes no room in the title line: tooltip only
+                    Text(account.name).appFont(.callout, weight: .medium).lineLimit(1).sensitive()
                         .help(account.owner.isEmpty ? "" : account.owner)
                     if account.accessRevoked {
                         Image(systemName: "lock.slash")
                             .appFont(.caption2)
                             .foregroundStyle(.orange)
                             .help("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.")
+                    }
+                    Spacer(minLength: 4)
+                    if syncing {
+                        ProgressView().controlSize(.mini)
                     }
                     // a small dot only; the count sits in the subtitle ("Bank · 8 neu")
                     if account.newCount > 0 {
@@ -567,42 +575,34 @@ struct AccountRow: View {
                             .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
                     }
                 }
-                if let repaid {
-                    // in a line as tall as the bank name of other accounts, so
-                    // loan rows don't sit higher than their neighbours (#171)
-                    ZStack(alignment: .leading) {
-                        Text(verbatim: " ").appFont(.caption2).hidden()
+                // row 2: bank / loan progress left, balance right
+                HStack(spacing: 6) {
+                    if let repaid {
                         ProgressView(value: repaid)
                             .progressViewStyle(.linear)
                             .tint(Theme.loan.opacity(0.7))
                             .controlSize(.mini)
-                            .frame(maxWidth: 110)
+                            .frame(maxWidth: 80)
+                            .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+                        Text("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+                            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    } else if let date = account.archivedDate {
+                        Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
+                            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            .help("Archiviert – wird nicht mehr abgerufen")
+                    } else {
+                        Text(subtitleWithNewCount)
+                            .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
+                            .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
-                } else if let date = account.archivedDate {
-                    Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
-                        .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                        .help("Archiviert – wird nicht mehr abgerufen")
-                } else {
-                    Text(subtitleWithNewCount)
-                        .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
-                        .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 4)
-            if syncing {
-                ProgressView().controlSize(.mini)
-            }
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(Money.format(account.balanceCents, currency: account.currency))
-                    .sensitive()
-                    .appFont(.footnote, monospacedDigit: true)
-                    .fixedSize() // the name truncates, never the balance (#343)
-                    .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
-                if let repaid {
-                    Text("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt").appFont(.caption2).foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Text(Money.format(account.balanceCents, currency: account.currency))
+                        .sensitive()
+                        .appFont(.subheadline, monospacedDigit: true)
+                        .fixedSize() // the subtitle truncates, never the balance (#343)
+                        .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
                 }
             }
         }
