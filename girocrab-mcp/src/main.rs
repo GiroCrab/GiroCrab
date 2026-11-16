@@ -1,9 +1,9 @@
 //! `girocrab-mcp`: started by an MCP client, talks JSON-RPC over stdin/stdout.
 //! Logs go to stderr only (stdout carries the protocol).
 
-use girocrab_mcp::{rpc_error, Adapter, Config};
+use girocrab_mcp::{no_token, rpc_error, Adapter, Config};
 use serde_json::Value;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 const USAGE: &str = "\
@@ -29,19 +29,26 @@ fn main() {
             std::process::exit(2);
         }
     };
-    if config.token.is_none() {
-        // Still serve: the client then shows the tool error that explains the setup.
-        eprintln!("girocrab-mcp: no access key (GIROCRAB_API_TOKEN or --token-file)");
+    if let Err(problem) = &config.token {
+        // Still serve: every tool call then tells the user what to set up.
+        eprintln!("girocrab-mcp: {problem}");
     }
     let mut adapter = Adapter::new(config);
-    let stdin = std::io::stdin();
+    let mut stdin = BufReader::new(std::io::stdin().lock());
     let mut stdout = std::io::stdout().lock();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
+    let mut line = Vec::new();
+    loop {
+        // Bytes, not `lines()`: one line that is not UTF-8 gets a parse error
+        // instead of ending the adapter.
+        line.clear();
+        match stdin.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let answer = match serde_json::from_str::<Value>(&line) {
+        let answer = match serde_json::from_slice::<Value>(&line) {
             Ok(msg) => adapter.handle(&msg),
             Err(e) => Some(rpc_error(Value::Null, -32700, &format!("parse error: {e}"))),
         };
@@ -58,14 +65,14 @@ fn main() {
 
 fn config(args: Vec<String>) -> Result<Config, String> {
     let mut socket = std::env::var_os("GIROCRAB_API_SOCKET").map(PathBuf::from);
-    let mut token = std::env::var("GIROCRAB_API_TOKEN").ok();
+    let mut token = std::env::var("GIROCRAB_API_TOKEN").map_err(|_| no_token());
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--socket" => socket = Some(args.next().ok_or("--socket needs a path")?.into()),
             "--token-file" => {
                 let path = args.next().ok_or("--token-file needs a path")?;
-                token = Some(read_token_file(&path)?);
+                token = read_token_file(&path);
             }
             "--version" => {
                 println!("girocrab-mcp {}", env!("CARGO_PKG_VERSION"));
@@ -82,19 +89,28 @@ fn config(args: Vec<String>) -> Result<Config, String> {
         Some(s) => s,
         None => default_socket().ok_or("no socket path: pass --socket or GIROCRAB_API_SOCKET")?,
     };
-    let token = token
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty());
+    let token = token.and_then(|t| {
+        let t = t.trim().to_string();
+        if t.is_empty() {
+            Err(no_token())
+        } else {
+            Ok(t)
+        }
+    });
     Ok(Config { socket, token })
 }
 
+/// The key, or a message for the user (the adapter still starts, see `main`).
 fn read_token_file(path: &str) -> Result<String, String> {
     use std::os::unix::fs::PermissionsExt;
-    let meta = std::fs::metadata(path).map_err(|e| format!("--token-file {path}: {e}"))?;
+    let unreadable = |e: std::io::Error| {
+        format!("The access key file {path} cannot be read ({e}). Check --token-file in this program's configuration.")
+    };
+    let meta = std::fs::metadata(path).map_err(unreadable)?;
     if meta.permissions().mode() & 0o077 != 0 {
         eprintln!("girocrab-mcp: {path} can be read by other users; chmod 600 it");
     }
-    std::fs::read_to_string(path).map_err(|e| format!("--token-file {path}: {e}"))
+    std::fs::read_to_string(path).map_err(unreadable)
 }
 
 /// Where the macOS app puts its socket.

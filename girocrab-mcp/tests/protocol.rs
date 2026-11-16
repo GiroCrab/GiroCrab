@@ -1,28 +1,14 @@
-use super::*;
+//! The protocol side of the adapter against a stand-in for the app, and the
+//! built binary over stdio.
+
+mod common;
+
+use common::ShortDir;
+use girocrab_mcp::{no_token, Adapter, Config, PROTOCOL_VERSIONS};
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
-
-/// A short directory: `sun_path` holds only 104 bytes on macOS.
-struct ShortDir(PathBuf);
-
-impl ShortDir {
-    fn new() -> Self {
-        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let dir = PathBuf::from(format!("/tmp/gcm-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
-    }
-    fn socket(&self) -> PathBuf {
-        self.0.join("s.sock")
-    }
-}
-
-impl Drop for ShortDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// Stands in for the app: answers each request line with `answer(request)`;
 /// `None` closes the connection without an answer. Records every request.
@@ -54,7 +40,7 @@ fn fake_app(
 fn adapter(dir: &ShortDir) -> Adapter {
     Adapter::new(Config {
         socket: dir.socket(),
-        token: Some("gcapi_test".into()),
+        token: Ok("gcapi_test".into()),
     })
 }
 
@@ -72,7 +58,7 @@ fn text(result: &Value) -> String {
 fn initialize_answers_the_asked_version_or_the_newest() {
     let mut a = Adapter::new(Config {
         socket: "/nonexistent".into(),
-        token: None,
+        token: Err(no_token()),
     });
     let init = |a: &mut Adapter, v: &str| {
         let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -96,7 +82,7 @@ fn initialize_answers_the_asked_version_or_the_newest() {
 fn notifications_get_no_answer_and_unknown_requests_an_error() {
     let mut a = Adapter::new(Config {
         socket: "/nonexistent".into(),
-        token: None,
+        token: Err(no_token()),
     });
     let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
     assert_eq!(a.handle(&note), None);
@@ -119,7 +105,7 @@ fn notifications_get_no_answer_and_unknown_requests_an_error() {
 fn tools_are_listed_read_only_with_object_schemas() {
     let mut a = Adapter::new(Config {
         socket: "/nonexistent".into(),
-        token: None,
+        token: Err(no_token()),
     });
     let r = a
         .handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
@@ -196,7 +182,7 @@ fn refusals_become_readable_tool_errors() {
 fn an_unknown_tool_is_a_protocol_error() {
     let mut a = Adapter::new(Config {
         socket: "/nonexistent".into(),
-        token: None,
+        token: Err(no_token()),
     });
     let msg =
         json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "pay" } });
@@ -207,12 +193,12 @@ fn an_unknown_tool_is_a_protocol_error() {
 fn without_key_or_app_the_user_is_told_what_to_do() {
     let mut a = Adapter::new(Config {
         socket: "/nonexistent/s.sock".into(),
-        token: None,
+        token: Err(no_token()),
     });
     assert!(text(&call(&mut a, "get_info", json!({}))).contains("GIROCRAB_API_TOKEN"));
     let mut a = Adapter::new(Config {
         socket: "/nonexistent/s.sock".into(),
-        token: Some("k".into()),
+        token: Ok("k".into()),
     });
     let r = call(&mut a, "get_info", json!({}));
     assert_eq!(r["isError"], true);
@@ -239,18 +225,159 @@ fn a_connection_closed_by_the_app_is_reopened() {
     );
 }
 
+/// Like the app at its connection limit: answers `busy` right on connect,
+/// without reading the request, and closes.
+fn busy_app(dir: &ShortDir, busy_connections: usize) -> Arc<Mutex<usize>> {
+    let listener = UnixListener::bind(dir.socket()).unwrap();
+    let served = Arc::new(Mutex::new(0));
+    let count = served.clone();
+    std::thread::spawn(move || {
+        for (n, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { return };
+            if n < busy_connections {
+                let _ = writeln!(
+                    stream,
+                    r#"{{"v":1,"error":{{"code":"busy","message":"too many"}}}}"#
+                );
+                continue; // dropped: closed without reading
+            }
+            *count.lock().unwrap() += 1;
+            let mut out = stream.try_clone().unwrap();
+            for _ in BufReader::new(stream).lines() {
+                writeln!(out, r#"{{"v":1,"result":{{}}}}"#).unwrap();
+            }
+        }
+    });
+    served
+}
+
 #[test]
 fn busy_is_waited_out() {
     let d = ShortDir::new();
-    let n = Arc::new(Mutex::new(0));
-    fake_app(&d, move |_| {
-        let mut n = n.lock().unwrap();
-        *n += 1;
-        Some(if *n < 3 {
-            json!({ "v": 1, "error": { "code": "busy", "message": "too many" } })
-        } else {
-            json!({ "v": 1, "result": {} })
-        })
-    });
+    let served = busy_app(&d, 2);
     assert_eq!(adapter(&d).request("info", json!({})).unwrap(), json!({}));
+    assert_eq!(*served.lock().unwrap(), 1);
+}
+
+#[test]
+fn busy_for_too_long_is_told_as_busy() {
+    let d = ShortDir::new();
+    busy_app(&d, 100);
+    let r = call(&mut adapter(&d), "get_info", json!({}));
+    assert_eq!(r["isError"], true);
+    assert!(text(&r).contains("busy"), "{}", text(&r));
+}
+
+#[test]
+fn responses_from_the_client_get_no_answer() {
+    let mut a = Adapter::new(Config {
+        socket: "/nonexistent".into(),
+        token: Err(no_token()),
+    });
+    assert_eq!(
+        a.handle(&json!({ "jsonrpc": "2.0", "id": 5, "result": {} })),
+        None
+    );
+    assert_eq!(
+        a.handle(&json!({ "jsonrpc": "2.0", "id": 6, "error": { "code": 1, "message": "x" } })),
+        None
+    );
+    let r = a.handle(&json!({ "jsonrpc": "2.0", "id": 7 })).unwrap();
+    assert_eq!(r["error"]["code"], -32600, "neither request nor response");
+}
+
+#[test]
+fn structured_content_only_from_2025_06_18() {
+    let d = ShortDir::new();
+    fake_app(&d, |_| Some(json!({ "v": 1, "result": { "a": 1 } })));
+    for (version, structured) in [
+        ("2025-06-18", true),
+        ("2025-03-26", false),
+        ("2024-11-05", false),
+    ] {
+        let mut a = adapter(&d);
+        a.handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                          "params": { "protocolVersion": version } }));
+        let r = call(&mut a, "get_info", json!({}));
+        assert_eq!(r["structuredContent"].is_object(), structured, "{version}");
+        assert_eq!(text(&r), r#"{"a":1}"#, "compact text");
+    }
+}
+
+#[test]
+fn an_unreadable_answer_is_reported_and_not_asked_again() {
+    let d = ShortDir::new();
+    let listener = UnixListener::bind(d.socket()).unwrap();
+    let requests = Arc::new(Mutex::new(0));
+    let count = requests.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let mut out = stream.try_clone().unwrap();
+            for _ in BufReader::new(stream).lines() {
+                *count.lock().unwrap() += 1;
+                writeln!(out, "not json").unwrap();
+            }
+        }
+    });
+    let r = call(&mut adapter(&d), "get_info", json!({}));
+    assert_eq!(r["isError"], true);
+    assert!(text(&r).contains("unreadable answer"), "{}", text(&r));
+    assert_eq!(*requests.lock().unwrap(), 1);
+}
+
+#[test]
+fn a_long_or_forbidden_socket_path_is_explained() {
+    let long = format!("/tmp/{}/s.sock", "x".repeat(120));
+    let mut a = Adapter::new(Config {
+        socket: long.into(),
+        token: Ok("k".into()),
+    });
+    let r = call(&mut a, "get_info", json!({}));
+    assert!(text(&r).contains("too long"), "{}", text(&r));
+}
+
+/// The built binary, as an MCP client starts it.
+fn run_binary(args: &[&str], env_token: Option<&str>, input: &[u8]) -> (Vec<Value>, String) {
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_girocrab-mcp"));
+    cmd.args(args)
+        .env("GIROCRAB_API_SOCKET", "/tmp/gcm-no-such.sock")
+        .env_remove("GIROCRAB_API_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(t) = env_token {
+        cmd.env("GIROCRAB_API_TOKEN", t);
+    }
+    let mut child = cmd.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let answers = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    (answers, String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[test]
+fn a_line_that_is_not_utf8_does_not_end_the_adapter() {
+    let mut input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"list_transactions\",\"arguments\":{\"search\":\"B\xe4cker\"}}}\n".to_vec();
+    input.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n");
+    let (answers, _) = run_binary(&[], Some("k"), &input);
+    assert_eq!(answers.len(), 2);
+    assert_eq!(answers[0]["error"]["code"], -32700);
+    assert_eq!(answers[1]["id"], 2);
+    assert_eq!(answers[1]["result"], json!({}));
+}
+
+#[test]
+fn an_unreadable_key_file_is_explained_on_every_call() {
+    let input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_info\"}}\n";
+    let (answers, stderr) = run_binary(&["--token-file", "/tmp/gcm-no-such-key"], None, input);
+    let text = answers[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(answers[0]["result"]["isError"], true);
+    assert!(text.contains("cannot be read"), "{text}");
+    assert!(stderr.contains("cannot be read"), "{stderr}");
 }
