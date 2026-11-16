@@ -7162,17 +7162,6 @@
         }
       }
     },
-    "Das Hilfsprogramm fehlt in diesem Build." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The helper is missing from this build."
-          }
-        }
-      }
-    },
     "Das Hilfsprogramm hat nicht rechtzeitig geantwortet. Versuchen Sie es noch einmal." : {
       "extractionState" : "manual",
       "localizations" : {

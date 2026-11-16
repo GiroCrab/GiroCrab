@@ -2,6 +2,7 @@
 //! Logs go to stderr only (stdout carries the protocol).
 
 use girocrab_mcp::{no_token, rpc_error, Adapter, Config};
+use serde_json::json;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -9,7 +10,7 @@ use std::path::PathBuf;
 const USAGE: &str = "\
 girocrab-mcp: MCP server (stdio) for GiroCrab's read-only local interface
 
-Usage: girocrab-mcp [--socket <path>] [--token-file <path>] [--check]
+Usage: girocrab-mcp [--socket <path>] [--token-file <path>] [--check [--json]]
 
 The access key comes from GiroCrab (Settings › Analysis). Pass it in the
 environment as GIROCRAB_API_TOKEN, or as a file with --token-file; never as an
@@ -21,11 +22,14 @@ argument (other programs can read the command line).
   --check              test the connection and the key, print the result and exit
                        (0 works, 3 not reachable, 4 no key, 5 key not accepted,
                        6 turned off, 7 locked, 8 busy, 1 other)
+  --json               with --check: one JSON line {\"problem\": …, \"message\": …}
+                       (problem: ok, unreachable, no_key, key_rejected, disabled,
+                       locked, busy, other)
   --version            print the version
 ";
 
 fn main() {
-    let (config, check) = match config(std::env::args().skip(1).collect()) {
+    let (config, check, json_output) = match config(std::env::args().skip(1).collect()) {
         Ok(c) => c,
         Err(message) => {
             eprintln!("{message}");
@@ -38,17 +42,22 @@ fn main() {
     }
     let mut adapter = Adapter::new(config);
     if check {
-        std::process::exit(match adapter.check() {
+        let (problem, message, code) = match adapter.check() {
             Ok(info) => {
                 let accounts = &info["account_count"];
-                println!("OK: GiroCrab answers and accepts the key; shared accounts: {accounts}.");
-                0
+                let message = format!(
+                    "OK: GiroCrab answers and accepts the key; shared accounts: {accounts}."
+                );
+                ("ok", message, 0)
             }
-            Err(e) => {
-                println!("{}", e.message);
-                e.problem.exit_code()
-            }
-        });
+            Err(e) => (e.problem.name(), e.message, e.problem.exit_code()),
+        };
+        if json_output {
+            println!("{}", json!({ "problem": problem, "message": message }));
+        } else {
+            println!("{message}");
+        }
+        std::process::exit(code);
     }
     let mut stdin = BufReader::new(std::io::stdin().lock());
     let mut stdout = std::io::stdout().lock();
@@ -79,11 +88,11 @@ fn main() {
     }
 }
 
-/// The configuration and whether `--check` was asked for.
-fn config(args: Vec<String>) -> Result<(Config, bool), String> {
+/// The configuration, and whether `--check` and `--json` were asked for.
+fn config(args: Vec<String>) -> Result<(Config, bool, bool), String> {
     let mut socket = std::env::var_os("GIROCRAB_API_SOCKET").map(PathBuf::from);
     let mut token = std::env::var("GIROCRAB_API_TOKEN").map_err(|_| no_token());
-    let mut check = false;
+    let (mut check, mut json_output) = (false, false);
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -93,6 +102,7 @@ fn config(args: Vec<String>) -> Result<(Config, bool), String> {
                 token = read_token_file(&path);
             }
             "--check" => check = true,
+            "--json" => json_output = true,
             "--version" => {
                 println!("girocrab-mcp {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
@@ -115,7 +125,7 @@ fn config(args: Vec<String>) -> Result<(Config, bool), String> {
             Ok(t)
         }
     });
-    Ok((Config { socket, token }, check))
+    Ok((Config { socket, token }, check, json_output))
 }
 
 /// The key, or a message for the user (the adapter still starts, see `main`).

@@ -9,11 +9,16 @@ import GiroCrabCore
 struct ExternalAccessSettings: View {
     @Environment(AppModel.self) private var model
     @State private var confirmRevoke = false
-    @State private var checking = false
-    @State private var checkResult: LocalApiCheck?
-    /// Bumped by every test and by a key change: a test still running when the
-    /// key changed must not show its now stale result.
-    @State private var checkRun = 0
+    /// The bundled MCP helper, looked up when the pane appears (not on every redraw).
+    @State private var helper: URL?
+    @State private var check: CheckState = .idle
+    /// The running connection test; cancelling it also ends the helper process.
+    @State private var checkTask: Task<Void, Never>?
+
+    private enum CheckState: Equatable {
+        case idle, running
+        case done(LocalApiCheck)
+    }
 
     var body: some View {
         Form {
@@ -33,8 +38,12 @@ struct ExternalAccessSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onDisappear { model.forgetNewLocalApiToken() }
-        // A new or revoked key makes an earlier test result stale.
+        .onAppear { helper = AppModel.localApiHelperURL }
+        .onDisappear {
+            model.forgetNewLocalApiToken()
+            forgetCheck()
+        }
+        // A new or revoked key makes an earlier (or running) test stale.
         .onChange(of: model.localApiNewToken) { forgetCheck() }
         .onChange(of: hasToken) { forgetCheck() }
         .confirmationDialog("Zugriff widerrufen?", isPresented: $confirmRevoke, titleVisibility: .visible) {
@@ -152,8 +161,8 @@ struct ExternalAccessSettings: View {
         Section {
             Text("Für KI-Assistenten und andere MCP-Clients liegt GiroCrab ein Hilfsprogramm bei. Tragen Sie den folgenden Eintrag in die MCP-Konfiguration Ihres Programms ein; es startet das Hilfsprogramm dann selbst.")
                 .appFont(.callout).foregroundStyle(.secondary)
-            if let helper = AppModel.localApiHelperURL {
-                if AppModel.localApiHelperIsTemporary {
+            if let helper {
+                if AppModel.localApiHelperIsTemporary(helper) {
                     Label("GiroCrab läuft aus einer vorübergehenden Kopie. Bewegen Sie die App in den Ordner „Programme“ und starten Sie sie neu, damit der Pfad im Eintrag dauerhaft gilt.", systemImage: "exclamationmark.triangle")
                         .appFont(.callout)
                 }
@@ -173,23 +182,14 @@ struct ExternalAccessSettings: View {
                         if token != nil { VaultKeyManager.copyToPasteboard(config) } else { copyToPasteboard(config) }
                     }
                     Button("Programmpfad kopieren") { copyToPasteboard(helper.path) }
-                    Button("Verbindung testen") {
-                        checkRun += 1
-                        let run = checkRun
-                        checking = true
-                        Task {
-                            let result = await model.checkLocalApiConnection()
-                            guard run == checkRun else { return }
-                            checkResult = result
-                            checking = false
-                        }
-                    }
-                    .disabled(checking)
+                    Button("Verbindung testen") { startCheck(helper) }
+                        .disabled(check == .running)
                 }
-                if checking {
-                    ProgressView().controlSize(.small)
-                } else if let checkResult {
-                    Label(checkText(checkResult), systemImage: checkResult == .works ? "checkmark.circle" : "exclamationmark.triangle")
+                switch check {
+                case .idle: EmptyView()
+                case .running: ProgressView().controlSize(.small)
+                case .done(let result):
+                    Label(checkText(result), systemImage: result == .works ? "checkmark.circle" : "exclamationmark.triangle")
                         .appFont(.callout)
                 }
             } else {
@@ -204,10 +204,19 @@ struct ExternalAccessSettings: View {
         } header: { Text("Für KI-Assistenten").appSectionHeader() }
     }
 
+    private func startCheck(_ helper: URL) {
+        checkTask?.cancel()
+        check = .running
+        checkTask = Task {
+            let result = await model.checkLocalApiConnection(helper: helper)
+            if !Task.isCancelled { check = .done(result) }
+        }
+    }
+
     private func forgetCheck() {
-        checkRun += 1
-        checking = false
-        checkResult = nil
+        checkTask?.cancel()
+        checkTask = nil
+        check = .idle
     }
 
     private func checkText(_ result: LocalApiCheck) -> String {
@@ -220,7 +229,6 @@ struct ExternalAccessSettings: View {
         case .locked: String(localized: "GiroCrab ist gesperrt.")
         case .busy: String(localized: "Alle Verbindungen sind belegt. Versuchen Sie es gleich noch einmal.")
         case .noAnswer: String(localized: "Das Hilfsprogramm hat nicht rechtzeitig geantwortet. Versuchen Sie es noch einmal.")
-        case .helperMissing: String(localized: "Das Hilfsprogramm fehlt in diesem Build.")
         case .failed(let output): String(localized: "Der Test ist fehlgeschlagen: \(output)")
         }
     }

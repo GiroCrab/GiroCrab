@@ -201,6 +201,28 @@ fn check(socket: &std::path::Path, token: Option<&str>) -> (i32, String) {
 }
 
 #[test]
+fn check_json_names_the_problem() {
+    let dir = ShortDir::new();
+    let app = serve(&dir);
+    let json_check = |token: &str| -> Value {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_girocrab-mcp"))
+            .args(["--check", "--json"])
+            .env("GIROCRAB_API_SOCKET", &app.socket)
+            .env("GIROCRAB_API_TOKEN", token)
+            .output()
+            .unwrap();
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    // The names the app's settings pane reads (LocalApiCheck in the app).
+    assert_eq!(json_check(&app.token)["problem"], "ok");
+    assert_eq!(json_check("gcapi_wrong")["problem"], "key_rejected");
+    app.server.stop();
+    let gone = json_check(&app.token);
+    assert_eq!(gone["problem"], "unreachable");
+    assert!(gone["message"].as_str().unwrap().contains("not reachable"));
+}
+
+#[test]
 fn check_tells_each_case_apart() {
     let dir = ShortDir::new();
     let app = serve(&dir);

@@ -228,45 +228,61 @@ final class LocalApiServerTests: XCTestCase {
     }
 
     #if os(macOS)
-    /// The exit codes of `girocrab-mcp --check` (girocrab-mcp/src/lib.rs,
-    /// `Problem::exit_code`) and what the pane makes of them, with a stand-in
-    /// script for the helper (runs in CI, where the helper is not built).
-    func testEveryCheckExitCodeIsMapped() async throws {
-        let cases: [(Int32, LocalApiCheck)] = [
-            (0, .works), (3, .notReachable), (4, .reachableWithoutKey), (5, .keyRejected),
-            (6, .turnedOff), (7, .locked), (8, .busy), (1, .failed("something odd")),
-        ]
+    /// A stand-in for the helper (runs in CI, where it is not built): a script
+    /// printing `body` and exiting with `code`.
+    private func fakeHelper(_ body: String, code: Int32 = 0) throws -> URL {
         let script = dir.appendingPathComponent("fake-helper")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { AppModel.localApiHelperOverride = nil }
-        for (code, expected) in cases {
-            try "#!/bin/sh\necho 'something odd' >&2\nexit \(code)\n".write(to: script, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-            AppModel.localApiHelperOverride = script
-            let result = await model.checkLocalApiConnection()
-            XCTAssertEqual(result, expected, "exit \(code)")
+        try "#!/bin/sh\n\(body)\nexit \(code)\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        return script
+    }
+
+    /// The names of `girocrab-mcp --check --json` (girocrab-mcp/src/lib.rs,
+    /// `Problem::name`) and what the pane makes of them.
+    func testEveryCheckProblemIsMapped() async throws {
+        let cases: [(String, LocalApiCheck)] = [
+            ("ok", .works), ("unreachable", .notReachable), ("no_key", .reachableWithoutKey),
+            ("key_rejected", .keyRejected), ("disabled", .turnedOff), ("locked", .locked),
+            ("busy", .busy), ("other", .failed("odd")), ("something_new", .failed("odd")),
+        ]
+        for (name, expected) in cases {
+            let helper = try fakeHelper(#"echo '{"problem":"\#(name)","message":"odd"}'"#)
+            let result = await model.checkLocalApiConnection(helper: helper)
+            XCTAssertEqual(result, expected, name)
         }
+        // No JSON at all (an older helper, a usage error on stderr): its first line.
+        let old = try fakeHelper("echo 'unknown argument: --json' >&2", code: 2)
+        let result = await model.checkLocalApiConnection(helper: old)
+        XCTAssertEqual(result, .failed("unknown argument: --json"))
+    }
+
+    func testCancellingTheCheckEndsTheHelper() async throws {
+        let slow = try fakeHelper("sleep 30")
+        let started = Date()
+        let check = Task { await model.checkLocalApiConnection(helper: slow) }
+        try await Task.sleep(for: .milliseconds(300))
+        check.cancel()
+        let result = await check.value
+        XCTAssertEqual(result, .noAnswer)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the helper was stopped, not waited for")
     }
 
     func testTheConnectionTestRunsTheHelperAgainstTheSocket() async throws {
-        // Tests/GiroCrabUITests/<file> → the repository root.
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let built = root.appendingPathComponent("target/release/girocrab-mcp")
-        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: built.path),
-                          "girocrab-mcp not built (cargo build --release -p girocrab-mcp)")
-        AppModel.localApiHelperOverride = built
-        defer { AppModel.localApiHelperOverride = nil }
+        // Not built in CI's Swift job: skipped there, the mapping is covered above.
+        guard let built = AppModel.localApiDevelopmentHelper() else {
+            throw XCTSkip("girocrab-mcp not built (cargo build -p girocrab-mcp)")
+        }
         try await enable()
         _ = await model.createLocalApiToken()
         try await awaitRunning(true)
-        let works = await model.checkLocalApiConnection()
+        let works = await model.checkLocalApiConnection(helper: built)
         XCTAssertEqual(works, .works)
         model.forgetNewLocalApiToken() // pane closed: no key at hand any more
-        let reachable = await model.checkLocalApiConnection()
+        let reachable = await model.checkLocalApiConnection(helper: built)
         XCTAssertEqual(reachable, .reachableWithoutKey)
         model.lock()
-        let gone = await model.checkLocalApiConnection()
+        let gone = await model.checkLocalApiConnection(helper: built)
         XCTAssertEqual(gone, .notReachable)
     }
 

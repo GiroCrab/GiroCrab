@@ -27,38 +27,41 @@ extension AppModel {
     /// newer of `target/release` and `target/debug` (looked up each time, so a
     /// helper built while the app runs is found). nil = not built. macOS only:
     /// on iOS no other app could reach the socket.
-    nonisolated static var localApiHelperURL: URL? { localApiHelperOverride ?? foundLocalApiHelper() }
-
-    /// Tests: the helper built in the repository (the test runner is no app bundle).
-    nonisolated(unsafe) static var localApiHelperOverride: URL?
-
-    /// The app runs from a temporary copy (Gatekeeper's App Translocation when it
-    /// was opened from Downloads): the helper's path vanishes after a restart.
-    nonisolated static var localApiHelperIsTemporary: Bool {
-        localApiHelperURL?.path.contains("/AppTranslocation/") == true
+    nonisolated static var localApiHelperURL: URL? {
+        if let bundledLocalApiHelper { return bundledLocalApiHelper }
+        #if DEBUG
+        return localApiDevelopmentHelper()
+        #else
+        return nil
+        #endif
     }
 
-    nonisolated private static func foundLocalApiHelper() -> URL? {
+    nonisolated private static let bundledLocalApiHelper: URL? = {
+        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/girocrab-mcp")
+        return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+    }()
+
+    #if DEBUG
+    /// The helper built in this source tree (also for the tests, whose runner
+    /// is no app bundle): this file is GiroCrabApp/Sources/GiroCrabUI/….
+    nonisolated static func localApiDevelopmentHelper(sourceFile: String = #filePath) -> URL? {
         let fm = FileManager.default
-        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/girocrab-mcp")
-        if fm.isExecutableFile(atPath: bundled.path) { return bundled }
-        #if DEBUG
-        // swift build / swift run: walk up from .build/… to the workspace root.
-        var dir = Bundle.main.executableURL?.deletingLastPathComponent()
-        while let d = dir, d.path != "/" {
-            if fm.fileExists(atPath: d.appendingPathComponent("girocrab-mcp/Cargo.toml").path) {
-                let built = ["release", "debug"]
-                    .map { d.appendingPathComponent("target/\($0)/girocrab-mcp") }
-                    .filter { fm.isExecutableFile(atPath: $0.path) }
-                let modified = { (url: URL) in
-                    (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
-                }
-                return built.max { modified($0) < modified($1) }
-            }
-            dir = d.deletingLastPathComponent()
+        var root = URL(fileURLWithPath: sourceFile)
+        for _ in 0..<4 { root.deleteLastPathComponent() }
+        let modified = { (url: URL) in
+            (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
         }
-        #endif
-        return nil
+        return ["release", "debug"]
+            .map { root.appendingPathComponent("target/\($0)/girocrab-mcp") }
+            .filter { fm.isExecutableFile(atPath: $0.path) }
+            .max { modified($0) < modified($1) }
+    }
+    #endif
+
+    /// `helper` runs from a temporary copy (Gatekeeper's App Translocation when
+    /// the app was opened from Downloads): its path vanishes after a restart.
+    nonisolated static func localApiHelperIsTemporary(_ helper: URL) -> Bool {
+        helper.path.contains("/AppTranslocation/")
     }
 
     /// The entry for an MCP client's configuration (the common `mcpServers`
@@ -80,23 +83,30 @@ extension AppModel {
         """
     }
 
-    /// Runs the helper's `--check` against this app's socket, the way an MCP
-    /// client reaches GiroCrab: with the key just created if it is still shown,
-    /// otherwise without one (then only reachability is known).
-    func checkLocalApiConnection() async -> LocalApiCheck {
-        guard let helper = Self.localApiHelperURL else { return .helperMissing }
-        let run = await Self.runHelperCheck(helper, socket: Self.localApiSocketPath, token: localApiNewToken)
-        guard let code = run.code else { return .noAnswer }
-        // The exit codes of `girocrab-mcp --check` (girocrab-mcp/src/lib.rs, Problem::exit_code).
-        switch code {
-        case 0: return .works
-        case 3: return .notReachable
-        case 4: return .reachableWithoutKey
-        case 5: return .keyRejected
-        case 6: return .turnedOff
-        case 7: return .locked
-        case 8: return .busy
-        default: return .failed(run.output)
+    /// Runs `helper --check --json` the way an MCP client starts it: on the
+    /// helper's default socket path (the app's own only when tests moved it), with
+    /// the key just created if it is still shown, otherwise without one (then
+    /// only reachability is known). Cancelling the task ends the helper.
+    func checkLocalApiConnection(helper: URL) async -> LocalApiCheck {
+        let socket = Self.localApiSocketPathOverride
+        guard let output = await Self.runHelperCheck(helper, socket: socket, token: localApiNewToken) else {
+            return .noAnswer
+        }
+        // `--check --json` prints {"problem": …, "message": …} on stdout (girocrab-mcp,
+        // Problem::name); stderr carries warnings, or the error of an older helper.
+        let answer = (try? JSONSerialization.jsonObject(with: Data(output.stdout.utf8))) as? [String: Any]
+        let firstLine = { (text: String) in text.split(separator: "\n").first.map(String.init) }
+        let message = answer?["message"] as? String
+            ?? firstLine(output.stderr) ?? firstLine(output.stdout) ?? ""
+        switch answer?["problem"] as? String {
+        case "ok": return .works
+        case "unreachable": return .notReachable
+        case "no_key": return .reachableWithoutKey
+        case "key_rejected": return .keyRejected
+        case "disabled": return .turnedOff
+        case "locked": return .locked
+        case "busy": return .busy
+        default: return .failed(message)
         }
     }
 
@@ -104,36 +114,43 @@ extension AppModel {
     /// short retries), so its own message arrives rather than a kill.
     nonisolated private static let helperCheckLimit: TimeInterval = 45
 
-    /// Exit code (nil when it had to be stopped) and first output line of
-    /// `girocrab-mcp --check` (stdout, or stderr for a usage error).
-    nonisolated private static func runHelperCheck(_ helper: URL, socket: String, token: String?) async -> (code: Int32?, output: String) {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = helper
-            process.arguments = ["--check"]
-            var env = ProcessInfo.processInfo.environment
-            env["GIROCRAB_API_SOCKET"] = socket
-            env["GIROCRAB_API_TOKEN"] = token
-            process.environment = env
-            let output = Pipe()
-            process.standardOutput = output
-            process.standardError = output
-            process.standardInput = FileHandle.nullDevice
-            process.terminationHandler = { p in
-                let data = output.fileHandleForReading.readDataToEndOfFile()
-                let line = String(decoding: data, as: UTF8.self).split(separator: "\n").first.map(String.init) ?? ""
-                let code = p.terminationReason == .exit ? p.terminationStatus : nil
-                continuation.resume(returning: (code, line))
+    /// Output of `girocrab-mcp --check --json`; nil when it had to be stopped
+    /// (time limit or the calling task was cancelled).
+    nonisolated private static func runHelperCheck(
+        _ helper: URL, socket: String?, token: String?
+    ) async -> (stdout: String, stderr: String)? {
+        let process = Process()
+        process.executableURL = helper
+        process.arguments = ["--check", "--json"]
+        var env = ProcessInfo.processInfo.environment
+        env["GIROCRAB_API_SOCKET"] = socket
+        env["GIROCRAB_API_TOKEN"] = token
+        process.environment = env
+        let stdout = Pipe(), stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        process.standardInput = FileHandle.nullDevice
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                process.terminationHandler = { p in
+                    let read = { (pipe: Pipe) in
+                        String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                    }
+                    let output = (stdout: read(stdout), stderr: read(stderr))
+                    continuation.resume(returning: p.terminationReason == .exit ? output : nil)
+                }
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(returning: (stdout: "", stderr: error.localizedDescription))
+                    return
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + helperCheckLimit) {
+                    if process.isRunning { process.terminate() }
+                }
             }
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: (-1, error.localizedDescription))
-                return
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + helperCheckLimit) {
-                if process.isRunning { process.terminate() }
-            }
+        } onCancel: {
+            if process.isRunning { process.terminate() }
         }
     }
     #endif

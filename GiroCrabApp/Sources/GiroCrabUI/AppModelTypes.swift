@@ -538,7 +538,7 @@ extension AccountKind {
     }
 }
 
-/// Result of the connection test in Einstellungen › Analyse (`girocrab-mcp --check`).
+/// Result of the connection test in Einstellungen › Analyse (`girocrab-mcp --check --json`).
 enum LocalApiCheck: Equatable {
     /// The helper reached GiroCrab and the key was accepted.
     case works
@@ -551,8 +551,6 @@ enum LocalApiCheck: Equatable {
     case busy
     /// The helper did not finish in time and was stopped.
     case noAnswer
-    /// The helper is not part of this build.
-    case helperMissing
     case failed(String)
 }
 

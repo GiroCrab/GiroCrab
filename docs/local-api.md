@@ -94,9 +94,8 @@ Eintrag in der Konfiguration des MCP-Clients (Form je nach Client):
 }
 ```
 
-Verbindung von der Kommandozeile prüfen: `girocrab-mcp --check` (Exit-Code 0 = funktioniert, 3 = nicht
-erreichbar, 4 = kein Schlüssel, 5 = Schlüssel abgelehnt, 6 = ausgeschaltet, 7 = gesperrt, 8 = belegt,
-1 = Sonstiges).
+Verbindung von der Kommandozeile prüfen: `girocrab-mcp --check` (mit `--json` als eine JSON-Zeile mit
+`problem` und `message`; Exit-Codes und Namen nennt `girocrab-mcp --help`).
 
 Den Schlüssel nie als Argument übergeben (die Befehlszeile ist für andere Programme sichtbar):
 `GIROCRAB_API_TOKEN` im Client-Eintrag oder `--token-file <Datei>` (Datei nur für Sie lesbar). Der

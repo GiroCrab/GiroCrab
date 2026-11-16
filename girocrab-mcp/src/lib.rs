@@ -165,8 +165,7 @@ pub enum Problem {
 }
 
 impl Problem {
-    /// Exit code of `--check` (0 = works, 2 = wrong arguments). The app's
-    /// settings pane maps these to its own texts.
+    /// Exit code of `--check` for shells (0 = works, 2 = wrong arguments).
     pub fn exit_code(self) -> i32 {
         match self {
             Problem::Other => 1,
@@ -176,6 +175,19 @@ impl Problem {
             Problem::Disabled => 6,
             Problem::Locked => 7,
             Problem::Busy => 8,
+        }
+    }
+
+    /// Name in `--check --json` (`"problem"`), what the app's settings pane reads.
+    pub fn name(self) -> &'static str {
+        match self {
+            Problem::Unreachable => "unreachable",
+            Problem::NoKey => "no_key",
+            Problem::KeyRejected => "key_rejected",
+            Problem::Disabled => "disabled",
+            Problem::Locked => "locked",
+            Problem::Busy => "busy",
+            Problem::Other => "other",
         }
     }
 }
@@ -194,34 +206,40 @@ impl ToolError {
             message: message.into(),
         }
     }
+
+    fn other(message: impl Into<String>) -> Self {
+        Self::new(Problem::Other, message)
+    }
 }
 
 const SETTINGS: &str = "Settings › Analysis, German: Einstellungen › Analyse";
+const UNREADABLE: &str = "GiroCrab sent an unreadable answer";
 
 /// The socket answer of a refused request, as something the user can act on.
 fn api_error(code: &str, message: &str) -> ToolError {
-    match code {
-        "locked" => ToolError::new(
+    let (problem, text) = match code {
+        "locked" => (
             Problem::Locked,
-            "GiroCrab is locked. Unlock it to continue.",
+            "GiroCrab is locked. Unlock it to continue.".into(),
         ),
-        "disabled" => ToolError::new(
+        "disabled" => (
             Problem::Disabled,
             format!("External analysis is turned off in GiroCrab ({SETTINGS})."),
         ),
-        "unauthorized" => ToolError::new(
+        "unauthorized" => (
             Problem::KeyRejected,
             format!(
                 "GiroCrab did not accept the access key. Create a new key in GiroCrab \
                  ({SETTINGS}) and update this program's configuration."
             ),
         ),
-        "busy" => ToolError::new(
+        "busy" => (
             Problem::Busy,
-            "GiroCrab is busy with other programs. Try again shortly.",
+            "GiroCrab is busy with other programs. Try again shortly.".into(),
         ),
-        _ => ToolError::new(Problem::Other, format!("{code}: {message}")),
-    }
+        _ => (Problem::Other, format!("{code}: {message}")),
+    };
+    ToolError::new(problem, text)
 }
 
 /// Why one exchange brought no answer.
@@ -234,29 +252,32 @@ enum NoAnswer {
 
 fn connect_error(socket: &Path, e: std::io::Error) -> ToolError {
     let socket = socket.display();
-    if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) {
-        return ToolError::new(
+    let (problem, text) = match e.kind() {
+        ErrorKind::NotFound | ErrorKind::ConnectionRefused => (
             Problem::Unreachable,
             format!(
                 "GiroCrab is not reachable: it is not running, the vault is locked, or \
                  external analysis is turned off ({SETTINGS}). Socket: {socket}"
             ),
-        );
-    }
-    ToolError::new(
-        Problem::Other,
-        match e.kind() {
-            ErrorKind::PermissionDenied => format!(
+        ),
+        ErrorKind::PermissionDenied => (
+            Problem::Other,
+            format!(
                 "GiroCrab's socket cannot be opened (permission denied): it belongs to \
-             another user, or --socket points to the wrong place. Socket: {socket}"
+                 another user, or --socket points to the wrong place. Socket: {socket}"
             ),
-            // sun_path holds 104 bytes on macOS (108 on Linux).
-            ErrorKind::InvalidInput => {
-                format!("The socket path is too long for a Unix socket: {socket}")
-            }
-            _ => format!("Cannot connect to GiroCrab ({socket}): {e}"),
-        },
-    )
+        ),
+        // sun_path holds 104 bytes on macOS (108 on Linux).
+        ErrorKind::InvalidInput => (
+            Problem::Other,
+            format!("The socket path is too long for a Unix socket: {socket}"),
+        ),
+        _ => (
+            Problem::Other,
+            format!("Cannot connect to GiroCrab ({socket}): {e}"),
+        ),
+    };
+    ToolError::new(problem, text)
 }
 
 /// One request on a fresh connection: the protocol keeps no state on a
@@ -271,10 +292,11 @@ fn exchange(socket: &Path, line: &str) -> Result<Value, NoAnswer> {
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     let _ = writeln!(&stream, "{line}");
     let mut answer = String::new();
-    let fail = |text: String| NoAnswer::Fail(ToolError::new(Problem::Other, text));
+    let fail = |text: String| NoAnswer::Fail(ToolError::other(text));
     match BufReader::new(&stream).read_line(&mut answer) {
-        Ok(n) if n > 0 => serde_json::from_str(&answer)
-            .map_err(|e| fail(format!("GiroCrab sent an unreadable answer: {e}"))),
+        Ok(n) if n > 0 => {
+            serde_json::from_str(&answer).map_err(|e| fail(format!("{UNREADABLE}: {e}")))
+        }
         Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
             Err(fail(format!(
                 "GiroCrab did not answer within {} seconds.",
@@ -282,9 +304,7 @@ fn exchange(socket: &Path, line: &str) -> Result<Value, NoAnswer> {
             )))
         }
         // An answer that is not UTF-8 arrived; asking again would not help.
-        Err(e) if e.kind() == ErrorKind::InvalidData => {
-            Err(fail(format!("GiroCrab sent an unreadable answer: {e}")))
-        }
+        Err(e) if e.kind() == ErrorKind::InvalidData => Err(fail(format!("{UNREADABLE}: {e}"))),
         // EOF or reset before an answer line.
         _ => Err(NoAnswer::Retry),
     }
@@ -376,27 +396,27 @@ impl Adapter {
     /// One request on the socket; `busy` and a dropped connection are tried
     /// again after a short wait.
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, ToolError> {
-        let token = self.config.token.clone();
-        let token = token.map_err(|e| ToolError::new(Problem::NoKey, e))?;
+        let token = self
+            .config
+            .token
+            .clone()
+            .map_err(|e| ToolError::new(Problem::NoKey, e))?;
         self.request_with(&token, method, params)
     }
 
     /// `--check`: the info call with the configured key. Without one, the app
-    /// is still asked (with no key), so the answer tells whether it is reachable.
+    /// is still asked (with no key, which it always refuses), so the answer
+    /// tells whether it is reachable.
     pub fn check(&mut self) -> Result<Value, ToolError> {
-        match self.config.token.clone() {
-            Ok(_) => self.request("info", json!({})),
-            Err(missing) => match self.request_with("", "info", json!({})) {
-                Err(e) if e.problem == Problem::KeyRejected => Err(ToolError::new(
-                    Problem::NoKey,
-                    format!("GiroCrab is reachable. {missing}"),
-                )),
-                Err(e) => Err(e),
-                Ok(_) => Err(ToolError::new(
-                    Problem::Other,
-                    "GiroCrab answered without a key.",
-                )),
-            },
+        let Err(missing) = &self.config.token else {
+            return self.request("info", json!({}));
+        };
+        let reachable = format!("GiroCrab is reachable. {missing}");
+        match self.request_with("", "info", json!({})) {
+            Err(e) if e.problem == Problem::KeyRejected => {
+                Err(ToolError::new(Problem::NoKey, reachable))
+            }
+            other => other,
         }
     }
 
@@ -426,17 +446,11 @@ impl Adapter {
                         error
                     }
                 },
-                Ok(_) => {
-                    return Err(ToolError::new(
-                        Problem::Other,
-                        "GiroCrab sent an unreadable answer.",
-                    ))
-                }
+                Ok(_) => return Err(ToolError::other(format!("{UNREADABLE}."))),
                 Err(NoAnswer::Fail(e)) => return Err(e),
-                Err(NoAnswer::Retry) => ToolError::new(
-                    Problem::Other,
-                    "GiroCrab closed the connection without an answer.",
-                ),
+                Err(NoAnswer::Retry) => {
+                    ToolError::other("GiroCrab closed the connection without an answer.")
+                }
             };
             if retries == 0 {
                 return Err(refused);

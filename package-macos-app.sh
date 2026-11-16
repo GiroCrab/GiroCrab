@@ -46,29 +46,18 @@ BIN_DIR="$(cd GiroCrabApp && swift build -c release --product GiroCrabMac --show
 
 # MCP adapter for AI assistants (#136): a small stdio helper the user's MCP client
 # starts. Shipped in Contents/Helpers, signed by sign-app.sh like any nested Mach-O.
-# Same toolchain, target and deployment target as build-xcframework.sh: rustup's
-# cargo/rustc (not a Homebrew Rust earlier in PATH) and the Mac's architecture.
+# Same toolchain, target and deployment target as the core (scripts/rust-toolchain.sh).
 echo "==> Building MCP adapter (release)"
-MCP_TARGET="aarch64-apple-darwin"
-[[ "$(uname -m)" == "x86_64" ]] && MCP_TARGET="x86_64-apple-darwin"
 MCP_TARGET_DIR="${GIROCRAB_TARGET_DIR:-$ROOT/target/apple}"
-(
-  export PATH="$HOME/.cargo/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=14.0
-  cargo="cargo"
-  if command -v rustup >/dev/null 2>&1 && rustup_cargo="$(rustup which cargo 2>/dev/null)" \
-     && rustup_rustc="$(rustup which rustc 2>/dev/null)"; then
-    cargo="${CARGO:-$rustup_cargo}"
-    export RUSTC="${RUSTC:-$rustup_rustc}"
-  fi
-  "$cargo" build --release -q -p girocrab-mcp --target "$MCP_TARGET" --target-dir "$MCP_TARGET_DIR"
-)
+source scripts/rust-toolchain.sh
+"$CARGO" build --release -q -p girocrab-mcp --target "$MAC_TARGET" --target-dir "$MCP_TARGET_DIR"
 
 echo "==> Assembling $APP"
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/GiroCrabMac" "$APP/Contents/MacOS/GiroCrabMac"
 mkdir -p "$APP/Contents/Helpers"
-cp "$MCP_TARGET_DIR/$MCP_TARGET/release/girocrab-mcp" "$APP/Contents/Helpers/girocrab-mcp"
+cp "$MCP_TARGET_DIR/$MAC_TARGET/release/girocrab-mcp" "$APP/Contents/Helpers/girocrab-mcp"
 
 echo "==> Embedding Sparkle.framework"
 SPARKLE_SRC=""
