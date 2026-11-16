@@ -3,13 +3,13 @@
 //! Wire layout and hash convention: HBCI4Java hbci-300.xml and INILetter.
 use std::sync::Arc;
 
-use openssl::{
-    bn::BigNum,
-    hash::{hash, MessageDigest},
-    pkey::PKey,
-    rsa::Rsa,
+use rsa::{
+    pkcs8::{DecodePublicKey, EncodePublicKey},
+    traits::PublicKeyParts,
+    BoxedUint, PublicKey,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::{
@@ -64,17 +64,12 @@ fn public_key(candidate: &Rah10BankKeyCandidate) -> CoreResult<BankKey> {
         "V" => 1,
         _ => return Err(invalid("Unbekannte Bankschlüsselart.")),
     };
-    let key = PKey::public_key_from_der(&candidate.public_key_der)
+    let key = PublicKey::from_public_key_der(&candidate.public_key_der)
         .map_err(|_| invalid("Öffentlicher RSA-Bankschlüssel ungültig."))?;
-    let rsa = key
-        .rsa()
-        .map_err(|_| invalid("Bankschlüssel ist kein RSA-Schlüssel."))?;
-    if rsa.n().num_bits() < 1984
-        || rsa.n().num_bits() > 8192
-        || rsa.e().num_bits() > 32
-        || rsa.e().num_bits() < 2
-        || !rsa.e().is_odd()
-        || !rsa.n().is_odd()
+    if key.n().bit_width() < 1984
+        || key.n().bit_width() > 8192
+        || key.e().bit_width() > 32
+        || key.e().bit_width() < 2
     {
         return Err(invalid(
             "RSA-Parameter des Bankschlüssels werden nicht unterstützt.",
@@ -92,12 +87,8 @@ fn public_key(candidate: &Rah10BankKeyCandidate) -> CoreResult<BankKey> {
 
 /// INI-letter fingerprint: SHA-256(padded big-endian exponent || modulus).
 fn fingerprint(key: &BankKey) -> CoreResult<String> {
-    let rsa = key
-        .key
-        .rsa()
-        .map_err(|_| invalid("Bankschlüssel ungültig."))?;
-    let modulus = rsa.n().to_vec();
-    let exponent = rsa.e().to_vec();
+    let modulus = key.key.n_bytes();
+    let exponent = key.key.e_bytes();
     let size = modulus.len().max(128);
     if exponent.len() > size {
         return Err(invalid("RSA-Exponent ungültig."));
@@ -105,10 +96,7 @@ fn fingerprint(key: &BankKey) -> CoreResult<String> {
     let mut data = vec![0u8; 2 * size];
     data[size - exponent.len()..size].copy_from_slice(&exponent);
     data[2 * size - modulus.len()..].copy_from_slice(&modulus);
-    Ok(hex::encode_upper(
-        hash(MessageDigest::sha256(), &data)
-            .map_err(|_| invalid("Prüfwert konnte nicht berechnet werden."))?,
-    ))
+    Ok(hex::encode_upper(Sha256::digest(&data)))
 }
 
 pub(crate) fn key_candidate(key: &BankKey) -> CoreResult<Rah10BankKeyCandidate> {
@@ -124,10 +112,12 @@ pub(crate) fn key_candidate(key: &BankKey) -> CoreResult<Rah10BankKeyCandidate> 
         version: key.version,
         public_key_der: key
             .key
-            .public_key_to_der()
-            .map_err(|_| invalid("RSA-Schlüssel ungültig."))?,
+            .to_public_key_der()
+            .map_err(|_| invalid("RSA-Schlüssel ungültig."))?
+            .as_bytes()
+            .to_vec(),
         fingerprint: fingerprint(key)?,
-        bits: key.key.bits(),
+        bits: key.key.n().bit_width(),
     })
 }
 
@@ -311,9 +301,10 @@ fn parse_candidates(raw: &[u8], blz: &str) -> CoreResult<(String, Vec<Rah10BankK
             Some(Value::Binary(b)) if !b.is_empty() && b.len() <= 1024 => Ok(b.as_slice()),
             _ => Err(invalid("RSA-Schlüsselmaterial fehlt.")),
         };
-        let rsa = Rsa::from_public_components(
-            BigNum::from_slice(component(3)?).map_err(|_| invalid("RSA-Modulus ungültig."))?,
-            BigNum::from_slice(component(5)?).map_err(|_| invalid("RSA-Exponent ungültig."))?,
+        let rsa = PublicKey::new_with_size_limits(
+            BoxedUint::from_be_slice_vartime(component(3)?),
+            BoxedUint::from_be_slice_vartime(component(5)?),
+            1984..=8192,
         )
         .map_err(|_| invalid("RSA-Schlüssel ungültig."))?;
         let mut candidate = Rah10BankKeyCandidate {
@@ -328,9 +319,11 @@ fn parse_candidates(raw: &[u8], blz: &str) -> CoreResult<(String, Vec<Rah10BankK
                 .get(5, 5)
                 .parse()
                 .map_err(|_| invalid("Schlüsselversion ungültig."))?,
-            public_key_der: PKey::from_rsa(rsa)
-                .and_then(|k| k.public_key_to_der())
-                .map_err(|_| invalid("RSA-Schlüssel ungültig."))?,
+            public_key_der: rsa
+                .to_public_key_der()
+                .map_err(|_| invalid("RSA-Schlüssel ungültig."))?
+                .as_bytes()
+                .to_vec(),
             fingerprint: String::new(),
             bits: 0,
         };

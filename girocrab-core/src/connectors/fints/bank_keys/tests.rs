@@ -1,14 +1,16 @@
 use super::*;
 
 fn candidate(kind: &str) -> Rah10BankKeyCandidate {
-    let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    let key = rsa::PrivateKey::new(&mut getrandom::SysRng, 2048)
+        .unwrap()
+        .to_public_key();
     let mut c = Rah10BankKeyCandidate {
         blz: "12345678".into(),
         user_id: "bank".into(),
         key_type: kind.into(),
         number: 1,
         version: 1,
-        public_key_der: key.public_key_to_der().unwrap(),
+        public_key_der: key.to_public_key_der().unwrap().as_bytes().to_vec(),
         fingerprint: String::new(),
         bits: 2048,
     };
@@ -17,9 +19,9 @@ fn candidate(kind: &str) -> Rah10BankKeyCandidate {
 }
 
 fn key_segment(c: &Rah10BankKeyCandidate, number: u32) -> Vec<u8> {
-    let key = public_key(c).unwrap().key.rsa().unwrap();
-    let n = key.n().to_vec();
-    let e = key.e().to_vec();
+    let key = public_key(c).unwrap().key;
+    let n = key.n_bytes();
+    let e = key.e_bytes();
     let mut segment = SegmentBuilder::new("HIISA", number, 3)
         .raw("1")
         .raw("dialog")
@@ -106,9 +108,9 @@ fn only_independently_confirmed_fingerprints_can_be_pinned() {
 #[test]
 fn ini_fingerprint_matches_fixed_padded_big_endian_vector() {
     // Public, invented numbers; reference SHA-256 independently calculated with hashlib.
-    let rsa = Rsa::from_public_components(
-        BigNum::from_slice(&[0x81; 256]).unwrap(),
-        BigNum::from_u32(65537).unwrap(),
+    let rsa = PublicKey::new(
+        BoxedUint::from_be_slice_vartime(&[0x81; 256]),
+        BoxedUint::from(65537u64),
     )
     .unwrap();
     let key = BankKey {
@@ -117,7 +119,7 @@ fn ini_fingerprint_matches_fixed_padded_big_endian_vector() {
         kind: 0,
         number: 1,
         version: 1,
-        key: PKey::from_rsa(rsa).unwrap(),
+        key: rsa,
     };
     assert_eq!(
         fingerprint(&key).unwrap(),

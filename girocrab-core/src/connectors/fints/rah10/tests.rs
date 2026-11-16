@@ -1,19 +1,18 @@
 use super::super::keyfile::UserKey;
 use super::*;
-use openssl::rsa::Rsa;
 
-fn bank_key(key: &PKey<Private>, user: &str, kind: u8) -> BankKey {
+fn bank_key(key: &PrivateKey, user: &str, kind: u8) -> BankKey {
     BankKey {
         blz: "12345678".into(),
         user_id: user.into(),
         kind,
         number: 1,
         version: 1,
-        key: PKey::public_key_from_der(&key.public_key_to_der().unwrap()).unwrap(),
+        key: key.to_public_key(),
     }
 }
 
-fn peer(own: PKey<Private>, remote: &PKey<Private>, user: &str, other: &str) -> Rah10 {
+fn peer(own: PrivateKey, remote: &PrivateKey, user: &str, other: &str) -> Rah10 {
     Rah10::new(
         KeyFile {
             identities: vec![Identity {
@@ -45,8 +44,8 @@ fn peer(own: PKey<Private>, remote: &PKey<Private>, user: &str, other: &str) -> 
 
 #[test]
 fn encrypted_signed_exchange_rejects_tampering_and_wrong_key() {
-    let client_key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
-    let bank_key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    let client_key = PrivateKey::new(&mut getrandom::SysRng, 2048).unwrap();
+    let bank_key = PrivateKey::new(&mut getrandom::SysRng, 2048).unwrap();
     let client = peer(client_key.clone(), &bank_key, "client", "bank");
     let mut bank = peer(bank_key, &client_key, "bank", "client");
     let payload = vec![SegmentBuilder::new("HIRMG", 3, 2).raw("0010::OK").build()];
@@ -62,7 +61,7 @@ fn encrypted_signed_exchange_rejects_tampering_and_wrong_key() {
     let at = wire.windows(6).position(|b| b == b"HNVSD:").unwrap() + 25;
     corrupted[at] ^= 1;
     assert!(client.unwrap(&corrupted, 1, "dialog").is_err());
-    let wrong = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    let wrong = PrivateKey::new(&mut getrandom::SysRng, 2048).unwrap();
     let wrong_client = peer(client_key, &wrong, "client", "bank");
     assert!(wrong_client.unwrap(&wire, 1, "dialog").is_err());
     bank.next_signature = bank.signature_limit;
@@ -71,19 +70,13 @@ fn encrypted_signed_exchange_rejects_tampering_and_wrong_key() {
 
 #[test]
 fn signature_covers_exact_bytes_and_double_hash() {
-    let private = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
-    let public = PKey::public_key_from_der(&private.public_key_to_der().unwrap()).unwrap();
+    let private = PrivateKey::new(&mut getrandom::SysRng, 2048).unwrap();
+    let public = private.to_public_key();
     let data = b"HNSHK:2:4+RAH:10'HIRMG:3:2+0010::OK'";
     let signature = sign(&private, data).unwrap();
     verify(&public, data, &signature).unwrap();
     assert!(verify(&public, b"changed", &signature).is_err());
-    let mut single_hash = Verifier::new(MessageDigest::sha256(), &public).unwrap();
-    single_hash.set_rsa_padding(Padding::PKCS1_PSS).unwrap();
-    single_hash
-        .set_rsa_pss_saltlen(RsaPssSaltlen::custom(32))
-        .unwrap();
-    single_hash.update(data).unwrap();
-    assert!(!single_hash.verify(&signature).unwrap());
+    assert!(public.pss_verify::<Sha256>(data, &signature).is_err());
 }
 
 #[test]
@@ -99,8 +92,8 @@ fn segment_ranges_skip_binary_and_escapes() {
 
 #[test]
 fn missing_bank_keys_require_setup() {
-    let own = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
-    let remote = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    let own = PrivateKey::new(&mut getrandom::SysRng, 2048).unwrap();
+    let remote = PrivateKey::new(&mut getrandom::SysRng, 2048).unwrap();
     let client = peer(own, &remote, "client", "bank");
     let file = KeyFile {
         identities: vec![client.identity],
@@ -109,4 +102,45 @@ fn missing_bank_keys_require_setup() {
     let error = Rah10::new(file, "client", 2, 100).err().unwrap();
     assert!(matches!(error, CoreError::InvalidInput { .. }));
     assert!(error.to_string().contains("Bankschlüssel"));
+}
+
+#[test]
+fn independent_reference_vectors_match_transport_signature_and_cbc() {
+    use rsa::pkcs8::DecodePublicKey;
+    let v: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/rah10/reference.json"
+    ))
+    .unwrap();
+    let bytes = |name: &str| hex::decode(v[name].as_str().unwrap()).unwrap();
+    let public = PublicKey::from_public_key_der(&bytes("public_der")).unwrap();
+    let number = |name: &str| {
+        let text = v[name].as_str().unwrap();
+        let text = if text.len().is_multiple_of(2) {
+            text.to_string()
+        } else {
+            format!("0{text}")
+        };
+        BoxedUint::from_be_slice_vartime(&hex::decode(text).unwrap())
+    };
+    let private = PrivateKey::from_primes(vec![number("p"), number("q")], number("e")).unwrap();
+    assert_eq!(private.to_public_key(), public);
+    let client = peer(private.clone(), &private, "client", "bank");
+    let response = client.unwrap(&bytes("wire"), 1, "dialog").unwrap();
+    assert_eq!(response[1].id(), "HIRMG");
+    assert_eq!(response[1].get(1, 0), "0010");
+    let message = bytes("message");
+    let signature = bytes("signature");
+    verify(&public, &message, &signature).unwrap();
+    assert!(verify(&public, b"changed", &signature).is_err());
+    assert!(public.pss_verify::<Sha256>(&message, &signature).is_err());
+    let session: [u8; 32] = bytes("session_key").try_into().unwrap();
+    let wrapped = bytes("wrapped_key");
+    assert_eq!(wrap_key(&public, &session).unwrap(), wrapped);
+    assert_eq!(*unwrap_key(&private, &wrapped).unwrap(), session);
+    assert!(unwrap_key(&private, &wrapped[1..]).is_err());
+    assert!(unwrap_key(&private, &public.n_bytes()).is_err());
+    let padded = bytes("padded_message");
+    let encrypted = bytes("aes_ciphertext");
+    assert_eq!(*aes(&padded, &session, Mode::Encrypt).unwrap(), encrypted);
+    assert_eq!(*aes(&encrypted, &session, Mode::Decrypt).unwrap(), padded);
 }

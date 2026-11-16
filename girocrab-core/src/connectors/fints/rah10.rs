@@ -1,13 +1,8 @@
 //! RAH-10 message protection. No payment jobs are enabled by this module.
 //! Protocol reference: HBCI4Java HBCIPassportRAH10, Sig and Crypt.
-use openssl::{
-    hash::{hash, MessageDigest},
-    pkey::{PKey, Private, Public},
-    rand::rand_bytes,
-    rsa::Padding,
-    sign::{RsaPssSaltlen, Signer, Verifier},
-    symm::{Cipher, Crypter, Mode},
-};
+use aes::cipher::{block_padding::NoPadding, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
+use rsa::{hazmat, traits::PublicKeyParts, BoxedUint, PrivateKey, PublicKey};
+use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::{
@@ -21,7 +16,7 @@ fn error() -> CoreError {
         message: "RAH-10-Nachricht unvollständig oder kryptografisch nicht verifiziert.".into(),
     }
 }
-fn crypto(_: openssl::error::ErrorStack) -> CoreError {
+fn crypto(_: impl std::fmt::Debug) -> CoreError {
     error()
 }
 
@@ -33,48 +28,76 @@ pub struct Rah10 {
     signature_limit: u64,
 }
 
+#[derive(Clone, Copy)]
+enum Mode {
+    Encrypt,
+    Decrypt,
+}
+
 fn aes(data: &[u8], key: &[u8], mode: Mode) -> CoreResult<Zeroizing<Vec<u8>>> {
-    let mut cipher =
-        Crypter::new(Cipher::aes_256_cbc(), mode, key, Some(&[0; 16])).map_err(crypto)?;
-    cipher.pad(false);
-    let mut out = Zeroizing::new(vec![0; data.len() + 16]);
-    let used = cipher.update(data, &mut out).map_err(crypto)?;
-    let end = cipher.finalize(&mut out[used..]).map_err(crypto)?;
-    out.truncate(used + end);
+    let mut out = Zeroizing::new(data.to_vec());
+    match mode {
+        Mode::Encrypt => {
+            cbc::Encryptor::<aes::Aes256>::new_from_slices(key, &[0; 16])
+                .map_err(crypto)?
+                .encrypt_padded::<NoPadding>(&mut out, data.len())
+                .map_err(crypto)?;
+        }
+        Mode::Decrypt => {
+            cbc::Decryptor::<aes::Aes256>::new_from_slices(key, &[0; 16])
+                .map_err(crypto)?
+                .decrypt_padded::<NoPadding>(&mut out)
+                .map_err(crypto)?;
+        }
+    }
     Ok(out)
 }
 
-fn sign(key: &PKey<Private>, data: &[u8]) -> CoreResult<Vec<u8>> {
-    let digest = hash(MessageDigest::sha256(), data).map_err(crypto)?;
-    let mut signer = Signer::new(MessageDigest::sha256(), key).map_err(crypto)?;
-    signer.set_rsa_padding(Padding::PKCS1_PSS).map_err(crypto)?;
-    signer
-        .set_rsa_mgf1_md(MessageDigest::sha256())
-        .map_err(crypto)?;
-    signer
-        .set_rsa_pss_saltlen(RsaPssSaltlen::custom(32))
-        .map_err(crypto)?;
-    signer.update(&digest).map_err(crypto)?;
-    signer.sign_to_vec().map_err(crypto)
+fn sign(key: &PrivateKey, data: &[u8]) -> CoreResult<Vec<u8>> {
+    // RAH-10 hashes the message before RSASSA-PSS hashes its input once more.
+    // SHA-256, MGF1-SHA-256 and a 32-byte salt (RFC 8017 §8.1).
+    key.pss_sign_with_rng::<Sha256, _>(&mut getrandom::SysRng, &Sha256::digest(data))
+        .map_err(crypto)
 }
 
-fn verify(key: &PKey<Public>, data: &[u8], signature: &[u8]) -> CoreResult<()> {
-    let digest = hash(MessageDigest::sha256(), data).map_err(crypto)?;
-    let mut verifier = Verifier::new(MessageDigest::sha256(), key).map_err(crypto)?;
-    verifier
-        .set_rsa_padding(Padding::PKCS1_PSS)
-        .map_err(crypto)?;
-    verifier
-        .set_rsa_mgf1_md(MessageDigest::sha256())
-        .map_err(crypto)?;
-    verifier
-        .set_rsa_pss_saltlen(RsaPssSaltlen::custom(32))
-        .map_err(crypto)?;
-    verifier.update(&digest).map_err(crypto)?;
-    if !verifier.verify(signature).map_err(crypto)? {
+fn verify(key: &PublicKey, data: &[u8], signature: &[u8]) -> CoreResult<()> {
+    key.pss_verify::<Sha256>(&Sha256::digest(data), signature)
+        .map_err(crypto)
+}
+
+// RAH-10 key transport: the 32 AES key bytes are right-aligned in a zero-filled
+// modulus-width block. This is RSAEP/RSADP (RFC 8017 §5.1), NOT RSAES-PKCS1-v1_5
+// or ISO 9796-2 signature padding. Interoperability reference: HBCI4Java
+// HBCIPassportRAH10.encrypt/decrypt (RSA modular exponentiation, trailing 32 bytes).
+// Do not reuse these raw operations for any other protocol.
+fn wrap_key(key: &PublicKey, session: &[u8; 32]) -> CoreResult<Vec<u8>> {
+    let m =
+        Zeroizing::new(BoxedUint::from_be_slice(session, key.n_bits_precision()).map_err(crypto)?);
+    if *m >= key.n().as_ref() {
         return Err(error());
     }
-    Ok(())
+    let c = hazmat::rsa_encrypt(key, &m).map_err(crypto)?;
+    let bytes = c.to_be_bytes();
+    Ok(bytes[bytes.len() - key.size()..].to_vec())
+}
+
+fn unwrap_key(key: &PrivateKey, ciphertext: &[u8]) -> CoreResult<Zeroizing<[u8; 32]>> {
+    if ciphertext.len() != key.size() {
+        return Err(error());
+    }
+    let c = BoxedUint::from_be_slice(ciphertext, key.n_bits_precision()).map_err(crypto)?;
+    // Blinding plus CRT fault check; range checking rejects representatives >= n.
+    let m = Zeroizing::new(
+        hazmat::rsa_decrypt_and_check(key, Some(&mut getrandom::SysRng), &c).map_err(crypto)?,
+    );
+    let bytes = Zeroizing::new(m.to_be_bytes());
+    let split = bytes.len().checked_sub(32).ok_or_else(error)?;
+    if bytes[..split].iter().any(|&b| b != 0) {
+        return Err(error());
+    }
+    let mut session = Zeroizing::new([0; 32]);
+    session.copy_from_slice(&bytes[split..]);
+    Ok(session)
 }
 
 impl Rah10 {
@@ -171,15 +194,8 @@ impl Rah10 {
             signed.push(0);
         }
         let mut session_key = Zeroizing::new([0u8; 32]);
-        rand_bytes(session_key.as_mut()).map_err(crypto)?;
-        let bank_rsa = self.bank_encrypt.key.rsa().map_err(crypto)?;
-        let mut padded = Zeroizing::new(vec![0; bank_rsa.size() as usize]);
-        let start = padded.len() - 32;
-        padded[start..].copy_from_slice(session_key.as_ref());
-        let mut encrypted_key = vec![0; padded.len()];
-        bank_rsa
-            .public_encrypt(&padded, &mut encrypted_key, Padding::NONE)
-            .map_err(crypto)?;
+        getrandom::fill(session_key.as_mut()).map_err(crypto)?;
+        let encrypted_key = wrap_key(&self.bank_encrypt.key, &session_key)?;
         let encrypted = aes(&signed, session_key.as_ref(), Mode::Encrypt)?;
         let mut head = SegmentBuilder::new("HNVSK", 998, 3)
             .raw("RAH:10")
@@ -260,18 +276,8 @@ impl Rah10 {
         if ciphertext.is_empty() || !ciphertext.len().is_multiple_of(16) {
             return Err(error());
         }
-        let rsa = self.identity.encryption.key.rsa().map_err(crypto)?;
-        if enc_key.len() != rsa.size() as usize {
-            return Err(error());
-        }
-        let mut decrypted = Zeroizing::new(vec![0; rsa.size() as usize]);
-        rsa.private_decrypt(enc_key, &mut decrypted, Padding::NONE)
-            .map_err(crypto)?;
-        let split = decrypted.len() - 32;
-        if decrypted[..split].iter().any(|&b| b != 0) {
-            return Err(error());
-        }
-        let mut plain = aes(ciphertext, &decrypted[split..], Mode::Decrypt)?;
+        let session_key = unwrap_key(&self.identity.encryption.key, enc_key)?;
+        let mut plain = aes(ciphertext, session_key.as_ref(), Mode::Decrypt)?;
         while plain.last() == Some(&0) {
             plain.pop();
         }

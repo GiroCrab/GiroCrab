@@ -1,5 +1,5 @@
 use super::*;
-use openssl::symm::encrypt;
+use aes::cipher::BlockModeEncrypt;
 
 fn field(tag: u16, data: &[u8]) -> Vec<u8> {
     [
@@ -9,8 +9,8 @@ fn field(tag: u16, data: &[u8]) -> Vec<u8> {
     ]
     .concat()
 }
-fn number(n: &openssl::bn::BigNumRef) -> Vec<u8> {
-    let mut bytes = n.to_vec();
+fn number(n: &BoxedUint) -> Vec<u8> {
+    let mut bytes = n.to_be_bytes_trimmed_vartime().to_vec();
     bytes.reverse();
     [(bytes.len() as u16).to_le_bytes().as_slice(), &bytes].concat()
 }
@@ -30,34 +30,23 @@ fn fixture_with_bank_keys(include_bank_keys: bool) -> Vec<u8> {
     ]
     .concat();
     let mut derived = [0u8; 32];
-    pbkdf2_hmac(
-        password,
-        &salt,
-        iterations as usize,
-        MessageDigest::sha256(),
-        &mut derived,
-    )
-    .unwrap();
-    let rsa = Rsa::generate(2048).unwrap();
+    pbkdf2_hmac::<Sha256>(password, &salt, iterations, &mut derived);
+    let rsa = PrivateKey::new(&mut getrandom::SysRng, 2048).unwrap();
     let mut private = Vec::new();
     for n in [
-        rsa.n(),
-        rsa.p().unwrap(),
-        rsa.q().unwrap(),
-        rsa.dmp1().unwrap(),
-        rsa.dmq1().unwrap(),
-        rsa.iqmp().unwrap(),
-        rsa.iqmp().unwrap(),
+        rsa.n().as_ref(),
+        rsa.primes()[0].as_ref(),
+        rsa.primes()[1].as_ref(),
+        rsa.dp().unwrap(),
+        rsa.dq().unwrap(),
+        rsa.dp().unwrap(),
+        rsa.dq().unwrap(),
     ] {
         private.extend(number(n));
     }
-    let mut encrypted = encrypt(
-        Cipher::des_ede3_cbc(),
-        &derived[..24],
-        Some(&[0; 8]),
-        &private,
-    )
-    .unwrap();
+    let mut encrypted = cbc::Encryptor::<des::TdesEde3>::new_from_slices(&derived[..24], &[0; 8])
+        .unwrap()
+        .encrypt_padded_vec::<Pkcs7>(&private);
     encrypted.reverse();
     let mut bank = vec![b' '; 237];
     bank[..3].copy_from_slice(b"280");
@@ -73,7 +62,7 @@ fn fixture_with_bank_keys(include_bank_keys: bool) -> Vec<u8> {
         let key = [
             vec![2, kind, 1, 0, 1, 0],
             number(rsa.e()),
-            number(rsa.n()),
+            number(rsa.n().as_ref()),
             (encrypted.len() as u16).to_le_bytes().to_vec(),
             encrypted.clone(),
         ]
@@ -92,15 +81,14 @@ fn fixture_with_bank_keys(include_bank_keys: bool) -> Vec<u8> {
         bank_key[3..11].copy_from_slice(b"12345678");
         bank_key[33..39].copy_from_slice(&[2, kind, 1, 0, 1, 0]);
         bank_key[39..43].copy_from_slice(b"bank");
-        bank_key.extend(number(rsa.n()));
+        bank_key.extend(number(rsa.n().as_ref()));
         bank_key.extend(number(rsa.e()));
         bytes.extend(field(0x53d6, &bank_key));
     }
     bytes.extend(field(0x4452, b"20261113000000"));
-    let hmac_key = PKey::hmac(&derived).unwrap();
-    let mut signer = Signer::new(MessageDigest::sha256(), &hmac_key).unwrap();
-    signer.update(&bytes).unwrap();
-    bytes.extend(field(0x4d44, &signer.sign_to_vec().unwrap()));
+    let mut mac = Hmac::<Sha256>::new_from_slice(&derived).unwrap();
+    mac.update(&bytes);
+    bytes.extend(field(0x4d44, &mac.finalize().into_bytes()));
     bytes
 }
 
@@ -110,13 +98,7 @@ fn authenticates_decrypts_and_checks_rsa() {
     let parsed = KeyFile::open(&bytes, b"invented-test-password").unwrap();
     assert_eq!(parsed.identities.len(), 1);
     assert_eq!(parsed.identities[0].blz, "12345678");
-    assert!(parsed.identities[0]
-        .signing
-        .key
-        .rsa()
-        .unwrap()
-        .check_key()
-        .unwrap());
+    parsed.identities[0].signing.key.validate().unwrap();
     assert!(matches!(
         KeyFile::open(&bytes, b"wrong"),
         Err(CoreError::Authentication { .. })
@@ -145,6 +127,35 @@ fn rejects_unbounded_work_before_password_derivation() {
     bytes.extend(field(0x4d44, &[0; 32]));
     assert!(KeyFile::open(&bytes, b"password").is_err());
     assert!(KeyFile::open(&vec![0; MAX_FILE_SIZE + 1], b"password").is_err());
+}
+
+#[test]
+fn reads_independent_rdhx_and_rejects_authenticated_invalid_crt() {
+    let v: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/rah10/reference.json"
+    ))
+    .unwrap();
+    let bytes = hex::decode(v["keyfile"].as_str().unwrap()).unwrap();
+    let password = b"invented-reference-password";
+    let file = KeyFile::open(&bytes, password).unwrap();
+    assert_eq!(file.identities[0].user_id, "demo");
+    assert_eq!(file.identities[0].blz, "12345678");
+    assert!(file.bank_keys.is_empty());
+    file.identities[0].signing.key.validate().unwrap();
+    let composite = hex::decode(v["composite_factor_keyfile"].as_str().unwrap()).unwrap();
+    assert!(matches!(
+        KeyFile::open(&composite, password),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    let invalid_crt = hex::decode(v["invalid_crt_keyfile"].as_str().unwrap()).unwrap();
+    assert!(matches!(
+        KeyFile::open(&invalid_crt, password),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        KeyFile::open(&bytes, b"wrong"),
+        Err(CoreError::Authentication { .. })
+    ));
 }
 
 #[test]

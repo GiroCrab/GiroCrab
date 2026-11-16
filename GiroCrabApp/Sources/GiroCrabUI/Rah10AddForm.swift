@@ -52,32 +52,27 @@ struct Rah10AddForm: View {
         } header: {
             Text("Schlüsseldatei").appSectionHeader()
         } footer: {
-            Text("GiroCrab übernimmt eine Kopie in den verschlüsselten Tresor. Die Originaldatei bleibt unverändert. Unterstützt zunächst Konto-, Salden- und Umsatzabrufe mit bestehenden Commerzbank-Zugängen. Bei weiterer Nutzung desselben Schlüssels in anderen Banking-Apps kann dort eine Synchronisierung des Signaturzählers nötig werden.")
+            Text("GiroCrab übernimmt eine Kopie in den verschlüsselten Tresor. Die Originaldatei bleibt unverändert. Unterstützt zunächst Konto-, Salden- und Umsatzabrufe mit bestehenden Commerzbank-Zugängen. Verwenden Sie denselben Schlüssel nicht parallel in anderer Bankingsoftware. GiroCrab reserviert pro Abruf 10.000 Signaturzähler; ungenutzte Werte bleiben verbraucht und die Originaldatei behält ihren alten Zähler. Dadurch kann es bei paralleler Nutzung zu Zählerkonflikten kommen.")
                 .appFont(.caption)
         }
         .disabled(busy)
         .fileImporter(isPresented: $picking, allowedContentTypes: [.item]) { result in
             guard case .success(let url) = result else { return }
-            let access = url.startAccessingSecurityScopedResource()
-            defer { if access { url.stopAccessingSecurityScopedResource() } }
-            do {
-                let file = try FileHandle(forReadingFrom: url)
-                defer { try? file.close() }
-                let data = try file.read(upToCount: 4 * 1024 * 1024 + 1) ?? Data()
-                guard !data.isEmpty, data.count <= 4 * 1024 * 1024 else {
+            busy = true
+            resetInspection()
+            Task {
+                defer { busy = false }
+                do {
+                    let data = try await Task.detached { try Rah10KeyfileReader.read(url) }.value
+                    bytes = data
+                    fileName = url.lastPathComponent
+                    fileError = nil
+                    password = ""
+                } catch {
                     bytes = Data()
                     fileName = ""
-                    fileError = "Die Datei ist leer oder größer als 4 MiB."
-                    return
+                    fileError = error.localizedDescription
                 }
-                bytes = data
-                fileName = url.lastPathComponent
-                fileError = nil
-                password = ""
-            } catch {
-                bytes = Data()
-                fileName = ""
-                fileError = "Die Datei konnte nicht gelesen werden."
             }
         }
         .onChange(of: ready, initial: true) { _, ok in submit.update(ok, commit) }

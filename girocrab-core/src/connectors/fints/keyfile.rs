@@ -3,16 +3,14 @@
 //! https://github.com/hbci4j/hbci4java/tree/master/src/main/java/org/kapott/hbci/passport/rdhXfile
 //! Never changes the source file, prints data, or contacts a bank.
 
-use openssl::{
-    bn::{BigNum, BigNumContext},
-    hash::MessageDigest,
-    memcmp,
-    pkcs5::pbkdf2_hmac,
-    pkey::{PKey, Private, Public},
-    rsa::Rsa,
-    sign::Signer,
-    symm::{decrypt, Cipher},
+use aes::cipher::{block_padding::Pkcs7, BlockModeDecrypt, KeyIvInit};
+use hmac::{Hmac, KeyInit, Mac};
+use pbkdf2::pbkdf2_hmac;
+use rsa::{
+    traits::{PrivateKeyParts, PublicKeyParts},
+    BoxedUint, PrivateKey, PublicKey,
 };
+use sha2::Sha256;
 use zeroize::Zeroizing;
 
 use crate::error::{CoreError, CoreResult};
@@ -25,7 +23,7 @@ fn invalid() -> CoreError {
         message: "Schlüsseldatei beschädigt oder Format noch nicht unterstützt.".into(),
     }
 }
-fn crypto(_: openssl::error::ErrorStack) -> CoreError {
+fn crypto(_: impl std::fmt::Debug) -> CoreError {
     invalid()
 }
 
@@ -64,7 +62,7 @@ fn text(bytes: &[u8], start: usize, length: usize) -> CoreResult<String> {
         .into())
 }
 
-fn integer(bytes: &[u8], offset: &mut usize) -> CoreResult<BigNum> {
+fn integer(bytes: &[u8], offset: &mut usize) -> CoreResult<BoxedUint> {
     let length = usize::from(u16_at(bytes, *offset)?);
     *offset += 2;
     if length == 0 || length > 1024 {
@@ -78,14 +76,14 @@ fn integer(bytes: &[u8], offset: &mut usize) -> CoreResult<BigNum> {
     );
     *offset += length;
     value.reverse();
-    BigNum::from_slice(&value).map_err(crypto)
+    BoxedUint::from_be_slice(&value, (length * 8) as u32).map_err(crypto)
 }
 
 // Deliberately no Debug/Serialize: these types contain credentials and private keys.
 pub struct UserKey {
     pub number: u16,
     pub version: u16,
-    pub key: PKey<Private>,
+    pub key: PrivateKey,
 }
 pub struct BankKey {
     pub blz: String,
@@ -93,7 +91,7 @@ pub struct BankKey {
     pub kind: u8,
     pub number: u16,
     pub version: u16,
-    pub key: PKey<Public>,
+    pub key: PublicKey,
 }
 pub struct Identity {
     pub blz: String,
@@ -129,34 +127,36 @@ fn user_key(data: &[u8], des_key: &[u8]) -> CoreResult<(u8, UserKey)> {
         return Err(invalid());
     }
     encrypted.reverse();
-    let plain = Zeroizing::new(
-        decrypt(Cipher::des_ede3_cbc(), des_key, Some(&[0; 8]), &encrypted).map_err(crypto)?,
-    );
+    // Decrypt in a zeroizing buffer so an authentication/padding error also wipes it.
+    let mut plain = encrypted;
+    let used = cbc::Decryptor::<des::TdesEde3>::new_from_slices(des_key, &[0; 8])
+        .map_err(crypto)?
+        .decrypt_padded::<Pkcs7>(&mut plain)
+        .map_err(crypto)?
+        .len();
+    plain.truncate(used);
     let mut offset = 0;
     let private_n = integer(&plain, &mut offset)?;
-    let p = integer(&plain, &mut offset)?;
-    let q = integer(&plain, &mut offset)?;
-    let dp = integer(&plain, &mut offset)?;
-    let dq = integer(&plain, &mut offset)?;
-    // Stored CRT recombination factors; OpenSSL computes its own q inverse.
-    let _ap = integer(&plain, &mut offset)?;
-    let _aq = integer(&plain, &mut offset)?;
-    if offset != plain.len() || private_n != n || n.num_bits() < 1984 || n.num_bits() > 8192 {
+    let p = Zeroizing::new(integer(&plain, &mut offset)?);
+    let q = Zeroizing::new(integer(&plain, &mut offset)?);
+    let dp = Zeroizing::new(integer(&plain, &mut offset)?);
+    let dq = Zeroizing::new(integer(&plain, &mut offset)?);
+    // Stored CRT recombination factors; RustCrypto recomputes its own coefficients.
+    let _ap = Zeroizing::new(integer(&plain, &mut offset)?);
+    let _aq = Zeroizing::new(integer(&plain, &mut offset)?);
+    if offset != plain.len() || private_n != n || n.bit_width() < 1984 || n.bit_width() > 8192 {
         return Err(invalid());
     }
-    let mut ctx = BigNumContext::new().map_err(crypto)?;
-    let mut pm1 = p.to_owned().map_err(crypto)?;
-    let mut qm1 = q.to_owned().map_err(crypto)?;
-    pm1.sub_word(1).map_err(crypto)?;
-    qm1.sub_word(1).map_err(crypto)?;
-    let mut phi = BigNum::new().map_err(crypto)?;
-    phi.checked_mul(&pm1, &qm1, &mut ctx).map_err(crypto)?;
-    let mut d = BigNum::new().map_err(crypto)?;
-    d.mod_inverse(&e, &phi, &mut ctx).map_err(crypto)?;
-    let mut iq = BigNum::new().map_err(crypto)?;
-    iq.mod_inverse(&q, &p, &mut ctx).map_err(crypto)?;
-    let rsa = Rsa::from_private_components(n, e, d, p, q, dp, dq, iq).map_err(crypto)?;
-    if !rsa.check_key().map_err(crypto)? {
+    // PrivateKey::validate checks RSA congruences but not primality. Preserve
+    // the old import's prime-factor check instead of accepting composite factors.
+    if !crypto_primes::is_prime(crypto_primes::Flavor::Any, &*p)
+        || !crypto_primes::is_prime(crypto_primes::Flavor::Any, &*q)
+    {
+        return Err(invalid());
+    }
+    let rsa = PrivateKey::from_primes(vec![(*p).clone(), (*q).clone()], e).map_err(crypto)?;
+    rsa.validate().map_err(crypto)?;
+    if rsa.n().as_ref() != &n || rsa.dp() != Some(&*dp) || rsa.dq() != Some(&*dq) {
         return Err(invalid());
     }
     Ok((
@@ -164,7 +164,7 @@ fn user_key(data: &[u8], des_key: &[u8]) -> CoreResult<(u8, UserKey)> {
         UserKey {
             number: u16_at(data, 2)?,
             version: u16_at(data, 4)?,
-            key: PKey::from_rsa(rsa).map_err(crypto)?,
+            key: rsa,
         },
     ))
 }
@@ -196,21 +196,13 @@ impl KeyFile {
             return Err(invalid());
         }
         let mut derived = Zeroizing::new([0u8; 32]);
-        pbkdf2_hmac(
-            password,
-            salt,
-            iterations,
-            MessageDigest::sha256(),
-            derived.as_mut(),
-        )
-        .map_err(crypto)?;
-        let hmac_key = PKey::hmac(derived.as_ref()).map_err(crypto)?;
-        let mut signer = Signer::new(MessageDigest::sha256(), &hmac_key).map_err(crypto)?;
+        pbkdf2_hmac::<Sha256>(password, salt, iterations as u32, derived.as_mut());
+        let mut mac = Hmac::<Sha256>::new_from_slice(derived.as_ref()).map_err(crypto)?;
         for record in records.iter().filter(|r| r.tag != 0x4d44) {
-            signer.update(record.raw).map_err(crypto)?;
+            mac.update(record.raw);
         }
-        let mac = signer.sign_to_vec().map_err(crypto)?;
-        if !memcmp::eq(&mac, macs[0].data) {
+        // Mac::verify_slice performs a constant-time tag comparison.
+        if mac.verify_slice(macs[0].data).is_err() {
             return Err(CoreError::Authentication {
                 message: "Passwort falsch oder Schlüsseldatei verändert.".into(),
             });
@@ -286,7 +278,7 @@ impl KeyFile {
                     let mut offset = 69;
                     let n = integer(data, &mut offset)?;
                     let e = integer(data, &mut offset)?;
-                    if offset != data.len() || n.num_bits() < 1984 || n.num_bits() > 8192 {
+                    if offset != data.len() || n.bit_width() < 1984 || n.bit_width() > 8192 {
                         return Err(invalid());
                     }
                     bank_keys.push(BankKey {
@@ -295,8 +287,7 @@ impl KeyFile {
                         kind,
                         number: u16_at(data, 37)?,
                         version: u16_at(data, 35)?,
-                        key: PKey::from_rsa(Rsa::from_public_components(n, e).map_err(crypto)?)
-                            .map_err(crypto)?,
+                        key: PublicKey::new_with_size_limits(n, e, 1984..=8192).map_err(crypto)?,
                     });
                 }
                 _ => return Err(invalid()),
