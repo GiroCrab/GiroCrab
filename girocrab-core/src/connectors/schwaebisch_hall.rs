@@ -172,13 +172,21 @@ fn month_of_key(k: &str) -> Option<u32> {
     month_name(k)
 }
 
-/// Year/month an object states in its own fields (`year`/`jahr`, `month`/`monat`).
+/// Year/month an object states in its own fields: `year`/`jahr`, and `month`/
+/// `monat` or – as the portal's month groups do (`{name: "Nov", fullname:
+/// "November", entries: […]}`, #290) – `fullname`/`name`. Each must hold an
+/// exact month name or number; anything else (e.g. `month` holding the list
+/// of month groups) is ignored.
 fn level_date(obj: &Map<String, Value>) -> (Option<i32>, Option<u32>) {
-    let field = |names: &[&str]| names.iter().find_map(|n| obj.get(*n));
-    (
-        field(&["year", "jahr"]).and_then(year_of),
-        field(&["month", "monat"]).and_then(month_of),
-    )
+    let year = ["year", "jahr"]
+        .iter()
+        .find_map(|n| obj.get(*n))
+        .and_then(year_of);
+    let month = ["month", "monat", "fullname", "name"]
+        .iter()
+        .filter_map(|n| obj.get(*n))
+        .find_map(month_of);
+    (year, month)
 }
 
 /// Applies a year/month found at one level: a new year starts without the
@@ -748,6 +756,82 @@ mod tests {
             .transactions
             .iter()
             .all(|t| t.value_date == t.booking_date));
+    }
+
+    /// The portal's real shape (anonymised sample from the issue author, #290):
+    /// numeric contract type/phase, years as list items, month groups with
+    /// `name`/`fullname` and the bookings in `entries`.
+    fn portal_sample_details() -> Value {
+        json!({"contracttype": 1, "contractphase": 1,
+               "transactions": [{"year": 2026, "saldo": "&#43; 0,00", "month": [
+                   {"name": "Nov", "fullname": "November", "entries": [
+                       {"amount": "&#43; 50,00", "subject": "Einzug Zahlung", "day": 3}]},
+                   {"name": "Okt", "fullname": "Oktober", "entries": [
+                       {"amount": "&#43; 50,00", "subject": "Einzug Zahlung", "day": 2},
+                       {"amount": "- 12,00", "subject": "Kontogebühr", "day": 30}]}]},
+                   {"year": 2025, "saldo": "&#43; 0,00", "month": [
+                       {"name": "Dez", "fullname": "Dezember", "entries": [
+                           {"amount": "&#43; 1,23", "subject": "Zinsen", "day": 31}]}]}]})
+    }
+
+    #[test]
+    fn portal_sample_months_in_name_and_fullname() {
+        let mut c = contract(
+            "0000000000000",
+            "Bausparvertrag Sparphase",
+            "&#43; 0,00",
+            Value::Null,
+        );
+        c["details"] = portal_sample_details();
+        let r = parse(json!([c])).unwrap();
+        assert_eq!(r.accounts[0].kind, AccountKind::Savings);
+        let got: Vec<_> = r
+            .transactions
+            .iter()
+            .map(|t| (t.booking_date.as_str(), t.amount_cents, t.purpose.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("2026-11-03", 5_000, "Einzug Zahlung"),
+                ("2026-10-02", 5_000, "Einzug Zahlung"),
+                ("2026-10-30", -1_200, "Kontogebühr"),
+                ("2025-12-31", 123, "Zinsen"),
+            ]
+        );
+        // `fullname` alone and `name` alone are enough
+        let mut only_full = portal_sample_details();
+        only_full["transactions"][0]["month"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("name");
+        only_full["transactions"][0]["month"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("fullname");
+        let mut c = contract("0000000000000", "Bausparvertrag", "+ 0,00", Value::Null);
+        c["details"] = only_full;
+        assert_eq!(parse(json!([c])).unwrap().transactions.len(), 4);
+    }
+
+    #[test]
+    fn portal_sample_loan_contract() {
+        // Darlehen as reported by the issue author: type text, contracttype 3,
+        // contractphase 1, negative balance.
+        let mut c = contract(
+            "0000000000001",
+            "Tilgungsaussetzungsdarlehen",
+            "- 1111,11",
+            Value::Null,
+        );
+        c["details"] = json!({"contracttype": 3, "contractphase": 1, "transactions": []});
+        let r = parse(json!([c])).unwrap();
+        assert_eq!(r.accounts[0].kind, AccountKind::Loan);
+        assert_eq!(r.accounts[0].balance_cents, -111_111);
+        assert_eq!(
+            r.accounts[0].name,
+            "Tilgungsaussetzungsdarlehen 123456 A 01"
+        );
     }
 
     #[test]

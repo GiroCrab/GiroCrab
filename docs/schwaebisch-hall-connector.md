@@ -35,7 +35,7 @@ die das Portal selbst lädt. Unten stehen nur Pfade, Feldnamen und Regeln, keine
 | 1 | `GET /bin/bshweb/authentication` | Startet die Anmeldung: Weiterleitung zu `login.schwaebisch-hall.de` (Azure AD B2C, Policy `B2C_1A_SEAMLESSMIGRATION_SIGNUPORSIGNIN`, Code-Flow mit PKCE). Nach der Anmeldung setzt das Portal die Sitzungs-Cookies. |
 | 2 | `GET /bin/bshweb/accountcontracts` | Verträge: `type`, `bsn`, `accountBalance`, `vtn`. Ohne Sitzung kommt `{"status":"error", …"code":"timeout"}`; daran erkennt das Fenster, ob man angemeldet ist. |
 | 3 | `GET …/myaccount_accounts.account_details.json?vtn={vtn}` | Je Vertrag: `contracttype`, `contractphase`, `transactions` (nach Jahr und Monat gruppiert, je Buchung `day`, `subject`, `amount`). |
-| 4 | `GET …/nachrichten.bin.postboxmessage?command=getmessages` | Postfach (nur wenn „PDF-Dokumente aus dem Postfach“ an ist). Die Anhang-ID steht im Download-Formular der Nachricht. |
+| 4 | `GET …/nachrichten.bin.postboxmessage?command=getmessages` | Postfach (nur wenn „PDF-Dokumente aus dem Postfach“ an ist): `data.messages` mit `id`, `date`, `title`, `type`, `typeName`, `text`. Nachrichten mit `type: "data"` (z. B. `typeName: "jahreskontoauszug"`) haben einen Anhang, dessen ID die Nachrichten-ID ist; `type: "message"` sind reine Textnachrichten. Eine ausdrückliche Anhang-ID (Download-Formular oder Link im `text`) geht vor. |
 | 5 | `GET /bin/bshweb/postbox/attachment?id={id}` | PDF-Anhang. |
 
 Die Abrufe laufen als Skript in der angemeldeten Seite (gleiche Herkunft, `credentials:
@@ -63,8 +63,12 @@ Stücken gelesen und beim Überschreiten von 25 MB sofort abgebrochen.
   Rechnen nur in Cent. Erlaubt sind nur Vorzeichen vorn, Ziffern, Trennzeichen und `€`/`EUR`;
   ein Soll/Haben-Kennzeichen (`S`/`H`) oder ein nachgestelltes Minus verwirft den Abruf, statt
   das Vorzeichen zu verlieren.
+* **Buchungsstruktur** (laut anonymisiertem Beispiel aus #290): die Detailantwort steckt in
+  `{status, data}`; `contracttype`/`contractphase` sind Zahlen (Bausparvertrag `1`/`1`,
+  Tilgungsaussetzungsdarlehen `3`/`1`); `transactions` ist eine Liste von Jahren
+  `{year, saldo, month: [{name: "Nov", fullname: "November", entries: [{amount, subject, day}]}]}`.
 * **Datum:** Jahr und Monat kommen aus der Gruppierung (Schlüssel wie `2025`/`Dezember`/`03`
-  oder Felder `year`/`month`), der Tag aus `day`. Steht im Tag ein volles Datum, gilt dieses.
+  oder Felder `year`/`month`, beim Monat auch `fullname`/`name`), der Tag aus `day`. Steht im Tag ein volles Datum, gilt dieses.
   Monatsnamen gelten nur exakt (keine Wortanfänge), Zahlen als Schlüssel nur zweistellig.
 * **Summen:** `saldo`, `summe`, `total` werden übersprungen. Ein Eintrag mit Betrag und Datum,
   aber ohne `subject`, verwirft den Abruf.
@@ -79,14 +83,15 @@ Stücken gelesen und beim Überschreiten von 25 MB sofort abgebrochen.
   Bereits geladene Anhänge werden nicht erneut geladen. Nur PDFs bis 25 MB werden gespeichert.
 * Hintergrund-Abrufe sind nicht möglich: Die Anmeldung braucht das Browserfenster.
 
-## Offene Punkte (bitte mit echtem Vertrag prüfen)
+## Geklärt und offen
 
-* Die genaue Form von `transactions` (Objekte nach Jahr/Monat oder Listen) war nur beschrieben,
-  nicht als vollständige Antwort zu sehen. Der Parser akzeptiert beides; ein anonymisiertes
-  Beispiel hilft, ihn festzuzurren.
-* Wo die Anhang-ID steht (im `text` der Nachricht oder in eigenen Feldern) und welchen
-  Dateityp der Download liefert, ist nicht bestätigt.
-* Ob Darlehensverträge ihren Saldo positiv oder negativ melden.
+Geklärt mit anonymisierten Beispielen des Issue-Autors (#290): die Buchungsstruktur (siehe
+„Buchungsstruktur“), Anhänge bei `type: "data"` mit der Nachrichten-ID als Anhang-ID, und
+Darlehen melden ihren Saldo negativ (`"- 1111,11"`, Vertragsart z. B.
+„Tilgungsaussetzungsdarlehen“).
+
+Noch offen: ein vollständiger Abruf mit echtem Vertrag in GiroCrab, ob jeder `data`-Anhang ein
+PDF ist, und ob das Laden eines Anhangs die Nachricht als gelesen markiert.
 
 ## Tests
 

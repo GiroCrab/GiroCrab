@@ -113,10 +113,13 @@ enum SchwaebischHallScripts {
     return JSON.stringify({version:1, contracts:out});
     """#
 
-    /// Postbox attachments as `[{id, date, title, vtn?}]`. The
-    /// attachment id sits in the message's download form
-    /// (`<form action="/bin/bshweb/postbox/attachment"><input name="id">`) or a
-    /// link to it; `vtn` is set when exactly one contract number appears in the message.
+    /// Postbox attachments as `[{id, date, title, vtn?}]`. The portal's download
+    /// uses the message id (`/bin/bshweb/postbox/attachment?id=<message id>`) for
+    /// messages with `type: "data"` (e.g. the annual statement); `type: "message"`
+    /// ones are text only (#290). An explicit attachment id – a download form
+    /// (`<form action="/bin/bshweb/postbox/attachment"><input name="id">`), a link
+    /// or an attachment field – wins. `vtn` is set when exactly one contract number
+    /// appears in the message.
     static let documents = #"""
     const contracts = await contractList();
     const data = await json('/content/bshweb/startseite/mein-konto/nachrichten.bin.postboxmessage?command=getmessages');
@@ -143,6 +146,7 @@ enum SchwaebischHallScripts {
       if (Array.isArray(m.attachments))
         for (const a of m.attachments) ids.push(typeof a === 'string' ? a : a?.id ?? a?.attachmentId);
       if (m.attachmentId !== undefined) ids.push(m.attachmentId);
+      if (!ids.length && m.type === 'data') ids.push(m.id);
       const plain = squash((m.title ?? '') + ' ' + html.replace(/<[^>]*>/g, ' '));
       const named = contracts.filter(c => plain.includes(c.vtn) || (c.bsn && plain.includes(squash(c.bsn))));
       for (const raw of ids) {

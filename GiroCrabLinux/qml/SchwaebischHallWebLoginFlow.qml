@@ -119,6 +119,7 @@ for (const m of messages) {
   if (Array.isArray(m.attachments))
     for (const a of m.attachments) ids.push(typeof a === 'string' ? a : a?.id ?? a?.attachmentId);
   if (m.attachmentId !== undefined) ids.push(m.attachmentId);
+  if (!ids.length && m.type === 'data') ids.push(m.id);
   const plain = squash((m.title ?? '') + ' ' + html.replace(/<[^>]*>/g, ' '));
   const named = contracts.filter(c => plain.includes(c.vtn) || (c.bsn && plain.includes(squash(c.bsn))));
   for (const raw of ids) {

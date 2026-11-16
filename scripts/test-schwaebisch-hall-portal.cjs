@@ -112,6 +112,30 @@ test('documents find attachment ids in forms, links and fields, once each', asyn
   assert.ok(docs.every(d => Object.keys(d).every(k => ['id', 'date', 'title', 'vtn'].includes(k))));
 });
 
+test('portal sample (#290): data envelope, numeric type/phase, month groups', async () => {
+  const sample = {status: 'success', data: {contracttype: 1, contractphase: 1,
+    coredata: {bsn: 'D02', vtn: '0000000000000', owners: ['DO NOT EXPORT']}, debit: {directdebits: [{iban: 'DO NOT EXPORT'}]},
+    transactions: [{year: 2026, saldo: '&#43; 0,00', month: [
+      {name: 'Nov', fullname: 'November', entries: [{amount: '&#43; 0,00', subject: 'Einzug Zahlung', day: 3}]}]}]}};
+  const snap = JSON.parse(await run('snapshot', portal([], {[DETAILS]: () => response(sample)})));
+  assert.deepEqual(snap.contracts[0].details, {contracttype: 1, contractphase: 1, transactions: sample.data.transactions});
+  assert.ok(!JSON.stringify(snap).includes('DO NOT EXPORT'));
+});
+
+test('postbox sample (#290): the message id is the attachment of type "data" messages only', async () => {
+  const messages = {status: 'success', data: {messages: [
+    {id: '12345678', date: '16.01.2026', title: 'Ihr Jahreskontoauszug 2025', type: 'data', read: true, text: 'text',
+     deletable: false, typeName: 'jahreskontoauszug', nbaurl: 'UrlAnfrage'},
+    {id: '87654321', date: '17.01.2026', title: 'Ihre Anfrage', type: 'message', read: true, text: 'text',
+     deletable: true, typeName: 'service_wop', nbaurl: 'UrlAnfrage'},
+    // an explicit attachment id wins over the message id
+    {id: '11111111', date: '18.01.2026', title: 'Info', type: 'data',
+     text: '<form action="/bin/bshweb/postbox/attachment"><input type="hidden" name="id" value="att-9"></form>'}]}};
+  const docs = JSON.parse(await run('documents', portal([], {[POSTBOX]: () => response(messages)})));
+  assert.deepEqual(docs.map(d => [d.id, d.date, d.title]),
+    [['12345678', '16.01.2026', 'Ihr Jahreskontoauszug 2025'], ['att-9', '18.01.2026', 'Info']]);
+});
+
 test('pdf downloads one attachment and rejects anything else', async () => {
   const calls = [];
   const b64 = await run('pdf', portal(calls), {args: {id: 'att 2'}});
