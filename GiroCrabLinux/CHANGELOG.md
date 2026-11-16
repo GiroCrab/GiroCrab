@@ -92,6 +92,12 @@ Funktionsumfang der Oberfläche.
   Abrechnungszeiträume geöffnet werden können; „Umsätze übernehmen“ übernimmt dann alles
   Erkannte und schließt. Beim ersten Abruf eines Zugangs ist das schon eingeschaltet.
 
+### Einstellungen
+
+- Unten im Einstellungsfenster steht dezent die Version („GiroCrab 0.7.5“), auf jedem Reiter.
+  Wie „Kern-Version“ in Sicherheit ist es die Nummer des Kerns, auf dem die Linux-Oberfläche
+  gebaut ist.
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus
