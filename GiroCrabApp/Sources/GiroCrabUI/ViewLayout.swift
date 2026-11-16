@@ -17,9 +17,11 @@ enum ViewLayout {
     static let budgetsCollapsedKey = "budgetsCollapsed"
     /// Shared card spacing so the three cards above the list line up (GitHub #603).
     static let cardPadding: CGFloat = 12
-    static let cardSpacing: CGFloat = 5
+    static let cardSpacing: CGFloat = 8
+    /// Outer gap between the stacked cards above the booking list (demo banner, header, cashflow, budgets, first day).
+    static let cardGap: CGFloat = 4
     /// Top/bottom inset of a folded card: one compact row.
-    static let collapsedCardVerticalPadding: CGFloat = 6
+    static let collapsedCardVerticalPadding: CGFloat = 4
     static func cardVerticalPadding(collapsed: Bool) -> CGFloat { collapsed ? collapsedCardVerticalPadding : cardPadding }
 
     /// Budgets show until switched off (Ansicht › Budgets anzeigen).
