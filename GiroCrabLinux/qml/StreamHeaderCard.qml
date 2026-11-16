@@ -125,11 +125,11 @@ Card {
             Layout.fillWidth: true
             spacing: 10
             KPI { Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1
-                  title: qsTr("Konsumausgaben"); subtitle: AppModel.periodSubtitle; value: Fmt.money(-AppModel.consumptionThisMonth); tint: Theme.outflow }
+                  title: qsTr("Konsumausgaben"); subtitle: AppModel.periodSubtitle; value: AppModel.isLoadingSelection ? "–" : Fmt.money(-AppModel.consumptionThisMonth); tint: Theme.outflow }
             KPI { Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1
-                  title: qsTr("Investiert"); subtitle: qsTr("Sparpläne & Perks"); value: Fmt.money(AppModel.investedThisMonth); tint: Theme.invest }
+                  title: qsTr("Investiert"); subtitle: qsTr("Sparpläne & Perks"); value: AppModel.isLoadingSelection ? "–" : Fmt.money(AppModel.investedThisMonth); tint: Theme.invest }
             KPI { Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1
-                  title: qsTr("Einnahmen"); subtitle: AppModel.periodSubtitle; value: Fmt.money(AppModel.incomeThisMonth); tint: Theme.inflow }
+                  title: qsTr("Einnahmen"); subtitle: AppModel.periodSubtitle; value: AppModel.isLoadingSelection ? "–" : Fmt.money(AppModel.incomeThisMonth); tint: Theme.inflow }
             KPI { Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1
                   title: qsTr("Fixkosten offen"); subtitle: qsTr("Diesen Monat · %1 offen").arg(card.openFixed)
                   value: Fmt.money(-(AppModel.recurringMonth ? AppModel.recurringMonth.open_expense_cents : 0)); tint: Theme.outflow

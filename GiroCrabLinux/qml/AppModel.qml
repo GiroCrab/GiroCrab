@@ -34,6 +34,81 @@ QtObject {
         }
     }
 
+    // MARK: background loads (`offMain` + generation check, CLAUDE.md › Architecture)
+    /// Bumped whenever the vault on screen changes (open, demo ↔ own, lock): an answer
+    /// for the previous vault is dropped.
+    property int vaultGeneration: 0
+    /// The core has a vault in front (`use_own` / `open_demo` done); `vaultState` turns
+    /// "open" only once the accounts are there.
+    property bool vaultLoaded: false
+    /// channel → { gen, busy, again, request, apply, failed }
+    property var loads: ({})
+    /// Latest-wins load on a worker thread. `request()` returns `[[method, args], …]`
+    /// (or `{ calls, ctx }`, or null to skip) and is evaluated when the load starts;
+    /// `apply(results, ctx)` runs on the GUI thread, only for the newest request of the
+    /// channel and the same vault. One load per channel runs at a time: asking again
+    /// meanwhile stops the running batch at its next call (`supersede`) and starts once
+    /// more with fresh arguments when it is back, so fast clicking queues nothing.
+    /// The demo vault (small, launch options and screenshots expect its data at once)
+    /// loads synchronously.
+    function loadOffMain(channel, request, apply, failed) {
+        if (!vaultLoaded) return
+        const l = loads[channel] || (loads[channel] = { gen: 0, busy: false, again: false })
+        l.gen++
+        l.request = request; l.apply = apply; l.failed = failed || null
+        if (demoActive) {
+            const req = loadRequest(request)
+            if (!req) return
+            let results
+            try { results = req.calls.map(c => core(c[0], c[1] || {})) } catch (e) {
+                if (failed) failed(e.message); else errorMessage = parseCoreError(e.message).message
+                return
+            }
+            apply(results, req.ctx)
+            return
+        }
+        Core.call("supersede", JSON.stringify({ channel: channel, token: l.gen }))
+        if (l.busy) { l.again = true; return }
+        startLoad(channel, l)
+    }
+    function loadRequest(request) {
+        const r = request()
+        if (!r) return null
+        return Array.isArray(r) ? { calls: r, ctx: null } : r
+    }
+    function startLoad(channel, l) {
+        l.again = false
+        if (!vaultLoaded) return
+        const req = loadRequest(l.request)
+        if (!req) return
+        const gen = l.gen, vgen = vaultGeneration, apply = l.apply, failed = l.failed
+        l.busy = true
+        l.runningGen = gen
+        const back = () => {
+            l.busy = false
+            if (!l.again) return false
+            startLoad(channel, l)   // a newer request came in meanwhile
+            return true
+        }
+        coreAsync("batch", { channel: channel, token: gen, calls: req.calls.map(c => ({ method: c[0], args: c[1] || {} })) }, r => {
+            if (back() || r.cancelled || gen !== l.gen || vgen !== vaultGeneration || !vaultLoaded) return
+            apply(r.results, req.ctx)
+        }, err => {
+            if (back() || gen !== l.gen || vgen !== vaultGeneration || !vaultLoaded) return
+            if (failed) failed(err); else errorMessage = parseCoreError(err).message
+        })
+    }
+    /// Drops the answer of a running load of `channel` (and stops its batch early).
+    function cancelLoad(channel) {
+        const l = loads[channel]
+        if (!l) return
+        l.gen++
+        l.again = false
+        if (l.busy) Core.call("supersede", JSON.stringify({ channel: channel, token: l.gen }))
+    }
+    /// A load of `channel` will still publish: running (not cancelled) or asked for again.
+    function isLoadPending(channel) { const l = loads[channel]; return !!l && (l.again || (l.busy && l.runningGen === l.gen)) }
+
     /// UserDefaults → QSettings (~/.config/GiroCrab/GiroCrab.conf).
     property Settings defaults: Settings {
         /// `girocrab.hasRealData`: "" = never answered, "true" / "false".
@@ -273,6 +348,7 @@ QtObject {
     function openDemo() {
         try {
             core("open_demo")
+            vaultSwitched()
             lockPreview = false
             demoActive = true
             vaultState = "open"
@@ -314,8 +390,8 @@ QtObject {
                     openDemo()
                     toast = qsTr("Ihr Tresor ist noch leer – Sie sehen Demo-Daten")
                 } else {
-                    // The key is there; loading the vault happens on this thread. Show
-                    // "Buchungen werden geladen …" first and give it a frame to appear.
+                    // The key is there: "Buchungen werden geladen …" until the accounts are
+                    // loaded (off the GUI thread); the rest fills in in the main view.
                     unlockPhase = "loading"
                     openVaultTimer.restart()
                 }
@@ -343,16 +419,45 @@ QtObject {
     property Timer openVaultTimer: Timer { interval: 60; onTriggered: model.useVault(false) }
 
     /// `useVault(_:demo:)` for the personal vault.
+    /// The main view shows once the accounts are loaded; list, chart and the rest follow.
+    /// Coming from the demo, its data stays until then (the accounts load synchronously
+    /// while `demoActive` still holds, so no demo id ever reaches the own vault).
     function useVault(demo) {
         if (!run(() => { core("use_own"); return true })) return
-        demoActive = demo
-        if (!demo) defaults.hasRealData = "true"
-        vaultState = "open"
+        vaultSwitched()
+        vaultLoaded = false   // the selection reset below must not load yet
         selectedBookingID = null
         sidebarSelection = "all"
-        reloadAll()
-        refreshAssetPrices(false)
-        selectedBookingID = bookings.length ? bookings[0].id : null
+        vaultLoaded = true
+        selectFirstBookingOnLoad = true
+        reloadAll(() => {
+            demoActive = demo
+            if (!demo) defaults.hasRealData = "true"
+            // nothing of the demo stays clickable under the own accounts: spinner until the list is there
+            showSelectionPlaceholder()
+            page = null; bookings = []; rebuildStream()
+            categories = []; categoryTree = []; recurring = []; recurringHidden = []; recurringMonth = null
+            selectionFlow = null; salaryCycle = null
+            vaultState = "open"
+            refreshAssetPrices(false)
+        }, err => {
+            vaultLoaded = false
+            failure = parseCoreError(err).message
+            vaultState = "failed"
+        })
+    }
+    /// A different vault is in front (or none): answers still on their way belong to the old one.
+    function vaultSwitched() {
+        vaultGeneration++
+        vaultLoaded = true
+        afterAccountsQueue = []
+        afterBookingsQueue = []
+        selectionNeeds = ({ recurring: false, categories: false })
+        selectFirstBookingOnLoad = false
+        endSelectionLoad()
+        merchantStatsTimer.stop()
+        merchantStatsCache = ({})
+        merchantStatsKey = ""
     }
     /// Switch to the demo data (own vault stays unlocked in the background).
     function showDemo() { if (!demoActive) openDemo() }
@@ -382,6 +487,8 @@ QtObject {
     function releaseVaultState() {
         endBankDialogsForLock()
         run(() => core("lock"))   // also cancels every bank dialog in the core (src/sessions.rs)
+        vaultSwitched()
+        vaultLoaded = false
         hasOwnVault = false
         demoActive = false
         groups = []; userGroups = []; accountsByID = ({}); accountMarkers = ({}); bookings = []; categories = []; categoryTree = []
@@ -422,30 +529,47 @@ QtObject {
     }
 
     // MARK: loading
-    function reloadAll() {
+    /// Everything of the vault on screen. The accounts come first: `then` runs as soon as
+    /// they are there (the main view can show), the rest fills in off the GUI thread.
+    function reloadAll(then, failed) {
         reloadSettings()
-        reloadAccounts()
-        refreshSalaryCycle()
-        refreshRecurring()
-        reloadHistory()
-        reloadCategories()
-        reloadBookings()
-        reloadRules()
-        reloadPlanning()
-        reloadDashboard()
+        reloadAccounts(() => {
+            if (then) then()
+            // the list first: the other loads would queue before it at the vault mutex
+            afterBookingsQueue.push(() => { reloadRules(); reloadPlanning(); reloadDashboard() })
+            requestSelectionLoad({ recurring: true, categories: true }, true)
+        }, failed)
     }
-    function reloadAccounts() {
-        run(() => {
-            groups = core("list_account_groups")
-            userGroups = core("list_user_groups")
-            connections = core("list_bank_connections")
+    /// While an accounts load runs, `fn` waits for it (group membership decides the account
+    /// ids of a selection) and true comes back; one entry per `key`. False: nothing runs.
+    property var afterAccountsQueue: []
+    function whenAccountsLoaded(key, fn) {
+        if (!isLoadPending("accounts")) return false
+        if (!key || !afterAccountsQueue.some(e => e.key === key)) afterAccountsQueue.push({ key: key, fn: fn })
+        return true
+    }
+    /// Groups, connections and Sachwerte in one background batch; `then` runs after they are published.
+    function reloadAccounts(then, failed) {
+        if (!vaultLoaded) return
+        if (then) afterAccountsQueue.push({ key: null, fn: then })
+        loadOffMain("accounts", () => [["list_account_groups"], ["list_user_groups"], ["list_bank_connections"],
+                                       ["list_tangible_account_ids"], ["list_all_asset_items"]], r => {
+            groups = r[0]
+            userGroups = r[1]
+            connections = r[2]
             if (sidebarSelection.startsWith("userGroup:") && !userGroups.some(g => "userGroup:" + g.uuid === sidebarSelection))
                 sidebarSelection = "all"
             if (sidebarSelection.startsWith("bank:") && !bankGroup(sidebarSelection.slice(5)))
                 sidebarSelection = "all"
             rebuildAccountIndex()
+            applyAssets(r[3], r[4])
+            const queue = afterAccountsQueue
+            afterAccountsQueue = []
+            for (const e of queue) e.fn()
+        }, err => {
+            afterAccountsQueue = []
+            if (failed) failed(err); else errorMessage = parseCoreError(err).message
         })
-        reloadAssets()
     }
     function rebuildAccountIndex() {
         reloadLoans()
@@ -465,11 +589,15 @@ QtObject {
         accountMarkers = markers
     }
     function reloadCategories() {
-        const r = periodRange()
-        run(() => {
-            categories = core("list_categories", { date_from: r[0], date_to: r[1] })
-            categoryTree = buildTree(categories)
-        })
+        if (!isUnlocked || selectionLoadTakes("categories")) return
+        loadOffMain("categories", () => {
+            const r = periodRange()
+            return [["list_categories", { date_from: r[0], date_to: r[1] }]]
+        }, r => applyCategories(r[0]))
+    }
+    function applyCategories(list) {
+        categories = list
+        categoryTree = buildTree(list)
     }
     /// Category tree from the flat list in one pass (grouped by parent first; the
     /// former per-node filter was quadratic and slow with large MoneyMoney imports).
@@ -488,18 +616,56 @@ QtObject {
         }
         return children("root")
     }
-    function reloadBookings() {
+    /// The booking list (and its sums) for the current filter, off the GUI thread; the
+    /// previous list stays until the new one is there. `then` runs after it is published.
+    function reloadBookings(then) {
         if (!isUnlocked) return
-        ++selectionLoadGeneration   // a pending off-main list must not overwrite this one
-        run(() => {
-            const p = core("list_transactions", { filter: currentFilter() })
-            publish(p)
+        if (then) afterBookingsQueue.push(then)
+        if (selectionLoadTakes(null)) return
+        if (whenAccountsLoaded("bookings", () => reloadBookings())) return
+        dropPendingPage()
+        loadOffMain("bookings", () => {
+            const f = currentFilter()
+            const calls = [["list_transactions", { filter: f }]]
+            const flowInPage = listHasFlow(f)
+            if (!flowInPage) calls.push(selectionFlowCall(f))
+            return { calls: calls, ctx: { flowInPage: flowInPage } }
+        }, (r, ctx) => {
+            publish(r[0])
+            applySelectionFlow(r[0], ctx.flowInPage ? null : r[1])
+            // Every edit, sync and import ends up here: cached merchant histories may be stale.
+            merchantStatsCache = ({})
+            afterListPublished(true)
         })
+    }
+    /// Run after the next published booking list (e.g. scroll to a day it had to load).
+    property var afterBookingsQueue: []
+    function afterListPublished(keepMerchantStats) {
         // the sticky booking is not in the list: re-read it so the inspector shows the edit
         if (stickyBooking !== null && !bookings.some(b => b.id === stickyBooking.id))
             stickyBooking = freshBooking(stickyBooking) || stickyBooking
-        reloadSelectionKPIs()
-        loadMerchantStats()
+        loadMerchantStats(keepMerchantStats)
+        const queue = afterBookingsQueue
+        afterBookingsQueue = []
+        for (const fn of queue) fn()
+    }
+    /// Every full reload calls this first: a page still on its way belongs to the old list.
+    function dropPendingPage() {
+        listGeneration++
+        isLoadingMoreBookings = false
+    }
+    /// The list page carries the selection's sums when no list-only filter narrows it.
+    function listHasFlow(f) {
+        return f.search === null && f.checked === null && f.direction === "All" && f.scope === "All"
+            && f.category_id === null && !f.uncategorized_only
+    }
+    function selectionFlowCall(f) {
+        const r = periodRange()
+        return ["selection_flow", { account_ids: f.account_ids, date_from: r[0], date_to: r[1] }]
+    }
+    function applySelectionFlow(page, s) {
+        selectionFlow = s ? { consumption: s.consumption_cents, invested: s.invested_cents, income: s.income_cents }
+                          : { consumption: page.flow.consumption_cents, invested: page.flow.invested_cents, income: page.flow.income_cents }
     }
     /// Shows a freshly loaded list page. A selected booking the page no longer
     /// contains falls back to the first row, unless it is sticky.
@@ -609,10 +775,11 @@ QtObject {
     // MARK: paging (loadMoreBookings / loadAllBookings)
     property int listGeneration: 0
     property bool isLoadingMoreBookings: false
-    readonly property bool hasMoreBookings: page !== null && bookings.length < page.total_count
+    // the previous selection's page may still show during a selection load
+    readonly property bool hasMoreBookings: page !== null && !selectionLoadRunning && bookings.length < page.total_count
     readonly property int remainingBookingCount: page ? Math.max(0, page.total_count - bookings.length) : 0
     function loadMoreBookings(count) {
-        if (!isUnlocked || !hasMoreBookings || isLoadingMoreBookings) return
+        if (!isUnlocked || !hasMoreBookings || isLoadingMoreBookings || selectionLoadRunning) return
         const f = currentFilter()
         f.offset = bookings.length
         f.limit = count > 0 ? count : defaultListLimit
@@ -632,24 +799,13 @@ QtObject {
         reloadBookings()
     }
 
-    function reloadSelectionKPIs() {
-        const f = currentFilter()
-        if (page && f.search === null && f.checked === null && f.direction === "All" && f.scope === "All"
-                && f.category_id === null && !f.uncategorized_only) {
-            selectionFlow = { consumption: page.flow.consumption_cents, invested: page.flow.invested_cents, income: page.flow.income_cents }
-            return
-        }
-        const r = periodRange()
-        run(() => {
-            const s = core("selection_flow", { account_ids: f.account_ids, date_from: r[0], date_to: r[1] })
-            selectionFlow = { consumption: s.consumption_cents, invested: s.invested_cents, income: s.income_cents }
-        })
-    }
     function reloadHistory() {
-        const req = historyRequest()
-        const r = periodRange()
-        ++historyLoadGeneration   // a pending off-main answer must not overwrite this one
-        run(() => { history = trimHistory(core("balance_history", { account_ids: req.ids, days: req.days }), r) })
+        if (!isUnlocked || selectionLoadTakes(null)) return
+        if (whenAccountsLoaded("history", () => reloadHistory())) return
+        loadOffMain("history", () => {
+            const req = historyRequest()
+            return { calls: [["balance_history", { account_ids: req.ids, days: req.days }]], ctx: periodRange() }
+        }, (r, range) => { history = trimHistory(r[0], range) }, () => {})
     }
     function trimHistory(pts, r) {
         if (r[1]) pts = pts.filter(p => p.date <= r[1])
@@ -682,67 +838,188 @@ QtObject {
     /// Series, hidden series and this month's overview from one `recurring_snapshot` call.
     function refreshRecurring() {
         if (!isUnlocked) { recurring = []; recurringHidden = []; recurringMonth = null; return }
+        if (selectionLoadTakes("recurring")) return
+        if (whenAccountsLoaded("recurring", () => refreshRecurring())) return
+        loadOffMain("recurring", () => [recurringCall()], r => applyRecurring(r[0]))
+    }
+    function recurringCall() {
         const now = new Date()
-        run(() => {
-            const s = core("recurring_snapshot", { account_ids: selectionAccountIDs(), year: now.getFullYear(), month: now.getMonth() + 1 })
-            recurring = s.series
-            recurringHidden = s.ignored
-            recurringMonth = s.month
-        })
+        return ["recurring_snapshot", { account_ids: selectionAccountIDs(), year: now.getFullYear(), month: now.getMonth() + 1 }]
+    }
+    function applyRecurring(s) {
+        recurring = s.series
+        recurringHidden = s.ignored
+        recurringMonth = s.month
     }
     /// Pay cycle of the selection: `.sinceSalary` derives the period from it.
     property var salaryCycle: null
     function refreshSalaryCycle() {
         if (!isUnlocked) { salaryCycle = null; return }
-        run(() => { salaryCycle = core("salary_cycle", { account_ids: selectionAccountIDs() }) })
+        // a selection load reads the cycle first anyway
+        if (selectionLoadTakes(null)) return
+        if (whenAccountsLoaded("salary", () => refreshSalaryCycle())) return
+        loadOffMain("salary", () => [["salary_cycle", { account_ids: selectionAccountIDs() }]], r => { salaryCycle = r[0] })
     }
     function reloadPlanning() {
-        const now = new Date()
-        run(() => { budgets = core("list_category_budget_progress", { year: now.getFullYear(), month: now.getMonth() + 1 }) })
+        if (!isUnlocked) return
+        loadOffMain("planning", () => {
+            const now = new Date()
+            return [["list_category_budget_progress", { year: now.getFullYear(), month: now.getMonth() + 1 }]]
+        }, r => { budgets = r[0] })
     }
-    function loadMerchantStats() {
+    /// Merchant history of the selected booking (Inspector › Händler-Historie). The core scans
+    /// every booking for it, so it runs off the GUI thread and is cached per merchant; the
+    /// short delay keeps arrow-key navigation from queueing one scan per row.
+    /// `keepShown`: after a data change the shown history of the same merchant stays until
+    /// the fresh one arrives (no flicker).
+    property var merchantStatsCache: ({})
+    property string merchantStatsKey: ""
+    property Timer merchantStatsTimer: Timer { interval: 80; onTriggered: model.loadMerchantStatsNow() }
+    function loadMerchantStats(keepShown) {
         // Not `selectedBooking`: inside onSelectedBookingIDChanged that binding may
         // not be re-evaluated yet and still answer the previous (or no) booking.
         const b = bookingByID(selectedBookingID)
-        if (!b || !b.merchant.key) { merchantStats = null; merchantAccountStats = null; return }
-        run(() => {
-            const h = core("merchant_history", { merchant_key: b.merchant.key, account_id: b.account_id })
-            merchantStats = h.all
-            merchantAccountStats = { account_id: b.account_id, stats: h.account }
-        })
+        if (!b || !b.merchant.key || !isUnlocked) {
+            merchantStatsTimer.stop(); cancelLoad("merchant")
+            merchantStats = null; merchantAccountStats = null; merchantStatsKey = ""
+            return
+        }
+        const key = b.merchant.key, own = b.account_id + "|" + key
+        if (merchantStatsCache[key] && merchantStatsCache[own]) {
+            merchantStatsTimer.stop(); cancelLoad("merchant")
+            merchantStats = merchantStatsCache[key]; merchantStatsKey = key
+            merchantAccountStats = { account_id: b.account_id, stats: merchantStatsCache[own] }
+            return
+        }
+        if (!(keepShown && merchantStatsKey === key)) { merchantStats = null; merchantAccountStats = null; merchantStatsKey = "" }
+        if (demoActive) loadMerchantStatsNow()
+        else merchantStatsTimer.restart()
     }
-    function reloadSelection(periodChanged) {
-        if (!isUnlocked) return
-        refreshSalaryCycle()
-        if (periodChanged) reloadCategories(); else refreshRecurring()
-        // AppModel.offMain: list and balance history load on a worker thread (each holds
-        // the vault for a while with many bookings); a newer selection drops older answers.
-        reloadBookingsOffMain()
-        reloadHistoryOffMain()
-    }
-    property int selectionLoadGeneration: 0
-    property int historyLoadGeneration: 0
-    function reloadBookingsOffMain() {
-        if (!isUnlocked) return
-        const gen = ++selectionLoadGeneration
-        coreAsync("list_transactions", { filter: currentFilter() }, p => {
-            if (gen !== selectionLoadGeneration || !isUnlocked) return
-            publish(p)
-            if (stickyBooking !== null && !bookings.some(b => b.id === stickyBooking.id))
-                stickyBooking = freshBooking(stickyBooking) || stickyBooking
-            reloadSelectionKPIs()
-            loadMerchantStats()
-        }, err => { if (gen === selectionLoadGeneration) errorMessage = parseCoreError(err).message })
-    }
-    function reloadHistoryOffMain() {
-        if (!isUnlocked) return
-        const gen = ++historyLoadGeneration
-        const req = historyRequest()
-        const r = periodRange()
-        coreAsync("balance_history", { account_ids: req.ids, days: req.days }, pts => {
-            if (gen !== historyLoadGeneration || !isUnlocked) return
-            history = trimHistory(pts, r)
+    function loadMerchantStatsNow() {
+        loadOffMain("merchant", () => {
+            const b = bookingByID(selectedBookingID)
+            if (!b || !b.merchant.key) return null
+            return { calls: [["merchant_history", { merchant_key: b.merchant.key, account_id: b.account_id }]],
+                     ctx: { key: b.merchant.key, accountId: b.account_id } }
+        }, (r, ctx) => {
+            merchantStatsCache[ctx.key] = r[0].all
+            merchantStatsCache[ctx.accountId + "|" + ctx.key] = r[0].account
+            const now = bookingByID(selectedBookingID)
+            if (!now || now.merchant.key !== ctx.key) return
+            merchantStats = r[0].all
+            merchantStatsKey = ctx.key
+            merchantAccountStats = now.account_id === ctx.accountId ? { account_id: ctx.accountId, stats: r[0].account } : null
         }, () => {})
+    }
+
+    // MARK: selection change (AppModel+Selection.swift › startSelectionLoad)
+    /// A sidebar or period change: pay cycle first (`.sinceSalary` derives the period from it),
+    /// then list, sums, chart and – depending on what changed – fixed costs or category sums,
+    /// all off the GUI thread and published in one go. The previous data stays until then, at
+    /// most `selectionPlaceholderTimer.interval`; after that list and chart show a spinner.
+    function reloadSelection(periodChanged, quiet) {
+        requestSelectionLoad(periodChanged ? { categories: true } : { recurring: true }, quiet)
+    }
+    /// What the next selection load brings besides list, sums and chart; a part stays
+    /// requested until a load has published it.
+    property var selectionNeeds: ({ recurring: false, categories: false })
+    /// A selection load is running (list paging waits for it).
+    property bool selectionLoadRunning: false
+    /// It has run longer than the placeholder delay: list, chart and sums show the spinner / "–".
+    property bool isLoadingSelection: false
+    property Timer selectionPlaceholderTimer: Timer {
+        interval: 200
+        onTriggered: if (model.selectionLoadRunning) model.showSelectionPlaceholder()
+    }
+    /// Select the first booking once the next selection load is published (vault just opened).
+    property bool selectFirstBookingOnLoad: false
+    function requestSelectionLoad(parts, quiet) {
+        if (!isUnlocked || !vaultLoaded) return
+        if (parts.recurring) selectionNeeds.recurring = true
+        if (parts.categories) selectionNeeds.categories = true
+        if (whenAccountsLoaded("selection", () => requestSelectionLoad({}, quiet))) return
+        // loads of a single part still running belong to the old selection: this one takes them over
+        for (const ch of ["recurring", "categories"]) if (isLoadPending(ch)) { cancelLoad(ch); selectionNeeds[ch] = true }
+        for (const ch of ["bookings", "history", "salary"]) cancelLoad(ch)
+        dropPendingPage()
+        selectionLoadRunning = true
+        if (!quiet) {
+            if (isLoadingSelection) showSelectionPlaceholder()
+            else selectionPlaceholderTimer.restart()
+        }
+        if (period === "sinceSalary") {
+            cancelLoad("selectionData")
+            loadOffMain("selectionCycle", () => [["salary_cycle", { account_ids: selectionAccountIDs() }]], r => {
+                salaryCycle = r[0]
+                loadSelectionData(false)
+            }, failSelectionLoad)
+        } else {
+            cancelLoad("selectionCycle")
+            loadSelectionData(true)
+        }
+    }
+    /// A running selection load brings list, sums and chart anyway (and `part`, now
+    /// requested too): instead of a load of its own, it starts once more with the current
+    /// state, so an older answer can never overwrite fresher data.
+    function selectionLoadTakes(part) {
+        if (!selectionLoadRunning) return false
+        if (part) selectionNeeds[part] = true
+        if (isLoadPending("selectionCycle")) return true   // the data load follows with the current state
+        if (isLoadPending("selectionData")) { loadSelectionData(period !== "sinceSalary"); return true }
+        return false
+    }
+    function loadSelectionData(withCycle) {
+        loadOffMain("selectionData", () => {
+            const f = currentFilter(), r = periodRange(), h = historyRequest()
+            const parts = { recurring: selectionNeeds.recurring, categories: selectionNeeds.categories }
+            const calls = []
+            if (withCycle) calls.push(["salary_cycle", { account_ids: selectionAccountIDs() }])
+            calls.push(["list_transactions", { filter: f }])
+            const flowInPage = listHasFlow(f)
+            if (!flowInPage) calls.push(selectionFlowCall(f))
+            if (parts.recurring) calls.push(recurringCall())
+            if (parts.categories) calls.push(["list_categories", { date_from: r[0], date_to: r[1] }])
+            calls.push(["balance_history", { account_ids: h.ids, days: h.days }])
+            return { calls: calls, ctx: { withCycle: withCycle, flowInPage: flowInPage, parts: parts, range: r } }
+        }, (res, ctx) => {
+            let i = 0
+            if (ctx.withCycle) salaryCycle = res[i++]
+            const page = res[i++]
+            const flow = ctx.flowInPage ? null : res[i++]
+            const rec = ctx.parts.recurring ? res[i++] : null
+            const cats = ctx.parts.categories ? res[i++] : null
+            const pts = res[i++]
+            endSelectionLoad()
+            publish(page)
+            applySelectionFlow(page, flow)
+            if (rec) { applyRecurring(rec); selectionNeeds.recurring = false }
+            if (cats) { applyCategories(cats); selectionNeeds.categories = false }
+            history = trimHistory(pts, ctx.range)
+            if (selectFirstBookingOnLoad) {
+                selectFirstBookingOnLoad = false
+                if (selectedBookingID === null && bookings.length) selectedBookingID = bookings[0].id
+            }
+            afterListPublished(false)
+        }, failSelectionLoad)
+    }
+    function failSelectionLoad(err) {
+        endSelectionLoad()
+        errorMessage = parseCoreError(err).message
+        const queue = afterBookingsQueue
+        afterBookingsQueue = []
+        for (const fn of queue) fn()
+    }
+    /// The load is slow: no list, sums and chart of the previous selection under the new
+    /// title. The list rows stay in the model, only hidden (BookingStreamView): building
+    /// them anew after the load would block the GUI thread far longer than the load.
+    function showSelectionPlaceholder() {
+        isLoadingSelection = true
+        history = []
+    }
+    function endSelectionLoad() {
+        selectionPlaceholderTimer.stop()
+        selectionLoadRunning = false
+        isLoadingSelection = false
     }
 
     // MARK: filter
@@ -1087,20 +1364,25 @@ QtObject {
     /// Jump to `day` in the booking stream: that day, or the nearest earlier
     /// day with bookings (the balance of a quiet day comes from there).
     function jumpToDay(day) {
-        loadBookingsThrough(day)
-        const target = dayGroups.find(g => g.date <= day) || dayGroups[dayGroups.length - 1]
-        if (target) scrollToDay(target.date)
+        const scroll = () => {
+            const target = dayGroups.find(g => g.date <= day) || dayGroups[dayGroups.length - 1]
+            if (target) scrollToDay(target.date)
+        }
+        // the list loads off the GUI thread: scroll once it reaches back to that day
+        if (!loadBookingsThrough(day, scroll)) scroll()
     }
-    /// Raises the list limit so the list reaches back to `day`.
-    function loadBookingsThrough(day) {
-        if (!isUnlocked || !page || bookings.length >= page.total_count) return
-        if (dayGroups.length && day >= dayGroups[dayGroups.length - 1].date) return
+    /// Raises the list limit so the list reaches back to `day`; true when it reloads
+    /// (`then` runs once the longer list is there).
+    function loadBookingsThrough(day, then) {
+        if (!isUnlocked || !page || bookings.length >= page.total_count) return false
+        if (dayGroups.length && day >= dayGroups[dayGroups.length - 1].date) return false
         const f = currentFilter()
         if (f.date_from === null || f.date_from < day) f.date_from = day
         const newer = run(() => core("count_transactions", { filter: f }))
-        if (newer === undefined) return
+        if (newer === undefined) return false
         listLimit = Math.max(listLimit, newer + 200)
-        reloadBookings()
+        reloadBookings(then)
+        return true
     }
     function setChecked(on, b) {
         run(() => core("set_transaction_checked", { transaction_id: b.id, checked: on }))
@@ -1152,8 +1434,9 @@ QtObject {
         run(() => core("set_booking_salary_flag", { booking_id: b.id, flag: flag }))
         // keep the edited booking selected even if it leaves the period
         if (selectedBookingID === b.id) stickyBooking = freshBooking(b)
+        // „Seit Gehalt“ derives the period from the new cycle: everything that depends on it loads after it
+        if (period === "sinceSalary") { reloadSelection(true, true); return }
         refreshSalaryCycle()
-        if (period === "sinceSalary") { reloadCategories(); reloadHistory() }
         reloadBookings()
     }
     /// `dates` (MM-DD) only for the interval "Custom".
@@ -1243,9 +1526,11 @@ QtObject {
     /// Fixed catalog entry "Demo-Bank (Test & Vorschau)".
     function addDemoBank() { addFinTsConnection("Demo-Bank", "99999999", "https://demo.invalid/fints", "demo") }
     function afterAdd(id) {
-        reloadSettings(); reloadAccounts()
-        const conn = connections.find(c => c.id === id)
-        if (conn) { toast = qsTr("%1 hinzugefügt").arg(conn.display_name); requestSync(conn) }
+        reloadSettings()
+        reloadAccounts(() => {
+            const conn = connections.find(c => c.id === id)
+            if (conn) { toast = qsTr("%1 hinzugefügt").arg(conn.display_name); requestSync(conn) }
+        })
     }
     function removeConnection(id) {
         // Its browser session goes too: cookies in the profile and in the vault (MARK: Web logins)
@@ -1580,7 +1865,11 @@ QtObject {
 
     // MARK: - Depot, loans, investment dashboard
     property var dashboard: null
-    function reloadDashboard() { run(() => { dashboard = core("investment_dashboard", { months: 6 }) }) }
+    /// The investment dashboard reads every booking: off the GUI thread.
+    function reloadDashboard() {
+        if (!isUnlocked) return
+        loadOffMain("dashboard", () => [["investment_dashboard", { months: 6 }]], r => { dashboard = r[0] })
+    }
     function holdings(accountID) { return run(() => core("list_holdings", { account_id: accountID })) || [] }
     function setAccountInitialBalance(accountID, cents) {
         run(() => core("set_account_initial_balance", { account_id: accountID, cents: cents }))
@@ -1598,16 +1887,14 @@ QtObject {
     /// AssetStore: ids of the Sachwerte accounts (as a set) and their items per account id.
     property var tangibleAccountIDs: ({})
     property var assetItemsByAccount: ({})
-    /// AppModel.reloadAssets: one core pass for all accounts (prices and points are loaded once).
-    function reloadAssets() {
-        if (!isUnlocked) return
-        run(() => {
-            const ids = {}, items = {}
-            for (const id of core("list_tangible_account_ids")) { ids[id] = true; items[id] = [] }
-            for (const it of core("list_all_asset_items")) (items[it.account_id] || (items[it.account_id] = [])).push(it)
-            tangibleAccountIDs = ids
-            assetItemsByAccount = items
-        })
+    /// AppModel.reloadAssets: one core pass for all accounts (prices and points are loaded once),
+    /// Loaded with the accounts (`reloadAccounts`): `list_tangible_account_ids`, `list_all_asset_items`.
+    function applyAssets(tangibleIDs, allItems) {
+        const ids = {}, items = {}
+        for (const id of tangibleIDs) { ids[id] = true; items[id] = [] }
+        for (const it of allItems) (items[it.account_id] || (items[it.account_id] = [])).push(it)
+        tangibleAccountIDs = ids
+        assetItemsByAccount = items
         reloadSelectedAssetHistory()
     }
     function isTangible(accountID) { return !!tangibleAccountIDs[accountID] }
@@ -1800,7 +2087,13 @@ QtObject {
     property int statementsCountBefore: 0
     property var accountDocumentsFor: null      // AccountDocumentsSheet
     function openAccountDocuments(a) { accountDocumentsFor = a }
-    function documents(b) { void documentsVersion; return b && isUnlocked ? (run(() => core("list_documents_for_booking", { booking_id: b.id })) || []) : [] }
+    /// The booking row counts its documents: no core call (which would wait for a running
+    /// background load at the vault mutex) for the many bookings without one.
+    function documents(b) {
+        void documentsVersion
+        if (!b || !isUnlocked || b.document_count === 0) return []
+        return run(() => core("list_documents_for_booking", { booking_id: b.id })) || []
+    }
     function allDocuments(search, unlinkedOnly, accountId) {
         void documentsVersion
         if (!isUnlocked) return []
@@ -2266,6 +2559,12 @@ QtObject {
 
     function reloadRules() {
         if (!isUnlocked) return
+        loadOffMain("rules", () => [["list_rules"]], r => { rules = r[0] })
+    }
+    /// The rule editor reads `rules` right away (priority of a new rule).
+    function reloadRulesNow() {
+        if (!isUnlocked) return
+        cancelLoad("rules")
         run(() => { rules = core("list_rules") })
     }
     function categoryByID(id) { return id === null || id === undefined ? null : (categories.find(c => c.id === id) || null) }
@@ -2371,7 +2670,7 @@ QtObject {
         }
     }
     function openRuleEditor(booking) {
-        reloadRules()
+        reloadRulesNow()
         ruleDraft = booking ? newRuleDraft(booking) : null
         showRuleEditor = true
     }
@@ -3194,11 +3493,16 @@ QtObject {
         interval: 350
         onTriggered: {
             // an older booking is not on the first page: load back to its day
-            if (!model.bookings.some(b => b.id === bookingID)) {
-                const day = model.run(() => model.core("booking_date", { booking_id: bookingID }))
-                if (day && model.page) { model.listLimit = Math.max(model.listLimit, model.page.total_count); model.reloadBookings() }
+            const id = bookingID
+            if (!model.bookings.some(b => b.id === id)) {
+                const day = model.run(() => model.core("booking_date", { booking_id: id }))
+                if (day && model.page) {
+                    model.listLimit = Math.max(model.listLimit, model.page.total_count)
+                    model.reloadBookings(() => model.selectBooking(id, false, false))
+                    return
+                }
             }
-            model.selectBooking(bookingID, false, false)
+            model.selectBooking(id, false, false)
         }
     }
 

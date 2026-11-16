@@ -197,6 +197,55 @@ fn restore_key(key: &[u8]) -> R {
     ok(())
 }
 
+/// Newest request per load channel (`AppModel.loadOffMain`): a background batch
+/// whose token is no longer the newest stops before its next call, so fast
+/// clicking does not queue one full load per click behind the vault mutex.
+static LOAD_TOKENS: Mutex<Option<std::collections::HashMap<String, i64>>> = Mutex::new(None);
+
+fn supersede(channel: String, token: i64) {
+    LOAD_TOKENS
+        .lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(channel, token);
+}
+
+fn is_current_load(channel: &str, token: i64) -> bool {
+    LOAD_TOKENS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|m| m.get(channel))
+        .is_none_or(|t| *t == token)
+}
+
+#[derive(serde::Deserialize)]
+struct BatchCall {
+    method: String,
+    #[serde(default)]
+    args: Value,
+}
+
+/// Several calls one after the other on one worker thread (`Core.callAsync("batch", …)`):
+/// `{ "results": [...] }` in call order, the first error ends the batch, and
+/// `{ "cancelled": true }` once a newer request of the same channel superseded it.
+fn batch(a: &Value) -> R {
+    let channel: Option<String> = arg(a, "channel")?;
+    let token: i64 = arg::<Option<i64>>(a, "token")?.unwrap_or(0);
+    let calls: Vec<BatchCall> = arg(a, "calls")?;
+    let mut results = Vec::with_capacity(calls.len());
+    for c in &calls {
+        if channel
+            .as_deref()
+            .is_some_and(|ch| !is_current_load(ch, token))
+        {
+            return ok(json!({ "cancelled": true }));
+        }
+        results.push(call(&c.method, &c.args)?);
+    }
+    ok(json!({ "results": results }))
+}
+
 /// AccountSelectionList.save (#346): takes `self: Arc<Vault>` (a held-back fetch is
 /// imported right away), so not part of `vault_methods!`.
 fn set_connection_account_choices(v: &Arc<Vault>, a: &Value) -> R {
@@ -522,6 +571,12 @@ fn call(method: &str, a: &Value) -> R {
             ok(())
         }
         "is_unlocked" => ok(VAULT.lock().unwrap().is_some()),
+        // --- background loads (AppModel.loadOffMain) ---
+        "supersede" => {
+            supersede(arg(a, "channel")?, arg(a, "token")?);
+            ok(())
+        }
+        "batch" => batch(a),
         "reset_app" => reset_app(),
         "set_connection_account_choices" => set_connection_account_choices(&vault()?, a),
         // catalog / directory (free functions of the core)
@@ -1439,6 +1494,47 @@ mod tests {
         );
         call_ok("lock", json!({}));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// AppModel.loadOffMain: a batch answers in call order, stops at the first error and
+    /// does nothing more once a newer request of its channel superseded it.
+    #[test]
+    fn batch_in_order_until_superseded() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let calls =
+            json!([{ "method": "account_count" }, { "method": "core_version", "args": {} }]);
+        let r = call_ok(
+            "batch",
+            json!({ "channel": "test", "token": 1, "calls": calls }),
+        );
+        assert!(r["results"][0].as_u64().unwrap() > 0);
+        assert_eq!(r["results"][1], json!(girocrab_core::core_version()));
+        call_ok("supersede", json!({ "channel": "test", "token": 2 }));
+        let stale = call_ok(
+            "batch",
+            json!({ "channel": "test", "token": 1, "calls": calls }),
+        );
+        assert_eq!(stale, json!({ "cancelled": true }));
+        let fresh = call_ok(
+            "batch",
+            json!({ "channel": "test", "token": 2, "calls": calls }),
+        );
+        assert_eq!(fresh["results"].as_array().unwrap().len(), 2);
+        // without a channel nothing can supersede it
+        let plain = call_ok("batch", json!({ "calls": calls }));
+        assert_eq!(plain["results"].as_array().unwrap().len(), 2);
+        let bad: Value = serde_json::from_str(&call_json(
+            "batch",
+            &json!({ "calls": [{ "method": "no_such_method" }, { "method": "account_count" }] })
+                .to_string(),
+        ))
+        .unwrap();
+        assert!(
+            bad.get("err").is_some(),
+            "the first error ends the batch: {bad}"
+        );
+        call_ok("lock", json!({}));
     }
 
     /// „App zurücksetzen“ (#241) with the keychain bypass and temporary XDG dirs only:

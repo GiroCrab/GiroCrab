@@ -137,9 +137,16 @@ Rectangle {
                     Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                     sourceComponent: Component { AssetPositionsView { account: AppModel.selectedAccount } }
                 }
+                // ProgressView while a slow selection load runs (AppModel.isLoadingSelection)
+                BusyIndicator {
+                    visible: AppModel.isLoadingSelection
+                    running: visible
+                    Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 40
+                    implicitWidth: 24; implicitHeight: 24; padding: 0
+                }
                 // ContentUnavailableView "Keine Buchungen im Depot", in the middle of the visible area
                 ColumnLayout {
-                    visible: AppModel.dayGroups.length === 0 && stream.isDepot && !stream.isTangible && AppModel.searchText === ""
+                    visible: AppModel.dayGroups.length === 0 && stream.isDepot && !stream.isTangible && AppModel.searchText === "" && !AppModel.isLoadingSelection
                     Layout.alignment: Qt.AlignHCenter // the column is only as wide as its texts
                     Layout.topMargin: Math.max(40, (list.height - implicitHeight) / 2 - 20)
                     spacing: 6
@@ -150,7 +157,7 @@ Rectangle {
                            text: qsTr("Ein Depot zeigt seine Positionen oben. Käufe, Verkäufe und Sparpläne stehen als Buchungen im Verrechnungskonto.") }
                 }
                 ColumnLayout {
-                    visible: AppModel.dayGroups.length === 0 && !(stream.isDepot && AppModel.searchText === "") && !stream.emptyVault && !stream.isNewBookings
+                    visible: AppModel.dayGroups.length === 0 && !(stream.isDepot && AppModel.searchText === "") && !stream.emptyVault && !stream.isNewBookings && !AppModel.isLoadingSelection
                     Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 40
                     spacing: 6
                     SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: AppModel.searchText ? "magnifyingglass" : "tray"; size: 32 }
@@ -160,7 +167,7 @@ Rectangle {
                 }
                 // NewBookingsCards: ContentUnavailableView "Keine neuen Umsätze"
                 ColumnLayout {
-                    visible: stream.isNewBookings && AppModel.streamItems.length === 0 && AppModel.page !== null
+                    visible: stream.isNewBookings && AppModel.streamItems.length === 0 && AppModel.page !== null && !AppModel.isLoadingSelection
                     Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 40
                     spacing: 6
                     SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: "checkmark.circle"; size: 32 }
@@ -189,6 +196,9 @@ Rectangle {
             function loadVisible() {
                 const f = list.footerItem
                 if (!AppModel.hasMoreBookings || AppModel.isLoadingMoreBookings || !f || !f.visible) return
+                // A page just published off the GUI thread is not laid out yet: the footer
+                // still sits where the empty list ended. A full page is always taller than the view.
+                if (f.y - list.originY < list.height) return
                 const missing = list.contentY + list.height - f.y   // px of the footer in view (+ below)
                 if (missing < -400) return
                 const perBooking = (AppModel.streamModel.count / Math.max(1, AppModel.bookings.length)) * list.estItemHeight
@@ -244,6 +254,10 @@ Rectangle {
                 required property int index
                 readonly property var modelData: AppModel.streamItems[index] ?? ({ type: "none" })
                 width: list.width
+                // The previous selection's rows stay instantiated (rebuilding them is what costs
+                // time) but out of sight and reach while a slow selection load runs.
+                opacity: AppModel.isLoadingSelection ? 0 : 1
+                enabled: !AppModel.isLoadingSelection
                 // „Kompakt“ (#542): no day headers, the date stands in each row
                 height: modelData.type === "header" ? (BookingPrefs.density === "compact" ? 0 : 14 + dayHeader.height)
                       : modelData.type === "account" ? 14 + accountHeader.height : row.height
