@@ -81,6 +81,17 @@ Funktionsumfang der Oberfläche.
 - Danach startet der erste Abruf. Beim Abruf fragt GiroCrab nach dem „Passwort der
   Schlüsseldatei“ statt nach einer PIN; vorerst nur Konten, Salden und Umsätze.
 
+### American Express im Portal-Fenster
+
+- **Vorgemerkte Umsätze nie doppelt** (#629): Der Kern speichert sie als Vormerkungen und
+  gleicht sie mit der späteren Buchung ab. Ist eine Vormerkung nicht mehr offen, ihre Buchung
+  aber noch nicht gefunden, bleibt das Fenster offen und weist auf den vorherigen
+  Abrechnungszeitraum hin. Beim Schließen fragt „Vorgemerkte Umsätze nicht gefunden“, ob sie
+  verworfen werden („Weiter suchen“ / „Verwerfen und schließen“).
+- **„Ältere Abrechnungen laden“** hält das Fenster offen, damit im Portal frühere
+  Abrechnungszeiträume geöffnet werden können; „Umsätze übernehmen“ übernimmt dann alles
+  Erkannte und schließt. Beim ersten Abruf eines Zugangs ist das schon eingeschaltet.
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus
