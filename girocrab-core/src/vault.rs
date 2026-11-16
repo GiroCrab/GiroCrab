@@ -32,7 +32,7 @@ mod rules;
 mod settings;
 mod transfer_pairs;
 
-pub(crate) use bookings::enrich;
+pub(crate) use bookings::{enrich, sql_int_list, LIVE_BOOKINGS_SQL};
 pub use merge::MergeStats;
 pub use settings::KNOWN_SETTINGS;
 
@@ -192,6 +192,8 @@ pub struct Vault {
         >,
     >,
     path: String,
+    /// Flow kinds of all bookings for the list (see `bookings::FlowCache`).
+    pub(crate) flow_cache: bookings::FlowCache,
     /// The master key, kept for sync snapshots and peer merges so the app
     /// doesn't ask the keychain again. Wiped on drop.
     key: Mutex<Zeroizing<Vec<u8>>>,
@@ -444,6 +446,7 @@ impl Vault {
             conn: Mutex::new(conn),
             pending_account_fetches: Mutex::new(std::collections::HashMap::new()),
             path,
+            flow_cache: bookings::FlowCache::default(),
             key: Mutex::new(key),
             _open: OpenVault::new(),
         }))

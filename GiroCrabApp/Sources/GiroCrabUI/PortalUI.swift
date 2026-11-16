@@ -1,6 +1,5 @@
 import SwiftUI
 import WebKit
-import PDFKit
 import UniformTypeIdentifiers
 import GiroCrabCore
 
@@ -13,7 +12,7 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, (c.connector == .amazonOrders || c.connector == .fnz || c.connector == .quirion) { return true }
+        if !isDemo, [.amazonOrders, .fnz, .quirion, .schwaebischHall].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         return !Self.cardUsesEnableBanking(
             optIn: settingEntry(Self.enableBankingOptInKey(c.connector))?.value,
@@ -70,24 +69,36 @@ extension AppModel {
     }
 
     func importStatement(_ c: BankConnection, url: URL) {
-        guard let vault else { return }
+        guard let pin = pinVault() else { return }
         let ok = url.startAccessingSecurityScopedResource()
         defer { if ok { url.stopAccessingSecurityScopedResource() } }
+        let fileName = url.lastPathComponent
+        let data: Data
         do {
-            let data = try Data(contentsOf: url)
-            var hint = ""
-            if data.starts(with: Array("%PDF".utf8)) { hint = PDFDocument(data: data)?.string ?? "" }
-            let s = try vault.importStatement(connectionId: c.id, fileName: url.lastPathComponent, bytes: data, pdfTextHint: hint)
-            toast = String(localized: "\(c.displayName): \(s.transactionsImported) neue Buchungen aus \(url.lastPathComponent)")
-            reloadAll()
-        } catch let e as CoreError {
-            if case .InvalidInput = e {
-                showError(String(localized: "Keine Umsätze erkannt"), String(localized: "In \(url.lastPathComponent) wurden keine Umsätze erkannt. Erwartet: CSV mit Datum, Beschreibung, Betrag oder ein Kontoauszug als PDF mit Textebene."))
-            } else {
-                showError(String(localized: "Kontoauszug-Import fehlgeschlagen"), describe(e))
-            }
+            data = try Data(contentsOf: url)
         } catch {
             showError(String(localized: "Kontoauszug-Import fehlgeschlagen"), describe(error))
+            return
+        }
+        let id = c.id
+        Task {
+            do {
+                let isPDF = data.starts(with: Array("%PDF".utf8))
+                let hint = isPDF ? await ReceiptText.extract(data: data, fileName: fileName) ?? "" : ""
+                // Parsing a large PDF statement takes seconds.
+                let s = try await pin.run {
+                    try $0.importStatement(connectionId: id, fileName: fileName, bytes: data, pdfTextHint: hint)
+                }
+                guard isCurrent(pin) else { return }
+                toast = String(localized: "\(c.displayName): \(s.transactionsImported) neue Buchungen aus \(fileName)")
+                reloadAll()
+            } catch where !isCurrent(pin) {
+                // Locked or switched vault meanwhile: no error over another vault.
+            } catch CoreError.InvalidInput {
+                showError(String(localized: "Keine Umsätze erkannt"), String(localized: "In \(fileName) wurden keine Umsätze erkannt. Erwartet: CSV mit Datum, Beschreibung, Betrag oder ein Kontoauszug als PDF mit Textebene."))
+            } catch {
+                showError(String(localized: "Kontoauszug-Import fehlgeschlagen"), describe(error))
+            }
         }
     }
 }
@@ -100,6 +111,7 @@ extension ConnectorKind {
         // Open Bank's general site without the card login.
         case .amazonVisa: return URL(string: "https://kunden.openbankpay.com/amazon/login")
         case .quirion: return URL(string: "https://banking.quirion.de/login/")
+        case .schwaebischHall: return SchwaebischHallScripts.loginURL
         case .fnz: return URL(string: "https://portal.fnz.de/")
         case .amazonOrders: return URL(string: "https://www.amazon.de/gp/css/order-history")
         default: return nil
@@ -123,6 +135,7 @@ extension ConnectorKind {
         case .amazonOrders: return ["amazon.de", "amazon.com"]
         case .fnz: return ["portal.fnz.de"]
         case .quirion: return ["banking.quirion.de"]
+        case .schwaebischHall: return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         default: return []
         }
     }

@@ -5,7 +5,7 @@
 //!
 //! Reference (M-series Mac, release build, COPIES=600 → 31,252 bookings, 2026-11-12):
 //!   set_transaction_category        0.6 ms
-//!   list_transactions(limit 3000) 150 ms   (same as without limit: the page is cut last)
+//!   list_transactions(limit 3000) 150 ms   (only ~10 % below no limit: every row is still finished)
 //!   list_categories                 35 ms
 //!   list_account_groups / _user_groups  1.8 ms each (41 ms before the covering indexes)
 //!   list_rules                      0.6 ms (84 ms before the covering indexes)
@@ -15,6 +15,17 @@
 //!   merchant_history                32 ms (total + own account; was 2 × merchant_stats)
 //!   local_api transactions(limit 100)  ~1.2 ms (first page, cursor page, single account; 2026-11-15)
 //!   local_api summary                  ~1.2 ms per year, 2.4 ms for the three-year maximum
+//!   preview_rule(limit 20)       1.3 ms, 31 ms if nothing matches (163 ms while it enriched
+//!                                  every booking; 31,853 bookings, 2026-11-16)
+//!   preview_manual_loan(limit 20)   55 ms (212 ms; the rest is the expression over every booking)
+//!   auto_match_document             10 ms (176 ms; SQL prefilter on the receipt's amounts and dates)
+//! After the flow cache (`Vault::flow_map`, 2026-11-16, COPIES=600 STEP_DAYS=7):
+//!   list_transactions(limit 3000)    44 ms (was 172), selection_flow 14 ms (was 290),
+//!   category selection, period "all" 102 ms (was 446), list_categories_filtered with the
+//!   expense filter 32 ms (was 336: `tx_amount_date` range scan). The first list after any
+//!   write still enriches every booking once (~155 ms) to refill the cache.
+//! OUT=<file> writes the vault with the app's demo key and stops (open it with
+//! GIROCRAB_DEMO_VAULT=<file> .build/debug/GiroCrabMac --demo-seed).
 //! RULE_INDEX=1 creates the covering indexes by hand on a vault that lacks them.
 //! STEP_DAYS (default 183) is the shift between copies: 7 with COPIES=600 spans ~11.5 years.
 //! PAYPAL=n adds a payment-service account with n uncategorised bookings, half of them
@@ -22,7 +33,7 @@
 //! COPIES=600 STEP_DAYS=7 PAYPAL=3000 (2026-11-16): category selection, period "all"
 //! ~360 ms (selection_flow 175 ms of it); local_api page 6.5 ms (did not finish in
 //! 10 minutes before the `tx_amount_date` index).
-use girocrab_core::models::{BookingFilter, BookingScope};
+use girocrab_core::models::{BookingDirection, BookingFilter, BookingScope};
 use girocrab_core::vault::Vault;
 
 fn time<T>(label: &str, mut f: impl FnMut() -> T) -> f32 {
@@ -41,10 +52,24 @@ fn time<T>(label: &str, mut f: impl FnMut() -> T) -> f32 {
 fn main() {
     let copies = env_usize("COPIES", 80);
     let step = env_usize("STEP_DAYS", 183);
-    let key = vec![9u8; 32];
+    // OUT=file writes the vault with the app's demo key and stops, so the app can open it:
+    // GIROCRAB_DEMO_VAULT=file .build/debug/GiroCrabMac --demo-seed
+    let out = std::env::var("OUT").ok().filter(|v| !v.is_empty());
+    let key: Vec<u8> = if out.is_some() {
+        (0..32u32).map(|i| ((i * 7 + 3) & 0xFF) as u8).collect()
+    } else {
+        vec![9u8; 32]
+    };
     let tmp = std::env::temp_dir().join(format!("gc-cat-perf-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp).unwrap();
-    let path = tmp.join("vault.db").to_string_lossy().to_string();
+    let path = out
+        .clone()
+        .unwrap_or_else(|| tmp.join("vault.db").to_string_lossy().to_string());
+    if out.is_some() {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{path}{suffix}"));
+        }
+    }
     {
         let v = Vault::open(path.clone(), key.clone()).unwrap();
         v.seed_demo_data().unwrap();
@@ -102,6 +127,12 @@ fn main() {
         if std::env::var("RULE_INDEX").is_ok_and(|v| !v.is_empty()) {
             c.execute_batch("CREATE INDEX tx_rule_live ON transactions(rule_id, deleted_ms); CREATE INDEX tx_acct_live ON transactions(account_id, category_id, checked, deleted_ms); ANALYZE;").unwrap();
         }
+    }
+    if let Some(out) = out {
+        // Open once so WAL data is checkpointed into the file.
+        Vault::open(out.clone(), key).unwrap().checkpoint().unwrap();
+        println!("vault written: {out}");
+        return;
     }
     let vault = Vault::open(path, key).unwrap();
     let all = vault
@@ -185,6 +216,24 @@ fn main() {
         "'Ohne Kategorie': + selection_flow (reloadSelectionKPIs)",
         || vault.selection_flow(vec![], None, None),
     );
+    // Header filter "Ausgaben" / "Neu": list, totals and sidebar sums behind it.
+    time("direction expense: list_transactions(3000)", || {
+        vault.list_transactions(BookingFilter {
+            direction: BookingDirection::Expense,
+            limit: 3000,
+            ..Default::default()
+        })
+    });
+    time("direction expense: list_categories_filtered", || {
+        vault.list_categories_filtered(None, None, vec![], None, BookingDirection::Expense)
+    });
+    time("status new: list_transactions(3000)", || {
+        vault.list_transactions(BookingFilter {
+            checked: Some(false),
+            limit: 3000,
+            ..Default::default()
+        })
+    });
     // Local read-only interface (#136): keyset pages enrich only their rows.
     let accounts: Vec<i64> = vault
         .list_accounts()
@@ -243,7 +292,96 @@ fn main() {
         vault.local_api_request(&three)
     });
     category_selection(&vault, &cats);
+    // Last: it writes (a document, a recurring series).
+    small_results(&vault, &all.transactions);
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Calls that return a handful of bookings or only sums.
+fn small_results(vault: &Vault, all: &[girocrab_core::models::Booking]) {
+    use girocrab_core::models::{MatchKind, PeriodGranularity, Rule, RuleField};
+    // The newest booking with a plain word in its counterparty: a rule or loan
+    // expression on it hits at once, newest first.
+    let (b, word) = all
+        .iter()
+        .find_map(|b| {
+            let w = b.counterparty.split_whitespace().next()?;
+            (w.len() >= 3 && w.chars().all(char::is_alphanumeric)).then(|| (b, w.to_string()))
+        })
+        .expect("a booking with a counterparty");
+    println!();
+    time("count_transactions(uncategorized)", || {
+        vault
+            .count_transactions(BookingFilter {
+                uncategorized_only: true,
+                ..Default::default()
+            })
+            .unwrap()
+    });
+    time("cashflow_by_period(month, 12)", || {
+        vault
+            .cashflow_by_period(PeriodGranularity::Month, 12)
+            .unwrap()
+    });
+    let rule = |pattern: &str| Rule {
+        id: 0,
+        name: String::new(),
+        category_id: 0,
+        field: RuleField::Counterparty,
+        match_kind: MatchKind::Keyword,
+        pattern: pattern.into(),
+        case_sensitive: false,
+        min_amount_cents: None,
+        max_amount_cents: None,
+        account_ids: vec![],
+        priority: 0,
+        enabled: true,
+        match_count: 0,
+    };
+    time("preview_rule(limit 20), newest bookings match", || {
+        assert!(!vault.preview_rule(rule(&word), 20).unwrap().is_empty())
+    });
+    time("preview_rule(limit 20), nothing matches", || {
+        assert!(vault.preview_rule(rule("zzqx"), 20).unwrap().is_empty())
+    });
+    let loan = girocrab_core::loans::LoanSetup {
+        name: "Kredit".into(),
+        original_cents: None,
+        anchor_date: "2020-01-01".into(),
+        anchor_balance_cents: 1_000_000,
+        interest_rate_ppm: None,
+        match_expr: word.clone(),
+    };
+    time("preview_manual_loan(limit 20)", || {
+        assert!(
+            vault
+                .preview_manual_loan(None, loan.clone(), 20)
+                .unwrap()
+                .match_count
+                > 0
+        )
+    });
+    let receipt = format!(
+        "{} Datum {} Summe {}",
+        b.counterparty,
+        b.booking_date,
+        girocrab_core::money::format_cents(b.amount_cents.abs(), "EUR".into())
+    );
+    time("auto_match_document (amount + date)", || {
+        vault
+            .auto_match_document("beleg.jpg".into(), vec![0xFF, 0xD8], Some(receipt.clone()))
+            .unwrap()
+            .expect("matched")
+    });
+    time("mark_booking_recurring", || {
+        vault
+            .mark_booking_recurring(
+                b.id,
+                girocrab_core::recurring::RecurrenceInterval::Monthly,
+                vec![],
+            )
+            .unwrap()
+    });
 }
 
 fn env_usize(name: &str, default: usize) -> usize {
