@@ -452,6 +452,14 @@ pub struct Booking {
     /// Product ids (Amazon ASIN) of an order's items, comma separated, one
     /// entry per item in purpose order ("" entry = unknown); "" = none (#354).
     pub item_refs: String,
+    #[uniffi(default = "")]
+    pub end_to_end_id: String,
+    #[uniffi(default = "")]
+    pub mandate_id: String,
+    #[uniffi(default = "")]
+    pub creditor_id: String,
+    #[uniffi(default = "")]
+    pub external_id: String,
 }
 
 /// Dry-run result of a MoneyMoney import (nothing stored).
@@ -654,6 +662,14 @@ pub struct DailyBalance {
     pub balance_cents: i64,
 }
 
+/// Sum of one category (with subcategories) over one calendar month (`period` = `yyyy-MM`).
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CategoryPeriodSum {
+    pub period: String,
+    pub cents: i64,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MerchantStats {
@@ -803,6 +819,32 @@ pub struct SepaTransferRequest {
     /// SEPA Instant Payment ("Echtzeitüberweisung", HKIPZ). FinTS only.
     pub instant: bool,
     /// Optional future execution date `YYYY-MM-DD` (Terminüberweisung, HKCSE). FinTS only.
+    pub execution_date: Option<String>,
+}
+
+/// One payment of a batch transfer.
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BatchPaymentInput {
+    pub name: String,
+    pub iban: String,
+    pub bic: Option<String>,
+    /// Must be > 0.
+    pub amount_cents: i64,
+    /// Verwendungszweck, max. 140 characters.
+    pub purpose: String,
+}
+
+/// Batch transfer (Sammelüberweisung, HKCCM): one debit account, many payments.
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BatchTransferRequest {
+    pub account_id: i64,
+    pub payments: Vec<BatchPaymentInput>,
+    /// true = one booking for the sum, false = one booking per payment (if the
+    /// bank allows it).
+    pub batch_booking: bool,
+    /// Optional future execution date `YYYY-MM-DD`.
     pub execution_date: Option<String>,
 }
 

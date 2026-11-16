@@ -30,8 +30,6 @@ enum BookingDensity: String, CaseIterable, Identifiable {
 
     /// Prefer the already cleaned text, avoiding a duplicate of the row title.
     func purpose(for booking: Booking) -> String {
-        let purpose = booking.cleanPurpose.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = booking.merchant.name.isEmpty ? booking.bookingText : booking.merchant.name
-        return purpose == title ? "" : purpose
+        ListPurpose.text(for: booking) ?? ""
     }
 }

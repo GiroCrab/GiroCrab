@@ -331,6 +331,172 @@ fn card_holds_are_replaced_on_each_sync() {
 }
 
 #[test]
+fn pending_batch_booking_is_replaced_by_the_banks_booking_whatever_its_iban() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::FinTsGeneric, String::new(), "u".into())
+        .unwrap();
+    let acc = RemoteAccount {
+        external_ref: "f:1".into(),
+        name: "Giro".into(),
+        owner: String::new(),
+        iban: "DE02120300000000202051".into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let fetch = |txs: Vec<RemoteTransaction>| FetchResult {
+        accounts: vec![acc.clone()],
+        transactions: txs,
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, fetch(vec![])).unwrap();
+    let account_id: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM accounts WHERE external_ref = 'f:1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let summary = |e2e: &str, cents: i64| TransferJob {
+        source_iban: acc.iban.clone(),
+        source_owner: "A".into(),
+        recipient_name: "Sammelüberweisung (3 Zahlungen)".into(),
+        recipient_iban: String::new(),
+        recipient_bic: None,
+        amount_cents: cents,
+        purpose: String::new(),
+        instant: false,
+        execution_date: None,
+        end_to_end_id: e2e.into(),
+    };
+    v.record_pending_transfer(
+        account_id,
+        &summary("A", 3_550),
+        "Sammelüberweisung (vorgemerkt)",
+    )
+    .unwrap();
+    v.record_pending_transfer(
+        account_id,
+        &summary("B", 9_900),
+        "Sammelüberweisung (vorgemerkt)",
+    )
+    .unwrap();
+    let pending = || -> i64 {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM transactions WHERE external_id LIKE 'pending-%' AND deleted_ms IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(pending(), 2);
+    // A single payment of the same size is no batch booking: both stay pending.
+    let today = chrono::Local::now().date_naive().to_string();
+    let other = RemoteTransaction {
+        account_ref: "f:1".into(),
+        external_id: "bank-0".into(),
+        booking_date: today.clone(),
+        value_date: today,
+        amount_cents: -3_550,
+        currency: "EUR".into(),
+        counterparty: "Shop".into(),
+        counterparty_iban: "DE89370400440532013000".into(),
+        booking_text: "Kartenzahlung".into(),
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, fetch(vec![other])).unwrap();
+    assert_eq!(pending(), 2);
+    // The bank books 35,50 € and names the own IBAN as counterparty.
+    let booked = RemoteTransaction {
+        account_ref: "f:1".into(),
+        external_id: "bank-1".into(),
+        booking_date: chrono::Local::now().date_naive().to_string(),
+        value_date: chrono::Local::now().date_naive().to_string(),
+        amount_cents: -3_550,
+        currency: "EUR".into(),
+        counterparty: "A".into(),
+        counterparty_iban: acc.iban.clone(),
+        booking_text: "SAMMELÜBERWEISUNG".into(),
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, fetch(vec![booked])).unwrap();
+    // Only the matching one is gone; the other batch is still pending.
+    assert_eq!(pending(), 1);
+    std::fs::remove_file(path).ok();
+}
+
+#[test]
+fn standing_orders_are_replaced_only_for_completely_fetched_accounts() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::FinTsGeneric, String::new(), "u".into())
+        .unwrap();
+    let acc = RemoteAccount {
+        external_ref: "f:1".into(),
+        name: "Giro".into(),
+        owner: String::new(),
+        iban: "DE02120300000000202051".into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let order = RemoteStandingOrder {
+        account_ref: "f:1".into(),
+        order_id: "O1".into(),
+        recipient_name: "Vermieter".into(),
+        recipient_iban: "DE89370400440532013000".into(),
+        amount_cents: 85_000,
+        purpose: "Miete".into(),
+        first_date: "2026-01-01".into(),
+        last_date: None,
+        time_unit: "M".into(),
+        interval: 1,
+        exec_day: 1,
+        ..Default::default()
+    };
+    let count = || -> i64 {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM standing_orders WHERE key = 'O1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let fetch = |orders: Vec<RemoteStandingOrder>, complete: bool| FetchResult {
+        accounts: vec![acc.clone()],
+        standing_orders: orders,
+        standing_orders_fetched: if complete { vec!["f:1".into()] } else { vec![] },
+        ..Default::default()
+    };
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        fetch(vec![order], true),
+    )
+    .unwrap();
+    assert_eq!(count(), 1);
+    // A sync without the standing-order request (bank lacks it, or it failed) keeps them.
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, fetch(vec![], false)).unwrap();
+    assert_eq!(count(), 1);
+    // A complete answer without orders means: the user deleted them at the bank.
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, fetch(vec![], true)).unwrap();
+    assert_eq!(count(), 0);
+    std::fs::remove_file(path).ok();
+}
+
+#[test]
 fn revoked_accounts_are_marked_and_new_ones_named() {
     let (v, path) = demo_vault();
     let conn = v
@@ -1106,6 +1272,8 @@ async fn demo_transfer_flow_adds_pending_booking_and_suggests_recipient() {
 mod account_selection;
 mod bank_name;
 mod banking_gate;
+mod batch_transfer;
 mod content_id;
+mod direct_debit;
 mod statements_auto;
 mod transfer_cancel;

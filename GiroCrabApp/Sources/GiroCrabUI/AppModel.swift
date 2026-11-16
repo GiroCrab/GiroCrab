@@ -58,6 +58,8 @@ public final class AppModel {
     var merchantAccountStats: (accountId: Int64, stats: MerchantStats)?
     var rules: [Rule] = []
     var history: [DailyBalance] = []
+    /// Monthly sums of the selected category incl. subcategories (chart above its bookings, #502).
+    var categoryHistory: [CategoryPeriodSum] = []
     var connections: [BankConnection] = []
     /// Login with accounts that another login already delivers: asks which to fetch (#346).
     var accountSelectionConnection: BankConnection?
@@ -71,7 +73,27 @@ public final class AppModel {
     @ObservationIgnored var logoCache: [String: (image: Image, pixels: Int)] = [:]
 
     // UI state
-    var sidebarSelection: SidebarItem? = .allAccounts { didSet { listLimit = Self.defaultListLimit; reloadSelection(periodChanged: false) } }
+    var sidebarSelection: SidebarItem? = .allAccounts {
+        didSet {
+            // Any other choice in the sidebar ends the merchant list (#495).
+            if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
+            listLimit = Self.defaultListLimit
+            // A category with its own default period switches to it; that load covers the selection too (#425).
+            if case .category(let id)? = sidebarSelection, let saved = categoryPeriod(id), saved != period {
+                period = saved
+                return
+            }
+            reloadSelection(periodChanged: false)
+        }
+    }
+    /// Merchant whose bookings the list shows across all accounts and categories (#495);
+    /// only the period still applies. Set by `focusMerchant(of:)`, ended by
+    /// `leaveMerchantFocus()` or any sidebar selection.
+    var merchantFocus: MerchantFocus?
+    /// Sidebar selection and list filters to return to when the merchant list is left.
+    @ObservationIgnored var merchantFocusReturn: MerchantFocusReturn?
+    /// True while `focusMerchant` / `leaveMerchantFocus` set the sidebar selection themselves.
+    @ObservationIgnored var appliesMerchantFocus = false
     /// Segmented control of the wealth view (shown in the toolbar instead of the booking scope).
     var assetClassificationVersion = 0
     var wealthScope: WealthScope = .all
@@ -101,7 +123,11 @@ public final class AppModel {
     }
     var interactivePeriod: Period {
         get { period }
-        set { loadsSelectionInBackground = true; period = newValue; loadsSelectionInBackground = false }
+        set {
+            loadsSelectionInBackground = true; period = newValue; loadsSelectionInBackground = false
+            // The user's choice becomes the default of the selected category (#425).
+            if case .category(let id)? = sidebarSelection { setCategoryPeriod(newValue, for: id) }
+        }
     }
     /// Latest salary of the selected accounts; start of the `.sinceSalary` period.
     var salaryCycle: SalaryCycle?
@@ -148,6 +174,15 @@ public final class AppModel {
             guard directionFilter != oldValue else { return }
             listLimit = Self.defaultListLimit
             reloadBookings()
+        }
+    }
+    /// Accounts whose bookings the category views show („Ohne Kategorie“ and
+    /// a category, GitHub #406); empty = all accounts. Kept while the app runs.
+    var categoryAccountFilter: Set<Int64> = [] {
+        didSet {
+            guard categoryAccountFilter != oldValue, showsCategoryAccountFilter else { return }
+            listLimit = Self.defaultListLimit
+            reloadSelection(periodChanged: false)
         }
     }
     var searchText: String = "" { didSet { scheduleSearch() } }
@@ -233,7 +268,39 @@ public final class AppModel {
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
     /// "Belege & PostBox" filtered to one account (#172); nil = all accounts.
+    var documentsScope: DocumentsScope = .all
     var documentsAccountFilter: Int64?
+    /// „Geplant“ (#240): payments with a bank order, the filters and a reload
+    /// marker (set by everything that can change them: transfers, syncs).
+    var plannedPayments: [PlannedPayment] = []
+    /// `plannedPayments` grouped by month, computed once per reload (not per redraw).
+    var plannedMonths: [PlannedMonth] = []
+    var plannedTotals = PlannedTotals(count: 0, outgoingCents: 0, incomingCents: 0)
+    var plannedAccountFilter: Int64?
+    var plannedHorizon: PlannedHorizon = .days90
+    var plannedVersion = 0
+    var selectedPlannedID: String?
+    /// „Lastschriften“ (#143): mandates of the creditor account shown.
+    var mandates: [Mandate] = []
+    var mandateAccountID: Int64?
+    var selectedMandateID: Int64?
+    var mandateDraft: MandateDraft?
+    var mandateError: String?
+    var mandateNote: String?
+    var mandatesVersion = 0
+    var creditorID = ""
+    var suggestedCreditorID = ""
+    var collectionLines: [CollectionLine] = []
+    var showCollectionSheet = false
+    /// Returned collections (Rücklastschriften) not yet marked as seen, and the bookings of the selected mandate (#143).
+    var openMandateReturns: [MandateBooking] = []
+    var mandateBookings: [MandateBooking] = []
+    /// Direct debit submission via FinTS (#143): the running job and whether the active session is one.
+    var debitRun: DebitRun?
+    var activeTransferIsDebit = false
+    var collectionFiles: [DebitFile] = []
+    var mandateExport = CSVFileDocument(data: Data())
+    var showMandateExport = false
     var expandedCategories: Set<Int64> = []
     var showRuleEditor = false {
         didSet { if showRuleEditor, rulesStale { reloadRules() } }
@@ -327,6 +394,10 @@ public final class AppModel {
     var activeSession: SyncSession?
     var activeTransfer: TransferSession?
     var showTransferSheet = false
+    /// Batch transfer (#240): sheet, the rows being edited, and whether the running session is one.
+    var showBatchSheet = false
+    var batchDraft = BatchDraft()
+    var activeTransferIsBatch = false
     /// Bumped whenever a sync wrote a row to the Abrufprotokoll (#238); the log window reloads on it.
     var syncLogVersion = 0
     var csvExport = CSVFileDocument(data: Data())
@@ -481,6 +552,8 @@ public final class AppModel {
             case "alltag": scope = .everyday
             case "sparplaene", "sparpläne", "investments": scope = .investments
             case "belege", "documents": sidebarSelection = .documents
+            case "geplant", "planned": sidebarSelection = .planned
+            case "lastschriften", "debits": sidebarSelection = .directDebits
             case "vermoegen", "vermögen", "wealth": sidebarSelection = .wealth
             case "vermoegen-cash": sidebarSelection = .wealth; wealthScope = .cash
             case "vermoegen-wertpapiere": sidebarSelection = .wealth; wealthScope = .securities
@@ -499,6 +572,7 @@ public final class AppModel {
             reloadBookings()
             if let q = options.pickBooking, let b = bookings.first(where: { $0.merchantName.lowercased().contains(q) || $0.counterparty.lowercased().contains(q) }) {
                 selectedBookingID = b.id
+                if options.merchantList { focusMerchant(of: b) }
             }
             // Sachwerte (#87): --pick also selects an item by name
             if let q = options.pickBooking, case .account(let id) = sidebarSelection, isTangible(id),
@@ -533,6 +607,23 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "mandate", "collection", "collection-files", "mandate-select":
+            // Lastschriften (#143): the mandate form / the collection sheet
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.reloadMandates()
+                if name == "mandate" { self.newMandate(); self.mandateDraft?.name = "Mia Beispiel"; self.mandateDraft?.iban = "DE89 3704 0044 0532 0130 00"
+                    self.mandateDraft?.reference = "M-2026-001"; self.mandateDraft?.amountText = "12,50"
+                    self.mandateDraft?.purpose = "Mitgliedsbeitrag" }
+                else if name == "mandate-select" {
+                    // the mandate with the returned collection, selected for the inspector
+                    self.selectedMandateID = self.mandates.first { $0.reference == "M-2025-014" }?.id
+                } else {
+                    self.openCollection()
+                    // `collection-files`: the step after "Dateien erzeugen", with the submit area
+                    if name == "collection-files" { self.buildCollection(dueDate: Date().addingTimeInterval(5 * 86_400)) }
+                }
+            }
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.last
@@ -551,6 +642,10 @@ public final class AppModel {
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = Period.previousMonth()
             showPrintSheet = true
+        case "batch-transfer", "batch-transfer-confirm", "batch-transfer-scheduled":
+            batchDraft.rows = BatchRow.samples(50)
+            openBatchTransfer()
+            if name == "batch-transfer-scheduled" { batchDraft.scheduled = true }
         case "transfer", "transfer-confirm":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
             openTransfer()
@@ -813,22 +908,29 @@ public final class AppModel {
                 defer { key.resetBytes(in: 0..<key.count) }
                 let fileSize = (try? FileManager.default.attributesOfItem(atPath: Self.vaultURL.path)[.size] as? Int) ?? -1
                 Self.debugLog("unlock: vault=\(Self.vaultURL.lastPathComponent) size=\(fileSize) key_created_new=\(VaultKeyManager.shared.lastUnlockCreatedKey)")
-                let v = try Vault.open(path: Self.vaultURL.path, key: key)
-                _ = try v.seedStarterCategories()
+                // Opening (key derivation, migrations) and the emptiness check run off the
+                // main thread: the lock screen's crab keeps moving meanwhile.
+                let path = Self.vaultURL.path
+                let (v, isEmpty) = try await Self.offMain { [key] () throws -> (Vault, Bool) in
+                    let v = try Vault.open(path: path, key: key)
+                    _ = try v.seedStarterCategories()
+                    let connections = (try? v.listBankConnections()) ?? []
+                    return (v, try v.accountCount() == 0 && connections.isEmpty)
+                }
+                StartupClock.mark("own vault opened (background)")
                 self.ownVault = v
                 // Let the crab's unlock hop play on the lock screen before the main view replaces it.
-                if !Motion.reduced {
-                    self.unlockCelebrating = true
-                    try? await Task.sleep(for: .milliseconds(320))
-                }
+                self.unlockCelebrating = !Motion.reduced
                 defer { self.unlockCelebrating = false }
-                if try v.accountCount() == 0 && self.connectionsExist(v) == false {
+                let hop = Task { if !Motion.reduced { try? await Task.sleep(for: .milliseconds(320)) } }
+                if isEmpty {
                     // Nothing synced yet: show demo bookings so the UI can be judged.
                     UserDefaults.standard.set(false, forKey: Self.realDataKey)
-                    self.openDemoVault()
+                    await hop.value
+                    await self.openDemoVaultAsync()
                     self.toast = String(localized: "Ihr Tresor ist noch leer – Sie sehen Demo-Daten")
                 } else {
-                    self.useVault(v, demo: false)
+                    await self.useOwnVaultAfterUnlock(v, hop: hop)
                 }
                 if CloudSyncManager.shared.isEnabled {
                     await self.performSyncOrAutoAdopt(vault: v)
@@ -919,6 +1021,39 @@ public final class AppModel {
 
     func connectionsExist(_ v: Vault) -> Bool {
         ((try? v.listBankConnections()) ?? []).isEmpty == false
+    }
+
+    /// `useVault(v, demo: false)` for the unlock: the lock screen stays (crab animated)
+    /// while the first lists load off the main thread; the main view appears with them.
+    func useOwnVaultAfterUnlock(_ v: Vault, hop: Task<Void, Never>) async {
+        // Without a vault the selection reset loads nothing: its `didSet` would
+        // otherwise scan the bookings synchronously, before the load below.
+        vault = nil
+        selectedBookingID = nil
+        sidebarSelection = .allAccounts
+        vault = v
+        demoActive = false
+        UserDefaults.standard.set(true, forKey: Self.realDataKey)
+        logoCache = [:]
+        // nothing of the vault shown before (demo) may appear under the new one
+        page = nil; bookings = []; history = []
+        assetClassificationVersion += 1
+        // cheap, indexed calls; everything that scans bookings goes off the main thread
+        reloadAccounts()
+        reloadRules()
+        reloadSettings()
+        mirrorDocumentsIfEnabled()
+        startSelectionLoad()
+        loadDashboard()
+        await selectionLoadTask?.value
+        await hop.value
+        StartupClock.mark("own vault loaded (background)")
+        // locked, or switched to the demo, while loading
+        guard vault === v, vaultState == .unlocking else { return }
+        vaultState = .open
+        selectedBookingID = bookings.first?.id
+        startAutoSync()
+        reconcileEnableBankingKey()
     }
 
     func useVault(_ v: Vault, demo: Bool) {
@@ -1037,7 +1172,12 @@ public final class AppModel {
         resetSyncBatch()
         transferBusy = false
         showTransferSheet = false
+        showBatchSheet = false
+        activeTransferIsBatch = false
+        activeTransferIsDebit = false
+        debitRun = nil
         transferDraft.pin = ""
+        batchDraft.pin = ""
         Task {
             await session?.cancel()
             _ = await transfer?.cancel()  // result cannot be shown once locked

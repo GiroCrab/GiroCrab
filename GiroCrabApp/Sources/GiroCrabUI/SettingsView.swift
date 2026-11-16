@@ -57,9 +57,18 @@ struct GeneralSettings: View {
     @State private var showHelp = false
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics = true
     @AppStorage(ViewLayout.budgetsKey) private var showBudgets = true
+    @AppStorage(NegativeAmountStyle.defaultsKey) private var negativeAmountStyle: NegativeAmountStyle = .neutral
     @AppStorage(AppTextSize.defaultsKey) private var textSize: AppTextSize = .standard
     @AppStorage(AppAppearance.defaultsKey) private var appearance: AppAppearance = .system
     @AppStorage(BookingDensity.defaultsKey) private var bookingDensity: BookingDensity = .standard
+
+    /// Core setting `sync.days_back`: how far the first fetch of a new account reaches back.
+    private var firstFetchDays: Binding<Int> {
+        Binding(
+            get: { Int(model.settingEntry("sync.days_back")?.value ?? "") ?? 90 },
+            set: { model.saveSetting("sync.days_back", String($0)) }
+        )
+    }
 
     var body: some View {
         @Bindable var model = model
@@ -100,12 +109,28 @@ struct GeneralSettings: View {
                 Toggle("Budgets anzeigen", isOn: $showBudgets)
                 Text("Wer keine Monatsbudgets nutzt, blendet die Budget-Karte und „Monatsbudget festlegen …“ ganz aus. Auch im Menü Ansicht umschaltbar.")
                     .appFont(.caption).foregroundStyle(.secondary)
+                Picker("Negative Beträge", selection: $negativeAmountStyle) {
+                    ForEach(NegativeAmountStyle.allCases) { Text($0.title).tag($0) }
+                }
+                Text("Farbe von Abbuchungen in der Buchungsliste: neutral wie der übrige Text oder rot wie negative Salden in der Seitenleiste. Das Minuszeichen bleibt immer sichtbar.")
+                    .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Ansicht").appSectionHeader() }
             Section {
                 Picker("Als geprüft markieren", selection: $model.autoReviewDelay) {
                     ForEach(AutoReviewDelay.allCases) { Text($0.title).tag($0) }
                 }
                 Text("Eine ausgewählte Buchung gilt nach dieser Zeit als geprüft – wie eine gelesene E-Mail. Bei Mehrfachauswahl nie.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+                Picker("Zeitraum beim ersten Abruf", selection: firstFetchDays) {
+                    Text("90 Tage").tag(90)
+                    Text("1 Jahr").tag(365)
+                    Text("2 Jahre").tag(730)
+                    // a value set elsewhere (e.g. synced from another device) stays selectable
+                    if ![90, 365, 730].contains(firstFetchDays.wrappedValue) {
+                        Text("\(firstFetchDays.wrappedValue) Tage").tag(firstFetchDays.wrappedValue)
+                    }
+                }
+                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Kontos zurückgeht. Viele Banken liefern nur 90 Tage oder verlangen für mehr eine TAN. Bereits abgerufene Konten betrifft das nicht.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Buchungen").appSectionHeader() }
             BalanceChartSettingsSection()
@@ -601,8 +626,6 @@ struct ICloudSyncSection: View {
                     Label("Die Daten wurden in den Ordner „GiroCrab“ in iCloud Drive verschoben. Bitte wechseln Sie über „Ordner wählen …“ zu diesem Ordner, damit alle Geräte denselben Ordner nutzen.", systemImage: "exclamationmark.triangle.fill")
                         .appFont(.callout).foregroundStyle(.orange)
                 }
-                // The app's own iCloud container is neither visible in Finder nor
-                // chosen by the user: only a plain folder gets these buttons.
                 if sync.location == .folder {
                     HStack {
                         Button("Ordner wählen …", systemImage: "folder.badge.gearshape") { picking = true }
@@ -610,6 +633,17 @@ struct ICloudSyncSection: View {
                         Button("Im Finder zeigen", systemImage: "folder") { revealFolder() }
                         #endif
                     }
+                    if sync.folderChosen && sync.containerAvailable {
+                        Button("Wieder über iCloud synchronisieren", systemImage: "icloud") {
+                            sync.useContainerAgain(); model.syncNow()
+                        }
+                    }
+                } else {
+                    // The app's own container is invisible in iCloud Drive: a device
+                    // without one (e.g. a Mac) syncs via the folder "GiroCrab" instead (#484).
+                    Button("Ordner wählen …", systemImage: "folder.badge.gearshape") { picking = true }
+                    Text("Nutzt ein anderes Gerät (etwa die Mac-App) den Ordner „GiroCrab“ in iCloud Drive, wählen Sie diesen Ordner, damit beide denselben Tresor sehen.")
+                        .appFont(.caption).foregroundStyle(.secondary)
                 }
                 Button(sync.isSyncing ? LocalizedStringKey("Synchronisiere …") : LocalizedStringKey("Jetzt synchronisieren"), systemImage: "arrow.triangle.2.circlepath") {
                     model.syncNow()
@@ -673,7 +707,7 @@ struct ICloudSyncSection: View {
                     } else if !hasVault {
                         pendingFolder = url
                     } else {
-                        do { try sync.setFolder(url); model.syncNow() } catch { }
+                        do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { }
                     }
                 }
             }
@@ -685,7 +719,7 @@ struct ICloudSyncSection: View {
         }
         .alert("Neuen Tresor in diesem Ordner anlegen?", isPresented: Binding(get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } })) {
             Button("Neuen Tresor anlegen") {
-                if let url = pendingFolder { do { try sync.setFolder(url); model.syncNow() } catch { } }
+                if let url = pendingFolder { do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { } }
                 pendingFolder = nil
             }
             Button("Abbrechen", role: .cancel) { pendingFolder = nil }

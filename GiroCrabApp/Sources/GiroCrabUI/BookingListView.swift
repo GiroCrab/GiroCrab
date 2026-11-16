@@ -40,6 +40,9 @@ struct BookingStreamView: View {
                 // Security lock: first, above everything else (stays visible).
                 BankingPolicyBanner()
                 AnnouncementBanner()
+                if let focus = model.merchantFocus {
+                    MerchantFocusBar(focus: focus)
+                }
                 #if !os(iOS)
                 header(isOverview: isOverview, emptyVault: emptyVault, scope: $model.scope)
                 #endif
@@ -47,12 +50,21 @@ struct BookingStreamView: View {
                     // Spacing 0: the stream below is one flat run of day headers and
                     // rows that form the day cards; everything above it is one block.
                     LazyVStack(alignment: .leading, spacing: 0) {
+                        #if !os(iOS)
+                        // The scroll-to-top target is the very first thing in the scroll
+                        // content and carries the gap above the first card itself. As a
+                        // zero-height view below a top padding, `scrollTo(…, anchor: .top)`
+                        // scrolled that padding away: after a scope or period change the
+                        // cards sat a few points higher than after launch (GitHub #423).
+                        Color.clear.frame(height: Self.topGap).id(Self.topID)
+                        #endif
                         VStack(alignment: .leading, spacing: 14) {
                         #if os(iOS)
                         // iPhone: header scrolls away so bookings get the screen.
                         header(isOverview: isOverview, emptyVault: emptyVault, scope: $model.scope)
-                        #endif
+                        // Below the header: "to the top" on iPhone means the newest day.
                         Color.clear.frame(height: 0).id(Self.topID)
+                        #endif
                         if emptyVault {
                             EmptyVaultCard()
                         }
@@ -127,7 +139,9 @@ struct BookingStreamView: View {
                         }
                     }
                     .padding(.horizontal, 20)
+                    #if os(iOS)
                     .padding(.top, 4)
+                    #endif
                     .padding(.bottom, 18)
                     .frame(maxWidth: .infinity)
                     // Sachwerte: a click on empty space (margins, gaps between the
@@ -325,6 +339,10 @@ struct BookingStreamView: View {
     }
 
     private static let topID = "stream-top"
+    #if !os(iOS)
+    /// Gap between the fixed header and the first card of the scroll content.
+    static let topGap: CGFloat = 18
+    #endif
 
 
     private func scrollToTop(_ proxy: ScrollViewProxy) {
@@ -356,6 +374,32 @@ private struct BookingScopePicker: View {
 /// stacked slices (header, rows) so each slice can be a lazy element of its own:
 /// rounded corners only at the card's top and bottom, the border only on the
 /// sides in between.
+/// Shown above a merchant-centred list (#495): names the merchant and leads back
+/// to the view the list was opened from.
+struct MerchantFocusBar: View {
+    @Environment(AppModel.self) private var model
+    let focus: MerchantFocus
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "storefront").foregroundStyle(Theme.secondary)
+            Text("Alle Buchungen von").foregroundStyle(Theme.secondary)
+            Text(focus.name).fontWeight(.semibold).lineLimit(1).sensitive(.personal)
+            Text(verbatim: "· \(model.periodTitle)").foregroundStyle(Theme.secondary).lineLimit(1)
+            Spacer(minLength: 8)
+            Button("Zurück", systemImage: "xmark.circle.fill") { model.leaveMerchantFocus() }
+                .buttonStyle(.borderless)
+                .fixedSize()
+                .help("Händler-Filter aufheben und zur vorherigen Ansicht zurückkehren")
+        }
+        .appFont(.callout)
+        .padding(.horizontal, 20).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+}
+
 struct DayCardSegment: ViewModifier {
     @AppStorage(BookingDensity.defaultsKey) private var density: BookingDensity = .standard
     let isTop: Bool
@@ -499,6 +543,36 @@ struct DayCardRow: View {
     }
 }
 
+/// The purpose shown behind the name in a booking row (#497).
+enum ListPurpose {
+    static func text(for b: Booking) -> String? {
+        text(purpose: b.purpose, cleanPurpose: b.cleanPurpose,
+             shownName: b.merchant.name.isEmpty ? b.bookingText : b.merchant.name,
+             counterparty: b.counterparty, paymentMethod: b.paymentMethod, bookingText: b.bookingText)
+    }
+
+    /// One line of purpose, or nil when there is none or it only repeats what the
+    /// row already shows (merchant name, counterparty, payment method), as card
+    /// payments often do.
+    static func text(purpose: String, cleanPurpose: String, shownName: String, counterparty: String,
+                     paymentMethod: String, bookingText: String) -> String? {
+        let raw = cleanPurpose.isEmpty ? purpose : cleanPurpose
+        let line = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let key = normalized(line)
+        guard !key.isEmpty else { return nil }
+        for shown in [shownName, counterparty, paymentMethod, bookingText] {
+            let other = normalized(shown)
+            if !other.isEmpty, other.contains(key) { return nil }
+        }
+        return line
+    }
+
+    /// Letters and digits only, case-insensitive: "REWE Markt GmbH" ≙ "rewe-markt gmbh".
+    private static func normalized(_ s: String) -> String {
+        String(s.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains))
+    }
+}
+
 /// Exactly three elements: signet · name + subtitle · amount.
 struct BookingRow: View {
     @AppStorage(BookingDensity.defaultsKey) private var density: BookingDensity = .standard
@@ -562,6 +636,7 @@ struct BookingRow: View {
                         .foregroundStyle(Theme.text)
                         .lineLimit(showsDetails ? nil : 1)
                         .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                     if booking.documentCount > 0 {
                         Image(systemName: "doc.text.fill")
                             .appFont(.caption)
@@ -761,7 +836,33 @@ struct BookingRow: View {
         #endif
         .padding(.horizontal, 14)
         .padding(.vertical, effectiveDensity.verticalPadding * textScale)
-        .background(RowSelectionBackground(id: booking.id))
+        .background {
+            ZStack {
+                // not booked yet: light diagonal hatching under the whole row
+                if booking.isPending { PendingHatch() }
+                RowSelectionBackground(id: booking.id)
+            }
+        }
+    }
+}
+
+/// Light diagonal hatching that marks a not yet booked ("vorgemerkt") row.
+/// Drawn with the theme's secondary colour, so it reads in light and dark.
+struct PendingHatch: View {
+    var spacing: CGFloat = 7
+    var body: some View {
+        Canvas { ctx, size in
+            var path = Path()
+            var x = -size.height
+            while x < size.width {
+                path.move(to: CGPoint(x: x, y: size.height))
+                path.addLine(to: CGPoint(x: x + size.height, y: 0))
+                x += spacing
+            }
+            ctx.stroke(path, with: .color(Theme.secondary.opacity(0.14)), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -875,9 +976,10 @@ struct AccountChip: View {
     }
 }
 
-/// Outflows dark slate, inflows an emerald badge.
+/// Outflows dark slate (or red, Einstellungen › Allgemein, #218), inflows an emerald badge.
 struct AmountLabel: View {
     let cents: Int64
+    @AppStorage(NegativeAmountStyle.defaultsKey) private var negativeStyle: NegativeAmountStyle = .neutral
 
     var body: some View {
         if cents > 0 {
@@ -891,7 +993,7 @@ struct AmountLabel: View {
             Text(Money.format(cents))
                 .sensitive()
                 .appFont(.body, weight: .medium, monospacedDigit: true)
-                .foregroundStyle(Theme.outflow)
+                .foregroundStyle(cents < 0 ? negativeStyle.color : Theme.outflow)
         }
     }
 }
@@ -980,13 +1082,14 @@ struct MainToolbar: ViewModifier {
         #else
         content.toolbar(id: "girocrab.main") {
             ToolbarItem(id: "scope", placement: .principal) {
-                // Same toolbar item, other content: the booking filter makes no sense in
-                // the wealth view (a customizable toolbar must not lose items).
+                // Keep one customizable toolbar item, with the filter for the current view.
                 if model.sidebarSelection == .wealth {
                     WealthScopePicker()
+                } else if model.sidebarSelection == .documents {
+                    DocumentsScopePicker()
                 } else {
                     BookingScopePicker()
-                        .disabled(model.sidebarSelection == .documents || model.sidebarSelection == .newBookings)
+                        .disabled(model.sidebarSelection == .newBookings)
                 }
             }
             ToolbarItem(id: "transfer", placement: .primaryAction) {

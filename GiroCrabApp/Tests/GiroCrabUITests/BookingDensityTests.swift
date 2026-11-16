@@ -33,6 +33,17 @@ final class BookingDensityTests: XCTestCase {
         XCTAssertEqual(BookingDensity.spacious.purpose(for: booking), "Rechnung für erfundene Gartenarbeiten")
     }
 
+    func testPurposeUsesUpstreamFallbackAndDuplicateNormalization() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        var booking = try XCTUnwrap(model.bookings.first)
+        booking.merchant.name = "Fiktive Gartenwerkstatt"
+        booking.cleanPurpose = ""
+        booking.purpose = "Rechnung DEMO-42\nfür Pflanzen"
+        XCTAssertEqual(BookingDensity.compact.purpose(for: booking), "Rechnung DEMO-42 für Pflanzen")
+        booking.cleanPurpose = "FIKTIVE-GARTENWERKSTATT"
+        XCTAssertEqual(BookingDensity.standard.purpose(for: booking), "")
+    }
+
     func testOnlyActiveCompactRowExpandsWhileStandardStaysUnchanged() {
         XCTAssertFalse(BookingDensity.compact.showsDetails(isActive: false))
         XCTAssertTrue(BookingDensity.compact.showsDetails(isActive: true))
