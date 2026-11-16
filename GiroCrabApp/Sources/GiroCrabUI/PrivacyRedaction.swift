@@ -139,6 +139,8 @@ enum RedactionSmudge {
 
     /// The colour of pixel `point` (pixels, origin top left) of `image`: the
     /// background a cover takes over, so it blends into the field around it.
+    /// nil for a (partly) transparent pixel (window corner, vibrancy): its
+    /// colour alone would turn into black.
     static func color(of image: CGImage, at point: CGPoint) -> CGColor? {
         let x = min(max(0, Int(point.x)), image.width - 1), y = min(max(0, Int(point.y)), image.height - 1)
         guard let pixel = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)),
@@ -147,7 +149,7 @@ enum RedactionSmudge {
                                   space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
         ctx.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard let p = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        guard let p = ctx.data?.assumingMemoryBound(to: UInt8.self), p[3] == 255 else { return nil }
         return CGColor(colorSpace: space, components: [CGFloat(p[0]) / 255, CGFloat(p[1]) / 255, CGFloat(p[2]) / 255, 1])
     }
 }

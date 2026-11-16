@@ -1,6 +1,7 @@
 import SwiftUI
 import ImageIO
 import UniformTypeIdentifiers
+import WebKit
 import GiroCrabCore
 #if os(macOS)
 import AppKit
@@ -123,7 +124,8 @@ enum BugReport {
         // (anything above it would sit on top of it).
         let layers = dialogLayers(over: window)
         let drawable = Array(layers.prefix { $0.tracker.map { ready($0.renderedRedaction) } ?? false })
-        guard let image = snapshot(window, dialogs: drawable, hideSearch: redaction.contains(.personal)) else {
+        guard let image = snapshot(window, dialogs: drawable, hideSearch: redaction.contains(.personal),
+                                   coverInputs: !redaction.isEmpty) else {
             return .noWindow
         }
         return .image(image, dialogOmitted: drawable.count < layers.count)
@@ -177,12 +179,20 @@ enum BugReport {
         let dialogs = trackers(.dialog)
         func tracked(_ w: NSWindow) -> Tracker? { dialogs.first { $0.window === w } }
 
+        // A capturable popover is known by its tracker; the class name finds
+        // the others (system popovers), so they count as left out.
+        func popovers(of hosts: [NSWindow]) -> [NSWindow] {
+            hosts.flatMap { host in
+                (host.childWindows ?? []).filter { w in
+                    w.isVisible && !hosts.contains(w)
+                        && (tracked(w) != nil || "\(type(of: w))".contains("Popover"))
+                }
+            }
+        }
+
         var hosts = [main]
         while let sheet = hosts.last?.attachedSheet { hosts.append(sheet) }
-        let popovers = hosts.flatMap { host in
-            (host.childWindows ?? []).filter { $0.isVisible && !hosts.contains($0) && "\(type(of: $0))".contains("Popover") }
-        }
-        var layers = (hosts.dropFirst() + popovers).map { DialogLayer(window: $0, tracker: tracked($0)) }
+        var layers = (hosts.dropFirst() + popovers(of: hosts)).map { DialogLayer(window: $0, tracker: tracked($0)) }
 
         // `orderedWindows` runs front to back; draw back to front. Sheets of a
         // dialog window follow it (e.g. "Passwort vorschlagen" over Settings).
@@ -195,13 +205,10 @@ enum BugReport {
             separate.append(w)
         }
         for w in separate.reversed() {
-            var host = w
-            repeat {
-                seen.insert(ObjectIdentifier(host))
-                layers.append(DialogLayer(window: host, tracker: tracked(host)))
-                guard let sheet = host.attachedSheet else { break }
-                host = sheet
-            } while true
+            var chain = [w]
+            while let sheet = chain.last?.attachedSheet { chain.append(sheet) }
+            chain.forEach { seen.insert(ObjectIdentifier($0)) }
+            layers += (chain + popovers(of: chain)).map { DialogLayer(window: $0, tracker: tracked($0)) }
         }
         return layers
     }
@@ -212,9 +219,10 @@ enum BugReport {
     /// the snapshot only; setting `stringValue` sends no action or
     /// text-change notification, so the search binding and the list stay.
     /// `dialogs` are drawn at their place over the window (sheets and
-    /// popovers are windows of their own), with their inputs covered.
+    /// popovers are windows of their own), with their inputs covered when
+    /// `coverInputs` (anything is to be hidden at all).
     @MainActor
-    private static func snapshot(_ window: NSWindow, dialogs: [DialogLayer], hideSearch: Bool) -> CGImage? {
+    private static func snapshot(_ window: NSWindow, dialogs: [DialogLayer], hideSearch: Bool, coverInputs: Bool) -> CGImage? {
         guard window.isVisible, !window.isMiniaturized else { return nil }
         let fields = hideSearch ? searchFields(in: window) : []
         let saved = fields.map(\.stringValue)
@@ -242,7 +250,7 @@ enum BugReport {
             guard let image = WindowScreenshot.bitmap(of: w)?.cgImage else { return nil } // fail closed
             ctx.draw(image, in: place(w.frame))
             let s = CGFloat(image.width) / w.frame.width
-            for r in inputRects(in: w) {
+            for r in coverInputs ? inputRects(in: w) : [] {
                 // `r` counts y from the bottom, the bitmap from the top.
                 let top = CGRect(x: r.minX, y: w.frame.height - r.maxY, width: r.width, height: r.height)
                 RedactionSmudge.draw(in: ctx, rect: place(r.offsetBy(dx: w.frame.minX, dy: w.frame.minY)),
@@ -252,14 +260,14 @@ enum BugReport {
         return ctx.makeImage()
     }
 
-    /// Text fields (search fields included), text views and pop-up menus of
-    /// `window`, in window coordinates.
+    /// Text fields (search fields included), text views, pop-up menus and web
+    /// pages (a bank or portal login) of `window`, in window coordinates.
     @MainActor
     private static func inputRects(in window: NSWindow) -> [CGRect] {
         func walk(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(walk) }
         guard let root = window.contentView?.superview ?? window.contentView else { return [] }
         return walk(root).compactMap { v in
-            let isInput = (v as? NSTextField)?.isEditable == true || v is NSTextView || v is NSPopUpButton
+            let isInput = (v as? NSTextField)?.isEditable == true || v is NSTextView || v is NSPopUpButton || v is WKWebView
             guard isInput, !v.isHiddenOrHasHiddenAncestor else { return nil }
             // `visibleRect` is the whole window for controls SwiftUI hosts:
             // clip the bounds to the scroll view they sit in instead
@@ -278,13 +286,16 @@ enum BugReport {
         return (toolbar + tree).filter { seen.insert(ObjectIdentifier($0)).inserted }
     }
     #else
-    /// The window that shows the vault: the key one if it does, else the
-    /// first one in a foreground scene (an iPad may show several).
+    /// The window that shows the vault in a foreground scene (an iPad may
+    /// show several): the one the report sheet is presented in, as that is
+    /// the scene the user asked from ("Hier aufnehmen"), else the key one.
     @MainActor
     static func mainWindow() -> UIWindow? {
         let windows = mainWindows()
             .filter { $0.windowScene?.activationState == .foregroundActive }
-        return windows.first(where: \.isKeyWindow) ?? windows.first
+        let reports = trackers(.report).compactMap(\.window)
+        return windows.first { w in reports.contains { $0 === w } }
+            ?? windows.first(where: \.isKeyWindow) ?? windows.first
     }
 
     struct DialogLayer {
@@ -311,10 +322,10 @@ enum BugReport {
 
     /// `hideSearch`: UIKit draws the search field. It gets an opaque cover
     /// for the snapshot instead of new text, so `.searchable` never sees a
-    /// change. `dialogs` are drawn over the main view (dimmed, as on
-    /// screen), with their inputs covered.
+    /// change. `dialogs` are drawn over the main view (sheets dimmed, as on
+    /// screen), with their inputs covered when `coverInputs`.
     @MainActor
-    private static func snapshot(_ window: UIWindow, dialogs: [DialogLayer], hideSearch: Bool) -> CGImage? {
+    private static func snapshot(_ window: UIWindow, dialogs: [DialogLayer], hideSearch: Bool, coverInputs: Bool) -> CGImage? {
         guard let view = window.rootViewController?.view else { return nil }
         let covers: [UIView] = hideSearch ? searchFields(in: view).compactMap { field in
             guard !(field.text ?? "").isEmpty, field.window != nil else { return nil }
@@ -331,11 +342,15 @@ enum BugReport {
             view.drawHierarchy(in: view.convert(view.bounds, to: window), afterScreenUpdates: true)
             for layer in dialogs {
                 let dialog = layer.controller.view!
-                UIColor.black.withAlphaComponent(0.2).setFill()
-                ctx.fill(window.bounds)
+                if !isPopover(layer.controller, in: window) { // the system dims below a sheet only
+                    UIColor.black.withAlphaComponent(0.2).setFill()
+                    ctx.fill(window.bounds)
+                }
                 dialog.drawHierarchy(in: dialog.convert(dialog.bounds, to: window), afterScreenUpdates: true)
+                let rects = coverInputs ? inputRects(in: dialog, window: window) : []
+                guard !rects.isEmpty else { continue }
                 let drawn = ctx.currentImage.cgImage
-                for r in inputRects(in: dialog, window: window) {
+                for r in rects {
                     let bg = drawn.map { inputBackground($0, r, scale: format.scale) } ?? inputCover
                     RedactionSmudge.draw(in: ctx.cgContext, rect: r, background: bg)
                 }
@@ -344,14 +359,30 @@ enum BugReport {
         return image.cgImage
     }
 
-    /// Text fields (search fields included) and text views in `view`, in
-    /// `window` coordinates. A field inside a hidden or fully transparent
+    /// A popover that stays one (not adapted to a sheet on a narrow screen).
+    private static func isPopover(_ controller: UIViewController, in window: UIWindow) -> Bool {
+        guard controller.modalPresentationStyle == .popover, let p = controller.presentationController else { return false }
+        return p.adaptivePresentationStyle(for: window.traitCollection) == .none
+    }
+
+    /// Text fields (search fields included), text views and web pages (a
+    /// bank or portal login) in `view`, in `window` coordinates, clipped to
+    /// the scroll view they sit in (a field scrolled under the navigation bar
+    /// must not cover it). A field inside a hidden or fully transparent
     /// container is not on screen and must not get a box over other content.
     private static func inputRects(in view: UIView, window: UIWindow) -> [CGRect] {
         func walk(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(walk) }
         return walk(view).compactMap { v in
-            guard v is UITextField || v is UITextView, v.window != nil, !isEffectivelyHidden(v) else { return nil }
-            return v.convert(v.bounds, to: window)
+            guard v is UITextField || v is UITextView || v is WKWebView, v.window != nil, !isEffectivelyHidden(v)
+            else { return nil }
+            var r = v.convert(v.bounds, to: window)
+            var node = v.superview
+            while let s = node, !(s is UIScrollView) { node = s.superview }
+            // Its bounds reach under the bars; the insets are what they cover.
+            if let clip = node as? UIScrollView {
+                r = r.intersection(clip.convert(clip.bounds.inset(by: clip.adjustedContentInset), to: window))
+            }
+            return r.isEmpty ? nil : r
         }
     }
 

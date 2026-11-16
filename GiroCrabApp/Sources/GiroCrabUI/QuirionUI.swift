@@ -161,7 +161,7 @@ struct QuirionWebSheet: View {
                 if running || browser.loading { ProgressView().controlSize(.small) }
             }.padding(14)
             Divider()
-            PortalWebView(browser: browser).macFrame(minWidth: 760, minHeight: 620)
+            PortalWebView(browser: browser).sensitive().macFrame(minWidth: 760, minHeight: 620) // a bank page
             Divider()
             HStack {
                 Button("Schließen", role: .cancel) { task?.cancel(); close() }.keyboardShortcut(.cancelAction)

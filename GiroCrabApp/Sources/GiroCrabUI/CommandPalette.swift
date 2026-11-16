@@ -22,6 +22,9 @@ struct CommandPaletteView: View {
         /// or category names) and of the subtitle (a category path).
         var hides: ReportRedaction = []
         var subtitleHides: ReportRedaction = []
+        /// What the row shows instead of `title` (a name masked inside it);
+        /// the search still matches `title`, so a capture keeps the list.
+        var shownTitle: String?
         let action: () -> Void
     }
 
@@ -99,7 +102,8 @@ struct CommandPaletteView: View {
         }
         if case .account(let id) = model.sidebarSelection, let a = model.account(for: id) {
             for g in model.namedUserGroups where g.uuid != a.userGroupUuid {
-                out.append(Item(title: String(localized: "„\(redaction.masking(a.name))“ nach „\(g.name)“ verschieben"), subtitle: action, symbol: "folder", hides: .labels) { model.moveAccount(a.id, to: g.uuid) })
+                out.append(Item(title: String(localized: "„\(a.name)“ nach „\(g.name)“ verschieben"), subtitle: action, symbol: "folder", hides: .labels,
+                                shownTitle: String(localized: "„\(redaction.masking(a.name))“ nach „\(g.name)“ verschieben")) { model.moveAccount(a.id, to: g.uuid) })
             }
         }
         for a in model.allAccounts {
@@ -141,7 +145,7 @@ struct CommandPaletteView: View {
                         Button { index = i; run(list) } label: {
                         HStack(spacing: 10) {
                             Image(systemName: item.symbol).frame(width: 20).foregroundStyle(i == index ? Theme.accent : Theme.secondary)
-                            Text(item.title).foregroundStyle(Theme.text).sensitive(item.hides)
+                            Text(item.shownTitle ?? item.title).foregroundStyle(Theme.text).sensitive(item.hides)
                             Spacer()
                             Text(item.subtitle).appFont(.caption).foregroundStyle(Theme.secondary).sensitive(item.subtitleHides)
                         }

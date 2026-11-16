@@ -26,6 +26,20 @@ final class BugReportTests: XCTestCase {
         XCTAssertEqual(ReportRedaction.labels.masking("12,00 €", .amounts), "12,00 €")
     }
 
+    func testSmudgeBackgroundIgnoresTransparentPixels() throws {
+        func image(_ rgba: [UInt8]) throws -> CGImage {
+            var bytes = rgba
+            let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+            let ctx = try XCTUnwrap(CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                              space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            return try XCTUnwrap(ctx.makeImage())
+        }
+        XCTAssertNil(RedactionSmudge.color(of: try image([0, 0, 0, 0]), at: .zero))
+        XCTAssertNil(RedactionSmudge.color(of: try image([100, 100, 100, 128]), at: .zero))
+        let white = try XCTUnwrap(RedactionSmudge.color(of: try image([255, 255, 255, 255]), at: .zero))
+        XCTAssertEqual(white.components?.first ?? 0, 1, accuracy: 0.01)
+    }
+
     func testHeaderKeepsVersionSystemAndConnectors() {
         let text = BugReport.diagnostics(info(), knownTerms: ["Sparkasse", "Giro"])
         XCTAssertTrue(text.contains("GiroCrab 0.6.2 (Build 14)"), text)

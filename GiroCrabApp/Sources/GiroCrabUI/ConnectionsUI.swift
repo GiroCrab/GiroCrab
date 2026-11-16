@@ -584,6 +584,7 @@ struct WebLoginSheet: View {
             Group {
                 if storeCleared {
                     TRWebView(url: URL(string: "https://app.traderepublic.com/login")!, phone: connection.loginName)
+                        .sensitive() // the broker page shows the depot and the phone number
                 } else {
                     ProgressView()
                 }
