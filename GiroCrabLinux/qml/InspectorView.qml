@@ -3,17 +3,63 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 
-// BookingDetailView.swift › InspectorView: receipt, note, salary, recurring,
-// merchant history, category grid, raw data – or the multi-selection card.
+// BookingDetailView.swift › InspectorView: the cards of the selected booking in the order of
+// InspectorLayout (#448) – receipt, note, tags, salary, recurring, category grid, documents,
+// merchant history, raw data – or the multi-selection card. „Anpassen“ in the bar above the
+// scroll view switches to the edit mode (InspectorLayoutEditor.qml).
 Rectangle {
     id: inspector
     color: Theme.canvas
     readonly property var b: AppModel.selectedBooking
+    /// The booking the cards show: the last selected one, so cards that are about to go away
+    /// never see `null` (their bindings run before the Loader around them deactivates).
+    property var cardBooking: AppModel.selectedBooking
+    onBChanged: if (b !== null) cardBooking = b
+    /// The single-booking cards are shown, so their layout can be edited.
+    readonly property bool showsBookingCards: AppModel.sidebarSelection !== "planned" && AppModel.sidebarSelection !== "directDebits"
+                                              && !AppModel.isMultiSelection && b !== null
+    /// `--demo-inspector-edit` (LaunchOptions.swift) opens the edit mode, for screenshots.
+    property bool editingLayout: Qt.application.arguments.indexOf("--demo-inspector-edit") >= 0
+
+    // InspectorSectionCard: one card per section, for the selected booking. In the edit mode
+    // (`placeholderWhenEmpty`) a card that would not show for this booking stands in as a placeholder.
+    property Component receiptCard: Component { ReceiptCard { booking: inspector.cardBooking } }
+    property Component noteCard: Component { NoteCard { booking: inspector.cardBooking } }
+    // TagsUI.swift › TagsCard (#228)
+    property Component tagsCard: Component { Card { TagsSection { width: parent.width; bookings: inspector.cardBooking ? [inspector.cardBooking] : [] } } }
+    property Component salaryCard: Component { SalaryCard { booking: inspector.cardBooking } }
+    property Component salaryPlaceholder: Component { PlaceholderCard { section: "salary"; hint: qsTr("Nur bei Einnahmen sichtbar") } }
+    property Component recurringCard: Component { RecurringCard { booking: inspector.cardBooking } }
+    property Component merchantHistoryCard: Component { MerchantHistoryCard { booking: inspector.cardBooking } }
+    property Component categoriesCard: Component { CategoryGridCard { booking: inspector.cardBooking } }
+    property Component documentsCard: Component { DocumentsCard { booking: inspector.cardBooking } }
+    property Component rawDataCard: Component { RawDataCard { booking: inspector.cardBooking } }
+    function cardComponent(section, placeholderWhenEmpty) {
+        switch (section) {
+        case "receipt": return receiptCard
+        case "note": return noteCard
+        case "tags": return tagsCard
+        case "salary": return cardBooking && cardBooking.amount_cents > 0 ? salaryCard : placeholderWhenEmpty ? salaryPlaceholder : null
+        case "recurring": return recurringCard
+        case "merchantHistory": return merchantHistoryCard
+        case "categories": return categoriesCard
+        case "documents": return documentsCard
+        case "rawData": return rawDataCard
+        }
+        return null
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+        // The bar sits above the scroll view (as on the Mac, #448, #492).
+        LayoutBar { visible: inspector.showsBookingCards; Layout.fillWidth: true }
 
     ScrollView {
-
+        id: scroll
         ScrollBar.vertical: ScrollViewBar {}
-        anchors.fill: parent
+        Layout.fillWidth: true
+        Layout.fillHeight: true
         contentWidth: availableWidth
         ColumnLayout {
             width: parent.width
@@ -47,6 +93,7 @@ Rectangle {
                 readonly property real income: AppModel.selectedBookings.filter(x => x.amount_cents > 0).reduce((s, x) => s + x.amount_cents, 0)
                 readonly property real expense: AppModel.selectedBookings.filter(x => x.amount_cents < 0).reduce((s, x) => s + x.amount_cents, 0)
                 ColumnLayout {
+                    id: multiColumn
                     width: parent.width; spacing: 12
                     RowLayout { SFIcon { symbol: "checkmark.circle"; size: 16; color: Theme.text }
                         Text { text: qsTr("%1 Buchungen ausgewählt").arg(AppModel.selectedBookings.length); font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text } }
@@ -59,6 +106,8 @@ Rectangle {
                         Text { visible: multi.expense !== 0; text: qsTr("Ausgaben"); color: Theme.text; font.pixelSize: Theme.callout + 1 }
                         Text { visible: multi.expense !== 0; text: Fmt.money(multi.expense); color: Theme.secondary; font.pixelSize: Theme.callout + 1; Sensitive {} }
                     }
+                    // MultiSelectionTags (#228)
+                    TagsSection { Layout.fillWidth: true; bookings: multi.visible ? AppModel.selectedBookings : [] }
                     Button { text: qsTr("Kategorisieren …"); icon.name: SF.icon("tag"); highlighted: true; Layout.fillWidth: true; onClicked: AppModel.showCategorizer = true }
                     Button { text: qsTr("Auswahl aufheben"); onClicked: AppModel.selectBooking(AppModel.selectedBookingID) }
                     Text { text: qsTr("Strg-Klick fügt eine Buchung hinzu oder entfernt sie, ⇧-Klick wählt einen Bereich, Strg+A alle.")
@@ -70,19 +119,85 @@ Rectangle {
                 active: !AppModel.isMultiSelection && inspector.b !== null
                 visible: active
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
-                sourceComponent: ColumnLayout {
-                    spacing: 14
-                    ReceiptCard { Layout.fillWidth: true; booking: inspector.b }
-                    NoteCard { Layout.fillWidth: true; booking: inspector.b }
-                    SalaryCard { Layout.fillWidth: true; booking: inspector.b; visible: inspector.b.amount_cents > 0 }
-                    RecurringCard { Layout.fillWidth: true; booking: inspector.b }
-                    MerchantHistoryCard { Layout.fillWidth: true; booking: inspector.b }
-                    CategoryGridCard { Layout.fillWidth: true; booking: inspector.b }
-                    DocumentsCard { Layout.fillWidth: true; booking: inspector.b }
-                    RawDataCard { Layout.fillWidth: true; booking: inspector.b }
-                }
+                // edit mode: room on top for the ⊖ / ⊕ buttons on the cards' corners
+                Layout.topMargin: inspector.editingLayout ? 8 : 0
+                sourceComponent: inspector.editingLayout ? layoutEditor : sectionCards
             }
             Item { implicitHeight: 2 }
+        }
+    }
+    }
+
+    Component {
+        id: sectionCards
+        ColumnLayout {
+            spacing: 14
+            Repeater {
+                model: InspectorLayout.shown
+                Loader {
+                    required property string modelData
+                    Layout.fillWidth: true
+                    visible: status === Loader.Ready
+                    sourceComponent: inspector.cardComponent(modelData, false)
+                }
+            }
+        }
+    }
+    Component {
+        id: layoutEditor
+        InspectorLayoutEditor {
+            booking: inspector.b
+            cardComponent: (section, placeholder) => inspector.cardComponent(section, placeholder)
+            flickable: scroll.contentItem
+        }
+    }
+
+    // InspectorLayoutBar: „Anpassen“ switches to the edit mode, which shows a hint,
+    // „Zurücksetzen“ once something changed, and „Fertig“.
+    component LayoutBar: Rectangle {
+        color: Theme.canvas
+        implicitHeight: barRow.implicitHeight + 12
+        RowLayout {
+            id: barRow
+            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+            anchors.leftMargin: 16; anchors.rightMargin: 16; anchors.topMargin: 8
+            spacing: 12
+            Text {
+                visible: inspector.editingLayout
+                text: qsTr("Ziehen zum Verschieben")
+                font.pixelSize: Theme.caption; color: Theme.secondary
+                wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+            Item { visible: !inspector.editingLayout; Layout.fillWidth: true }
+            IconButton {
+                visible: inspector.editingLayout && !InspectorLayout.isStandard
+                text: qsTr("Zurücksetzen"); symbol: ""; font.pixelSize: Theme.caption; textColor: Theme.accent
+                ToolTip.text: qsTr("Standard-Reihenfolge wiederherstellen und alle Bereiche einblenden")
+                onClicked: InspectorLayout.reset()
+            }
+            IconButton {
+                text: inspector.editingLayout ? qsTr("Fertig") : qsTr("Anpassen")
+                symbol: inspector.editingLayout ? "" : "slider.horizontal.3"; symbolSize: 12
+                font.pixelSize: Theme.caption; font.weight: inspector.editingLayout ? Font.DemiBold : Font.Normal
+                textColor: Theme.accent; tint: Theme.accent
+                ToolTip.text: inspector.editingLayout ? qsTr("Bearbeitung der Seitenleiste beenden")
+                                                      : qsTr("Reihenfolge der Bereiche ändern und Bereiche ausblenden")
+                onClicked: inspector.editingLayout = !inspector.editingLayout
+            }
+        }
+    }
+
+    // InspectorPlaceholderCard: stand-in for a card that has nothing to show for this booking.
+    component PlaceholderCard: Card {
+        id: ph
+        property string section
+        property string hint
+        readonly property var info: InspectorLayout.section(section)
+        ColumnLayout {
+            width: parent.width; spacing: 4
+            CardTitle { text: ph.info.title; symbol: ph.info.symbol }
+            Text { text: ph.hint; font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         }
     }
 
@@ -155,6 +270,15 @@ Rectangle {
                         Sensitive {}
                     }
                     Text { text: rc.booking.account_name + " · " + rc.booking.payment_method; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                    // the counter account: an own account or pocket by name (#523), else its IBAN
+                    TextEdit {
+                        readonly property var counter: BookingDetails.counterAccount(rc.booking)
+                        visible: counter !== null || rc.booking.counterparty_iban !== ""
+                        text: counter ? qsTr("⇄ %1 (%2)").arg(counter.name).arg(Fmt.iban(rc.booking.counterparty_iban)) : Fmt.iban(rc.booking.counterparty_iban)
+                        readOnly: true; selectByMouse: true; wrapMode: Text.Wrap; Layout.fillWidth: true
+                        font.pixelSize: Theme.caption; font.family: counter ? Qt.application.font.family : "monospace"; color: Theme.secondary
+                        Sensitive {}
+                    }
                     MerchantDomainRow { merchant: rc.booking.merchant; Layout.fillWidth: true }
                     Item { Layout.fillHeight: true }
                 }
@@ -407,7 +531,22 @@ Rectangle {
         }
         ColumnLayout {
             width: parent.width; spacing: 10
-            CardTitle { text: qsTr("Händler-Historie") }
+            // The heading opens the list of this merchant's bookings (#495).
+            RowLayout {
+                id: historyHeading
+                readonly property bool enabledLink: mh.booking.merchant.key !== ""
+                spacing: 4
+                opacity: enabledLink ? 1 : 0.5
+                CardTitle { text: qsTr("Händler-Historie") }
+                SFIcon { symbol: "chevron.right"; size: 10; color: Theme.secondary }
+                Accessible.role: Accessible.Button
+                Accessible.name: qsTr("Händler-Historie")
+                Accessible.description: qsTr("Alle Buchungen dieses Händlers im gewählten Zeitraum anzeigen")
+                HoverHandler { id: historyHover; enabled: historyHeading.enabledLink; cursorShape: Qt.PointingHandCursor }
+                TapHandler { enabled: historyHeading.enabledLink; onTapped: MerchantFocus.focusMerchant(mh.booking) }
+                ToolTip.visible: historyHover.hovered; ToolTip.delay: 600
+                ToolTip.text: qsTr("Alle Buchungen dieses Händlers im gewählten Zeitraum anzeigen")
+            }
             // total and the booking's own account side by side, else one unlabelled row
             StatsRow { visible: mh.s !== null; stats: mh.s; label: mh.own ? qsTr("Alle Konten") : "" }
             StatsRow { visible: mh.own !== null; stats: mh.own; label: qsTr("Dieses Konto"); accountName: mh.booking.account_name }

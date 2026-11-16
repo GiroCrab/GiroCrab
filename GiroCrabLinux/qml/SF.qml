@@ -75,7 +75,10 @@ QtObject {
         // filled variants (SyncLog outcome, RecurringSheet): Breeze has no filled circles, same icon as the outline
         "checkmark.circle.fill": "dialog-ok-apply", "exclamationmark.triangle.fill": "dialog-warning", "minus.circle.fill": "list-remove",
         // Tresor sichern (VaultBackupUI), RAH-10 key file (Rah10AddForm)
-        "externaldrive.badge.plus": "document-save-all", "doc.badge.key": "document-encrypt"
+        "externaldrive.badge.plus": "document-save-all", "doc.badge.key": "document-encrypt",
+        // booking list and inspector (tags #228, merchant list #495, category menu #366)
+        "number": "tag-assigned", "storefront": "view-financial-category-expense", "tag.slash": "tag-delete",
+        "xmark.circle.fill": "window-close", "plus.circle.fill": "list-add"
     })
     function icon(name) {
         if (!name) return "tag"

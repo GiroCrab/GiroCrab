@@ -117,6 +117,45 @@ Funktionsumfang der Oberfläche.
   öffnet wieder das eigene Formular mit Hinweis; die nächste Einzelüberweisung läuft wieder als
   Einzelüberweisung (#533).
 
+### Buchungsliste und rechte Seitenleiste
+
+- **Tags vergeben (#228):** Die rechte Seitenleiste hat eine Karte „Tags“ unter der Notiz: Chips
+  mit ✕, ein Eingabefeld mit Vorschlägen (die ersten 8, „+n weitere“ klappt alle auf, beim Tippen
+  alle passenden und ähnlichen) und einem Hinweis, was ↩ tut (neu anlegen, hinzufügen, schon
+  gesetzt, ähnlicher Tag vorhanden, zu lang). Bei der Mehrfachauswahl sind Tags, die nur einige
+  Buchungen tragen, gestrichelt; ein Klick gibt sie allen. Dazu das Untermenü „Tags“ im
+  Kontextmenü und Buchung › „Tags bearbeiten“. In der Liste stehen bis zu zwei Tags an der
+  Buchung, „+n“ zeigt beim Darüberfahren alle. Bearbeiten › Rückgängig (Strg+Z) nimmt eine
+  Änderung genau für die geänderten Buchungen zurück.
+- **Buchungsdichte (#542):** Einstellungen › Allgemein › „Buchungsdichte“: Kompakt (eine Zeile
+  je Buchung mit Datum, ohne Tageskarten; die aktive Buchung klappt mit allen Details auf, ein
+  zweiter Klick klappt sie zu), Standard (mit kurzem Verwendungszweck unter dem Namen) oder
+  Großzügig (alle Buchungen mit allen Details).
+- **Verwendungszweck in der Zeile (#497):** Der bereinigte Zweck steht einzeilig in der Zeile
+  (Standard: unter dem Namen, Kompakt: hinter dem Namen); wiederholt er nur Händler, Gegenpartei
+  oder Zahlungsart, entfällt er.
+- **Rechte Seitenleiste anpassbar (#448):** „Anpassen“ über den Karten schaltet in einen
+  Bearbeiten-Modus: Karten per Ziehen umsortieren (blaue Einfügelinie) oder mit ↑ / ↓, mit ⊖
+  ausblenden, unter „Ausgeblendet“ mit ⊕ wieder einblenden, „Zurücksetzen“ stellt die
+  Standard-Reihenfolge wieder her.
+- **Farbe negativer Beträge (#218, #571):** Einstellungen › Allgemein › „Negative Beträge“ wählt
+  Neutral (wie bisher), Rot (wie negative Salden in der Seitenleiste) oder Kontraststark (orange
+  und blau, auch bei Rot-Grün-Schwäche gut unterscheidbar). Das Vorzeichen bleibt immer sichtbar;
+  Bestellkonto-Zeilen zeigen jetzt ebenfalls Minus bzw. Plus.
+- **Händler-Liste (#495):** Die Überschrift „Händler-Historie“ öffnet alle Buchungen des Händlers
+  im gewählten Zeitraum über alle Konten. Eine Leiste „Alle Buchungen von …“ führt mit „Zurück“
+  zur vorherigen Ansicht samt Filtern zurück.
+- **Kategorisieren per Kontextmenü und Drag & Drop (#366):** Das Kontextmenü einer Buchung hat
+  das Untermenü „Kategorie“ mit dem Kategorienbaum, „Kategorisieren …“ und „Kategorie entfernen“
+  (bei Mehrfachauswahl für alle markierten Buchungen). Buchungen lassen sich auf eine Kategorie
+  ohne Unterkategorien in der Seitenleiste ziehen.
+- **Wiederkehrende Buchungen:** Das Kontextmenü einer Serie in der Übersicht hat das Untermenü
+  „Wiederkehrend“ mit dem Intervall der ganzen Serie (#581).
+- **Kategorie je Konto ausblenden und Gegenkonto (#336, #523):** Im Kontomenü schaltet
+  „Kategorie in der Buchungszeile anzeigen“ den Kategorie-Chip für dieses Konto ab. Überweisungen
+  auf ein eigenes Konto oder einen Unterkonto-„Pocket“ nennen es in der Zeile („⇄ Name“) und in
+  der Seitenleiste mit IBAN.
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus
