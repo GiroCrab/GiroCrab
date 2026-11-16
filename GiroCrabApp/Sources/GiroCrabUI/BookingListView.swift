@@ -22,14 +22,6 @@ struct BookingStreamView: View {
     @State private var showCashflowIOS = false
     #endif
 
-    /// Depots show positions; bookings (buys, sells) live on the clearing account.
-    private var isDepot: Bool {
-        if case .account(let id)? = model.sidebarSelection, let a = model.account(for: id) {
-            return a.kind == .brokerage || a.name.localizedCaseInsensitiveContains("depot")
-        }
-        return false
-    }
-
     var body: some View {
         @Bindable var model = model
         let isOverview: Bool = { if case .allAccounts? = model.sidebarSelection { return true }; return false }()
@@ -75,7 +67,7 @@ struct BookingStreamView: View {
                         }
                         if model.scope == .investments {
                             InvestmentDashboardView()
-                        } else if cards.any, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics, !isDepot {
+                        } else if cards.any, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
                             // Overview: always; single account: only when toggled on.
                             #if os(iOS)
                             if cards.cashflow {
@@ -108,11 +100,6 @@ struct BookingStreamView: View {
                                 .padding(.top, 40)
                         } else if isNewBookings {
                             // the cards below bring their own empty state
-                        } else if isDepot, case .account(let id)? = model.sidebarSelection, let a = model.account(for: id) {
-                            // depots: positions as cards (an empty depot explains itself there)
-                            DepotPositionsView(account: a)
-                        } else if model.dayGroups.isEmpty && isDepot {
-                            // no "Keine Buchungen" placeholder under the positions
                         } else if model.dayGroups.isEmpty && !(model.allAccounts.isEmpty && !model.demoActive) {
                             ContentUnavailableView(
                                 model.searchText.isEmpty ? "Keine Buchungen" : "Keine Treffer",
@@ -154,16 +141,6 @@ struct BookingStreamView: View {
                     #endif
                     .padding(.bottom, 18)
                     .frame(maxWidth: .infinity)
-                    // Sachwerte: a click on empty space (margins, gaps between the
-                    // cards) shows the whole account again; a background layer, so
-                    // clicks on rows never reach it
-                    .background {
-                        if model.assetStore.selected != nil {
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .onTapGesture { model.deselectAssetItem() }
-                        }
-                    }
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
                 }
                 .coordinateSpace(name: StreamDayTracker.space)
@@ -191,7 +168,6 @@ struct BookingStreamView: View {
             // Drop a receipt anywhere on the stream: matched by amount/date/merchant.
             .dropDestination(for: URL.self) { urls, _ in
                 model.dropAnywhere(urls)
-                return !urls.isEmpty
             }
             .background(SelectionScroller(proxy: proxy))
             // another account, group, period or view: back to the newest day
@@ -286,24 +262,7 @@ struct BookingStreamView: View {
         #if os(iOS)
         .modifier(WindowTitle(title: model.title))
         #endif
-        .capturableSheet(isPresented: $model.showPrintSheet) { PrintSheet() }
-        .capturableSheet(isPresented: $model.showExportSheet) { ExportSheet() }
-        .fileExporter(
-            isPresented: $model.showCSVExporter,
-            document: model.csvExport,
-            contentType: .commaSeparatedText,
-            defaultFilename: "GiroCrab-Buchungen"
-        ) { result in
-            if case .failure(let e) = result { model.showError(String(localized: "Export fehlgeschlagen"), e.localizedDescription) }
-        }
-        .fileExporter(
-            isPresented: $model.showExportExporter,
-            document: model.exportFile,
-            contentType: model.exportContentType,
-            defaultFilename: model.exportFilename
-        ) { result in
-            if case .failure(let e) = result { model.showError(String(localized: "Export fehlgeschlagen"), e.localizedDescription) }
-        }
+        .bookingOutputSheets()
     }
 
 
@@ -322,7 +281,7 @@ struct BookingStreamView: View {
                     #endif
                     if !emptyVault {
                         StreamHeaderCard()
-                        if showStatistics && !isOverview && !isDepot && model.scope != .investments && !model.allAccounts.isEmpty {
+                        if showStatistics && !isOverview && model.scope != .investments && !model.allAccounts.isEmpty {
                             HStack {
                                 Button {
                                     withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { showAnalytics.toggle() }
@@ -381,6 +340,40 @@ struct BookingStreamView: View {
         model.scrollFocusDay = nil
         proxy.scrollTo(Self.topID, anchor: .top)
     }
+}
+
+
+/// Print and export sheets plus the file exporters behind the menu commands; shared by the
+/// booking list and the depot view, so a command works in both.
+private struct BookingOutputSheets: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        @Bindable var model = model
+        content
+        .capturableSheet(isPresented: $model.showPrintSheet) { PrintSheet() }
+        .capturableSheet(isPresented: $model.showExportSheet) { ExportSheet() }
+        .fileExporter(
+            isPresented: $model.showCSVExporter,
+            document: model.csvExport,
+            contentType: .commaSeparatedText,
+            defaultFilename: "GiroCrab-Buchungen"
+        ) { result in
+            if case .failure(let e) = result { model.showError(String(localized: "Export fehlgeschlagen"), e.localizedDescription) }
+        }
+        .fileExporter(
+            isPresented: $model.showExportExporter,
+            document: model.exportFile,
+            contentType: model.exportContentType,
+            defaultFilename: model.exportFilename
+        ) { result in
+            if case .failure(let e) = result { model.showError(String(localized: "Export fehlgeschlagen"), e.localizedDescription) }
+        }
+    }
+}
+
+extension View {
+    func bookingOutputSheets() -> some View { modifier(BookingOutputSheets()) }
 }
 
 #if os(macOS)
@@ -561,9 +554,9 @@ struct DayCardRow: View {
         VStack(spacing: 0) {
                 BookingRow(booking: b, compactDetailsCollapsed: compactDetailsCollapsed)
                     .dropDestination(for: URL.self) { urls, _ in
+                        guard model.attach(urls, to: b) else { return false }
                         model.selectedBookingID = b.id
-                        model.attach(urls, to: b)
-                        return !urls.isEmpty
+                        return true
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -591,6 +584,10 @@ struct DayCardRow: View {
                     // simultaneous, so single clicks keep selecting without the double-click delay
                     .simultaneousGesture(TapGesture(count: 2).onEnded { model.editNote(for: b) })
                     .contextMenu { rowMenu(b) }
+                    #if os(macOS)
+                    // onto a sidebar category (#366); the payload is read when the drag starts
+                    .draggable(BookingDrag.payload(model.categorizeTargets(for: b).map(\.id)))
+                    #endif
             if !isLast || density == .compact {
                 Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1)
                     .padding(.leading, density == .compact ? 14 : 64)
@@ -604,7 +601,7 @@ struct DayCardRow: View {
 
     @ViewBuilder
     private func rowMenu(_ b: Booking) -> some View {
-        CategorizeMenuButton(booking: b)
+        CategoryAssignMenu(booking: b)
         Button("Regel für diesen Händler erstellen …", systemImage: "wand.and.stars") { model.openRuleEditor(from: b) }
         Button("Notiz bearbeiten …", systemImage: "note.text") { model.editNote(for: b) }
         TagsMenu(model: model, booking: b)
@@ -999,21 +996,6 @@ private struct RowSelectionBackground: View {
     }
 }
 
-/// "Kategorisieren …" of the row menu; its title follows a multiple selection.
-/// A view of its own, so the selection stays out of the day card's dependencies.
-private struct CategorizeMenuButton: View {
-    @Environment(AppModel.self) private var model
-    let booking: Booking
-
-    var body: some View {
-        Button(model.isMultiSelection && model.selectedBookingIDs.contains(booking.id)
-               ? "\(model.selectedBookingIDs.count) Buchungen kategorisieren …" : "Kategorisieren …", systemImage: "tag") {
-            if !model.selectedBookingIDs.contains(booking.id) { model.selectedBookingID = booking.id }
-            model.showCategorizer = true
-        }
-    }
-}
-
 /// "Selected" for assistive technologies; like `RowSelectionBackground`, it keeps
 /// the selection out of the day card's dependencies.
 private struct RowSelectionTraits: ViewModifier {
@@ -1056,6 +1038,7 @@ private struct SelectionScroller: View {
 /// ("Ohne Kategorie" like the sidebar entry, in the warning colour).
 struct BookingCategoryLabel: View {
     let booking: Booking
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         let none = booking.categoryName.isEmpty
@@ -1063,8 +1046,8 @@ struct BookingCategoryLabel: View {
         HStack(spacing: 3) {
             Image(systemName: none ? "questionmark.folder" : (booking.categorySymbol.isEmpty ? "tag.fill" : booking.categorySymbol))
                 .appFont(.caption)
-            Text(none ? String(localized: "Ohne Kategorie") : booking.categoryName)
-                .sensitive(none ? [] : .labels)
+            Text(none ? model.uncategorizedLabel : booking.categoryName)
+                .sensitive(.labels)
                 .appFont(.callout, weight: .medium)
                 .lineLimit(1)
         }
@@ -1217,8 +1200,13 @@ struct MainToolbar: ViewModifier {
                 } else if model.sidebarSelection == .documents {
                     DocumentsScopePicker()
                 } else {
-                    BookingScopePicker()
-                        .disabled(model.sidebarSelection == .newBookings)
+                    switch model.presentation {
+                    case .securities: DepotTabPicker()
+                    // Sachwerte have neither booking scopes nor depot tabs; the item stays so the
+                    // customizable toolbar keeps its layout
+                    case .tangible: Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                    case .bookings: BookingScopePicker().disabled(model.sidebarSelection == .newBookings)
+                    }
                 }
             }
             .defaultCustomization(.visible, options: .alwaysAvailable) // pinned: not draggable/removable, so the others keep their slots (#609)

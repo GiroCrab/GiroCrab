@@ -18,7 +18,11 @@ public final class AppModel {
     }
 
     let options: LaunchOptions
-    private(set) var vault: Vault?
+    private(set) var vault: Vault? { didSet { vaultRevision &+= 1 } }
+    /// Counts vault swaps (unlock, lock, demo ↔ own): views that cache vault data reload when it changes.
+    private(set) var vaultRevision = 0
+    /// Securities depot view: inventory or activities (toolbar on macOS, header on iOS).
+    var depotTab: DepotTab = .positions
     /// Manual loans (GitHub #36), see ManualLoansUI.swift.
     @ObservationIgnored let loanStore = ManualLoanStore()
     /// Sachwerte (GitHub #87), see TangibleAssetsUI.swift.
@@ -46,6 +50,8 @@ public final class AppModel {
     var accountMarkers: [Int64: AccountMarker] = [:]
     /// Account notes (vault setting `account.note.<id>`), loaded with the account index.
     var accountNotes: [Int64: String] = [:]
+    /// Custom label for „Ohne Kategorie“ (vault setting `ui.uncategorized_name`, #597); empty = default.
+    var uncategorizedName = ""
     var categories: [GiroCrabCore.Category] = []
     /// Live tags in list order with their booking counts (#228).
     var tags: [GiroCrabCore.Tag] = []
@@ -648,6 +654,7 @@ public final class AppModel {
             }
             if let q = options.selectAccount, let a = allAccounts.first(where: { $0.name.lowercased().contains(q) }) {
                 sidebarSelection = .account(a.id)
+                if options.depotTab == "activities" { depotTab = .activities }
                 selectedBookingID = bookings.first?.id
             }
             switch options.demoFilter {
@@ -1463,5 +1470,18 @@ extension AppModel {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         runCore { try vault.setSetting(key: "account.note.\(accountID)", value: trimmed) }
         accountNotes[accountID] = trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Label of the uncategorized row, list chips and title (#597).
+    var uncategorizedLabel: String {
+        uncategorizedName.isEmpty ? String(localized: "Ohne Kategorie") : uncategorizedName
+    }
+
+    /// Stores the custom label; an empty text restores the default.
+    func setUncategorizedName(_ name: String) {
+        guard let vault else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        runCore { try vault.setSetting(key: "ui.uncategorized_name", value: trimmed) }
+        uncategorizedName = trimmed
     }
 }

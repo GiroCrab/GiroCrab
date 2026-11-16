@@ -4,6 +4,7 @@ name = "girocrab-windows"
 version = "0.7.5"
 edition = "2021"
 license = "GPL-3.0-or-later"
+repository = "https://github.com/GiroCrab/GiroCrab"
 description = "GiroCrab for Windows (MVP): Slint front end on the GiroCrab Rust core"
 build = "build.rs"
 
@@ -25,9 +26,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zeroize = "1"
 tokio = { version = "1", features = ["rt"] }
+# photoTAN images (PNG/JPEG bytes from the bank) -> Slint image; already in the tree via Slint.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+rfd = { version = "0.15", default-features = false }
 
 [build-dependencies]
 slint-build = "1"

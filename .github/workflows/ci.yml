@@ -43,8 +43,8 @@ jobs:
           rust=true; swift=true
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-            # Rust core, workspace manifests, Linux front end, CI itself
-            echo "$files" | grep -qE '^(girocrab-core/|GiroCrabLinux/|GiroCrabWindows/|Cargo\.(toml|lock)$|\.github/|build-xcframework\.sh$)' || rust=false
+            # Rust core, MCP adapter, workspace manifests, Linux and Windows front ends, CI itself
+            echo "$files" | grep -qE '^(girocrab-core/|girocrab-mcp/|GiroCrabLinux/|GiroCrabWindows/|Cargo\.(toml|lock)$|\.github/|build-xcframework\.sh$)' || rust=false
             # Swift app, the core behind it (bindings), CI itself
             echo "$files" | grep -qE '^(GiroCrabApp/|girocrab-core/|Cargo\.(toml|lock)$|\.github/|build-xcframework\.sh$)' || swift=false
           fi
@@ -159,6 +159,15 @@ jobs:
       - run: cargo test --manifest-path GiroCrabWindows/Cargo.toml
       - if: runner.os == 'Windows'
         run: cargo build --release --manifest-path GiroCrabWindows/Cargo.toml
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: girocrab-windows-x86_64
+          path: |
+            GiroCrabWindows/target/release/girocrab.exe
+            THIRD_PARTY_NOTICES.md
+          if-no-files-found: error
+          retention-days: 14
 
   swift:
     needs: changes
