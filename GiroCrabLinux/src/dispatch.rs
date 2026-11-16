@@ -837,6 +837,8 @@ fn call(method: &str, a: &Value) -> R {
                 .block_on(v.refresh_asset_prices(force))
                 .map_err(|e| e.to_string())?)
         }
+        // --- Händler-Logos (AppModel+Logos.swift, #33) --- network: called with Core.callAsync
+        "merchant_logo" => merchant_logo(&*vault()?, a),
         // --- portal logins --- (src/web_login.rs: browser cookies, Amex/Amazon/FNZ/quirion imports)
         m if crate::web_login::handles(m) => crate::web_login::call(m, a, vault),
         _ => {
@@ -845,6 +847,98 @@ fn call(method: &str, a: &Value) -> R {
                 .unwrap_or_else(|| Err(format!("unknown core method `{method}`")))
         }
     }
+}
+
+/// Network favicon requests started by `merchant_logo` (tests: none while logos are off).
+static LOGO_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// AppModel+Logos.swift › logo(for:): the logo cached in the vault for the first candidate
+/// domain that has one, else the favicon of the selected provider (network, worker thread).
+/// Nothing – not even a cached logo, and no request – while online logos are off (#422).
+/// Answer: `{ url: "data:…;base64,…", pixels }` (decodeLogo: `pixels` = largest width) or null.
+fn merchant_logo(v: &Vault, a: &Value) -> R {
+    let candidates: Vec<String> = arg(a, "candidates")?;
+    let e = |e: girocrab_core::CoreError| e.to_string();
+    if candidates.is_empty() || v.online_logo_provider().map_err(e)? == "off" {
+        return ok(Value::Null);
+    }
+    for d in &candidates {
+        if let Some(bytes) = v.get_merchant_logo_png(d.clone()).map_err(e)? {
+            return ok(logo_payload(&bytes));
+        }
+    }
+    LOGO_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let found = crate::sessions::RUNTIME
+        .block_on(v.fetch_merchant_logo(candidates))
+        .map_err(e)?;
+    ok(found.map(|l| logo_payload(&l.bytes)).unwrap_or(Value::Null))
+}
+
+fn png_width(b: &[u8]) -> Option<u32> {
+    (b.len() >= 24 && b.starts_with(b"\x89PNG\r\n\x1a\n"))
+        .then(|| u32::from_be_bytes([b[16], b[17], b[18], b[19]]))
+}
+
+/// AppModel.decodeLogo: an ICO keeps only its largest image (Qt would draw the first one);
+/// `pixels` is that image's width, the "sharp logo" threshold of MerchantSignet.
+fn logo_payload(bytes: &[u8]) -> Value {
+    let (data, mime, pixels): (Vec<u8>, &str, u32) = if let Some(w) = png_width(bytes) {
+        (bytes.to_vec(), "image/png", w)
+    } else if let Some((dir, entry, w)) = largest_ico_entry(bytes) {
+        match png_width(entry) {
+            Some(pw) => (entry.to_vec(), "image/png", pw),
+            None => {
+                // a one-image ICO around the largest bitmap
+                let mut ico = vec![0, 0, 1, 0, 1, 0];
+                ico.extend_from_slice(&dir[..8]);
+                ico.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+                ico.extend_from_slice(&22u32.to_le_bytes());
+                ico.extend_from_slice(entry);
+                (ico, "image/x-icon", w)
+            }
+        }
+    } else if bytes.starts_with(b"GIF8") && bytes.len() >= 10 {
+        let w = u16::from_le_bytes([bytes[6], bytes[7]]) as u32;
+        (bytes.to_vec(), "image/gif", w)
+    } else {
+        // JPEG, WebP, …: Qt reads them by content; size unknown = a small logo
+        (bytes.to_vec(), "application/octet-stream", 0)
+    };
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+    json!({ "url": format!("data:{mime};base64,{b64}"), "pixels": pixels })
+}
+
+/// The largest image of an ICO file: its directory entry, its bytes and its width
+/// (0 in the directory = 256).
+fn largest_ico_entry(bytes: &[u8]) -> Option<(&[u8], &[u8], u32)> {
+    if bytes.len() < 6 || bytes[..4] != [0, 0, 1, 0] {
+        return None;
+    }
+    let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+    let mut best: Option<(&[u8], &[u8], u32)> = None;
+    for i in 0..count {
+        let Some(dir) = bytes.get(6 + 16 * i..6 + 16 * (i + 1)) else {
+            break;
+        };
+        let size = u32::from_le_bytes([dir[8], dir[9], dir[10], dir[11]]) as usize;
+        let offset = u32::from_le_bytes([dir[12], dir[13], dir[14], dir[15]]) as usize;
+        let Some(data) = offset
+            .checked_add(size)
+            .and_then(|end| bytes.get(offset..end))
+        else {
+            continue;
+        };
+        let w = match png_width(data) {
+            Some(pw) => pw,
+            None if dir[0] == 0 => 256,
+            None => dir[0] as u32,
+        };
+        if best.is_none_or(|(_, _, bw)| w > bw) {
+            best = Some((dir, data, w));
+        }
+    }
+    best
 }
 
 /// A MoneyMoney export file (`path`) as bytes plus its file name, which the
@@ -1431,6 +1525,8 @@ vault_methods! {
     // --- Anlageklassen (AssetClassificationUI, DepotMetrics) ---
     classified_assets(account_id)
     set_asset_class_override(security_key, value) set_instrument_override(security_key, value)
+    // --- Händler-Logos (AppModel+Logos, MerchantLogoSettingsSection); logos: `merchant_logo` ---
+    online_logo_provider() clear_logo_cache() set_merchant_domain(merchant_key, domain)
 }
 
 #[cfg(test)]
@@ -1512,6 +1608,107 @@ mod tests {
         );
         call_ok("lock", json!({}));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Händler-Logos (#33): while the provider is "off" (the default) `merchant_logo` answers
+    /// null without any network request; the domain override and the cache calls round-trip.
+    #[test]
+    fn merchant_logos_stay_offline_while_off() {
+        use std::sync::atomic::Ordering;
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        call_ok(
+            "set_setting",
+            json!({ "key": "merchants.online_logos", "value": "off" }),
+        );
+        assert_eq!(call_ok("online_logo_provider", json!({})), json!("off"));
+        let before = LOGO_FETCHES.load(Ordering::SeqCst);
+        let logo = call_ok(
+            "merchant_logo",
+            json!({ "candidates": ["lidl.de", "lidl.com"] }),
+        );
+        assert_eq!(logo, Value::Null);
+        assert_eq!(
+            LOGO_FETCHES.load(Ordering::SeqCst),
+            before,
+            "no fetch while off"
+        );
+        assert!(call_ok("clear_logo_cache", json!({})).is_u64());
+        let key = "test-merchant-logo";
+        assert_eq!(
+            call_ok(
+                "set_merchant_domain",
+                json!({ "merchant_key": key, "domain": "https://www.EnBW.com/privat" })
+            ),
+            json!("enbw.com")
+        );
+        assert_eq!(
+            call_ok(
+                "set_merchant_domain",
+                json!({ "merchant_key": key, "domain": null })
+            ),
+            Value::Null
+        );
+        // switched on: a fetch starts (an invalid domain is refused before the network)
+        call_ok(
+            "set_setting",
+            json!({ "key": "merchants.online_logos", "value": "duckduckgo" }),
+        );
+        let logo = call_ok("merchant_logo", json!({ "candidates": ["not a domain!"] }));
+        assert_eq!(logo, Value::Null);
+        assert_eq!(LOGO_FETCHES.load(Ordering::SeqCst), before + 1);
+        assert_eq!(
+            call_ok("merchant_logo", json!({ "candidates": [] })),
+            Value::Null
+        );
+        call_ok(
+            "set_setting",
+            json!({ "key": "merchants.online_logos", "value": "off" }),
+        );
+    }
+
+    /// AppModel.decodeLogo: PNG width, the largest image of an ICO, unknown formats.
+    #[test]
+    fn logo_payload_picks_largest_image() {
+        let png = |w: u32| {
+            let mut b = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+            b.extend_from_slice(&w.to_be_bytes());
+            b.extend_from_slice(&w.to_be_bytes());
+            b.extend_from_slice(&[8, 6, 0, 0, 0]);
+            b
+        };
+        let p = logo_payload(&png(64));
+        assert_eq!(p["pixels"], json!(64));
+        assert!(p["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        // ICO: a 16 px bitmap and an embedded 48 px PNG → the PNG alone
+        let bmp = vec![0u8; 40];
+        let big = png(48);
+        let mut ico = vec![0, 0, 1, 0, 2, 0];
+        let entry = |w: u8, len: usize, off: usize| {
+            let mut e = vec![w, w, 0, 0, 1, 0, 32, 0];
+            e.extend_from_slice(&(len as u32).to_le_bytes());
+            e.extend_from_slice(&(off as u32).to_le_bytes());
+            e
+        };
+        ico.extend(entry(16, bmp.len(), 38));
+        ico.extend(entry(48, big.len(), 38 + bmp.len()));
+        ico.extend(&bmp);
+        ico.extend(&big);
+        let p = logo_payload(&ico);
+        assert_eq!(p["pixels"], json!(48));
+        assert!(p["url"].as_str().unwrap().starts_with("data:image/png;"));
+        // bitmaps only: a one-image ICO of the largest
+        let mut ico = vec![0, 0, 1, 0, 2, 0];
+        ico.extend(entry(16, 40, 38));
+        ico.extend(entry(32, 40, 78));
+        ico.extend(vec![0u8; 80]);
+        let p = logo_payload(&ico);
+        assert_eq!(p["pixels"], json!(32));
+        assert!(p["url"].as_str().unwrap().starts_with("data:image/x-icon;"));
+        assert_eq!(logo_payload(b"\xff\xd8\xff")["pixels"], json!(0));
     }
 
     /// AppModel.loadOffMain: a batch answers in call order, stops at the first error and

@@ -373,15 +373,52 @@ Rectangle {
         property var merchant
         readonly property string sourceLabel: ({ dictionary: qsTr("Wörterbuch"), company: qsTr("Firmenname"), person: qsTr("Privatperson"),
                                                  override: qsTr("manuell") })[merchant.domain_source] || qsTr("keine Domain")
+        id: domainRow
         spacing: 4
-        SFIcon { symbol: "globe"; size: 10; color: Theme.tertiary }
-        Text { text: merchant.domain || (merchant.is_person ? qsTr("Privatperson – kein Logo") : qsTr("Domain festlegen"))
+        // BookingDetailView.swift › MerchantDomainRow: edit button → field for a manual domain
+        property bool editing: false
+        onMerchantChanged: editing = false
+        function save() { MerchantLogos.setMerchantDomain(merchant, domainField.text); editing = false }
+        SFIcon { visible: !domainRow.editing; symbol: "globe"; size: 10; color: Theme.tertiary }
+        Text { visible: !domainRow.editing
+               text: merchant.domain || (merchant.is_person ? qsTr("Privatperson – kein Logo") : qsTr("Domain festlegen"))
                font.family: "monospace"; font.pixelSize: Theme.caption; color: Theme.tertiary
                elide: Text.ElideRight; Layout.minimumWidth: 24; Layout.preferredWidth: implicitWidth
                // a guessed domain spells out the (redacted) counterparty; dictionary brands show their logo anyway
                Sensitive { when: merchant.domain !== "" && merchant.domain_source !== "dictionary" } }
-        Text { visible: merchant.domain !== ""; text: "· " + parent.sourceLabel; font.pixelSize: Theme.caption2; color: Theme.tertiary }
-        SFIcon { symbol: "pencil"; size: 10; color: Theme.tertiary }
+        Text { visible: !domainRow.editing && merchant.domain !== ""; text: "· " + parent.sourceLabel; font.pixelSize: Theme.caption2; color: Theme.tertiary }
+        IconButton {
+            visible: !domainRow.editing
+            symbol: "pencil"; symbolSize: 10; implicitWidth: 20; implicitHeight: 18
+            tint: Theme.tertiary
+            ToolTip.text: qsTr("Eigene Domain für das Logo eintragen")
+            Accessible.name: qsTr("Domain bearbeiten")
+            onClicked: { domainField.text = merchant.domain; domainRow.editing = true; domainField.forceActiveFocus() }
+        }
+        TextField {
+            id: domainField
+            visible: domainRow.editing
+            Layout.maximumWidth: 180; Layout.fillWidth: true
+            placeholderText: qsTr("z. B. enbw.com")
+            font.pixelSize: Theme.caption
+            inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhUrlCharactersOnly
+            onAccepted: domainRow.save()
+            Keys.onEscapePressed: domainRow.editing = false
+            Sensitive {}
+        }
+        Button { visible: domainRow.editing; text: qsTr("Logo laden"); font.pixelSize: Theme.caption; onClicked: domainRow.save() }
+        IconButton {
+            visible: domainRow.editing && merchant.domain_source === "override"
+            symbol: "arrow.uturn.backward"; symbolSize: 12
+            ToolTip.text: qsTr("Automatische Erkennung wiederherstellen")
+            onClicked: { MerchantLogos.setMerchantDomain(merchant, null); domainRow.editing = false }
+        }
+        IconButton {
+            visible: domainRow.editing
+            symbol: "xmark"; symbolSize: 12
+            ToolTip.text: qsTr("Abbrechen")
+            onClicked: domainRow.editing = false
+        }
         Item { Layout.fillWidth: true }
     }
 

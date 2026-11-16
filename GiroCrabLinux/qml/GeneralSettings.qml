@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// SettingsView.swift › GeneralSettings. Mitteilungen, Saldoverlauf (bars) and Händler-Logos
-// are not on Linux yet (no announcement feed, line chart only, no online logos).
+// SettingsView.swift › GeneralSettings. Mitteilungen and Saldoverlauf (bars) are not on
+// Linux yet (no announcement feed, line chart only).
 ScrollView {
     ScrollBar.vertical: ScrollViewBar {}
     id: pane
@@ -128,6 +128,27 @@ ScrollView {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Eine ausgewählte Buchung gilt nach dieser Zeit als geprüft – wie eine gelesene E-Mail. Bei Mehrfachauswahl nie.") }
+        }
+        // SettingsView.swift › MerchantLogoSettingsSection (GitHub #33); needs an open vault
+        SettingsFormSection {
+            title: qsTr("Händler-Logos")
+            enabled: AppModel.isUnlocked
+            footer: qsTr("Ohne Anbieter zeigt GiroCrab mitgelieferte Markenzeichen, sonst Monogramme und Kategorie-Symbole. Mit Anbieter werden Favicons geladen und verschlüsselt im Tresor zwischengespeichert. Übertragen wird nur die Händler-Domain (z. B. lidl.de) – keine Beträge, keine Kontodaten.")
+            SettingsFormRow {
+                label: qsTr("Logos aus dem Internet laden")
+                AppComboBox {
+                    Layout.preferredWidth: 200 * Theme.textScale
+                    model: [{ id: "off", title: qsTr("Aus") }, { id: "duckduckgo", title: qsTr("DuckDuckGo") },
+                            { id: "google", title: qsTr("Google") }]
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: Math.max(0, ["off", "duckduckgo", "google"].indexOf(MerchantLogos.provider))
+                    onActivated: MerchantLogos.setProvider(currentValue)
+                }
+            }
+            Button {
+                text: qsTr("Logo-Cache leeren")
+                onClicked: MerchantLogos.clearLogoCache()
+            }
         }
         Item { implicitHeight: 8 }
     }

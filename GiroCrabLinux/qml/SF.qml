@@ -79,7 +79,9 @@ QtObject {
         "externaldrive.badge.plus": "document-save-all", "doc.badge.key": "document-encrypt",
         // booking list and inspector (tags #228, merchant list #495, category menu #366)
         "number": "tag-assigned", "storefront": "view-financial-category-expense", "tag.slash": "tag-delete",
-        "xmark.circle.fill": "window-close", "plus.circle.fill": "list-add"
+        "xmark.circle.fill": "window-close", "plus.circle.fill": "list-add",
+        // MerchantLogoTip (#33)
+        "photo.on.rectangle": "insert-image"
     })
     function icon(name) {
         if (!name) return "tag"

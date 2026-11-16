@@ -10,6 +10,17 @@ Funktionsumfang der Oberfläche.
 
 ## Nächster Stand (in Arbeit)
 
+### Händler-Logos (#33)
+
+- **Logos aus dem Internet:** Einstellungen › Allgemein › „Händler-Logos“ wählt den Anbieter (Aus,
+  DuckDuckGo, Google) und leert den Logo-Cache. Standard bleibt „Aus“: Vorher wird nichts
+  angefragt, auch keine früher zwischengespeicherten Logos angezeigt. Übertragen wird nur die
+  Händler-Domain; die Favicons liegen verschlüsselt im Tresor.
+- **Hinweis in der Buchungsliste:** Sind echte Buchungen zu sehen und Logos aus, bietet ein Hinweis
+  einmalig „Mit DuckDuckGo laden“ oder „Einstellungen …“ an (nicht im Demo-Tresor).
+- **Eigene Domain:** Im Beleg setzt der Stift neben der Domain eine eigene Domain für das Logo,
+  „Automatische Erkennung wiederherstellen“ entfernt sie wieder.
+
 ### Anlageklassen im Vermögen
 
 - **Anlageklassen und Instrumente:** Wertpapiere und Sachwerte zeigen ihre Anlageklasse (Aktien,

@@ -116,6 +116,11 @@ Rectangle {
                     visible: stream.emptyVault
                     Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                 }
+                // BookingListView.swift: MerchantLogoTipView (#33), not in "Sparpläne & Perks"
+                MerchantLogoTip {
+                    visible: MerchantLogos.tipEligible && !stream.emptyVault && AppModel.scope !== "Investments"
+                    Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                }
                 // Built only in "Sparpläne & Perks" (it is hidden everywhere else).
                 Loader {
                     active: AppModel.scope === "Investments" && AppModel.dashboard !== null
