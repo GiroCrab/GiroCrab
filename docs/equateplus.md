@@ -70,8 +70,10 @@ dieser Zugang künftig abruft, steht unter **Einstellungen › Banken › Zugang
 Kontenauswahl** (dieselbe Auswahl wie bei anderen Zugängen, #346):
 
 - **Abgerufen** (Standard): Das Programm wird bei jedem Abruf aktualisiert.
-- **Übersprungen**: Das Programm wird bei künftigen Abrufen nicht mehr geändert. Bereits
-  gespeicherte Positionen bleiben erhalten und werden nicht gelöscht.
+- **Übersprungen**: Das Programm wird **archiviert und ausgeblendet** (nicht in der Seitenleiste, nicht
+  in der Summe, nicht mehr abgerufen, keine Regeln). Bereits gespeicherte Positionen und
+  Dokumente bleiben erhalten. Das Archiv-Symbol in der Seitenleiste zeigt archivierte Programme
+  wieder an; wieder angewählt wird das Programm reaktiviert.
 - Ein Programm, das erst später im Portal erscheint, wird beim nächsten Abruf standardmäßig
   übernommen.
 - Die Programmsummen aller Programme werden weiterhin gemeinsam geprüft; ein fehlerhafter

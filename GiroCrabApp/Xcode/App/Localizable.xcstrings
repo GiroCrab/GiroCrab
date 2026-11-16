@@ -2695,13 +2695,24 @@
         }
       }
     },
-    "Abrufen: Konto, Umsätze und Dokumente werden über diesen Zugang importiert. Überspringen: nichts davon, bereits gespeicherte Daten bleiben erhalten." : {
+    "Abrufen: Konto, Umsätze und Dokumente werden über diesen Zugang importiert. Überspringen: nichts davon; das Konto wird archiviert (abgeblendet, nicht in der Summe) und behält seine gespeicherten Daten." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fetch: the account, its transactions and documents are imported through this login. Skip: none of that; data already stored is kept."
+            "value" : "Fetch: the account, bookings and documents are imported through this login. Skip: none of that; the account is archived (dimmed, not in the total) and keeps its stored data."
+          }
+        }
+      }
+    },
+    "Abrufen: Konto, Umsätze und Dokumente werden über diesen Zugang importiert. Überspringen: nichts davon; das Konto wird archiviert und ausgeblendet und behält seine gespeicherten Daten. Das Archiv-Symbol in der Seitenleiste zeigt archivierte Konten wieder an." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch: the account, bookings and documents are imported through this login. Skip: none of that; the account is archived and hidden and keeps its stored data. The archive icon in the sidebar shows archived accounts again."
           }
         }
       }
@@ -17205,6 +17216,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Account selection"
+          }
+        }
+      }
+    },
+    "Kontenauswahl nicht gespeichert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account selection not saved"
           }
         }
       }
