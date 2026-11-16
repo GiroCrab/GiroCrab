@@ -1685,8 +1685,8 @@ QtObject {
             assetRefreshing = false
             if (r.requested) { reloadAccounts(); reloadHistory() }
             if (!userInitiated) return
-            if (r.error !== null) toast = qsTr("Kurse konnten nicht geladen werden: %1").arg(r.error)
-            else if (r.requested) toast = qsTr("Kurse aktualisiert")
+            if (r.error !== null) toast = qsTr("Goldpreis konnte nicht geladen werden: %1").arg(r.error)
+            else if (r.requested) toast = qsTr("Goldpreis aktualisiert")
         }, err => {
             assetRefreshing = false
             if (userInitiated) toast = parseCoreError(err).message
