@@ -21,10 +21,10 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   CARGO_TERM_COLOR: always
-  # Line tables are enough for backtraces; full debug info only costs link time (slow on
-  # Windows) and cache size (the repository's 10 GB Actions cache was full, so caches of
-  # `main` got evicted and PRs rebuilt every dependency from scratch).
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # No debug info in CI: it costs link time (slow on Windows) and a large share of the Rust
+  # caches (the repository's 10 GB Actions cache was full, so caches of `main` got evicted and
+  # PRs rebuilt every dependency from scratch). Panic messages keep file and line.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 # Neuer Push auf denselben PR bricht den laufenden Lauf ab (macOS-Runner sind knapp).
 concurrency:
