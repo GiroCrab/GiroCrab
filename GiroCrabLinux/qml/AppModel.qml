@@ -1114,7 +1114,7 @@ QtObject {
     /// The Buchung menu entry: nothing to do without new bookings, and not in
     /// Belege (there the list would silently mean every account).
     readonly property bool canMarkAllChecked: isUnlocked && newCount > 0 && sidebarSelection !== "documents"
-    /// "Alle als gelesen markieren": everything new in the list as filtered now, or –
+    /// "Alle Buchungen als gelesen markieren": everything new in the list as filtered now, or –
     /// with `accountIDs`, from a sidebar entry – in those accounts regardless of
     /// period, search and scope. One SQL update off the GUI thread.
     function markAllChecked(accountIDs) {
