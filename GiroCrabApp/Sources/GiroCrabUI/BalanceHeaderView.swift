@@ -40,6 +40,12 @@ struct AccountCopyMenu: View {
 
 /// Header card of the stream: title, balance, calm balance chart and the
 /// monthly KPIs (consumption is always shown without ETF plans / perks).
+/// The account holder shown under the bank/IBAN line; nil when empty (#606).
+func accountHolderLine(_ a: Account) -> String? {
+    let owner = a.owner.trimmingCharacters(in: .whitespacesAndNewlines)
+    return owner.isEmpty ? nil : owner
+}
+
 struct StreamHeaderCard: View {
     @Environment(AppModel.self) private var model
     #if os(iOS)
@@ -66,15 +72,25 @@ struct StreamHeaderCard: View {
 
     var body: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: ViewLayout.cardSpacing) {
+            HStack(alignment: compactHeader ? .center : .top) {
+                // Minimise the header: more room for the booking list (GitHub #358).
+                CardChevron(collapsed: $compactHeader, customTitle: compactHeaderTitle)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(headerTitle).sensitive(account == nil ? .labels : .personal).appFont(compactHeader ? .headline : .title2, weight: .semibold).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
+                    Text(headerTitle).sensitive(account == nil ? .labels : .personal).appFont(compactHeader ? .subheadline : .title2, weight: .semibold).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
                     if !compactHeader {
                     Group {
                         if let a = account {
                             Text([a.bankName, a.iban.isEmpty ? "" : formatIBAN(a.iban)].filter { !$0.isEmpty }.joined(separator: " · "))
                                 .sensitive()
+                            if let holder = accountHolderLine(a) {
+                                Text(holder)
+                                    .sensitive()
+                                    .appFont(.caption)
+                                    .foregroundStyle(Theme.secondary)
+                                    .lineLimit(1)
+                                    .help(holder)
+                            }
                             let note = model.accountNote(for: a.id)
                             if !note.isEmpty {
                                 Text(note)
@@ -95,19 +111,10 @@ struct StreamHeaderCard: View {
                 .contextMenu {
                     if let a = account { AccountCopyMenu(account: a) }
                 }
-                // Minimise the header: more room for the booking list (GitHub #358).
-                Button {
-                    withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { compactHeader.toggle() }
-                } label: {
-                    Image(systemName: compactHeader ? "chevron.down" : "chevron.up")
-                        .appFont(.caption, weight: .semibold)
-                        .foregroundStyle(Theme.secondary)
-                        .padding(4)
-                        .contentShape(Rectangle())
+                // Folded: period and status filters share the title row (GitHub #603).
+                if compactHeader && !isDepot {
+                    filterRow
                 }
-                .buttonStyle(.plain)
-                .help(compactHeaderTitle)
-                .accessibilityLabel(compactHeaderTitle)
                 #if os(iOS)
                 // long-press is invisible on iPhone/iPad: show an explicit entry too
                 if let a = account {
@@ -122,7 +129,7 @@ struct StreamHeaderCard: View {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(Money.format(hb.cents))
                             .sensitive()
-                            .appFont(compactHeader ? .title3 : .largeTitle, weight: .semibold, monospacedDigit: true)
+                            .appFont(compactHeader ? .subheadline : .largeTitle, weight: .semibold, monospacedDigit: true)
                             .foregroundStyle(account?.kind == .loan ? Theme.loan : Theme.text)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
@@ -209,10 +216,10 @@ struct StreamHeaderCard: View {
                 #endif
                 }
 
-                filterRow
+                if !compactHeader { filterRow }
             }
         }
-        .card()
+        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: compactHeader))
     }
 
     /// Depot: no cash-flow KPIs or booking filters – the period, documents and a hint.
