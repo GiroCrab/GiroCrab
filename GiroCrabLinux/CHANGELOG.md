@@ -36,6 +36,21 @@ Funktionsumfang der Oberfläche.
 - Bankzugang bearbeiten: Easybank und Alte Leipziger speichern das Passwort, die Volkswagen Bank
   die PIN im Tresor.
 
+### Tresor sichern und wiederherstellen
+
+- **Einstellungen › Sicherheit › „Sicherung“:** „Tresor sichern …“ speichert den eigenen Tresor
+  als Datei „GiroCrab-Sicherung <Datum>.girocrab-backup“, verschlüsselt mit einem Passwort Ihrer
+  Wahl (mindestens 8 Zeichen, zweimal eingegeben). Die Sicherung lässt sich auf jedem Rechner
+  öffnen, auch ohne den Schlüsselbund dieses Rechners – aber nicht ohne das Passwort.
+- **„Passwort vorschlagen“** erzeugt ein starkes Passwort (drei Sechsergruppen, rund 90 Bit aus
+  dem Zufallsgenerator des Kernels) und trägt es in beide Felder ein. „Kopieren“ legt es für
+  60 Sekunden in die Zwischenablage, ohne Eintrag im Verlauf der Zwischenablage.
+- **„Tresor wiederherstellen …“** ersetzt alle Daten des eigenen Tresors durch eine Sicherung und
+  zeigt danach den eigenen Tresor, auch wenn vorher die Demo zu sehen war.
+- **„Vorhandene Daten importieren“ › Datenbank** bietet jetzt auch die GiroCrab-Sicherung an
+  (Art: GiroCrab oder MoneyMoney). Bei leerem Tresor ist sie vorgewählt; enthält der Tresor schon
+  Konten, fragt „Tresor ersetzen?“ nach.
+
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.0 kann. Was aus
@@ -160,7 +175,6 @@ Diese Funktionen der Mac-App folgen in den nächsten Schritten, unter anderem:
 - Seiten **„Geplant“** (Termin- und Daueraufträge) und **„Lastschriften“** (Mandate, pain.008)
 - **Sammelüberweisung** und **Umbuchung** zwischen eigenen Konten
 - **Tags** für Buchungen, **Buchungsdichte** mit drei Ansichten, vorgemerkte Umsätze schraffiert
-- **Sicherung mit Passwort** und Wiederherstellung
 - anpassbare rechte Seitenleiste, Seitenleiste mit Abschnitten
 - **Regeln für mehrere Konten** (Linux wählt vorerst ein Konto), Kategorie-Ansichten je Konto,
   Kategorien duplizieren, Anlageklassen in der Vermögensübersicht

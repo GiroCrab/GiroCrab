@@ -268,6 +268,27 @@ fn write_text_file(a: &Value) -> R {
     ok(())
 }
 
+/// VaultBackup.suggestedPassword (VaultBackupUI.swift): three groups of six from 32
+/// characters without look-alikes (l/1, o/0), e.g. "kawxe7-hupdyq-bomtiz" – about 90 bits
+/// from the kernel's CSPRNG. 256 is a multiple of 32, so `byte % 32` is unbiased.
+fn suggested_backup_password() -> Result<String, String> {
+    use std::io::Read;
+    const ALPHABET: &[u8; 32] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut bytes = zeroize::Zeroizing::new([0u8; 18]);
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes[..]))
+        .map_err(|e| e.to_string())?;
+    Ok(bytes
+        .chunks(6)
+        .map(|g| {
+            g.iter()
+                .map(|b| ALPHABET[usize::from(b % 32)] as char)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("-"))
+}
+
 pub fn call_json(method: &str, args: &str) -> String {
     let a: Value = if args.trim().is_empty() {
         Value::Null
@@ -578,6 +599,7 @@ fn call(method: &str, a: &Value) -> R {
                 .map_err(|e| e.to_string())?;
             ok(())
         }
+        "suggested_backup_password" => ok(suggested_backup_password()?),
         // --- import / export ---
         "preview_moneymoney_file" => {
             let (data, file_name) = read_import_file(a)?;
@@ -1410,6 +1432,56 @@ mod tests {
         // first start again: a new, empty vault
         let r = call_ok("unlock_own", json!({ "allow_create": true }));
         assert_eq!(r["account_count"], json!(0));
+        call_ok("lock", json!({}));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Einstellungen › Sicherheit › „Tresor sichern …“ / „Tresor wiederherstellen …“ on the
+    /// own vault (keychain bypass, temporary XDG dir), plus the suggested password.
+    #[test]
+    fn backup_roundtrip_and_suggested_password() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("girocrab-backup-{}", std::process::id()));
+        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+        std::env::set_var("GIROCRAB_NO_KEYCHAIN", "1");
+        let p = call_ok("suggested_backup_password", json!({}));
+        let p = p.as_str().unwrap();
+        assert_eq!(p.len(), 20);
+        assert!(p.split('-').all(|g| g.len() == 6
+            && g.bytes()
+                .all(|b| b"abcdefghijkmnpqrstuvwxyz23456789".contains(&b))));
+        assert_ne!(
+            p,
+            call_ok("suggested_backup_password", json!({}))
+                .as_str()
+                .unwrap()
+        );
+
+        call_ok("unlock_own", json!({ "allow_create": true }));
+        call_ok("use_own", json!({}));
+        let rules = call_ok("list_rules", json!({})).as_array().unwrap().len();
+        let file = dir.join("GiroCrab-Sicherung 2026-11-16.girocrab-backup");
+        call_ok(
+            "write_backup",
+            json!({ "dest_path": file.display().to_string(), "password": "geheim123" }),
+        );
+        assert!(file.exists());
+        let wrong: Value = serde_json::from_str(&call_json(
+            "restore_backup",
+            &json!({ "backup_path": file.display().to_string(), "password": "falsch123" })
+                .to_string(),
+        ))
+        .unwrap();
+        assert!(wrong.get("err").is_some(), "wrong password must be refused");
+        call_ok(
+            "restore_backup",
+            json!({ "backup_path": file.display().to_string(), "password": "geheim123" }),
+        );
+        call_ok("use_own", json!({}));
+        assert_eq!(
+            call_ok("list_rules", json!({})).as_array().unwrap().len(),
+            rules
+        );
         call_ok("lock", json!({}));
         let _ = std::fs::remove_dir_all(dir);
     }

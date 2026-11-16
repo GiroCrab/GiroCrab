@@ -73,7 +73,9 @@ QtObject {
         "list.bullet.clipboard": "view-list-text", "checkmark.shield": "security-high", "circle": "draw-circle",
         "minus.circle": "list-remove", "arrow.clockwise": "view-refresh", "diamond": "view-financial-account-asset", "creditcard.fill": "view-financial-account-credit-card",
         // filled variants (SyncLog outcome, RecurringSheet): Breeze has no filled circles, same icon as the outline
-        "checkmark.circle.fill": "dialog-ok-apply", "exclamationmark.triangle.fill": "dialog-warning", "minus.circle.fill": "list-remove"
+        "checkmark.circle.fill": "dialog-ok-apply", "exclamationmark.triangle.fill": "dialog-warning", "minus.circle.fill": "list-remove",
+        // Tresor sichern (VaultBackupUI), RAH-10 key file (Rah10AddForm)
+        "externaldrive.badge.plus": "document-save-all", "doc.badge.key": "document-encrypt"
     })
     function icon(name) {
         if (!name) return "tag"
