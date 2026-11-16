@@ -8,7 +8,9 @@
 Status: **Rückmeldungen mit echten Verträgen erwünscht** – `ConnectorKind::SchwaebischHall`
 (Schlüssel `schwaebischhall`), Anmeldung im Browserfenster, Auswertung in
 `girocrab-core/src/connectors/schwaebisch_hall.rs`, Abruf-Skripte in
-`GiroCrabApp/Sources/GiroCrabUI/SchwaebischHallUI.swift`.
+`GiroCrabApp/Sources/GiroCrabUI/SchwaebischHallUI.swift` (Linux:
+`GiroCrabLinux/qml/SchwaebischHallWebLoginFlow.qml`, Skripte per
+`scripts/gen-schwaebisch-hall-qml.py` aus der Swift-Datei übernommen).
 Issue: [#290](https://github.com/GiroCrab/GiroCrab/issues/290).
 
 Die Bausparkasse Schwäbisch Hall (BLZ 62220000) bietet keine API für Kundinnen und Kunden.

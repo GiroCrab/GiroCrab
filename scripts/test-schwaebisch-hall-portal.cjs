@@ -108,3 +108,14 @@ test('pdf downloads one attachment and rejects anything else', async () => {
   await assert.rejects(run('pdf', html, {args: {id: 'x'}}), /kein PDF/);
   await assert.rejects(run('pdf', portal([]), {args: {id: ''}}), /Ungültige Dokument-ID/);
 });
+
+test('the Linux flow runs exactly the scripts of the Swift file', () => {
+  const qml = readFileSync(new URL('../GiroCrabLinux/qml/SchwaebischHallWebLoginFlow.qml', `file://${__filename}`), 'utf8');
+  const linux = Object.fromEntries([...qml.matchAll(/readonly property string (\w+): `((?:\\[\s\S]|[^`\\])*)`/g)]
+    .map(m => [m[1], vm.runInNewContext('`' + m[2] + '`')]));
+  // Swift strips the closing delimiter's indentation (4 spaces) from every line.
+  const dedent = s => s.split('\n').map(l => l.startsWith('    ') ? l.slice(4) : l.trimStart()).join('\n');
+  assert.deepEqual(Object.keys(linux).sort(), ['documents', 'pdf', 'prelude', 'probe', 'snapshot']);
+  for (const name of Object.keys(linux))
+    assert.equal(linux[name], dedent(scripts[name]), `${name} differs: run python3 -I scripts/gen-schwaebisch-hall-qml.py`);
+});
