@@ -21,15 +21,24 @@ extension AppModel {
         return base.appendingPathComponent("GiroCrab/local-api/girocrab.sock").path
     }()
 
+    #if os(macOS)
     /// The MCP adapter for AI assistants (`girocrab-mcp`): in the app at
     /// `Contents/Helpers/girocrab-mcp`, in a developer build the repository's
-    /// `target/release` (or `debug`) build. nil = not built.
-    nonisolated static var localApiHelperURL: URL? { localApiHelperOverride ?? foundLocalApiHelper }
+    /// newer of `target/release` and `target/debug` (looked up each time, so a
+    /// helper built while the app runs is found). nil = not built. macOS only:
+    /// on iOS no other app could reach the socket.
+    nonisolated static var localApiHelperURL: URL? { localApiHelperOverride ?? foundLocalApiHelper() }
 
     /// Tests: the helper built in the repository (the test runner is no app bundle).
     nonisolated(unsafe) static var localApiHelperOverride: URL?
 
-    nonisolated private static let foundLocalApiHelper: URL? = {
+    /// The app runs from a temporary copy (Gatekeeper's App Translocation when it
+    /// was opened from Downloads): the helper's path vanishes after a restart.
+    nonisolated static var localApiHelperIsTemporary: Bool {
+        localApiHelperURL?.path.contains("/AppTranslocation/") == true
+    }
+
+    nonisolated private static func foundLocalApiHelper() -> URL? {
         let fm = FileManager.default
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/girocrab-mcp")
         if fm.isExecutableFile(atPath: bundled.path) { return bundled }
@@ -38,17 +47,19 @@ extension AppModel {
         var dir = Bundle.main.executableURL?.deletingLastPathComponent()
         while let d = dir, d.path != "/" {
             if fm.fileExists(atPath: d.appendingPathComponent("girocrab-mcp/Cargo.toml").path) {
-                for profile in ["release", "debug"] {
-                    let built = d.appendingPathComponent("target/\(profile)/girocrab-mcp")
-                    if fm.isExecutableFile(atPath: built.path) { return built }
+                let built = ["release", "debug"]
+                    .map { d.appendingPathComponent("target/\($0)/girocrab-mcp") }
+                    .filter { fm.isExecutableFile(atPath: $0.path) }
+                let modified = { (url: URL) in
+                    (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
                 }
-                return nil
+                return built.max { modified($0) < modified($1) }
             }
             dir = d.deletingLastPathComponent()
         }
         #endif
         return nil
-    }()
+    }
 
     /// The entry for an MCP client's configuration (the common `mcpServers`
     /// form), with the helper's path and `token` (or a placeholder).
@@ -74,7 +85,9 @@ extension AppModel {
     /// otherwise without one (then only reachability is known).
     func checkLocalApiConnection() async -> LocalApiCheck {
         guard let helper = Self.localApiHelperURL else { return .helperMissing }
-        let (code, output) = await Self.runHelperCheck(helper, socket: Self.localApiSocketPath, token: localApiNewToken)
+        let run = await Self.runHelperCheck(helper, socket: Self.localApiSocketPath, token: localApiNewToken)
+        guard let code = run.code else { return .noAnswer }
+        // The exit codes of `girocrab-mcp --check` (girocrab-mcp/src/lib.rs, Problem::exit_code).
         switch code {
         case 0: return .works
         case 3: return .notReachable
@@ -83,13 +96,17 @@ extension AppModel {
         case 6: return .turnedOff
         case 7: return .locked
         case 8: return .busy
-        default: return .failed(output)
+        default: return .failed(run.output)
         }
     }
 
-    /// Exit code and first output line of `girocrab-mcp --check` (stdout or, for
-    /// a usage error, stderr; killed after 20 s).
-    nonisolated private static func runHelperCheck(_ helper: URL, socket: String, token: String?) async -> (Int32, String) {
+    /// Longer than the helper's own worst case (30 s for one answer, then a few
+    /// short retries), so its own message arrives rather than a kill.
+    nonisolated private static let helperCheckLimit: TimeInterval = 45
+
+    /// Exit code (nil when it had to be stopped) and first output line of
+    /// `girocrab-mcp --check` (stdout, or stderr for a usage error).
+    nonisolated private static func runHelperCheck(_ helper: URL, socket: String, token: String?) async -> (code: Int32?, output: String) {
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = helper
@@ -105,7 +122,8 @@ extension AppModel {
             process.terminationHandler = { p in
                 let data = output.fileHandleForReading.readDataToEndOfFile()
                 let line = String(decoding: data, as: UTF8.self).split(separator: "\n").first.map(String.init) ?? ""
-                continuation.resume(returning: (p.terminationStatus, line))
+                let code = p.terminationReason == .exit ? p.terminationStatus : nil
+                continuation.resume(returning: (code, line))
             }
             do {
                 try process.run()
@@ -113,11 +131,12 @@ extension AppModel {
                 continuation.resume(returning: (-1, error.localizedDescription))
                 return
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + helperCheckLimit) {
                 if process.isRunning { process.terminate() }
             }
         }
     }
+    #endif
 
     /// Tests: a short path outside Application Support (`sun_path` holds 104 bytes).
     nonisolated(unsafe) static var localApiSocketPathOverride: String?

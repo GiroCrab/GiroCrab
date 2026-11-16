@@ -281,6 +281,10 @@ fn exchange(socket: &Path, line: &str) -> Result<Value, NoAnswer> {
                 IO_TIMEOUT.as_secs()
             )))
         }
+        // An answer that is not UTF-8 arrived; asking again would not help.
+        Err(e) if e.kind() == ErrorKind::InvalidData => {
+            Err(fail(format!("GiroCrab sent an unreadable answer: {e}")))
+        }
         // EOF or reset before an answer line.
         _ => Err(NoAnswer::Retry),
     }

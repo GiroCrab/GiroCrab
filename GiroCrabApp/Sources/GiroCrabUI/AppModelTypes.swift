@@ -549,6 +549,8 @@ enum LocalApiCheck: Equatable {
     case turnedOff
     case locked
     case busy
+    /// The helper did not finish in time and was stopped.
+    case noAnswer
     /// The helper is not part of this build.
     case helperMissing
     case failed(String)

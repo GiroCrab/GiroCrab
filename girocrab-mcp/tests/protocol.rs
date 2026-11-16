@@ -242,6 +242,28 @@ fn an_unreadable_answer_is_reported_and_not_asked_again() {
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
 
+#[test]
+fn an_answer_that_is_not_utf8_is_reported_and_not_asked_again() {
+    let d = ShortDir::new();
+    let listener = UnixListener::bind(d.socket()).unwrap();
+    let requests = Arc::new(Mutex::new(0));
+    let count = requests.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let mut out = stream.try_clone().unwrap();
+            for _ in BufReader::new(stream).lines() {
+                *count.lock().unwrap() += 1;
+                out.write_all(b"{\"v\":1,\"result\":\"B\xe4cker\"}\n")
+                    .unwrap();
+            }
+        }
+    });
+    let r = call(&mut adapter(&d), "get_info", json!({}));
+    assert!(text(&r).contains("unreadable answer"), "{}", text(&r));
+    assert_eq!(*requests.lock().unwrap(), 1);
+}
+
 /// Like the app at its connection limit: answers `busy` right on connect,
 /// without reading the request, and closes.
 fn busy_app(dir: &ShortDir, busy_connections: usize) -> Arc<Mutex<usize>> {

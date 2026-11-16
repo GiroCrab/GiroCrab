@@ -7173,6 +7173,28 @@
         }
       }
     },
+    "Das Hilfsprogramm hat nicht rechtzeitig geantwortet. Versuchen Sie es noch einmal." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The helper did not answer in time. Try again."
+          }
+        }
+      }
+    },
+    "Das Hilfsprogramm ist in diesem Build nicht enthalten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The helper is not included in this build."
+          }
+        }
+      }
+    },
     "Das Konto gehört nicht zum eingegebenen Namen. Wenn Sie trotzdem senden, kann das Geld beim falschen Empfänger landen und lässt sich womöglich nicht zurückholen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12275,6 +12297,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GiroCrab could not verify whether this version may still communicate with banks safely. Please try again later, or allow connections to raw.githubusercontent.com in your firewall or Little Snitch."
+          }
+        }
+      }
+    },
+    "GiroCrab läuft aus einer vorübergehenden Kopie. Bewegen Sie die App in den Ordner „Programme“ und starten Sie sie neu, damit der Pfad im Eintrag dauerhaft gilt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab is running from a temporary copy. Move the app to the Applications folder and restart it so the path in the entry stays valid."
           }
         }
       }

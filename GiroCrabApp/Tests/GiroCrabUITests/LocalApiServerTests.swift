@@ -227,6 +227,27 @@ final class LocalApiServerTests: XCTestCase {
         model.showOwnVault()
     }
 
+    #if os(macOS)
+    /// The exit codes of `girocrab-mcp --check` (girocrab-mcp/src/lib.rs,
+    /// `Problem::exit_code`) and what the pane makes of them, with a stand-in
+    /// script for the helper (runs in CI, where the helper is not built).
+    func testEveryCheckExitCodeIsMapped() async throws {
+        let cases: [(Int32, LocalApiCheck)] = [
+            (0, .works), (3, .notReachable), (4, .reachableWithoutKey), (5, .keyRejected),
+            (6, .turnedOff), (7, .locked), (8, .busy), (1, .failed("something odd")),
+        ]
+        let script = dir.appendingPathComponent("fake-helper")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { AppModel.localApiHelperOverride = nil }
+        for (code, expected) in cases {
+            try "#!/bin/sh\necho 'something odd' >&2\nexit \(code)\n".write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            AppModel.localApiHelperOverride = script
+            let result = await model.checkLocalApiConnection()
+            XCTAssertEqual(result, expected, "exit \(code)")
+        }
+    }
+
     func testTheConnectionTestRunsTheHelperAgainstTheSocket() async throws {
         // Tests/GiroCrabUITests/<file> → the repository root.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -258,4 +279,5 @@ final class LocalApiServerTests: XCTestCase {
         XCTAssertEqual((server["env"] as? [String: String])?["GIROCRAB_API_TOKEN"], "gcapi_abc")
         XCTAssertTrue(AppModel.localApiClientConfig(helper: helper, token: nil).contains("gcapi_…"))
     }
+    #endif
 }
