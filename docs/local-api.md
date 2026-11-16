@@ -1,5 +1,7 @@
 # Externe Analyse: lokale, lesende Schnittstelle (#136)
 
+Für Entwicklung, Bündelung und lokale Tests siehe [local-api-entwicklung.md](local-api-entwicklung.md).
+
 GiroCrab kann ausgewählte Konten, Buchungen, Kategorien und Summen für Programme auf demselben Mac
 lesbar machen, etwa für eigene Auswertungen oder einen KI-Assistenten. Die Schnittstelle ist
 standardmäßig aus und strikt lesend: keine Änderungen, keine Zahlungen, keine Zugangsdaten.
