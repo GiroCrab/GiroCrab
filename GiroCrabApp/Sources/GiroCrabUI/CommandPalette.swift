@@ -231,7 +231,7 @@ struct CategorizerSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(many.count) Buchungen kategorisieren").appFont(.headline)
                     Text(Money.format(many.reduce(0) { $0 + $1.amountCents })).appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
-                        .sensitive()
+                        .sensitive(.amounts)
                 }
             } else if let b = model.selectedBooking {
                 HStack(spacing: 10) {
@@ -239,7 +239,7 @@ struct CategorizerSheet: View {
                     VStack(alignment: .leading) {
                         Text(b.merchant.name).appFont(.headline).sensitive()
                         Text(Money.format(b.amountCents)).appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
-                            .sensitive()
+                            .sensitive(.amounts)
                     }
                     Spacer()
                 }

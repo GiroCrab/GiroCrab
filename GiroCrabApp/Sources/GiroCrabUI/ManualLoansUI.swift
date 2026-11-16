@@ -432,7 +432,7 @@ struct LoanEditorSheet: View {
                         Text(DateText.medium(b.bookingDate)).monospacedDigit().foregroundStyle(Theme.secondary)
                         Text(b.merchant.name.isEmpty ? b.counterparty : b.merchant.name).lineLimit(1).sensitive()
                         Spacer()
-                        Text(Money.format(b.amountCents)).monospacedDigit().sensitive()
+                        Text(Money.format(b.amountCents)).monospacedDigit().sensitive(.amounts)
                     }
                     .appFont(.callout)
                     .accessibilityElement(children: .combine)
@@ -448,14 +448,14 @@ struct LoanEditorSheet: View {
     private var previewRows: some View {
         if let s = preview?.status {
             if isAnchor, let old = existing?.status {
-                LabeledContent("Restschuld bisher") { Text(Money.format(-old.remainingCents)).sensitive() }
+                LabeledContent("Restschuld bisher") { Text(Money.format(-old.remainingCents)).sensitive(.amounts) }
             }
-            LabeledContent("Restschuld") { Text(Money.format(-s.remainingCents)).sensitive() }
+            LabeledContent("Restschuld") { Text(Money.format(-s.remainingCents)).sensitive(.amounts) }
                 .appFont(.headline)
             LabeledContent("Stand vom", value: DateText.medium(s.asOfDate))
-            LabeledContent("Raten seit Stichtag") { Text("\(s.paymentCount) · \(Money.format(s.paidCents))").sensitive() }
+            LabeledContent("Raten seit Stichtag") { Text("\(s.paymentCount) · \(Money.format(s.paidCents))").sensitive(.amounts) }
             if s.interestCents > 0 {
-                LabeledContent("davon Zinsen / Tilgung") { Text("\(Money.format(s.interestCents)) / \(Money.format(s.principalCents))").sensitive() }
+                LabeledContent("davon Zinsen / Tilgung") { Text("\(Money.format(s.interestCents)) / \(Money.format(s.principalCents))").sensitive(.amounts) }
             }
             if s.beforeAnchorCount > 0 {
                 LabeledContent("Ältere Buchungen (nicht gezählt)", value: "\(s.beforeAnchorCount)")
@@ -624,7 +624,7 @@ struct ManualLoanDetails: View {
             if let rate = loan.setup.interestRatePpm {
                 Text("Sollzins \(PercentText.format(rate)) % · Zinsen seit Stichtag \(Money.format(s.interestCents))")
                     .appFont(.caption)
-                    .sensitive()
+                    .sensitive(.amounts)
                     .foregroundStyle(Theme.secondary)
             }
             if let m = s.monthsLeft, m > 0 {

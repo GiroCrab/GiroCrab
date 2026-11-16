@@ -239,7 +239,7 @@ struct RecurringSheet: View {
                     } header: {
                         Text("Diesen Monat")
                     } footer: {
-                        Text("Noch offen: \(redaction.masking(Money.format(-m.openExpenseCents))) Ausgaben, \(redaction.masking(Money.format(m.openIncomeCents))) Einnahmen · bereits gebucht: \(redaction.masking(Money.format(-m.bookedExpenseCents)))")
+                        Text("Noch offen: \(redaction.masking(Money.format(-m.openExpenseCents), .amounts)) Ausgaben, \(redaction.masking(Money.format(m.openIncomeCents), .amounts)) Einnahmen · bereits gebucht: \(redaction.masking(Money.format(-m.bookedExpenseCents), .amounts))")
                             .appFont(.caption)
                             .foregroundStyle(Theme.secondary)
                             .leadingFooter()

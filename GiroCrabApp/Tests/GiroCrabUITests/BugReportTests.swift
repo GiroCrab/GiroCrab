@@ -17,6 +17,15 @@ final class BugReportTests: XCTestCase {
                        logLines: log)
     }
 
+    func testPersonalRedactionImpliesAmounts() {
+        XCTAssertEqual(ReportRedaction.amounts.effective, .amounts)
+        XCTAssertEqual(ReportRedaction.personal.effective, [.personal, .amounts])
+        XCTAssertEqual(ReportRedaction([.personal, .labels]).effective, [.personal, .amounts, .labels])
+        XCTAssertEqual(ReportRedaction.personal.masking("12,00 €", .amounts), "•••")
+        XCTAssertEqual(ReportRedaction.amounts.masking("Girokonto"), "Girokonto")
+        XCTAssertEqual(ReportRedaction.labels.masking("12,00 €", .amounts), "12,00 €")
+    }
+
     func testHeaderKeepsVersionSystemAndConnectors() {
         let text = BugReport.diagnostics(info(), knownTerms: ["Sparkasse", "Giro"])
         XCTAssertTrue(text.contains("GiroCrab 0.6.2 (Build 14)"), text)

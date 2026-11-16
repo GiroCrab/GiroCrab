@@ -112,12 +112,15 @@ Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captur
 - A macOS window of its own is captured only when tracked: the `Settings` scene carries `.reportCapturable()`,
   so its views get the redaction environment and its window (with its sheets) is drawn over the main window.
   A window that must never be captured (the report itself) carries no tracker or one with role `.report`.
-- `.sensitive()` on anything personal or financial: amounts, balances, chart axis values and readouts, IBANs, account
-  names and numbers, owners, counterparties, merchant names/initials/guessed domains, purposes, references, notes,
-  documents and their previews, loan figures. `.sensitive(.labels)` for category, group, budget and security names
+- `.sensitive()` on anything personal: IBANs, account names and numbers, owners, counterparties, merchant
+  names/initials/guessed domains, purposes, references, notes, documents and their previews.
+  `.sensitive(.amounts)` on money and quantities: amounts, balances, sums, shares, chart axis values and readouts, loan
+  figures; text mixing both gets `.sensitive([.personal, .amounts])` (a requested `.personal` redaction hides amounts too,
+  `ReportRedaction.effective`). `.sensitive(.labels)` for category, group, budget and security names
   (hidden only on request). Dates, bank/connector names, logos of known brands and error texts stay visible.
-- The modifier hides the content and draws an opaque box, so it also covers AppKit/UIKit-backed views (TextEditor,
-  PDFView). Never use `.redacted(reason:)` or a plain overlay for this.
+- The modifier does not draw the content (opacity 0) and puts a soft, fixed smudge in its place (gradients, no `.blur`),
+  so it also covers AppKit/UIKit-backed views (TextEditor, PDFView). Never use `.redacted(reason:)`, `.blur` or a plain
+  overlay for this. In a parameter string use `redaction.masking(text, .amounts)` for an amount.
 - Text that is a parameter (`navigationTitle`, `ContentUnavailableView(description:)`, `.help`, title bars) cannot
   carry the modifier: read `@Environment(\.reportRedaction)` and substitute (see `WindowTitle`, the empty state in
   `BookingStreamView`). AppKit/UIKit-drawn search fields are handled in `BugReport` – new platform text controls

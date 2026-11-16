@@ -349,7 +349,7 @@ struct RuleForm: View {
                                     Image(systemName: "hand.raised.fill").foregroundStyle(.secondary).help("Manuell zugeordnet – die Regel ändert das nicht")
                                 }
                                 Text(Money.format(b.amountCents)).monospacedDigit().foregroundStyle(Money.ink(b.amountCents))
-                                    .sensitive()
+                                    .sensitive(.amounts)
                             }
                             .appFont(.callout)
                         }

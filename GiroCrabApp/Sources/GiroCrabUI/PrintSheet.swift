@@ -154,7 +154,7 @@ struct PrintSheet: View {
                     .appFont(.headline)
                 Text("Einnahmen \(Money.format(totals.incomeCents)) · Ausgaben \(Money.format(totals.expenseCents))")
                     .appFont(.caption).foregroundStyle(.secondary).monospacedDigit()
-                    .sensitive()
+                    .sensitive(.amounts)
             }
             Spacer()
             Button("Alle auswählen") { selected.formUnion(visibleRows.map(\.id)) }
@@ -178,7 +178,7 @@ struct PrintSheet: View {
                 Spacer()
                 Text(Money.format(r.amountCents, currency: r.currency))
                     .monospacedDigit()
-                    .sensitive()
+                    .sensitive(.amounts)
                     .foregroundStyle(r.amountCents > 0 ? Theme.inflow : .primary)
             }
         }

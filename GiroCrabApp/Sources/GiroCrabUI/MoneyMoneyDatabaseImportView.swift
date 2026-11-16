@@ -347,7 +347,7 @@ struct MoneyMoneyDatabaseImportView: View {
     private func balanceCell(_ a: MoneyMoneyDbAccount) -> some View {
         Text(Money.format(a.computedBalanceCents, currency: a.currency))
             .monospacedDigit()
-            .sensitive()
+            .sensitive(.amounts)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .help(a.balanceSource)
     }
@@ -723,10 +723,10 @@ struct MoneyMoneyDatabaseImportView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(c.foundBookings + c.deletedBookings) / \(c.mmBookings)")
                         .foregroundStyle(c.foundBookings + c.deletedBookings == c.mmBookings ? Theme.text : Theme.warning)
-                    Text(Money.format(c.mmBalanceCents, currency: c.currency)).sensitive()
+                    Text(Money.format(c.mmBalanceCents, currency: c.currency)).sensitive(.amounts)
                     Text(Money.format(c.girocrabBalanceCents, currency: c.currency))
                         .foregroundStyle(c.balanceFromBank || c.girocrabBalanceCents == c.mmBalanceCents ? Theme.text : Theme.warning)
-                        .sensitive()
+                        .sensitive(.amounts)
                 }
                 .monospacedDigit()
             }

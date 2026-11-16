@@ -114,7 +114,7 @@ struct StreamHeaderCard: View {
                 if let hb = headerBalance {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(Money.format(hb.cents))
-                            .sensitive()
+                            .sensitive(.amounts)
                             .appFont(compactHeader ? .subheadline : .largeTitle, weight: .semibold, monospacedDigit: true)
                             .foregroundStyle(account?.kind == .loan ? Theme.loan : Theme.text)
                             .lineLimit(1)
@@ -124,7 +124,7 @@ struct StreamHeaderCard: View {
                         }
                         if account == nil, let split = model.headerTotalSplit {
                             Text("Zusätzlich: \(split.others.map { Money.format($0.cents, currency: $0.currency) }.joined(separator: " · "))")
-                                .sensitive()
+                                .sensitive(.amounts)
                                 .appFont(.caption, monospacedDigit: true)
                                 .foregroundStyle(Theme.secondary)
                                 .lineLimit(1)

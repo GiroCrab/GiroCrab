@@ -323,7 +323,7 @@ struct AssetEditorSheet: View {
                 // the other way round, read-only: per piece for a total and vice versa
                 if let other = otherPrice {
                     LabeledContent(priceMode == .total ? "Kaufpreis je Stück" : "Kaufpreis gesamt") {
-                        Text(Money.format(other)).sensitive()
+                        Text(Money.format(other)).sensitive(.amounts)
                     }
                     .foregroundStyle(Theme.secondary)
                 }
@@ -375,7 +375,7 @@ struct AssetEditorSheet: View {
                 let fine = w.grams * w.purity / 1000
                 LabeledContent("Feingold je Stück") {
                     Text("\(NumberText.format(fine, digits: 3)) g · \(NumberText.format(fine / NumberText.troyOunceGrams, digits: 4)) oz")
-                        .sensitive() // how much gold the user owns
+                        .sensitive(.amounts) // how much gold the user owns
                 }
                 .foregroundStyle(Theme.secondary)
             }
@@ -620,7 +620,7 @@ private struct ValueEntryRows: View {
         }
         if let other {
             LabeledContent(mode == .total ? "Wert je Stück" : "Wert gesamt") {
-                Text(Money.format(other)).sensitive()
+                Text(Money.format(other)).sensitive(.amounts)
             }
             .foregroundStyle(Theme.secondary)
         }
@@ -725,12 +725,12 @@ struct AssetValuesSheet: View {
                         Text(DateText.medium(p.date)).monospacedDigit()
                         Spacer()
                         // per piece; with several pieces then what they were worth together
-                        Text(Money.format(p.valueCents)).monospacedDigit().sensitive()
+                        Text(Money.format(p.valueCents)).monospacedDigit().sensitive(.amounts)
                         let held = item.heldQuantity(on: p.date)
                         if held > 0, held != 1 {
                             Text("gesamt \(Money.format(Int64((Double(p.valueCents) * held).rounded())))")
                                 .monospacedDigit().foregroundStyle(Theme.secondary)
-                                .sensitive()
+                                .sensitive(.amounts)
                         }
                         if p.date != item.setup.purchaseDate {
                             AssetRemoveButton { change { try $0.deleteAssetValue(itemId: item.id, date: p.date) } }
@@ -772,7 +772,7 @@ struct AssetQuantitiesSheet: View {
                         Spacer()
                         Text(q.date == item.setup.purchaseDate ? String(localized: "Kauf: \(NumberText.format(q.quantity))") : String(localized: "ab hier: \(NumberText.format(q.quantity))"))
                             .monospacedDigit()
-                            .sensitive()
+                            .sensitive(.amounts)
                         if q.date != item.setup.purchaseDate {
                             AssetRemoveButton { change { try $0.deleteAssetQuantity(itemId: item.id, date: q.date) } }
                         }
@@ -838,7 +838,7 @@ struct AssetSellSheet: View {
                 }
             } footer: {
                 FormFooter(held > 0
-                    ? "Bestand an diesem Tag: \(redaction.masking(NumberText.format(held))). Verkaufte Sachwerte stehen danach unter „Ehemalige Positionen“; ihr Wert bis zum Verkauf bleibt im Verlauf."
+                    ? "Bestand an diesem Tag: \(redaction.masking(NumberText.format(held), .amounts)). Verkaufte Sachwerte stehen danach unter „Ehemalige Positionen“; ihr Wert bis zum Verkauf bleibt im Verlauf."
                     : "An diesem Tag ist kein Bestand vorhanden.")
             }
         }

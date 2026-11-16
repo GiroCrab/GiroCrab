@@ -804,7 +804,7 @@ struct BookingRow: View {
                 // Order account: no signs — colour says the direction. Charges and
                 // refunds are badged symmetrically (same padding, same alignment).
                 Text(Money.format(ref.isRefund ? booking.amountCents : abs(booking.amountCents)))
-                    .sensitive()
+                    .sensitive(.amounts)
                     .appFont(.body, weight: .semibold, monospacedDigit: true)
                     .foregroundStyle(ref.isRefund ? Theme.inflow : Theme.charge)
                     .padding(.horizontal, 8).padding(.vertical, 3)

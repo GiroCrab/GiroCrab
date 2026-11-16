@@ -630,7 +630,7 @@ struct AccountRow: View {
                     }
                     Spacer(minLength: 4)
                     Text(Money.format(account.balanceCents, currency: account.currency))
-                        .sensitive()
+                        .sensitive(.amounts)
                         .appFont(.subheadline, monospacedDigit: true)
                         .fixedSize() // the subtitle truncates, never the balance (#343)
                         .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
@@ -676,7 +676,7 @@ struct CategoryRow: View {
             Spacer(minLength: 4)
             if category.totalCents != 0 {
                 Text(Money.format(category.totalCents))
-                    .sensitive()
+                    .sensitive(.amounts)
                     .appFont(.caption, monospacedDigit: true)
                     .fixedSize()
                     .foregroundStyle(.secondary) // follows selection, Dark Mode, Increase Contrast
