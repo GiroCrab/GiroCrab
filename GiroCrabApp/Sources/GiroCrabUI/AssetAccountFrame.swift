@@ -104,15 +104,6 @@ struct AssetAccountFrame<Top: View, Header: View, Metrics: View, Analysis: View,
     }
 }
 
-private struct AssetChartAlignmentKey: EnvironmentKey { static let defaultValue = Alignment.leading }
-extension EnvironmentValues {
-    /// Where the chart's notes sit: the chart runs under the title and the value over the full width, so they sit across.
-    var assetChartAlignment: Alignment {
-        get { self[AssetChartAlignmentKey.self] }
-        set { self[AssetChartAlignmentKey.self] = newValue }
-    }
-}
-
 /// Header card of a holdings view: title, current value, a value chart and the footer row with the
 /// period menu, documents and kind-specific actions. Wide: the name, details and actions on the left,
 /// the value with its chart below on the right (about 40 % of the card). Narrow and on iPhone: name
@@ -292,13 +283,14 @@ struct AssetValueChart: View {
         case depot([DepotValuePoint], from: String?, to: String?)
     }
 
-    @Environment(\.assetChartAlignment) private var alignment
     /// iPhone: the chart grows with Dynamic Type, so the two axis labels never touch.
     @ScaledMetric(relativeTo: .caption2) private var scaledHeight: CGFloat = 44
     let content: Content
     var currency = "EUR"
     /// Small print under the chart (e.g. that a change in value is no return).
     var footnote: LocalizedStringKey?
+    /// What a sum leaves out (depots in another currency), shown like a partial sum.
+    var excludedNote: String?
 
     var body: some View {
         switch content {
@@ -327,7 +319,7 @@ struct AssetValueChart: View {
             Text("Nur eine Bewertung: \(DateText.medium(only.date)) · \(Money.format(only.valueCents, currency: currency))")
                 .sensitive(.amounts)
                 .appFont(.caption).foregroundStyle(Theme.secondary)
-                .frame(maxWidth: .infinity, alignment: alignment)
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             let period = from.flatMap { DateText.parseISODay($0) }.map { start in
                 start...(to.flatMap { DateText.parseISODay($0) } ?? Date())
@@ -344,6 +336,10 @@ struct AssetValueChart: View {
                 Label(coverage, systemImage: "chart.line.uptrend.xyaxis")
                     .appFont(.caption2, weight: .semibold).foregroundStyle(Theme.warning)
             }
+            if let excludedNote {
+                Label(excludedNote, systemImage: "dollarsign.circle")
+                    .appFont(.caption2, weight: .semibold).foregroundStyle(Theme.warning)
+            }
             if let footnote {
                 Text(footnote).appFont(.caption2).foregroundStyle(Theme.tertiary)
             }
@@ -352,7 +348,6 @@ struct AssetValueChart: View {
 
     private func note(_ text: String) -> some View {
         Text(text).appFont(.caption).foregroundStyle(Theme.secondary)
-            .multilineTextAlignment(alignment == .trailing ? .trailing : .leading)
-            .frame(maxWidth: .infinity, alignment: alignment)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

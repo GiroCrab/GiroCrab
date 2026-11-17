@@ -213,14 +213,16 @@ fn a_new_valuation_day_is_stored_even_if_nothing_changed() {
         .unwrap();
     let h = holding("IE00B4L5Y983", "ETF", 1.0, 100);
     let db = v.db().unwrap();
-    let day = record_fetch(&db, id, Some(&[&h]), 4_000_000_000_000).unwrap();
+    let day = record_fetch(&db, id, Some(&[&h]), &[], true, 4_000_000_000_000).unwrap();
     assert_eq!(day.as_deref(), Some("2026-11-11"));
     drop(db);
     assert_eq!(count(&v), 4, "new day: total and position again");
     let db = v.db().unwrap();
-    assert!(record_fetch(&db, id, Some(&[&h]), 4_000_000_001_000)
-        .unwrap()
-        .is_none());
+    assert!(
+        record_fetch(&db, id, Some(&[&h]), &[], true, 4_000_000_001_000)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -235,7 +237,7 @@ fn a_position_gone_from_a_delivered_inventory_is_closed_with_zero() {
         fetch(
             vec![
                 holding("IE00B4L5Y983", "ETF", 1.0, 100),
-                holding("DE0000000001", "Alt AG", 1.0, 50),
+                holding("DE0007164600", "Alt AG", 1.0, 50),
             ],
             150,
         ),
@@ -249,7 +251,7 @@ fn a_position_gone_from_a_delivered_inventory_is_closed_with_zero() {
     )
     .unwrap();
     let id = depot(&v);
-    let sold = v.position_value_history(id, "DE0000000001".into()).unwrap();
+    let sold = v.position_value_history(id, "DE0007164600".into()).unwrap();
     assert_eq!(
         sold.iter().map(|p| p.value_cents).collect::<Vec<_>>(),
         vec![0],
@@ -257,7 +259,7 @@ fn a_position_gone_from_a_delivered_inventory_is_closed_with_zero() {
     );
     let list = v.depot_value_positions(id).unwrap();
     assert_eq!(list.len(), 2);
-    let alt = list.iter().find(|p| p.position == "DE0000000001").unwrap();
+    let alt = list.iter().find(|p| p.position == "DE0007164600").unwrap();
     assert_eq!((alt.last_value_cents, alt.held), (0, false));
     assert!(
         list.iter()
@@ -316,7 +318,7 @@ fn custody_rows_of_one_isin_keep_quantity_times_price_equal_to_the_value() {
 }
 
 #[test]
-fn a_fetch_does_not_close_positions_only_an_import_knows_by_name() {
+fn a_fetch_closes_only_positions_a_fetch_reported_last() {
     let dir = crate::test_support::TempDir::new("dobs-import-keys");
     let v = open(&dir);
     let c = connected(&v);
@@ -331,7 +333,7 @@ fn a_fetch_does_not_close_positions_only_an_import_knows_by_name() {
             id,
             &[
                 imported("cash", "Liquidität", "EUR", "2020-01-02", 500),
-                imported("DE0000000001", "Alt AG", "EUR", "2020-01-02", 500),
+                imported("DE0007164600", "Alt AG", "EUR", "2020-01-02", 500),
             ],
         )
         .unwrap();
@@ -346,10 +348,16 @@ fn a_fetch_does_not_close_positions_only_an_import_knows_by_name() {
     };
     assert_eq!(last("cash"), 500, "an import-only name key is not closed");
     assert_eq!(
-        last("DE0000000001"),
-        0,
-        "an ISIN missing from the inventory is closed"
+        last("DE0007164600"),
+        500,
+        "a position only an import knows is not closed on its behalf"
     );
+    // it is no longer held: its history ends with the last value the import gave
+    let alt = list.iter().find(|p| p.position == "DE0007164600").unwrap();
+    assert!(!alt.held);
+    let series = v.position_value_history(id, "DE0007164600".into()).unwrap();
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].date, "2020-01-02");
 }
 
 #[test]
@@ -556,7 +564,13 @@ fn perf_of_a_real_sized_imported_history() {
             let day = (start + chrono::Duration::days(d))
                 .format("%Y-%m-%d")
                 .to_string();
-            let mut r = imported(&format!("DE{p:010}"), "Pos", "EUR", &day, 1_000 + d);
+            let mut r = imported(
+                &format!("name:pos {p}"),
+                &format!("Pos {p}"),
+                "EUR",
+                &day,
+                1_000 + d,
+            );
             r.source_ref = p.to_string();
             rows.push(r);
         }
@@ -575,7 +589,7 @@ fn perf_of_a_real_sized_imported_history() {
     let t_rebuild = t.elapsed();
     drop(db);
     let held: Vec<Holding> = (0..50)
-        .map(|p| holding(&format!("DE{p:010}"), "Pos", 1.0, 100))
+        .map(|p| holding("", &format!("Pos {p}"), 1.0, 100))
         .collect();
     let t = std::time::Instant::now();
     store_fetch(&v, ConnectorKind::Comdirect, c, fetch(held, 5_000)).unwrap();
@@ -584,7 +598,7 @@ fn perf_of_a_real_sized_imported_history() {
     let list = v.depot_value_positions(id).unwrap();
     let t_list = t.elapsed();
     let t = std::time::Instant::now();
-    let h = v.position_value_history(id, "DE0000000100".into()).unwrap();
+    let h = v.position_value_history(id, "name:pos 100".into()).unwrap();
     let t_one = t.elapsed();
     let t = std::time::Instant::now();
     let all = v.depot_value_history(vec![id], 3650).unwrap();
@@ -593,4 +607,88 @@ fn perf_of_a_real_sized_imported_history() {
         "rows {n}: import {t_import:?}, rebuild {t_rebuild:?}, fetch {t_fetch:?}, positions ({}) {t_list:?}, one position ({}) {t_one:?}, depot history ({}) {t_depot:?}",
         list.len(), h.len(), all.len()
     );
+}
+
+#[test]
+fn a_folded_or_merged_account_hands_its_history_on() {
+    let dir = crate::test_support::TempDir::new("dobs-move");
+    let v = open(&dir);
+    let c = connected(&v);
+    let data = || fetch(vec![holding("IE00B4L5Y983", "ETF", 1.0, 100)], 100);
+    store_fetch(&v, ConnectorKind::Comdirect, c, data()).unwrap();
+    let bank = depot(&v);
+    let db = v.db().unwrap();
+    // the imported twin: another depot with an older history of the same position
+    db.execute(
+        "INSERT INTO accounts(group_id, name, kind, balance_cents, balance_date, currency)
+         SELECT group_id, 'Import', kind, 90, '', currency FROM accounts WHERE id = ?1",
+        [bank],
+    )
+    .unwrap();
+    let twin = db.last_insert_rowid();
+    record_import(
+        &db,
+        twin,
+        &[
+            imported("", "", "EUR", "2020-01-02", 90),
+            imported("IE00B4L5Y983", "ETF", "EUR", "2020-01-02", 90),
+        ],
+    )
+    .unwrap();
+    crate::depot_values::move_account(&db, twin, bank).unwrap();
+    let left: i64 = db
+        .query_row(
+            "SELECT count(*) FROM depot_observations WHERE account_id = ?1",
+            [twin],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(left, 0);
+    drop(db);
+    assert_eq!(
+        derived(&v, bank),
+        vec![
+            ("2020-01-02".into(), "import".into(), 90),
+            ("2026-11-10".into(), "fetch".into(), 100)
+        ]
+    );
+    let etf = v
+        .position_value_history(bank, "IE00B4L5Y983".into())
+        .unwrap();
+    assert_eq!(etf[0].date, "2020-01-02");
+}
+
+#[test]
+fn an_unread_balance_records_the_positions_but_no_total() {
+    let dir = crate::test_support::TempDir::new("dobs-unknown");
+    let v = open(&dir);
+    let c = connected(&v);
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        c,
+        fetch(vec![holding("IE00B4L5Y983", "ETF", 1.0, 100)], 100),
+    )
+    .unwrap();
+    let mut data = fetch(vec![holding("IE00B4L5Y983", "ETF", 1.0, 120)], 0);
+    data.balances_unknown = vec!["depot".into()];
+    store_fetch(&v, ConnectorKind::Comdirect, c, data).unwrap();
+    let rows: Vec<(String, String, bool, i64)> = v
+        .db()
+        .unwrap()
+        .prepare(
+            "SELECT kind, value_date, date_assumed, value_cents FROM depot_observations
+             ORDER BY observed_ms, kind",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let today = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+    assert_eq!(rows.len(), 3, "no second total: {rows:?}");
+    assert_eq!(rows[2], ("position".into(), today, true, 120));
 }

@@ -118,17 +118,23 @@ struct Group {
     name: String,
 }
 
+/// Keys of the positions a depot holds now (`holdings`).
+fn held_keys(conn: &Connection, account_id: i64) -> CoreResult<HashSet<String>> {
+    let mut q = conn.prepare_cached("SELECT isin, name FROM holdings WHERE account_id = ?1")?;
+    let rows = q.query_map([account_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut keys = HashSet::new();
+    for row in rows {
+        let (isin, name) = row?;
+        keys.extend(position_key(&isin, &name));
+    }
+    Ok(keys)
+}
+
 pub(crate) fn positions(conn: &Connection, account_id: i64) -> CoreResult<Vec<ValuePosition>> {
     let own = account_currency(conn, account_id)?;
-    let held: HashSet<String> = {
-        let mut q = conn.prepare("SELECT isin, name FROM holdings WHERE account_id = ?1")?;
-        let rows = q.query_map([account_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
-        rows.filter_map(|r| r.ok())
-            .filter_map(|(isin, name)| position_key(&isin, &name))
-            .collect()
-    };
+    let held = held_keys(conn, account_id)?;
     // per position the account's currency, else the one reported latest
     let mut best: HashMap<String, ((bool, i64), ValuePosition)> = HashMap::new();
     let mut finish = |g: Group| {
@@ -212,12 +218,15 @@ pub(crate) fn history(
     let Some(currency) = position_currency(conn, account_id, position, &own)? else {
         return Ok(vec![]);
     };
-    let rows = observations::observed(conn, account_id, KIND_POSITION, position, &currency)?;
+    let rows = observations::observed(conn, account_id, KIND_POSITION, position, &currency, None)?;
     let days = best_per_day(&rows);
     let today = chrono::Local::now().date_naive();
-    // a sold position ends with its sale, an open one carries on to today
+    // A held position carries on to today. A sold one ends with its sale (a 0), one no longer held
+    // with the last day a source reported it (its value after that is unknown).
     let end = match days.last() {
-        Some((d, 0)) => NaiveDate::parse_from_str(&day_text(*d), "%Y-%m-%d").unwrap_or(today),
+        Some((d, v)) if *v == 0 || !held_keys(conn, account_id)?.contains(position) => {
+            NaiveDate::parse_from_str(&day_text(*d), "%Y-%m-%d").unwrap_or(today)
+        }
         _ => today,
     };
     Ok(carried(&days, end))

@@ -34,8 +34,8 @@ pub fn holding_position_key(isin: String, name: String) -> Option<String> {
 }
 
 pub(crate) fn position_key(isin: &str, name: &str) -> Option<String> {
-    let isin = isin.trim().to_uppercase();
-    if !isin.is_empty() {
+    // only a valid ISIN: placeholders ("-", "N/A") or a WKN would join different securities
+    if let Some(isin) = crate::asset_classification::normalized_isin(isin) {
         return Some(isin);
     }
     let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -128,13 +128,18 @@ fn write_if_changed(conn: &Connection, s: &FetchStamp, v: &Value) -> CoreResult<
 
 /// Records what a fetch reported for a securities depot: its value (the account balance just
 /// stored) and, when the fetch delivered the inventory (`holdings`, maybe empty), each position.
-/// A delivered inventory confirms a value of 0 and closes a position missing from it with a 0;
-/// without one a 0 stays unconfirmed (the bank may just not have reported it). A balance of 0
-/// next to positions is taken as their sum. Returns the valuation day when a total was written.
+/// A delivered inventory confirms a value of 0 and closes with a 0 each position of `previous`
+/// (the keys held before this fetch) that is missing from it, when its latest value came from a
+/// fetch: a position only an import knows is not closed on its behalf. Without an inventory a 0
+/// stays unconfirmed (the bank may just not have reported it). A balance of 0 next to positions
+/// is taken as their sum. With `balance_known` false the balance is a placeholder: only the
+/// positions are recorded, dated today. Returns the valuation day when a total was written.
 pub(crate) fn record_fetch(
     conn: &Connection,
     account_id: i64,
     holdings: Option<&[&Holding]>,
+    previous: &[String],
+    balance_known: bool,
     observed_ms: i64,
 ) -> CoreResult<Option<String>> {
     let row: Option<(String, String, i64, String)> = conn
@@ -152,7 +157,11 @@ pub(crate) fn record_fetch(
         return Ok(None);
     }
     let today = chrono::Local::now().date_naive();
-    let (value_date, date_assumed) = valuation_day(&balance_date, today);
+    let (value_date, date_assumed) = if balance_known {
+        valuation_day(&balance_date, today)
+    } else {
+        (iso(today), true)
+    };
     let stamp = FetchStamp {
         account_id,
         currency: &currency,
@@ -190,18 +199,19 @@ pub(crate) fn record_fetch(
     } else {
         balance
     };
-    let wrote_total = write_if_changed(
-        conn,
-        &stamp,
-        &Value {
-            kind: KIND_TOTAL,
-            position: "",
-            name: "",
-            value_cents: total,
-            quantity: None,
-            price_cents: None,
-        },
-    )?;
+    let wrote_total = balance_known
+        && write_if_changed(
+            conn,
+            &stamp,
+            &Value {
+                kind: KIND_TOTAL,
+                position: "",
+                name: "",
+                value_cents: total,
+                quantity: None,
+                price_cents: None,
+            },
+        )?;
     for (key, h) in &agg {
         write_if_changed(
             conn,
@@ -217,24 +227,25 @@ pub(crate) fn record_fetch(
         )?;
     }
     if holdings.is_some() {
-        // Positions still open at their latest observation. Those that only an import knows by
-        // name (`cash`, `name:…`) are not closed: a bank need not report them under the same
-        // key, so their absence says nothing.
-        let open: Vec<(String, String, i64, String)> = {
-            // one pass: SQLite takes the other columns from the row with the max
-            let mut q = conn.prepare(
-                "SELECT position, name, value_cents, source, max(observed_ms) FROM depot_observations
-                 WHERE account_id = ?1 AND kind = 'position' AND currency = ?2
-                 GROUP BY position",
-            )?;
-            let rows = q.query_map(params![account_id, currency], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-            })?;
-            rows.collect::<Result<_, _>>()?
-        };
-        for (key, name, value, source) in open {
-            let by_name = key == CASH || key.starts_with("name:");
-            if value == 0 || index.contains_key(&key) || (source != SOURCE_FETCH && by_name) {
+        // a position held before and missing now was sold, when a fetch reported it last
+        let mut latest = conn.prepare_cached(
+            "SELECT value_cents, source, name FROM depot_observations
+             WHERE account_id = ?1 AND kind = 'position' AND position = ?2 AND currency = ?3
+             ORDER BY observed_ms DESC LIMIT 1",
+        )?;
+        for key in previous {
+            if index.contains_key(key) {
+                continue;
+            }
+            let last: Option<(i64, String, String)> = latest
+                .query_row(params![account_id, key, currency], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })
+                .optional()?;
+            let Some((value, source, name)) = last else {
+                continue;
+            };
+            if value == 0 || source != SOURCE_FETCH {
                 continue;
             }
             write_if_changed(
@@ -242,7 +253,7 @@ pub(crate) fn record_fetch(
                 &stamp,
                 &Value {
                     kind: KIND_POSITION,
-                    position: &key,
+                    position: key,
                     name: &name,
                     value_cents: 0,
                     quantity: Some(0.0),
@@ -426,7 +437,9 @@ pub(crate) struct DayValue {
 /// - `fetch`: the latest observation of the day; a 0 only when it was confirmed.
 /// - `import`: the largest non-zero value of the day (a source may list one ISIN in several rows,
 ///   e.g. a position sold and bought again); a 0 only after a positive value, and only the first
-///   of a run of zeros (a closed depot keeps reporting 0).
+///   of a run of zeros (a closed depot keeps reporting 0). Not the sum: in a real database the
+///   largest value matched the source's own depot total on 62 % of the days with such rows, the
+///   sum on 31 %; most extra rows are leftovers of an earlier holding, not a second lot.
 pub(crate) fn day_values(rows: &[Observed]) -> Vec<DayValue> {
     let mut out: Vec<DayValue> = Vec::new();
     let mut i = 0;
@@ -488,20 +501,36 @@ pub(crate) fn source_rank(source: &str) -> u8 {
     }
 }
 
-/// Reads the observations of one series of a depot in `currency`, sorted for [`day_values`].
+/// Reads the observations of one series of a depot in `currency`, sorted for [`day_values`]:
+/// all of them, or only the fetches of `fetch_day` (what a fetch changed).
 pub(crate) fn observed(
     conn: &Connection,
     account_id: i64,
     kind: &str,
     position: &str,
     currency: &str,
+    fetch_day: Option<&str>,
 ) -> CoreResult<Vec<Observed>> {
-    let mut q = conn.prepare_cached(
-        "SELECT value_date, source, observed_ms, value_cents, confirmed FROM depot_observations
-         WHERE account_id = ?1 AND kind = ?2 AND position = ?3 AND currency = ?4
-         ORDER BY source, value_date, observed_ms",
-    )?;
-    let mut rows = q.query(params![account_id, kind, position, currency])?;
+    let mut q;
+    let mut rows = match fetch_day {
+        None => {
+            q = conn.prepare_cached(
+                "SELECT value_date, source, observed_ms, value_cents, confirmed FROM depot_observations
+                 WHERE account_id = ?1 AND kind = ?2 AND position = ?3 AND currency = ?4
+                 ORDER BY source, value_date, observed_ms",
+            )?;
+            q.query(params![account_id, kind, position, currency])?
+        }
+        Some(day) => {
+            q = conn.prepare_cached(
+                "SELECT value_date, source, observed_ms, value_cents, confirmed FROM depot_observations
+                 WHERE account_id = ?1 AND kind = ?2 AND position = ?3 AND currency = ?4
+                   AND source = 'fetch' AND value_date = ?5
+                 ORDER BY observed_ms",
+            )?;
+            q.query(params![account_id, kind, position, currency, day])?
+        }
+    };
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
         let text = |i| r.get_ref(i)?.as_str().map_err(rusqlite::Error::from);

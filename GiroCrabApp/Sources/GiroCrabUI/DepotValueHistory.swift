@@ -47,7 +47,7 @@ enum DepotValueHistory {
 
     /// What is drawn: equal values in a row collapse into the first of them (lossless for a step line),
     /// and a series still longer than `maxPoints` keeps the last point of each stretch (the first and
-    /// the last point always stay).
+    /// the last point always stay, so the line reaches the last day even after an unchanged stretch).
     static func drawn(_ points: [DepotValuePoint], maxPoints: Int = 900) -> [DepotValuePoint] {
         var collapsed: [DepotValuePoint] = []
         for point in points {
@@ -55,6 +55,7 @@ enum DepotValueHistory {
                last.coveredDepots == point.coveredDepots, last.totalDepots == point.totalDepots { continue }
             collapsed.append(point)
         }
+        if let last = points.last, collapsed.last?.date != last.date { collapsed.append(last) }
         guard collapsed.count > maxPoints, maxPoints > 2 else { return collapsed }
         let step = Int((Double(collapsed.count) / Double(maxPoints)).rounded(.up))
         var thinned = [collapsed[0]]
@@ -93,6 +94,20 @@ enum DepotValueHistory {
               let periodStart = DateText.parseISODay(from), let firstDay = DateText.parseISODay(first.date),
               firstDay.timeIntervalSince(periodStart) > 3 * 86_400 else { return nil }
         return String(localized: "Werte ab \(DateText.medium(first.date))")
+    }
+
+    /// The currency of a chart over depots in `currencies`: one depot's own, else EUR (the core sums
+    /// only EUR depots, `Vault.depotValueHistory`).
+    static func chartCurrency(_ currencies: [String]) -> String {
+        if currencies.count == 1, let only = currencies.first, !only.isEmpty { return only }
+        return "EUR"
+    }
+
+    /// "Ohne Depots in anderer Währung (1)" when a sum over several depots leaves some out.
+    static func excludedNote(_ currencies: [String]) -> String? {
+        guard currencies.count > 1 else { return nil }
+        let other = currencies.filter { !$0.isEmpty && $0 != "EUR" }.count
+        return other > 0 ? String(localized: "Ohne Depots in anderer Währung (\(other))") : nil
     }
 
     /// "Teilsumme · 2 von 3 Depots" when some day of the shown period is not fully covered

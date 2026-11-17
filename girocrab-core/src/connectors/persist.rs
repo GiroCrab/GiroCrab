@@ -336,11 +336,15 @@ pub(crate) fn store_fetch(
                     {
                         let (group, sym, order) = group_for(acc.kind);
                         let gid = Vault::ensure_group(&tx, group, sym, order)?;
-                        tx.execute(
+                        let changed = tx.execute(
                             // a symbol the user picked (symbol_ms > 0) stays
                             "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3 WHERE id = ?4 AND kind <> ?1",
                             params![acc.kind.as_str(), acc.kind.sf_symbol(), gid, id],
                         )?;
+                        if changed > 0 {
+                            // a history imported while it was another kind counts now (#578)
+                            crate::depot_values::rebuild(&tx, id, None)?;
+                        }
                     }
                     id
                 }
@@ -508,6 +512,23 @@ pub(crate) fn store_fetch(
             depots.len(),
             by_account.len()
         ));
+        // the inventory before this fetch: a position missing from the new one was sold (#578)
+        let mut previous: HashMap<i64, Vec<String>> = HashMap::new();
+        for acc_id in by_account.keys() {
+            let mut q =
+                tx.prepare_cached("SELECT isin, name FROM holdings WHERE account_id = ?1")?;
+            let rows = q.query_map([acc_id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
+            let mut keys = Vec::new();
+            for row in rows {
+                let (isin, name) = row?;
+                keys.extend(crate::depot_values::observations::position_key(
+                    &isin, &name,
+                ));
+            }
+            previous.insert(*acc_id, keys);
+        }
         for (acc_id, list) in &by_account {
             tx.execute("DELETE FROM holdings WHERE account_id = ?1", [acc_id])?;
             for remote in list {
@@ -760,19 +781,28 @@ pub(crate) fn store_fetch(
         // Value history of depots (#578), after every balance update above: what this fetch
         // reported per depot. A depot whose inventory came (maybe an empty one) confirms a 0 and
         // closes sold positions; one whose total came without positions (an overview) records the
-        // total alone; one whose balance could not be read records nothing.
+        // total alone. An unread balance records no total (its positions still count).
         let observed_ms = chrono::Utc::now().timestamp_millis();
+        let unknown: std::collections::HashSet<i64> = data
+            .balances_unknown
+            .iter()
+            .filter_map(|r| account_ids.get(r).copied())
+            .collect();
         for (acc_id, list) in &by_account {
             let positions: Vec<&crate::models::Holding> = list.iter().map(|r| &r.holding).collect();
-            crate::depot_values::record_fetch(&tx, *acc_id, Some(&positions), observed_ms)?;
+            crate::depot_values::record_fetch(
+                &tx,
+                *acc_id,
+                Some(&positions),
+                previous.get(acc_id).map_or(&[][..], |p| p.as_slice()),
+                !unknown.contains(acc_id),
+                observed_ms,
+            )?;
         }
         for acc in &data.accounts {
-            if data.balances_unknown.contains(&acc.external_ref) {
-                continue;
-            }
             if let Some(id) = account_ids.get(&acc.external_ref) {
-                if !by_account.contains_key(id) {
-                    crate::depot_values::record_fetch(&tx, *id, None, observed_ms)?;
+                if !by_account.contains_key(id) && !unknown.contains(id) {
+                    crate::depot_values::record_fetch(&tx, *id, None, &[], true, observed_ms)?;
                 }
             }
         }

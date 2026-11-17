@@ -102,12 +102,16 @@ pub(crate) fn rebuild(
         )?;
         return Ok(());
     };
-    let mut rows =
-        observations::observed(conn, account_id, observations::KIND_TOTAL, "", &currency)?;
+    let rows = observations::observed(
+        conn,
+        account_id,
+        observations::KIND_TOTAL,
+        "",
+        &currency,
+        fetch_day,
+    )?;
     match fetch_day {
         Some(day) => {
-            let key = observations::day_key(day);
-            rows.retain(|o| o.source == observations::SOURCE_FETCH && o.day == key);
             conn.execute(
                 "DELETE FROM depot_values WHERE account_id = ?1 AND value_date = ?2 AND source = 'fetch'",
                 params![account_id, day],
@@ -143,12 +147,38 @@ pub(crate) fn record_fetch(
     conn: &Connection,
     account_id: i64,
     holdings: Option<&[&crate::models::Holding]>,
+    previous: &[String],
+    balance_known: bool,
     observed_ms: i64,
 ) -> CoreResult<()> {
-    if let Some(day) = observations::record_fetch(conn, account_id, holdings, observed_ms)? {
+    let day = observations::record_fetch(
+        conn,
+        account_id,
+        holdings,
+        previous,
+        balance_known,
+        observed_ms,
+    )?;
+    if let Some(day) = day {
         rebuild(conn, account_id, Some(&day))?;
     }
     Ok(())
+}
+
+/// The history of `from` goes to `to` (an imported twin folded into the bank's account, a
+/// duplicate account merged away): its observations move, both are derived again.
+pub(crate) fn move_account(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
+    conn.execute(
+        "UPDATE OR IGNORE depot_observations SET account_id = ?1 WHERE account_id = ?2",
+        params![to, from],
+    )?;
+    // left over: rows `to` holds already
+    conn.execute(
+        "DELETE FROM depot_observations WHERE account_id = ?1",
+        [from],
+    )?;
+    conn.execute("DELETE FROM depot_values WHERE account_id = ?1", [from])?;
+    rebuild(conn, to, None)
 }
 
 /// Vault merge: adds the other vault's observations of mapped accounts and derives the depots
@@ -174,6 +204,9 @@ pub(crate) struct Series {
     /// The depots with at least one point: the caller leaves them out of its own walk back over
     /// bookings.
     pub accounts: Vec<i64>,
+    /// Per depot with a point its first one (day, value), possibly before `start`: a chart without
+    /// coverage (`balance_history`) carries it back instead of letting the depot jump in.
+    pub firsts: Vec<(i64, String, i64)>,
 }
 
 pub(crate) fn series(
@@ -189,6 +222,7 @@ pub(crate) fn series(
     let mut total = vec![0_i64; days];
     let mut covered_days = vec![0_u32; days];
     let mut with_points = Vec::new();
+    let mut firsts = Vec::new();
     let mut total_depots = 0_u32;
     let mut q = conn.prepare(
         "SELECT value_date, value_cents FROM depot_values
@@ -204,9 +238,11 @@ pub(crate) fn series(
                 r.get(0)
             })
             .ok();
-        if kind.as_deref() == Some("brokerage") && !crate::assets::is_tangible(conn, id)? {
-            total_depots += 1;
+        // another account (a former depot keeps stale values until it is derived again) has none
+        if kind.as_deref() != Some("brokerage") || crate::assets::is_tangible(conn, id)? {
+            continue;
         }
+        total_depots += 1;
         let mut points: Vec<(String, i64)> = q
             .query_map(params![id, last], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<_, _>>()?;
@@ -222,6 +258,7 @@ pub(crate) fn series(
             }
         }
         with_points.push(id);
+        firsts.push((id, points[0].0.clone(), points[0].1));
         let mut next = 0;
         let mut current: Option<i64> = None;
         for i in 0..days {
@@ -243,6 +280,7 @@ pub(crate) fn series(
         covered: covered_days,
         total_depots,
         accounts: with_points,
+        firsts,
     }))
 }
 
@@ -272,10 +310,11 @@ fn reported_point(conn: &Connection, id: i64, end: NaiveDate) -> CoreResult<Opti
     if bookings > 0 {
         return Ok(None);
     }
-    let day = if is_iso_date(date.trim()) {
-        date.trim().to_string()
-    } else {
-        end.format("%Y-%m-%d").to_string()
+    // a missing, malformed or future date (a bank's value date) is the end of the series
+    let last = end.format("%Y-%m-%d").to_string();
+    let day = match date.trim() {
+        d if is_iso_date(d) && d <= last.as_str() => d.to_string(),
+        _ => last,
     };
     Ok(Some((day, cents)))
 }
@@ -357,13 +396,13 @@ mod tests {
         let (_d, v) = open("depot-values-record");
         let id = depot(&v, 100_000, "2026-03-01");
         let db = v.db().unwrap();
-        record_fetch(&db, id, None, 1).unwrap();
+        record_fetch(&db, id, None, &[], true, 1).unwrap();
         db.execute(
             "UPDATE accounts SET balance_cents = 120_000 WHERE id = ?1",
             [id],
         )
         .unwrap();
-        record_fetch(&db, id, None, 2).unwrap();
+        record_fetch(&db, id, None, &[], true, 2).unwrap();
         // both fetches stay observed, the later one is the value of the day
         let observed: i64 = db
             .query_row("SELECT count(*) FROM depot_observations", [], |r| r.get(0))
@@ -384,13 +423,13 @@ mod tests {
         let (_d, v) = open("depot-values-skip");
         let empty = depot(&v, 0, "2026-03-01");
         let db = v.db().unwrap();
-        record_fetch(&db, empty, None, 1).unwrap();
+        record_fetch(&db, empty, None, &[], true, 1).unwrap();
         db.execute(
             "UPDATE accounts SET kind = 'checking', balance_cents = 5 WHERE id = ?1",
             [empty],
         )
         .unwrap();
-        record_fetch(&db, empty, Some(&[]), 2).unwrap();
+        record_fetch(&db, empty, Some(&[]), &[], true, 2).unwrap();
         let n: i64 = db
             .query_row("SELECT count(*) FROM depot_values", [], |r| r.get(0))
             .unwrap();
@@ -402,13 +441,13 @@ mod tests {
         let (_d, v) = open("depot-values-zero");
         let id = depot(&v, 50_000, "2026-03-02");
         let db = v.db().unwrap();
-        record_fetch(&db, id, Some(&[]), 1).unwrap();
+        record_fetch(&db, id, Some(&[]), &[], true, 1).unwrap();
         db.execute(
             "UPDATE accounts SET balance_cents = 0, balance_date = '2026-03-05' WHERE id = ?1",
             [id],
         )
         .unwrap();
-        record_fetch(&db, id, Some(&[]), 2).unwrap();
+        record_fetch(&db, id, Some(&[]), &[], true, 2).unwrap();
         let s = series(&db, &[id], day("2026-03-02"), day("2026-03-07"))
             .unwrap()
             .unwrap();
@@ -497,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn the_total_history_does_not_invent_a_past_for_a_depot_without_history() {
+    fn a_depot_without_history_does_not_jump_into_the_total() {
         let (_d, v) = open("depot-values-total");
         let today = chrono::Local::now().date_naive();
         let f = |n: i64| {
@@ -513,8 +552,75 @@ mod tests {
         }
         let h = v.balance_history(vec![a, b], 5).unwrap();
         let values: Vec<i64> = h.iter().map(|p| p.balance_cents).collect();
-        // the unrecorded depot adds nothing before its balance day (it was 100 only today)
-        assert_eq!(values, vec![40, 40, 40, 140]);
+        // the unrecorded depot (100, reported today) stays at its value instead of jumping in
+        // today: the total chart cannot mark a partial sum
+        assert_eq!(values, vec![140, 140, 140, 140]);
+    }
+
+    #[test]
+    fn a_depot_walks_back_over_its_bookings_before_its_first_value() {
+        let (_d, v) = open("depot-values-bookings");
+        let today = chrono::Local::now().date_naive();
+        let f = |n: i64| {
+            (today - chrono::Duration::days(n))
+                .format("%Y-%m-%d")
+                .to_string()
+        };
+        let id = depot(&v, 1_000, &f(0));
+        {
+            let db = v.db().unwrap();
+            // a deposit three days ago, then the first fetched value yesterday
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
+                        amount_cents, currency, counterparty, purpose)
+                 VALUES (?1, 'b1', ?2, ?2, 300, 'EUR', '', '')",
+                params![id, f(3)],
+            )
+            .unwrap();
+            observe(&db, id, &f(1), 1_000, 1);
+        }
+        let h = v.balance_history(vec![id], 5).unwrap();
+        let values: Vec<i64> = h.iter().map(|p| p.balance_cents).collect();
+        // before the deposit (end of day -4) 700, from it 1 000: the booking history stays real
+        assert_eq!(values, vec![700, 1_000, 1_000, 1_000, 1_000]);
+    }
+
+    #[test]
+    fn a_future_balance_date_counts_as_today() {
+        let (_d, v) = open("depot-values-future");
+        let today = chrono::Local::now().date_naive();
+        let ahead = (today + chrono::Duration::days(2))
+            .format("%Y-%m-%d")
+            .to_string();
+        let id = depot(&v, 10_000, &ahead);
+        let h = v.depot_value_history(vec![id], 5).unwrap();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].value_cents, 10_000);
+    }
+
+    #[test]
+    fn a_former_depot_leaves_the_history_with_its_kind() {
+        let (_d, v) = open("depot-values-kind");
+        let today = chrono::Local::now().date_naive();
+        let f = |n: i64| {
+            (today - chrono::Duration::days(n))
+                .format("%Y-%m-%d")
+                .to_string()
+        };
+        let id = depot(&v, 500, &f(0));
+        observe(&v.db().unwrap(), id, &f(2), 400, 1);
+        assert_eq!(v.depot_value_history(vec![id], 5).unwrap().len(), 3);
+        v.set_account_kind(id, AccountKind::Checking).unwrap();
+        assert!(v.depot_value_history(vec![id], 5).unwrap().is_empty());
+        let n: i64 = v
+            .db()
+            .unwrap()
+            .query_row("SELECT count(*) FROM depot_values", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "derived again: no stale values");
+        // back to a depot: the history counts again
+        v.set_account_kind(id, AccountKind::Brokerage).unwrap();
+        assert_eq!(v.depot_value_history(vec![id], 5).unwrap().len(), 3);
     }
 
     #[test]

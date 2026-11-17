@@ -106,6 +106,23 @@ import GiroCrabCore
         #expect(DepotValueHistory.drawn(joined).count == 2)
     }
 
+    @Test func anUnchangedLastStretchStillReachesTheLastDay() {
+        let points = [Self.point("2026-03-01", 10), Self.point("2026-03-02", 20), Self.point("2026-03-03", 20),
+                      Self.point("2026-03-04", 20)]
+        #expect(DepotValueHistory.drawn(points).map(\.date) == ["2026-03-01", "2026-03-02", "2026-03-04"])
+        let flat = [Self.point("2026-03-01", 10), Self.point("2026-03-02", 10)]
+        #expect(DepotValueHistory.drawn(flat).count == 2, "a flat series is still a line")
+    }
+
+    @Test func aSumOverDepotsIsInEuroAndSaysWhatItLeavesOut() {
+        #expect(DepotValueHistory.chartCurrency(["USD"]) == "USD")
+        #expect(DepotValueHistory.chartCurrency([""]) == "EUR")
+        #expect(DepotValueHistory.chartCurrency(["EUR", "USD"]) == "EUR")
+        #expect(DepotValueHistory.excludedNote(["USD"]) == nil, "one depot is shown in its own currency")
+        #expect(DepotValueHistory.excludedNote(["EUR", ""]) == nil)
+        #expect(DepotValueHistory.excludedNote(["EUR", "USD"]) != nil)
+    }
+
     @Test func aLongSeriesIsThinnedAndKeepsItsFirstAndLastPoint() {
         let long = (0..<3_000).map { Self.point("d\($0)", Int64($0 + 1)) }
         let drawn = DepotValueHistory.drawn(long, maxPoints: 500)

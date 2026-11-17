@@ -21754,6 +21754,17 @@
         }
       }
     },
+    "Ohne Depots in anderer Währung (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluding depots in another currency (%lld)"
+          }
+        }
+      }
+    },
     "Ohne Empfänger, ohne gültige IBAN oder nicht in Euro" : {
       "extractionState" : "manual",
       "localizations" : {

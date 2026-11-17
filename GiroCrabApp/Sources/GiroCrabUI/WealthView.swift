@@ -539,7 +539,10 @@ struct WealthView: View {
                 }
             }
         }
-        let depotChart = AssetValueChart(content: depotChartContent, currency: "EUR", footnote: DepotValueHistory.footnote)
+        let depotCurrencies = s.depots.map(\.currency)
+        let depotChart = AssetValueChart(content: depotChartContent, currency: DepotValueHistory.chartCurrency(depotCurrencies),
+                                         footnote: DepotValueHistory.footnote,
+                                         excludedNote: DepotValueHistory.excludedNote(depotCurrencies))
         // title (and the period of the securities tab) stay on the left on every width
         let heading = VStack(alignment: .leading, spacing: 6) {
             if scope != .all { Text(scope.title).appFont(.title3, weight: .semibold).foregroundStyle(Theme.text) }
@@ -1122,10 +1125,11 @@ struct WealthView: View {
 
     // MARK: depot value history (the values the banks reported and imported values)
 
-    /// A new value or a sync reloads the history; the period only cuts what is shown.
+    /// A new value, a sync, an import or a merge (`reloadAll`) reloads the history; the period only cuts
+    /// what is shown.
     private func depotHistoryKey(_ s: WealthSummary) -> String {
         let depots = s.depots.map { "\($0.id):\($0.balanceCents):\($0.balanceDate)" }.joined(separator: ",")
-        return "\(depots)|" + syncStamp
+        return "\(depots)|\(model.assetClassificationVersion)|\(model.vaultRevision)|" + syncStamp
     }
 
     /// The chart of the securities header: the period menu above steers what it shows.

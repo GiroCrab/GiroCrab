@@ -3097,7 +3097,12 @@ fn value_history_of_a_depot_is_imported_as_delivered_and_once() {
         [30_000, 30_000, 30_000, 0],
         "no point for the 0 before the first value"
     );
-    assert_eq!(series("DE0000000001"), [500, 500, 0], "one closing zero");
+    // no valid ISIN: keyed by its name
+    assert_eq!(
+        series("name:verkauft ag"),
+        [500, 500, 0],
+        "one closing zero"
+    );
 
     // a second run adds nothing
     let r2 = v

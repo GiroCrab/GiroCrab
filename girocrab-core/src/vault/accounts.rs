@@ -679,12 +679,44 @@ impl Vault {
             day -= chrono::Duration::days(1);
         }
         out.reverse();
-        // depot values enter directly; a depot adds nothing before its first point. Without other
-        // accounts the history starts on the first day a depot has a value.
+        // Depot values enter directly. Before its first point a depot walks back over its own
+        // bookings from that first value (none: it stays at it), so it never jumps into a chart
+        // that cannot say "partial sum" (that is `depot_value_history`'s job). Without other
+        // accounts and bookings the history starts on the first day a depot has a value.
         if let Some(depots) = depot_series {
-            let first_known = depots.covered.iter().position(|&c| c > 0).unwrap_or(0);
+            let mut first_known = depots.covered.iter().position(|&c| c > 0).unwrap_or(0);
             for (p, v) in out.iter_mut().zip(&depots.values) {
                 p.balance_cents += v;
+            }
+            let db = self.db()?;
+            let mut stmt = db.prepare(&format!(
+                "SELECT t.booking_date, SUM(t.amount_cents) {}
+                  WHERE t.account_id = ?1 AND t.booking_date > ?2 AND t.booking_date <= ?3
+                    AND t.deleted_ms IS NULL AND {}
+                  GROUP BY t.booking_date",
+                super::balances::COUNTED_FROM,
+                super::balances::counts_sql()
+            ))?;
+            let from = start.format("%Y-%m-%d").to_string();
+            for (id, first_day, first_value) in &depots.firsts {
+                let Ok(first) = chrono::NaiveDate::parse_from_str(first_day, "%Y-%m-%d") else {
+                    continue;
+                };
+                let k = (first - start).num_days();
+                if k <= 0 {
+                    continue;
+                }
+                let booked: HashMap<String, i64> = stmt
+                    .query_map(params![id, from, first_day], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<Result<_, _>>()?;
+                if !booked.is_empty() {
+                    first_known = 0; // its walk back is real history
+                }
+                let mut value = *first_value;
+                for i in (0..k as usize).rev() {
+                    value -= booked.get(&out[i + 1].date).copied().unwrap_or(0);
+                    out[i].balance_cents += value;
+                }
             }
             if book_ids.is_empty() && valuation.is_none() {
                 out.drain(..first_known);
@@ -773,6 +805,8 @@ impl Vault {
                 what: trf("Konto {0}", &[&account_id]),
             });
         }
+        // a depot's value history counts only while it is one (#578)
+        crate::depot_values::rebuild(&db, account_id, None)?;
         Ok(())
     }
 
