@@ -443,15 +443,7 @@ pub(crate) fn store_fetch(
                 if !is_card {
                     continue;
                 }
-                let mut st = tx.prepare(
-                    "SELECT booking_date, amount_cents, counterparty || ' ' || purpose || ' ' || booking_text
-                     FROM transactions WHERE account_id = ?1 AND deleted_ms IS NULL ORDER BY booking_date, id",
-                )?;
-                let rows: Vec<(String, i64, String)> = st
-                    .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                    .collect::<Result<_, _>>()?;
-                drop(st);
-                if let Some(open) = open_card_balance(&rows) {
+                if let Some(open) = card_open_balance(&tx, id)? {
                     tx.execute(
                         "UPDATE accounts SET balance_cents = ?1 WHERE id = ?2",
                         params![open, id],
@@ -1210,6 +1202,7 @@ impl Vault {
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
+            OrderKind::Single,
             job,
             request.account_id,
         )))
@@ -1301,11 +1294,11 @@ impl Vault {
             batch_booking: request.batch_booking,
             execution_date: exec_date,
         };
-        Ok(Arc::new(TransferSession::new_batch(
+        Ok(Arc::new(TransferSession::new(
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
-            batch,
+            OrderKind::Batch(batch),
             summary,
             request.account_id,
         )))
@@ -1464,11 +1457,11 @@ impl Vault {
             execution_date: None,
             end_to_end_id: new_end_to_end_id(),
         };
-        Ok(Arc::new(TransferSession::new_standing(
+        Ok(Arc::new(TransferSession::new(
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
-            order,
+            OrderKind::Standing(order),
             summary,
             request.account_id,
         )))
@@ -1574,14 +1567,14 @@ impl Vault {
             collections,
             batch_booking: request.batch_booking,
         };
-        Ok(Arc::new(TransferSession::new_debit(
+        Ok(Arc::new(TransferSession::new(
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
-            DebitSubmission {
+            OrderKind::Debit(DebitSubmission {
                 job,
                 mandate_ids: ids,
-            },
+            }),
             summary,
             request.account_id,
         )))
@@ -1934,6 +1927,21 @@ fn adopt_unlinked(
 fn is_amex_name(s: &str) -> bool {
     let l = s.to_lowercase();
     l.contains("amex") || l.contains("american express")
+}
+
+/// `open_card_balance` of an account's live bookings; `None` without bookings.
+pub(crate) fn card_open_balance(
+    conn: &rusqlite::Connection,
+    account_id: i64,
+) -> CoreResult<Option<i64>> {
+    let mut st = conn.prepare_cached(
+        "SELECT booking_date, amount_cents, counterparty || ' ' || purpose || ' ' || booking_text
+         FROM transactions WHERE account_id = ?1 AND deleted_ms IS NULL ORDER BY booking_date, id",
+    )?;
+    let rows: Vec<(String, i64, String)> = st
+        .query_map([account_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(open_card_balance(&rows))
 }
 
 /// Open card balance (negative = owed) from `(date, amount_cents, text)` rows
