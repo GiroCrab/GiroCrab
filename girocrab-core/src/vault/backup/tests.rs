@@ -230,3 +230,9 @@ fn restore_keeps_this_devices_endpoints_pins_and_fetch_interval() {
     assert_eq!(get("fints.tan_medium.1"), None);
     assert_eq!(get("ui.note").as_deref(), Some("from backup"));
 }
+
+#[test]
+fn checkpoint_succeeds_on_an_idle_vault() {
+    let (src, _) = filled(1);
+    src.checkpoint().unwrap();
+}

@@ -505,7 +505,15 @@ impl Vault {
     /// so copying the file (e.g. to iCloud) never misses committed frames.
     pub fn checkpoint(&self) -> Result<(), CoreError> {
         let conn = self.db()?;
-        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        // Result row: (busy, WAL frames, frames checkpointed). busy = 1 means a
+        // reader blocked the checkpoint: the WAL is not flushed, so do not
+        // report success to a caller about to copy the main file.
+        let busy: i64 = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+        if busy != 0 {
+            return Err(CoreError::Database {
+                message: "wal_checkpoint: database busy, WAL not flushed".into(),
+            });
+        }
         Ok(())
     }
 
