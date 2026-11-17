@@ -1237,6 +1237,14 @@ fn document_temp_file(doc_id: i64, mime: String) -> R {
     // a view that shows this document already reads this file: replacing it
     // under the viewer breaks its page decoding
     if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+        // shown again = newest: the clean-up below keeps it while two other documents open
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc_o_nofollow())
+            .open(&path)
+        {
+            let _ = f.set_modified(std::time::SystemTime::now());
+        }
         return ok(path.display().to_string());
     }
     // few decrypted copies at a time, newest kept (viewers that still show an
@@ -1601,6 +1609,53 @@ mod tests {
         let r: Value = serde_json::from_str(&call_json(method, &args.to_string())).unwrap();
         assert!(r.get("err").is_none(), "{method}: {r}");
         r["ok"].clone()
+    }
+
+    /// Preview copies (`document_temp_file`): a shown document asked for again
+    /// counts as newest, so opening two others keeps it (#941 review); a vault
+    /// switch removes every copy.
+    #[test]
+    fn quicklook_copies_keep_the_shown_document() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let run = std::env::temp_dir().join(format!("girocrab-ql-{}", std::process::id()));
+        std::fs::create_dir_all(&run).unwrap();
+        let saved = std::env::var_os("XDG_RUNTIME_DIR");
+        std::env::set_var("XDG_RUNTIME_DIR", &run);
+        call_ok("open_demo", json!({}));
+        let docs = call_ok(
+            "list_all_documents",
+            json!({ "filter": { "account_id": null,
+            "doc_type": null, "search": null, "unlinked_only": false } }),
+        );
+        let docs = docs.as_array().unwrap();
+        assert!(docs.len() >= 4, "demo has documents");
+        let temp = |i: usize| {
+            let d = &docs[i];
+            let p = call_ok(
+                "document_temp_file",
+                json!({ "doc_id": d["id"], "mime_type": d["mime_type"] }),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::path::PathBuf::from(p.as_str().unwrap())
+        };
+        let shown = temp(0);
+        let older = temp(1);
+        assert_eq!(temp(0), shown, "a shown document reuses its copy");
+        let third = temp(2);
+        let fourth = temp(3);
+        assert!(shown.exists(), "the shown document survives two others");
+        assert!(!older.exists(), "the oldest copy goes");
+        assert!(third.exists() && fourth.exists());
+        call_ok("open_demo", json!({}));
+        assert!(
+            !shown.exists() && !fourth.exists(),
+            "a vault switch removes every copy"
+        );
+        match saved {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(run);
     }
 
     /// Own vault lifecycle with the keychain bypass: create, use, lock, reopen,
