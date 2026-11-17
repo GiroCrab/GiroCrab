@@ -2560,6 +2560,17 @@
         }
       }
     },
+    "API-Benutzername, API-Passwort und Signatur finden Sie bei PayPal unter Kontoeinstellungen › API-Zugriff (klassische NVP-API). Geeignet für Privatkonten mit bestehenden API-Zugangsdaten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You find the API username, API password and signature at PayPal under Account settings › API access (classic NVP API). Suited to personal accounts with existing API credentials."
+          }
+        }
+      }
+    },
     "API-Schlüssel (wird nicht gespeichert)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2578,6 +2589,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Store API Key in Vault"
+          }
+        }
+      }
+    },
+    "API-Signatur" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API signature"
           }
         }
       }
@@ -11302,6 +11324,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "One file per selected account to Downloads"
+          }
+        }
+      }
+    },
+    "Eine REST-App mit der Berechtigung „Transaction Search“ legen Sie auf developer.paypal.com an. PayPal gibt diese Berechtigung nur für Geschäftskonten frei." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create a REST app with the “Transaction Search” permission on developer.paypal.com. PayPal grants this permission to business accounts only."
           }
         }
       }
@@ -23627,6 +23660,17 @@
         }
       }
     },
+    "REST-App" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "REST app"
+          }
+        }
+      }
+    },
     "REWE | EDEKA | ALDI" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30337,6 +30381,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Connection"
+          }
+        }
+      }
+    },
+    "Zugang über" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Access via"
           }
         }
       }

@@ -22,6 +22,8 @@ struct AddBankSheet: View {
     /// Ways to reach the selected bank (FinTS, own API, Enable Banking).
     @State private var ways: [BankSearchResult] = []
     @State private var setupValues: [String: String] = [:]
+    /// PayPal: set up the classic API signature (personal accounts) instead of a REST app.
+    @State private var payPalSignature = true
     @State private var submit = AddBankSubmit()
     /// Shown while the search is empty (computed once, the directory is large).
     @State private var popular: [BankSearchResult] = []
@@ -149,9 +151,18 @@ struct AddBankSheet: View {
         let kind = s.connector ?? (s.mode == .finTs ? .finTsGeneric : .enableBanking)
         guard let d = bankCatalog().first(where: { $0.kind == kind }) else { return [] }
         // PayPal via API signature (classic NVP API) needs no REST app.
-        if kind == .payPal, model.settingEntry("paypal.api_signature")?.hasValue == true { return [] }
+        if kind == .payPal {
+            if model.settingEntry("paypal.api_signature")?.hasValue == true { return [] }
+            if payPalSignature {
+                return Self.payPalSignatureKeys.filter { !(model.settingEntry($0)?.hasValue ?? false) }
+            }
+        }
         return model.userRequiredKeys(for: d).filter { key in !(model.settingEntry(key)?.hasValue ?? false) }
     }
+
+    static let payPalSignatureKeys = ["paypal.api_username", "paypal.api_password", "paypal.api_signature"]
+
+    private var isPayPal: Bool { selected?.connector == .payPal }
 
     private var isLastStep: Bool {
         if selected?.id == Self.rah10Bank.id && step == .setup { return false }
@@ -420,6 +431,22 @@ struct AddBankSheet: View {
 
     private var setupStep: some View {
         Form {
+            if isPayPal {
+                Section {
+                    Picker("Zugang über", selection: $payPalSignature) {
+                        Text("API-Signatur").tag(true)
+                        Text("REST-App").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                } footer: {
+                    // two Text literals, not a ternary of strings: those would not be localized
+                    (payPalSignature
+                        ? Text("API-Benutzername, API-Passwort und Signatur finden Sie bei PayPal unter Kontoeinstellungen › API-Zugriff (klassische NVP-API). Geeignet für Privatkonten mit bestehenden API-Zugangsdaten.")
+                        : Text("Eine REST-App mit der Berechtigung „Transaction Search“ legen Sie auf developer.paypal.com an. PayPal gibt diese Berechtigung nur für Geschäftskonten frei."))
+                        .appFont(.caption).foregroundStyle(Theme.secondary)
+                        .leadingFooter()
+                }
+            }
             let keys = missingSettings
             if keys.contains(where: { BankSetupSheet.enableBankingKeys.contains($0) }) {
                 EnableBankingSetupSection(values: $setupValues)
@@ -455,6 +482,7 @@ struct AddBankSheet: View {
                     URL(string: "https://www.fints.org/de/hersteller/produktregistrierung")!,
                     "FinTS-Programme brauchen eine kostenlose Produktregistrierung bei der Deutschen Kreditwirtschaft. Sie dauert meist einige Tage.")
         }
+        if isPayPal && payPalSignature { return nil }
         if let k = selected?.connector, let link = KindAddForm.credentialsLink(k) {
             return (link.title, link.url,
                     "Die Zugangsdaten erstellen Sie einmalig bei Ihrer Bank. GiroCrab speichert sie verschlüsselt im Tresor.")

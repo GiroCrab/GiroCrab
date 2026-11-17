@@ -11,6 +11,7 @@
 //! `PAYPAL_NVP_RAW=1` instead prints the unfiltered rows of one TransactionSearch
 //! since `SINCE` (type, status, amounts; name and e-mail only as present/absent),
 //! to see what PayPal sends for a booking that is shown oddly.
+//! `PAYPAL_NVP_CLASS=BalanceAffecting` (or another TRANSACTIONCLASS) filters it.
 use std::collections::HashMap;
 
 use girocrab_core::connectors::paypal::PayPalConnector;
@@ -112,7 +113,12 @@ async fn raw(ctx: &ConnectContext) {
     )
     .expect("http client");
     let since = chrono::NaiveDate::parse_from_str(&ctx.since, "%Y-%m-%d").expect("SINCE");
-    let rows = match nvp.raw_rows(since).await {
+    // e.g. PAYPAL_NVP_CLASS=BalanceAffecting (TRANSACTIONCLASS of TransactionSearch)
+    let class = std::env::var("PAYPAL_NVP_CLASS").ok();
+    if let Some(c) = &class {
+        println!("TRANSACTIONCLASS={c}");
+    }
+    let rows = match nvp.raw_rows(since, class.as_deref()).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Abruf fehlgeschlagen: {e}");

@@ -24,6 +24,11 @@ use crate::secret::SecretString;
 const VERSION: &str = "204.0";
 /// Warning code of a TransactionSearch answer cut at 100 rows.
 const TRUNCATED: &str = "11002";
+/// Most rows one `TransactionSearch` returns (PayPal's documented limit).
+const MAX_ROWS: usize = 100;
+/// External id prefix of temporary holds: stored as provisional bookings
+/// (`FetchResult::hold_prefix`), dropped once settled or no longer reported.
+pub const HOLD_PREFIX: &str = "pending-hold-paypal-";
 /// Window of the first request per step; halved on truncation.
 const WINDOW_DAYS: i64 = 31;
 
@@ -53,6 +58,14 @@ fn ack_ok(r: &Nvp) -> bool {
         r.get("ACK").map(String::as_str),
         Some("Success") | Some("SuccessWithWarning")
     )
+}
+
+/// Whether more rows may exist than this answer holds: warning 11002, or the
+/// documented limit reached without it (the warning is not documented for
+/// `TransactionSearch`, so the row count decides too).
+fn is_truncated(r: &Nvp) -> bool {
+    error_codes(r).contains(&TRUNCATED)
+        || (0..MAX_ROWS).all(|i| r.contains_key(&format!("L_TRANSACTIONID{i}")))
 }
 
 fn error_codes(r: &Nvp) -> Vec<&str> {
@@ -101,7 +114,7 @@ impl NvpClient {
         form.extend(params.iter().map(|(k, v)| (*k, v.as_str())));
         let resp = self.client.post(&self.endpoint).form(&form).send().await?;
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = super::read_text_limited(resp).await.unwrap_or_default();
         let r = parse_nvp(&body);
         if !status.is_success() && r.is_empty() {
             return Err(CoreError::Bank {
@@ -139,7 +152,7 @@ impl NvpClient {
             let mut end = (start + Duration::days(WINDOW_DAYS)).min(now);
             loop {
                 let r = self.search(start, end).await?;
-                let truncated = error_codes(&r).contains(&TRUNCATED);
+                let truncated = is_truncated(&r);
                 // Halve until the window fits; below one hour take what came.
                 if truncated && end - start > Duration::hours(1) {
                     end = start + (end - start) / 2;
@@ -158,15 +171,40 @@ impl NvpClient {
         Ok((out, withdrawn))
     }
 
+    /// Fills the purpose of payments from `GetTransactionDetails` (transaction id, subject, note,
+    /// items, invoice number: `TransactionSearch` has none of them).
+    /// One request per booking, so only for ids not in `done` (ids already looked
+    /// up in an earlier sync); those looked up now are appended to it. A failed
+    /// lookup keeps the purpose from the search and is retried next time.
+    pub async fn fill_details(&self, txs: &mut [RemoteTransaction], done: &mut Vec<String>) {
+        for t in txs.iter_mut() {
+            if !wants_details(t) || done.contains(&t.external_id) {
+                continue;
+            }
+            let Ok(d) = self
+                .call(
+                    "GetTransactionDetails",
+                    &[("TRANSACTIONID", t.external_id.clone())],
+                )
+                .await
+            else {
+                continue;
+            };
+            t.purpose = with_search_purpose(&purpose_from_details(&t.external_id, &d), &t.purpose);
+            done.push(t.external_id.clone());
+        }
+    }
+
     /// Diagnostics (`examples/paypal_nvp.rs`, `PAYPAL_NVP_RAW=1`): the rows of one
     /// `TransactionSearch` from `start` until now, each as its fields without the
     /// index suffix (`L_TYPE`, `L_STATUS` …), unfiltered.
-    pub async fn raw_rows(&self, start: NaiveDate) -> CoreResult<Vec<Nvp>> {
+    /// `class`: optional `TRANSACTIONCLASS` filter (e.g. `BalanceAffecting`).
+    pub async fn raw_rows(&self, start: NaiveDate, class: Option<&str>) -> CoreResult<Vec<Nvp>> {
         let from = start
             .and_hms_opt(0, 0, 0)
             .map(|d| d.and_utc())
             .unwrap_or_else(Utc::now);
-        let r = self.search(from, Utc::now()).await?;
+        let r = self.search_with(from, Utc::now(), class).await?;
         let mut rows = Vec::new();
         for i in 0.. {
             let suffix = i.to_string();
@@ -190,12 +228,21 @@ impl NvpClient {
     }
 
     async fn search(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> CoreResult<Nvp> {
+        self.search_with(start, end, None).await
+    }
+
+    async fn search_with(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        class: Option<&str>,
+    ) -> CoreResult<Nvp> {
         let fmt = |d: DateTime<Utc>| d.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.call(
-            "TransactionSearch",
-            &[("STARTDATE", fmt(start)), ("ENDDATE", fmt(end))],
-        )
-        .await
+        let mut params = vec![("STARTDATE", fmt(start)), ("ENDDATE", fmt(end))];
+        if let Some(c) = class.filter(|c| !c.is_empty()) {
+            params.push(("TRANSACTIONCLASS", c.to_string()));
+        }
+        self.call("TransactionSearch", &params).await
     }
 }
 
@@ -225,6 +272,67 @@ pub(crate) fn accounts_from_balance(r: &Nvp, owner: &str) -> Vec<RemoteAccount> 
             balance_cents: amount,
             balance_date: super::today(),
         });
+    }
+    out
+}
+
+/// Most ids remembered as "details looked up" in the connector state.
+pub const MAX_DONE_IDS: usize = 2000;
+
+/// Payments get their purpose from `GetTransactionDetails`; funding transfers,
+/// currency conversions, unnamed internal entries and holds have none worth a request.
+fn wants_details(t: &RemoteTransaction) -> bool {
+    let k = t.booking_text.as_str();
+    !(k.starts_with("Transfer")
+        || k.starts_with("Currency Conversion")
+        || k == UNNAMED_TYPE
+        || t.external_id.starts_with(HOLD_PREFIX))
+}
+
+/// Purpose from a `GetTransactionDetails` answer: the PayPal transaction id (what
+/// PayPal's mails and support quote), subject, note, item names and invoice
+/// number, each once, joined by " / ". `CUSTOM` is left out: merchants and payment
+/// providers put internal references there (e.g. `acct_…:pi_…`).
+pub(crate) fn purpose_from_details(id: &str, d: &Nvp) -> String {
+    let field = |k: &str| d.get(k).map(|v| v.trim().to_string()).unwrap_or_default();
+    let items: Vec<String> = (0..)
+        .map_while(|i| d.get(&format!("L_NAME{i}")))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .collect();
+    let mut parts: Vec<String> = Vec::new();
+    for p in [
+        id.trim().to_string(),
+        field("SUBJECT"),
+        field("NOTE"),
+        items.join(", "),
+        field("INVNUM"),
+    ] {
+        if !p.is_empty() && !parts.contains(&p) {
+            parts.push(p);
+        }
+    }
+    parts.join(" / ")
+}
+
+/// `details` as the purpose, followed by what the search purpose had: the
+/// counterparty's e-mail address (" / …", when not already in `details`) and the
+/// fee note (" · Gebühr …").
+fn with_search_purpose(details: &str, search_purpose: &str) -> String {
+    let mut out = details.to_string();
+    let mut fee = None;
+    for p in search_purpose.split(" · ").map(str::trim) {
+        if p.starts_with("Gebühr ") {
+            fee = Some(p);
+        } else if !p.is_empty() && !out.split(" / ").any(|d| d == p) {
+            if !out.is_empty() {
+                out.push_str(" / ");
+            }
+            out.push_str(p);
+        }
+    }
+    if let Some(fee) = fee {
+        out = format!("{out} · {fee}");
     }
     out
 }
@@ -293,7 +401,12 @@ pub(crate) fn transactions_from_search(r: &Nvp) -> (Vec<RemoteTransaction>, Vec<
         }
         out.push(RemoteTransaction {
             account_ref: format!("paypal:{currency}"),
-            external_id: id.clone(),
+            // a temporary hold reserves money but books nothing (yet)
+            external_id: if kind == "Temporary Hold" {
+                format!("{HOLD_PREFIX}{id}")
+            } else {
+                id.clone()
+            },
             booking_date: date.clone(),
             value_date: date,
             amount_cents,
@@ -410,6 +523,85 @@ mod tests {
                 ("paypal:EUR".to_string(), "P2".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn details_make_the_purpose() {
+        let d = parse_nvp(
+            "SUBJECT=&NOTE=&INVNUM=1234567890123&CUSTOM=ab12cd-34ef-56gh\
+             &L_NAME0=Beispielartikel&L_NAME1=Versand&ACK=Success",
+        );
+        // transaction id first, no CUSTOM
+        assert_eq!(
+            purpose_from_details("9AB12345CD678901E", &d),
+            "9AB12345CD678901E / Beispielartikel, Versand / 1234567890123"
+        );
+        // repeated values once, an empty answer leaves the id
+        let d = parse_nvp("SUBJECT=Abo&NOTE=Abo&ACK=Success");
+        assert_eq!(purpose_from_details("T1", &d), "T1 / Abo");
+        assert_eq!(purpose_from_details("T1", &parse_nvp("ACK=Success")), "T1");
+        // the e-mail address and fee note of the search stay
+        assert_eq!(
+            with_search_purpose("T1 / Rechnung 1", "shop@example.com · Gebühr -0,35 €"),
+            "T1 / Rechnung 1 / shop@example.com · Gebühr -0,35 €"
+        );
+        assert_eq!(
+            with_search_purpose("T1 / Rechnung 1", "shop@example.com"),
+            "T1 / Rechnung 1 / shop@example.com"
+        );
+        assert_eq!(
+            with_search_purpose("T1", "Gebühr -0,35 €"),
+            "T1 · Gebühr -0,35 €"
+        );
+        assert_eq!(with_search_purpose("T1", ""), "T1");
+    }
+
+    #[test]
+    fn only_payments_ask_for_details() {
+        let t = |text: &str, id: &str| RemoteTransaction {
+            booking_text: text.into(),
+            external_id: id.into(),
+            ..Default::default()
+        };
+        assert!(wants_details(&t("Purchase", "X1")));
+        assert!(wants_details(&t("Payment", "X2")));
+        assert!(!wants_details(&t("Transfer", "X3")));
+        assert!(!wants_details(&t("Transfer (charge)", "X4")));
+        assert!(!wants_details(&t("Currency Conversion (debit)", "X5")));
+        assert!(!wants_details(&t(UNNAMED_TYPE, "X6")));
+        assert!(!wants_details(&t(
+            "Temporary Hold",
+            &format!("{HOLD_PREFIX}X7")
+        )));
+    }
+
+    #[test]
+    fn a_temporary_hold_is_a_provisional_booking() {
+        let r = parse_nvp(
+            "L_TIMESTAMP0=2026%2d11%2d10T08%3a15%3a00Z&L_TYPE0=Temporary%20Hold&L_NAME0=Beispiel%20Shop&L_TRANSACTIONID0=H1&L_STATUS0=Completed&L_AMT0=%2d30%2e00&L_NETAMT0=%2d30%2e00&L_CURRENCYCODE0=EUR&L_TIMESTAMP1=2026%2d11%2d10T08%3a15%3a01Z&L_TYPE1=Authorization&L_NAME1=Beispiel%20Shop&L_TRANSACTIONID1=A1&L_STATUS1=Completed&L_AMT1=%2d30%2e00&L_NETAMT1=%2d30%2e00&L_CURRENCYCODE1=EUR&ACK=Success",
+        );
+        let (t, gone) = transactions_from_search(&r);
+        assert!(gone.is_empty());
+        // the authorisation is left out, the hold becomes a provisional booking
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].external_id, format!("{HOLD_PREFIX}H1"));
+        assert!(t[0].external_id.starts_with("pending-"));
+        assert_eq!(t[0].amount_cents, -3000);
+    }
+
+    #[test]
+    fn a_full_page_counts_as_truncated_without_the_warning() {
+        let page: String = (0..MAX_ROWS)
+            .map(|i| format!("L_TRANSACTIONID{i}=T{i}&"))
+            .collect();
+        assert!(is_truncated(&parse_nvp(&format!("{page}ACK=Success"))));
+        let short: String = (0..MAX_ROWS - 1)
+            .map(|i| format!("L_TRANSACTIONID{i}=T{i}&"))
+            .collect();
+        assert!(!is_truncated(&parse_nvp(&format!("{short}ACK=Success"))));
+        assert!(is_truncated(&parse_nvp(
+            "ACK=SuccessWithWarning&L_ERRORCODE0=11002"
+        )));
     }
 
     #[test]
