@@ -591,6 +591,14 @@ pub struct BookingFilter {
     #[uniffi(default)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub untagged_only: bool,
+    /// Only bookings whose absolute amount (sign ignored) is at least this many cents (#357).
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub amount_min_cents: Option<i64>,
+    /// Only bookings whose absolute amount (sign ignored) is at most this many cents (#357).
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub amount_max_cents: Option<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
