@@ -27,10 +27,9 @@ final class GiroCodeTests: XCTestCase {
     func testImageMatchesCoreMatrix() throws {
         let payload = try XCTUnwrap(GiroCode.payload(name: "A", iban: "DE02120300000000202051", amountCents: 100, purpose: ""))
         let m = try XCTUnwrap(girocodeMatrix(payload: payload))
-        XCTAssertEqual(try XCTUnwrap(GiroCode.image(for: payload, pixelsPerModule: 1)).width, Int(m.width))
         let cg = try XCTUnwrap(GiroCode.image(for: payload))
-        XCTAssertEqual(cg.width, Int(m.width) * 10)
-        XCTAssertEqual(cg.height, Int(m.width) * 10)
+        XCTAssertEqual(cg.width, Int(m.width) * GiroCode.pixelsPerModule)
+        XCTAssertEqual(cg.height, Int(m.width) * GiroCode.pixelsPerModule)
     }
 
     /// Generated image → QR scanner → GiroCrab's own GiroCode parser.

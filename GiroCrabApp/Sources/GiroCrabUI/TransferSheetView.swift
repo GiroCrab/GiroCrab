@@ -107,10 +107,10 @@ struct TransferSheetView: View {
                 TransferKindPicker(batch: false).padding(.bottom, 10)
             }
             Divider()
-            if step == .form {
-                form(draft: $model.transferDraft)
-            } else {
-                confirmation
+            switch step {
+            case .form: form(draft: $model.transferDraft)
+            case .review: sendConfirmation
+            case .giroCode: giroCodeView
             }
             if model.transferError != nil || model.transferInstantDeclined != nil {
                 VStack(alignment: .leading, spacing: 8) {
@@ -422,10 +422,6 @@ struct TransferSheetView: View {
 
     // MARK: confirmation
 
-    @ViewBuilder private var confirmation: some View {
-        if step == .giroCode { giroCodeView } else { sendConfirmation }
-    }
-
     /// The transfer as EPC QR code for the bank's app: the only way out for
     /// read-only accounts (e.g. C24), on request for sendable ones.
     private var giroCodeView: some View {
@@ -446,9 +442,7 @@ struct TransferSheetView: View {
                 .frame(width: 200, height: 200)
                 .sensitive() // the code carries name, IBAN, amount and purpose
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(Money.format(cents ?? 0))
-                        .appFont(.largeTitle, weight: .semibold, monospacedDigit: true)
-                        .sensitive(.amounts)
+                    amountHeadline
                     summaryRow("An", d.name)
                     summaryRow("IBAN", d.iban)
                     if !bicText.isEmpty { summaryRow("BIC", bicText.uppercased()) }
@@ -499,15 +493,20 @@ struct TransferSheetView: View {
         .controlSize(.small)
     }
 
+    /// The amount at the top of the review and the GiroCode step.
+    private var amountHeadline: some View {
+        Text(Money.format(cents ?? 0))
+            .appFont(.largeTitle, weight: .semibold, monospacedDigit: true)
+            .sensitive(.amounts)
+    }
+
     /// Read-only review in the same grouped style as the form: the amount first,
     /// then recipient, payment and execution, each as label + value.
     private var sendConfirmation: some View {
         let d = model.transferDraft
         return Form {
             Section {
-                Text(Money.format(cents ?? 0))
-                    .appFont(.largeTitle, weight: .semibold, monospacedDigit: true)
-                    .sensitive(.amounts)
+                amountHeadline
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
             }
@@ -602,7 +601,8 @@ struct TransferSheetView: View {
                     Button("Als GiroCode anzeigen") { leaveForm(to: .giroCode) }
                         .disabled(!canReview || giroCodePayload == nil)
                 }
-                Button(canSend ? "Weiter" : "GiroCode erstellen") { leaveForm(to: canSend ? .review : .giroCode) }
+                let next: Step = canSend ? .review : .giroCode
+                Button(next == .review ? "Weiter" : "GiroCode erstellen") { leaveForm(to: next) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(!canReview || (canSend && !pinStored && model.transferDraft.pin.isEmpty)

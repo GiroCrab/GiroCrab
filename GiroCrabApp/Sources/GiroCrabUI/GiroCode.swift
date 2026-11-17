@@ -14,23 +14,21 @@ enum GiroCode {
         girocodePayload(name: name, iban: iban, bic: bic, amountCents: amountCents, purpose: purpose)
     }
 
-    /// QR image (error correction "M", as the EPC guideline requires), quiet zone
-    /// included, `pixelsPerModule` pixels per module: drawn at about its own size,
-    /// the code stays sharp even where `.interpolation(.none)` is ignored
-    /// (screenshots, bug report capture, printing).
-    static func image(for payload: String, pixelsPerModule: Int = 10) -> CGImage? {
-        guard let m = girocodeMatrix(payload: payload), pixelsPerModule > 0 else { return nil }
+    /// Pixels per module: drawn at about its own size, the code stays sharp even
+    /// where `.interpolation(.none)` is ignored (screenshots, bug report capture,
+    /// printing), and the exported PNG is large enough to scan.
+    static let pixelsPerModule = 10
+
+    /// QR image (error correction "M", as the EPC guideline requires), quiet zone included.
+    static func image(for payload: String) -> CGImage? {
+        guard let m = girocodeMatrix(payload: payload) else { return nil }
         let n = Int(m.width), scale = pixelsPerModule, side = n * scale
-        var pixels = [UInt8](repeating: 255, count: side * side)
+        var pixels = Data(capacity: side * side)
         for y in 0..<n {
-            for x in 0..<n where m.modules[y * n + x] {
-                for row in (y * scale)..<((y + 1) * scale) {
-                    pixels.replaceSubrange((row * side + x * scale)..<(row * side + (x + 1) * scale),
-                                           with: repeatElement(0, count: scale))
-                }
-            }
+            let row = m.modules[(y * n)..<((y + 1) * n)].flatMap { repeatElement(UInt8($0 ? 0 : 255), count: scale) }
+            for _ in 0..<scale { pixels.append(contentsOf: row) }
         }
-        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
+        guard let provider = CGDataProvider(data: pixels as CFData) else { return nil }
         return CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: side,
                        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
