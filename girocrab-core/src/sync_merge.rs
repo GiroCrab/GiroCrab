@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::models::ConnectorKind;
+use crate::schema::{has_column, has_table};
 
 /// Fixed namespace for the deterministic (v5) uuids.
 const NAMESPACE: Uuid = Uuid::from_bytes([
@@ -64,12 +65,7 @@ const COLUMNS: &[(&str, &str, &str)] = &[
 /// Repair step up to schema 9 (`schema::repair_to_v8`); new changes go in `schema.rs`.
 pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
     for (table, col, def) in COLUMNS {
-        let has: i64 = conn.query_row(
-            "SELECT count(*) FROM pragma_table_info(?1) WHERE name = ?2",
-            [table, col],
-            |r| r.get(0),
-        )?;
-        if has == 0 {
+        if !has_column(conn, "main", table, col)? {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {col} {def};"))?;
         }
     }
@@ -251,11 +247,7 @@ pub(crate) fn fill_missing_uuids(conn: &Connection) -> CoreResult<()> {
     }
     // rules
     // runs during migrations too: before step 24 the column is the account set
-    let has_set: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'rule_accounts')",
-        [],
-        |r| r.get(0),
-    )?;
+    let has_set = has_table(conn, "main", "rule_accounts")?;
     let accounts = if has_set {
         "COALESCE((SELECT group_concat(account_id) FROM rule_accounts
                    WHERE rule_id = rules.id), account_id)"
@@ -1115,13 +1107,7 @@ type RawRule = (
 fn load_rules(conn: &Connection, schema: &str) -> CoreResult<Vec<RawRule>> {
     // includes soft-deleted rows
     // a vault from before step 24 has no `rule_accounts`: its column is the set
-    let has_set: bool = conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM {schema}.sqlite_master WHERE name = 'rule_accounts')"
-        ),
-        [],
-        |r| r.get(0),
-    )?;
+    let has_set = has_table(conn, schema, "rule_accounts")?;
     let accounts = if has_set {
         format!(
             "COALESCE((SELECT group_concat(account_id) FROM {schema}.rule_accounts

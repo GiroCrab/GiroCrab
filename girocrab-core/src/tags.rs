@@ -21,6 +21,7 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::tr;
+use crate::schema::has_column;
 use crate::vault::Vault;
 
 pub(crate) mod merge;
@@ -55,12 +56,7 @@ const MAX_NAME: usize = 64;
 /// `transactions.tags_ms`. Idempotent like the steps before it.
 pub(crate) fn tags_tables(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(TAGS)?;
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM pragma_table_info('transactions') WHERE name = 'tags_ms'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has == 0 {
+    if !has_column(conn, "main", "transactions", "tags_ms")? {
         conn.execute_batch(
             "ALTER TABLE transactions ADD COLUMN tags_ms INTEGER NOT NULL DEFAULT 0;",
         )?;

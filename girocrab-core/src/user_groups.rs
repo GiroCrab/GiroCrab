@@ -60,6 +60,7 @@ use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::{Account, UserGroup};
+use crate::schema::has_column;
 use crate::vault::Vault;
 
 const SCHEMA: &str = "
@@ -209,23 +210,13 @@ pub fn account_color_palette() -> Vec<String> {
 pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(SCHEMA)?;
     for (col, def) in ACCOUNT_COLUMNS {
-        let has: i64 = conn.query_row(
-            "SELECT count(*) FROM pragma_table_info('accounts') WHERE name = ?1",
-            [col],
-            |r| r.get(0),
-        )?;
-        if has == 0 {
+        if !has_column(conn, "main", "accounts", col)? {
             conn.execute_batch(&format!("ALTER TABLE accounts ADD COLUMN {col} {def};"))?;
         }
     }
     // added during review, for vaults that already had the first v7 table
     for (col, def) in GROUP_COLUMNS {
-        let has: i64 = conn.query_row(
-            "SELECT count(*) FROM pragma_table_info('user_groups') WHERE name = ?1",
-            [col],
-            |r| r.get(0),
-        )?;
-        if has == 0 {
+        if !has_column(conn, "main", "user_groups", col)? {
             conn.execute_batch(&format!("ALTER TABLE user_groups ADD COLUMN {col} {def};"))?;
             // (a parent was never chosen in such a vault: its stamp stays 0)
             if col.ends_with("_ms") && *col != "parent_ms" {

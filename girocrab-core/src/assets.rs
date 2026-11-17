@@ -31,6 +31,7 @@ use crate::dates::{iso, now_ms, parse_iso};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::*;
+use crate::schema::{has_column, has_table};
 use crate::vault::Vault;
 
 pub(crate) const ASSET_SCHEMA: &str = "
@@ -107,14 +108,6 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
         }
     }
     Ok(())
-}
-
-fn has_column(conn: &Connection, schema: &str, table: &str, col: &str) -> CoreResult<bool> {
-    Ok(conn.query_row(
-        "SELECT count(*) FROM pragma_table_info(?1, ?2) WHERE name = ?3",
-        params![table, schema, col],
-        |r| r.get::<_, i64>(0),
-    )? > 0)
 }
 
 /// Sets a dated point (`asset_quantities.quantity` / `asset_values.value_cents`),
@@ -898,14 +891,15 @@ fn store_item(
 /// along, so a deleted item or point does not come back. Vaults of older
 /// development builds lack the stamps: their rows count as oldest.
 pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> CoreResult<()> {
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM other.sqlite_master WHERE type = 'table'
-           AND name IN ('asset_items', 'asset_quantities', 'asset_values', 'asset_prices')",
-        [],
-        |r| r.get(0),
-    )?;
-    if has < 4 {
-        return Ok(());
+    for table in [
+        "asset_items",
+        "asset_quantities",
+        "asset_values",
+        "asset_prices",
+    ] {
+        if !has_table(conn, "other", table)? {
+            return Ok(());
+        }
     }
     // a column of `other`, or a stand-in when its vault predates it
     let col = |table: &str, name: &str, fallback: &'static str| -> CoreResult<String> {

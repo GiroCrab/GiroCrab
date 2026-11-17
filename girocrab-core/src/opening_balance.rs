@@ -24,6 +24,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
+use crate::schema::has_table;
 use crate::vault::Vault;
 
 /// Accounts whose balance is computed from bookings (SQL condition on `a`).
@@ -210,12 +211,7 @@ pub(crate) fn calibrate_in(
 
 /// Vault merge: the newer edit per account wins; then refreshes balances.
 pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> CoreResult<()> {
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM other.sqlite_master WHERE type = 'table' AND name = 'opening_balances'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has > 0 {
+    if has_table(conn, "other", "opening_balances")? {
         let mut st = conn.prepare(
             "SELECT account_id, opening_date, opening_cents, updated_ms FROM other.opening_balances",
         )?;

@@ -20,6 +20,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::*;
 use crate::rules::RuleRow;
+use crate::schema::has_table;
 use crate::search_expr::SearchExpr;
 use crate::vault::{sql_int_list, Vault, LIVE_BOOKINGS_SQL};
 
@@ -335,12 +336,7 @@ fn manual_loan_ids(conn: &Connection) -> CoreResult<Vec<i64>> {
 /// matches, then refreshes every manual loan's balance. Called after every
 /// import (via `apply_rules_inner`) and after loan edits.
 pub(crate) fn apply_loan_rules(conn: &Connection) -> CoreResult<u32> {
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'loan_terms'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has == 0 {
+    if !has_table(conn, "main", "loan_terms")? {
         return Ok(0);
     }
     let loans: Vec<(i64, SearchExpr)> = {
@@ -383,12 +379,7 @@ pub(crate) fn apply_loan_rules(conn: &Connection) -> CoreResult<u32> {
 /// Takes over manual loans and their hand-made links from an attached vault
 /// (`other`). Rule links are re-derived afterwards.
 pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> CoreResult<()> {
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM other.sqlite_master WHERE type = 'table' AND name IN ('loan_terms', 'loan_links')",
-        [],
-        |r| r.get(0),
-    )?;
-    if has < 2 {
+    if !has_table(conn, "other", "loan_terms")? || !has_table(conn, "other", "loan_links")? {
         return Ok(());
     }
     {
