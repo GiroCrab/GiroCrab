@@ -8915,6 +8915,17 @@
         }
       }
     },
+    "Der Schlüssel entschlüsselt Ihren gesamten Tresor. Er liegt 60 Sekunden in der Zwischenablage, nicht als Text, und lässt sich nur mit „Aus Zwischenablage einfügen“ in GiroCrab verwenden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The key decrypts your entire vault. It stays on the clipboard for 60 seconds, not as text, and can only be used with “Paste from Clipboard” in GiroCrab."
+          }
+        }
+      }
+    },
     "Der Schlüssel für den vorhandenen Tresor fehlt im Schlüsselbund. Wenn Sie den iCloud-Schlüsselbund nutzen, warten Sie, bis er synchronisiert ist, und versuchen Sie es erneut. Es wurde kein neuer Schlüssel angelegt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24061,6 +24072,17 @@
         }
       }
     },
+    "Schlüssel kopieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy key"
+          }
+        }
+      }
+    },
     "Schlüssel kopiert (60 s)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26715,6 +26737,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copy vault key"
+          }
+        }
+      }
+    },
+    "Tresor-Schlüssel kopieren?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy vault key?"
           }
         }
       }
