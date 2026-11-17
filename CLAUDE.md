@@ -185,6 +185,7 @@ The PR card (`tools/export-ai-provenance.py`, `docs/ai-transparency.md`) reads o
   `GiroCrabApp/**` and the core. The cheap lint steps of `rust` always run. In PRs Debian/Flatpak build only amd64/x86_64 (arm64/aarch64 on main).
 - `rust` (fmt, lints, clippy, `cargo test --workspace`) runs on Ubuntu; the macOS-only branches of the local API are tested in `swift`.
   Only `main` writes the Rust cache (`save-if`), PRs restore it: the repository's 10 GB Actions cache is small, branch caches evicted main's.
+  `cache-cleanup.yml` deletes a PR's caches (`refs/pull/<N>/merge`) when it is closed or merged. Check the size: `gh api repos/GiroCrab/GiroCrab/actions/cache/usage`.
 - Branch from `upstream/main`, push to `origin` (fork), PR against `GiroCrab/GiroCrab`. PR title
   and description in German, conventional-commit prefix (`feat:`, `fix:`, `perf:`, `ci:`, `docs:`).
 - The local xcframework is whatever branch last ran `./build-xcframework.sh`. Before trusting
