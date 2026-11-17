@@ -1447,10 +1447,8 @@ impl Vault {
             return Ok(out);
         }
         out.requested = true;
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .user_agent(concat!("GiroCrab/", env!("CARGO_PKG_VERSION")))
-            .build()?;
+        let client =
+            crate::connectors::client_builder(std::time::Duration::from_secs(15)).build()?;
         for (symbol, from, to) in plan {
             let resp = client
                 .get(FRANKFURTER_URL)
