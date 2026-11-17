@@ -52,7 +52,6 @@ pub struct ExportCsvColumns {
 }
 
 /// Excel CSV (UTF-8 BOM, semicolon, decimal comma, CRLF).
-#[uniffi::export]
 pub fn export_csv(
     rows: Vec<ExportCsvRow>,
     columns: ExportCsvColumns,
