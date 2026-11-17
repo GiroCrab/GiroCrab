@@ -113,9 +113,13 @@ depot_observations(
 - **Abruf** (`observations::record_fetch`, aus `connectors/persist.rs` nach allen Saldo-Änderungen): der Kontostand als
   Depotwert (0 neben Positionen = deren Summe) und jede Position, in der Kontowährung. Geschrieben wird nur bei einer
   Änderung gegenüber der letzten Abruf-Zeile oder an einem neuen Bewertungstag. Kam der Bestand (auch ein leerer), ist
-  eine 0 bestätigt und eine fehlende Position bekommt eine 0 (Verkauf); Positionen, die nur ein Import unter `cash` oder
-  `name:` kennt, werden nicht geschlossen. Ist der Kontostand als unbekannt markiert, entsteht nichts. Bewertungstag:
+  eine 0 bestätigt, und eine Position des bisherigen Bestands, die fehlt, bekommt eine 0 (Verkauf), sofern ihr letzter
+  Wert von einem Abruf stammt: eine Position, die nur ein Import kennt, schließt der Abruf nicht. Ist der Kontostand als
+  unbekannt markiert, entstehen nur die Positionen (mit dem Abruftag) und kein Depotwert. Bewertungstag:
   `accounts.balance_date`, bei fehlendem, ungültigem oder künftigem Datum der Abruftag (`date_assumed`).
+- Positionsschlüssel: eine gültige ISIN (`normalized_isin`), sonst `cash` oder der normalisierte Name.
+- Wird ein importiertes Konto mit dem Bankkonto zusammengeführt (Zwilling) oder ein doppeltes Konto aufgelöst, ziehen
+  seine Beobachtungen mit (`depot_values::move_account`). Ändert sich die Kontoart, wird `depot_values` neu abgeleitet.
 - **Import** (`observations::record_import`, Datenbank-Import `portfolio_chart`): je Tag der Depotwert und der Wert
   jeder Position, verkaufte eingeschlossen, unverändert mit eigener Währung und Quellzeile. Nullwerte gelten als
   bestätigt. Ein zweiter Lauf fügt nichts hinzu.
@@ -160,8 +164,11 @@ depot_values(
 
 **Wer liest**
 - `Vault::depot_value_history(account_ids, days)`: Diagramm der Depotansicht und von Vermögen › Wertpapiere
-  (`DepotValueChart`, zugeschnitten auf den Zeitraum durch `DepotValueHistory`). `balance_history` nimmt die
-  Depotwerte direkt, nicht als Differenz zum Kontostand.
+  (`DepotValueChart`, zugeschnitten auf den Zeitraum durch `DepotValueHistory`). Mehrere Depots: nur EUR, das
+  Diagramm nennt ausgelassene Depots in anderer Währung; ein einzelnes Depot in seiner Währung.
+- `balance_history` (Gesamtverlauf ohne Teilsummen-Hinweis) nimmt die Depotwerte direkt. Vor seinem ersten Wert läuft
+  ein Depot über seine eigenen Buchungen von diesem Wert zurück (ohne Buchungen bleibt es bei ihm), damit es nicht als
+  Zuwachs in die Summe springt.
 - `Vault::depot_value_positions(account_id)`: Positionen mit Verlauf, verkaufte eingeschlossen (`held`), mit erstem und
   letztem Tag. `Vault::position_value_history(account_id, position)`: Tageswert einer Position aus `depot_observations`
   ab ihrem ersten Wert, bis heute oder bis zum Verkauf (`PositionHistorySheet`). Eine Reihe in anderer Währung wird in
