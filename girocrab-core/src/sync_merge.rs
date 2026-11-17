@@ -539,11 +539,11 @@ fn key_of_connection(connector: &str, login: &str, bank: &str) -> String {
     // comdirect via its own API or via FinTS: „Abrufweg umstellen“ (#486)
     // moves a login between the two, so every device must see one login (#537)
     if is_comdirect_route(connector) {
-        let login = crate::connections::normalize_login(ConnectorKind::Comdirect, login);
+        let login = crate::vault::connections::normalize_login(ConnectorKind::Comdirect, login);
         return format!("{}|{login}|", ConnectorKind::Comdirect.as_str());
     }
     let login = match ConnectorKind::from_str(connector) {
-        Some(kind) => crate::connections::normalize_login(kind, login),
+        Some(kind) => crate::vault::connections::normalize_login(kind, login),
         None => login.trim().to_string(),
     };
     format!("{connector}|{login}|{bank}")
@@ -558,7 +558,7 @@ fn is_comdirect_route(connector: &str) -> bool {
 /// An account reference without the mark „Abrufweg umstellen“ sets (#537).
 fn unmarked(external_ref: &str) -> &str {
     external_ref
-        .strip_prefix(crate::connections::SWITCH_MARK)
+        .strip_prefix(crate::vault::connections::SWITCH_MARK)
         .unwrap_or(external_ref)
 }
 

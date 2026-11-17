@@ -2135,7 +2135,7 @@ fn find_connection(
     key: &str,
     login: &str,
 ) -> CoreResult<Option<i64>> {
-    let login = crate::connections::normalize_login(kind, login);
+    let login = crate::vault::connections::normalize_login(kind, login);
     let mut st = conn
         .prepare("SELECT id, login_name FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL ORDER BY id")?;
     let rows: Vec<(i64, String)> = st
@@ -2143,7 +2143,9 @@ fn find_connection(
         .collect::<Result<_, _>>()?;
     Ok(rows
         .into_iter()
-        .find(|(_, l)| crate::connections::normalize_login(kind, l).eq_ignore_ascii_case(&login))
+        .find(|(_, l)| {
+            crate::vault::connections::normalize_login(kind, l).eq_ignore_ascii_case(&login)
+        })
         .map(|(id, _)| id))
 }
 
@@ -2165,7 +2167,7 @@ pub(crate) fn adopt_account(
     let switched: Option<i64> = conn
         .query_row(
             "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref = ?2 AND deleted_ms IS NULL",
-            params![connection_id, format!("{}{external_ref}", crate::connections::SWITCH_MARK)],
+            params![connection_id, format!("{}{external_ref}", crate::vault::connections::SWITCH_MARK)],
             |r| r.get(0),
         )
         .optional()?;

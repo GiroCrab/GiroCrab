@@ -276,7 +276,7 @@ pub(crate) fn merge_accounts(
                     "SELECT id FROM accounts WHERE connection_id IS ?1
                        AND (external_ref = ?2 OR external_ref = ?3 || ?2 OR ?3 || external_ref = ?2)
                      ORDER BY external_ref = ?2 DESC, id LIMIT 1",
-                    params![con, ext, crate::connections::SWITCH_MARK],
+                    params![con, ext, crate::vault::connections::SWITCH_MARK],
                     |r| r.get(0),
                 )
                 .optional()?;
