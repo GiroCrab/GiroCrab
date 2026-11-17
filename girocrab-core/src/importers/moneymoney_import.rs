@@ -302,7 +302,7 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
         .collect::<Vec<_>>()
         .join("\n");
     let rows = split_csv(&body, delim);
-    let (hi, cols) = rows
+    let (hi, mut cols) = rows
         .iter()
         .enumerate()
         .find_map(|(i, r)| {
@@ -316,16 +316,25 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
     // C24's Kontonummer belongs to the source account, not the counterparty.
     // Keep the two category columns as literal path components (names may
     // contain separators that MoneyMoney uses for its single category field).
-    let is_c24 = rows[hi].iter().any(|h| norm(h) == "transaktionstyp")
-        && cols.contains(&Some(Field::Subcategory));
+    // Resolve format-specific columns once, rather than normalising and
+    // searching the same headers again for every booking.
+    let headers: Vec<String> = rows[hi].iter().map(|h| norm(h)).collect();
+    let has_subcategory = cols.contains(&Some(Field::Subcategory));
+    let is_c24 = has_subcategory && headers.iter().any(|h| h == "transaktionstyp");
+    if is_c24 {
+        for (header, field) in headers.iter().zip(cols.iter_mut()) {
+            if header == "kontonummer" {
+                *field = None;
+            }
+        }
+    }
+    let booking_text_columns =
+        ["beschreibung", "transaktionstyp"].map(|name| headers.iter().position(|h| h == name));
     let mut out = Vec::new();
     for r in rows.iter().skip(hi + 1) {
         // First column wins when a header occurs twice (e.g. "Konto" + "IBAN").
         let mut seen: HashMap<Field, String> = HashMap::new();
         for (i, f) in cols.iter().enumerate() {
-            if is_c24 && norm(&rows[hi][i]) == "kontonummer" {
-                continue;
-            }
             if let (Some(f), Some(v)) = (f, r.get(i)) {
                 let e = seen.entry(*f).or_default();
                 if e.trim().is_empty() {
@@ -334,7 +343,7 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
             }
         }
         if let Some(mut row) = build_row(|f| seen.get(&f).cloned().unwrap_or_default()) {
-            if cols.contains(&Some(Field::Subcategory)) {
+            if has_subcategory {
                 row.category_parts = [Field::Category, Field::Subcategory]
                     .iter()
                     .filter_map(|f| seen.get(f))
@@ -343,15 +352,10 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
                     .collect();
             }
             if is_c24 {
-                row.booking_text = ["beschreibung", "transaktionstyp"]
+                row.booking_text = booking_text_columns
                     .iter()
-                    .find_map(|header| {
-                        rows[hi]
-                            .iter()
-                            .position(|h| norm(h) == *header)
-                            .and_then(|i| r.get(i))
-                            .filter(|s| !s.trim().is_empty())
-                    })
+                    .flatten()
+                    .find_map(|&i| r.get(i).filter(|s| !s.trim().is_empty()))
                     .map(|s| crate::text::clean_bank_text(s.trim()))
                     .unwrap_or_default();
             }
@@ -1396,6 +1400,21 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
         );
         let only_categories = "Transaktionstyp;Buchungsdatum;Betrag;Kategorie;Unterkategorie\n;;;Freizeit;Streaming\n";
         assert!(parse_export(only_categories.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn c24_header_mapping_handles_column_order_and_short_rows() {
+        // Source account comes before the (empty) counterparty IBAN. A short
+        // row has no description and must fall back to the transaction type.
+        let csv = "Kontonummer;IBAN;Transaktionstyp;Betrag;Buchungsdatum;Kategorie;Unterkategorie;Beschreibung\n\
+123456;;Kartenzahlung;-5,00;01.01.2030;Essen;Backwaren;Beim Bäcker\n\
+123456;;Überweisung;10,00;02.01.2030;Einkommen;Erstattung\n";
+        let rows = parse_export(csv.as_bytes()).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.iban.is_empty()));
+        assert_eq!(rows[0].booking_text, "Beim Bäcker");
+        assert_eq!(rows[1].booking_text, "Überweisung");
+        assert_eq!(rows[1].category_path(), vec!["Einkommen", "Erstattung"]);
     }
 
     #[test]
