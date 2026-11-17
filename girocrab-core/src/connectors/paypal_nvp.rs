@@ -63,6 +63,16 @@ fn ack_ok(r: &Nvp) -> bool {
 /// Whether more rows may exist than this answer holds: warning 11002, or the
 /// documented limit reached without it (the warning is not documented for
 /// `TransactionSearch`, so the row count decides too).
+/// Smallest search window: below it a truncated answer is an error.
+const MIN_WINDOW_SECS: i64 = 60;
+
+/// End of the halved window `start..end`, or `None` when it would be shorter
+/// than [`MIN_WINDOW_SECS`].
+fn smaller_window(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let half = (end - start) / 2;
+    (half >= Duration::seconds(MIN_WINDOW_SECS)).then(|| start + half)
+}
+
 fn is_truncated(r: &Nvp) -> bool {
     error_codes(r).contains(&TRUNCATED)
         || (0..MAX_ROWS).all(|i| r.contains_key(&format!("L_TRANSACTIONID{i}")))
@@ -152,10 +162,17 @@ impl NvpClient {
             let mut end = (start + Duration::days(WINDOW_DAYS)).min(now);
             loop {
                 let r = self.search(start, end).await?;
-                let truncated = is_truncated(&r);
-                // Halve until the window fits; below one hour take what came.
-                if truncated && end - start > Duration::hours(1) {
-                    end = start + (end - start) / 2;
+                // Halve until the window fits. Never keep a truncated answer: the
+                // missing rows would be lost silently, and the open holds of the
+                // period (`hold_prefix`) would count as complete.
+                if is_truncated(&r) {
+                    end = smaller_window(start, end).ok_or_else(|| CoreError::Bank {
+                        code: TRUNCATED.into(),
+                        message: format!(
+                            "PayPal meldet ab {start} mehr als {MAX_ROWS} Umsätze in einer Minute; \
+                             der Abruf wurde abgebrochen, damit keine Umsätze fehlen."
+                        ),
+                    })?;
                     continue;
                 }
                 let (kept, gone) = transactions_from_search(&r);
@@ -315,16 +332,21 @@ pub(crate) fn purpose_from_details(id: &str, d: &Nvp) -> String {
     parts.join(" / ")
 }
 
-/// `details` as the purpose, followed by what the search purpose had: the
-/// counterparty's e-mail address (" / …", when not already in `details`) and the
-/// fee note (" · Gebühr …").
+/// `details` as the purpose, followed by what the search purpose had and
+/// `details` lacks (its " / " parts: the e-mail address) and the fee note
+/// (" · Gebühr …").
 fn with_search_purpose(details: &str, search_purpose: &str) -> String {
     let mut out = details.to_string();
     let mut fee = None;
-    for p in search_purpose.split(" · ").map(str::trim) {
-        if p.starts_with("Gebühr ") {
-            fee = Some(p);
-        } else if !p.is_empty() && !out.split(" / ").any(|d| d == p) {
+    for part in search_purpose.split(" · ").map(str::trim) {
+        if part.starts_with("Gebühr ") {
+            fee = Some(part);
+            continue;
+        }
+        for p in part.split(" / ").map(str::trim) {
+            if p.is_empty() || out.split(" / ").any(|d| d == p) {
+                continue;
+            }
             if !out.is_empty() {
                 out.push_str(" / ");
             }
@@ -386,18 +408,15 @@ pub(crate) fn transactions_from_search(r: &Nvp) -> (Vec<RemoteTransaction>, Vec<
         } else {
             kind
         };
-        let mut purpose = if name.is_empty() || email.is_empty() {
-            String::new()
-        } else {
-            email.clone()
-        };
+        // Transaction id first (what PayPal's mails and support quote), then the
+        // e-mail address when the name already is the counterparty.
+        let mut purpose = id.trim().to_string();
+        if !name.is_empty() && !email.is_empty() {
+            purpose = format!("{purpose} / {email}");
+        }
         if fee != 0 {
             let f = crate::money::format_cents(fee, currency.clone());
-            purpose = if purpose.is_empty() {
-                format!("Gebühr {f}")
-            } else {
-                format!("{purpose} · Gebühr {f}")
-            };
+            purpose = format!("{purpose} · Gebühr {f}");
         }
         out.push(RemoteTransaction {
             account_ref: format!("paypal:{currency}"),
@@ -499,10 +518,11 @@ mod tests {
         assert_eq!(t[0].booking_date, "2026-11-10");
         assert_eq!(t[0].amount_cents, -2000);
         assert_eq!(t[0].counterparty, "Beispiel Shop");
-        assert_eq!(t[0].purpose, "shop@example.com");
+        // transaction id first, then the e-mail address (the name is the counterparty)
+        assert_eq!(t[0].purpose, "AAA / shop@example.com");
         assert_eq!(t[0].account_ref, "paypal:EUR");
         assert_eq!(t[1].amount_cents, 9715);
-        assert!(t[1].purpose.starts_with("Gebühr"), "{}", t[1].purpose);
+        assert!(t[1].purpose.starts_with("BBB · Gebühr"), "{}", t[1].purpose);
     }
 
     #[test]
@@ -553,6 +573,11 @@ mod tests {
             with_search_purpose("T1", "Gebühr -0,35 €"),
             "T1 · Gebühr -0,35 €"
         );
+        // the search purpose starts with the id too: not twice
+        assert_eq!(
+            with_search_purpose("T1 / Rechnung 1", "T1 / shop@example.com · Gebühr -0,35 €"),
+            "T1 / Rechnung 1 / shop@example.com · Gebühr -0,35 €"
+        );
         assert_eq!(with_search_purpose("T1", ""), "T1");
     }
 
@@ -587,6 +612,25 @@ mod tests {
         assert_eq!(t[0].external_id, format!("{HOLD_PREFIX}H1"));
         assert!(t[0].external_id.starts_with("pending-"));
         assert_eq!(t[0].amount_cents, -3000);
+    }
+
+    #[test]
+    fn a_truncated_window_shrinks_down_to_a_minute_then_fails() {
+        let start = DateTime::parse_from_rfc3339("2026-11-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut end = start + Duration::days(31);
+        let mut steps = 0;
+        while let Some(e) = smaller_window(start, end) {
+            assert!(e > start && e < end);
+            end = e;
+            steps += 1;
+        }
+        // 31 days halve to just over a minute; one more halving would be below it
+        assert!(steps > 10, "{steps}");
+        assert!(end - start >= Duration::seconds(MIN_WINDOW_SECS));
+        assert!(end - start < Duration::seconds(2 * MIN_WINDOW_SECS));
+        assert_eq!(smaller_window(start, start + Duration::seconds(119)), None);
     }
 
     #[test]

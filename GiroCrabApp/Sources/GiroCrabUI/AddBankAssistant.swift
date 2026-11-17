@@ -153,17 +153,12 @@ struct AddBankSheet: View {
         guard let s = selected else { return [] }
         let kind = s.connector ?? (s.mode == .finTs ? .finTsGeneric : .enableBanking)
         guard let d = bankCatalog().first(where: { $0.kind == kind }) else { return [] }
-        // PayPal via API signature (classic NVP API) needs no REST app.
-        if kind == .payPal {
-            if model.settingEntry("paypal.api_signature")?.hasValue == true { return [] }
-            if payPalSignature {
-                return Self.payPalSignatureKeys.filter { !(model.settingEntry($0)?.hasValue ?? false) }
-            }
+        // PayPal via API signature (classic NVP API) needs all three fields and no REST app.
+        if kind == .payPal, payPalSignature || model.payPalUsesSignature {
+            return model.missingPayPalSignatureKeys
         }
         return model.userRequiredKeys(for: d).filter { key in !(model.settingEntry(key)?.hasValue ?? false) }
     }
-
-    static let payPalSignatureKeys = ["paypal.api_username", "paypal.api_password", "paypal.api_signature"]
 
     private var isPayPal: Bool { selected?.connector == .payPal }
 
@@ -497,7 +492,7 @@ struct AddBankSheet: View {
         let entry = model.settingEntry(key)
         let label = entry?.label ?? settingLabels[key] ?? key
         let binding = Binding(get: { setupValues[key] ?? "" }, set: { setupValues[key] = $0 })
-        if entry?.isSecret ?? key.contains("secret") {
+        if AppModel.isSecretSetting(key, entry) {
             SecureField(label, text: binding, prompt: Text("Erforderlich"))
                 .visibleInsertionPoint()
         } else {

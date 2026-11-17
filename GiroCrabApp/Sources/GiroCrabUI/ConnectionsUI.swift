@@ -183,7 +183,7 @@ struct ConnectionEditSheet: View {
         switch connection.connector {
         case .americanExpress: return ["enablebanking.use.amex", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amex", "enablebanking.country.amex"]
         // Prototype #156: classic NVP API instead of the REST app.
-        case .payPal: return ["paypal.api_username", "paypal.api_password", "paypal.api_signature"]
+        case .payPal: return AppModel.payPalSignatureKeys
         case .amazonVisa: return ["enablebanking.use.amazonvisa", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amazonvisa", "enablebanking.country.amazonvisa"]
         default: return []
         }
@@ -519,7 +519,7 @@ struct ConnectionEditSheet: View {
     private func field(_ key: String) -> some View {
         let entry = model.settingEntry(key)
         let label = entry?.label ?? settingLabels[key] ?? (key.hasPrefix("fints.url.") ? String(localized: "FinTS-URL") : key)
-        let secret = entry?.isSecret ?? false
+        let secret = AppModel.isSecretSetting(key, entry)
         VStack(alignment: .leading, spacing: 4) {
             if key.contains("private_key") {
                 HStack {
