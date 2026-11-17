@@ -7,9 +7,14 @@
 //! PAYPAL_API_USERNAME=… [PAYPAL_SANDBOX=1] [SINCE=2026-01-01] \
 //!   cargo run -q -p girocrab-core --example paypal_nvp
 //! ```
+//!
+//! `PAYPAL_NVP_RAW=1` instead prints the unfiltered rows of one TransactionSearch
+//! since `SINCE` (type, status, amounts; name and e-mail only as present/absent),
+//! to see what PayPal sends for a booking that is shown oddly.
 use std::collections::HashMap;
 
 use girocrab_core::connectors::paypal::PayPalConnector;
+use girocrab_core::connectors::paypal_nvp::{NvpClient, NvpCredentials};
 use girocrab_core::connectors::{BankConnector, ConnectContext, Phase};
 use girocrab_core::money::format_cents;
 use girocrab_core::secret::SecretString;
@@ -49,6 +54,10 @@ async fn main() {
         since,
         since_by_account: HashMap::new(),
     };
+    if std::env::var("PAYPAL_NVP_RAW").is_ok_and(|v| v == "1") {
+        raw(&ctx).await;
+        return;
+    }
     let mut c = PayPalConnector::new();
     match c.begin(&ctx).await {
         Ok(Phase::Ready) => eprintln!("Anmeldung ok (seit {})", ctx.since),
@@ -83,6 +92,70 @@ async fn main() {
             t.counterparty,
             t.purpose,
             t.external_id
+        );
+    }
+}
+
+async fn raw(ctx: &ConnectContext) {
+    let get = |k: &str| ctx.settings[k].expose().trim().to_string();
+    let sandbox = ctx
+        .settings
+        .get("paypal.environment")
+        .is_some_and(|v| v.expose() == "sandbox");
+    let nvp = NvpClient::new(
+        sandbox,
+        NvpCredentials {
+            user: get("paypal.api_username"),
+            password: SecretString::new(ctx.settings["paypal.api_password"].expose().to_string()),
+            signature: SecretString::new(get("paypal.api_signature")),
+        },
+    )
+    .expect("http client");
+    let since = chrono::NaiveDate::parse_from_str(&ctx.since, "%Y-%m-%d").expect("SINCE");
+    let rows = match nvp.raw_rows(since).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Abruf fehlgeschlagen: {e}");
+            std::process::exit(1)
+        }
+    };
+    let f = |r: &girocrab_core::connectors::paypal_nvp::Nvp, k: &str| {
+        r.get(k).cloned().unwrap_or_else(|| "-".into())
+    };
+    println!(
+        "{} Zeilen (höchstens 100, sonst SINCE näher legen)",
+        rows.len()
+    );
+    for r in &rows {
+        let id = f(r, "L_TRANSACTIONID");
+        let id_tail: String = id
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        println!(
+            "{}  type={:?}  status={:?}  amt={} fee={} net={} {}  name={} email={}  id=…{}",
+            f(r, "L_TIMESTAMP"),
+            f(r, "L_TYPE"),
+            f(r, "L_STATUS"),
+            f(r, "L_AMT"),
+            f(r, "L_FEEAMT"),
+            f(r, "L_NETAMT"),
+            f(r, "L_CURRENCYCODE"),
+            if r.contains_key("L_NAME") {
+                "ja"
+            } else {
+                "nein"
+            },
+            if r.contains_key("L_EMAIL") {
+                "ja"
+            } else {
+                "nein"
+            },
+            id_tail
         );
     }
 }

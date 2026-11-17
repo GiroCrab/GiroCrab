@@ -142,7 +142,7 @@ impl BankConnector for PayPalConnector {
             if out.accounts.is_empty() {
                 out.accounts.push(fallback_account(ctx));
             }
-            out.transactions = nvp.transactions(since_date(ctx)).await?;
+            (out.transactions, out.withdrawn) = nvp.transactions(since_date(ctx)).await?;
             retain_known(&mut out);
             return Ok(out);
         }

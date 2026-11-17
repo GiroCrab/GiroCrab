@@ -27,20 +27,20 @@ const TRUNCATED: &str = "11002";
 /// Window of the first request per step; halved on truncation.
 const WINDOW_DAYS: i64 = 31;
 
-pub(crate) struct NvpCredentials {
+pub struct NvpCredentials {
     pub user: String,
     pub password: SecretString,
     pub signature: SecretString,
 }
 
-pub(crate) struct NvpClient {
+pub struct NvpClient {
     client: reqwest::Client,
     endpoint: String,
     creds: NvpCredentials,
 }
 
 /// Decoded NVP answer (`KEY=value&…`).
-pub(crate) type Nvp = HashMap<String, String>;
+pub type Nvp = HashMap<String, String>;
 
 pub(crate) fn parse_nvp(body: &str) -> Nvp {
     url::form_urlencoded::parse(body.as_bytes())
@@ -123,9 +123,14 @@ impl NvpClient {
         Ok(accounts_from_balance(&r, owner))
     }
 
-    pub async fn transactions(&self, since: NaiveDate) -> CoreResult<Vec<RemoteTransaction>> {
+    /// Bookings since `since`, and the `(account ref, id)` of internal entries left out.
+    pub async fn transactions(
+        &self,
+        since: NaiveDate,
+    ) -> CoreResult<(Vec<RemoteTransaction>, Vec<(String, String)>)> {
         let now = Utc::now();
         let mut out = Vec::new();
+        let mut withdrawn = Vec::new();
         let mut start = since
             .and_hms_opt(0, 0, 0)
             .map(|d| d.and_utc())
@@ -140,7 +145,9 @@ impl NvpClient {
                     end = start + (end - start) / 2;
                     continue;
                 }
-                out.extend(transactions_from_search(&r));
+                let (kept, gone) = transactions_from_search(&r);
+                out.extend(kept);
+                withdrawn.extend(gone);
                 break;
             }
             start = end + Duration::seconds(1);
@@ -148,7 +155,38 @@ impl NvpClient {
         // Windows touch at the boundary second: drop duplicates.
         let mut seen = std::collections::HashSet::new();
         out.retain(|t| seen.insert((t.account_ref.clone(), t.external_id.clone())));
-        Ok(out)
+        Ok((out, withdrawn))
+    }
+
+    /// Diagnostics (`examples/paypal_nvp.rs`, `PAYPAL_NVP_RAW=1`): the rows of one
+    /// `TransactionSearch` from `start` until now, each as its fields without the
+    /// index suffix (`L_TYPE`, `L_STATUS` …), unfiltered.
+    pub async fn raw_rows(&self, start: NaiveDate) -> CoreResult<Vec<Nvp>> {
+        let from = start
+            .and_hms_opt(0, 0, 0)
+            .map(|d| d.and_utc())
+            .unwrap_or_else(Utc::now);
+        let r = self.search(from, Utc::now()).await?;
+        let mut rows = Vec::new();
+        for i in 0.. {
+            let suffix = i.to_string();
+            let row: Nvp = r
+                .iter()
+                .filter(|(k, _)| k.starts_with("L_") && k.ends_with(&suffix))
+                .filter_map(|(k, v)| {
+                    let base = &k[..k.len() - suffix.len()];
+                    // L_ERRORCODE0 vs. L_TYPE10: only letters and '_' before the index
+                    base.chars()
+                        .all(|c| c.is_ascii_uppercase() || c == '_')
+                        .then(|| (base.to_string(), v.clone()))
+                })
+                .collect();
+            if !row.contains_key("L_TRANSACTIONID") {
+                break;
+            }
+            rows.push(row);
+        }
+        Ok(rows)
     }
 
     async fn search(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> CoreResult<Nvp> {
@@ -191,8 +229,15 @@ pub(crate) fn accounts_from_balance(r: &Nvp, owner: &str) -> Vec<RemoteAccount> 
     out
 }
 
-pub(crate) fn transactions_from_search(r: &Nvp) -> Vec<RemoteTransaction> {
+/// Booking text for NVP's "..." type (a transaction type the classic API cannot name).
+const UNNAMED_TYPE: &str = "PayPal-Vorgang";
+
+/// Bookings of one `TransactionSearch` answer, and the `(account ref, id)` of the
+/// internal offsetting pairs left out (see [`internal_pairs`]).
+pub(crate) fn transactions_from_search(r: &Nvp) -> (Vec<RemoteTransaction>, Vec<(String, String)>) {
     let mut out = Vec::new();
+    // per booking: (timestamp, anonymous entry of an unnamed type)
+    let mut meta: Vec<(String, bool)> = Vec::new();
     for i in 0.. {
         let Some(id) = r.get(&format!("L_TRANSACTIONID{i}")) else {
             break;
@@ -223,6 +268,16 @@ pub(crate) fn transactions_from_search(r: &Nvp) -> Vec<RemoteTransaction> {
         };
         let name = get("L_NAME");
         let email = get("L_EMAIL");
+        let unnamed = kind.trim().is_empty() || kind.trim() == "...";
+        meta.push((
+            get("L_TIMESTAMP"),
+            unnamed && name.is_empty() && email.is_empty(),
+        ));
+        let kind = if unnamed {
+            UNNAMED_TYPE.to_string()
+        } else {
+            kind
+        };
         let mut purpose = if name.is_empty() || email.is_empty() {
             String::new()
         } else {
@@ -250,7 +305,41 @@ pub(crate) fn transactions_from_search(r: &Nvp) -> Vec<RemoteTransaction> {
             ..Default::default()
         });
     }
-    out
+    let drop = internal_pairs(&out, &meta);
+    let mut withdrawn = Vec::new();
+    let mut kept = Vec::new();
+    for (i, t) in out.into_iter().enumerate() {
+        if drop.contains(&i) {
+            withdrawn.push((t.account_ref, t.external_id));
+        } else {
+            kept.push(t);
+        }
+    }
+    (kept, withdrawn)
+}
+
+/// Indexes of internal offsetting pairs: anonymous entries of an unnamed type
+/// ("...", e.g. moves between a pool and the balance) with the same timestamp
+/// and currency whose amounts cancel out. They move no money; the balance
+/// comes from `GetBalance`. A single unnamed entry without counterpart stays.
+fn internal_pairs(
+    out: &[RemoteTransaction],
+    meta: &[(String, bool)],
+) -> std::collections::HashSet<usize> {
+    let mut groups: HashMap<(&str, &str), Vec<usize>> = HashMap::new();
+    for (i, (ts, anonymous)) in meta.iter().enumerate() {
+        if *anonymous && !ts.is_empty() {
+            groups
+                .entry((ts.as_str(), out[i].currency.as_str()))
+                .or_default()
+                .push(i);
+        }
+    }
+    groups
+        .into_values()
+        .filter(|g| g.len() >= 2 && g.iter().map(|&i| out[i].amount_cents).sum::<i64>() == 0)
+        .flatten()
+        .collect()
 }
 
 #[cfg(test)]
@@ -290,7 +379,8 @@ mod tests {
              &L_TRANSACTIONID2=CCC&L_STATUS2=Denied&L_AMT2=%2d5%2e00&L_NETAMT2=%2d5%2e00\
              &L_CURRENCYCODE2=EUR&ACK=Success",
         );
-        let t = transactions_from_search(&r);
+        let (t, gone) = transactions_from_search(&r);
+        assert!(gone.is_empty());
         assert_eq!(t.len(), 2);
         assert_eq!(t[0].external_id, "AAA");
         assert_eq!(t[0].booking_date, "2026-11-10");
@@ -300,6 +390,26 @@ mod tests {
         assert_eq!(t[0].account_ref, "paypal:EUR");
         assert_eq!(t[1].amount_cents, 9715);
         assert!(t[1].purpose.starts_with("Gebühr"), "{}", t[1].purpose);
+    }
+
+    #[test]
+    fn offsetting_unnamed_pairs_are_left_out() {
+        // pool <-> balance: same second, type "...", no name/e-mail, net +10 / -10
+        let r = parse_nvp(
+            "L_TIMESTAMP0=2026%2d11%2d17T05%3a59%3a44Z&L_TYPE0=%2e%2e%2e&L_TRANSACTIONID0=P1&L_STATUS0=Completed&L_AMT0=10%2e00&L_FEEAMT0=0%2e00&L_NETAMT0=10%2e00&L_CURRENCYCODE0=EUR&L_TIMESTAMP1=2026%2d11%2d17T05%3a59%3a44Z&L_TYPE1=%2e%2e%2e&L_TRANSACTIONID1=P2&L_STATUS1=Completed&L_AMT1=10%2e00&L_FEEAMT1=0%2e00&L_NETAMT1=%2d10%2e00&L_CURRENCYCODE1=EUR&L_TIMESTAMP2=2026%2d11%2d16T08%3a00%3a00Z&L_TYPE2=%2e%2e%2e&L_TRANSACTIONID2=P3&L_STATUS2=Completed&L_AMT2=5%2e00&L_NETAMT2=5%2e00&L_CURRENCYCODE2=EUR&L_TIMESTAMP3=2026%2d11%2d16T08%3a00%3a00Z&L_TYPE3=Payment&L_NAME3=Shop&L_TRANSACTIONID3=P4&L_STATUS3=Completed&L_AMT3=%2d5%2e00&L_NETAMT3=%2d5%2e00&L_CURRENCYCODE3=EUR&ACK=Success",
+        );
+        let (t, gone) = transactions_from_search(&r);
+        let ids: Vec<&str> = t.iter().map(|t| t.external_id.as_str()).collect();
+        // P3 has a counterpart only of a named type with a payee: it stays
+        assert_eq!(ids, vec!["P3", "P4"]);
+        assert_eq!(t[0].booking_text, UNNAMED_TYPE);
+        assert_eq!(
+            gone,
+            vec![
+                ("paypal:EUR".to_string(), "P1".to_string()),
+                ("paypal:EUR".to_string(), "P2".to_string())
+            ]
+        );
     }
 
     #[test]

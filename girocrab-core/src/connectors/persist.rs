@@ -718,6 +718,22 @@ pub(crate) fn store_fetch(
                       AND r.booking_date >= transactions.booking_date))",
             [crate::dates::now_ms()],
         )?;
+        // Entries the connector recognised as no real movement (stored by an older version).
+        for (account_ref, external_id) in &data.withdrawn {
+            let Some(acc_id) = account_ids.get(account_ref) else {
+                continue;
+            };
+            let row: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM transactions WHERE account_id = ?1 AND external_id = ?2 AND deleted_ms IS NULL",
+                    params![acc_id, external_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(row_id) = row {
+                crate::sync_merge::soft_delete_booking(&tx, row_id)?;
+            }
+        }
         // Card holds: keep exactly the ones the bank still reports as open.
         if let Some(prefix) = data.hold_prefix.as_deref().filter(|p| !p.is_empty()) {
             let current: std::collections::HashSet<&str> = data

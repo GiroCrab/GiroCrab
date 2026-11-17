@@ -38,7 +38,7 @@ pub mod fordmoney;
 pub mod ibkr;
 pub mod opel;
 pub mod paypal;
-pub(crate) mod paypal_nvp;
+pub mod paypal_nvp;
 pub mod quirion;
 pub mod scalable;
 pub mod schwaebisch_hall;
