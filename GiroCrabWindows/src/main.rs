@@ -3,6 +3,7 @@
 //! bookings of the selected account and bank sync (FinTS PIN/TAN dialog, PSD2 browser redirect).
 
 mod analytics;
+mod announcements;
 mod assets_loans;
 mod assets_loans_ui;
 mod cockpit;

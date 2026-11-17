@@ -1036,6 +1036,19 @@ export component MainWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
             }
         }
+        // ---- project announcement banner (announcements.rs)
+        if SettingsImportState.banner-title != "": Rectangle {
+            height: 34px;
+            background: SettingsImportState.banner-important ? Theme.warning-bg : Theme.bar;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 12px;
+                Text { text: SettingsImportState.banner-title; color: SettingsImportState.banner-important ? Theme.warning-text : Theme.text; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                Button { text: "Lesen"; clicked => { SettingsImportState.banner-show(); } }
+                Button { text: "Ausblenden"; clicked => { SettingsImportState.banner-dismiss(); } }
+            }
+        }
         // ---- demo banner
         if root.demo-active: Rectangle {
             height: 34px;
