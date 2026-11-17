@@ -1,6 +1,7 @@
 package de.girocrab.app.model
 
 import java.time.LocalDate
+import org.json.JSONObject
 import kotlin.random.Random
 
 /**
@@ -31,6 +32,21 @@ class DefaultCoreBridge : CoreBridge {
 }
 
 /** Realistic German demo data across 7 banks. Deterministic (seeded). */
+object AnnouncementLoader {
+    /** Parses `policy/announcements.json` (bundled as a Java resource). Signature verification is the caller's job. */
+    fun load(today: LocalDate = LocalDate.now(), lang: String = "de", version: String = "0.8.0"): List<Announcement> = runCatching {
+        val raw = AnnouncementLoader::class.java.classLoader?.getResourceAsStream("announcements.json")
+            ?.bufferedReader()?.use { it.readText() } ?: return emptyList()
+        val arr = JSONObject(raw).getJSONArray("announcements")
+        fun JSONObject.text(k: String): String = optJSONObject(k)?.let { it.optString(lang).ifBlank { it.optString("en") } } ?: optString(k)
+        (0 until arr.length()).map { arr.getJSONObject(it) }.mapNotNull { o ->
+            val until = o.optString("until").takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            if (until != null && until.isBefore(today)) return@mapNotNull null
+            Announcement(o.getString("id"), o.text("title"), o.text("body").ifBlank { o.text("summary") }, today, o.optString("link").takeIf { it.isNotBlank() })
+        }
+    }.getOrDefault(emptyList())
+}
+
 object DemoData {
     private fun cat(id: String, name: String, color: Long, icon: String, budget: Long? = null, parent: String? = null) =
         Category(id, name, parent, color, icon, budget)
@@ -82,7 +98,7 @@ object DemoData {
             AccountGroup("g_pp", "PayPal", ConnectorKind.PayPal, 0xFF003087),
         )
         val accounts = listOf(
-            Account("a_spk", "g_spk", "Sparkasse", "Girokonto", "DE89370400440532013000", AccountKind.Giro, 284_512),
+            Account("a_spk", "g_spk", "Sparkasse", "Girokonto", "DE89370400440532013000", AccountKind.Giro, 284_512, holder = "Max Mustermann"),
             Account("a_ing", "g_ing", "ING", "Extra-Konto", "DE02500105170137075030", AccountKind.Savings, 1_250_000),
             Account("a_dkb", "g_dkb", "DKB", "Visa Kreditkarte", "DE12120300001234567890", AccountKind.CreditCard, -64_230),
             Account("a_cbk", "g_cbk", "Commerzbank", "Girokonto", "DE75512108001245126199", AccountKind.Giro, 91_877),
@@ -94,7 +110,12 @@ object DemoData {
         val bookings = mutableListOf<Booking>()
         var n = 0
         fun add(acc: String, date: LocalDate, cents: Long, who: String, purpose: String, cat: String? = null, tags: Set<String> = emptySet()) {
-            bookings += Booking("b${n++}", acc, date, amountCents = cents, counterparty = who, purpose = purpose, categoryId = cat, tagIds = tags)
+            val i = n++
+            bookings += Booking(
+                "b$i", acc, date, amountCents = cents, counterparty = who, purpose = purpose, categoryId = cat, tagIds = tags,
+                checked = !(date.isAfter(today.minusDays(20)) && i % 3 == 0),
+                documentCount = if (cat == "c_ins" || cat == "c_shop" || cat == "c_travel") 1 else 0,
+            )
         }
 
         for (m in 0 until 12) {
@@ -132,6 +153,8 @@ object DemoData {
             Holding("h1", "a_tr", "iShares Core MSCI World", "IE00B4L5Y983", 42.35, 9_812, 360_000),
             Holding("h2", "a_tr", "Vanguard FTSE All-World", "IE00BK5BQT80", 28.10, 12_054, 300_000),
             Holding("h3", "a_tr", "Xtrackers MSCI Emerging Markets", "IE00BTJRMP35", 55.0, 5_430, 270_000),
+            Holding("h4", "a_tr", "Apple Inc.", "US0378331005", 12.0, 23_150, 24_000, wkn = "865985", currency = "USD", fxRateToEur = 0.92),
+            Holding("h5", "a_tr", "iShares MSCI World (USD)", "IE00B0M62Q58", 20.0, 11_240, 19_500, currency = "USD", fxRateToEur = 0.92),
         )
         return VaultSnapshot(
             groups = groups,
@@ -156,9 +179,9 @@ object DemoData {
                 TangibleAsset("ta1", "Fahrrad (E-Bike)", 180_000, today.minusYears(1), "Kaufbeleg im Ordner"),
                 TangibleAsset("ta2", "Pkw", 1_450_000, today.minusYears(3)),
             ),
-            announcements = listOf(
-                Announcement("n1", "Willkommen bei GiroCrab", "Du siehst Demodaten. Verbinde eine Bank oder öffne deinen Tresor, um echte Umsätze zu nutzen.", today),
-            ),
+            announcements = AnnouncementLoader.load(today).ifEmpty {
+                listOf(Announcement("n1", "Willkommen bei GiroCrab", "Du siehst Demodaten. Verbinde eine Bank oder öffne deinen Tresor, um echte Umsätze zu nutzen.", today))
+            },
         )
     }
 }

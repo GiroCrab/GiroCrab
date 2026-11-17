@@ -13,6 +13,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.runtime.remember
 import de.girocrab.app.model.Booking
 import de.girocrab.app.ui.screens.AccountsAndWealthScreen
+import de.girocrab.app.ui.screens.AccountsBadges
+import de.girocrab.app.ui.screens.PortfolioAndAssetsScreen
 import de.girocrab.app.ui.screens.AddBankDialog
 import de.girocrab.app.ui.screens.AnalyticsScreen
 import de.girocrab.app.ui.screens.BookingDetailSheet
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -66,6 +69,7 @@ enum class MainTab(val label: String, val icon: ImageVector) {
     Accounts("Konten", Icons.Default.AccountBalanceWallet),
     Analytics("Analysen", Icons.Default.Analytics),
     Payments("Zahlungen", Icons.Default.Payments),
+    Portfolio("Vermögen", Icons.Default.Savings),
     More("Mehr", Icons.Default.MoreHoriz),
 }
 
@@ -196,14 +200,28 @@ fun GiroCrabRoot(
                             onFilter = vm::setFilter,
                             onNewTransfer = { tab = MainTab.Payments },
                             onOpenBooking = { detail = it },
+                            onToggleChecked = vm::toggleBookingChecked,
                         )
                         MainTab.Accounts -> AccountsAndWealthScreen(
                             state = state,
+                            badges = AccountsBadges(
+                                unreadBookings = state.data.bookings.count { !it.checked },
+                                documents = state.data.bookings.sumOf { it.documentCount },
+                                unreadByAccount = state.data.bookings.filter { !it.checked }.groupingBy { it.accountId }.eachCount(),
+                                documentsByAccount = state.data.bookings.groupBy { it.accountId }.mapValues { (_, v) -> v.sumOf { it.documentCount } },
+                            ),
                             onSelectGroup = { vm.selectGroup(it); tab = MainTab.Bookings },
                             onSelectAccount = { vm.selectAccount(it); tab = MainTab.Bookings },
                         )
                         MainTab.Analytics -> AnalyticsScreen(state, vm, onShowBookings = { tab = MainTab.Bookings })
-                        MainTab.Payments -> PaymentsScreen(state = state, onSubmitTransfer = {})
+                        MainTab.Payments -> PaymentsScreen(state = state, onSubmitTransfer = vm::submitTransfer)
+                        MainTab.Portfolio -> PortfolioAndAssetsScreen(
+                            state = state,
+                            onUpsertLoan = vm::upsertLoan,
+                            onDeleteLoan = vm::deleteLoan,
+                            onUpsertAsset = vm::upsertAsset,
+                            onDeleteAsset = vm::deleteAsset,
+                        )
                         MainTab.More -> SettingsScreen(
                             state = state,
                             onLanguage = { vm.setLanguage(it); onLanguage(it) },

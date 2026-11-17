@@ -25,6 +25,8 @@ data class Account(
     val balanceCents: Long,
     val currency: String = "EUR",
     val hidden: Boolean = false,
+    /** Account holder (#587). */
+    val holder: String = "",
 )
 
 data class SplitPart(
@@ -48,6 +50,11 @@ data class Booking(
     val note: String = "",
     val splits: List<SplitPart> = emptyList(),
     val currency: String = "EUR",
+    val checked: Boolean = true,
+    val documentCount: Int = 0,
+    val isTransfer: Boolean = false,
+    val transferReason: String = "",
+    val counterpartyIban: String = "",
 ) {
     val isIncome get() = amountCents > 0
 }

@@ -98,15 +98,6 @@ fun parseSepaFields(raw: String): SepaFields {
     )
 }
 
-fun formatIban(iban: String): String = iban.replace(" ", "").chunked(4).joinToString(" ")
-
-/** Parses "-12,50" / "12.5" to cents; null when not a number. */
-fun parseCents(text: String): Long? {
-    val t = text.trim().replace(" ", "").replace("€", "")
-    if (t.isEmpty()) return null
-    val norm = if (t.contains(',')) t.replace(".", "").replace(',', '.') else t
-    return norm.toBigDecimalOrNull()?.movePointRight(2)?.toLong()
-}
 
 private fun centsToInput(c: Long): String {
     val sign = if (c < 0) "-" else ""

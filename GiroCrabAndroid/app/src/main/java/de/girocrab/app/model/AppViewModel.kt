@@ -2,6 +2,7 @@ package de.girocrab.app.model
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.girocrab.app.ui.screens.SepaTransferDraft
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -132,6 +133,25 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
 
     fun toggleTag(bookingId: String, tagId: String) =
         editBooking(bookingId) { it.copy(tagIds = if (tagId in it.tagIds) it.tagIds - tagId else it.tagIds + tagId) }
+
+    fun toggleBookingChecked(id: String) = editBooking(id) { it.copy(checked = !it.checked) }
+
+    /** Books a SEPA transfer as an outgoing booking and reduces the account balance (Demo/Own). */
+    fun submitTransfer(draft: SepaTransferDraft) {
+        val date = draft.executionDate ?: java.time.LocalDate.now()
+        val amount = -kotlin.math.abs(draft.amountCents)
+        editData { d ->
+            val booking = Booking(
+                id = "b_tr_${System.nanoTime()}", accountId = draft.accountId, bookingDate = date,
+                amountCents = amount, counterparty = draft.recipient, purpose = draft.purpose,
+                isTransfer = true, transferReason = draft.purpose, counterpartyIban = draft.iban,
+            )
+            d.copy(
+                bookings = (d.bookings + booking).sortedByDescending { it.bookingDate },
+                accounts = d.accounts.map { if (it.id == draft.accountId) it.copy(balanceCents = it.balanceCents + amount) else it },
+            )
+        }
+    }
 
     fun setNote(bookingId: String, note: String) = editBooking(bookingId) { it.copy(note = note) }
 

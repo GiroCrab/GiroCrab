@@ -321,7 +321,7 @@ private fun AccountRow(
     val subtitle = listOfNotNull(
         accountKindLabel(account.kind),
         account.bankName.takeIf { it.isNotBlank() },
-        group?.name?.takeIf { it.isNotBlank() },
+        account.holder.takeIf { it.isNotBlank() } ?: group?.name?.takeIf { it.isNotBlank() },
     ).joinToString(" · ")
     val canSync = group != null && group.connector != ConnectorKind.Manual && group.connector != ConnectorKind.Import
 

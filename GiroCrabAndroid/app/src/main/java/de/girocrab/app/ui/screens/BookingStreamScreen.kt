@@ -46,8 +46,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.SnapshotStateList
-import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,19 +110,18 @@ fun groupByMonth(bookings: List<Booking>): List<MonthGroup> =
  * Booking stream: balance header, filter bar and month-grouped list.
  *
  * @param bookings pre-filtered by scope/search/filter (AppViewModel.visibleBookings)
- * @param documentIds ids of bookings with an attached document
  */
 @Composable
 fun BookingStreamScreen(
     state: AppUiState,
     bookings: List<Booking>,
-    documentIds: Set<String> = emptySet(),
     onSearch: (String) -> Unit,
     onFilter: (BookingFilter) -> Unit,
     onFetch: () -> Unit = {},
     onNewTransfer: () -> Unit = {},
     onAccountSettings: () -> Unit = {},
     onOpenBooking: (Booking) -> Unit = {},
+    onToggleChecked: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val masked = state.privacyMode
@@ -132,19 +129,17 @@ fun BookingStreamScreen(
     var flow by rememberSaveable { mutableStateOf(FlowFilter.All) }
     var docsOnly by rememberSaveable { mutableStateOf(false) }
     var analytics by rememberSaveable { mutableStateOf(false) }
-    // Booking has no "checked" flag in the snapshot: kept locally (id set) until the core bridge provides it.
-    val checked: SnapshotStateList<String> = remember { mutableListOf<String>().toMutableStateList() }
 
     val shown = bookings
         .filter { b ->
             when (flow) {
                 FlowFilter.All -> true
-                FlowFilter.Unchecked -> b.id !in checked
+                FlowFilter.Unchecked -> !b.checked
                 FlowFilter.Expenses -> b.amountCents < 0
                 FlowFilter.Income -> b.amountCents > 0
             }
         }
-        .filter { !docsOnly || it.id in documentIds }
+        .filter { !docsOnly || it.documentCount > 0 }
     val groups = remember(shown) { groupByMonth(shown) }
     val data = state.data
 
@@ -213,10 +208,10 @@ fun BookingStreamScreen(
                     booking = b,
                     category = data.categories.firstOrNull { it.id == b.categoryId },
                     tags = data.tags.filter { it.id in b.tagIds },
-                    unchecked = b.id !in checked,
-                    hasDocument = b.id in documentIds,
+                    unchecked = !b.checked,
+                    hasDocument = b.documentCount > 0,
                     masked = masked,
-                    onToggleChecked = { if (b.id in checked) checked.remove(b.id) else checked.add(b.id) },
+                    onToggleChecked = { onToggleChecked(b.id) },
                     onClick = { onOpenBooking(b) },
                 )
             }
