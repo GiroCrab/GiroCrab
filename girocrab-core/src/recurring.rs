@@ -343,6 +343,17 @@ fn load_stored(conn: &Connection) -> CoreResult<HashMap<String, Stored>> {
     Ok(out)
 }
 
+/// `|a - b| * factor <= |b|`, exact in i128 so extreme peer amounts neither
+/// panic (debug) nor wrap (release).
+fn amount_close(a: i64, b: i64, factor: i64) -> bool {
+    (i128::from(a) - i128::from(b)).abs() * i128::from(factor) <= i128::from(b).abs()
+}
+
+/// `|a - b| * 100 <= |b| * percent`, exact in i128.
+fn amount_close_pct(a: i64, b: i64, percent: i64) -> bool {
+    (i128::from(a) - i128::from(b)).abs() * 100 <= i128::from(b).abs() * i128::from(percent)
+}
+
 /// Interval of a group of bookings (date-sorted) when it looks recurring.
 fn detect_group(list: &[&Booking]) -> Option<RecurrenceInterval> {
     // one booking per day (split payments / corrections)
@@ -353,7 +364,7 @@ fn detect_group(list: &[&Booking]) -> Option<RecurrenceInterval> {
     let med = median(list.iter().map(|b| b.amount_cents).collect());
     let similar = list
         .iter()
-        .filter(|b| (b.amount_cents - med).abs() * 4 <= med.abs())
+        .filter(|b| amount_close(b.amount_cents, med, 4))
         .count();
     if similar * 4 < list.len() * 3 {
         return None;
@@ -361,9 +372,7 @@ fn detect_group(list: &[&Booking]) -> Option<RecurrenceInterval> {
     // Only two monthly bookings: amounts must (almost) match (±5 %).
     if dates.len() < 3
         && i == RecurrenceInterval::Monthly
-        && list
-            .iter()
-            .any(|b| (b.amount_cents - med).abs() * 20 > med.abs())
+        && list.iter().any(|b| !amount_close(b.amount_cents, med, 20))
     {
         return None;
     }
@@ -378,11 +387,7 @@ fn amount_clusters<'a>(list: &[&'a Booking]) -> Vec<Vec<&'a Booking>> {
     let mut clusters: Vec<Vec<&Booking>> = Vec::new();
     for b in by_amount {
         match clusters.last_mut() {
-            Some(c)
-                if (b.amount_cents - c[0].amount_cents).abs() * 10 <= c[0].amount_cents.abs() =>
-            {
-                c.push(b)
-            }
+            Some(c) if amount_close(b.amount_cents, c[0].amount_cents, 10) => c.push(b),
             _ => clusters.push(vec![b]),
         }
     }
@@ -396,8 +401,7 @@ fn amount_clusters<'a>(list: &[&'a Booking]) -> Vec<Vec<&'a Booking>> {
 /// Does `b` belong to series `s`?
 pub fn series_matches(s: &RecurringSeries, b: &Booking) -> bool {
     series_key(b) == s.base_key
-        && (!s.amount_specific
-            || (b.amount_cents - s.amount_cents).abs() * 100 <= s.amount_cents.abs() * 15)
+        && (!s.amount_specific || amount_close_pct(b.amount_cents, s.amount_cents, 15))
 }
 
 fn make_series(
@@ -543,7 +547,9 @@ fn ignored_series(bookings: &[Booking], stored: &HashMap<String, Stored>) -> Vec
             let last = bookings
                 .iter()
                 .filter(in_base)
-                .filter(|b| amount.is_none_or(|a| (b.amount_cents.abs() - a).abs() * 100 <= a * 15))
+                .filter(|b| {
+                    amount.is_none_or(|a| amount_close_pct(b.amount_cents.saturating_abs(), a, 15))
+                })
                 .max_by(|a, b| (&a.booking_date, a.id).cmp(&(&b.booking_date, b.id)))?;
             Some(IgnoredRecurring {
                 series_key: key.clone(),
@@ -600,7 +606,9 @@ fn month_items(
                     amount_cents: b.amount_cents,
                 });
                 if b.amount_cents < 0 {
-                    ov.booked_expense_cents += -b.amount_cents;
+                    ov.booked_expense_cents = ov
+                        .booked_expense_cents
+                        .saturating_add(b.amount_cents.saturating_neg());
                 }
             }
             continue;
@@ -626,9 +634,11 @@ fn month_items(
                     amount_cents: s.amount_cents,
                 });
                 if s.amount_cents < 0 {
-                    ov.open_expense_cents += -s.amount_cents;
+                    ov.open_expense_cents = ov
+                        .open_expense_cents
+                        .saturating_add(s.amount_cents.saturating_neg());
                 } else {
-                    ov.open_income_cents += s.amount_cents;
+                    ov.open_income_cents = ov.open_income_cents.saturating_add(s.amount_cents);
                 }
             }
         }
@@ -799,6 +809,19 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extreme_amounts_do_not_overflow_the_similarity_checks() {
+        assert!(!amount_close(i64::MIN, i64::MAX, 20));
+        assert!(!amount_close(i64::MAX, i64::MIN, 4));
+        assert!(!amount_close_pct(i64::MIN, 1, 15));
+        assert!(amount_close(1000, 1000, 4));
+        assert!(amount_close(1100, 1000, 4));
+        assert!(!amount_close(2000, 1000, 4));
+        assert!(amount_close_pct(1100, 1000, 15));
+        assert!(!amount_close_pct(1200, 1000, 15));
+    }
+
     use crate::merchants::MerchantResolver;
     use crate::models::{AccountKind, CategorySource};
 
