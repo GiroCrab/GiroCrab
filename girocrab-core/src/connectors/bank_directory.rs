@@ -163,6 +163,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "ford money fordmoney fordbank tagesgeld festgeld",
         ),
         (
+            ConnectorKind::OpelDirektbank,
+            "Opel Direktbank",
+            "opel direktbank opelbank opel-direktbank stellantis tagesgeld festgeld",
+        ),
+        (
             ConnectorKind::Ffb,
             "FFB (FIL Fondsbank)",
             "ffb fil fondsbank fidelity fondsdepot fonds vl sparplan",
@@ -252,6 +257,8 @@ const ALTE_LEIPZIGER_BLZ: &str = "50012800";
 const FFB_BLZ: &str = "50021120";
 /// Ford Bank (Ford Money), no FinTS: served by its own web connector.
 const FORD_BANK_BLZ: &str = "37021548";
+/// Opel Direktbank: its FinTS server offers no statements; served by its own web connector.
+const OPEL_DIREKTBANK_BLZ: &str = "50025000";
 const SCHWAEBISCH_HALL_BLZ: &str = "62220000";
 
 fn own_result(kind: ConnectorKind, name: &str) -> BankSearchResult {
@@ -329,6 +336,8 @@ pub fn search(
             out.push(fints_result(b));
         } else if blz == "70013000" {
             out.push(own_result(ConnectorKind::Fnz, "FNZ Bank"));
+        } else if blz == OPEL_DIREKTBANK_BLZ {
+            out.push(own_result(ConnectorKind::OpelDirektbank, "Opel Direktbank"));
         } else if blz == FORD_BANK_BLZ {
             out.push(own_result(ConnectorKind::FordMoney, "Ford Money"));
         } else if blz == FFB_BLZ {
@@ -685,7 +694,8 @@ mod tests {
     fn deutsche_bank_is_found_by_name_bank_code_and_bic() {
         let blzs = ["10070000", "50070010", "50070024"];
         // name
-        let r = search("Deutsche Bank", vec![], 20);
+        // the directory holds hundreds of branches named "Deutsche Bank …"
+        let r = search("Deutsche Bank", vec![], 1000);
         for blz in blzs {
             let b = r.iter().find(|b| b.blz == blz);
             assert!(b.is_some(), "name: {blz}");

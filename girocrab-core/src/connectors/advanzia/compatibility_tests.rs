@@ -358,3 +358,52 @@ fn settlement_preserves_tags_on_the_posted_booking() {
         )
         .unwrap());
 }
+
+#[test]
+fn legacy_holds_never_adopt_or_replace_an_imported_posting() {
+    for existing_hold in [false, true] {
+        let (v, id, _dir) = setup();
+        let account = legacy(&v, id);
+        let imported = {
+            let db = v.db().unwrap();
+            db.execute(
+                "INSERT INTO transactions(account_id,external_id,booking_date,value_date,amount_cents,currency,counterparty,note)
+                 VALUES (?1,'mm-fictional-posting','2026-11-12','2026-11-12',-2098,'EUR','TEST SHOP','keep imported note')",
+                [account],
+            ).unwrap();
+            db.last_insert_rowid()
+        };
+        if existing_hold {
+            let hold = old_row(&v, account, true, "separate-hold");
+            v.db()
+                .unwrap()
+                .execute(
+                    "UPDATE transactions SET note='',checked=0 WHERE id=?1",
+                    [hold],
+                )
+                .unwrap();
+        }
+        // Matching amount, date and merchant must not turn the imported posting
+        // into a provisional hold, either on first fetch or when fetched again.
+        for target in [Some(account), None] {
+            import(&v, id, target, vec![pending("separate-hold")]).unwrap();
+            let stored = rows(&v);
+            assert_eq!(stored.len(), 2);
+            assert!(stored.iter().all(|r| r.3.is_none()));
+            assert!(stored
+                .iter()
+                .any(|r| r.0 == imported && r.1 == "mm-fictional-posting"));
+            assert_eq!(v.advanzia_open_holds(id).unwrap().len(), 1);
+            let note: String = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT note FROM transactions WHERE id=?1",
+                    [imported],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(note, "keep imported note");
+        }
+    }
+}
