@@ -3218,6 +3218,9 @@ QtObject {
     onClipboardCheckChanged: defaults.setValue("transfer/clipboardCheck", clipboardCheck)
     property var clipboardHandledHash: null
     /// parseAmountToCents: null when unparsable.
+    /// True when a password manager marked the clipboard entry secret (mime types only, no content);
+    /// also when the check fails, so the entry is then not read.
+    function clipboardConcealed() { try { return core("clipboard_concealed") !== false } catch (e) { return true } }
     function clipboardText() { clipboardHelper.text = ""; clipboardHelper.paste(); const t = clipboardHelper.text; clipboardHelper.text = ""; return t }
 
     /// Pre-selects the sidebar account if it is offered in the form, else the first one.

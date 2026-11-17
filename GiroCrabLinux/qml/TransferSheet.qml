@@ -151,8 +151,9 @@ Sheet {
     /// changed since the last offer and holds a valid IBAN (the core sets `iban` only then).
     /// The text is parsed in memory and never stored or logged; only a hash of it is remembered.
     /// Linux has no paste prompt, so it is simply read. Entries that password managers mark as
-    /// secret (mime type x-kde-passwordManagerHint = secret) cannot be told apart here: QML's
-    /// TextEdit.paste() hands over the text only, not the clipboard's mime data.
+    /// secret (x-kde-passwordManagerHint = secret, org.nspasteboard.ConcealedType / TransientType)
+    /// are skipped, like on macOS: QML's TextEdit.paste() hands over the text only, so the mime
+    /// types are checked natively first (cpp/prepare.cpp) and a concealed entry is never read.
     function checkClipboard() {
         if (AppModel.demoSheet === "transfer-clipboard") { // invented payment, the real clipboard stays untouched
             const demo = { name: "Stadtwerke München", iban: "DE89370400440532013000", amountText: Fmt.plain(8500), purpose: "Abschlag Strom Kd-Nr 482910" }
@@ -160,6 +161,7 @@ Sheet {
             return
         }
         if (!AppModel.clipboardCheck || !draftIsEmpty()) return
+        if (AppModel.clipboardConcealed()) return
         const text = AppModel.clipboardText()
         if (text === "" || text.length > 8 * 1024) return // longer text is no payment slip
         let h = 5381
