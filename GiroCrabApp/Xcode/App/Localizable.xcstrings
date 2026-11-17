@@ -5981,6 +5981,17 @@
         }
       }
     },
+    "Beim Ausschalten wird der Zugangsschlüssel widerrufen. Zum erneuten Einschalten erzeugen Sie einen neuen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switching access off revokes the access key. To switch it on again, create a new one."
+          }
+        }
+      }
+    },
     "Beim Entsperren %@ verlangen" : {
       "extractionState" : "manual",
       "localizations" : {
