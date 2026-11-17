@@ -705,6 +705,7 @@ export component MainWindow inherits Window {
     // daily driver: filter bar, inspector, privacy, import, transfer
     in-out property <bool> privacy: false;
     in-out property <bool> uncategorized-only: false;
+    in-out property <bool> documents-only: false;
     in-out property <int> status-index: 0;
     in-out property <int> range-index: 0;
     in-out property <int> tag-index: 0;
@@ -1295,6 +1296,11 @@ export component MainWindow inherits Window {
                 PillToggle {
                     text: "Ohne Kategorie";
                     checked <=> root.uncategorized-only;
+                    toggled => { root.search-changed(); }
+                }
+                PillToggle {
+                    text: "Dokumente";
+                    checked <=> root.documents-only;
                     toggled => { root.search-changed(); }
                 }
                 PillToggle {

@@ -52,6 +52,8 @@ pub struct Filter {
     pub from_date: String,
     /// Only bookings carrying a tag with this name; empty = any.
     pub tag: String,
+    /// Only bookings with at least one attached document.
+    pub with_documents: bool,
 }
 
 /// ISO date `days` days before today (UTC), for the time range selector.
@@ -119,6 +121,8 @@ pub struct Row {
     pub reference: String,
     /// Classified as a transfer between own accounts / settlement (#574).
     pub transfer: bool,
+    /// Attached documents (paperclip).
+    pub documents: u32,
 }
 
 impl From<&Booking> for Row {
@@ -169,6 +173,7 @@ impl From<&Booking> for Row {
             .collect::<Vec<_>>()
             .join("\n"),
             transfer: b.flow == girocrab_core::merchants::FlowKind::Transfer,
+            documents: b.document_count,
         }
     }
 }
@@ -179,6 +184,9 @@ impl Filter {
             return false;
         }
         if !self.from_date.is_empty() && r.booking_date.as_str() < self.from_date.as_str() {
+            return false;
+        }
+        if self.with_documents && r.documents == 0 {
             return false;
         }
         if !self.tag.is_empty() && !r.tags.iter().any(|t| t.name == self.tag) {
@@ -264,12 +272,50 @@ pub fn inspect(r: &Row, privacy: bool, money: impl Fn(i64, &str) -> String) -> I
         recurring: r.recurring,
         reference: mask(&r.reference, privacy),
         transfer_reason: if r.transfer {
-            "Als Umbuchung erkannt: Die Buchung läuft zwischen eigenen Konten oder ist eine Kartenabrechnung bzw. Aufladung und zählt deshalb nicht als Einnahme oder Ausgabe.".into()
+            transfer_reason(r)
         } else {
             String::new()
         },
         booking_text: r.booking_text.clone(),
     }
+}
+
+/// IBAN in blocks of four ("DE02 1203 …").
+pub fn format_iban(iban: &str) -> String {
+    let c: Vec<char> = iban.chars().filter(|c| !c.is_whitespace()).collect();
+    c.chunks(4)
+        .map(|b| b.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Header subtitle of an account: bank name and formatted IBAN (IBAN masked in privacy mode).
+pub fn account_subtitle(bank: &str, iban: &str, privacy: bool) -> String {
+    let iban = if iban.trim().is_empty() {
+        String::new()
+    } else {
+        mask(&format_iban(iban), privacy)
+    };
+    [bank.trim().to_string(), iban]
+        .into_iter()
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// Why a booking counts as transfer, from its own texts.
+pub fn transfer_reason(r: &Row) -> String {
+    let t = format!("{} {} {}", r.counterparty, r.purpose, r.booking_text).to_lowercase();
+    let why = if t.contains("kreditkarte") || t.contains("abrechnung") || t.contains("visa") {
+        "Kartenabrechnung"
+    } else if t.contains("aufladung") || t.contains("paypal") {
+        "Aufladung / Zahlungsdienst"
+    } else if t.contains("depot") || t.contains("sparplan") {
+        "Übertrag auf ein Depot"
+    } else {
+        "Zahlung zwischen eigenen Konten"
+    };
+    format!("Als Umbuchung erkannt ({why}): zählt nicht als Einnahme oder Ausgabe.")
 }
 
 /// Raw form input of the transfer dialog.
@@ -411,6 +457,7 @@ mod tests {
             tags: Vec::new(),
             reference: String::new(),
             transfer: false,
+            documents: 0,
         }
     }
 

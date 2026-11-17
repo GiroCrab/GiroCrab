@@ -392,6 +392,7 @@ pub(crate) mod tests {
             tags: Vec::new(),
             reference: String::new(),
             transfer: false,
+            documents: 0,
         }
     }
 

@@ -650,6 +650,7 @@ fn apply_filter(win: &MainWindow) {
             uncategorized_only: win.get_uncategorized_only(),
             status: StatusFilter::from_index(win.get_status_index()),
             from_date: daily::range_from(win.get_range_index()),
+            with_documents: win.get_documents_only(),
             tag: {
                 let i = win.get_tag_index();
                 if i > 0 {
