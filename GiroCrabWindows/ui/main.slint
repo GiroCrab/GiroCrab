@@ -682,6 +682,10 @@ export component MainWindow inherits Window {
     in property <[string]> cashflow-ticks;
     in-out property <int> cashflow-period: 0;
     in property <[BudgetLine]> budget-lines;
+    in property <[BudgetLine]> analytics-expense-cats;
+    in property <[BudgetLine]> analytics-income-cats;
+    in property <[BudgetLine]> analytics-tags;
+    in property <string> analytics-summary;
     in property <string> budget-title: "Monatsbudgets";
     in property <[TileRow]> category-tiles;
     callback cashflow-changed();
@@ -1338,6 +1342,26 @@ export component MainWindow inherits Window {
                     Text { text: root.budget-title; color: Theme.text; font-size: 14px; font-weight: 700; }
                     if root.budget-lines.length == 0: Text { text: "Keine Ausgaben in diesem Monat"; color: Theme.muted; font-size: 11px; }
                     for l[i] in root.budget-lines: BudgetBar { l: l; visible: i < 4; height: i < 4 ? 30px : 0px; }
+                }
+            }
+            if root.view-mode == 0 && root.cards-open: Rectangle {
+                height: 50px + (root.analytics-expense-cats.length + root.analytics-income-cats.length + root.analytics-tags.length) * 32px + (root.analytics-tags.length == 0 ? 20px : 0px) + 90px;
+                background: Theme.surface;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: Theme.border;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 6px;
+                    Text { text: "Analysen"; color: Theme.text; font-size: 14px; font-weight: 700; }
+                    Text { text: root.analytics-summary; color: Theme.muted; font-size: 11px; overflow: elide; }
+                    Text { text: "Ausgaben nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                    for l in root.analytics-expense-cats: BudgetBar { l: l; height: 30px; }
+                    Text { text: "Einnahmen nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                    for l in root.analytics-income-cats: BudgetBar { l: l; height: 30px; }
+                    Text { text: "Auswertung nach Tags"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                    if root.analytics-tags.length == 0: Text { text: "Keine getaggten Buchungen im Filter"; color: Theme.muted; font-size: 11px; }
+                    for l in root.analytics-tags: BudgetBar { l: l; height: 30px; }
                 }
             }
             if root.view-mode == 0: Rectangle {

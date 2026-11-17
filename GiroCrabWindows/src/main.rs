@@ -2,6 +2,7 @@
 //! Unlock / create vault, demo mode (`GIROCRAB_DEMO_SEED=1`), accounts with balances,
 //! bookings of the selected account and bank sync (FinTS PIN/TAN dialog, PSD2 browser redirect).
 
+mod analytics;
 mod assets_loans;
 mod assets_loans_ui;
 mod cockpit;
@@ -356,6 +357,61 @@ fn tag_names(rows: &[Row]) -> Vec<String> {
     v
 }
 
+/// Fills the inline analytics (category breakdown, tag evaluation) from the filtered rows.
+fn render_analytics(win: &MainWindow, privacy: bool) {
+    let (inc, exp, exp_cats, inc_cats, tags) = with_state(|st| {
+        let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
+        let (inc, exp, _) = analytics::totals(&shown);
+        (
+            inc,
+            exp,
+            analytics::categories(&shown, true, 6),
+            analytics::categories(&shown, false, 6),
+            analytics::tags(&shown, 8),
+        )
+    });
+    let lines = |v: Vec<analytics::Slice>| -> ModelRc<BudgetLine> {
+        ModelRc::new(VecModel::from(
+            v.into_iter()
+                .map(|s| {
+                    let cents = s.cents;
+                    BudgetLine {
+                        name: daily::mask(&s.name, false).into(),
+                        amount: daily::mask(
+                            &format!(
+                                "{} · {} Buch. · {:.0} %",
+                                money(cents, "EUR"),
+                                s.count,
+                                s.share * 100.0
+                            ),
+                            privacy,
+                        )
+                        .into(),
+                        progress: s.share,
+                        over: false,
+                        color: tint(&s.color_hex),
+                    }
+                })
+                .collect::<Vec<_>>(),
+        ))
+    };
+    win.set_analytics_expense_cats(lines(exp_cats));
+    win.set_analytics_income_cats(lines(inc_cats));
+    win.set_analytics_tags(lines(tags));
+    win.set_analytics_summary(
+        daily::mask(
+            &format!(
+                "Einnahmen {} · Ausgaben {} · Saldo {}",
+                money(inc, "EUR"),
+                money(exp, "EUR"),
+                money(inc - exp, "EUR")
+            ),
+            privacy,
+        )
+        .into(),
+    );
+}
+
 fn render_bookings(win: &MainWindow) {
     let privacy = privacy_on(win);
     let (count, tags) = with_state(|st| (st.shown.len(), tag_names(&st.rows)));
@@ -366,6 +422,7 @@ fn render_bookings(win: &MainWindow) {
         win.set_tag_index(0);
     }
     win.set_tag_labels(ModelRc::new(VecModel::from(labels)));
+    render_analytics(win, privacy);
     let (days, inspector, cat_index) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
         let buckets = cockpit::group_by_day(&shown);

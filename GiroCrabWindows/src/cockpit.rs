@@ -351,10 +351,10 @@ pub fn top_spending(rows: &[Row], year: i32, month: u32, n: usize) -> Vec<Budget
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn row(date: &str, cents: i64, cat: &str) -> Row {
+    pub(crate) fn row(date: &str, cents: i64, cat: &str) -> Row {
         Row {
             id: 1,
             account_name: "Giro".into(),
