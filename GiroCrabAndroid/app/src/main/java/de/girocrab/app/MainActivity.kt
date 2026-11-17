@@ -3,6 +3,8 @@ package de.girocrab.app
 import android.app.LocaleManager
 import android.os.Build
 import android.os.Bundle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import android.os.LocaleList
 import android.view.WindowManager
 import androidx.activity.compose.setContent
@@ -69,7 +71,7 @@ enum class MainTab(val label: String, val icon: ImageVector) {
     Accounts("Konten", Icons.Default.AccountBalanceWallet),
     Analytics("Analysen", Icons.Default.Analytics),
     Payments("Zahlungen", Icons.Default.Payments),
-    Portfolio("Vermögen", Icons.Default.Savings),
+    Portfolio("Depot", Icons.Default.Savings),
     More("Mehr", Icons.Default.MoreHoriz),
 }
 
@@ -144,7 +146,7 @@ fun GiroCrabRoot(
     var lockPreview by rememberSaveable { mutableStateOf(false) }
 
     val locked = (state.vaultState == VaultState.Locked && !state.loading) || lockPreview
-    LaunchedEffect(state.privacyMode, locked) { setSecure(state.privacyMode || locked) }
+    LaunchedEffect(state.privacyMode, locked) { setSecure(state.privacyMode) }
 
     if (state.loading && state.vaultState == VaultState.Locked) {
         Box(Modifier.fillMaxSize())
@@ -168,7 +170,7 @@ fun GiroCrabRoot(
                         selected = tab == t,
                         onClick = { tab = t },
                         icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label) },
+                        label = { Text(t.label, fontSize = 11.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
                     )
                 }
             }

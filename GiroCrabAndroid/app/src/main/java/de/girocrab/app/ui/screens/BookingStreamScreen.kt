@@ -33,6 +33,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -87,7 +89,8 @@ enum class FlowFilter(val label: String) {
 
 private val DE: Locale = Locale.GERMANY
 private val dayFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.", DE)
-private val tabular = FontFamily.Monospace
+private val tabular = FontFamily.Default
+private val tnum = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
 
 private fun color(hex: Long) = Color(hex)
 
@@ -248,15 +251,21 @@ fun BalanceHeaderCard(
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 formatMoney(state.totalBalanceCents, masked = masked),
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.headlineMedium.copy(style = tnum),
                 fontFamily = tabular,
                 fontWeight = FontWeight.Bold,
             )
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = onFetch) {
+                Button(
+                    onClick = onFetch,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0067C0), contentColor = Color.White),
+                ) {
                     Icon(Icons.Filled.Sync, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Jetzt abrufen")
                 }
-                FilledTonalButton(onClick = onNewTransfer) {
+                FilledTonalButton(
+                    onClick = onNewTransfer,
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFE8F1FB), contentColor = Color(0xFF004E8C)),
+                ) {
                     Icon(Icons.Filled.Send, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Neue Überweisung")
                 }
                 if (account != null) {
@@ -393,7 +402,7 @@ private fun AnalyticsPanel(bookings: List<Booking>, categories: List<Category>, 
                             Modifier.width((90f * cents / max).dp.coerceAtLeast(2.dp)).size(width = 90.dp, height = 6.dp)
                                 .clip(RoundedCornerShape(3.dp)).background(color(c?.colorHex ?: 0xFF9E9E9E)),
                         )
-                        Text(formatMoney(cents, masked = masked), Modifier.width(90.dp), fontFamily = tabular, fontSize = 13.sp)
+                        Text(formatMoney(cents, masked = masked), Modifier.width(90.dp), fontFamily = tabular, style = tnum, fontSize = 13.sp)
                     }
                 }
             }
@@ -405,7 +414,7 @@ private fun AnalyticsPanel(bookings: List<Booking>, categories: List<Category>, 
 private fun SumRow(label: String, cents: Long, masked: Boolean) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
-        Text(formatMoney(cents, masked = masked), fontFamily = tabular, fontWeight = FontWeight.SemiBold)
+        Text(formatMoney(cents, masked = masked), fontFamily = tabular, style = tnum, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -421,9 +430,9 @@ private fun MonthHeader(g: MonthGroup, masked: Boolean) {
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
         )
-        Text(formatMoney(g.income, masked = masked), fontFamily = tabular, fontSize = 12.sp, color = Color(0xFF2E7D32))
+        Text(formatMoney(g.income, masked = masked), fontFamily = tabular, style = tnum, fontSize = 12.sp, color = Color(0xFF2E7D32))
         Spacer(Modifier.width(10.dp))
-        Text(formatMoney(g.expense, masked = masked), fontFamily = tabular, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(formatMoney(g.expense, masked = masked), fontFamily = tabular, style = tnum, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -472,7 +481,7 @@ private fun BookingRow(
         }
         Text(
             formatMoney(booking.amountCents, booking.currency, masked),
-            fontFamily = tabular,
+            fontFamily = tabular, style = tnum,
             fontWeight = FontWeight.Medium,
             color = if (booking.amountCents > 0) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,

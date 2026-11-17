@@ -95,7 +95,7 @@ fun formatMoney(cents: Long, currency: String = "EUR", masked: Boolean = false):
     if (masked) return "••••"
     val nf = NumberFormat.getCurrencyInstance(Locale.GERMANY)
     runCatching { nf.currency = Currency.getInstance(currency) }
-    return nf.format(cents / 100.0)
+    return nf.format(cents / 100.0).replace('\u00A0', ' ').replace('\u202F', ' ')
 }
 
 fun accountKindLabel(k: AccountKind) = when (k) {

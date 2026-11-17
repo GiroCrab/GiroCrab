@@ -178,11 +178,13 @@ fun DemoBanner(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+        color = androidx.compose.ui.graphics.Color(0xFFFFF4CE),
+        contentColor = androidx.compose.ui.graphics.Color(0xFF5C4300),
+        border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFF0E0A0)),
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Science, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
