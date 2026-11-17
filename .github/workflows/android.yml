@@ -20,8 +20,9 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # ubuntu-latest ships the Android SDK; skip setup-android (its sdkmanager step failed) and just accept licenses.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
