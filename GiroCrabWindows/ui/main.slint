@@ -656,6 +656,11 @@ export component MainWindow inherits Window {
     in-out property <bool> privacy: false;
     in-out property <bool> uncategorized-only: false;
     in-out property <int> status-index: 0;
+    in-out property <int> range-index: 0;
+    in-out property <int> tag-index: 0;
+    in property <[string]> tag-labels: ["Alle Tags"];
+    in property <string> booking-count;
+    in property <string> selected-subtitle;
     in property <int> selected-booking: -1;
     in property <bool> has-inspector: false;
     in property <InspectorData> inspector;
@@ -1134,6 +1139,7 @@ export component MainWindow inherits Window {
                             text: root.selected-name == "" ? "Keine Konten" : root.selected-name;
                             font-size: 16px; font-weight: 700; color: Theme.text; overflow: elide;
                         }
+                        if root.selected-subtitle != "": Text { text: root.selected-subtitle; color: Theme.muted; font-size: 11px; overflow: elide; }
                         Text { text: root.selected-balance; font-size: 24px; font-weight: 700; color: Theme.text; overflow: elide; }
                     }
                     HorizontalLayout {
@@ -1141,7 +1147,13 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         GhostButton {
                             y: (parent.height - self.height) / 2;
-                            text: "Bearbeiten";
+                            text: "Neue Überweisung";
+                            enabled: root.selected > 0 && !root.busy;
+                            clicked => { root.transfer-start(); }
+                        }
+                        GhostButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Kontoeinstellungen";
                             enabled: root.selected > 0 && !root.busy;
                             visible: root.selected > 0;
                             clicked => { root.account-edit(); }
@@ -1185,11 +1197,32 @@ export component MainWindow inherits Window {
                     current-index <=> root.status-index;
                     selected => { root.search-changed(); }
                 }
+                ComboBox {
+                    preferred-width: 120px;
+                    min-width: 90px;
+                    horizontal-stretch: 0;
+                    model: ["Gesamter Zeitraum", "30 Tage", "90 Tage", "Dieses Jahr"];
+                    current-index <=> root.range-index;
+                    selected => { root.search-changed(); }
+                }
+                ComboBox {
+                    preferred-width: 110px;
+                    min-width: 80px;
+                    horizontal-stretch: 0;
+                    model: root.tag-labels;
+                    current-index <=> root.tag-index;
+                    selected => { root.search-changed(); }
+                }
                 PillToggle {
                     text: "Ohne Kategorie";
                     checked <=> root.uncategorized-only;
                     toggled => { root.search-changed(); }
                 }
+                PillToggle {
+                    text: "Analysen";
+                    checked <=> root.cards-open;
+                }
+                Text { text: root.booking-count; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
             }
             // dashboard cards above the bookings: cashflow chart and budgets
             if root.view-mode == 0: HorizontalLayout {

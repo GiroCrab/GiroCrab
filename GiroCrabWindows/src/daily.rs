@@ -48,6 +48,37 @@ pub struct Filter {
     pub search: String,
     pub uncategorized_only: bool,
     pub status: StatusFilter,
+    /// Earliest booking date (ISO `YYYY-MM-DD`) that still passes; empty = no time limit.
+    pub from_date: String,
+    /// Only bookings carrying a tag with this name; empty = any.
+    pub tag: String,
+}
+
+/// ISO date `days` days before today (UTC), for the time range selector.
+pub fn date_days_ago(days: i64) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let z = secs / 86_400 - days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Time range selector: 0 all, 1 last 30 days, 2 last 90 days, 3 last year.
+pub fn range_from(index: i32) -> String {
+    match index {
+        1 => date_days_ago(30),
+        2 => date_days_ago(90),
+        3 => date_days_ago(365),
+        _ => String::new(),
+    }
 }
 
 /// The booking fields the list and the inspector need (copied once per load).
@@ -130,6 +161,12 @@ impl From<&Booking> for Row {
 impl Filter {
     pub fn matches(&self, r: &Row) -> bool {
         if self.uncategorized_only && r.category_id.is_some() {
+            return false;
+        }
+        if !self.from_date.is_empty() && r.booking_date.as_str() < self.from_date.as_str() {
+            return false;
+        }
+        if !self.tag.is_empty() && !r.tags.iter().any(|t| t.name == self.tag) {
             return false;
         }
         let status_ok = match self.status {

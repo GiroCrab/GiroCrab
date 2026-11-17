@@ -331,8 +331,27 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
 }
 
 /// Builds the day cards and the inspector from the cached rows; never touches the vault.
+/// Distinct tag names of the loaded rows, sorted (the tag filter's choices).
+fn tag_names(rows: &[Row]) -> Vec<String> {
+    let mut v: Vec<String> = rows
+        .iter()
+        .flat_map(|r| r.tags.iter().map(|t| t.name.clone()))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
 fn render_bookings(win: &MainWindow) {
     let privacy = privacy_on(win);
+    let (count, tags) = with_state(|st| (st.shown.len(), tag_names(&st.rows)));
+    win.set_booking_count(format!("{count} Buchungen").into());
+    let mut labels = vec![SharedString::from("Alle Tags")];
+    labels.extend(tags.into_iter().map(SharedString::from));
+    if win.get_tag_index() as usize >= labels.len() {
+        win.set_tag_index(0);
+    }
+    win.set_tag_labels(ModelRc::new(VecModel::from(labels)));
     let (days, inspector, cat_index) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
         let days: Vec<DayGroup> = cockpit::group_by_day(&shown)
@@ -531,6 +550,18 @@ fn apply_filter(win: &MainWindow) {
             search: win.get_search_text().to_string(),
             uncategorized_only: win.get_uncategorized_only(),
             status: StatusFilter::from_index(win.get_status_index()),
+            from_date: daily::range_from(win.get_range_index()),
+            tag: {
+                let i = win.get_tag_index();
+                if i > 0 {
+                    tag_names(&st.rows)
+                        .get(i as usize - 1)
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            },
         };
         st.shown = daily::visible(&st.rows, &st.filter);
         st.selected_booking = daily::keep_selection(&st.rows, &st.shown, st.selected_booking)
