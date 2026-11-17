@@ -141,22 +141,24 @@ Sheet {
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.border }
 
-        // ContentUnavailableView „Noch keine Tags“
-        ColumnLayout {
+        // ContentUnavailableView „Noch keine Tags“, centred in the free space
+        Item {
             visible: TagsModel.tags.length === 0
             Layout.fillWidth: true; Layout.fillHeight: true
-            spacing: 8
-            Item { Layout.fillHeight: true }
-            SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: "number"; size: 32; color: Theme.tertiary }
-            Text { Layout.alignment: Qt.AlignHCenter; text: qsTr("Noch keine Tags"); font.pixelSize: Theme.body + 3; font.weight: Font.Bold; color: Theme.text }
-            Text {
-                Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 380 * Theme.textScale
-                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                text: qsTr("Tags vergeben Sie in der rechten Seitenleiste einer Buchung oder per Rechtsklick in der Buchungsliste.")
-                font.pixelSize: Theme.body; color: Theme.secondary
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 32, 380 * Theme.textScale)
+                spacing: 8
+                SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: "number"; size: 32; color: Theme.tertiary }
+                Text { Layout.alignment: Qt.AlignHCenter; text: qsTr("Noch keine Tags"); font.pixelSize: Theme.body + 3; font.weight: Font.Bold; color: Theme.text }
+                Text {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                    text: qsTr("Tags vergeben Sie in der rechten Seitenleiste einer Buchung oder per Rechtsklick in der Buchungsliste.")
+                    font.pixelSize: Theme.body; color: Theme.secondary
+                }
+                Button { Layout.alignment: Qt.AlignHCenter; text: qsTr("Neuer Tag …"); onClicked: sheet.openEditor("create", null) }
             }
-            Button { Layout.alignment: Qt.AlignHCenter; text: qsTr("Neuer Tag …"); onClicked: sheet.openEditor("create", null) }
-            Item { Layout.fillHeight: true }
         }
 
         // header: „Tag“ … „Buchungen“
