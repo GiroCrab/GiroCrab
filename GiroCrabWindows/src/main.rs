@@ -1071,7 +1071,6 @@ fn render_header(
     selected: Option<i64>,
 ) -> Result<Option<i64>, String> {
     let (rows, total) = account_rows(vault, win.get_privacy())?;
-    let first = rows.first().map(|r| r.id as i64);
     let header: Vec<(i64, String, String, String)> = rows
         .iter()
         .map(|r| {
@@ -1085,7 +1084,7 @@ fn render_header(
         .collect();
     win.set_accounts(ModelRc::new(VecModel::from(rows)));
     win.set_total(total.clone().into());
-    let sel = selected.or(first);
+    let sel = selected.or(Some(0));
     win.set_selected(sel.map_or(-1, |s| s as i32));
     let cur = if sel == Some(0) {
         ("Alle Konten".to_string(), total, "EUR".to_string())
@@ -1104,11 +1103,24 @@ fn render_header(
 
 /// Header plus the view of the selected target (bookings reload, or the depot / list view).
 fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
+    // Privacy follows `toggle || !unlocked`: unlock first and start with the toggle off, so the
+    // first paint shows real balances instead of masks.
+    win.set_privacy(false);
+    win.set_unlocked(true);
     match render_header(win, vault, selected) {
         Ok(sel) => {
             refresh_transfer_sources(win, vault);
+            // Fill the sidebar and the account count now; the background refresh follows.
+            views_ui::set_accounts_now(win, vault);
             views_ui::sync_target(sel);
             if sel.is_some() {
+                // First paint: load the scope's bookings synchronously (selects the first one);
+                // the background reload in `apply_view` then refreshes them.
+                let target = with_state(|st| st.target);
+                if let Ok(rows) = load_rows(vault, target) {
+                    with_state(|st| st.rows = rows);
+                    apply_filter(win);
+                }
                 views_ui::apply_view(win, vault);
             } else {
                 with_state(|st| {

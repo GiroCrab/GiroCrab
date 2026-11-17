@@ -157,11 +157,11 @@ component SideLine inherits Rectangle {
             width: 16px;
         }
         if r.fold == 0 && r.kind == 3: Rectangle {
-            width: 26px;
-            height: 26px;
+            width: 24px;
+            height: 24px;
             y: (parent.height - self.height) / 2;
             border-radius: 6px;
-            background: #161b22;
+            background: Theme.surface;
             border-width: 1px;
             border-color: r.dot.with-alpha(0.22);
             Rectangle { border-radius: 6px; background: r.dot.with-alpha(0.10); }
@@ -229,10 +229,10 @@ component SegButton inherits Rectangle {
     height: 28px;
     border-radius: 4px;
     border-width: checked ? 0px : 0px;
-    background: checked ? Theme.primary : ta.has-hover ? Theme.text.with-alpha(0.07) : transparent;
+    background: checked ? #FFFFFF : ta.has-hover ? Theme.text.with-alpha(0.07) : transparent;
     horizontal-stretch: 1;
     ta := TouchArea { clicked => { root.clicked(); } }
-    Text { text: root.text; color: checked ? #ffffff : Theme.text; font-size: 11px; font-weight: checked ? 700 : 500; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+    Text { text: root.text; color: checked ? #1a1a1a : #3a3a3a; font-size: 11px; font-weight: checked ? 700 : 500; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
 }
 
 component KpiCard inherits Rectangle {
@@ -344,6 +344,7 @@ component MerchantAvatar inherits Rectangle {
 component BookingLine inherits Rectangle {
     in property <BookingRow> b;
     in property <bool> active;
+    in property <bool> multi-select-active;
     callback clicked();
     callback toggle-checked();
     callback toggle-mark();
@@ -357,7 +358,7 @@ component BookingLine inherits Rectangle {
         padding-right: 12px;
         spacing: 10px;
         // multi-select box
-        Rectangle {
+        if root.multi-select-active || b.marked: Rectangle {
             width: 18px;
             Rectangle {
                 width: 14px; height: 14px; y: (parent.height - self.height) / 2;
@@ -398,29 +399,29 @@ component BookingLine inherits Rectangle {
             HorizontalLayout {
                 spacing: 5px;
                 alignment: start;
-                Text { text: b.account; color: Theme.muted; font-size: 11px; overflow: elide; max-width: 140px; }
+                Text { text: b.account; color: Theme.muted; font-size: 11px; overflow: elide; horizontal-stretch: 1; min-width: 0px; }
                 Text { text: "·"; color: Theme.muted; font-size: 11px; }
                 Rectangle {
                     background: b.category-color.with-alpha(0.18);
                     border-radius: 8px;
-                    max-width: 170px;
+                    horizontal-stretch: 0;
+                    width: cat-text.preferred-width + 14px;
                     HorizontalLayout {
                         padding-left: 7px; padding-right: 7px; padding-top: 1px; padding-bottom: 1px;
-                        Text { text: b.category; color: Theme.dark ? b.category-color.brighter(0.4) : b.category-color.darker(0.3); font-size: 10px; font-weight: 600; overflow: elide; }
+                        cat-text := Text { text: b.category; color: Theme.dark ? b.category-color.brighter(0.4) : b.category-color.darker(0.3); font-size: 10px; font-weight: 600; }
                     }
                 }
                 if b.tags-text != "": Rectangle {
                     background: Theme.text.with-alpha(0.08);
                     border-radius: 8px;
-                    max-width: 150px;
+                    horizontal-stretch: 0;
+                    width: tag-text.preferred-width + 14px;
                     HorizontalLayout {
                         padding-left: 7px; padding-right: 7px; padding-top: 1px; padding-bottom: 1px;
-                        Text { text: b.tags-text; color: Theme.muted; font-size: 10px; overflow: elide; }
+                        tag-text := Text { text: b.tags-text; color: Theme.muted; font-size: 10px; }
                     }
                 }
-                if b.detail != "": Text { text: "·"; color: Theme.muted; font-size: 11px; }
-                if b.detail != "": Text { text: b.detail; color: Theme.muted; font-size: 11px; overflow: elide; horizontal-stretch: 1; }
-                if b.detail == "": Rectangle { horizontal-stretch: 1; }
+                if b.category == "" && b.tags-text == "" && b.detail != "": Text { text: b.detail; color: Theme.muted; font-size: 11px; overflow: elide; horizontal-stretch: 1; }
             }
         }
         Text {
@@ -438,6 +439,7 @@ component BookingLine inherits Rectangle {
 component DayCard inherits Rectangle {
     in property <DayGroup> day;
     in property <int> selected-booking;
+    in property <bool> multi-select-active;
     callback select(int);
     callback toggle-checked(int);
     callback toggle-mark(int);
@@ -460,6 +462,7 @@ component DayCard inherits Rectangle {
         for b in day.rows: BookingLine {
             b: b;
             active: root.selected-booking == b.id;
+            multi-select-active: root.multi-select-active;
             clicked => { root.select(b.id); }
             toggle-checked => { root.toggle-checked(b.id); }
             toggle-mark => { root.toggle-mark(b.id); }
@@ -1088,13 +1091,16 @@ export component MainWindow inherits Window {
         vertical-stretch: 1;
         // ---- sidebar
         Rectangle {
-            width: 260px;
+            min-width: 295px;
+            max-width: 295px;
+            horizontal-stretch: 0;
             background: Theme.sidebar;
             VerticalLayout {
                 padding: 10px;
                 spacing: 6px;
                 ListView {
                     vertical-stretch: 1;
+                    min-height: 120px;
                     for r in root.side-rows: Rectangle {
                         height: r.kind == 5 ? 68px : r.kind == 1 ? 26px : r.kind == 2 ? 22px : r.key == "all" ? 38px : r.progress >= 0 ? 40px : (r.kind == 3 && r.detail != "") ? 40px : 30px;
                         if r.kind == 5: VerticalLayout {
@@ -1105,9 +1111,10 @@ export component MainWindow inherits Window {
                                 height: 28px;
                                 border-radius: 4px;
                                 border-width: 1px;
-                                border-color: Theme.border;
-                                background: Theme.surface;
+                                border-color: #EAEAEA;
+                                background: #EAEAEA;
                                 HorizontalLayout {
+                                    padding: 2px;
                                     spacing: 0px;
                                     SegButton { text: "Gruppen"; checked: root.group-mode == 0; clicked => { root.group-mode = 0; root.side-controls-changed(); } }
                                     SegButton { text: "Banken"; checked: root.group-mode == 1; clicked => { root.group-mode = 1; root.side-controls-changed(); } }
@@ -1185,6 +1192,7 @@ export component MainWindow inherits Window {
                     spacing: 12px;
                     VerticalLayout {
                         horizontal-stretch: 1;
+                        min-width: max(120px, bal.preferred-width);
                         alignment: center;
                         spacing: 4px;
                         Text {
@@ -1195,6 +1203,7 @@ export component MainWindow inherits Window {
                         Text { text: root.selected-balance; font-size: 18px; font-weight: 700; color: Theme.text; overflow: elide; }
                     }
                     HorizontalLayout {
+                        horizontal-stretch: 0;
                         alignment: end;
                         spacing: 8px;
                         GhostButton {
@@ -1204,7 +1213,7 @@ export component MainWindow inherits Window {
                             enabled: root.selected > 0 && !root.busy;
                             clicked => { root.transfer-start(); }
                         }
-                        GhostButton {
+                        if root.selected > 0: GhostButton {
                             y: (parent.height - self.height) / 2;
                             text: "⚙";
                             width: 34px;
@@ -1366,6 +1375,7 @@ export component MainWindow inherits Window {
                     }
                     ListView {
                         for d in root.days: VerticalLayout {
+                            padding-right: 16px;
                             spacing: 6px;
                             if d.show-month: HorizontalLayout {
                                 height: 34px;
@@ -1379,6 +1389,7 @@ export component MainWindow inherits Window {
                             DayCard {
                                 day: d;
                                 selected-booking: root.selected-booking;
+                                multi-select-active: root.marked-count > 0;
                                 select(id) => { root.select-booking(id); }
                                 toggle-checked(id) => { root.toggle-booking-checked(id); }
                                 toggle-mark(id) => { root.toggle-booking-mark(id); }
