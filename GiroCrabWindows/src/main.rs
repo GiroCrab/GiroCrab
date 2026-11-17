@@ -503,7 +503,7 @@ fn render_bookings(win: &MainWindow) {
                 iban: i.iban.into(),
                 purpose: i.purpose.into(),
                 booking_date: german_date(&i.booking_date).into(),
-                value_date: i.value_date.into(),
+                value_date: german_date(&i.value_date).into(),
                 account: i.account.into(),
                 amount: i.amount.into(),
                 note: i.note.into(),
