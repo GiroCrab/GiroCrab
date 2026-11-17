@@ -19,6 +19,8 @@ struct TransferSheetView: View {
     /// "Umbuchung": the recipient is one of the user's own accounts.
     @State private var ownTransfer = false
     @State private var ownTargetID: Int64?
+    /// Measured form and sheet heights: the sheet takes what the form needs (#879).
+    @State private var formFit = FormFit()
 
     private let maxPurpose = 140
 
@@ -93,6 +95,17 @@ struct TransferSheetView: View {
             && model.transferDraft.purpose.count <= maxPurpose
     }
 
+    /// The height the form needs (#879), at most what the screen offers;
+    /// `nil` (fixed 700 pt) until measured or before macOS 15.
+    private var fittedHeight: CGFloat? {
+        #if os(macOS)
+        let screen = NSScreen.main?.visibleFrame.height ?? 900
+        return formFit.height(min: 420, max: screen - 120)
+        #else
+        return nil
+        #endif
+    }
+
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
@@ -123,7 +136,11 @@ struct TransferSheetView: View {
             Divider()
             buttons.padding(14)
         }
-        .macFrame(width: 560, height: 700)
+        .macFrame(width: 560, height: fittedHeight == nil ? 700 : nil)
+        .frame(height: fittedHeight)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { formFit.total = $0 }
+        // The GiroCode view does not scroll: back to the fixed height.
+        .onChange(of: confirming) { formFit = FormFit(total: formFit.total) }
         .task { if model.options.demoSheetName == "transfer-confirm" { confirming = true } } // screenshots
         .overlay {
             if dropTargeted {
@@ -348,6 +365,7 @@ struct TransferSheetView: View {
             }
         }
         .formStyle(.grouped)
+        .reportsFormFit($formFit)
     }
 
     private var suggestionRow: some View {
@@ -476,6 +494,7 @@ struct TransferSheetView: View {
             }
         }
         .formStyle(.grouped)
+        .reportsFormFit($formFit)
     }
 
     private func reviewRow(_ label: LocalizedStringKey, _ value: String, monospaced: Bool = false,
