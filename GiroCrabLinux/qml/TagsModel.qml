@@ -6,7 +6,7 @@ import QtQuick
 // data in bug report pictures (`Sensitive {}`, not `labels`).
 // The tag list comes from `list_tags` (one indexed aggregate, cheap enough for the GUI thread).
 // A change patches the loaded rows at once (no list reload) and can be undone exactly
-// (Bearbeiten › Rückgängig, Strg+Z: just the bookings that changed).
+// (Bearbeiten › Rückgängig, Strg+Z, via UndoManager: just the bookings that changed).
 QtObject {
     id: tm
 
@@ -29,10 +29,10 @@ QtObject {
     /// Another vault (demo / own, lock, reset): other tags, nothing to undo.
     property Connections vaultWatch: Connections {
         target: AppModel
-        function onVaultStateChanged() { tm.undoStack = []; tm.redoStack = []; tm.reload() }
-        function onDemoActiveChanged() { tm.undoStack = []; tm.redoStack = []; tm.reload() }
-        // also a restored backup in the same vault: undo ids would point at replaced data
-        function onVaultReplaced() { tm.undoStack = []; tm.redoStack = []; tm.reload() }
+        // (UndoManager drops the undo steps itself)
+        function onVaultStateChanged() { tm.reload() }
+        function onDemoActiveChanged() { tm.reload() }
+        function onVaultReplaced() { tm.reload() }
     }
 
     // MARK: names (same rules as the core)
@@ -114,7 +114,9 @@ QtObject {
     function targets(b) { return BookingDetails.categorizeTargets(b) }
 
     /// One small transaction; the rows show the change at once, the counts follow from `reload`.
-    function changeTag(tagID, bookingIDs, adding, fromHistory, historyName) {
+    /// Undoable (UndoManager) for exactly the bookings that changed; undo and redo keep the
+    /// name of the original step (`historyName`).
+    function changeTag(tagID, bookingIDs, adding, historyName) {
         if (!AppModel.isUnlocked || !bookingIDs.length) return
         let changed
         try {
@@ -127,13 +129,8 @@ QtObject {
         if (!changed.length) return
         showTag(tagID, changed, adding)
         reload()
-        const entry = { tagID: tagID, ids: changed, adding: !adding,
-                        name: historyName || (adding ? qsTr("Tag hinzufügen") : qsTr("Tag entfernen")) }
-        if (fromHistory === "undo") redoStack = redoStack.concat([entry])
-        else {
-            undoStack = undoStack.concat([entry])
-            if (fromHistory !== "redo") redoStack = []
-        }
+        const name = historyName || (adding ? qsTr("Tag hinzufügen") : qsTr("Tag entfernen"))
+        UndoManager.register(name, () => tm.changeTag(tagID, changed, !adding, name))
     }
     /// Optimistic update of the loaded rows and a sticky inspector booking.
     function showTag(tagID, ids, adding) {
@@ -156,23 +153,5 @@ QtObject {
     function rank(t) {
         const i = tags.findIndex(x => x.id === t.id)
         return i < 0 ? Number.MAX_SAFE_INTEGER : i
-    }
-
-    // MARK: undo (windowUndoManager on the Mac)
-    property var undoStack: []
-    property var redoStack: []
-    readonly property string undoName: undoStack.length ? undoStack[undoStack.length - 1].name : ""
-    readonly property string redoName: redoStack.length ? redoStack[redoStack.length - 1].name : ""
-    function undo() {
-        if (!undoStack.length) return
-        const e = undoStack[undoStack.length - 1]
-        undoStack = undoStack.slice(0, -1)
-        changeTag(e.tagID, e.ids, e.adding, "undo", e.name)
-    }
-    function redo() {
-        if (!redoStack.length) return
-        const e = redoStack[redoStack.length - 1]
-        redoStack = redoStack.slice(0, -1)
-        changeTag(e.tagID, e.ids, e.adding, "redo", e.name)
     }
 }

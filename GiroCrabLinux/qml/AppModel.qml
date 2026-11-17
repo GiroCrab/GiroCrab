@@ -262,7 +262,7 @@ QtObject {
     /// Hands keyboard focus back to the booking list (Esc in the note field).
     signal focusList()
     /// The data behind the UI was replaced (demo ↔ own vault, unlock, backup restore): singletons
-    /// holding per-vault state (tags undo, merchant list, sidebar settings, standing orders) reset.
+    /// holding per-vault state (undo history, merchant list, sidebar settings, standing orders) reset.
     signal vaultReplaced()
     /// Day card the stream should scroll to (click in the balance chart).
     signal scrollToDay(string day)
@@ -2109,7 +2109,7 @@ QtObject {
     // MARK: - Manual loans (ManualLoansUI.swift) and Startsaldo (OpeningBalanceUI.swift)
     // A manual loan has no account at the bank: the core keeps a Stand (balance at the
     // end of a date), an optional interest rate and a search rule; bookings are linked
-    // by the rule or by hand. Undo (Bearbeiten › Widerrufen) is not ported.
+    // by the rule or by hand. Assigning, saving and creating are undoable (UndoManager).
 
     /// ManualLoanStore: [ManualLoan] and transaction id -> LoanLink, refreshed with the accounts.
     property var loans: []
@@ -2152,25 +2152,48 @@ QtObject {
     function loanLink(b) { return b ? (loanLinks[b.id] || null) : null }
     /// "Darlehen zuordnen" applies: no loan booking, and an outflow or already linked (#429).
     function loanAssignable(b) { return !!b && b.account_kind !== "Loan" && (b.amount_cents < 0 || loanLink(b) !== null) }
-    /// Links (or with `null` unlinks) a booking.
+    /// Links (or with `null` unlinks) a booking; undoable via Bearbeiten › Rückgängig.
     function assignLoan(loanId, b) {
         const link = loanLink(b)
         const previous = link ? link.loan_account_id : null
         if (previous === loanId) return
         if (run(() => { core("set_booking_loan", { transaction_id: b.id, loan_account_id: loanId }); return true }) === undefined) return
+        UndoManager.register(qsTr("Darlehenszuordnung"), () => assignLoan(previous, b))
         const name = b.merchant.name === "" ? b.counterparty : b.merchant.name
         const loan = loanId !== null ? manualLoan(loanId) : null
         toast = loan ? qsTr("„%1“ dem Darlehen „%2“ zugeordnet").arg(name).arg(loan.setup.name)
                      : qsTr("Zuordnung von „%1“ aufgehoben").arg(name)
         reloadAccounts(); reloadLoansNow(); reloadBookings()
     }
-    /// Creates or changes a manual loan; returns the account id. Throws on failure.
+    /// Creates or changes a manual loan ("Stand neu setzen" too); returns the account id.
+    /// Throws on failure. Undoable via Bearbeiten › Rückgängig.
     function saveLoan(setup, accountId) {
         let id = accountId
-        if (accountId !== null) core("update_manual_loan", { account_id: accountId, setup: setup })
-        else id = core("create_manual_loan", { setup: setup })
+        if (accountId !== null) {
+            const known = manualLoan(accountId)
+            const old = known ? known.setup : null
+            core("update_manual_loan", { account_id: accountId, setup: setup })
+            if (old) UndoManager.register(qsTr("Darlehen ändern"), () => run(() => saveLoan(old, accountId)))
+        } else {
+            id = core("create_manual_loan", { setup: setup })
+            UndoManager.register(qsTr("Darlehen anlegen"), () => removeCreatedLoan(id, setup))
+        }
         reloadAccounts(); reloadLoansNow(); reloadBookings(); reloadHistory()
         return id
+    }
+    /// Undo of "Neues Darlehen": removes the loan again (redo creates it anew).
+    function removeCreatedLoan(id, setup) {
+        if (run(() => {
+            core("set_account_archived", { account_id: id, archived: true })
+            core("delete_account", { account_id: id })
+            return true
+        }) === undefined) return
+        if (sidebarSelection === "account:" + id) sidebarSelection = "all"
+        UndoManager.register(qsTr("Darlehen anlegen"), () => {
+            const created = run(() => saveLoan(setup, null))
+            if (created !== undefined) sidebarSelection = "account:" + created
+        })
+        reloadAccounts(); reloadLoansNow(); reloadBookings(); reloadHistory()
     }
     function openLoanEditor(mode, accountId, draft) {
         loanEditor = { mode: mode, accountId: accountId === undefined ? null : accountId, draft: draft || null }
@@ -2195,8 +2218,14 @@ QtObject {
     function canSetOpeningBalance(a) { return !!a && a.balance_derived && a.archived_unix === null }
     function openOpeningBalance(a) { openingBalanceRequest = { accountId: a.id } }
     /// Sets (or clears with `null`) the Startsaldo; `date` "" = all bookings. Throws on failure.
-    function setOpeningBalance(accountId, cents, date) {
+    /// Undoable via Bearbeiten › Rückgängig. `known` ({ cents, date }): the value stored now,
+    /// passed by undo/redo because the account list reloads off the GUI thread.
+    function setOpeningBalance(accountId, cents, date, known) {
+        const a = accountsByID[accountId] || null
+        const old = known || (a ? { cents: a.opening_balance_cents, date: a.opening_balance_date } : null)
         core("set_account_opening_balance", { account_id: accountId, cents: cents, date: date })
+        if (old) UndoManager.register(cents === null ? qsTr("Startsaldo entfernen") : qsTr("Startsaldo ändern"),
+                                      () => run(() => setOpeningBalance(accountId, old.cents, old.date, { cents: cents, date: date })))
         reloadAccounts(); reloadHistory()
     }
     /// What a Startsaldo at `date` would count, off the GUI thread; nothing is stored.

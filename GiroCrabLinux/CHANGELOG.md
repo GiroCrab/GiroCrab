@@ -235,6 +235,17 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
   signierte Textdatei von GitHub, ohne Kennung und ohne Tracking; Einstellungen › Allgemein ›
   Mitteilungen schaltet das samt Netzabruf ab.
 
+### Widerrufen bei Darlehen und Startsaldo
+
+- **Bearbeiten › Rückgängig / Wiederholen** (Strg+Z / Strg+Umschalt+Z) gilt jetzt auch für
+  Darlehen und Startsaldo: „Darlehenszuordnung“ (Buchung › Darlehen zuordnen oder Zuordnung
+  aufheben), „Darlehen ändern“ (auch „Stand neu setzen“), „Darlehen anlegen“ (Rückgängig
+  entfernt das neue Darlehen wieder) sowie „Startsaldo ändern“ und „Startsaldo entfernen“.
+- Wie in der Mac-App gibt es dafür einen gemeinsamen Verlauf mit den Tag-Änderungen: Rückgängig
+  nimmt immer die letzte Änderung zurück, gleich welcher Art, und der Menüpunkt nennt sie. Beim
+  Sperren, beim Wechsel zwischen Demo und eigenem Tresor und nach einer Wiederherstellung wird
+  der Verlauf geleert.
+
 ### Einstellungen
 
 - Unten im Einstellungsfenster steht dezent die Version („GiroCrab 0.7.5“), auf jedem Reiter.
@@ -245,7 +256,6 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 
 - Tags verwalten (umbenennen, Farbe, zusammenführen)
 - QR-Codes in Bildern und PDFs beim Überweisen erkennen
-- „Widerrufen“ nach Änderungen an Darlehen und Startsaldo
 - RAH-10-Texte in „Bankzugang bearbeiten“
 
 ## Funktionsstand 0.7.0 (Kern 0.7.5)

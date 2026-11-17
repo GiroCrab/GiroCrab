@@ -73,12 +73,12 @@ ApplicationWindow {
         }
         AppMenu {
             title: qsTr("&Bearbeiten")
-            // Undo of tag changes (AppModel+Tags.swift registers them with the window's undo
-            // manager); text fields keep their own Strg+Z
-            Action { text: TagsModel.undoName ? qsTr("Rückgängig: %1").arg(TagsModel.undoName) : qsTr("Rückgängig")
-                     shortcut: StandardKey.Undo; enabled: TagsModel.undoName !== ""; onTriggered: TagsModel.undo() }
-            Action { text: TagsModel.redoName ? qsTr("Wiederholen: %1").arg(TagsModel.redoName) : qsTr("Wiederholen")
-                     shortcut: StandardKey.Redo; enabled: TagsModel.redoName !== ""; onTriggered: TagsModel.redo() }
+            // The window's undo manager (ManualLoansUI.swift › windowUndoManager): tags, loans
+            // and the Startsaldo register on it; text fields keep their own Strg+Z
+            Action { text: UndoManager.undoName ? qsTr("Rückgängig: %1").arg(UndoManager.undoName) : qsTr("Rückgängig")
+                     shortcut: StandardKey.Undo; enabled: UndoManager.canUndo; onTriggered: UndoManager.undo() }
+            Action { text: UndoManager.redoName ? qsTr("Wiederholen: %1").arg(UndoManager.redoName) : qsTr("Wiederholen")
+                     shortcut: StandardKey.Redo; enabled: UndoManager.canRedo; onTriggered: UndoManager.redo() }
             AppMenuSeparator {}
             Action { id: findAction; text: qsTr("Suchen …"); shortcut: StandardKey.Find; enabled: AppModel.isUnlocked; onTriggered: Qt.callLater(window.focusSearch) }
             Action { text: qsTr("Alles auswählen"); shortcut: StandardKey.SelectAll
