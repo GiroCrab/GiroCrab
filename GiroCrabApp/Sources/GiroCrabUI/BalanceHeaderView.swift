@@ -565,10 +565,10 @@ struct BalanceChart: View {
     let points: [DailyBalance]
     /// Click on a day (jump to its bookings).
     var onSelect: ((Date) -> Void)? = nil
-    /// Day under the mouse pointer (hover readout: date + balance).
-    @State private var hovered: Point?
-    /// Bar under the mouse pointer (bar style: month/day + average balance).
-    @State private var hoveredBar: BalanceBucket?
+    /// Day or bar under the mouse pointer. Only the overlay and the accessibility value read it,
+    /// each in a view of its own: a hover step redraws the marker without re-running `body`,
+    /// where Charts re-evaluates every mark (up to ~1800 on long histories, every frame).
+    @State private var hover = Hover()
     @AppStorage(BalanceChartStyle.defaultsKey) private var style: BalanceChartStyle = .line
     @AppStorage(BalanceBarUnit.defaultsKey) private var barUnit: BalanceBarUnit = .automatic
 
@@ -577,7 +577,14 @@ struct BalanceChart: View {
     /// Height of the chart: the y-axis keeps its labels apart by it (large text in a small chart).
     @State private var chartHeight: CGFloat = 0
 
-    private struct Point: Identifiable, Equatable {
+    @Observable fileprivate final class Hover {
+        /// Day under the mouse pointer (hover readout: date + balance).
+        var point: Point?
+        /// Bar under the mouse pointer (bar style: month/day + average balance).
+        var bar: BalanceBucket?
+    }
+
+    fileprivate struct Point: Identifiable, Equatable {
         let id: Int
         let date: Date
         let cents: Int64
@@ -693,14 +700,14 @@ struct BalanceChart: View {
         if drawStyle == .bars {
             let all = buckets
             guard !all.isEmpty else { return }
-            let current = hoveredBar.map(\.id) ?? (delta > 0 ? -1 : all.count)
-            hoveredBar = all[min(max(current + delta, 0), all.count - 1)]
+            let current = hover.bar.map(\.id) ?? (delta > 0 ? -1 : all.count)
+            hover.bar = all[min(max(current + delta, 0), all.count - 1)]
             return
         }
         let all = pts
         guard !all.isEmpty else { return }
-        let current = hovered.flatMap { h in all.firstIndex { $0.id == h.id } } ?? (delta > 0 ? -1 : all.count)
-        hovered = all[min(max(current + delta, 0), all.count - 1)]
+        let current = hover.point.flatMap { h in all.firstIndex { $0.id == h.id } } ?? (delta > 0 ? -1 : all.count)
+        hover.point = all[min(max(current + delta, 0), all.count - 1)]
     }
 
     private var summary: String {
@@ -714,10 +721,10 @@ struct BalanceChart: View {
     }
 
     private var currentValue: String {
-        if drawStyle == .bars, let b = hoveredBar {
+        if drawStyle == .bars, let b = hover.bar {
             return String(localized: "\(barTitle(b)): Ø \(Money.format(b.averageCents)), Ende \(Money.format(b.closingCents))")
         }
-        guard let h = hovered else { return summary }
+        guard let h = hover.point else { return summary }
         return "\(h.date.formatted(.dateTime.weekday(.wide).day().month(.wide))): \(Money.format(h.cents))"
     }
 
@@ -736,17 +743,17 @@ struct BalanceChart: View {
         return last.timeIntervalSince(first) / 86_400
     }
 
-    private func clearHover() { hovered = nil; hoveredBar = nil }
+    private func clearHover() { hover.point = nil; hover.bar = nil }
 
     /// Jumps to the bookings of the hovered day / bar; false if nothing is hovered.
     @discardableResult private func selectHovered() -> Bool {
         guard let onSelect else { return false }
         switch drawStyle {
         case .bars:
-            guard let b = hoveredBar else { return false }
+            guard let b = hover.bar else { return false }
             onSelect(b.last)
         default:
-            guard let h = hovered else { return false }
+            guard let h = hover.point else { return false }
             onSelect(h.date)
         }
         return true
@@ -756,7 +763,7 @@ struct BalanceChart: View {
         interactiveChart
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Saldoverlauf")
-            .accessibilityValue(currentValue)
+            .modifier(HoverObservers(hover: hover, value: { currentValue }))
             .accessibilityHint(onSelect == nil ? "" : String(localized: "Pfeiltasten wählen einen Tag, Eingabe zeigt seine Buchungen."))
             .accessibilityAdjustableAction { direction in
                 switch direction {
@@ -778,10 +785,7 @@ struct BalanceChart: View {
         .onChange(of: points.first?.date) { _, _ in clearHover() }
         .onChange(of: points.count) { _, _ in clearHover() }
         .onChange(of: style) { _, _ in clearHover() }
-        .onChange(of: barUnit) { _, _ in hoveredBar = nil }
-        // the booking list highlights the day under the pointer (#593)
-        .onChange(of: hovered) { _, h in model.chartHoverDay = h.map { DateText.iso($0.date) } }
-        .onChange(of: hoveredBar) { _, b in model.chartHoverDay = b.map { DateText.iso($0.last) } }
+        .onChange(of: barUnit) { _, _ in hover.bar = nil }
         .onDisappear { model.chartHoverDay = nil }
         .contextMenu { styleMenu }
         #if os(macOS)
@@ -791,7 +795,7 @@ struct BalanceChart: View {
         .onKeyPress(.rightArrow) { step(1); return .handled }
         .onKeyPress(.return) { selectHovered() ? .handled : .ignored }
         .onKeyPress(.escape) {
-            guard hovered != nil || hoveredBar != nil else { return .ignored }
+            guard hover.point != nil || hover.bar != nil else { return .ignored }
             clearHover()
             return .handled
         }
@@ -818,7 +822,7 @@ struct BalanceChart: View {
     /// Marker for the hovered day, else the day at the top of the scrolled list. Drawn in the
     /// overlay, outside the chart's marks, so moving it does not rebuild the line.
     @ViewBuilder private func marker(in all: [Point], proxy: ChartProxy, geo: GeometryProxy) -> some View {
-        if let m = hovered ?? followedPoint(in: all), let plot = proxy.plotFrame,
+        if let m = hover.point ?? followedPoint(in: all), let plot = proxy.plotFrame,
            let x = proxy.position(forX: m.date), let y = proxy.position(forY: m.euros) {
             let frame = geo[plot]
             let left = m.id * 2 > all.count
@@ -866,7 +870,7 @@ struct BalanceChart: View {
         .chartXAxis { xAxis(span: spanDays(pts.first?.date, pts.last?.date)) }
         .chartOverlay { proxy in
             GeometryReader { geo in
-                marker(in: pts, proxy: proxy, geo: geo)
+                ObservationScope { marker(in: pts, proxy: proxy, geo: geo) }
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .onContinuousHover { phase in
                         switch phase {
@@ -875,9 +879,9 @@ struct BalanceChart: View {
                             let x = location.x - geo[plot].origin.x
                             guard let date: Date = proxy.value(atX: x) else { return }
                             let nearest = pts.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
-                            if nearest != hovered { hovered = nearest }
+                            if nearest != hover.point { hover.point = nearest }
                         case .ended:
-                            hovered = nil
+                            hover.point = nil
                         }
                     }
                     .onTapGesture { location in
@@ -931,7 +935,7 @@ struct BalanceChart: View {
         .chartXAxis { xAxis(span: spanDays(bars.first?.start, bars.last?.last), centered: barUnit != .day) }
         .chartOverlay { proxy in
             GeometryReader { geo in
-                barHighlight(in: bars, unit: barUnit, proxy: proxy, geo: geo)
+                ObservationScope { barHighlight(in: bars, unit: barUnit, proxy: proxy, geo: geo) }
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .onContinuousHover { phase in
                         switch phase {
@@ -939,9 +943,9 @@ struct BalanceChart: View {
                             guard let plot = proxy.plotFrame,
                                   let date: Date = proxy.value(atX: location.x - geo[plot].origin.x) else { return }
                             let hit = Self.bar(at: date, in: bars, unit: barUnit)
-                            if hit != hoveredBar { hoveredBar = hit }
+                            if hit != hover.bar { hover.bar = hit }
                         case .ended:
-                            hoveredBar = nil
+                            hover.bar = nil
                         }
                     }
                     .onTapGesture { location in
@@ -962,7 +966,7 @@ struct BalanceChart: View {
     /// many times a second.
     @ViewBuilder private func barHighlight(in bars: [BalanceBucket], unit: BalanceBarUnit,
                                            proxy: ChartProxy, geo: GeometryProxy) -> some View {
-        if let b = hoveredBar ?? followedBar(in: bars, unit: unit), let plot = proxy.plotFrame,
+        if let b = hover.bar ?? followedBar(in: bars, unit: unit), let plot = proxy.plotFrame,
            let x0 = proxy.position(forX: b.start),
            let x1 = unit.end(after: b.start).flatMap({ proxy.position(forX: $0) }) {
             let frame = geo[plot]
@@ -1131,6 +1135,28 @@ private struct PlotReadoutLayout: Layout {
         let x = min(max(left ? before - 4 - width : after + 4, 0), max(0, plot.width - width))
         readout.place(at: CGPoint(x: bounds.minX + plot.minX + x, y: bounds.minY + plot.minY), proposal: .unspecified)
     }
+}
+
+/// The parts of `BalanceChart` that follow the hover: the accessibility value and the day the
+/// booking list highlights (#593). A modifier of its own, so only it re-runs on a hover step.
+private struct HoverObservers: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let hover: BalanceChart.Hover
+    let value: () -> String
+
+    func body(content: Content) -> some View {
+        content
+            .accessibilityValue(value())
+            .onChange(of: hover.point) { _, h in model.chartHoverDay = h.map { DateText.iso($0.date) } }
+            .onChange(of: hover.bar) { _, b in model.chartHoverDay = b.map { DateText.iso($0.last) } }
+    }
+}
+
+/// Builds `content` in a body of its own: observable state it reads invalidates this view,
+/// not the one that made the closure.
+private struct ObservationScope<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View { content() }
 }
 
 /// Audio Graph / VoiceOver chart description of the balance history.
