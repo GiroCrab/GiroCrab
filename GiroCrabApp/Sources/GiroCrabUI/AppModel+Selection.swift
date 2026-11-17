@@ -29,6 +29,8 @@ extension AppModel {
     var isMultiSelection: Bool { selectedBookingIDs.count > 1 }
     /// The selected bookings in list order.
     var selectedBookings: [Booking] { visibleBookings.filter { selectedBookingIDs.contains($0.id) } }
+    /// Net amount of the selected bookings in cents (income plus expenses).
+    var selectedTotalCents: Int64 { selectedBookings.reduce(Int64(0)) { $0 + $1.amountCents } }
 
     /// Click on a booking row: plain = only this one, `toggle` (⌘) adds or
     /// removes it, `extend` (⇧) selects the range from the current booking.

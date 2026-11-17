@@ -146,6 +146,10 @@ struct BookingStreamView: View {
                 .coordinateSpace(name: StreamDayTracker.space)
                 .frame(minHeight: 0, maxHeight: .infinity)
                 .scrollBounceBehavior(.basedOnSize)
+                // count and sum of a manual multiple selection, also when the inspector is hidden
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if model.isMultiSelection { SelectionSummaryBar() }
+                }
                 #if os(iOS)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     // keeps the last booking clear of the floating search bar
@@ -326,6 +330,30 @@ struct BookingStreamView: View {
     }
 }
 
+
+/// Bar below the booking list while several bookings are selected: how many and their sum.
+private struct SelectionSummaryBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Label("\(model.selectedBookingIDs.count) Buchungen ausgewählt", systemImage: "checkmark.circle")
+            Spacer(minLength: 12)
+            Text("Summe")
+                .foregroundStyle(Theme.secondary)
+            Text(Money.format(model.selectedTotalCents))
+                .fontWeight(.semibold)
+                .sensitive(.amounts)
+        }
+        .appFont(.callout, monospacedDigit: true)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .combine)
+    }
+}
 
 /// Print and export sheets plus the file exporters behind the menu commands; shared by the
 /// booking list and the depot view, so a command works in both.
