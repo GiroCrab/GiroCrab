@@ -35,6 +35,20 @@ use crate::models::{AccountKind, Holding, SecurityDirection, SecurityTransaction
 use crate::money::{json_number_to_cents, json_number_to_cents_rounded};
 use crate::secret::SecretString;
 
+/// `https://` on `scalable.capital` or one of its subdomains, no user info.
+fn is_scalable_https(uri: &str) -> bool {
+    let Ok(u) = url::Url::parse(uri) else {
+        return false;
+    };
+    u.scheme() == "https"
+        && u.username().is_empty()
+        && u.password().is_none()
+        && u.host_str().is_some_and(|h| {
+            let h = h.to_ascii_lowercase();
+            h == "scalable.capital" || h.ends_with(".scalable.capital")
+        })
+}
+
 const GRAPHQL_URL: &str = "https://de.scalable.capital/api/cli/graphql";
 const ISSUER: &str = "https://secure.scalable.capital";
 const AUDIENCE: &str = "https://de.scalable.capital/api-gateway";
@@ -946,6 +960,15 @@ impl ScalableConnector {
                 message: "device code response incomplete".into(),
             });
         }
+        // The user is sent to these addresses and the front end opens them: only
+        // https on Scalable's own domain, whatever the response says.
+        if !is_scalable_https(&uri)
+            || (!uri_complete.is_empty() && !is_scalable_https(&uri_complete))
+        {
+            return Err(CoreError::Protocol {
+                message: "device code response names an untrusted address".into(),
+            });
+        }
         let interval = v["interval"].as_u64().unwrap_or(5).max(1) as u32;
         let expires_in = v["expires_in"].as_u64().unwrap_or(600) as u32;
         log(&format!(
@@ -1566,6 +1589,24 @@ impl BankConnector for ScalableConnector {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_scalable_https_addresses_are_trusted() {
+        assert!(is_scalable_https(
+            "https://secure.scalable.capital/device?code=A"
+        ));
+        assert!(is_scalable_https("https://scalable.capital/x"));
+        assert!(!is_scalable_https("http://secure.scalable.capital/x"));
+        assert!(!is_scalable_https(
+            "https://scalable.capital.evil.example/x"
+        ));
+        assert!(!is_scalable_https("https://evilscalable.capital/x"));
+        assert!(!is_scalable_https(
+            "https://secure.scalable.capital@evil.example/x"
+        ));
+        assert!(!is_scalable_https("javascript:alert(1)"));
+        assert!(!is_scalable_https("file:///etc/passwd"));
+    }
+
     use super::*;
 
     #[test]
