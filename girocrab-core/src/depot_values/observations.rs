@@ -87,8 +87,8 @@ fn write_if_changed(conn: &Connection, s: &FetchStamp, v: &Value) -> CoreResult<
     let prev: Option<Latest> = conn
         .query_row(
             "SELECT value_date, value_cents, quantity, price_cents, confirmed FROM depot_observations
-             WHERE account_id = ?1 AND kind = ?2 AND position = ?3 AND source = 'fetch' AND currency = ?4
-             ORDER BY observed_ms DESC LIMIT 1",
+             WHERE account_id = ?1 AND kind = ?2 AND position = ?3 AND currency = ?4 AND source = 'fetch'
+             ORDER BY value_date DESC, observed_ms DESC LIMIT 1",
             params![s.account_id, v.kind, v.position, s.currency],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
@@ -221,26 +221,20 @@ pub(crate) fn record_fetch(
         // name (`cash`, `name:…`) are not closed: a bank need not report them under the same
         // key, so their absence says nothing.
         let open: Vec<(String, String, i64, String)> = {
+            // one pass: SQLite takes the other columns from the row with the max
             let mut q = conn.prepare(
-                "SELECT position, name, value_cents, source FROM depot_observations o
+                "SELECT position, name, value_cents, source, max(observed_ms) FROM depot_observations
                  WHERE account_id = ?1 AND kind = 'position' AND currency = ?2
-                   AND observed_ms = (SELECT max(observed_ms) FROM depot_observations x
-                                      WHERE x.account_id = o.account_id AND x.kind = o.kind
-                                        AND x.position = o.position AND x.currency = o.currency)",
+                 GROUP BY position",
             )?;
             let rows = q.query_map(params![account_id, currency], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })?;
             rows.collect::<Result<_, _>>()?
         };
-        let mut closed = HashSet::new();
         for (key, name, value, source) in open {
             let by_name = key == CASH || key.starts_with("name:");
-            if value == 0
-                || index.contains_key(&key)
-                || (source != SOURCE_FETCH && by_name)
-                || !closed.insert(key.clone())
-            {
+            if value == 0 || index.contains_key(&key) || (source != SOURCE_FETCH && by_name) {
                 continue;
             }
             write_if_changed(
@@ -370,10 +364,47 @@ pub(crate) fn merge_attached(
     Ok(touched)
 }
 
+/// A day as a number (`YYYYMMDD`), so a long series is read without a string per row; 0 when `s`
+/// is no `YYYY-MM-DD`. Orders like the text.
+pub(crate) fn day_key(s: &str) -> u32 {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return 0;
+    }
+    let mut n = 0u32;
+    for &c in b.iter().filter(|c| **c != b'-') {
+        if !c.is_ascii_digit() {
+            return 0;
+        }
+        n = n * 10 + u32::from(c - b'0');
+    }
+    n
+}
+
+/// `YYYY-MM-DD` of a [`day_key`].
+pub(crate) fn day_text(day: u32) -> String {
+    format!(
+        "{:04}-{:02}-{:02}",
+        day / 10_000,
+        day / 100 % 100,
+        day % 100
+    )
+}
+
+/// The source of a row as one of the known ones (no string per row).
+pub(crate) fn source_of(s: &str) -> &'static str {
+    match s {
+        SOURCE_FETCH => SOURCE_FETCH,
+        SOURCE_IMPORT => SOURCE_IMPORT,
+        _ => "other",
+    }
+}
+
 /// One observation as [`day_values`] reads it.
 pub(crate) struct Observed {
-    pub value_date: String,
-    pub source: String,
+    /// [`day_key`] of the valuation day
+    pub day: u32,
+    pub source: &'static str,
     pub observed_ms: i64,
     pub value_cents: i64,
     pub confirmed: bool,
@@ -382,8 +413,9 @@ pub(crate) struct Observed {
 /// The value of one day from one source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DayValue {
-    pub date: String,
-    pub source: String,
+    /// [`day_key`]
+    pub day: u32,
+    pub source: &'static str,
     pub value_cents: i64,
     /// the observation it came from
     pub observed_ms: i64,
@@ -404,14 +436,11 @@ pub(crate) fn day_values(rows: &[Observed]) -> Vec<DayValue> {
     let mut import_last: Option<i64> = None;
     while i < rows.len() {
         let mut j = i;
-        while j < rows.len()
-            && rows[j].source == rows[i].source
-            && rows[j].value_date == rows[i].value_date
-        {
+        while j < rows.len() && rows[j].source == rows[i].source && rows[j].day == rows[i].day {
             j += 1;
         }
         let day = &rows[i..j];
-        let source = rows[i].source.as_str();
+        let source = rows[i].source;
         if source != series_source {
             series_source = source;
             import_seen_value = false;
@@ -434,13 +463,13 @@ pub(crate) fn day_values(rows: &[Observed]) -> Vec<DayValue> {
                 _ => None,
             }
         };
-        if let Some(o) = picked {
+        if let Some(o) = picked.filter(|o| o.day != 0) {
             if source != SOURCE_FETCH {
                 import_last = Some(o.value_cents);
             }
             out.push(DayValue {
-                date: o.value_date.clone(),
-                source: source.to_string(),
+                day: o.day,
+                source,
                 value_cents: o.value_cents,
                 observed_ms: o.observed_ms,
             });
@@ -472,16 +501,19 @@ pub(crate) fn observed(
          WHERE account_id = ?1 AND kind = ?2 AND position = ?3 AND currency = ?4
          ORDER BY source, value_date, observed_ms",
     )?;
-    let rows = q.query_map(params![account_id, kind, position, currency], |r| {
-        Ok(Observed {
-            value_date: r.get(0)?,
-            source: r.get(1)?,
+    let mut rows = q.query(params![account_id, kind, position, currency])?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        let text = |i| r.get_ref(i)?.as_str().map_err(rusqlite::Error::from);
+        out.push(Observed {
+            day: day_key(text(0)?),
+            source: source_of(text(1)?),
             observed_ms: r.get(2)?,
             value_cents: r.get(3)?,
             confirmed: r.get(4)?,
-        })
-    })?;
-    Ok(rows.collect::<Result<_, _>>()?)
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

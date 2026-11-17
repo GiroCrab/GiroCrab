@@ -108,12 +108,21 @@ fn imported(position: &str, name: &str, currency: &str, day: &str, cents: i64) -
 
 fn obs(date: &str, source: &str, ms: i64, cents: i64, confirmed: bool) -> Observed {
     Observed {
-        value_date: date.into(),
-        source: source.into(),
+        day: day_key(date),
+        source: source_of(source),
         observed_ms: ms,
         value_cents: cents,
         confirmed,
     }
+}
+
+#[test]
+fn day_keys_order_like_the_text_and_round_trip() {
+    assert_eq!(day_key("2026-11-07"), 20_261_107);
+    assert_eq!(day_text(20_261_107), "2026-11-07");
+    assert!(day_key("2026-11-07") < day_key("2026-12-01"));
+    assert_eq!(day_key("07.11.2026"), 0);
+    assert_eq!(day_key("2026-1x-07"), 0);
 }
 
 #[test]
@@ -406,7 +415,7 @@ fn imported_duplicates_give_the_largest_value_and_zeros_count_only_after_a_value
     ];
     let got: Vec<(String, i64)> = day_values(&rows)
         .into_iter()
-        .map(|d| (d.date, d.value_cents))
+        .map(|d| (day_text(d.day), d.value_cents))
         .collect();
     assert_eq!(
         got,
@@ -428,7 +437,7 @@ fn a_fetch_takes_the_latest_observation_of_a_day_and_an_unconfirmed_zero_is_none
     ];
     let got: Vec<(String, i64, i64)> = day_values(&rows)
         .into_iter()
-        .map(|d| (d.date, d.value_cents, d.observed_ms))
+        .map(|d| (day_text(d.day), d.value_cents, d.observed_ms))
         .collect();
     assert_eq!(
         got,
@@ -497,9 +506,10 @@ fn a_merge_unions_observations_and_derives_the_depot_again() {
     // the same rows seen from "other", plus an older day only it saw
     db.execute_batch(
         "CREATE TABLE other.depot_observations AS SELECT * FROM main.depot_observations;
-         INSERT INTO other.depot_observations
-             SELECT account_id, kind, position, source, source_ref, 1, '2026-11-01', date_assumed,
-                    currency, 80, confirmed, quantity, price_cents, name
+         INSERT INTO other.depot_observations(account_id, kind, position, currency, source,
+                 value_date, observed_ms, source_ref, date_assumed, value_cents, confirmed, name)
+             SELECT account_id, kind, position, currency, source, '2026-11-01', 1, source_ref,
+                    date_assumed, 80, confirmed, name
              FROM main.depot_observations WHERE kind = 'total';",
     )
     .unwrap();
@@ -521,4 +531,66 @@ fn a_merge_unions_observations_and_derives_the_depot_again() {
     );
     let db = a.db().unwrap();
     assert!(merge_attached(&db, &HashMap::new()).unwrap().is_empty());
+}
+
+#[test]
+#[ignore = "timing at the size of a real imported history: cargo test --release -p girocrab-core --lib perf_of -- --ignored --nocapture"]
+fn perf_of_a_real_sized_imported_history() {
+    let dir = crate::test_support::TempDir::new("dobs-perf");
+    let v = open(&dir);
+    let c = connected(&v);
+    store_fetch(&v, ConnectorKind::Comdirect, c, fetch(vec![], 100)).unwrap();
+    let id = depot(&v);
+    // 7 years of days, 223 positions of ~500 days each and a total every day: ~114k rows
+    let start = chrono::NaiveDate::from_ymd_opt(2019, 1, 14).unwrap();
+    let mut rows = Vec::new();
+    for d in 0..2_550_i64 {
+        let day = (start + chrono::Duration::days(d))
+            .format("%Y-%m-%d")
+            .to_string();
+        rows.push(imported("", "", "EUR", &day, 1_000_000 + d));
+    }
+    for p in 0..223_i64 {
+        let from = (p * 9) % 2_000;
+        for d in from..from + 500 {
+            let day = (start + chrono::Duration::days(d))
+                .format("%Y-%m-%d")
+                .to_string();
+            let mut r = imported(&format!("DE{p:010}"), "Pos", "EUR", &day, 1_000 + d);
+            r.source_ref = p.to_string();
+            rows.push(r);
+        }
+    }
+    let n = rows.len();
+    let db = v.db().unwrap();
+    let t = std::time::Instant::now();
+    let tx = db.unchecked_transaction().unwrap();
+    record_import(&tx, id, &rows).unwrap();
+    tx.commit().unwrap();
+    let t_import = t.elapsed();
+    let t = std::time::Instant::now();
+    let tx = db.unchecked_transaction().unwrap();
+    crate::depot_values::rebuild(&tx, id, None).unwrap();
+    tx.commit().unwrap();
+    let t_rebuild = t.elapsed();
+    drop(db);
+    let held: Vec<Holding> = (0..50)
+        .map(|p| holding(&format!("DE{p:010}"), "Pos", 1.0, 100))
+        .collect();
+    let t = std::time::Instant::now();
+    store_fetch(&v, ConnectorKind::Comdirect, c, fetch(held, 5_000)).unwrap();
+    let t_fetch = t.elapsed();
+    let t = std::time::Instant::now();
+    let list = v.depot_value_positions(id).unwrap();
+    let t_list = t.elapsed();
+    let t = std::time::Instant::now();
+    let h = v.position_value_history(id, "DE0000000100".into()).unwrap();
+    let t_one = t.elapsed();
+    let t = std::time::Instant::now();
+    let all = v.depot_value_history(vec![id], 3650).unwrap();
+    let t_depot = t.elapsed();
+    println!(
+        "rows {n}: import {t_import:?}, rebuild {t_rebuild:?}, fetch {t_fetch:?}, positions ({}) {t_list:?}, one position ({}) {t_one:?}, depot history ({}) {t_depot:?}",
+        list.len(), h.len(), all.len()
+    );
 }

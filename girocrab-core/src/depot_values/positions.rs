@@ -6,7 +6,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::NaiveDate;
 use rusqlite::{params, Connection};
 
-use super::observations::{self, day_values, position_key, source_rank, Observed, KIND_POSITION};
+use super::observations::{
+    self, day_key, day_text, day_values, position_key, source_of, source_rank, Observed,
+    KIND_POSITION,
+};
 use crate::error::{CoreError, CoreResult};
 use crate::models::DepotValuePoint;
 use crate::vault::Vault;
@@ -29,15 +32,15 @@ pub struct ValuePosition {
     pub held: bool,
 }
 
-/// One value per day: the best source of each day ([`source_rank`]).
-fn best_per_day(rows: &[Observed]) -> Vec<(String, i64)> {
-    let mut days: BTreeMap<String, (u8, i64)> = BTreeMap::new();
+/// One value per day ([`day_key`]): the best source of each day ([`source_rank`]).
+fn best_per_day(rows: &[Observed]) -> Vec<(u32, i64)> {
+    let mut days: BTreeMap<u32, (u8, i64)> = BTreeMap::new();
     for d in day_values(rows) {
-        let rank = source_rank(&d.source);
-        match days.get(&d.date) {
+        let rank = source_rank(d.source);
+        match days.get(&d.day) {
             Some((r, _)) if *r <= rank => {}
             _ => {
-                days.insert(d.date, (rank, d.value_cents));
+                days.insert(d.day, (rank, d.value_cents));
             }
         }
     }
@@ -76,10 +79,10 @@ fn position_currency(
 }
 
 /// Days from `first` to `end` with the last known value carried on.
-fn carried(values: &[(String, i64)], end: NaiveDate) -> Vec<DepotValuePoint> {
+fn carried(values: &[(u32, i64)], end: NaiveDate) -> Vec<DepotValuePoint> {
     let Some(first) = values
         .first()
-        .and_then(|(d, _)| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .and_then(|(d, _)| NaiveDate::parse_from_str(&day_text(*d), "%Y-%m-%d").ok())
     else {
         return vec![];
     };
@@ -88,13 +91,14 @@ fn carried(values: &[(String, i64)], end: NaiveDate) -> Vec<DepotValuePoint> {
     let mut current = 0;
     let mut day = first;
     while day <= end {
-        let key = day.format("%Y-%m-%d").to_string();
+        let date = day.format("%Y-%m-%d").to_string();
+        let key = day_key(&date);
         while next < values.len() && values[next].0 <= key {
             current = values[next].1;
             next += 1;
         }
         out.push(DepotValuePoint {
-            date: key,
+            date,
             value_cents: current,
             covered_depots: 1,
             total_depots: 1,
@@ -102,6 +106,16 @@ fn carried(values: &[(String, i64)], end: NaiveDate) -> Vec<DepotValuePoint> {
         day += chrono::Duration::days(1);
     }
     out
+}
+
+/// The rows of one (position, currency) of a depot, read in one pass over all of them.
+struct Group {
+    position: String,
+    currency: String,
+    rows: Vec<Observed>,
+    /// latest observation and the name it gave
+    latest_ms: i64,
+    name: String,
 }
 
 pub(crate) fn positions(conn: &Connection, account_id: i64) -> CoreResult<Vec<ValuePosition>> {
@@ -115,58 +129,74 @@ pub(crate) fn positions(conn: &Connection, account_id: i64) -> CoreResult<Vec<Va
             .filter_map(|(isin, name)| position_key(&isin, &name))
             .collect()
     };
-    // all position rows in one pass, grouped by (position, currency)
+    // per position the account's currency, else the one reported latest
+    let mut best: HashMap<String, ((bool, i64), ValuePosition)> = HashMap::new();
+    let mut finish = |g: Group| {
+        let days = best_per_day(&g.rows);
+        let (Some(first), Some(last)) = (days.first(), days.last()) else {
+            return;
+        };
+        let rank = (g.currency == own, g.latest_ms);
+        if best.get(&g.position).is_some_and(|(r, _)| *r >= rank) {
+            return;
+        }
+        let p = ValuePosition {
+            held: held.contains(&g.position),
+            position: g.position.clone(),
+            name: g.name,
+            currency: g.currency,
+            first_date: day_text(first.0),
+            last_date: day_text(last.0),
+            last_value_cents: last.1,
+        };
+        best.insert(g.position, (rank, p));
+    };
+    // all position rows in one pass (the table's own order), a string only where a group starts
+    // or a name changes
     let mut q = conn.prepare(
         "SELECT position, currency, value_date, source, observed_ms, value_cents, confirmed, name
          FROM depot_observations WHERE account_id = ?1 AND kind = 'position'
          ORDER BY position, currency, source, value_date, observed_ms",
     )?;
-    type Group = (Vec<Observed>, i64, String);
-    let mut groups: Vec<((String, String), Group)> = Vec::new();
     let mut rows = q.query([account_id])?;
+    let mut group: Option<Group> = None;
     while let Some(r) = rows.next()? {
-        let key: (String, String) = (r.get(0)?, r.get(1)?);
+        let text = |i| r.get_ref(i)?.as_str().map_err(rusqlite::Error::from);
+        let (position, currency) = (text(0)?, text(1)?);
+        if group
+            .as_ref()
+            .is_none_or(|g| g.position != position || g.currency != currency)
+        {
+            if let Some(done) = group.take() {
+                finish(done);
+            }
+            group = Some(Group {
+                position: position.to_string(),
+                currency: currency.to_string(),
+                rows: Vec::new(),
+                latest_ms: i64::MIN,
+                name: String::new(),
+            });
+        }
+        let g = group.as_mut().expect("set above");
         let ms: i64 = r.get(4)?;
-        let name: String = r.get(7)?;
-        if groups.last().is_none_or(|g| g.0 != key) {
-            groups.push((key, (Vec::new(), i64::MIN, String::new())));
+        if ms >= g.latest_ms {
+            g.latest_ms = ms;
+            let name = text(7)?;
+            if !name.is_empty() && name != g.name {
+                g.name = name.to_string();
+            }
         }
-        let g = &mut groups.last_mut().expect("pushed above").1;
-        if ms >= g.1 && !name.is_empty() {
-            g.1 = ms;
-            g.2 = name;
-        }
-        g.0.push(Observed {
-            value_date: r.get(2)?,
-            source: r.get(3)?,
+        g.rows.push(Observed {
+            day: day_key(text(2)?),
+            source: source_of(text(3)?),
             observed_ms: ms,
             value_cents: r.get(5)?,
             confirmed: r.get(6)?,
         });
     }
-    // per position the account's currency, else the one reported latest
-    let mut best: HashMap<String, ((bool, i64), ValuePosition)> = HashMap::new();
-    for ((position, currency), (rows, latest_ms, name)) in groups {
-        let days = best_per_day(&rows);
-        let (Some(first), Some(last)) = (days.first(), days.last()) else {
-            continue;
-        };
-        let rank = (currency == own, latest_ms);
-        let p = ValuePosition {
-            held: held.contains(&position),
-            position: position.clone(),
-            name,
-            currency,
-            first_date: first.0.clone(),
-            last_date: last.0.clone(),
-            last_value_cents: last.1,
-        };
-        match best.get(&position) {
-            Some((r, _)) if *r >= rank => {}
-            _ => {
-                best.insert(position, (rank, p));
-            }
-        }
+    if let Some(done) = group {
+        finish(done);
     }
     let mut out: Vec<ValuePosition> = best.into_values().map(|(_, p)| p).collect();
     out.sort_by_key(|p| p.name.to_lowercase());
@@ -187,7 +217,7 @@ pub(crate) fn history(
     let today = chrono::Local::now().date_naive();
     // a sold position ends with its sale, an open one carries on to today
     let end = match days.last() {
-        Some((d, 0)) => NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap_or(today),
+        Some((d, 0)) => NaiveDate::parse_from_str(&day_text(*d), "%Y-%m-%d").unwrap_or(today),
         _ => today,
     };
     Ok(carried(&days, end))

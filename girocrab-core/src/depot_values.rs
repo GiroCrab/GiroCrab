@@ -26,7 +26,8 @@ pub(crate) mod positions;
 
 /// Step 28. `depot_observations` is the raw layer ([`observations`]): one row per value a
 /// fetch (`source = 'fetch'`) or an import (`'import'`) delivered, for the depot total or a
-/// position, never edited. `depot_values` is derived from it ([`rebuild`]) and not merged: per
+/// position, never edited. It is stored in the order its readers walk it (one series, by
+/// source, day and time), so a series or all positions of a depot are one range scan. `depot_values` is derived from it ([`rebuild`]) and not merged: per
 /// depot, valuation day and source one value with a quality (`observed`, `reconstructed`,
 /// `estimated`; `prices` and the last two are reserved for computed values), and the
 /// observation it came from (`observed_ms`). Several sources of a day live side by side;
@@ -36,21 +37,19 @@ CREATE TABLE IF NOT EXISTS depot_observations (
     account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     kind         TEXT    NOT NULL,             -- total | position
     position     TEXT    NOT NULL DEFAULT '',  -- '' (total) | ISIN | 'cash' | 'name:<normalised>'
-    source       TEXT    NOT NULL,             -- fetch | import
-    source_ref   TEXT    NOT NULL DEFAULT '',  -- import: the source's row of the position
-    observed_ms  INTEGER NOT NULL,             -- retrieval time; import: the source's timestamp
-    value_date   TEXT    NOT NULL,             -- YYYY-MM-DD, the bank's valuation day
-    date_assumed INTEGER NOT NULL DEFAULT 0,   -- 1 = no valuation date, the retrieval day
     currency     TEXT    NOT NULL,
+    source       TEXT    NOT NULL,             -- fetch | import
+    value_date   TEXT    NOT NULL,             -- YYYY-MM-DD, the bank's valuation day
+    observed_ms  INTEGER NOT NULL,             -- retrieval time; import: the source's timestamp
+    source_ref   TEXT    NOT NULL DEFAULT '',  -- import: the source's row of the position
+    date_assumed INTEGER NOT NULL DEFAULT 0,   -- 1 = no valuation date, the retrieval day
     value_cents  INTEGER NOT NULL,
     confirmed    INTEGER NOT NULL DEFAULT 0,   -- 1 = the inventory was delivered: a 0 is real
     quantity     REAL,                         -- fetch only
     price_cents  INTEGER,                      -- fetch only
     name         TEXT    NOT NULL DEFAULT '',  -- name of the position at that time
-    PRIMARY KEY (account_id, kind, position, source, source_ref, observed_ms, currency)
-);
-CREATE INDEX IF NOT EXISTS depot_observations_day
-    ON depot_observations(account_id, kind, position, value_date);
+    PRIMARY KEY (account_id, kind, position, currency, source, value_date, observed_ms, source_ref)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS depot_values (
     account_id  INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     value_date  TEXT    NOT NULL,                    -- YYYY-MM-DD, the valuation day
@@ -107,7 +106,8 @@ pub(crate) fn rebuild(
         observations::observed(conn, account_id, observations::KIND_TOTAL, "", &currency)?;
     match fetch_day {
         Some(day) => {
-            rows.retain(|o| o.source == observations::SOURCE_FETCH && o.value_date == day);
+            let key = observations::day_key(day);
+            rows.retain(|o| o.source == observations::SOURCE_FETCH && o.day == key);
             conn.execute(
                 "DELETE FROM depot_values WHERE account_id = ?1 AND value_date = ?2 AND source = 'fetch'",
                 params![account_id, day],
@@ -127,7 +127,7 @@ pub(crate) fn rebuild(
     for d in observations::day_values(&rows) {
         ins.execute(params![
             account_id,
-            d.date,
+            observations::day_text(d.day),
             d.source,
             QUALITY_OBSERVED,
             d.value_cents,
