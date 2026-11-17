@@ -1074,10 +1074,6 @@ private struct SelectionScroller: View {
         Color.clear
             .onChange(of: model.selectedBookingID) { _, id in
                 guard let id else { return }
-                // the chart marker follows the selected booking (#593)
-                if let day = model.selectedBooking?.bookingDate, model.selectedBookingID == id, model.scrollFocusDay != day {
-                    model.scrollFocusDay = day
-                }
                 // the day jump already scrolled to the day: do not override it
                 if model.jumpSelectedBookingID == id { model.jumpSelectedBookingID = nil; return }
                 // Every row is an element of the lazy stream, so the proxy finds it
