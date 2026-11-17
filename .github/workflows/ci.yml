@@ -140,7 +140,7 @@ jobs:
       # gigabyte-sized copy and evicts the cache of main.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -198,7 +198,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --manifest-path girocrab-core/Cargo.toml
 
   # GiroCrabWindows: Slint front end on the core (own workspace). Also checked on Linux to keep
@@ -220,7 +220,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: GiroCrabWindows
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
       - run: cargo test --manifest-path GiroCrabWindows/Cargo.toml
@@ -252,7 +252,7 @@ jobs:
       - if: needs.changes.outputs.swift == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build Rust core + UniFFI bindings (macOS only)
         if: needs.changes.outputs.swift == 'true'
         run: ./build-xcframework.sh --macos-only
@@ -309,7 +309,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: GiroCrabLinux
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Every UI text needs English (Localizable.xcstrings or i18n/en-linux.json).
       - name: English UI texts
         working-directory: GiroCrabLinux
@@ -364,7 +364,7 @@ jobs:
         with:
           workspaces: GiroCrabLinux
           key: debian-${{ matrix.arch }}
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo clippy
         working-directory: GiroCrabLinux
         run: cargo clippy --all-targets -- -D warnings
