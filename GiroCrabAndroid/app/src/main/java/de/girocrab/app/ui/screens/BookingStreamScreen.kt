@@ -251,7 +251,7 @@ fun BalanceHeaderCard(
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 formatMoney(state.totalBalanceCents, masked = masked),
-                style = MaterialTheme.typography.headlineMedium.copy(style = tnum),
+                style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"),
                 fontFamily = tabular,
                 fontWeight = FontWeight.Bold,
             )
