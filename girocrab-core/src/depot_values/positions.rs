@@ -198,7 +198,7 @@ impl Vault {
     /// Positions of a depot that have a value history, sold ones included (`held` = false),
     /// sorted by name.
     pub fn depot_value_positions(&self, account_id: i64) -> Result<Vec<ValuePosition>, CoreError> {
-        Ok(positions(&*self.db()?, account_id)?)
+        positions(&*self.db()?, account_id)
     }
 
     /// Daily value of one position of a depot ([`ValuePosition::position`]) from its first value
@@ -209,6 +209,6 @@ impl Vault {
         account_id: i64,
         position: String,
     ) -> Result<Vec<DepotValuePoint>, CoreError> {
-        Ok(history(&*self.db()?, account_id, &position)?)
+        history(&*self.db()?, account_id, &position)
     }
 }
