@@ -85,7 +85,7 @@ fn parse_date(iso: &str) -> Option<(i32, u32, u32)> {
     ((1..=12).contains(&m) && (1..=31).contains(&d)).then_some((y, m, d))
 }
 
-fn fmt_date(y: i32, m: u32, d: u32) -> String {
+pub(crate) fn fmt_date(y: i32, m: u32, d: u32) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 

@@ -5,6 +5,7 @@
 use girocrab_core::{CategoryBudgetStatus, PeriodCashflow};
 
 use crate::daily::Row;
+use crate::portfolio::fmt_date;
 
 const WEEKDAYS: [&str; 7] = [
     "Montag",
@@ -65,6 +66,15 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     let y = (yoe + era * 400) as i32 + i32::from(m <= 2);
     (y, m, d)
+}
+
+/// ISO date `n` days after today (UTC).
+pub fn today_plus_days(n: i64) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400) + n);
+    fmt_date(y, m, d)
 }
 
 /// Year and month of today (UTC; a few hours' offset around midnight does not matter here).

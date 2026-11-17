@@ -1668,7 +1668,7 @@ fn main() -> Result<(), slint::PlatformError> {
             demo_active.clone(),
             bridge.clone(),
         );
-        win.on_transfer_submit(move |index, name, iban, amount, purpose| {
+        win.on_transfer_submit(move |index, name, iban, amount, purpose, instant, date| {
             let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
                 return;
             };
@@ -1679,6 +1679,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 iban: iban.to_string(),
                 amount: amount.to_string(),
                 purpose: purpose.to_string(),
+                instant,
+                date: date.to_string(),
             };
             let request = match daily::validate_transfer(&input) {
                 Ok(r) => r,

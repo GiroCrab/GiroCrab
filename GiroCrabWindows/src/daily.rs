@@ -280,6 +280,43 @@ pub struct TransferInput {
     pub iban: String,
     pub amount: String,
     pub purpose: String,
+    /// Echtzeitüberweisung.
+    pub instant: bool,
+    /// Wunschtermin (`TT.MM.JJJJ` or `JJJJ-MM-TT`), empty = sofort.
+    pub date: String,
+}
+
+/// Normalises a desired execution date to ISO; `Ok(None)` for empty input.
+pub fn parse_execution_date(text: &str, today: &str) -> Result<Option<String>, String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    let bad = || "Das Datum ist ungültig (TT.MM.JJJJ).".to_string();
+    let (y, m, d) = if let Some((y, rest)) = t.split_once('-') {
+        let (m, d) = rest.split_once('-').ok_or_else(bad)?;
+        (y, m, d)
+    } else {
+        let mut it = t.split('.');
+        let (d, m, y) = (it.next(), it.next(), it.next());
+        match (d, m, y, it.next()) {
+            (Some(d), Some(m), Some(y), None) => (y, m, d),
+            _ => return Err(bad()),
+        }
+    };
+    let (y, m, d): (i32, u32, u32) = (
+        y.parse().map_err(|_| bad())?,
+        m.parse().map_err(|_| bad())?,
+        d.parse().map_err(|_| bad())?,
+    );
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || y < 2000 {
+        return Err(bad());
+    }
+    let iso = format!("{y:04}-{m:02}-{d:02}");
+    if iso.as_str() < today {
+        return Err("Der Ausführungstermin liegt in der Vergangenheit.".into());
+    }
+    Ok(Some(iso))
 }
 
 /// Checks the form like the core does, but with messages next to the right field and without
@@ -307,6 +344,12 @@ pub fn validate_transfer(i: &TransferInput) -> Result<SepaTransferRequest, Strin
     if purpose.chars().count() > 140 {
         return Err("Der Verwendungszweck darf höchstens 140 Zeichen lang sein.".into());
     }
+    let execution_date = parse_execution_date(&i.date, &crate::portfolio::today_iso())?;
+    if i.instant && execution_date.is_some() {
+        return Err(
+            "Eine Echtzeitüberweisung wird sofort ausgeführt – bitte kein Datum angeben.".into(),
+        );
+    }
     Ok(SepaTransferRequest {
         account_id: i.account_id,
         recipient_name: name.to_string(),
@@ -314,8 +357,8 @@ pub fn validate_transfer(i: &TransferInput) -> Result<SepaTransferRequest, Strin
         recipient_bic: None,
         amount_cents: cents,
         purpose: purpose.to_string(),
-        instant: false,
-        execution_date: None,
+        instant: i.instant,
+        execution_date,
     })
 }
 
@@ -478,6 +521,8 @@ mod tests {
             iban: "de89 3704 0044 0532 0130 00".into(),
             amount: "12,50".into(),
             purpose: "Miete".into(),
+            instant: false,
+            date: String::new(),
         }
     }
 
@@ -488,6 +533,17 @@ mod tests {
         assert_eq!(r.recipient_iban, "DE89370400440532013000");
         assert_eq!(r.amount_cents, 1250);
         assert!(!r.instant && r.execution_date.is_none());
+    }
+
+    #[test]
+    fn execution_date_formats() {
+        assert_eq!(parse_execution_date("", "2026-01-01"), Ok(None));
+        assert_eq!(
+            parse_execution_date("15.03.2027", "2026-01-01"),
+            Ok(Some("2027-03-15".into()))
+        );
+        assert!(parse_execution_date("2020-01-01", "2026-01-01").is_err());
+        assert!(parse_execution_date("32.13.2027", "2026-01-01").is_err());
     }
 
     #[test]

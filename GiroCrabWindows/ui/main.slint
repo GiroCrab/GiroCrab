@@ -781,6 +781,7 @@ export component MainWindow inherits Window {
     in property <string> rc-month-summary;
     in property <[RecLine]> rc-month-rows;
     in property <[RecLine]> rc-ignored-rows;
+    in-out property <int> rc-planned-horizon: 1;
     in property <string> rc-planned-summary;
     in property <[RecLine]> rc-planned-rows;
     in property <[RecLine]> rc-standing-rows;
@@ -897,7 +898,7 @@ export component MainWindow inherits Window {
     callback privacy-changed();
     callback lock();
     callback import-file();
-    callback transfer-submit(int, string, string, string, string);
+    callback transfer-submit(int, string, string, string, string, bool, string);
     callback transfer-start();
 
     // account / category management, About, keyboard shortcuts
@@ -1772,6 +1773,15 @@ export component MainWindow inherits Window {
                 tr-iban := LineEdit { placeholder-text: "IBAN des Empfängers"; }
                 tr-amount := LineEdit { placeholder-text: "Betrag in EUR, z. B. 12,50"; }
                 tr-purpose := LineEdit { placeholder-text: "Verwendungszweck (max. 140 Zeichen)"; }
+                tr-instant := Switch { text: "Echtzeitüberweisung (sofort, rund um die Uhr)"; checked: false; }
+                tr-date := LineEdit {
+                    placeholder-text: "Ausführungstermin TT.MM.JJJJ (leer = sofort)";
+                    enabled: !tr-instant.checked;
+                }
+                if root.demo-active: Text {
+                    text: "Demo: Die Überweisung wird nur simuliert und nicht an eine Bank gesendet.";
+                    color: Theme.accent; font-size: 11px; wrap: word-wrap;
+                }
                 Text {
                     text: "PIN und TAN werden erst beim Senden abgefragt und nie gespeichert.";
                     color: Theme.muted; font-size: 11px; wrap: word-wrap;
@@ -1784,7 +1794,7 @@ export component MainWindow inherits Window {
                     Button {
                         text: "Senden";
                         primary: true;
-                        clicked => { root.transfer-submit(tr-account.current-index, tr-name.text, tr-iban.text, tr-amount.text, tr-purpose.text); }
+                        clicked => { root.transfer-submit(tr-account.current-index, tr-name.text, tr-iban.text, tr-amount.text, tr-purpose.text, tr-instant.checked, tr-instant.checked ? "" : tr-date.text); }
                     }
                 }
             }
@@ -2068,7 +2078,7 @@ export component MainWindow inherits Window {
             salary-state: root.rc-salary-state; can-salary: root.rc-can-salary; has-series: root.rc-has-series;
             interval-names: root.rc-interval-names; interval-index <=> root.rc-interval; custom-dates <=> root.rc-custom-dates;
             month-summary: root.rc-month-summary; month-rows: root.rc-month-rows; ignored-rows: root.rc-ignored-rows;
-            planned-summary: root.rc-planned-summary; planned-rows: root.rc-planned-rows;
+            planned-horizon <=> root.rc-planned-horizon; planned-summary: root.rc-planned-summary; planned-rows: root.rc-planned-rows;
             standing-rows: root.rc-standing-rows; limits-text: root.rc-limits;
             tab-changed(t) => { root.rc-tab-changed(t); }
             mark(i, d) => { root.rc-mark(i, d); }
