@@ -457,6 +457,8 @@ pub struct FetchResult {
     /// Accounts (external refs) whose balance could not be read this time: the
     /// reported `balance_cents` is a placeholder and the stored balance stays.
     pub balances_unknown: Vec<String>,
+    /// Explicit bank-reported balances, including zero; never derive a replacement.
+    pub balances_reported: Vec<String>,
     /// Securities transactions (buy, sell, dividend …) of depots; added or
     /// refreshed by `(account, external_id)`, never removed.
     pub security_transactions: Vec<RemoteSecurityTransaction>,
@@ -505,6 +507,10 @@ pub struct FetchResult {
     /// `(external_ref, old automatic name, new name)`: rename accounts that
     /// still carry the old automatic name; names the user chose are kept.
     pub name_updates: Vec<(String, String, String)>,
+    /// Ask before fetching accounts this login delivers for the first time
+    /// (several cards behind one portal login, #243): they are held back
+    /// like accounts another login already delivers.
+    pub confirm_new_accounts: bool,
 }
 
 #[async_trait]

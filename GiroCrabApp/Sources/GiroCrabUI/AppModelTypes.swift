@@ -373,8 +373,14 @@ struct CSVFileDocument: FileDocument {
     func fileWrapper(configuration: WriteConfiguration) -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
 
+/// What the transfer sheets do: one transfer, an Umbuchung between own
+/// accounts, or a batch.
+enum TransferKind: Hashable { case single, own, batch }
+
 struct TransferDraft {
     var accountID: Int64?
+    /// Umbuchung: name and IBAN come from an own account.
+    var ownTransfer = false
     var name = ""
     var iban = ""
     var bic = ""
@@ -388,6 +394,13 @@ struct TransferDraft {
     /// Terminüberweisung: when on, `executionDate` is sent (FinTS only).
     var scheduled = false
     var executionDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+
+    /// The fields a payment fills (paste, invoice, clipboard check #663).
+    static let paymentFields: [WritableKeyPath<TransferDraft, String>] = [\.name, \.iban, \.bic, \.amountText, \.purpose]
+
+    func isBlank(_ field: KeyPath<TransferDraft, String>) -> Bool {
+        self[keyPath: field].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var executionMode: ExecutionMode {
         get { instant ? .instant : (scheduled ? .scheduled : .regular) }

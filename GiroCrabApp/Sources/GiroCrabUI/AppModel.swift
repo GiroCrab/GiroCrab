@@ -18,7 +18,15 @@ public final class AppModel {
     }
 
     let options: LaunchOptions
-    private(set) var vault: Vault? { didSet { vaultRevision &+= 1 } }
+    /// A swapped-in vault (unlock, demo ↔ own) shows its own sidebar badges: the counts are read again.
+    /// Any vault swap cancels a running Advanzia workflow.
+    private(set) var vault: Vault? {
+        didSet {
+            vaultRevision &+= 1
+            advanziaWorkflow?.cancel()
+            if vault != nil { refreshSidebarCounts() }
+        }
+    }
     /// Counts vault swaps (unlock, lock, demo ↔ own): views that cache vault data reload when it changes.
     private(set) var vaultRevision = 0
     /// Securities depot view: inventory or activities (toolbar on macOS, header on iOS).
@@ -88,6 +96,7 @@ public final class AppModel {
     var categoryHistory: [CategoryPeriodSum] = []
     /// Bar width of the category chart (#557); `.automatic` follows the global setting (months if that is automatic too).
     var categoryBarUnit: BalanceBarUnit = .automatic
+    var advanziaWorkflow: AdvanziaWorkflow?
     var connections: [BankConnection] = []
     /// Login with accounts that another login already delivers: asks which to fetch (#346).
     var accountSelectionConnection: BankConnection?
@@ -395,6 +404,10 @@ public final class AppModel {
     /// Sidebar badges: scheduled payments / active mandates over all accounts (SQL counts).
     var plannedCount = 0
     var mandateCount = 0
+    /// Unread documents (badge of „Belege & PostBox“), a partial-index COUNT.
+    var unseenDocumentCount = 0
+    /// Counts the sidebar badge reads: an older read that finishes late must not overwrite a newer one.
+    @ObservationIgnored var sidebarCountsGeneration = 0
     var selectedPlannedID: String?
     /// „Lastschriften“ (#143): mandates of the creditor account shown.
     var mandates: [Mandate] = []
@@ -586,6 +599,9 @@ public final class AppModel {
     /// Print dialog (GitHub #53).
     var showPrintSheet = false
     var transferDraft = TransferDraft()
+    /// Opt-in clipboard check (#663): pasteboard `changeCount` last looked at, so the same
+    /// content is offered once. Never the content itself; in memory only.
+    var clipboardChangeCountHandled: Int?
     var transferError: String?
     /// Instant was not possible and nothing was sent: why (shown in the
     /// transfer sheet with a "send as regular transfer" button).
@@ -673,7 +689,7 @@ public final class AppModel {
     /// Result of the latest mirror run, for the settings.
     var documentMirrorStatus: String?
     var mirrorRunning = false
-    var documentsVersion = 0
+    var documentsVersion = 0 { didSet { refreshSidebarCounts() } }
     /// Account whose statements (HKEKA) are being fetched by the running session.
     var statementsAccountID: Int64?
     var statementsCountBefore = 0
@@ -876,13 +892,11 @@ public final class AppModel {
             standingDraft.purpose = "Abschlag Strom Kd-Nr 482910"
             standingDraft.execDay = 3
             standingDraft.syncDate(to: nil)
-        case "transfer", "transfer-confirm", "transfer-girocode":
+        case "transfer", "transfer-confirm", "transfer-girocode", "transfer-clipboard":
             if let a = transferAccounts.first { sidebarSelection = .account(a.id) }
             openTransfer()
-            transferDraft.name = "Stadtwerke München"
-            transferDraft.iban = TransferSheetView.groupedIBAN("DE89370400440532013000")
-            transferDraft.amountText = Money.plain(8500)
-            transferDraft.purpose = "Abschlag Strom Kd-Nr 482910"
+            // transfer-clipboard: empty form, the sheet offers the payment in its clipboard banner (#663)
+            if name != "transfer-clipboard" { ParsedPayment.demo.apply(to: &transferDraft) }
         case "moneymoney":
             demoImportPreview = MoneyMoneyImportPreview(
                 totalRows: 4820, newBookings: 4820, duplicatesSkippedOrEnriched: 0, notesCount: 312,
@@ -1522,7 +1536,8 @@ public final class AppModel {
         activeTransferIsDebit = false
         activeTransferIsStanding = false
         debitRun = nil
-        transferDraft.pin = ""
+        // the whole draft: name, IBAN and amount are personal too (#881)
+        transferDraft = TransferDraft()
         batchDraft.pin = ""
         standingDraft = StandingDraft()
         standingOrders = []

@@ -155,6 +155,7 @@ struct GeneralSettings: View {
                 Text("Wie weit GiroCrab beim ersten Abruf eines neuen Kontos zurückgeht. Viele Banken liefern nur 90 Tage oder verlangen für mehr eine TAN. Bereits abgerufene Konten betrifft das nicht.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Buchungen").appSectionHeader() }
+            TransferSettingsSection()
             BalanceChartSettingsSection()
             MerchantLogoSettingsSection()
             #if os(macOS)
@@ -178,6 +179,19 @@ struct GeneralSettings: View {
         #if os(iOS)
         .capturableSheet(isPresented: $showHelp) { HelpSheet() }
         #endif
+    }
+}
+
+/// Überweisungen: opt-in clipboard check when the form opens (#663), per device.
+struct TransferSettingsSection: View {
+    @AppStorage(ClipboardPaymentCheck.enabledKey) private var clipboardCheck = ClipboardPaymentCheck.enabledDefault
+
+    var body: some View {
+        Section {
+            Toggle("Zwischenablage beim Öffnen einer Überweisung prüfen", isOn: $clipboardCheck)
+            Text("Nur bei leerem Formular. Der Inhalt wird nur auf diesem Gerät gelesen, nie gespeichert oder protokolliert. Felder werden erst nach Bestätigung im Hinweis ausgefüllt.")
+                .appFont(.caption).foregroundStyle(.secondary)
+        } header: { Text("Überweisungen").appSectionHeader() }
     }
 }
 
@@ -627,7 +641,8 @@ struct ICloudSyncSection: View {
     @State private var wrongFolderHint: String?
     @State private var keychainSync = VaultKeyManager.shared.syncViaICloudKeychain
     @Binding var showKeySheet: Bool
-    @State private var keyCopied = false
+    /// When the copied key leaves the clipboard; the button counts down to it (#909).
+    @State private var keyCopiedUntil: Date?
     @State private var confirmKeyCopy = false
 
     var body: some View {
@@ -704,16 +719,28 @@ struct ICloudSyncSection: View {
                             catch { keychainSync = VaultKeyManager.shared.syncViaICloudKeychain; model.toast = error.localizedDescription }
                         }
                     }
+                    // without the entitlement it could only fail (#909); switching off always works
+                    .disabled(!VaultKeyManager.canShareViaICloudKeychain && !keychainSync)
+                if let note = KeychainSyncNote.text(available: VaultKeyManager.canShareViaICloudKeychain) {
+                    Text(note).appFont(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
-                    Button(keyCopied ? "Schlüssel kopiert (60 s)" : "Tresor-Schlüssel kopieren", systemImage: "key") {
+                    Button {
                         confirmKeyCopy = true
+                    } label: {
+                        // ticks every second while the key is on the clipboard, then offers copying again
+                        TimelineView(.periodic(from: .now, by: 1)) { tick in
+                            Label(KeyCopyCountdown.title(secondsLeft: KeyCopyCountdown.secondsLeft(until: keyCopiedUntil, now: tick.date)),
+                                  systemImage: "key")
+                                .monospacedDigit()
+                        }
                     }
                     .confirmationDialog("Tresor-Schlüssel kopieren?", isPresented: $confirmKeyCopy, titleVisibility: .visible) {
                         Button("Schlüssel kopieren") {
                             Task {
                                 if let k = try? await VaultKeyManager.shared.exportKeyBase64() {
                                     VaultKeyManager.copyKeyToPasteboard(k)
-                                    keyCopied = true
+                                    keyCopiedUntil = Date().addingTimeInterval(VaultKeyManager.keyClipboardLifetime)
                                 }
                             }
                         }
@@ -723,6 +750,11 @@ struct ICloudSyncSection: View {
                     }
                     Button("Schlüssel einfügen …", systemImage: "square.and.pencil") { showKeySheet = true }
                 }
+                #if os(iOS)
+                // Two plain buttons in one Form row: iOS fires both on every tap, so
+                // "Tresor-Schlüssel kopieren" opened the paste sheet too (#909).
+                .buttonStyle(.borderless)
+                #endif
                 if sync.keyMismatch {
                     Label("Der iCloud-Tresor nutzt einen anderen Schlüssel. Fügen Sie den Schlüssel von Ihrem anderen Gerät ein.", systemImage: "exclamationmark.triangle.fill")
                         .appFont(.caption).foregroundStyle(Theme.warning)
@@ -946,5 +978,27 @@ struct OwnProductIDField: View {
         guard model.focusOwnProductID else { return }
         model.focusOwnProductID = false
         focused = true
+    }
+}
+
+/// Why the iCloud Keychain switch is off in this build (#909), or nil when it works.
+enum KeychainSyncNote {
+    static func text(available: Bool) -> String? {
+        available ? nil : String(localized: "In dieser Version nicht verfügbar. Übertragen Sie den Schlüssel mit „Tresor-Schlüssel kopieren“ und fügen Sie ihn auf dem anderen Gerät mit „Schlüssel einfügen …“ ein.")
+    }
+}
+
+/// Label of "Tresor-Schlüssel kopieren": while the key is on the clipboard, how
+/// long it stays there (#909; a fixed "(60 s)" stayed after the key was gone).
+enum KeyCopyCountdown {
+    /// Whole seconds until `until`, rounded up; nil once it has passed.
+    static func secondsLeft(until: Date?, now: Date) -> Int? {
+        guard let until, until > now else { return nil }
+        return Int(until.timeIntervalSince(now).rounded(.up))
+    }
+
+    static func title(secondsLeft: Int?) -> String {
+        guard let secondsLeft else { return String(localized: "Tresor-Schlüssel kopieren") }
+        return String(localized: "Schlüssel noch \(secondsLeft) s in der Zwischenablage")
     }
 }

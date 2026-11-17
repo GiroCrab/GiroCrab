@@ -171,9 +171,10 @@ impl Vault {
                 format!("fints.rah10.bank_keys.{connection_id}")
             ],
         )?;
-        // stored secrets of this connection (PIN); the soft delete blanked the session (state_json)
+        // stored secrets of this connection (PIN, portal user name `pin.conn.<id>.login`);
+        // the soft delete blanked the session (state_json)
         db.execute(
-            "DELETE FROM settings WHERE key = ?1",
+            "DELETE FROM settings WHERE key = ?1 OR substr(key, 1, length(?1) + 1) = ?1 || '.'",
             [super::connections::pin_key(connection_id)],
         )?;
         // the account choice of this login (#346): a re-added login starts fresh
@@ -522,6 +523,8 @@ impl Vault {
         // (unless a Startsaldo drives the balance; bank-synced cards ignore one).
         for a in accounts.iter_mut().filter(|a| {
             a.kind == AccountKind::CreditCard
+                // Advanzia imports require a checked bank balance, including genuine zero.
+                && a.connector != Some(ConnectorKind::Advanzia)
                 && a.balance_cents == 0
                 && a.transaction_count > 0
                 && !(a.balance_derived && a.opening_balance_cents.is_some())

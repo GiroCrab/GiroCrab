@@ -278,6 +278,7 @@ extension AppModel {
 
     func removeConnection(_ id: Int64) {
         guard let vault else { return }
+        if advanziaWorkflow?.connection.id == id { advanziaWorkflow?.cancel() }
         // Trade Republic: also drop the browser session (tr_session, tr_refresh, website data).
         if connections.first(where: { $0.id == id })?.connector == .tradeRepublic {
             Task { await WebLoginSheet.clearAllTradeRepublicWebData() }
@@ -305,6 +306,10 @@ extension AppModel {
         runCore { _ = try vault.switchComdirectAccess(connectionId: id) }
         reloadAll()
     }
+
+    /// Vault setting with the portal user name of a login (Amex); the password is
+    /// the login's PIN (`setConnectionPin`). `pin.` keys are stored as secrets.
+    static func portalLoginKey(_ id: Int64) -> String { "pin.conn.\(id).login" }
 
     func setConnectionPin(_ id: Int64, _ pin: String?) {
         guard let vault else { return }

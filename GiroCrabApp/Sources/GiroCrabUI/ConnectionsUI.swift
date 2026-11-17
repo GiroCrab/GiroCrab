@@ -128,6 +128,7 @@ struct ConnectionEditSheet: View {
     @State private var name = ""
     @State private var login = ""
     @State private var pin = ""
+    @State private var advanziaSettings = AdvanziaConnectionSettingsState()
     @State private var storePin = false
     @State private var tanMedium = ""
     private var isFinTs: Bool { [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric].contains(connection.connector) }
@@ -165,7 +166,7 @@ struct ConnectionEditSheet: View {
         case .comdirect: return ["comdirect.client_id", "comdirect.client_secret"]
         case .payPal: return ["paypal.client_id", "paypal.client_secret", "paypal.environment"]
         case .tradeRepublic: return []
-        case .americanExpress, .amazonVisa: return []
+        case .americanExpress, .amazonVisa, .advanzia: return []
         case .bunq: return ["bunq.environment"]
         case .enableBanking: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
         case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank: return []
@@ -243,6 +244,11 @@ struct ConnectionEditSheet: View {
 
     private var usesPin: Bool { [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .comdirect, .tradeRepublic, .bunq, .ibkr, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .ffb, .fordMoney, .opelDirektbank].contains(connection.connector) }
     private var isTR: Bool { connection.connector == .tradeRepublic }
+    /// Amex: user name and password for the portal login, kept in the vault and
+    /// filled into the login form of the portal window.
+    private var savesPortalLogin: Bool { connection.connector == .americanExpress }
+    @State private var storePortalLogin = false
+    @State private var portalUser = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -282,6 +288,9 @@ struct ConnectionEditSheet: View {
                             .autocorrectionDisabled()
                     }
                 } header: { Text("Zugang").appSectionHeader() }
+                if connection.connector == .advanzia {
+                    AdvanziaConnectionFields(state: advanziaSettings)
+                }
                 if !keys.isEmpty {
                     Section {
                         ForEach(keys, id: \.self) { key in field(key) }
@@ -317,6 +326,19 @@ struct ConnectionEditSheet: View {
                                     dismiss()
                                 }
                             }
+                        if savesPortalLogin {
+                            Toggle("Anmeldedaten im Tresor speichern", isOn: $storePortalLogin)
+                            if storePortalLogin {
+                                TextField("Benutzername", text: $portalUser)
+                                    .autocorrectionDisabled()
+                                    .textContentType(.username)
+                                SecureField(status?.hasPin == true ? "Gespeichertes Passwort (leer = unverändert)" : "Passwort", text: $pin)
+                                    .textContentType(.password)
+                                Text("GiroCrab trägt beide verschlüsselt gespeichert ins Anmeldeformular ein. „Anmelden“ und den Bestätigungscode bestätigen Sie selbst.")
+                                    .appFont(.caption).foregroundStyle(Theme.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                         Button("Web-Sitzung (Cookies) löschen …", role: .destructive) { confirmClear = .portal }
                     } header: { Text("Direkt-Login (Web-Session)").appSectionHeader() }
                     Section {
@@ -427,6 +449,11 @@ struct ConnectionEditSheet: View {
         }
         .macFrame(minWidth: 560, minHeight: 560)
         .onAppear(perform: load)
+        .task {
+            if connection.connector == .advanzia {
+                await advanziaSettings.load(connectionID: connection.id, model: model)
+            }
+        }
         .confirmRemoveConnection($confirmRemove) { dismiss() }
         .confirmationDialog("Abrufweg umstellen?", isPresented: $confirmSwitch, titleVisibility: .visible) {
             Button("Umstellen") {
@@ -557,15 +584,25 @@ struct ConnectionEditSheet: View {
     }
     private var saveBtn: some View {
         Button("Speichern") { saveAll() }
+            .disabled(connection.connector == .advanzia && (advanziaSettings.busy || !advanziaSettings.loaded))
             .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
     }
     private var fetchBtn: some View {
         Button("Speichern & abrufen") { saveAll(thenSync: true) }
+            .disabled(connection.connector == .advanzia && (advanziaSettings.busy || !advanziaSettings.loaded))
     }
 
     /// The login's settings and the account selection, saved together; a fetch only starts after
     /// the selection is stored (a switched-off account must not be fetched).
     private func saveAll(thenSync: Bool = false) {
+        if connection.connector == .advanzia {
+            Task { @MainActor in
+                guard let updated = await advanziaSettings.save(connection: connection, name: name, login: login, model: model) else { return }
+                dismiss()
+                if thenSync { model.requestSync(updated) }
+            }
+            return
+        }
         save()
         let id = connection.id
         let draft = selection
@@ -586,6 +623,10 @@ struct ConnectionEditSheet: View {
         storePin = status?.hasPin ?? false
         if isComdirect, connection.connector == .finTsGeneric { postbox = model.comdirectPostboxEnabled(connection.id) }
         if isFinTs { tanMedium = model.revealSetting(tanMediumKey) }
+        if savesPortalLogin {
+            portalUser = model.revealSetting(AppModel.portalLoginKey(connection.id))
+            storePortalLogin = status?.hasPin == true || !portalUser.isEmpty
+        }
         for key in keys + advancedKeys + postboxKeys {
             let e = model.settingEntry(key)
             if e?.isSecret == true {
@@ -614,6 +655,17 @@ struct ConnectionEditSheet: View {
                 model.setConnectionPin(connection.id, nil)
             } else if !pin.isEmpty {
                 model.setConnectionPin(connection.id, pin)
+            }
+        }
+        if savesPortalLogin {
+            let key = AppModel.portalLoginKey(connection.id)
+            let user = portalUser.trimmingCharacters(in: .whitespaces)
+            if !storePortalLogin {
+                model.setConnectionPin(connection.id, nil)
+                model.saveSetting(key, "")
+            } else {
+                if user != model.revealSetting(key) { model.saveSetting(key, user) }
+                if !pin.isEmpty { model.setConnectionPin(connection.id, pin) }
             }
         }
         saveSettings(keys + advancedKeys + postboxKeys)

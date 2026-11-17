@@ -34,7 +34,7 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `GiroCrabApp/Sources/GiroCrabUI/BookingListView.swift` – booking list
 - `GiroCrabApp/Sources/GiroCrabUI/ConnectionsUI.swift` – bank connections UI
 
-Other UI files live in the same `GiroCrabUI/` dir. Ignore `cashcrab-core/` and `CashCrabApp/` (legacy).
+Other UI files live in the same `GiroCrabUI/` dir. A view with its own design page (`docs/*_UI.md`) names it in a comment on its type; a new view gets one. Ignore `cashcrab-core/` and `CashCrabApp/` (legacy).
 
 ## Builds
 - **Swift-only change** (only `GiroCrabApp/**/*.swift`): NEVER rebuild `girocrab-core` or run `./build-xcframework.sh`. Run only `swift build -q` (in `GiroCrabApp/`) or `xcodebuild -quiet`.
@@ -71,6 +71,7 @@ Internal code identifiers (module, function, test and file names) are exempt; `s
 - Swift: `cd GiroCrabApp && swift test -q --filter <Suite>`; whole suite ~30 s. `AppModel` tests
   run against a demo vault: `AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))`,
   pattern in `Tests/GiroCrabUITests/SelectionLoadTests.swift`. Run them before pushing.
+- Tests, die `UserDefaults.standard` nutzen, tragen `// test: serial-defaults` (läuft seriell nach der parallelen Phase, `scripts/swift-test-split.sh`). Eigene Suites immer mit `\(UUID().uuidString)` (`scripts/lint-test-defaults.sh`).
 - Rust: `cargo test -q -p girocrab-core --lib <module>` for one module; whole `--lib` run ~10 s. It stays
   that fast only because unit tests skip `cipher_memory_security` (`cfg!(test)` in `Vault::apply_key`) and
   `.cargo/config.toml` builds SQLite with `SQLITE_DEFAULT_MEMSTATUS=0`: both make parallel test threads

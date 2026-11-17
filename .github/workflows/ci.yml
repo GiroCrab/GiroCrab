@@ -161,6 +161,8 @@ jobs:
         run: scripts/lint-brand-names.sh
       - name: Sheets and popovers captured by the bug report (redacted)
         run: scripts/lint-report-dialogs.sh
+      - name: Swift tests with UserDefaults.standard marked serial, unique suite names
+        run: scripts/lint-test-defaults.sh
       - name: String catalogs sorted (scripts/xcstrings.py format)
         run: scripts/xcstrings.py check
       # A Mac PR that renames or drops a catalog key the Linux UI still uses leaves Linux
@@ -172,7 +174,7 @@ jobs:
       - name: Test AI provenance classifier
         run: python3 -m unittest tools/test_export_ai_provenance.py
       - name: Test FNZ portal browser scripts
-        run: node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-schwaebisch-hall-portal.cjs
+        run: node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-schwaebisch-hall-portal.cjs scripts/test-advanzia-portal.cjs
       - name: FFI types carry the optional serde derive (front ends without UniFFI)
         run: scripts/lint-serde-feature.sh
       - name: Free functions are exported to UniFFI only from ffi.rs
@@ -285,9 +287,9 @@ jobs:
       - name: Core tests of macOS-specific code (local API)
         if: needs.changes.outputs.swift == 'true' && needs.changes.outputs.macos-local-api == 'true'
         run: cargo test -p girocrab-core --lib local_api
-      - name: Build & Test SwiftUI app (parallel)
+      - name: Build & Test SwiftUI app (parallel + serial-defaults)
         if: needs.changes.outputs.swift == 'true'
-        run: cd GiroCrabApp && swift test --parallel
+        run: scripts/swift-test-split.sh
 
   # ---------------------------------------------------------------------------------------
   # Linux port (GiroCrabLinux/, Qt 6 / QML).

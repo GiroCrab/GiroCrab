@@ -728,7 +728,9 @@ struct MainSplitView: View {
         } detail: {
             HStack(spacing: 0) {
                 bookingColumn
-                if showInspector {
+                // Belege & PostBox has its own preview; the booking inspector would show whatever
+                // booking was selected last, whichever document is open.
+                if showInspector, model.sidebarSelection != .documents {
                     inspectorSplitter
                     InspectorView()
                         .frame(width: inspectorWidth * textScale)
@@ -739,8 +741,8 @@ struct MainSplitView: View {
             // min widths: 240 (sidebar) + 560 + 280 (inspector) keep the minimum window size.
             // Must not depend on `inspectorWidth`: the split view re-lays out whenever these
             // change, which made the column jump while the splitter was dragged (#828).
-            .macColumnWidth(min: showInspector ? 560 + InspectorWidth.minimum * textScale : 560,
-                            ideal: showInspector ? 700 + InspectorWidth.standard * textScale : 700)
+            .macColumnWidth(min: showInspector && model.sidebarSelection != .documents ? 560 + InspectorWidth.minimum * textScale : 560,
+                            ideal: showInspector && model.sidebarSelection != .documents ? 700 + InspectorWidth.standard * textScale : 700)
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -800,8 +802,13 @@ struct MainSplitView: View {
         } content: {
             bookingColumn
         } detail: {
-            InspectorView()
-                .frame(minHeight: 0, maxHeight: .infinity)
+            if model.sidebarSelection == .documents {
+                // the documents view has its own preview
+                Color.clear
+            } else {
+                InspectorView()
+                    .frame(minHeight: 0, maxHeight: .infinity)
+            }
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -817,6 +824,7 @@ struct MainSplitView: View {
         .openingBalanceSheet(model)
         .offlineAccountSheets(model)
         .tangibleAssetSheets(model)
+        .modifier(AdvanziaBackgroundModifier())
         #if os(macOS)
         // AppModel.openSettings(_:), e.g. the merchant-logo tip → Settings › Händler-Logos
         .onChange(of: model.settingsRequested) { _, requested in
@@ -855,7 +863,7 @@ struct MainSplitView: View {
             AccountSelectionSheet(connection: c)
                 .environment(model)
         }
-        .capturableSheet(isPresented: $model.showAddBank) {
+        .capturableSheet(isPresented: $model.showAddBank, onDismiss: { model.advanziaWorkflow?.start() }) {
             AddBankSheet()
                 .environment(model)
         }
