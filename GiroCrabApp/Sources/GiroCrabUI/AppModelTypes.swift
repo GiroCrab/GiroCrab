@@ -23,6 +23,18 @@ enum SidebarItem: Hashable {
     case directDebits
     /// "Vermögen": cash and assets (depots) minus liabilities
     case wealth
+
+    /// Whether this selection is an overall money context (#337): its KPI sums
+    /// follow the effective total set (account switch, group, archiving). The
+    /// booking list never narrows — a total context is not a proof context. A
+    /// single account, a category and every proof view keep their sums.
+    var usesTotalsContext: Bool {
+        switch self {
+        case .allAccounts, .group, .bank, .userGroup: true
+        case .account, .category, .uncategorized, .documents, .newBookings, .planned, .directDebits, .wealth:
+            false
+        }
+    }
 }
 
 /// Document origin is independent of its booking link. Bank connectors and
@@ -564,7 +576,10 @@ enum StartupClock {
 
 extension BookingFilter {
     /// The list query sums exactly the selection's bookings (all of them, not a
-    /// narrowed subset), so its `flow` can stand in for `selectionFlow`.
+    /// narrowed subset) with the same calculation context, so its `flow` can
+    /// stand in for `selectionFlow` / `selectionFlowForTotals` (#337: reuse
+    /// only when the page was loaded with this very filter — `respectInTotal`
+    /// included — and nothing narrows it).
     var listHasFlow: Bool {
         scope == .all && direction == .all && checked == nil && search == nil && categoryId == nil && !uncategorizedOnly
             && tagIds.isEmpty && !untaggedOnly
@@ -608,7 +623,7 @@ extension Result where Failure == Error {
 
 /// Account kinds the user can pick (import, „Kontoart ändern …“), on Mac and iPhone.
 extension AccountKind {
-    static let importChoices: [AccountKind] = [.checking, .savings, .creditCard, .paymentService, .brokerage, .cash, .loan]
+    static let importChoices: [AccountKind] = [.checking, .savings, .creditCard, .paymentService, .brokerage, .cash, .loan, .order]
 
     var label: String {
         switch self {
@@ -616,6 +631,7 @@ extension AccountKind {
         case .savings: return String(localized: "Tagesgeld / Sparen")
         case .creditCard: return String(localized: "Kreditkarte")
         case .paymentService: return String(localized: "Zahlungsdienst")
+        case .order: return String(localized: "Bestellkonto")
         case .brokerage: return String(localized: "Depot")
         case .cash: return String(localized: "Bargeld")
         case .loan: return String(localized: "Darlehen")

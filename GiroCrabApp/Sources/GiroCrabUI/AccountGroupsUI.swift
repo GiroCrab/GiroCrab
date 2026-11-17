@@ -173,6 +173,23 @@ struct UserGroupHeader: View {
     var open: Bool = true
     var toggle: () -> Void = {}
 
+    /// A group of only order accounts shows an evidence sum — a positive
+    /// number (order sum after credits), no warning colour, no minus (#337);
+    /// mixed groups warn as before.
+    private var subtreeIsOrderOnly: Bool {
+        let subtree = model.userGroupSubtree(group.uuid).flatMap(\.accounts)
+        return !subtree.isEmpty && subtree.allSatisfy { $0.kind == .order }
+    }
+
+    private var groupSumColor: AnyShapeStyle {
+        if subtreeIsOrderOnly { return AnyShapeStyle(Theme.secondary) }
+        return AnyShapeStyle(group.balanceCents < 0 ? Theme.negative : Theme.secondary)
+    }
+
+    private var groupSumCents: Int64 {
+        subtreeIsOrderOnly ? abs(group.balanceCents) : group.balanceCents
+    }
+
     var body: some View {
         HStack(spacing: 5) {
             Button(action: toggle) {
@@ -196,12 +213,12 @@ struct UserGroupHeader: View {
                     .accessibilityLabel("Nicht in der Gesamtsumme")
             }
             Spacer()
-            Text(Money.format(group.balanceCents))
+            Text(Money.format(groupSumCents))
                 .sensitive(.amounts)
                 .appFont(.footnote, weight: .semibold) // same size as in SectionHeader (#602)
                 .monospacedDigit()
                 .fixedSize() // the name truncates, never the balance (#343)
-                .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(group.balanceCents < 0 ? Theme.negative : Theme.secondary))
+                .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(groupSumColor))
                 .opacity(group.inTotal ? 1 : 0.6)
         }
         .appFont(.body, weight: .semibold) // as big as the account names
@@ -1168,7 +1185,7 @@ struct GroupDetailEditor: View {
                 } footer: {
                     Text(g.includeInTotal && !g.inTotal
                          ? "Diese Gruppe liegt in einer Gruppe, die nicht zur Gesamtsumme zählt – ihre Konten zählen deshalb ebenfalls nicht."
-                         : "Ausgeschaltet zählen die Konten dieser Gruppe und ihrer Untergruppen nicht zu „Verfügbar“ und zum Saldoverlauf der Übersicht – z. B. für Geschäfts- oder Kinderkonten.")
+                         : "Ausgeschaltet zählen die Konten dieser Gruppe und ihrer Untergruppen nicht zu den übergreifenden Geld- und Vermögenswerten – „Verfügbar“, Einnahmen, Konsum, Investitionen, Cashflow, Vermögen und die Saldoverläufe der Übersicht – z. B. für Geschäfts- oder Kinderkonten.")
                     .leadingFooter()
                 }
                 Section {

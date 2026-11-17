@@ -5,7 +5,16 @@ import GiroCrabCore
 extension AppModel {
     // MARK: - Loading
 
+    /// A totals reload supersedes category snapshots and refreshes the cashflow
+    /// card even when the proof list keeps exactly the same bookings.
+    func invalidateTotals() {
+        categoryRefreshTask?.cancel()
+        categoryRefreshTask = nil
+        totalsVersion += 1
+    }
+
     func reloadAll() {
+        invalidateTotals()
         assetClassificationVersion += 1
         let all = Perf.signposter.beginInterval("reloadAll")
         defer { Perf.signposter.endInterval("reloadAll", all) }
@@ -419,7 +428,11 @@ extension AppModel {
             tagIds: tagFilter.untagged ? [] : tagFilter.tagIDs.sorted(),
             untaggedOnly: tagFilter.untagged,
             amountMinCents: amountFilter.minCents,
-            amountMaxCents: amountFilter.maxCents
+            amountMaxCents: amountFilter.maxCents,
+            // Overall money contexts (#337) — overview, kind / bank / user
+            // group, also with exactly one account — sum the effective total
+            // set; single account, category and proof views keep their sums.
+            respectInTotal: sidebarSelection?.usesTotalsContext ?? true
         )
     }
 
@@ -599,10 +612,19 @@ extension AppModel {
     }
 
     /// KPI tiles: same flow rules as the dashboard, but for the selected
-    /// period and account/group (no account selected = all accounts).
+    /// period and account/group (no account selected = all accounts). A pure
+    /// order selection shows order evidence instead (#337): no money KPIs.
     func reloadSelectionKPIs() {
-        guard let vault else { selectionFlow = nil; return }
+        guard let vault else { selectionFlow = nil; orderCurrencySummaries = []; return }
         let (from, to) = periodRange
+        if let ids = orderSelectionAccountIDs {
+            runCore {
+                orderCurrencySummaries = try vault.orderSelectionSummary(accountIds: ids, dateFrom: from, dateTo: to)
+                selectionFlow = nil // evidence tiles, not money KPIs
+            }
+            return
+        }
+        orderCurrencySummaries = []
         let filter = currentFilter
         // The list query already summed the same bookings unless it is narrowed further.
         if let page, filter.listHasFlow || kpiFollowsList {
@@ -610,8 +632,13 @@ extension AppModel {
             return
         }
         let ids = filter.accountIds
+        let forTotals = filter.respectInTotal
         runCore {
-            let f = try vault.selectionFlow(accountIds: ids, dateFrom: from, dateTo: to)
+            // the fallback must run in the filter's own calculation context
+            // (#337): overall figures respect the effective total set
+            let f = try (forTotals
+                ? vault.selectionFlowForTotals(accountIds: ids, dateFrom: from, dateTo: to)
+                : vault.selectionFlow(accountIds: ids, dateFrom: from, dateTo: to))
             selectionFlow = (f.consumptionCents, f.investedCents, f.incomeCents)
         }
     }
@@ -653,9 +680,11 @@ extension AppModel {
         var ids: [Int64]
         switch sidebarSelection {
         case .account(let id): ids = [id]
-        // same accounts as the group's sum in the header (#208)
-        case .group(let gid): ids = groups.first(where: { $0.id == gid })?.accounts.filter { !$0.isArchived }.map(\.id) ?? []
-        case .bank(let key): ids = bankGroup(for: key)?.accounts.filter { !$0.isArchived }.map(\.id) ?? []
+        // same accounts as the group's sum in the header (#208), and like that
+        // sum only the effectively included ones (#337; `inTotal` also covers
+        // archiving and the account's own switch)
+        case .group(let gid): ids = groups.first(where: { $0.id == gid })?.accounts.filter(\.inTotal).map(\.id) ?? []
+        case .bank(let key): ids = bankGroup(for: key)?.accounts.filter(\.inTotal).map(\.id) ?? []
         case .userGroup(let uuid): ids = userGroupBalanceAccountIDs(uuid)
         default: ids = liquidAccounts.map(\.id)
         }
@@ -766,7 +795,55 @@ extension AppModel {
     var allAccounts: [Account] { groups.flatMap(\.accounts) }
     var hasArchivedAccounts: Bool { allAccounts.contains(where: \.isArchived) }
     /// Everyday accounts counted in "Verfügbar" (skips groups excluded from the total).
-    var liquidAccounts: [Account] { allAccounts.filter { $0.inTotal && [.checking, .savings, .paymentService, .creditCard, .cash].contains($0.kind) } }
+    var liquidAccounts: [Account] { allAccounts.filter { $0.inTotal && [.checking, .savings, .paymentService, .creditCard, .cash, .order].contains($0.kind) } }
+    var selectedOrderAccountID: Int64? {
+        guard case .account(let id) = sidebarSelection, account(for: id)?.kind == .order else { return nil }
+        return id
+    }
+
+    /// Accounts of a pure order selection: a single Bestellkonto, or a user
+    /// group / kind section / bank made up solely of order accounts. Such a
+    /// view is an evidence context (#337): order tiles instead of money KPIs
+    /// and no balance chart — although the overall money totals keep these
+    /// accounts out. Mixed selections stay money contexts.
+    var orderSelectionAccountIDs: [Int64]? {
+        let accounts: [Account]?
+        switch sidebarSelection {
+        case .account(let id):
+            accounts = account(for: id).map { [$0] }
+        case .group(let gid):
+            accounts = groups.first(where: { $0.id == gid })?.accounts
+        case .bank(let key):
+            accounts = bankGroup(for: key)?.accounts
+        case .userGroup(let uuid):
+            accounts = userGroupSubtree(uuid).flatMap(\.accounts)
+        default:
+            return nil
+        }
+        guard let accs = accounts, !accs.isEmpty, accs.allSatisfy({ $0.kind == .order }) else { return nil }
+        return accs.map(\.id)
+    }
+
+    /// The selection shows order evidence instead of money KPIs.
+    var isOrderSelection: Bool { orderSelectionAccountIDs != nil }
+
+    /// Primary-currency evidence of the selection (EUR first, else the entry
+    /// with the largest order value) — what the tiles and the header show.
+    var orderAccountSummary: OrderAccountSummary? {
+        guard let s = orderCurrencySummaries.first else { return nil }
+        return OrderAccountSummary(
+            orderCount: s.orderCount, creditCount: s.creditCount,
+            orderValueCents: s.orderValueCents, creditValueCents: s.creditValueCents)
+    }
+
+    /// Currency of `orderAccountSummary`.
+    var orderSelectionCurrency: String? { orderCurrencySummaries.first?.currency }
+
+    /// Further currencies of the selection (after Gutschriften): shown as a
+    /// note, never added into the primary figures.
+    var orderSelectionExtraCurrencies: [(currency: String, cents: Int64)] {
+        orderCurrencySummaries.dropFirst().map { ($0.currency, $0.orderValueCents - $0.creditValueCents) }
+    }
     var liquidBalance: Int64 { liquidAccounts.reduce(0) { $0 + $1.balanceCents } }
     var newCount: Int { allAccounts.reduce(0) { $0 + Int($1.newCount) } }
     /// Bookings without a category (badge of „Ohne Kategorie“): all of them, or, while list filters
@@ -815,12 +892,15 @@ extension AppModel {
     }
 
     /// Accounts behind the header total of the current selection (nil: single account / not a total).
+    /// Like the sum it shows: only effectively included accounts (#337).
     private var headerTotalAccounts: [Account]? {
         switch sidebarSelection {
         case .allAccounts, .none: return liquidAccounts
-        case .group(let id): return groups.first { $0.id == id }?.accounts
-        case .bank(let key): return bankGroup(for: key)?.accounts
-        case .userGroup(let uuid): let ids = Set(userGroupAccountIDs(uuid)); return allAccounts.filter { ids.contains($0.id) }
+        case .group(let id): return groups.first { $0.id == id }?.accounts.filter(\.inTotal)
+        case .bank(let key): return bankGroup(for: key)?.accounts.filter(\.inTotal)
+        case .userGroup(let uuid):
+            let ids = Set(userGroupAccountIDs(uuid))
+            return allAccounts.filter { ids.contains($0.id) && $0.inTotal }
         default: return nil
         }
     }

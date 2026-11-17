@@ -15,6 +15,7 @@ use std::sync::{Arc, LazyLock};
 
 use chrono::NaiveDate;
 use regex::Regex;
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 
 use super::portal_import::parse_amount;
@@ -277,7 +278,7 @@ fn to_fetch(connection_id: i64, name: &str, bookings: Vec<Booking>) -> FetchResu
             iban: String::new(),
             account_number: String::new(),
             currency: "EUR".into(),
-            kind: AccountKind::PaymentService,
+            kind: AccountKind::Order,
             balance_cents: 0,
             balance_date: crate::connectors::today(),
         }],
@@ -342,13 +343,13 @@ impl Vault {
                 message: "not an Amazon connection".into(),
             });
         }
-        let parsed = parse_capture(&orders_json);
+        let mut parsed = parse_capture(&orders_json);
         if parsed.is_empty() {
             return Err(CoreError::InvalidInput {
                 message: tr("Keine Bestellungen erkannt.").into(),
             });
         }
-        self.heal_amazon_amounts(connection_id, &parsed)?;
+        self.heal_amazon_amounts(connection_id, &mut parsed)?;
         let summary = store_fetch(
             &self,
             kind,
@@ -365,33 +366,69 @@ impl Vault {
     /// Order bookings already stored with a different total (e.g. the wrong
     /// 1,32 € read from "€1,329.00" by an older parser) are corrected in place;
     /// `store_fetch` only inserts new ids. The synthetic balance follows.
-    fn heal_amazon_amounts(&self, connection_id: i64, parsed: &[Booking]) -> Result<(), CoreError> {
+    fn heal_amazon_amounts(
+        &self,
+        connection_id: i64,
+        parsed: &mut [Booking],
+    ) -> Result<(), CoreError> {
         let account_ref = format!("amazon-orders-{connection_id}");
         let db = self.db()?;
         let Ok(acc_id) = db.query_row(
-            "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref = ?2",
+            "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref = ?2 AND archived_unix IS NULL AND deleted_ms IS NULL",
             rusqlite::params![connection_id, account_ref],
             |r| r.get::<_, i64>(0),
         ) else {
             return Ok(());
         };
-        for b in parsed.iter().filter(|b| b.id.starts_with("amazon:")) {
-            let old: Option<i64> = db
+        for b in parsed {
+            // Refund ids historically include the amount. A rising cumulative
+            // refund is the same captured row, not an additional credit.
+            let prefix =
+                b.id.starts_with("amazon-refund:")
+                    .then(|| format!("{}:", b.id.rsplit_once(':').expect("refund id").0));
+            let read =
+                |r: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, String, i64, i64, Option<i64>)> {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                };
+            let mut old = db
                 .query_row(
-                    "SELECT amount_cents FROM transactions WHERE account_id = ?1 AND external_id = ?2 AND deleted_ms IS NULL",
+                    "SELECT id, external_id, amount_cents, amount_ms, deleted_ms FROM transactions
+                 WHERE account_id=?1 AND external_id=?2",
                     rusqlite::params![acc_id, b.id],
-                    |r| r.get(0),
+                    read,
                 )
-                .ok();
-            if let Some(old) = old.filter(|o| *o != b.cents) {
-                db.execute(
-                    "UPDATE transactions SET amount_cents = ?1 WHERE account_id = ?2 AND external_id = ?3",
-                    rusqlite::params![b.cents, acc_id, b.id],
-                )?;
-                db.execute(
-                    "UPDATE accounts SET balance_cents = balance_cents + ?1 WHERE id = ?2",
-                    rusqlite::params![b.cents - old, acc_id],
-                )?;
+                .optional()?;
+            if old.is_none() {
+                if let Some(prefix) = prefix {
+                    // Indexed range lookup, not one full account scan per order.
+                    let upper = format!("{prefix}\u{10ffff}");
+                    old = db.query_row(
+                        "SELECT id, external_id, amount_cents, amount_ms, deleted_ms FROM transactions
+                         WHERE account_id=?1 AND external_id>=?2 AND external_id<?3
+                         ORDER BY id DESC LIMIT 1",
+                        rusqlite::params![acc_id, prefix, upper], read,
+                    ).optional()?;
+                }
+            }
+            if let Some((id, external_id, old, amount_ms, deleted)) = old {
+                if deleted.is_some() {
+                    b.id = external_id;
+                    continue;
+                }
+                if old != b.cents {
+                    let stamp = crate::dates::now_ms().max(amount_ms + 1);
+                    db.execute(
+                        "UPDATE transactions SET amount_cents=?1, amount_ms=?3 WHERE id=?2",
+                        rusqlite::params![b.cents, id, stamp],
+                    )?;
+                    db.execute(
+                        "UPDATE accounts SET balance_cents=balance_cents+?1 WHERE id=?2",
+                        rusqlite::params![b.cents - old, acc_id],
+                    )?;
+                }
+                // Keep the original stable booking key (also used by sync and
+                // attachments); store_fetch must recognise this as the same row.
+                b.id = external_id;
             }
         }
         Ok(())

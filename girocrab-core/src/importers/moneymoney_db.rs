@@ -2863,9 +2863,9 @@ impl ImportCtx<'_> {
             .unwrap_or_else(|| "Datenimport".into());
         conn.execute(
             "INSERT INTO accounts(connection_id, group_id, external_ref, name, bank_name, owner, iban, account_number,
-                                  currency, kind, balance_cents, balance_date, sf_symbol, sort_order, created_ms)
+                                  currency, kind, balance_cents, balance_date, sf_symbol, sort_order, created_ms, include_in_total)
              VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, '', ?10,
-                     (SELECT IFNULL(MAX(sort_order),0)+1 FROM accounts), ?11)",
+                     (SELECT IFNULL(MAX(sort_order),0)+1 FROM accounts), ?11, ?12)",
             params![
                 gid,
                 ext,
@@ -2877,7 +2877,9 @@ impl ImportCtx<'_> {
                 a.currency,
                 kind.as_str(),
                 kind.sf_symbol(),
-                now_ms()
+                now_ms(),
+                // order accounts (Bestellkonten) start outside the totals (#337)
+                kind != AccountKind::Order
             ],
         )?;
         self.res.accounts_created += 1;
@@ -2897,8 +2899,11 @@ impl ImportCtx<'_> {
         let (group, sym, order) = group_for(kind);
         let gid = Vault::ensure_group(conn, group, sym, order)?;
         conn.execute(
-            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3, balance_cents = ?4, balance_date = ?5 WHERE id = ?6",
-            params![kind.as_str(), kind.sf_symbol(), gid, r.balance_cents, r.balance_date, account_id],
+            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3, balance_cents = ?4, balance_date = ?5,
+                include_in_total = CASE WHEN ?1 = 'order' AND kind <> 'order' THEN 0 ELSE include_in_total END,
+                total_ms = CASE WHEN ?1 = 'order' AND kind <> 'order' AND include_in_total <> 0 THEN MAX(?7, total_ms + 1) ELSE total_ms END
+             WHERE id = ?6",
+            params![kind.as_str(), kind.sf_symbol(), gid, r.balance_cents, r.balance_date, account_id, now_ms()],
         )?;
         if kind == AccountKind::Loan {
             Vault::derive_initial_balance(conn, account_id)?;

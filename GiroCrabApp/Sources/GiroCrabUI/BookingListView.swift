@@ -67,7 +67,7 @@ struct BookingStreamView: View {
                         }
                         if model.scope == .investments {
                             InvestmentDashboardView()
-                        } else if cards.any, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
+                        } else if cards.any, !model.isOrderSelection, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
                             // Overview: always; single account: only when toggled on.
                             #if os(iOS)
                             if cards.cashflow {
@@ -908,8 +908,7 @@ struct BookingRow: View {
                         .overlay {
                             if booking.isPending {
                                 Capsule().strokeBorder(Theme.secondary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                            }
-                        }
+                            }                        }
                 }
                 // balance after this booking (#577); pending ones have none
                 if let balance {

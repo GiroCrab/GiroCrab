@@ -280,6 +280,7 @@ struct SidebarView: View {
                 name: group.name, sfSymbol: group.sfSymbol, balanceCents: group.balanceCents,
                 selected: model.sidebarSelection == .group(group.id),
                 isLoanGroup: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .loan },
+                isOrderSection: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .order },
                 open: open, toggle: toggle
             )
                 .padding(.top, 10)
@@ -313,6 +314,7 @@ struct SidebarView: View {
                     name: group.name, sfSymbol: group.sfSymbol, balanceCents: group.balanceCents,
                     selected: model.sidebarSelection == .bank(group.id),
                     isLoanGroup: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .loan },
+                    isOrderSection: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .order },
                     nameRedaction: [],
                     open: open, toggle: toggle
                 )
@@ -485,6 +487,15 @@ struct SidebarView: View {
         }
         Button("Kontoinhaber …", systemImage: "person.crop.circle") { model.groupDialog = .editOwner(account) }
         AccountGroupMenu(account: account)
+        // the account's own switch for the overall money totals (#337); the
+        // group (or a group that group is in) and archiving can still keep it
+        // out — the row's tooltip explains that precedence
+        Toggle(isOn: Binding(
+            get: { account.includeInTotal },
+            set: { model.setAccountIncludeInTotal(account, $0) }
+        )) {
+            Label("In Gesamtsummen zählen", systemImage: "plus.forwardslash.minus")
+        }
         Divider()
         Button("Alle Buchungen als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: [account.id]) }
         ManualLoanAccountMenu(model: model, account: account)
@@ -631,10 +642,23 @@ struct SectionHeader: View {
     let balanceCents: Int64
     var selected: Bool = false
     var isLoanGroup: Bool = false
+    /// Section of only order accounts: the sum is evidence (order values), a
+    /// negative number is not a warning (#337).
+    var isOrderSection: Bool = false
     /// Bug report screenshot (#301): category-like group names hide on request, bank names stay visible.
     var nameRedaction: ReportRedaction = .labels
     var open: Bool = true
     var toggle: () -> Void = {}
+
+    private var sumColor: AnyShapeStyle {
+        if balanceCents >= 0 || isOrderSection { return AnyShapeStyle(Theme.secondary) }
+        if isLoanGroup { return AnyShapeStyle(Theme.loan) }
+        return AnyShapeStyle(Theme.negative)
+    }
+
+    /// An order section's sum is evidence (order sum after credits): shown
+    /// positive, without a minus that would read like debt (#337).
+    private var displayCents: Int64 { isOrderSection ? abs(balanceCents) : balanceCents }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -657,12 +681,11 @@ struct SectionHeader: View {
                 .lineLimit(2) // a second line instead of "…" at large text sizes (#571)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Text(Money.format(balanceCents))
+            Text(Money.format(displayCents))
                 .sensitive(.amounts)
-                .appFont(.footnote, weight: .semibold) // same size as the account balances
-                .monospacedDigit()
+                .appFont(.footnote, weight: .semibold) // same size as the account balances                .monospacedDigit()
                 .fixedSize() // the name truncates, never the balance (#343)
-                .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(balanceCents < 0 && isLoanGroup ? Theme.loan : (balanceCents < 0 ? Theme.negative : Theme.secondary)))
+                .foregroundStyle(selected ? AnyShapeStyle(.primary) : sumColor)
         }
         .appFont(.body, weight: .semibold) // as big as the account names
         .foregroundStyle(.secondary)
@@ -721,7 +744,14 @@ struct AccountRow: View {
                         ProgressView().controlSize(.mini)
                             .accessibilityLabel(Text("Wird synchronisiert"))
                     }
-                }
+                    // outside the overall money totals (#337): like a group's
+                    // eye.slash — the effective flag (own switch, group, archiving).
+                    // Not for order accounts: being outside is their normal
+                    // state, not worth a permanent marker (toggle shows it).
+                    if account.showsTotalExclusionIndicator {
+                        AccountTotalExclusionIndicator(
+                            help: model.totalExclusionIconHelp(account, redaction: redaction))
+                    }                }
                 // row 2: bank / loan progress left, balance right
                 HStack(spacing: 6) {
                     if let repaid {
@@ -750,19 +780,31 @@ struct AccountRow: View {
                     Spacer(minLength: 4)
                     // archived accounts show no balance (#667)
                     if !account.isArchived {
-                        Text(Money.format(account.balanceCents, currency: account.currency))
+                        Text(Money.format(account.displayBalanceCents, currency: account.currency))
                             .sensitive(.amounts)
                             .appFont(.subheadline, monospacedDigit: true)
                             .fixedSize() // the subtitle truncates, never the balance (#343)
-                            .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
+                            .foregroundStyle(balanceColor)
                     }
                 }
             }
         }
         .padding(.vertical, 1)
-        .opacity(account.isArchived ? 0.55 : 1)
-        // one element per account: unread count, name, bank / loan progress, balance
-        .accessibilityElement(children: .combine)
+        .opacity(account.isArchived ? 0.55 : (account.showsTotalExclusionIndicator ? 0.6 : 1))
+        // reachable explanation (#337): why the account stays out of the totals
+        // although its own switch is on — the group that wins, or archiving
+        .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
+    }
+
+    /// A negative balance is a warning only where money can run short. Loans
+    /// carry their own calm tone; an order account's negative balance is the
+    /// evidence value (sum of the orders) — plain text colour, no alarm
+    /// (#337). The booking list keeps its red/green direction.
+    private var balanceColor: AnyShapeStyle {
+        if onSelection { return AnyShapeStyle(.primary) }
+        if account.kind == .loan { return AnyShapeStyle(Theme.loan) }
+        if account.kind == .order { return AnyShapeStyle(Theme.text) }
+        return AnyShapeStyle(account.balanceCents < 0 ? Theme.negative : Theme.text)
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.

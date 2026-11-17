@@ -98,7 +98,7 @@ automatically get a monogram, never a logo.
 ## Testing with demo data
 
 `GIROCRAB_DEMO_SEED=1 cargo run` (or `cargo run -- --demo-seed`) opens a throw-away vault with
-5 fictional accounts, exactly 52 invented bookings and 2 ETF depot positions
+10 fictional accounts, 58 invented bookings (including Amazon orders and credits) and 2 ETF depot positions
 (`girocrab-core/src/demo.rs`). Change the data
 there only with invented names and amounts.
 

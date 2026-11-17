@@ -36,7 +36,7 @@ enum SymbolCatalog {
     private static let raw: [Section] = [
         Section(title: "Finanzen", items: [
             i("banknote", "Geld"), i("creditcard", "Kreditkarte"), i("eurosign.circle", "Bargeld"),
-            i("dollarsign.circle", "Dollar"), i("building.columns", "Bank"), i("envelope.circle", "Bezahldienst"), i("wallet.bifold", "Geldbörse"),
+            i("dollarsign.circle", "Dollar"), i("building.columns", "Bank"), i("envelope.circle", "Bezahldienst"), i("shippingbox", "Bestellkonto"), i("wallet.bifold", "Geldbörse"),
             i("chart.pie", "Vermögen"), i("chart.line.uptrend.xyaxis", "Depot"), i("diamond", "Sachwerte"), i("percent", "Zinsen"),
             i("bitcoinsign.circle", "Krypto"), i("giftcard", "Gutschein"), i("arrow.left.arrow.right", "Umbuchung"),
             i("lock.shield", "Sicherheit"), i("doc.text", "Vertrag"), i("building.2", "Firma"),

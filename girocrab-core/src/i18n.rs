@@ -187,6 +187,8 @@ fn default_name_en(de: &str) -> Option<&'static str> {
         "Kreditkarten" => "Credit cards",
         "Depots & ETFs" => "Portfolios & ETFs",
         "Darlehen & Kredite" => "Loans",
+        "Bestellkonten" => "Order accounts",
+        "Bestellungen" => "Orders",
         "Importierte Konten" => "Imported accounts",
         // Starter categories.
         "Einnahmen" => "Income",

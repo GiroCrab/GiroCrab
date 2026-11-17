@@ -15,7 +15,7 @@ import Foundation
 ///                         "Portal-Struktur prüfen"; also GIROCRAB_DEVELOPER=1
 ///  --try-add-bank <name>  (developer, with --fresh-vault) add a bank on start,
 ///                         e.g. 1822direkt, to see the setup form
-///  --select <text>        (demo) preselect the account whose name contains <text>
+///  --select <text>        (demo) preselect the account (or user group) whose name contains <text>
 ///  --demo-inspector-edit (demo) open the right-hand inspector in its edit mode (#448)
 ///  --demo-sheet account-selection|transfer|moneymoney|moneymoney-db|recurring|print|export|rules|palette|
 ///               categorizer|payee-match|payee-close|payee-nomatch|error|rule-edit|icon-color|category|icon-color-category|
@@ -74,7 +74,7 @@ public struct LaunchOptions: Sendable {
     /// accuracy report of the category suggestions (#664, counts only) to this file
     public var evalSuggestions: String?
     public var tryAddBank: String?
-    /// (demo) preselect the account whose name contains this text
+    /// (demo) preselect the account (or user group) whose name contains this text
     public var selectAccount: String?
     /// (demo) preselect the booking whose merchant/counterparty contains this text
     public var pickBooking: String?

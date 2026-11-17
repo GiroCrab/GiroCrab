@@ -59,6 +59,7 @@ use crate::connectors::group_for;
 use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
+use crate::models::AccountKind;
 use crate::models::{Account, UserGroup};
 use crate::schema::has_column;
 use crate::vault::Vault;
@@ -352,23 +353,27 @@ pub(crate) fn merge_attached(
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
         (Option<i64>, i64, String, i64),
+        (bool, i64),
     )> = tx
         .prepare(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
-                    archived_unix, archived_ms, sf_symbol, symbol_ms
+                    archived_unix, archived_ms, sf_symbol, symbol_ms,
+                    include_in_total != 0, total_ms
              FROM other.accounts",
         )?
         .query_map([], |r| {
             Ok((
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
                 (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?),
+                (r.get(12)?, r.get(13)?),
             ))
         })?
         .collect::<Result<_, _>>()?;
     for (
         (oid, uuid, order, placed, name, named, color, colored),
         (archived, archived_ms, symbol, symbol_ms),
+        (in_total, total_ms),
     ) in rows
     {
         let Some(&id) = acc_map.get(&oid) else {
@@ -391,6 +396,14 @@ pub(crate) fn merge_attached(
         changed += tx.execute(
             "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3 WHERE id = ?1 AND (?4 OR archived_ms < ?3)",
             params![id, archived, archived_ms, fresh],
+        )? as u32;
+        // total switch (#337): the one field merge of value and stamp — newer
+        // stamp wins, an equal stamp breaks the tie towards `true` (like the
+        // group flag), inserted accounts take both unconditionally
+        changed += tx.execute(
+            "UPDATE accounts SET include_in_total = ?2, total_ms = ?3
+              WHERE id = ?1 AND (?4 OR total_ms < ?3 OR (total_ms = ?3 AND include_in_total < ?2))",
+            params![id, in_total, total_ms, fresh],
         )? as u32;
         // only a user's choice travels; the type's default stays local
         changed += tx.execute(
@@ -634,6 +647,28 @@ pub(crate) fn excluded_from_total(conn: &Connection) -> CoreResult<HashSet<Strin
         .collect())
 }
 
+/// Accounts that count towards overall money figures (#337): their own switch
+/// on, not archived, their group (or a group that group is in) included, not
+/// deleted. The one set behind `BookingFilter.respect_in_total`,
+/// `selection_flow_for_totals`, the dashboard sums and the cashflow card; the
+/// same rule that derives `Account.in_total`. Takes the caller's connection,
+/// so aggregations never take the vault lock a second time.
+pub(crate) fn total_account_ids(conn: &Connection) -> CoreResult<HashSet<i64>> {
+    let excluded = excluded_from_total(conn)?;
+    let rows: Vec<(i64, Option<String>)> = conn
+        .prepare(
+            "SELECT id, user_group_uuid FROM accounts
+              WHERE deleted_ms IS NULL AND archived_unix IS NULL AND include_in_total != 0",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, g)| g.as_ref().is_none_or(|u| !excluded.contains(u)))
+        .map(|(id, _)| id)
+        .collect())
+}
+
 /// `uuid` and all groups below it.
 fn subtree(parents: &HashMap<String, Option<String>>, uuid: &str) -> HashSet<String> {
     parents
@@ -724,10 +759,15 @@ impl Vault {
             });
             v
         };
-        // archived accounts stay listed but don't count (GiroCrab/GiroCrab#208)
+        // Archived and switched-out accounts stay listed but don't count
+        // (GiroCrab/GiroCrab#208, #337); `in_total` is the effective flag.
+        // Order accounts (Bestellkonten) are evidence accounts: their balance
+        // is the evidence value, so a group of order accounts sums it even
+        // while the overall money totals keep them out — no double counting:
+        // Verfügbar / wealth / dashboard filter exactly as before (#337).
         let sum = |v: &[Account]| {
             v.iter()
-                .filter(|a| a.currency == "EUR" && a.archived_unix.is_none())
+                .filter(|a| a.currency == "EUR" && (a.in_total || a.kind == AccountKind::Order))
                 .map(|a| a.balance_cents)
                 .sum()
         };

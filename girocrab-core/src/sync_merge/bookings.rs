@@ -131,6 +131,9 @@ struct OtherBooking {
     category_source: String,
     rule_id: Option<i64>,
     fields: BookingFields,
+    /// (amount_cents, amount_ms): corrected imported order/refund amounts
+    /// carry a stamp; ordinary bank amounts keep 0 (#337).
+    amount: (i64, i64),
 }
 
 // includes soft-deleted rows: deleted bookings travel as tombstones
@@ -139,7 +142,7 @@ const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
         imported_unix, purpose_code, gvc, salary_flag,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms
+        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms, amount_ms
      FROM other.transactions ORDER BY account_id, external_id";
 
 /// The id both sides keep for one booking known under two ids: the bank's
@@ -206,13 +209,14 @@ pub(crate) fn merge_bookings(
     // (account, import_fp) -> (external_id, id) of local fingerprinted rows
     let mut fp_rows: Vec<((i64, String), (String, i64))> = Vec::new();
     let mut local: HashMap<i64, BookingFields> = HashMap::new();
+    let mut local_amounts: HashMap<i64, (i64, i64)> = HashMap::new();
     {
         let mut st = conn.prepare(
             // includes soft-deleted rows
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms
+                    tags_ms, amount_ms
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
@@ -230,6 +234,7 @@ pub(crate) fn merge_bookings(
                 &r.get::<_, String>(12)?,
             );
             fp_rows.push(((acc, fp), (ext, id)));
+            local_amounts.insert(id, (r.get(17)?, r.get(20)?));
             let source: String = r.get(5)?;
             let manual = if source == "manual" { r.get(4)? } else { None };
             local.insert(
@@ -297,6 +302,7 @@ pub(crate) fn merge_bookings(
                     deleted_ms: r.get(26)?,
                 },
                 category_source: source,
+                amount: (r.get(6)?, r.get(32)?),
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -377,13 +383,26 @@ pub(crate) fn merge_bookings(
         };
         match existing {
             Some((id, renamed)) => {
+                // Only explicitly corrected amounts carry a stamp (#337): the
+                // newer (amount_ms, amount) wins; unstamped bank amounts keep
+                // the existing immutable contract.
+                let previous = local_amounts[&id];
+                let amount_changed =
+                    o.amount.1 > 0 && (o.amount.1, o.amount.0) > (previous.1, previous.0);
+                if amount_changed {
+                    conn.execute(
+                        "UPDATE transactions SET amount_cents=?2, amount_ms=?3 WHERE id=?1",
+                        params![id, o.amount.0, o.amount.1],
+                    )?;
+                    local_amounts.insert(id, o.amount);
+                }
                 let old = local[&id].clone();
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
                 if m == old {
-                    if renamed {
+                    if renamed || amount_changed {
                         stats.bookings_updated += 1;
                     }
                     continue;
@@ -429,14 +448,15 @@ pub(crate) fn merge_bookings(
                 ]);
                 p.extend(o.sepa_refs.iter().cloned());
                 p.push(f.tags_ms.into());
+                p.push(o.amount.1.into());
                 conn.execute(
                     "INSERT INTO transactions(account_id, external_id, import_fp,
                         booking_date, value_date, amount_cents, currency, counterparty_iban, booking_text,
                         imported_unix, purpose_code, gvc, salary_flag,
                         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
                         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31)",
+                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms, amount_ms)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32)",
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
@@ -445,6 +465,7 @@ pub(crate) fn merge_bookings(
                     tag_ids.write(conn, id, &f.tags)?;
                 }
                 by_key.insert((acc, o.external_id), id);
+                local_amounts.insert(id, o.amount);
                 local.insert(id, o.fields);
                 if local[&id].deleted_ms.is_none() {
                     stats.bookings_added += 1;

@@ -51,7 +51,12 @@ final class AccountGroupsTests: XCTestCase {
         let listed = model.userGroups.flatMap(\.accounts).map(\.id)
         XCTAssertEqual(listed.sorted(), model.allAccounts.map(\.id).sorted(), "each account exactly once", file: file, line: line)
         for g in model.userGroups {
-            let sum = g.accounts.filter { $0.currency == "EUR" }.reduce(Int64(0)) { $0 + $1.balanceCents }
+            // like the core's sum (#337): effectively included accounts, plus
+            // order accounts — their balance is the evidence value, so a group
+            // of order accounts sums it even outside the money totals
+            let sum = g.accounts
+                .filter { $0.currency == "EUR" && ($0.inTotal || $0.kind == .order) }
+                .reduce(Int64(0)) { $0 + $1.balanceCents }
             XCTAssertEqual(g.balanceCents, sum, "sum of \(g.name)", file: file, line: line)
             for a in g.accounts {
                 XCTAssertEqual(a.userGroupUuid ?? "", g.uuid, "\(a.name) belongs to \(g.name)", file: file, line: line)
@@ -65,10 +70,10 @@ final class AccountGroupsTests: XCTestCase {
 
     func testDemoStartsGroupedByGroup() {
         XCTAssertEqual(model.accountView, .byGroup, "groups exist → 'Nach Gruppe' without an explicit choice")
-        XCTAssertEqual(groups.count, 3)
-        XCTAssertEqual(groups.map(\.sfSymbol), ["person", "chart.pie", "house"])
+        XCTAssertEqual(groups.count, 4)
+        XCTAssertEqual(groups.map(\.sfSymbol), ["person", "chart.pie", "house", "shippingbox"])
         XCTAssertNil(ungrouped, "every demo account is in a group")
-        XCTAssertEqual(model.allAccounts.count, 14)
+        XCTAssertEqual(model.allAccounts.count, 15)
         assertConsistent()
     }
 
@@ -91,7 +96,7 @@ final class AccountGroupsTests: XCTestCase {
     func testCreateEmptyGroupIsListed() throws {
         let uuid = try XCTUnwrap(model.createUserGroup(name: "Kinder"))
         XCTAssertTrue(try group(uuid).accounts.isEmpty)
-        XCTAssertEqual(groups.count, 4, "empty groups stay visible as drop targets")
+        XCTAssertEqual(groups.count, 5, "empty groups stay visible as drop targets")
         assertConsistent()
     }
 
@@ -103,22 +108,23 @@ final class AccountGroupsTests: XCTestCase {
         XCTAssertNil(model.createUserGroup(name: "   "))
         XCTAssertNotNil(model.errorMessage)
         model.errorMessage = nil
-        XCTAssertEqual(groups.count, 3)
+        XCTAssertEqual(groups.count, 4)
     }
 
     func testRenameToExistingNameAsksToMerge() throws {
         let from = groups[2], into = groups[0], other = groups[1].uuid
+        let untouched = groups.dropFirst(3).map(\.uuid)
         let moved = Set(from.accounts.map(\.id)), kept = into.accounts.map(\.id)
         model.sidebarSelection = .userGroup(from.uuid)
         // a clash changes nothing yet, it asks
         let ask = try XCTUnwrap(model.renameUserGroup(from, to: " \(into.name.uppercased()) "))
         guard case .merge(let f, let i) = ask else { return XCTFail("expected .merge, got \(ask)") }
         XCTAssertEqual([f.uuid, i.uuid], [from.uuid, into.uuid])
-        XCTAssertEqual(groups.count, 3)
+        XCTAssertEqual(groups.count, 4)
         XCTAssertNil(model.errorMessage)
         // confirming combines them: accounts appended, selection follows
         model.mergeUserGroups(f, into: i)
-        XCTAssertEqual(groups.map(\.uuid), [into.uuid, other])
+        XCTAssertEqual(groups.map(\.uuid), [into.uuid, other] + untouched)
         let now = try members(into.uuid)
         XCTAssertEqual(Array(now.prefix(kept.count)), kept)
         XCTAssertEqual(Set(now.dropFirst(kept.count)), moved)
@@ -303,7 +309,7 @@ final class AccountGroupsTests: XCTestCase {
         let order = groups.map(\.uuid)
         // editor sheet: List.onMove – last group to the top
         model.moveUserGroups(from: IndexSet(integer: order.count - 1), to: 0)
-        XCTAssertEqual(groups.map(\.uuid), [order[2], order[0], order[1]])
+        XCTAssertEqual(groups.map(\.uuid), [order.last!] + Array(order.dropLast()))
         // explicit order (sidebar header drop)
         model.reorderUserGroups(order)
         XCTAssertEqual(groups.map(\.uuid), order)
@@ -376,7 +382,7 @@ final class AccountGroupsTests: XCTestCase {
         XCTAssertFalse(try group(g.uuid).includeInTotal)
         XCTAssertTrue(try group(g.uuid).accounts.allSatisfy { !$0.inTotal })
         XCTAssertEqual(model.liquidBalance, liquidBefore - excludedLiquid, "'Verfügbar' drops by the group's liquid accounts")
-        XCTAssertEqual(try group(g.uuid).balanceCents, g.balanceCents, "the group header still shows its own sum")
+        XCTAssertEqual(try group(g.uuid).balanceCents, 0, "an excluded selection shows 0 as its money figure (#337)")
 
         model.updateUserGroup(try group(g.uuid), includeInTotal: true)
         XCTAssertEqual(model.liquidBalance, liquidBefore)
@@ -401,7 +407,7 @@ final class AccountGroupsTests: XCTestCase {
         model.updateUserGroup(try group(alt), includeInTotal: false)
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(try group(alle).balanceCents, kept.balanceCents, "archived account and excluded subgroup don't count")
-        XCTAssertEqual(try group(alt).balanceCents, old.balanceCents, "the excluded subgroup keeps its own sum")
+        XCTAssertEqual(try group(alt).balanceCents, 0, "the excluded subgroup shows 0 as its money figure (#337)")
         XCTAssertEqual(Set(try group(alle).accounts.map(\.id)), [kept.id, archived.id], "archived account stays listed")
         XCTAssertEqual(model.userGroupBalanceAccountIDs(alle), [kept.id], "chart follows the sum")
         XCTAssertEqual(Set(model.userGroupAccountIDs(alle)), [kept.id, archived.id, old.id], "bookings still cover everything")
@@ -421,7 +427,7 @@ final class AccountGroupsTests: XCTestCase {
         model.deleteUserGroup(g)
         XCTAssertNil(model.userGroups.first { $0.uuid == g.uuid })
         XCTAssertEqual(Set(ungrouped?.accounts.map(\.id) ?? []), Set(ids), "accounts go to 'Ohne Gruppe'")
-        XCTAssertEqual(model.allAccounts.count, 14, "no account deleted")
+        XCTAssertEqual(model.allAccounts.count, 15, "no account deleted")
         XCTAssertEqual(model.sidebarSelection, .allAccounts, "selection leaves the deleted group")
         XCTAssertNotNil(model.toast)
         assertConsistent()
@@ -430,7 +436,7 @@ final class AccountGroupsTests: XCTestCase {
     func testDeleteAllGroupsThenGroupAgain() throws {
         for g in groups { model.deleteUserGroup(g) }
         XCTAssertTrue(groups.isEmpty)
-        XCTAssertEqual(ungrouped?.accounts.count, 14)
+        XCTAssertEqual(ungrouped?.accounts.count, 15)
         XCTAssertFalse(model.hasUserGroups)
         XCTAssertEqual(model.accountView, .byKind, "no groups left → 'Nach Kontoart' by default")
         let uuid = try XCTUnwrap(model.createUserGroup(name: "Alles", moving: try account(.checking).id))
@@ -559,7 +565,7 @@ final class AccountGroupsTests: XCTestCase {
             assertConsistent()
             if model.errorMessage != nil { XCTFail("step \(step): \(model.errorMessage!)"); return }
         }
-        XCTAssertEqual(model.allAccounts.count, 14)
+        XCTAssertEqual(model.allAccounts.count, 15)
         let excluded = model.allAccounts.filter { !$0.inTotal }.map(\.id)
         XCTAssertTrue(model.liquidAccounts.allSatisfy { !excluded.contains($0.id) })
     }

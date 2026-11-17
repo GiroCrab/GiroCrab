@@ -166,6 +166,8 @@ pub enum AccountKind {
     Cash,
     /// Planned loan / mortgage (Darlehen) – shown neutral, not alarming.
     Loan,
+    /// Order evidence account; not a bank balance.
+    Order,
 }
 
 impl AccountKind {
@@ -178,6 +180,7 @@ impl AccountKind {
             AccountKind::Brokerage => "brokerage",
             AccountKind::Cash => "cash",
             AccountKind::Loan => "loan",
+            AccountKind::Order => "order",
         }
     }
     pub fn from_str(s: &str) -> Self {
@@ -188,6 +191,7 @@ impl AccountKind {
             "brokerage" => AccountKind::Brokerage,
             "cash" => AccountKind::Cash,
             "loan" => AccountKind::Loan,
+            "order" => AccountKind::Order,
             _ => AccountKind::Checking,
         }
     }
@@ -201,6 +205,7 @@ impl AccountKind {
             AccountKind::Brokerage => "chart.line.uptrend.xyaxis",
             AccountKind::Cash => "eurosign.circle",
             AccountKind::Loan => "house",
+            AccountKind::Order => "shippingbox",
         }
     }
 }
@@ -354,8 +359,13 @@ pub struct Account {
     pub initial_balance_cents: Option<i64>,
     /// User-defined group ("Nach Gruppe" view); `None` = "Ohne Gruppe".
     pub user_group_uuid: Option<String>,
-    /// Counts towards the overall total (false if its user group, or a group
-    /// that one is in, is excluded).
+    /// The account's own switch for the overall money totals (#337): whether
+    /// the user let it count. Order accounts (Amazon) start with `false`.
+    #[uniffi(default = true)]
+    #[cfg_attr(feature = "serde", serde(default = "default_true"))]
+    pub include_in_total: bool,
+    /// Counts towards the overall total: the own switch is on AND its user
+    /// group (or a group that one is in) is included AND it is not archived.
     pub in_total: bool,
     /// Marker colour (`#RRGGBB`): the user's choice or a default derived
     /// from the account's sync identity (same on every device).
@@ -620,11 +630,30 @@ pub struct BookingFilter {
     #[uniffi(default = None)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub amount_max_cents: Option<i64>,
+    /// Overall money figures only (#337): the sums below (`income_cents` …
+    /// `perk_cents`, `flow`) count accounts of the effective total set (own
+    /// switch, group, archiving) — an empty selection after that exclusion
+    /// means "none" (zero sums), never "all accounts". It never touches the
+    /// booking list itself: selection, `total_count`, paging, exports and
+    /// documents are proof views and stay complete. Default `false` keeps the
+    /// proof semantics of every existing caller (single account, category,
+    /// documents, API share, menu bar).
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub respect_in_total: bool,
+}
+
+/// Serde default of [`Account::include_in_total`].
+#[cfg(feature = "serde")]
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BookingPage {
+    /// Proof view: every booking of the filter, regardless of
+    /// `BookingFilter.respect_in_total` — that flag only narrows the sums.
     pub transactions: Vec<Booking>,
     pub total_count: u32,
     /// Sum of `FlowKind::Income` bookings (= `flow.income_cents`).
@@ -1114,4 +1143,29 @@ pub struct TransferTemplate {
     pub recipient_bic: String,
     pub default_amount_cents: Option<i64>,
     pub default_purpose: String,
+}
+
+/// Order evidence for an account and inclusive date range; independent of paging and total switches.
+#[derive(Debug, Clone, Default, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OrderAccountSummary {
+    pub order_count: u64,
+    pub credit_count: u64,
+    pub order_value_cents: i64,
+    pub credit_value_cents: i64,
+}
+
+/// Order evidence of a selection (one or several order accounts) in ONE
+/// booking currency, for an inclusive date range. `order_selection_summary`
+/// returns one entry per currency: different currencies are never added up.
+/// Primary display currency: EUR when present, else the entry with the
+/// largest order value (the app shows the rest as a separate note).
+#[derive(Debug, Clone, Default, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OrderCurrencySummary {
+    pub currency: String,
+    pub order_count: u64,
+    pub credit_count: u64,
+    pub order_value_cents: i64,
+    pub credit_value_cents: i64,
 }

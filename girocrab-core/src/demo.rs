@@ -1,4 +1,4 @@
-//! Demo mode: five fictional German accounts and exactly 50 invented bookings
+//! Demo mode: fictional bank and order accounts with invented bookings
 //! (`--demo-seed` / `GIROCRAB_DEMO_SEED=1`). Deterministic and relative to
 //! today so screenshots are reproducible. Nothing in here is real data.
 
@@ -182,6 +182,50 @@ fn demo_documents(conn: &Connection, today: NaiveDate) -> CoreResult<()> {
         )?;
     }
     Ok(())
+}
+
+/// Order evidence mirrors the existing Amazon card payments. Only the card
+/// settlement enters totals; the separate order account starts excluded.
+fn demo_orders(conn: &Connection, card: i64, today: NaiveDate) -> CoreResult<u32> {
+    conn.execute("INSERT INTO bank_connections(connector,display_name,login_name,sf_symbol) VALUES ('amazon-orders','Amazon','demo-amazon-orders','shippingbox')", [])?;
+    let cid = conn.last_insert_rowid();
+    let (name, symbol, order) = group_for(AccountKind::Order);
+    let group = Vault::ensure_group(conn, name, symbol, order)?;
+    conn.execute("INSERT INTO accounts(connection_id,group_id,external_ref,name,bank_name,currency,kind,sf_symbol,include_in_total,total_ms,balance_derived,balance_date)
+        VALUES (?1,?2,?3,'Amazon Bestellungen (Demo)','Amazon','EUR','order','shippingbox',0,0,1,?4)",
+        params![cid,group,format!("amazon-orders-{cid}"),today.format("%Y-%m-%d").to_string()])?;
+    let account = conn.last_insert_rowid();
+    let (uuid, _) = crate::user_groups::find_or_create(conn, "Bestellungen", "shippingbox")?;
+    crate::user_groups::assign(conn, account, Some(&uuid), 0)?;
+    for (days, code, cents, item) in [
+        (3, "302-1234567-8901234", -3999, "USB-Kabel"),
+        (18, "302-2345678-9012345", -2490, "Buch"),
+        (37, "302-3456789-0123456", -6149, "Haushaltsartikel"),
+    ] {
+        let date = (today - Duration::days(days))
+            .format("%Y-%m-%d")
+            .to_string();
+        conn.execute("INSERT INTO transactions(account_id,external_id,booking_date,value_date,amount_cents,currency,counterparty,purpose,booking_text)
+            VALUES (?1,?2,?3,?3,?4,'EUR','Amazon',?5,'Amazon-Bestellung')",
+            params![account,format!("amazon:{code}"),date,cents,format!("{item} – Bestellung {code}")])?;
+    }
+    let date = (today - Duration::days(2)).format("%Y-%m-%d").to_string();
+    for (id, key, text) in [
+        (
+            account,
+            "amazon-refund:302-1234567-8901234:0:1000",
+            "Amazon-Erstattung",
+        ),
+        (card, "demo-amazon-bank-credit", "GUTSCHRIFT"),
+    ] {
+        conn.execute("INSERT INTO transactions(account_id,external_id,booking_date,value_date,amount_cents,currency,counterparty,purpose,booking_text)
+            VALUES (?1,?2,?3,?3,1000,'EUR','Amazon','Erstattung für Bestellung 302-1234567-8901234',?4)",params![id,key,date,text])?;
+    }
+    conn.execute(
+        "UPDATE accounts SET balance_cents=-11638 WHERE id=?1",
+        [account],
+    )?;
+    Ok(5)
 }
 
 /// Login name that switches a bank connection to the simulated demo bank
@@ -2777,6 +2821,7 @@ impl Vault {
         // bookings, starting with the statement balance at the start of the
         // month three months ago, calibrated to today's balance of the spec.
         let visa = acc_ids["demo-visa"];
+        n += demo_orders(&tx, visa, today)?;
         tx.execute(
             "UPDATE accounts SET balance_derived = 1 WHERE id = ?1",
             [visa],
@@ -3348,12 +3393,12 @@ mod tests {
     }
 
     #[test]
-    fn demo_seed_has_fourteen_accounts_and_exactly_seventy_four_bookings() {
+    fn demo_seed_has_fifteen_accounts_and_exactly_seventy_nine_bookings() {
         let dir_dir = crate::test_support::TempDir::new("girocrab-test");
         let dir = dir_dir.join("v.db");
         let v = Vault::open(dir.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
-        assert_eq!(v.seed_demo_data().unwrap(), 74);
-        assert_eq!(v.account_count().unwrap(), 14);
+        assert_eq!(v.seed_demo_data().unwrap(), 79);
+        assert_eq!(v.account_count().unwrap(), 15);
         // #679: the offline cash account takes manual bookings and keeps its computed balance
         let cash = v
             .list_accounts()
