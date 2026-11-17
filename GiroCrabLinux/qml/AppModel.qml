@@ -497,6 +497,8 @@ QtObject {
     }
     function lock() {
         if (!holdsRealData) return
+        // an open tag sheet keeps what it changed (AppModel.swift › lock)
+        if (TagManager.shown) TagManager.applyDraft()
         demoDismissedLock = true
         releaseVaultState()
         vaultState = "locked"
@@ -3809,6 +3811,8 @@ QtObject {
             break
         }
         case "category": if (top) newCategoryRequest = { parent: top.id }; break
+        // Konten › Tags verwalten … (#228)
+        case "tags": TagManager.open(); break
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = previousMonthPeriod()

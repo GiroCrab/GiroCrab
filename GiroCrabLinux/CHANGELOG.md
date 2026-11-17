@@ -51,6 +51,15 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
   Kontextmenü und Buchung › „Tags bearbeiten“. In der Liste stehen bis zu zwei Tags an der
   Buchung, „+n“ zeigt beim Darüberfahren alle. Bearbeiten › Rückgängig (Strg+Z) nimmt eine
   Änderung genau für die geänderten Buchungen zurück. *(Mac-App: erst nach 0.7.5)*
+- **Tags verwalten (#228):** Konten › „Tags verwalten …“ (Strg+Umschalt+T, auch „Verwalten …“
+  in der Tag-Karte der rechten Seitenleiste) zeigt alle Tags mit der Zahl ihrer Buchungen.
+  Umbenennen per Doppelklick, ↩ oder Rechtsklick (mit denselben Hinweisen wie im Eingabefeld),
+  Farbe aus 8 Farben, „Keine Farbe“ oder „Eigene Farbe“, Reihenfolge per Ziehen oder „Sortieren“
+  (nach Name, meiste oder wenigste Buchungen). Namen, Farben und Reihenfolge gelten erst beim
+  Schließen. Ab zwei markierten Tags (Strg-Klick) „Zusammenführen …“ mit Wahl des Tags, der
+  bleibt; Löschen (−, Entf, Rechtsklick) mit Rückfrage, die die Zahl der Buchungen nennt;
+  „Ungenutzte entfernen …“; Suche über alle Tags, auch nach ähnlichen Schreibweisen; Strg+N legt
+  einen Tag an, Esc hebt erst die Auswahl auf und schließt dann. *(Mac-App: erst nach 0.7.5)*
 - **Buchungsdichte (#542):** Einstellungen › Allgemein › „Buchungsdichte“: Kompakt (eine Zeile
   je Buchung mit Datum, ohne Tageskarten; die aktive Buchung klappt mit allen Details auf, ein
   zweiter Klick klappt sie zu), Standard (mit kurzem Verwendungszweck unter dem Namen) oder

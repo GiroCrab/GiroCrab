@@ -23,9 +23,23 @@ ColumnLayout {
     Connections { target: TagsModel; function onPendingTagFocusChanged() { section.claimFocus() } }
 
     RowLayout {
+        Layout.fillWidth: true
         spacing: 6
         SFIcon { symbol: "number"; size: 14; color: Theme.text }
         Text { text: qsTr("Tags"); font.pixelSize: Theme.subheadline + 2; font.weight: Font.DemiBold; color: Theme.text }
+        Item { Layout.fillWidth: true }
+        // TagsCard: the tag sheet (rename, merge, delete); also Konten › Tags verwalten …
+        // (not in MultiSelectionTags)
+        Text {
+            visible: !section.multiple
+            text: qsTr("Verwalten …")
+            font.pixelSize: Theme.caption; color: Theme.accent
+            font.underline: manageMouse.containsMouse
+            Accessible.role: Accessible.Button
+            Accessible.name: text
+            Accessible.onPressAction: TagManager.open()
+            MouseArea { id: manageMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: TagManager.open() }
+        }
     }
     Flow {
         id: chips

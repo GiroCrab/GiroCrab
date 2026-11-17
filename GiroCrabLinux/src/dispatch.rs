@@ -2845,6 +2845,91 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Tags verwalten (#228, TagManager.qml): colour, order, rename, merge, delete with the
+    /// argument names the QML sends.
+    #[test]
+    fn tag_management_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-tags-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![5; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let row = |id: &Value| {
+            call("list_tags", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["id"] == *id)
+                .cloned()
+        };
+        let bookings = call(
+            "list_transactions",
+            json!({ "filter": {
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 2, "offset": 0, "scope": "All", "merchant_key": null, "direction": "All",
+            "checked": null, "whole_days": false, "tag_ids": [], "untagged_only": false } }),
+        )["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["id"].clone())
+            .collect::<Vec<_>>();
+        let a = call(
+            "create_tag",
+            json!({ "name": "Verwaltet A", "color_hex": "" }),
+        );
+        let b = call(
+            "create_tag",
+            json!({ "name": "Verwaltet B", "color_hex": "" }),
+        );
+        call(
+            "add_tag_to_bookings",
+            json!({ "booking_ids": [bookings[0]], "tag_id": a["id"] }),
+        );
+        call(
+            "add_tag_to_bookings",
+            json!({ "booking_ids": [bookings[1]], "tag_id": b["id"] }),
+        );
+        call(
+            "set_tag_color",
+            json!({ "id": a["id"], "color_hex": "#16A085" }),
+        );
+        assert_eq!(row(&a["id"]).unwrap()["color_hex"], json!("#16A085"));
+        // reorder: B first
+        let mut ids: Vec<Value> = call("list_tags", json!({}))
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].clone())
+            .filter(|id| *id != b["id"])
+            .collect();
+        ids.insert(0, b["id"].clone());
+        call("reorder_tags", json!({ "ids": ids }));
+        assert_eq!(call("list_tags", json!({}))[0]["id"], b["id"]);
+        // a case-only rename is allowed
+        call(
+            "rename_tag",
+            json!({ "id": a["id"], "name": "verwaltet a" }),
+        );
+        assert_eq!(row(&a["id"]).unwrap()["name"], json!("verwaltet a"));
+        // merge B into A: A carries both bookings, B is gone
+        call(
+            "merge_tag_into",
+            json!({ "source": b["id"], "target": a["id"] }),
+        );
+        assert!(row(&b["id"]).is_none());
+        assert_eq!(row(&a["id"]).unwrap()["booking_count"], json!(2));
+        call("delete_tag", json!({ "id": a["id"] }));
+        assert!(row(&a["id"]).is_none());
+        drop(v);
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn parse_key_accepts_base64_and_hex() {
         assert_eq!(

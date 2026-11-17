@@ -52,7 +52,7 @@ ApplicationWindow {
         }
         AppMenu {
             title: qsTr("&Ablage")
-            Action { text: qsTr("Neue Überweisung …"); shortcut: "Ctrl+N"; enabled: AppModel.canTransfer; onTriggered: AppModel.openTransfer() }
+            Action { text: qsTr("Neue Überweisung …"); shortcut: "Ctrl+N"; enabled: AppModel.canTransfer && !TagManager.shown; onTriggered: AppModel.openTransfer() }
             Action { text: qsTr("Neue Kontogruppe …"); shortcut: "Ctrl+Shift+N"; enabled: AppModel.isUnlocked
                      onTriggered: AppModel.groupDialog = { kind: "create", movingAccount: null, parent: null } }
             Action { text: qsTr("Bank hinzufügen …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.showAddBank = true }
@@ -80,7 +80,7 @@ ApplicationWindow {
             Action { text: UndoManager.redoName ? qsTr("Wiederholen: %1").arg(UndoManager.redoName) : qsTr("Wiederholen")
                      shortcut: StandardKey.Redo; enabled: UndoManager.canRedo; onTriggered: UndoManager.redo() }
             AppMenuSeparator {}
-            Action { id: findAction; text: qsTr("Suchen …"); shortcut: StandardKey.Find; enabled: AppModel.isUnlocked; onTriggered: Qt.callLater(window.focusSearch) }
+            Action { id: findAction; text: qsTr("Suchen …"); shortcut: StandardKey.Find; enabled: AppModel.isUnlocked && !TagManager.shown; onTriggered: Qt.callLater(window.focusSearch) }
             Action { text: qsTr("Alles auswählen"); shortcut: StandardKey.SelectAll
                      enabled: AppModel.isUnlocked && AppModel.sidebarSelection !== "documents"; onTriggered: AppModel.selectAllBookings() }
         }
@@ -123,6 +123,8 @@ ApplicationWindow {
                      onTriggered: AppModel.requestSyncAll() }
             AppMenuSeparator {}
             Action { text: qsTr("Regeln …"); shortcut: "Ctrl+Alt+K"; enabled: AppModel.isUnlocked; onTriggered: AppModel.openRuleEditor(null) }
+            // TagManagerView.swift (#228): while the sheet is up it takes Strg+N („Neuer Tag …“)
+            Action { text: qsTr("Tags verwalten …"); shortcut: "Ctrl+Shift+T"; enabled: AppModel.isUnlocked; onTriggered: TagManager.open() }
             Action { text: qsTr("Wiederkehrende Buchungen …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.showRecurringSheet = true }
         }
         AppMenu {
@@ -538,6 +540,7 @@ ApplicationWindow {
     // MARK: account groups & command palette (AccountGroupsUI.swift, CommandPalette.swift)
     AccountGroupDialogs {}
     Loader { active: AppModel.showGroupManager; sourceComponent: Component { GroupManagerSheet {} } }
+    Loader { active: TagManager.shown; sourceComponent: Component { TagManagerSheet {} } }
     Loader { active: AppModel.accountSelectionConnection !== null; sourceComponent: Component { AccountSelectionSheet {} } }
     Loader { active: AppModel.showCommandPalette; sourceComponent: Component { CommandPaletteSheet {} } }
 
