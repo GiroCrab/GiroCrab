@@ -75,9 +75,17 @@ data class Rule(
     val categoryId: String?,
     val tagIds: Set<String> = emptySet(),
     val enabled: Boolean = true,
+    /** Optional range on |amount| in cents (#759). */
+    val minCents: Long? = null,
+    val maxCents: Long? = null,
 ) {
     fun matches(b: Booking): Boolean {
-        if (!enabled || pattern.isBlank()) return false
+        val hasRange = minCents != null || maxCents != null
+        if (!enabled || (pattern.isBlank() && !hasRange)) return false
+        val abs = kotlin.math.abs(b.amountCents)
+        if (minCents != null && abs < minCents) return false
+        if (maxCents != null && abs > maxCents) return false
+        if (pattern.isBlank()) return true
         val haystack = when (field) {
             RuleField.Counterparty -> b.counterparty
             RuleField.Purpose -> b.purpose

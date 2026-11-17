@@ -1,8 +1,28 @@
 package de.girocrab.app
 
+import android.app.LocaleManager
+import android.os.Build
 import android.os.Bundle
+import android.os.LocaleList
 import android.view.WindowManager
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.runtime.remember
+import de.girocrab.app.model.Booking
+import de.girocrab.app.ui.screens.AccountsAndWealthScreen
+import de.girocrab.app.ui.screens.AddBankDialog
+import de.girocrab.app.ui.screens.AnalyticsScreen
+import de.girocrab.app.ui.screens.BookingDetailSheet
+import de.girocrab.app.ui.screens.BookingStreamScreen
+import de.girocrab.app.ui.screens.CategoryManagerDialog
+import de.girocrab.app.ui.screens.PaymentsScreen
+import de.girocrab.app.ui.screens.RuleEditorDialog
+import de.girocrab.app.ui.screens.SettingsScreen
+import de.girocrab.app.ui.screens.TagManagerDialog
+import java.io.File
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,8 +77,37 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             GiroCrabTheme {
-                GiroCrabRoot(vm, setSecure = ::setSecure)
+                GiroCrabRoot(
+                    vm,
+                    setSecure = ::setSecure,
+                    onLanguage = ::applyLanguage,
+                    onExportBackup = { exportLauncher.launch("girocrab-backup.vault") },
+                    onRestoreBackup = { restoreLauncher.launch(arrayOf("*/*")) },
+                )
             }
+        }
+    }
+
+    // Backup = the vault file copied as-is, so it stays encrypted. Assumes the core keeps it at filesDir/girocrab.vault.
+    private val vaultFile get() = File(filesDir, "girocrab.vault")
+
+    private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        if (uri != null && vaultFile.exists()) runCatching {
+            contentResolver.openOutputStream(uri)?.use { out -> vaultFile.inputStream().use { it.copyTo(out) } }
+        }
+    }
+
+    // Restore replaces the vault file, then locks so the next unlock re-reads it.
+    private val restoreLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) runCatching {
+            contentResolver.openInputStream(uri)?.use { input -> vaultFile.outputStream().use { input.copyTo(it) } }
+            vm.lock()
+        }
+    }
+
+    private fun applyLanguage(code: String) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            getSystemService(LocaleManager::class.java)?.applicationLocales = LocaleList.forLanguageTags(code)
         }
     }
 
@@ -76,8 +125,17 @@ class MainActivity : FragmentActivity() {
 }
 
 @Composable
-fun GiroCrabRoot(vm: AppViewModel, setSecure: (Boolean) -> Unit) {
+fun GiroCrabRoot(
+    vm: AppViewModel,
+    setSecure: (Boolean) -> Unit,
+    onLanguage: (String) -> Unit = {},
+    onExportBackup: () -> Unit = {},
+    onRestoreBackup: () -> Unit = {},
+) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val visible by vm.visibleBookings.collectAsStateWithLifecycle()
+    var detail by remember { mutableStateOf<Booking?>(null) }
+    var dialog by remember { mutableStateOf<ManagementDialog?>(null) }
     var tab by rememberSaveable { mutableStateOf(MainTab.Bookings) }
     var lockPreview by rememberSaveable { mutableStateOf(false) }
 
@@ -130,12 +188,97 @@ fun GiroCrabRoot(vm: AppViewModel, setSecure: (Boolean) -> Unit) {
                         onRestore = { tab = MainTab.More },
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
-                    // Tab content screens are supplied by later milestones.
-                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(tab.label, style = MaterialTheme.typography.titleMedium)
+                    else -> when (tab) {
+                        MainTab.Bookings -> BookingStreamScreen(
+                            state = state,
+                            bookings = visible,
+                            onSearch = vm::setSearch,
+                            onFilter = vm::setFilter,
+                            onNewTransfer = { tab = MainTab.Payments },
+                            onOpenBooking = { detail = it },
+                        )
+                        MainTab.Accounts -> AccountsAndWealthScreen(
+                            state = state,
+                            onSelectGroup = { vm.selectGroup(it); tab = MainTab.Bookings },
+                            onSelectAccount = { vm.selectAccount(it); tab = MainTab.Bookings },
+                        )
+                        MainTab.Analytics -> AnalyticsScreen(state, vm, onShowBookings = { tab = MainTab.Bookings })
+                        MainTab.Payments -> PaymentsScreen(state = state, onSubmitTransfer = {})
+                        MainTab.More -> SettingsScreen(
+                            state = state,
+                            onLanguage = { vm.setLanguage(it); onLanguage(it) },
+                            onTogglePrivacy = vm::togglePrivacy,
+                            onUseOwnFintsId = vm::setOwnFintsId,
+                            onFintsProductId = vm::setFintsProductId,
+                            onExportBackup = onExportBackup,
+                            onRestoreBackup = onRestoreBackup,
+                            onOpenRules = { dialog = ManagementDialog.Rules },
+                            onOpenTags = { dialog = ManagementDialog.Tags },
+                            onOpenCategories = { dialog = ManagementDialog.Categories },
+                            onAddBank = { dialog = ManagementDialog.AddBank },
+                        )
                     }
                 }
             }
         }
     }
+
+    detail?.let { BookingDetailSheet(it, state, vm, onDismiss = { detail = null }) }
+
+    when (dialog) {
+        ManagementDialog.AddBank -> AddBankDialog(
+            state = state,
+            onDismiss = { dialog = null },
+            // Real connection setup is performed by the core bridge once it exposes FinTS sessions.
+            onConnect = { },
+            onTryDemo = { vm.showDemo(); dialog = null },
+        )
+        ManagementDialog.Rules -> RulesListDialog(state, vm, onDismiss = { dialog = null })
+        ManagementDialog.Tags -> TagManagerDialog(state, onAdd = { vm.addTag(it) }, onDelete = vm::deleteTag, onDismiss = { dialog = null })
+        ManagementDialog.Categories -> CategoryManagerDialog(
+            state, onAdd = { n, p -> vm.addCategory(n, parentId = p) }, onDelete = vm::deleteCategory, onDismiss = { dialog = null },
+        )
+        null -> Unit
+    }
+}
+
+enum class ManagementDialog { AddBank, Rules, Tags, Categories }
+
+/** Rule list with edit/delete/add; opens [RuleEditorDialog]. */
+@Composable
+private fun RulesListDialog(state: de.girocrab.app.model.AppUiState, vm: AppViewModel, onDismiss: () -> Unit) {
+    var editing by remember { mutableStateOf<de.girocrab.app.model.Rule?>(null) }
+    var creating by remember { mutableStateOf(false) }
+    if (creating || editing != null) {
+        RuleEditorDialog(
+            state = state,
+            initial = editing,
+            onDismiss = { creating = false; editing = null },
+            onSave = vm::upsertRule,
+            onApplyUncategorized = vm::applyRuleToUncategorized,
+        )
+        return
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Regeln") },
+        text = {
+            androidx.compose.foundation.lazy.LazyColumn {
+                items(state.data.rules, key = { it.id }) { r ->
+                    androidx.compose.material3.ListItem(
+                        modifier = Modifier.clickable { editing = r },
+                        headlineContent = { Text("${r.field.name} ${r.matchKind.name} „${r.pattern}“") },
+                        supportingContent = { Text(vm.category(r.categoryId)?.name ?: "–") },
+                        trailingContent = {
+                            androidx.compose.material3.IconButton(onClick = { vm.deleteRule(r.id) }) {
+                                Icon(Icons.Default.Delete, "Löschen")
+                            }
+                        },
+                    )
+                }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { creating = true }) { Text("Neue Regel") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Fertig") } },
+    )
 }

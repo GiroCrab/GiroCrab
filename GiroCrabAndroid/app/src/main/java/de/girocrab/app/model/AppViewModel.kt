@@ -26,6 +26,10 @@ data class AppUiState(
     val search: String = "",
     val filter: BookingFilter = BookingFilter(),
     val error: String? = null,
+    val language: String = "de",
+    /** #789: false = GiroCrab's built-in FinTS registration (no product ID asked). */
+    val useOwnFintsId: Boolean = false,
+    val fintsProductId: String = "",
 ) {
     val demoActive get() = vaultState == VaultState.Demo
     val isUnlocked get() = vaultState != VaultState.Locked
@@ -192,6 +196,26 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         }
         return changed
     }
+
+    /** Scoped apply (#759): only this rule, only uncategorized bookings in the current scope. Returns count. */
+    fun applyRuleToUncategorized(rule: Rule): Int {
+        var changed = 0
+        val scoped = _state.value.scopedAccountIds
+        editData { d ->
+            d.copy(bookings = d.bookings.map { b ->
+                if (b.categoryId != null || b.accountId !in scoped || !rule.matches(b)) return@map b
+                changed++
+                b.copy(categoryId = rule.categoryId, categoryByRule = true, tagIds = b.tagIds + rule.tagIds)
+            })
+        }
+        return changed
+    }
+
+    // ---- Settings ----
+
+    fun setLanguage(lang: String) = _state.update { it.copy(language = lang) }
+    fun setOwnFintsId(own: Boolean) = _state.update { it.copy(useOwnFintsId = own) }
+    fun setFintsProductId(id: String) = _state.update { it.copy(fintsProductId = id.trim()) }
 
     // ---- Derived values ----
 
