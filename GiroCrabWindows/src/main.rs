@@ -1119,6 +1119,7 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 render_bookings(win);
             }
             views_ui::refresh_sidebar(win, vault);
+            settings_import_ui::refresh_news(win, vault);
             win.set_unlocked(true);
             manage_ui::refocus_later(win);
         }

@@ -1549,7 +1549,8 @@ export component MainWindow inherits Window {
                         border-color: Theme.border;
                         Text { text: root.view-mode == 0 ? "Keine Buchung ausgewählt" : "Details zur Buchung erscheinen in der Umsatzliste"; wrap: word-wrap; color: Theme.muted.with-alpha(0.8); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
                     }
-                    if root.view-mode == 0 && root.has-inspector: VerticalLayout {
+                    if root.view-mode == 0 && root.has-inspector: ScrollView {
+                      VerticalLayout {
                         spacing: 10px;
                         padding-right: 2px;
                         // booking header
@@ -1670,6 +1671,7 @@ export component MainWindow inherits Window {
                         // category tiles
                         Rectangle {
                             vertical-stretch: 1;
+                            min-height: 260px;
                             background: Theme.surface;
                             border-radius: 12px;
                             border-width: 1px;
@@ -1707,6 +1709,7 @@ export component MainWindow inherits Window {
                                 GhostButton { text: "Regeln anwenden"; enabled: !root.busy; clicked => { root.apply-rules(); } }
                             }
                         }
+                      }
                     }
                 }
             }
