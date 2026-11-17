@@ -272,7 +272,6 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 
 ### Noch nicht in der Linux-Oberfläche
 
-- Tags verwalten (umbenennen, Farbe, zusammenführen)
 - RAH-10-Texte in „Bankzugang bearbeiten“
 
 ## Funktionsstand 0.7.0 (Kern 0.7.5)
