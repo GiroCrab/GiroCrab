@@ -588,6 +588,8 @@ fn call(method: &str, a: &Value) -> R {
                 .unwrap()
                 .clone()
                 .ok_or_else(|| crate::i18n::tr("Der eigene Tresor ist nicht geöffnet."))?;
+            // preview copies are named by document id: none may survive into another vault
+            remove_quicklook_files();
             *VAULT.lock().unwrap() = Some(own);
             ok(())
         }
@@ -738,6 +740,7 @@ fn call(method: &str, a: &Value) -> R {
             };
             own.restore_backup(local_path(arg(a, "backup_path")?), arg(a, "password")?)
                 .map_err(|e| e.to_string())?;
+            remove_quicklook_files();
             ok(())
         }
         "suggested_backup_password" => ok(suggested_backup_password()?),
@@ -1210,8 +1213,10 @@ fn file_name_of(path: &str) -> String {
 }
 
 /// QuickLook copy (`AppModel.quickLookURL`): a private, owner-only file in
-/// the folder of `prepared_quicklook_dir`. Only the current preview exists:
-/// the previous copy goes when another document is shown (and on lock / quit).
+/// the folder of `prepared_quicklook_dir`. Only the few documents on screen
+/// keep a copy (the preview column and the receipt card in the inspector show
+/// two at once): asking again for a shown document reuses its file, a new one
+/// removes all but the newest `QUICKLOOK_KEEP - 1` others. All go on lock / quit.
 fn document_temp_file(doc_id: i64, mime: String) -> R {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -1228,14 +1233,27 @@ fn document_temp_file(doc_id: i64, mime: String) -> R {
         _ => "pdf",
     };
     let name = format!("GiroCrab-Beleg-{doc_id}.{ext}");
-    // one decrypted copy at a time (viewers that still show an old one keep
-    // their open file handle)
+    let path = dir.join(&name);
+    // a view that shows this document already reads this file: replacing it
+    // under the viewer breaks its page decoding
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+        return ok(path.display().to_string());
+    }
+    // few decrypted copies at a time, newest kept (viewers that still show an
+    // older one keep their open file handle)
     if let Ok(entries) = std::fs::read_dir(&dir) {
-        for e in entries.flatten() {
-            let _ = std::fs::remove_file(e.path());
+        let mut files: Vec<_> = entries
+            .flatten()
+            .map(|e| {
+                let modified = e.metadata().and_then(|m| m.modified()).ok();
+                (modified, e.path())
+            })
+            .collect();
+        files.sort_by_key(|f| std::cmp::Reverse(f.0));
+        for (_, old) in files.into_iter().skip(QUICKLOOK_KEEP - 1) {
+            let _ = std::fs::remove_file(old);
         }
     }
-    let path = dir.join(name);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1246,6 +1264,9 @@ fn document_temp_file(doc_id: i64, mime: String) -> R {
     f.write_all(&bytes).map_err(|e| e.to_string())?;
     ok(path.display().to_string())
 }
+
+/// Decrypted preview copies kept at once (see `document_temp_file`).
+const QUICKLOOK_KEEP: usize = 3;
 
 const fn libc_o_nofollow() -> i32 {
     0o400000 // O_NOFOLLOW on Linux
@@ -1308,6 +1329,7 @@ pub fn remove_quicklook_files() {
 
 /// `AppModel.makeDemoVault`: throw-away vault in the temp dir with fixed key.
 fn open_demo() -> R {
+    remove_quicklook_files();
     let path = std::env::temp_dir().join("GiroCrab-Demo.girocrab");
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
