@@ -2516,15 +2516,35 @@ impl Vault {
                 )?;
             }
         }
-        // Valuation history of the three depots (`depot_values`), deterministic. Each depot shows a
-        // case the chart has to handle:
-        // - Welt-Depot: a year of fetched values, no gaps.
+        // Valuation history of the three depots (`depot_observations`, derived into
+        // `depot_values`), deterministic. Each depot shows a case the chart has to handle:
+        // - Welt-Depot: a year of fetched values, no gaps, with the history of its positions and
+        //   of one position sold 60 days ago.
         // - Einzeltitel-Depot: connected only 120 days ago, so the sum of the depots is partial
         //   before that ("2 von 3 Depots") and the line breaks where it joins.
         // - Krypto-Depot: gaps of one to three days (the last value carries on), and an older
         //   stretch from an import; the fetched values win where both exist.
         {
-            let now = crate::user_groups::now_ms();
+            use crate::depot_values::observations::{
+                record_as, ObservedValue, KIND_POSITION, KIND_TOTAL, SOURCE_FETCH, SOURCE_IMPORT,
+            };
+            let noon = |d: &str| {
+                chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                    .ok()
+                    .and_then(|d| d.and_hms_opt(12, 0, 0))
+                    .map_or(0, |t| t.and_utc().timestamp_millis())
+            };
+            let value =
+                |kind, position: &str, name: &str, date: String, cents: i64| ObservedValue {
+                    kind,
+                    position: position.into(),
+                    source_ref: String::new(),
+                    name: name.into(),
+                    currency: "EUR".into(),
+                    observed_ms: noon(&date),
+                    value_date: date,
+                    value_cents: cents,
+                };
             for (key, start, vol, weekends, seed) in [
                 ("demo-depot", 0.55_f64, 0.0065_f64, false, 0x51F1_5EED_u64),
                 ("demo-einzeltitel", 0.72, 0.011, false, 0xA11C_E5ED),
@@ -2536,10 +2556,18 @@ impl Vault {
                     [id],
                     |r| r.get(0),
                 )?;
+                let positions: Vec<(String, String, i64)> = {
+                    let mut q = tx.prepare(
+                        "SELECT isin, name, value_cents FROM holdings WHERE account_id = ?1 ORDER BY id",
+                    )?;
+                    let rows = q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+                    rows.collect::<Result<_, _>>()?
+                };
                 let levels = demo_depot_levels(seed, start, vol, weekends, today);
                 let value_at =
                     |ago: i64| -> i64 { (end as f64 * levels[ago as usize]).round() as i64 };
                 let day = |ago: i64| (today - Duration::days(ago)).format("%Y-%m-%d").to_string();
+                let (mut fetched, mut imported) = (Vec::new(), Vec::new());
                 for ago in (0..=365_i64).rev() {
                     match key {
                         "demo-einzeltitel" if ago > 120 => continue,
@@ -2555,33 +2583,45 @@ impl Vault {
                     }
                     if key == "demo-krypto" && ago > 200 {
                         // imported history; deliberately a little off where it overlaps the fetches
-                        crate::depot_values::upsert_from(
-                            &tx,
-                            id,
-                            &day(ago),
-                            value_at(ago),
-                            now,
-                            "import",
-                            "observed",
-                        )?;
+                        imported.push(value(KIND_TOTAL, "", "", day(ago), value_at(ago)));
                         continue;
                     }
-                    crate::depot_values::upsert(&tx, id, &day(ago), value_at(ago), now)?;
+                    fetched.push(value(KIND_TOTAL, "", "", day(ago), value_at(ago)));
+                    if key != "demo-krypto" {
+                        // the positions move with the depot, each a little on its own
+                        for (k, (isin, name, cents)) in positions.iter().enumerate() {
+                            let wobble = 1.0
+                                + 0.015 * ((ago as f64 * 0.4 + k as f64).sin() - (k as f64).sin());
+                            let v = (*cents as f64 * levels[ago as usize] * wobble).round() as i64;
+                            fetched.push(value(KIND_POSITION, isin, name, day(ago), v));
+                        }
+                    }
+                    if key == "demo-depot" && ago >= 60 {
+                        // a position sold 60 days ago: its history ends with a 0
+                        let v = if ago == 60 {
+                            0
+                        } else {
+                            (180_000.0 * levels[ago as usize]).round() as i64
+                        };
+                        fetched.push(value(
+                            KIND_POSITION,
+                            "IE00BKM4GZ66",
+                            "iShares Core MSCI EM IMI UCITS ETF",
+                            day(ago),
+                            v,
+                        ));
+                    }
                 }
                 if key == "demo-krypto" {
                     // overlap: import values 2 % higher for the days 200..=190 that fetches also cover
                     for ago in 190..=200_i64 {
-                        crate::depot_values::upsert_from(
-                            &tx,
-                            id,
-                            &day(ago),
-                            (value_at(ago) as f64 * 1.02).round() as i64,
-                            now,
-                            "import",
-                            "observed",
-                        )?;
+                        let v = (value_at(ago) as f64 * 1.02).round() as i64;
+                        imported.push(value(KIND_TOTAL, "", "", day(ago), v));
                     }
                 }
+                record_as(&tx, id, SOURCE_FETCH, &fetched)?;
+                record_as(&tx, id, SOURCE_IMPORT, &imported)?;
+                crate::depot_values::rebuild(&tx, id, None)?;
             }
         }
         // manual loan without a bank account (#36): Stand two months ago, rates from the Giro

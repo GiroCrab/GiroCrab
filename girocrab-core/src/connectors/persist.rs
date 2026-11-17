@@ -527,23 +527,6 @@ pub(crate) fn store_fetch(
                     params![tx.last_insert_rowid(),remote.classification.asset_class.map(|a|a.as_str()),remote.classification.instrument.map(|a|a.as_str()),remote.direct_crypto])?;
             }
         }
-        // one point of the depot value history per fetched depot (see `depot_values`)
-        for acc_id in by_account.keys() {
-            // the bank delivered the inventory (maybe an empty one): a value of 0 is confirmed
-            crate::depot_values::record(&tx, *acc_id, true)?;
-        }
-        // A depot whose total came without positions (an overview import) has a value too; a 0
-        // there is not confirmed.
-        for acc in &data.accounts {
-            if data.balances_unknown.contains(&acc.external_ref) {
-                continue;
-            }
-            if let Some(id) = account_ids.get(&acc.external_ref) {
-                if !by_account.contains_key(id) {
-                    crate::depot_values::record(&tx, *id, false)?;
-                }
-            }
-        }
         let mut imported = 0u32;
         let mut skipped_archived = 0u32;
         {
@@ -772,6 +755,25 @@ pub(crate) fn store_fetch(
         for acc in data.accounts.iter().filter(|a| a.kind == AccountKind::Loan) {
             if let Some(id) = account_ids.get(&acc.external_ref) {
                 Vault::derive_initial_balance(&tx, *id)?;
+            }
+        }
+        // Value history of depots (#578), after every balance update above: what this fetch
+        // reported per depot. A depot whose inventory came (maybe an empty one) confirms a 0 and
+        // closes sold positions; one whose total came without positions (an overview) records the
+        // total alone; one whose balance could not be read records nothing.
+        let observed_ms = chrono::Utc::now().timestamp_millis();
+        for (acc_id, list) in &by_account {
+            let positions: Vec<&crate::models::Holding> = list.iter().map(|r| &r.holding).collect();
+            crate::depot_values::record_fetch(&tx, *acc_id, Some(&positions), observed_ms)?;
+        }
+        for acc in &data.accounts {
+            if data.balances_unknown.contains(&acc.external_ref) {
+                continue;
+            }
+            if let Some(id) = account_ids.get(&acc.external_ref) {
+                if !by_account.contains_key(id) {
+                    crate::depot_values::record_fetch(&tx, *id, None, observed_ms)?;
+                }
             }
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;

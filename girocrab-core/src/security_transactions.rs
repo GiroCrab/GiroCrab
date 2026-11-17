@@ -645,9 +645,13 @@ mod tests {
                 .unwrap();
             store_fetch(v, ConnectorKind::Comdirect, c, holding_fetch()).unwrap();
         }
+        // only the observations travel; the other vault's fetch saw an older day
         b.db()
             .unwrap()
-            .execute("UPDATE depot_values SET value_date = '2020-01-01'", [])
+            .execute(
+                "UPDATE depot_observations SET value_date = '2020-01-01', observed_ms = 1",
+                [],
+            )
             .unwrap();
         a.merge_other_vault(b.file_path(), key).unwrap();
         let dates: Vec<String> = value_points(&a).into_iter().map(|p| p.0).collect();
