@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::dates::{iso, parse_iso};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::*;
@@ -279,14 +280,6 @@ pub struct AssetPriceRefresh {
     pub error: Option<String>,
 }
 
-fn parse_date(s: &str) -> Option<NaiveDate> {
-    NaiveDate::parse_from_str(s.get(..10).unwrap_or(s), "%Y-%m-%d").ok()
-}
-
-fn iso(d: NaiveDate) -> String {
-    d.format("%Y-%m-%d").to_string()
-}
-
 fn today() -> NaiveDate {
     chrono::Local::now().date_naive()
 }
@@ -296,7 +289,7 @@ fn is_manual(source: &str) -> bool {
 }
 
 fn valid_date(s: &str) -> CoreResult<String> {
-    let d = parse_date(s).ok_or_else(|| CoreError::invalid(trf("Ungültiges Datum: {0}", &[&s])))?;
+    let d = parse_iso(s).ok_or_else(|| CoreError::invalid(trf("Ungültiges Datum: {0}", &[&s])))?;
     if d > today() {
         return Err(CoreError::invalid(tr(
             "Das Datum darf nicht in der Zukunft liegen.",
@@ -434,7 +427,7 @@ fn manual_value_at(
     let (d0, v0) = &points[i - 1];
     if interp == AssetInterpolation::Linear {
         if let Some((d1, v1)) = points.get(i) {
-            if let (Some(a), Some(b), Some(x)) = (parse_date(d0), parse_date(d1), parse_date(day)) {
+            if let (Some(a), Some(b), Some(x)) = (parse_iso(d0), parse_iso(d1), parse_iso(day)) {
                 let span = (b - a).num_days() as f64;
                 if span > 0.0 {
                     let t = (x - a).num_days() as f64 / span;
@@ -1059,7 +1052,7 @@ fn parse_rates(body: &str) -> CoreResult<Vec<(String, i64)>> {
     })?;
     Ok(rows
         .into_iter()
-        .filter(|r| r.rate.is_finite() && r.rate > 0.0 && parse_date(&r.date).is_some())
+        .filter(|r| r.rate.is_finite() && r.rate > 0.0 && parse_iso(&r.date).is_some())
         .map(|r| (r.date, (r.rate * 100.0).round() as i64))
         .collect())
 }
@@ -1093,7 +1086,7 @@ fn fetch_plan(conn: &Connection, force: bool) -> CoreResult<Vec<(String, String,
     let mut out = vec![];
     for (symbol, oldest) in needed {
         // a week before the oldest purchase: a weekend or holiday has no rate of its own
-        let min_date = parse_date(&oldest)
+        let min_date = parse_iso(&oldest)
             .map(|d| iso(d - chrono::Duration::days(7)))
             .unwrap_or(oldest);
         if !PRICE_SYMBOLS.contains(&symbol.as_str()) {
@@ -1430,7 +1423,7 @@ impl Vault {
             return Ok(vec![]);
         };
         let end = today();
-        let mut day = parse_date(&purchase).unwrap_or(end).min(end);
+        let mut day = parse_iso(&purchase).unwrap_or(end).min(end);
         let mut out = Vec::new();
         while day <= end {
             let key = iso(day);

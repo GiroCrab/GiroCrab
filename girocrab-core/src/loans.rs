@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::dates::parse_iso;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::*;
@@ -115,10 +116,6 @@ pub struct LoanLink {
     pub by_rule: bool,
 }
 
-fn parse_date(s: &str) -> Option<NaiveDate> {
-    NaiveDate::parse_from_str(s.get(..10).unwrap_or(s), "%Y-%m-%d").ok()
-}
-
 fn compile_expr(src: &str) -> CoreResult<Option<SearchExpr>> {
     if src.trim().is_empty() {
         return Ok(None);
@@ -139,7 +136,7 @@ fn validate(setup: &LoanSetup) -> CoreResult<LoanSetup> {
             &[&MAX_NAME_CHARS],
         )));
     }
-    let Some(date) = parse_date(&setup.anchor_date) else {
+    let Some(date) = parse_iso(&setup.anchor_date) else {
         return Err(CoreError::invalid(tr("Ungültiges Stichtagsdatum.")));
     };
     if date > chrono::Local::now().date_naive() {
@@ -219,9 +216,9 @@ pub(crate) fn compute_status(setup: &LoanSetup, bookings: &[(String, i64)]) -> L
     let ppm = setup.interest_rate_ppm.unwrap_or(0);
     let mut events: Vec<(NaiveDate, &str, i64)> = Vec::new();
     let mut before = 0u32;
-    let anchor = parse_date(&setup.anchor_date);
+    let anchor = parse_iso(&setup.anchor_date);
     for (d, amount) in bookings {
-        match (parse_date(d), anchor) {
+        match (parse_iso(d), anchor) {
             (Some(date), Some(a)) if date > a => events.push((date, d.as_str(), -amount)),
             _ => before += 1,
         }

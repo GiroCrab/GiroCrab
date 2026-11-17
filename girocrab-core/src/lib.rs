@@ -30,6 +30,7 @@ pub mod batch_csv;
 pub mod connections;
 pub mod connectors;
 mod data_tables;
+mod dates;
 pub mod demo;
 pub mod depot_debug;
 pub mod depot_values;
