@@ -22,8 +22,8 @@ use regex::Regex;
 use zeroize::Zeroize;
 
 use super::{
-    http_client, BankConnector, ChallengeResponse, ConnectContext, ContentIds, FetchResult, Phase,
-    RemoteAccount, RemoteTransaction,
+    http_client_same_host, BankConnector, ChallengeResponse, ConnectContext, ContentIds,
+    FetchResult, Phase, RemoteAccount, RemoteTransaction,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::tr;
@@ -434,7 +434,7 @@ impl BankConnector for UberspaceConnector {
                 message: tr("Uberspace: E-Mail-Adresse und Passwort erforderlich.").into(),
             });
         }
-        let client = http_client()?;
+        let client = http_client_same_host()?;
         let resp = client.get(format!("{BASE}/login")).send().await?;
         let page_url = resp.url().clone();
         ensure_dashboard(&page_url)?;

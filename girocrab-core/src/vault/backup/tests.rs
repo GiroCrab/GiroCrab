@@ -236,3 +236,14 @@ fn checkpoint_succeeds_on_an_idle_vault() {
     let (src, _) = filled(1);
     src.checkpoint().unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn backup_file_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let (src, _) = filled(1);
+    let backup = temp_path("bak");
+    src.write_backup(path(&backup), PASSWORD.into()).unwrap();
+    let mode = std::fs::metadata(&backup).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}

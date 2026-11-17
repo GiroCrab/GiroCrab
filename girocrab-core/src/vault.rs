@@ -373,6 +373,13 @@ impl Vault {
                 })?;
             }
         }
+        // Owner-only from the first byte: SQLite opens the empty file we created and
+        // keeps its mode, instead of creating it with the process umask.
+        crate::fsutil::create_private(std::path::Path::new(dest_path)).map_err(|e| {
+            CoreError::Database {
+                message: format!("{dest_path}: {e}"),
+            }
+        })?;
         let conn = self.db()?;
         conn.execute("ATTACH DATABASE ?1 AS snap KEY ?2", params![dest_path, key])?;
         let res = conn

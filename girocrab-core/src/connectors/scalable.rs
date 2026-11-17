@@ -25,8 +25,9 @@ use serde_json::{json, Value};
 
 use super::dpop::DpopKey;
 use super::{
-    http_client, BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext,
-    FetchResult, Phase, RemoteAccount, RemoteHolding, RemoteSecurityTransaction, RemoteTransaction,
+    http_client_same_host, BankConnector, Challenge, ChallengeKind, ChallengeResponse,
+    ConnectContext, FetchResult, Phase, RemoteAccount, RemoteHolding, RemoteSecurityTransaction,
+    RemoteTransaction,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -641,7 +642,7 @@ impl ScalableConnector {
 
     fn client(&mut self) -> CoreResult<reqwest::Client> {
         if self.client.is_none() {
-            self.client = Some(http_client()?);
+            self.client = Some(http_client_same_host()?);
         }
         Ok(self.client.clone().unwrap())
     }
