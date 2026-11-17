@@ -223,7 +223,8 @@ struct CamtEntry {
 
 /// Day part of a stored date (`2025-03-01T10:00:00` → `2025-03-01`).
 const DAY_SQL: &str = "substr(t.booking_date, 1, 10)";
-pub(crate) const PENDING_SQL: &str = "t.external_id LIKE 'pending-%'";
+pub(crate) const PENDING_SQL: &str =
+    "(t.external_id LIKE 'pending-%' OR t.external_id LIKE 'advanzia-hold-%')";
 
 #[uniffi::export]
 impl Vault {

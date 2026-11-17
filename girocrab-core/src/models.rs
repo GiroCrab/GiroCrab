@@ -48,6 +48,8 @@ pub enum ConnectorKind {
     VolkswagenBank,
     /// Uberspace hosting accounts (balance and bookings per Asteroid) via the web dashboard.
     Uberspace,
+    /// Advanzia credit card via an authenticated WebKit session.
+    Advanzia,
     /// Bausparkasse Schwäbisch Hall (Bausparverträge, postbox PDFs) via the
     /// "Mein Konto" portal, authenticated inside the embedded browser (#290).
     SchwaebischHall,
@@ -82,6 +84,7 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
             ConnectorKind::Uberspace => "uberspace",
+            ConnectorKind::Advanzia => "advanzia",
             ConnectorKind::SchwaebischHall => "schwaebischhall",
             ConnectorKind::EquatePlus => "equateplus",
             ConnectorKind::Ffb => "ffb",
@@ -139,6 +142,7 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,
             ConnectorKind::Uberspace,
+            ConnectorKind::Advanzia,
             ConnectorKind::SchwaebischHall,
             ConnectorKind::EquatePlus,
             ConnectorKind::Ffb,

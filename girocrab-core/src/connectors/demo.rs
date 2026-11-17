@@ -110,6 +110,7 @@ impl BankConnector for DemoConnector {
                 poll_interval_seconds: 0,
             },
             ConnectorKind::AmericanExpress
+            | ConnectorKind::Advanzia
             | ConnectorKind::AmazonVisa
             | ConnectorKind::AmazonOrders
             | ConnectorKind::EquatePlus

@@ -135,11 +135,14 @@ pub(crate) fn store_fetch(
     vault: &Vault,
     kind: ConnectorKind,
     connection_id: i64,
-    data: FetchResult,
+    mut data: FetchResult,
 ) -> CoreResult<SyncSummary> {
     {
         let db = vault.db()?;
         let tx = db.unchecked_transaction()?;
+        if kind == ConnectorKind::Advanzia {
+            super::advanzia::prepare_import(&tx, connection_id, &mut data)?;
+        }
         let generic_bank_name = descriptor(kind).name;
         // No name from the bank: the connection's display name (the bank picked
         // when adding it, or renamed later) beats the generic "FinTS-Bank".
@@ -276,7 +279,8 @@ pub(crate) fn store_fetch(
                         // A card reporting 0 (no /balances data) must not wipe a known balance,
                         // and neither must an account whose balance was not read at all.
                         let keep = data.balances_unknown.contains(&acc.external_ref)
-                            || acc.balance_cents == 0
+                            || !data.balances_reported.contains(&acc.external_ref)
+                                && acc.balance_cents == 0
                                 && acc.kind == AccountKind::CreditCard
                                 && tx.query_row(
                                     "SELECT balance_cents FROM accounts WHERE id = ?1",
@@ -430,7 +434,11 @@ pub(crate) fn store_fetch(
         }
         // Credit cards without a connector balance: derive the open amount.
         if !data.adjust_balances {
-            for acc in data.accounts.iter().filter(|a| a.balance_cents == 0) {
+            for acc in data.accounts.iter().filter(|a| {
+                a.balance_cents == 0
+                    && !data.balances_reported.contains(&a.external_ref)
+                    && !data.balances_unknown.contains(&a.external_ref)
+            }) {
                 let Some(&id) = account_ids.get(&acc.external_ref) else {
                     continue;
                 };
@@ -570,6 +578,7 @@ pub(crate) fn store_fetch(
                 // Already imported from MoneyMoney? Adopt that row (keeps category + note).
                 // Never for a hold: it is dropped once posted and would take the row with it.
                 if !t.external_id.starts_with("pending-")
+                    && !super::advanzia::is_advanzia_hold(&t.external_id)
                     && crate::importers::moneymoney_import::adopt_import(
                         &tx,
                         *acc_id,
@@ -613,6 +622,7 @@ pub(crate) fn store_fetch(
                     // Old duplicate: bank row exists although an MoneyMoney twin does too.
                     // (Not for holds, see above.)
                     if !t.external_id.starts_with("pending-")
+                        && !super::advanzia::is_advanzia_hold(&t.external_id)
                         && crate::importers::moneymoney_import::merge_synced_twin(
                             &tx,
                             *acc_id,
@@ -668,7 +678,7 @@ pub(crate) fn store_fetch(
                 imported_unix < strftime('%s','now') - 14*86400 OR EXISTS (
                     SELECT 1 FROM transactions r WHERE r.account_id = transactions.account_id
                       AND r.deleted_ms IS NULL
-                      AND r.external_id NOT LIKE 'pending-%' AND r.amount_cents = transactions.amount_cents
+                      AND r.external_id NOT LIKE 'pending-%' AND r.external_id NOT LIKE 'advanzia-hold-%' AND r.amount_cents = transactions.amount_cents
                       AND (r.counterparty_iban = transactions.counterparty_iban
                            -- a batch booking carries no recipient IBAN; banks put
                            -- whatever they like there (often the own account). So a
@@ -831,6 +841,9 @@ pub(crate) fn store_fetch(
                 !unknown.contains(&id),
                 observed_ms,
             )?;
+        }
+        if kind == ConnectorKind::Advanzia {
+            super::advanzia::settle_holds(&tx, &account_ids, &mut data)?;
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = data.state {
