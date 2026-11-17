@@ -25,6 +25,7 @@ use crate::iban::{normalize_iban, validate_iban};
 use crate::merchants::{FlowKind, MerchantResolver};
 use crate::models::*;
 use crate::money::parse_cents;
+use crate::text::parse_bool_loose;
 use crate::vault::{enrich, Vault};
 
 const ARCHIVE_GROUP: &str = "Importierte Konten";
@@ -166,13 +167,6 @@ fn amount(s: &str) -> Option<i64> {
     })
 }
 
-fn truthy(s: &str) -> bool {
-    matches!(
-        s.trim().to_lowercase().as_str(),
-        "1" | "true" | "yes" | "ja" | "x" | "✓" | "✔"
-    )
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Field {
     Date,
@@ -288,7 +282,7 @@ fn build_row(get: impl Fn(Field) -> String) -> Option<MmRow> {
         category: get(Field::Category).trim().to_string(),
         category_parts: Vec::new(),
         note: get(Field::Note).trim().to_string(),
-        checkmark: truthy(&get(Field::Check)),
+        checkmark: parse_bool_loose(&get(Field::Check)),
         mandate_ref: get(Field::Mandate).trim().to_string(),
         creditor_id: get(Field::Creditor).trim().to_string(),
         end_to_end: get(Field::EndToEnd).trim().to_string(),

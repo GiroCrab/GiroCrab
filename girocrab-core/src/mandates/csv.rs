@@ -8,6 +8,7 @@ use crate::dates::{iso, parse_de_or_iso};
 use crate::i18n::{tr, trf};
 use crate::iban::{normalize_iban, validate_iban};
 use crate::money::parse_cents;
+use crate::text::parse_bool_loose;
 
 use super::{MandateInput, MandateScheme};
 
@@ -105,13 +106,6 @@ fn columns(header: &[String]) -> Option<Columns> {
     known.then_some(cols)
 }
 
-fn yes(s: &str) -> bool {
-    matches!(
-        s.trim().to_lowercase().as_str(),
-        "ja" | "j" | "yes" | "y" | "1" | "true" | "x"
-    )
-}
-
 /// Undoes the export's formula guard (see `field`).
 fn unguard(s: String) -> String {
     match s.strip_prefix('\'') {
@@ -190,8 +184,8 @@ fn to_row(line: u32, f: &[String], cols: Columns) -> MandateCsvRow {
         reference,
         signed_date,
         scheme,
-        one_off: yes(&get(cols.one_off)),
-        active: cols.active.is_none() || yes(&get(cols.active)),
+        one_off: parse_bool_loose(&get(cols.one_off)),
+        active: cols.active.is_none() || parse_bool_loose(&get(cols.active)),
         default_amount_cents,
         default_purpose: unguard(get(cols.purpose)),
         errors,
