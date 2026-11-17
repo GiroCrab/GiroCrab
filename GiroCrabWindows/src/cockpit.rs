@@ -380,6 +380,8 @@ mod tests {
             salary_flag: None,
             salary_signal: false,
             tags: Vec::new(),
+            reference: String::new(),
+            transfer: false,
         }
     }
 

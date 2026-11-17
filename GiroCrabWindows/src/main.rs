@@ -456,6 +456,9 @@ fn render_bookings(win: &MainWindow) {
                 logo: logo.unwrap_or_default(),
                 subtitle: subtitle.into(),
                 recurring,
+                reference: i.reference.into(),
+                transfer_reason: i.transfer_reason.into(),
+                booking_text: i.booking_text.into(),
             });
             win.set_inspector_category(cat_index);
             win.set_has_inspector(true);

@@ -25,7 +25,7 @@ export struct KpiTile { label: string, value: string, negative: bool }
 export struct ShareBar { label: string, value: string, share: float, color: color }
 export struct RuleItem { title: string, detail: string }
 export struct BankHit { name: string, detail: string }
-export struct InspectorData { counterparty: string, iban: string, purpose: string, booking-date: string, value-date: string, account: string, amount: string, note: string, read-only: bool, monogram: string, tint: color, logo: image, has-logo: bool, subtitle: string, recurring: bool }
+export struct InspectorData { counterparty: string, iban: string, purpose: string, booking-date: string, value-date: string, account: string, amount: string, note: string, read-only: bool, monogram: string, tint: color, logo: image, has-logo: bool, subtitle: string, recurring: bool, reference: string, transfer-reason: string, booking-text: string }
 
 global Theme {
     out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
@@ -1538,6 +1538,31 @@ export component MainWindow inherits Window {
                                         toggled => { root.set-checked(root.inspector-checked); }
                                     }
                                 }
+                            }
+                        }
+                        // details
+                        Rectangle {
+                            background: Theme.surface;
+                            border-radius: 12px;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            height: dl.preferred-height + 24px;
+                            iban-copy := TextInput { text: root.inspector.iban; width: 0px; height: 0px; visible: false; }
+                            dl := VerticalLayout {
+                                padding: 12px;
+                                spacing: 4px;
+                                Text { text: "Details"; font-size: 12px; font-weight: 700; color: Theme.text; }
+                                if root.inspector.transfer-reason != "": Text { text: "⇄ " + root.inspector.transfer-reason; font-size: 11px; color: Theme.positive; wrap: word-wrap; }
+                                if root.inspector.iban != "": HorizontalLayout {
+                                    spacing: 6px;
+                                    Text { text: "IBAN: " + root.inspector.iban; font-size: 11px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide; }
+                                    GhostButton { text: "Kopieren"; clicked => { iban-copy.select-all(); iban-copy.copy(); } }
+                                }
+                                Text { text: "Buchungsdatum: " + root.inspector.booking-date + "  ·  Wertstellung: " + root.inspector.value-date; font-size: 11px; color: Theme.muted; wrap: word-wrap; }
+                                if root.inspector.booking-text != "": Text { text: "Buchungsart: " + root.inspector.booking-text; font-size: 11px; color: Theme.muted; wrap: word-wrap; }
+                                if root.inspector.reference != "": Text { text: root.inspector.reference; font-size: 11px; color: Theme.muted; wrap: word-wrap; }
+                                if root.inspector.purpose != "": Text { text: "Verwendungszweck"; font-size: 11px; font-weight: 700; color: Theme.text; }
+                                if root.inspector.purpose != "": Text { text: root.inspector.purpose; font-size: 11px; color: Theme.text; wrap: word-wrap; }
                             }
                         }
                         // note

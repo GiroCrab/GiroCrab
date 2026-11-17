@@ -115,6 +115,10 @@ pub struct Row {
     pub salary_signal: bool,
     /// The tags the booking carries.
     pub tags: Vec<girocrab_core::tags::BookingTag>,
+    /// End-to-end id, mandate and creditor id, one labelled line each (empty ones left out).
+    pub reference: String,
+    /// Classified as a transfer between own accounts / settlement (#574).
+    pub transfer: bool,
 }
 
 impl From<&Booking> for Row {
@@ -154,6 +158,17 @@ impl From<&Booking> for Row {
             salary_flag: b.salary_flag,
             salary_signal: girocrab_core::salary::salary_signal(b),
             tags: b.tags.clone(),
+            reference: [
+                ("Ende-zu-Ende-Referenz", &b.end_to_end_id),
+                ("Mandatsreferenz", &b.mandate_id),
+                ("Gläubiger-ID", &b.creditor_id),
+            ]
+            .iter()
+            .filter(|(_, v)| !v.is_empty() && v.as_str() != "NOTPROVIDED")
+            .map(|(l, v)| format!("{l}: {v}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+            transfer: b.flow == girocrab_core::merchants::FlowKind::Transfer,
         }
     }
 }
@@ -223,6 +238,9 @@ pub struct Inspector {
     /// Personal data hidden: the inspector is read-only.
     pub read_only: bool,
     pub recurring: bool,
+    pub reference: String,
+    pub transfer_reason: String,
+    pub booking_text: String,
 }
 
 pub fn inspect(r: &Row, privacy: bool, money: impl Fn(i64, &str) -> String) -> Inspector {
@@ -244,6 +262,13 @@ pub fn inspect(r: &Row, privacy: bool, money: impl Fn(i64, &str) -> String) -> I
         category_id: r.category_id,
         read_only: privacy,
         recurring: r.recurring,
+        reference: mask(&r.reference, privacy),
+        transfer_reason: if r.transfer {
+            "Als Umbuchung erkannt: Die Buchung läuft zwischen eigenen Konten oder ist eine Kartenabrechnung bzw. Aufladung und zählt deshalb nicht als Einnahme oder Ausgabe.".into()
+        } else {
+            String::new()
+        },
+        booking_text: r.booking_text.clone(),
     }
 }
 
@@ -341,6 +366,8 @@ mod tests {
             salary_flag: None,
             salary_signal: false,
             tags: Vec::new(),
+            reference: String::new(),
+            transfer: false,
         }
     }
 
