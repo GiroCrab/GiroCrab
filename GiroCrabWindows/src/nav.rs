@@ -481,6 +481,9 @@ pub fn build(input: &SidebarInput, money: &dyn Fn(i64, &str) -> String) -> Vec<S
             r.color_hex = c.color_hex.clone();
             r.amount = hide(money(c.total_cents, "EUR"));
             r.negative = c.total_cents < 0 && !input.privacy;
+            if c.transaction_count > 0 {
+                r.badge = c.transaction_count.to_string();
+            }
             if has_children {
                 r.fold = if folded(&cid) { 2 } else { 1 };
                 if r.fold == 2 {
