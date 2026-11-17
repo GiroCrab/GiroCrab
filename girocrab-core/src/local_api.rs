@@ -25,7 +25,9 @@
 //! change between releases, `v1` stays stable.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::LazyLock;
 
+use regex::{Captures, Regex};
 use rusqlite::params_from_iter;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -574,7 +576,7 @@ impl Vault {
         let after = p.cursor.as_deref().map(parse_cursor).transpose()?;
         let limit = p.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
         // One extra row tells whether another page follows.
-        let mut rows = Vault::booking_page_after(
+        let mut rows = self.booking_page_after(
             &db,
             &filter,
             &accounts,
@@ -624,7 +626,7 @@ impl Vault {
             ..Default::default()
         };
         let mut totals: BTreeMap<String, ApiCurrencyTotals> = BTreeMap::new();
-        for t in Vault::booking_page_after(&db, &filter, &accounts, &shared, None, 0)? {
+        for t in self.booking_page_after(&db, &filter, &accounts, &shared, None, 0)? {
             let e = totals
                 .entry(t.currency.clone())
                 .or_insert_with(|| ApiCurrencyTotals {
@@ -811,7 +813,8 @@ fn check_search(scope: &ShareScope, search: Option<String>) -> ApiResult<Option<
 /// spaces, `-`, `/` or `.`); a real calendar date (`15.11.2026`, `15.11.26`,
 /// `2026-11-15`) and shorter numbers stay.
 fn shared_text(scope: &ShareScope, on: bool, text: &str) -> Option<String> {
-    static LONG_NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static LONG_NUMBER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\d(?:[ \t\u{00A0}\u{202F}\-/.]?\d){5,}").unwrap());
     if !on {
         return None;
     }
@@ -819,16 +822,16 @@ fn shared_text(scope: &ShareScope, on: bool, text: &str) -> Option<String> {
         return Some(text.to_string());
     }
     let text = crate::sync_log::replace_ibans(text, |_| "[IBAN]".into());
-    let long = crate::sync_log::re(&LONG_NUMBER, r"\d(?:[ \t\u{00A0}\u{202F}\-/.]?\d){5,}");
     Some(
-        long.replace_all(&text, |c: &regex::Captures<'_>| {
-            if is_calendar_date(&c[0]) {
-                c[0].to_string()
-            } else {
-                "[number]".to_string()
-            }
-        })
-        .into_owned(),
+        LONG_NUMBER
+            .replace_all(&text, |c: &Captures<'_>| {
+                if is_calendar_date(&c[0]) {
+                    c[0].to_string()
+                } else {
+                    "[number]".to_string()
+                }
+            })
+            .into_owned(),
     )
 }
 
