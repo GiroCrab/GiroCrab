@@ -10,7 +10,20 @@ struct DepotData {
     let transactions: [SecurityTransaction]
     /// The depot's value history (all of it; the period cuts it for the chart).
     let valuePoints: [DepotValuePoint]
+    /// Positions with a value history (#578), sold ones included.
+    let valuePositions: [ValuePosition]
     var holdings: [Holding] { assets.map(\.holding) }
+
+    /// The history of a held position, by its key (`holdingPositionKey`).
+    func valuePosition(_ p: DepotPosition) -> ValuePosition? {
+        guard let key = holdingPositionKey(isin: p.holding.isin, name: p.holding.name) else { return nil }
+        return valuePositions.first { $0.held && $0.position == key }
+    }
+
+    /// Positions no longer held that have a history, the latest sale first.
+    var soldPositions: [ValuePosition] {
+        valuePositions.filter { !$0.held }.sorted { $0.lastDate > $1.lastDate }
+    }
 }
 
 enum DepotLoadState {
@@ -71,6 +84,8 @@ struct DepotDetailView: View {
     /// Positions behind the slice clicked in the composition card (nil: all).
     @State private var compositionFilter: Set<String>?
     @State private var editingClassification: ClassificationEditRequest?
+    @State private var historyRequest: PositionHistoryRequest?
+    @State private var demoSheetShown = false
 
     private var currency: String { account.currency.isEmpty ? "EUR" : account.currency }
 
@@ -106,6 +121,7 @@ struct DepotDetailView: View {
             content: { wide in content(wide: wide) }
         )
         .capturableSheet(item: $editingClassification) { AssetClassificationSheet(request: $0).environment(model) }
+        .capturableSheet(item: $historyRequest) { PositionHistorySheet(request: $0).environment(model) }
         .task(id: loadKey) { await reload() }
     }
 
@@ -137,11 +153,20 @@ struct DepotDetailView: View {
         do {
             let result = try await model.vaultOffMain { vault in
                 (try vault.classifiedAssets(accountId: id), try vault.listSecurityTransactions(accountId: id),
-                 try vault.depotValueHistory(accountIds: [id], days: DepotValueHistory.lookbackDays))
+                 try vault.depotValueHistory(accountIds: [id], days: DepotValueHistory.lookbackDays),
+                 try vault.depotValuePositions(accountId: id))
             }
             // nil: locked or swapped meanwhile; a cancelled load never replaces newer data
             guard !Task.isCancelled, let result else { return }
-            load = .loaded(DepotData(accountId: id, revision: revision, assets: result.0, transactions: result.1, valuePoints: result.2))
+            let data = DepotData(accountId: id, revision: revision, assets: result.0, transactions: result.1,
+                                 valuePoints: result.2, valuePositions: result.3)
+            load = .loaded(data)
+            // (developer) `--demo-sheet position-history`: once, the first position that has a history
+            if model.options.demoSheetName == "position-history", !demoSheetShown,
+               let p = DepotPosition.make(data.assets).lazy.compactMap({ data.valuePosition($0) }).first {
+                demoSheetShown = true
+                historyRequest = PositionHistoryRequest(accountId: id, position: p)
+            }
         } catch {
             guard !Task.isCancelled else { return }
             load = .failed(describe(error))
@@ -226,6 +251,21 @@ struct DepotDetailView: View {
 
     @ViewBuilder
     private func positionsTab(_ data: DepotData, wide: Bool) -> some View {
+        heldPositions(data, wide: wide)
+        let sold = data.soldPositions.filter { matches($0, query: query) }
+        if !sold.isEmpty, compositionFilter == nil {
+            SoldPositionsSection(positions: sold) { historyRequest = PositionHistoryRequest(accountId: account.id, position: $0) }
+        }
+    }
+
+    /// A sold position matches the search by name or key (ISIN).
+    private func matches(_ p: ValuePosition, query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty || p.name.localizedCaseInsensitiveContains(q) || p.position.localizedCaseInsensitiveContains(q)
+    }
+
+    @ViewBuilder
+    private func heldPositions(_ data: DepotData, wide: Bool) -> some View {
         let positions = DepotPosition.make(data.assets)
         let shown = DepotPosition.sorted(DepotPosition.filtered(DepotPosition.filtered(positions, query: query), keys: compositionFilter, inventory: positions), by: sort)
         if data.assets.isEmpty {
@@ -247,6 +287,11 @@ struct DepotDetailView: View {
                 DepotPositionsTable(positions: shown, totalCount: positions.count, sort: $sort, wide: wide,
                                     currency: currency, onClassify: { editingClassification = $0 },
                                     copyAll: { copyToPasteboard(positions.map { HoldingFigures.clipboardLine($0.holding) }.joined(separator: "\n")) })
+                    .valueHistory(available: { data.valuePosition($0) != nil },
+                                  open: { p in
+                                      guard let v = data.valuePosition(p) else { return }
+                                      historyRequest = PositionHistoryRequest(accountId: account.id, position: v)
+                                  })
             }
         }
     }

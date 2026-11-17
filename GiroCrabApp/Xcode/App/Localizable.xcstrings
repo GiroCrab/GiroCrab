@@ -1947,6 +1947,17 @@
         }
       }
     },
+    "%u Wertverlauf-Einträge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%u value history entries"
+          }
+        }
+      }
+    },
     "%u bereits vorhanden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18601,6 +18612,17 @@
         }
       }
     },
+    "Letzter Wert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Latest value"
+          }
+        }
+      }
+    },
     "Letztes Jahr" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20835,6 +20857,17 @@
         }
       }
     },
+    "Nicht mehr im Depot seit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No longer in the depot since"
+          }
+        }
+      }
+    },
     "Nicht verbinden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20985,6 +21018,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not fetched yet"
+          }
+        }
+      }
+    },
+    "Noch kein Verlauf für diese Position" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No history for this position yet"
           }
         }
       }
@@ -27550,6 +27594,17 @@
         }
       }
     },
+    "Verkaufte Positionen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sold positions (%lld)"
+          }
+        }
+      }
+    },
     "Verknüpfung lösen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27568,6 +27623,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sales"
+          }
+        }
+      }
+    },
+    "Verlauf ab" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History since"
           }
         }
       }
@@ -28639,6 +28705,17 @@
         }
       }
     },
+    "Wert der Position (Menge × Kurs). Käufe und Verkäufe verändern ihn – er ist kein Kursverlauf." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Value of the position (quantity × price). Purchases and sales change it – it is not a price chart."
+          }
+        }
+      }
+    },
     "Wert gesamt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28778,6 +28855,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Value date"
+          }
+        }
+      }
+    },
+    "Wertverlauf anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show value history"
+          }
+        }
+      }
+    },
+    "Wertverlauf konnte nicht geladen werden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Value history could not be loaded"
+          }
+        }
+      }
+    },
+    "Wertverlauf-Einträge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Value history entries"
           }
         }
       }
@@ -30518,6 +30628,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "sold"
+          }
+        }
+      }
+    },
+    "verkauft %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "sold %@"
           }
         }
       }
