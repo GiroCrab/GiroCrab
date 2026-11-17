@@ -51,6 +51,8 @@ pub enum ConnectorKind {
     /// Bausparkasse Schwäbisch Hall (Bausparverträge, postbox PDFs) via the
     /// "Mein Konto" portal, authenticated inside the embedded browser (#290).
     SchwaebischHall,
+    /// Employee share plans via authenticated EquatePlus browser session.
+    EquatePlus,
 }
 
 impl ConnectorKind {
@@ -76,6 +78,7 @@ impl ConnectorKind {
             ConnectorKind::VolkswagenBank => "volkswagenbank",
             ConnectorKind::Uberspace => "uberspace",
             ConnectorKind::SchwaebischHall => "schwaebischhall",
+            ConnectorKind::EquatePlus => "equateplus",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -130,6 +133,7 @@ impl ConnectorKind {
             ConnectorKind::VolkswagenBank,
             ConnectorKind::Uberspace,
             ConnectorKind::SchwaebischHall,
+            ConnectorKind::EquatePlus,
         ]
     }
 }
@@ -227,6 +231,18 @@ pub struct Holding {
     /// Custody type as the bank names it (e.g. "Girosammelverwahrung"), "" = unknown.
     #[uniffi(default = "")]
     pub custody_type: String,
+    /// Native currency of the position (ISO code), "" = the account currency (#625).
+    /// `current_price_cents`, `purchase_price_cents` and `value_cents` are always in
+    /// the account currency so depot sums stay correct; the `native_*` fields carry
+    /// the same figures in `currency` when it differs.
+    #[uniffi(default = "")]
+    pub currency: String,
+    #[uniffi(default = None)]
+    pub native_price_cents: Option<i64>,
+    #[uniffi(default = None)]
+    pub native_purchase_price_cents: Option<i64>,
+    #[uniffi(default = None)]
+    pub native_value_cents: Option<i64>,
 }
 
 /// What a securities transaction was (#314).

@@ -281,22 +281,6 @@ struct BookingStreamView: View {
                     #endif
                     if !emptyVault {
                         StreamHeaderCard()
-                        if showStatistics && !isOverview && model.scope != .investments && !model.allAccounts.isEmpty {
-                            HStack {
-                                Button {
-                                    withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { showAnalytics.toggle() }
-                                } label: {
-                                    Label("Analysen", systemImage: "chart.bar.xaxis")
-                                        .appFont(.caption, weight: .medium)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 4)
-                                        .background(showAnalytics ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: Capsule())
-                                }
-                                .buttonStyle(.plain)
-                                .help("Cashflow und Budgets für dieses Konto ein-/ausblenden")
-                                Spacer()
-                            }
-                        }
                     }
                 }
                 #if os(iOS)
@@ -1187,7 +1171,7 @@ struct MainToolbar: ViewModifier {
                         Button { model.lock() } label: { Label("Tresor sperren", systemImage: "lock") }
                     }
                     if model.demoActive && (model.hasOwnVault || AppModel.vaultMayHoldRealData) {
-                        Button { model.showOwnVault() } label: { Label("Zurück zum eigenen Tresor", systemImage: "lock.open") }
+                        Button { model.showOwnVault() } label: { Label(AppModel.vaultMayHoldRealData ? "Zurück zum eigenen Tresor" : "Eigenes Konto anlegen", systemImage: "lock.open") }
                     } else if !model.demoActive {
                         Button { model.showDemo() } label: { Label("Demo-Daten-Vorschau starten", systemImage: "theatermasks") }
                     }
@@ -1231,34 +1215,43 @@ struct MainToolbar: ViewModifier {
                 Toggle(isOn: $privacyMode) { Label("Privatmodus", systemImage: privacyMode ? "eye.slash" : "eye") }
                     .help(privacyMode ? String(localized: "Privatmodus beenden (⇧⌘H)") : String(localized: "Privatmodus: Beträge ausblenden (⇧⌘H)"))
             }
-            ToolbarItem(id: "palette", placement: .primaryAction, showsByDefault: false) {
-                Button { model.showCommandPalette = true } label: { Label("Befehle", systemImage: "command") }
-                    .help("Befehlspalette (⌘K)")
-            }
-            ToolbarItem(id: "export", placement: .primaryAction, showsByDefault: false) {
-                Button { model.openBookingExport() } label: { Label("Umsätze exportieren", systemImage: "square.and.arrow.up") }
-                    .help("Umsätze als PDF, CSV oder CAMT.053 exportieren … (#53 / #372)")
-            }
-            ToolbarItem(id: "print", placement: .primaryAction, showsByDefault: false) {
-                Button { model.showPrintSheet = true } label: { Label("Drucken", systemImage: "printer") }
-                    .help("Gefilterte Buchungen drucken … (⌘P)")
-            }
-            ToolbarItem(id: "rules", placement: .primaryAction, showsByDefault: false) {
-                Button { model.openRuleEditor() } label: { Label("Regeln", systemImage: "wand.and.stars") }
-                    .help("Kategorisierungsregeln … (⌥⌘K)")
-            }
-            ToolbarItem(id: "lock", placement: .primaryAction, showsByDefault: false) {
-                Button { model.lock() } label: { Label("Tresor sperren", systemImage: "lock") }
-                    .help("Tresor sperren (⌃⌘L)")
-                    .disabled(!model.hasOwnVault)
-            }
-            ToolbarItem(id: "settings", placement: .primaryAction, showsByDefault: false) {
-                SettingsLink { Label("Einstellungen", systemImage: "gearshape") }
-                    .help("Einstellungen … (⌘,)")
-            }
+            extraToolbarItems
         }
         #endif
     }
+
+    #if os(macOS)
+    /// Second half of the customizable toolbar: `ToolbarContentBuilder` has no `buildBlock` for more than
+    /// 10 children, so the items are split in two (IDs, order and `showsByDefault` unchanged).
+    @ToolbarContentBuilder
+    private var extraToolbarItems: some CustomizableToolbarContent {
+        ToolbarItem(id: "palette", placement: .primaryAction, showsByDefault: false) {
+            Button { model.showCommandPalette = true } label: { Label("Befehle", systemImage: "command") }
+                .help("Befehlspalette (⌘K)")
+        }
+        ToolbarItem(id: "export", placement: .primaryAction, showsByDefault: false) {
+            Button { model.openBookingExport() } label: { Label("Umsätze exportieren", systemImage: "square.and.arrow.up") }
+                .help("Umsätze als PDF, CSV oder CAMT.053 exportieren … (#53 / #372)")
+        }
+        ToolbarItem(id: "print", placement: .primaryAction, showsByDefault: false) {
+            Button { model.showPrintSheet = true } label: { Label("Drucken", systemImage: "printer") }
+                .help("Gefilterte Buchungen drucken … (⌘P)")
+        }
+        ToolbarItem(id: "rules", placement: .primaryAction, showsByDefault: false) {
+            Button { model.openRuleEditor() } label: { Label("Regeln", systemImage: "wand.and.stars") }
+                .help("Kategorisierungsregeln … (⌥⌘K)")
+        }
+        ToolbarItem(id: "lock", placement: .primaryAction, showsByDefault: false) {
+            Button { model.lock() } label: { Label("Tresor sperren", systemImage: "lock") }
+                .help("Tresor sperren (⌃⌘L)")
+                .disabled(!model.hasOwnVault)
+        }
+        ToolbarItem(id: "settings", placement: .primaryAction, showsByDefault: false) {
+            SettingsLink { Label("Einstellungen", systemImage: "gearshape") }
+                .help("Einstellungen … (⌘,)")
+        }
+    }
+    #endif
 }
 
 #if os(macOS)

@@ -1,0 +1,12 @@
+GiroCrab v0.8.0 (iOS Build unter Version 0.7.5, Schema v27)
+
+Hinweis zur Versionsnummer in TestFlight:
+Weil unsere Entwicklung schneller voranschreitet als Apples Versions-Review fuer neue Release-Zweige, liefern wir das komplette v0.8.0-Release auf iOS ohne Wartezeit direkt als neuen Build unter 0.7.5 aus.
+
+Was ist neu und was kann getestet werden:
+- Integrierte FinTS-Produktregistrierung & automatisches Tresor-Backup vor dem Upgrade.
+- Tags filtern & auswerten (#228, #777): Buchungen nach Tags filtern und in den Diagrammen auswerten.
+- EquatePlus & IBKR-Einzelwaehrungen (#750, #625): Neuer EquatePlus-Connector und native Waehrung pro Depotposition.
+- Revolut OAuth-Popup (#289), ING Business (#721), Sparda Hannover (#619) & C24-Kategorien (#763).
+- iOS-Fix (#768): Schluessel-Einfuegen-Dialog unter Einstellungen -> Sicherheit bleibt stabil geoeffnet.
+- Performance-Schub & UI-Feinschliff: ListCache (#760), Split-Buchungs-Kategorien (#654), Analyse-Button in der Filterleiste (#757) und Seitenleisten-Zaehler (#592).

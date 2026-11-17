@@ -24,8 +24,16 @@
 //!   category selection, period "all" 102 ms (was 446), list_categories_filtered with the
 //!   expense filter 32 ms (was 336: `tx_amount_date` range scan). The first list after any
 //!   write still enriches every booking once (~155 ms) to refill the cache.
+//! After caching the `BookingFinisher` and each booking's merchant key (`ListCache`,
+//! 2026-11-17, COPIES=600 STEP_DAYS=7 PAYPAL=2000, 43,469 bookings): local_api page 1.5 ms
+//! (was 5.3), preview_rule with hits 0.7 ms (4.2), count_transactions(uncategorized)
+//! 18 ms (58), merchant_history 1.4 ms (33; the first one after a write still resolves
+//! every booking). investment_dashboard still finishes every booking (~220 ms).
 //! OUT=<file> writes the vault with the app's demo key and stops (open it with
 //! GIROCRAB_DEMO_VAULT=<file> .build/debug/GiroCrabMac --demo-seed).
+//!   tag_totals (#228, a third of the bookings tagged, 2026-11-16)  ~80 ms (SQL; off main),
+//!     150 ms with a scope filter (enriched pass); tag_account_counts ~20 ms (incl. the
+//!     linked loans); list_tags 58 ms
 //! RULE_INDEX=1 creates the covering indexes by hand on a vault that lacks them.
 //! STEP_DAYS (default 183) is the shift between copies: 7 with COPIES=600 spans ~11.5 years.
 //! PAYPAL=n adds a payment-service account with n uncategorised bookings, half of them
@@ -234,6 +242,40 @@ fn main() {
             ..Default::default()
         })
     });
+    // Tags (#228, part 3): a third of the bookings carry one of the demo tags.
+    let tags = vault.list_tags().unwrap();
+    if !tags.is_empty() {
+        for (i, tag) in tags.iter().enumerate() {
+            let ids: Vec<i64> = all
+                .transactions
+                .iter()
+                .skip(i)
+                .step_by(3 * tags.len())
+                .map(|b| b.id)
+                .collect();
+            vault.add_tag_to_bookings(ids, tag.id).unwrap();
+        }
+        time("tag_totals (all accounts, all dates)", || {
+            vault.tag_totals(BookingFilter::default())
+        });
+        time("tag_totals (category, with subcategories)", || {
+            vault.tag_totals(BookingFilter {
+                category_id: Some(c1),
+                include_subcategories: true,
+                ..Default::default()
+            })
+        });
+        time("tag_totals (scope Alltag: enriched pass)", || {
+            vault.tag_totals(BookingFilter {
+                scope: BookingScope::Everyday,
+                ..Default::default()
+            })
+        });
+        time("tag_account_counts", || {
+            vault.tag_account_counts(tags[0].id)
+        });
+        time("list_tags", || vault.list_tags());
+    }
     // Local read-only interface (#136): keyset pages enrich only their rows.
     let accounts: Vec<i64> = vault
         .list_accounts()
@@ -320,7 +362,7 @@ fn small_results(vault: &Vault, all: &[girocrab_core::models::Booking]) {
     });
     time("cashflow_by_period(month, 12)", || {
         vault
-            .cashflow_by_period(PeriodGranularity::Month, 12)
+            .cashflow_by_period(PeriodGranularity::Month, 12, None)
             .unwrap()
     });
     let rule = |pattern: &str| Rule {

@@ -1,7 +1,8 @@
-//! MoneyMoney migration: lossless import of MoneyMoney CSV / XML exports.
+//! Import of MoneyMoney CSV / XML exports and C24 CSV exports.
 //!
 //! * Parses German and English CSV headers (`;` `,` or tab) and the XML
 //!   `<transactions><transaction>…` export.
+//! * Reads C24 category / subcategory columns as literal tree components.
 //! * Keeps hierarchical categories (`Haushalt\Lebensmittel`, `Steuern / Büro`)
 //!   as a category tree and the user's notes in `transactions.note`.
 //! * Idempotent: every row gets a deterministic fingerprint
@@ -11,6 +12,7 @@
 //!   FinTS sync adopts imported rows (see [`adopt_import`]).
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -153,8 +155,9 @@ fn amount(s: &str) -> Option<i64> {
         return Some(v);
     }
     // "1.234" / "-1.234.567": German grouping without decimals.
-    let re = Regex::new(r"^([+-]?)(\d{1,3}(?:\.\d{3})+)$").unwrap();
-    re.captures(t).and_then(|c| {
+    static GROUPED: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^([+-]?)(\d{1,3}(?:\.\d{3})+)$").unwrap());
+    GROUPED.captures(t).and_then(|c| {
         let digits: String = c[2].chars().filter(|c| c.is_ascii_digit()).collect();
         let v: i64 = digits.parse::<i64>().ok()?.checked_mul(100)?;
         Some(if &c[1] == "-" { -v } else { v })
@@ -173,6 +176,7 @@ enum Field {
     Date,
     Value,
     Category,
+    Subcategory,
     Name,
     Purpose,
     Iban,
@@ -201,6 +205,7 @@ fn field_for(header: &str) -> Option<Field> {
             Field::Value
         }
         "kategorie" | "category" => Field::Category,
+        "unterkategorie" | "subcategory" => Field::Subcategory,
         "name"
         | "empfänger"
         | "empfaenger"
@@ -299,7 +304,7 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
         .collect::<Vec<_>>()
         .join("\n");
     let rows = split_csv(&body, delim);
-    let (hi, cols) = rows
+    let (hi, mut cols) = rows
         .iter()
         .enumerate()
         .find_map(|(i, r)| {
@@ -310,6 +315,23 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
         .ok_or_else(|| CoreError::InvalidInput {
             message: tr("Keine Kopfzeile (Datum/Buchungstag und Betrag) gefunden.").into(),
         })?;
+    // C24's Kontonummer belongs to the source account, not the counterparty.
+    // Keep the two category columns as literal path components (names may
+    // contain separators that MoneyMoney uses for its single category field).
+    // Resolve format-specific columns once, rather than normalising and
+    // searching the same headers again for every booking.
+    let headers: Vec<String> = rows[hi].iter().map(|h| norm(h)).collect();
+    let has_subcategory = cols.contains(&Some(Field::Subcategory));
+    let is_c24 = has_subcategory && headers.iter().any(|h| h == "transaktionstyp");
+    if is_c24 {
+        for (header, field) in headers.iter().zip(cols.iter_mut()) {
+            if header == "kontonummer" {
+                *field = None;
+            }
+        }
+    }
+    let booking_text_columns =
+        ["beschreibung", "transaktionstyp"].map(|name| headers.iter().position(|h| h == name));
     let mut out = Vec::new();
     for r in rows.iter().skip(hi + 1) {
         // First column wins when a header occurs twice (e.g. "Konto" + "IBAN").
@@ -322,7 +344,23 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
                 }
             }
         }
-        if let Some(row) = build_row(|f| seen.get(&f).cloned().unwrap_or_default()) {
+        if let Some(mut row) = build_row(|f| seen.get(&f).cloned().unwrap_or_default()) {
+            if has_subcategory {
+                row.category_parts = [Field::Category, Field::Subcategory]
+                    .iter()
+                    .filter_map(|f| seen.get(f))
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+            if is_c24 {
+                row.booking_text = booking_text_columns
+                    .iter()
+                    .flatten()
+                    .find_map(|&i| r.get(i).filter(|s| !s.trim().is_empty()))
+                    .map(|s| crate::text::clean_bank_text(s.trim()))
+                    .unwrap_or_default();
+            }
             out.push(row);
         }
     }
@@ -330,40 +368,54 @@ pub fn parse_csv_export(text: &str) -> CoreResult<Vec<MmRow>> {
 }
 
 fn xml_unescape(s: &str) -> String {
+    // One pass over all entities: a decoded `&` must not start another one
+    // (`&#38;lt;` is the text "&lt;", not "<").
+    static ENTITY: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"&(?:#(x?[0-9a-fA-F]+)|(lt|gt|quot|apos|amp));").unwrap());
     let s = s.trim();
     let s = s
         .strip_prefix("<![CDATA[")
         .and_then(|x| x.strip_suffix("]]>"))
         .map(|x| x.to_string())
         .unwrap_or_else(|| {
-            let re = Regex::new(r"&#(x?[0-9a-fA-F]+);").unwrap();
-            let t = re.replace_all(s, |c: &regex::Captures| {
-                let v = &c[1];
-                let n = match v.strip_prefix('x') {
-                    Some(h) => u32::from_str_radix(h, 16).ok(),
-                    None => v.parse().ok(),
-                };
-                n.and_then(char::from_u32)
-                    .map(|c| c.to_string())
-                    .unwrap_or_default()
-            });
-            t.replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&apos;", "'")
-                .replace("&amp;", "&")
+            ENTITY
+                .replace_all(s, |c: &regex::Captures| {
+                    if let Some(v) = c.get(1) {
+                        let v = v.as_str();
+                        let n = match v.strip_prefix('x') {
+                            Some(h) => u32::from_str_radix(h, 16).ok(),
+                            None => v.parse().ok(),
+                        };
+                        return n
+                            .and_then(char::from_u32)
+                            .map(|c| c.to_string())
+                            .unwrap_or_default();
+                    }
+                    match &c[2] {
+                        "lt" => "<",
+                        "gt" => ">",
+                        "quot" => "\"",
+                        "apos" => "'",
+                        _ => "&",
+                    }
+                    .to_string()
+                })
+                .into_owned()
         });
     s.trim().to_string()
 }
 
 pub fn parse_xml_export(text: &str) -> CoreResult<Vec<MmRow>> {
-    let block = Regex::new(r"(?is)<transaction(?:\s[^>]*)?>(.*?)</transaction\s*>").unwrap();
-    let leaf = Regex::new(r"(?is)<([A-Za-z_][\w.\-]*)(?:\s[^>]*)?>(.*?)</([A-Za-z_][\w.\-]*)\s*>")
-        .unwrap();
+    static BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?is)<transaction(?:\s[^>]*)?>(.*?)</transaction\s*>").unwrap()
+    });
+    static LEAF: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?is)<([A-Za-z_][\w.\-]*)(?:\s[^>]*)?>(.*?)</([A-Za-z_][\w.\-]*)\s*>").unwrap()
+    });
     let mut out = Vec::new();
-    for b in block.captures_iter(text) {
+    for b in BLOCK.captures_iter(text) {
         let mut fields: HashMap<Field, String> = HashMap::new();
-        for l in leaf.captures_iter(&b[1]) {
+        for l in LEAF.captures_iter(&b[1]) {
             if !l[1].eq_ignore_ascii_case(&l[3]) {
                 continue;
             }
@@ -558,7 +610,12 @@ pub(crate) fn find_or_create_category(
             )
             .optional()?;
         let id = match found {
-            Some(id) => id,
+            Some(id) => {
+                // An imported path is user-owned even when it reuses a starter
+                // row. Its literal name must survive a UI language switch.
+                conn.execute("UPDATE categories SET builtin_role=NULL WHERE id=?1", [id])?;
+                id
+            }
             None => {
                 let order: i32 = conn.query_row(
                     "SELECT IFNULL(MAX(sort_order), 0) + 1 FROM categories WHERE parent_id IS ?1",
@@ -576,6 +633,17 @@ pub(crate) fn find_or_create_category(
                 id
             }
         };
+        // Preserve the importer's established transfer semantics explicitly;
+        // this role never grants localisation of an imported name.
+        if matches!(
+            part.trim().to_lowercase().as_str(),
+            "umbuchung" | "umbuchungen" | "geldtransit" | "transfer" | "transfers"
+        ) {
+            conn.execute(
+                "UPDATE categories SET builtin_role='import:transfers' WHERE id=?1",
+                [id],
+            )?;
+        }
         cache.insert(key.clone(), id);
         parent = Some(id);
     }
@@ -589,25 +657,30 @@ pub(crate) fn find_or_create_category(
 /// several statements name no single account.
 fn statement_account(text: &str) -> Option<(String, String)> {
     use crate::connectors::fints::sepa;
+    static STMT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"<(?:\w+:)?(?:Stmt|Rpt|Ntfctn)>").unwrap());
+    static ACCT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?s)<(?:\w+:)?Acct>(.*?)</(?:\w+:)?Acct>").unwrap());
+    static IBAN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"<(?:\w+:)?IBAN>\s*([^<]+?)\s*<").unwrap());
+    static CCY: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"<(?:\w+:)?Ccy>\s*([^<]+?)\s*<").unwrap());
+    static FIELD_25: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^:25:(.+)$").unwrap());
     if text.contains("BkToCstmr") {
-        let stmt = Regex::new(r"<(?:\w+:)?Stmt>").unwrap();
-        if stmt.find_iter(text).count() != 1 {
+        // camt.053 `Stmt`, camt.052 `Rpt`, camt.054 `Ntfctn`.
+        if STMT.find_iter(text).count() != 1 {
             return None;
         }
-        let acct = Regex::new(r"(?s)<(?:\w+:)?Acct>(.*?)</(?:\w+:)?Acct>").unwrap();
-        let block = acct.captures(text)?.get(1)?.as_str();
-        let iban = Regex::new(r"<(?:\w+:)?IBAN>\s*([^<]+?)\s*<").unwrap();
-        let ccy = Regex::new(r"<(?:\w+:)?Ccy>\s*([^<]+?)\s*<").unwrap();
-        let i = sepa::normalize_iban(iban.captures(block)?.get(1)?.as_str());
-        let c = ccy
+        let block = ACCT.captures(text)?.get(1)?.as_str();
+        let i = sepa::normalize_iban(IBAN.captures(block)?.get(1)?.as_str());
+        let c = CCY
             .captures(block)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().to_uppercase())
             .unwrap_or_default();
         return sepa::validate_iban(&i).then_some((i, c));
     }
-    let f25 = Regex::new(r"(?m)^:25:(.+)$").unwrap();
-    let mut it = f25.captures_iter(text);
+    let mut it = FIELD_25.captures_iter(text);
     let first = sepa::normalize_iban(it.next()?.get(1)?.as_str().trim());
     if it.any(|c| sepa::normalize_iban(c[1].trim()) != first) {
         return None;
@@ -898,29 +971,29 @@ pub(crate) fn merge_rows(
             }
             continue;
         }
-        conn.execute(
+        conn.prepare_cached(
             "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents, currency,
                     counterparty, counterparty_iban, purpose, booking_text, category_id, category_source, checked, note, import_fp, category_ms, note_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15, ?16)",
-            params![
-                st.account_id,
-                format!("mm-{fp}-{k}"),
-                r.booking_date,
-                r.value_date,
-                r.amount_cents,
-                if r.currency.is_empty() { account_currency } else { &r.currency },
-                r.name,
-                r.iban,
-                r.stored_purpose(),
-                r.booking_text,
-                cat_id,
-                if cat_id.is_some() { "manual" } else { "none" },
-                note,
-                fp,
-                if cat_id.is_some() { crate::user_groups::now_ms() } else { 0 },
-                if note.is_empty() { 0 } else { crate::user_groups::now_ms() }
-            ],
-        )?;
+        )?
+        .execute(params![
+            st.account_id,
+            format!("mm-{fp}-{k}"),
+            r.booking_date,
+            r.value_date,
+            r.amount_cents,
+            if r.currency.is_empty() { account_currency } else { &r.currency },
+            r.name,
+            r.iban,
+            r.stored_purpose(),
+            r.booking_text,
+            cat_id,
+            if cat_id.is_some() { "manual" } else { "none" },
+            note,
+            fp,
+            if cat_id.is_some() { crate::user_groups::now_ms() } else { 0 },
+            if note.is_empty() { 0 } else { crate::user_groups::now_ms() }
+        ])?;
         st.new += 1;
         st.balance_cents += r.amount_cents;
         if !note.is_empty() {
@@ -944,7 +1017,7 @@ fn find_twin(
     name: &str,
     purpose: &str,
 ) -> CoreResult<Option<i64>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT id, counterparty, counterparty_iban, purpose FROM transactions
           WHERE account_id = ?1 AND external_id LIKE 'mm-%' AND amount_cents = ?2
             AND deleted_ms IS NULL AND id != ?3 AND abs(julianday(booking_date) - julianday(?4)) <= 2",
@@ -1003,30 +1076,28 @@ pub(crate) fn adopt_import(
     purpose: &str,
     booking_text: &str,
 ) -> CoreResult<bool> {
+    // Checked first: on a re-fetch most bookings are already stored, and this
+    // spares them the fingerprint and twin lookups.
+    let taken = conn
+        .prepare_cached(
+            // includes soft-deleted rows: (account, external_id) is unique
+            "SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2",
+        )?
+        .exists(params![account_id, external_id])?;
+    if taken {
+        return Ok(false);
+    }
     let fp = fingerprint(date, cents, iban, name, purpose);
     let mut row: Option<i64> = conn
-        .query_row(
+        .prepare_cached(
             "SELECT id FROM transactions WHERE account_id = ?1 AND import_fp = ?2 AND external_id LIKE 'mm-%' AND deleted_ms IS NULL LIMIT 1",
-            params![account_id, fp],
-            |r| r.get(0),
-        )
+        )?
+        .query_row(params![account_id, fp], |r| r.get(0))
         .optional()?;
     if row.is_none() {
         row = find_twin(conn, account_id, None, date, cents, iban, name, purpose)?;
     }
     let Some(id) = row else { return Ok(false) };
-    let taken: bool = conn
-        .query_row(
-            // includes soft-deleted rows: (account, external_id) is unique
-            "SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2",
-            params![account_id, external_id],
-            |_| Ok(true),
-        )
-        .optional()?
-        .unwrap_or(false);
-    if taken {
-        return Ok(false);
-    }
     take_over(conn, id, external_id, iban, booking_text)?;
     Ok(true)
 }
@@ -1040,13 +1111,13 @@ fn take_over(
     iban: &str,
     booking_text: &str,
 ) -> CoreResult<()> {
-    conn.execute(
+    conn.prepare_cached(
         "UPDATE transactions SET external_id = ?1,
                 counterparty_iban = CASE WHEN counterparty_iban = '' THEN ?3 ELSE counterparty_iban END,
                 booking_text = CASE WHEN booking_text = '' THEN ?4 ELSE booking_text END
           WHERE id = ?2",
-        params![external_id, id, iban, booking_text],
-    )?;
+    )?
+    .execute(params![external_id, id, iban, booking_text])?;
     Ok(())
 }
 
@@ -1065,15 +1136,16 @@ pub(crate) fn merge_synced_twin(
     purpose: &str,
 ) -> CoreResult<bool> {
     let bank: Option<(i64, String, String)> = conn
-        .query_row(
+        .prepare_cached(
             "SELECT id, counterparty_iban, booking_text FROM transactions
               WHERE account_id = ?1 AND external_id = ?2
                 AND deleted_ms IS NULL AND category_source != 'manual' AND checked = 0 AND trim(note) = ''
                 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = transactions.id)
                 AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = transactions.id)",
-            params![account_id, external_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
+        )?
+        .query_row(params![account_id, external_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
         .optional()?;
     let Some((bank_id, bank_iban, bank_text)) = bank else {
         return Ok(false);
@@ -1127,14 +1199,11 @@ fn sample(r: &MmRow, i: i64, account_id: i64) -> Booking {
         purpose: r.stored_purpose(),
         booking_text: r.booking_text.clone(),
         category_id: None,
-        category_name: split_category(&r.category)
-            .last()
-            .cloned()
-            .unwrap_or_default(),
-        category_path: split_category(&r.category).join(" › "),
+        category_name: r.category_path().last().cloned().unwrap_or_default(),
+        category_path: r.category_path().join(" › "),
         category_color_hex: String::new(),
         category_symbol: String::new(),
-        category_source: if r.category.is_empty() {
+        category_source: if r.category_path().is_empty() {
             CategorySource::None
         } else {
             CategorySource::Manual
@@ -1167,7 +1236,8 @@ fn sample(r: &MmRow, i: i64, account_id: i64) -> Booking {
     };
     // preview of an import: no connection yet, a payment service reads as before
     let paypal = b.account_kind == AccountKind::PaymentService;
-    enrich(&mut b, paypal);
+    // Preview names are imported user text, never built-in category roles.
+    enrich(&mut b, paypal, "");
     b.is_salary = crate::salary::salary_signal(&b);
     b
 }
@@ -1191,7 +1261,7 @@ impl Vault {
         let st = run(&tx, &rows, &file_name, target_account_id, true, true)?;
         let mut cats: Vec<String> = rows
             .iter()
-            .map(|r| split_category(&r.category).join(" › "))
+            .map(|r| r.category_path().join(" › "))
             .filter(|c| !c.is_empty())
             .collect();
         cats.sort();
@@ -1270,6 +1340,190 @@ mod tests {
     const CSV: &str = "\"Datum\";\"Wertstellung\";\"Kategorie\";\"Name\";\"Verwendungszweck\";\"Konto\";\"Bank\";\"Betrag\";\"Währung\";\"Notiz\"\n\
 \"15.03.2012\";\"15.03.2012\";\"Haushalt\\Supermarkt\";\"REWE Markt\";\"Einkauf Kartenzahlung\";\"DE02120300000000202051\";\"BYLADEM1001\";\"-1.234,56\";\"EUR\";\"Wocheneinkauf\"\n\
 \"01.04.2026\";\"01.04.2026\";\"Steuern / Büro\";\"Finanzamt\";\"Erstattung\";\"\";\"\";\"2.000,00\";\"EUR\";\"\"\n";
+
+    // Synthetic booking rows using the headers supplied in #705. The attached
+    // category-only sample has no actual dates/amounts and must not create bookings.
+    const C24: &str = "Transaktionstyp;Buchungsdatum;Karteneinsatz;Betrag;Zahlungsempfänger;IBAN;BIC;Verwendungszweck;Beschreibung;Kontonummer;Kontoname;Kategorie;Unterkategorie;Bargeldabhebung\n\
+Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;Essen;Backwaren;Nein\n\
+Überweisung;02.01.2030;;100,00;Alice;DE02120300000000202051;;Erstattung;;123456;Pocket;Freizeit & Unterhaltung;Streaming & Pay TV;Nein\n";
+
+    #[test]
+    fn c24_reporter_fixture_preserves_all_category_pairs() {
+        let data = include_bytes!("../../tests/fixtures/c24_categories.csv");
+        // Category-only rows must never create zero-value / phantom bookings.
+        assert!(parse_export(data).is_err());
+        let text = decode(data);
+        let mut records = split_csv(&text, ',');
+        assert_eq!(records.len(), 66);
+        for (i, record) in records.iter_mut().skip(1).enumerate() {
+            record[1] = "17.11.2026".into();
+            record[3] = format!("-{},00", i + 1);
+            record[4] = "Testzahlung".into();
+        }
+        let csv = records
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| format!("\"{}\"", cell.replace('"', "\"\"")))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rows = parse_export(csv.as_bytes()).unwrap();
+        assert_eq!(rows.len(), 65);
+        for (row, record) in rows.iter().zip(records.iter().skip(1)) {
+            assert_eq!(
+                row.category_path(),
+                vec![record[11].clone(), record[12].clone()]
+            );
+        }
+        let (_dir, v) = vault();
+        let result = v
+            .import_moneymoney_data(csv.as_bytes().to_vec(), "c24.csv".into(), None, true, true)
+            .unwrap();
+        assert_eq!(result.imported, 65);
+        let again = v
+            .import_moneymoney_data(
+                csv.as_bytes().to_vec(),
+                "c24.csv".into(),
+                Some(result.account_id),
+                true,
+                true,
+            )
+            .unwrap();
+        assert_eq!((again.imported, again.duplicates), (0, 65));
+        let without_categories = v
+            .import_moneymoney_data(
+                csv.as_bytes().to_vec(),
+                "plain.csv".into(),
+                None,
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(without_categories.categories_created, 0);
+        let page = v
+            .list_transactions(BookingFilter {
+                account_ids: vec![without_categories.account_id],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(page.transactions.iter().all(|b| b.category_id.is_none()));
+    }
+
+    #[test]
+    fn c24_columns_preserve_category_components_and_counterparty_iban() {
+        let rows = parse_export(C24.as_bytes()).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].category_path(), vec!["Essen", "Backwaren"]);
+        assert_eq!(rows[0].iban, "");
+        assert_eq!(rows[0].amount_cents, -500);
+        assert_eq!(rows[0].booking_text, "Kartenzahlung");
+        assert_eq!(rows[1].iban, "DE02120300000000202051");
+        assert_eq!(rows[1].amount_cents, 10000);
+        let without_child = C24.replace("Essen;Backwaren", "Essen;");
+        assert_eq!(
+            parse_export(without_child.as_bytes()).unwrap()[0].category_path(),
+            vec!["Essen"]
+        );
+        assert_eq!(
+            rows[1].category_path(),
+            vec!["Freizeit & Unterhaltung", "Streaming & Pay TV"]
+        );
+        let literal = C24.replace("Essen;Backwaren", "Essen / Trinken;Backwaren / Café");
+        assert_eq!(
+            parse_export(literal.as_bytes()).unwrap()[0].category_path(),
+            vec!["Essen / Trinken", "Backwaren / Café"]
+        );
+        let only_categories = "Transaktionstyp;Buchungsdatum;Betrag;Kategorie;Unterkategorie\n;;;Freizeit;Streaming\n";
+        assert!(parse_export(only_categories.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn c24_header_mapping_handles_column_order_and_short_rows() {
+        // Source account comes before the (empty) counterparty IBAN. A short
+        // row has no description and must fall back to the transaction type.
+        let csv = "Kontonummer;IBAN;Transaktionstyp;Betrag;Buchungsdatum;Kategorie;Unterkategorie;Beschreibung\n\
+123456;;Kartenzahlung;-5,00;01.01.2030;Essen;Backwaren;Beim Bäcker\n\
+123456;;Überweisung;10,00;02.01.2030;Einkommen;Erstattung\n";
+        let rows = parse_export(csv.as_bytes()).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.iban.is_empty()));
+        assert_eq!(rows[0].booking_text, "Beim Bäcker");
+        assert_eq!(rows[1].booking_text, "Überweisung");
+        assert_eq!(rows[1].category_path(), vec!["Einkommen", "Erstattung"]);
+    }
+
+    #[test]
+    fn c24_enriches_api_booking_and_reimport_keeps_manual_category() {
+        let (_dir, v) = vault();
+        let account = v
+            .import_moneymoney_data(
+                CSV.as_bytes().to_vec(),
+                "account.csv".into(),
+                None,
+                true,
+                true,
+            )
+            .unwrap()
+            .account_id;
+        {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose)
+                VALUES (?1, 'enable-banking-1', '2030-01-01', -500, 'Bäcker', 'Brötchen')", [account]).unwrap();
+        }
+        let preview = v
+            .preview_moneymoney_import(C24.as_bytes().to_vec(), "c24.csv".into(), Some(account))
+            .unwrap();
+        assert_eq!(
+            (preview.new_bookings, preview.duplicates_skipped_or_enriched),
+            (1, 1)
+        );
+        assert!(preview
+            .detected_categories
+            .contains(&"Essen › Backwaren".into()));
+        assert_eq!(
+            preview.sample_bookings[0].category_path,
+            "Essen › Backwaren"
+        );
+        let result = v
+            .import_moneymoney_data(
+                C24.as_bytes().to_vec(),
+                "c24.csv".into(),
+                Some(account),
+                true,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            (result.imported, result.duplicates, result.enriched),
+            (1, 1, 1)
+        );
+        let changed = C24.replace("Essen;Backwaren", "Andere;Kategorie");
+        let result = v
+            .import_moneymoney_data(
+                changed.as_bytes().to_vec(),
+                "c24.csv".into(),
+                Some(account),
+                true,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            (result.imported, result.duplicates, result.enriched),
+            (0, 2, 0)
+        );
+        let page = v
+            .list_transactions(BookingFilter {
+                account_ids: vec![account],
+                search: Some("Bäcker".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.transactions[0].category_path, "Essen › Backwaren");
+    }
 
     const XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <transactions>
@@ -1791,5 +2045,73 @@ mod tests {
         assert_eq!(rows[0].booking_date, "2025-01-02");
         assert_eq!(rows[0].name, "Markt GmbH");
         assert_eq!(rows[1].amount_cents, 250000);
+    }
+
+    #[test]
+    fn xml_values_unescape_entities_and_cdata() {
+        assert_eq!(
+            xml_unescape(" Strom &amp; Gas &#65;&#x47; "),
+            "Strom & Gas AG"
+        );
+        assert_eq!(
+            xml_unescape("&lt;b&gt; &quot;x&quot; &apos;y&apos;"),
+            "<b> \"x\" 'y'"
+        );
+        assert_eq!(xml_unescape("<![CDATA[ a &amp; b ]]>"), "a &amp; b");
+        // an invalid code point is dropped
+        assert_eq!(xml_unescape("a&#xD800;b"), "ab");
+        // no double decoding
+        assert_eq!(xml_unescape("&amp;#38;lt;"), "&#38;lt;");
+        assert_eq!(xml_unescape("&#38;lt;"), "&lt;");
+        assert_eq!(xml_unescape("&amp;lt;"), "&lt;");
+    }
+
+    #[test]
+    fn amounts_with_german_grouping_and_no_cents() {
+        assert_eq!(amount("1.234"), Some(123_400));
+        assert_eq!(amount("-1.234.567"), Some(-123_456_700));
+        assert_eq!(amount("EUR"), None);
+    }
+
+    #[test]
+    fn statement_account_from_camt_and_mt940() {
+        let camt = CAMT053
+            .replace("DE44520900000012345601", "DE89370400440532013000")
+            .replace("</Id></Acct>", "</Id><Ccy>eur</Ccy></Acct>");
+        assert_eq!(
+            statement_account(&camt),
+            Some(("DE89370400440532013000".into(), "EUR".into()))
+        );
+        let two = camt.replace("</Stmt>", "</Stmt><Stmt></Stmt>");
+        assert_eq!(statement_account(&two), None);
+        for (open, close) in [("Rpt", "Rpt"), ("Ntfctn", "Ntfctn")] {
+            let other = camt
+                .replace("<Stmt>", &format!("<{open}>"))
+                .replace("</Stmt>", &format!("</{close}>"));
+            assert_eq!(
+                statement_account(&other),
+                Some(("DE89370400440532013000".into(), "EUR".into())),
+                "{open}"
+            );
+        }
+
+        let mt = |accounts: &[&str]| -> String {
+            accounts
+                .iter()
+                .map(|a| {
+                    format!(":20:STARTUMS\r\n:25:{a}\r\n:61:2501020102DR23,45NDDTNONREF\r\n-\r\n")
+                })
+                .collect()
+        };
+        let iban = "DE89 3704 0044 0532 0130 00";
+        assert_eq!(
+            statement_account(&mt(&[iban, iban])),
+            Some(("DE89370400440532013000".into(), String::new()))
+        );
+        assert_eq!(statement_account(&mt(&["52090000/0012345678"])), None);
+        assert_eq!(
+            statement_account(&mt(&[iban, "DE02120300000000202051"])),
+            None
+        );
     }
 }

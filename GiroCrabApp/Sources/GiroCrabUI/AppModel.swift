@@ -138,6 +138,8 @@ public final class AppModel {
     var customPeriodTo: String = UserDefaults.standard.string(forKey: "period.customTo") ?? AppModel.defaultCustomPeriod.to
     /// Shows the start/end date dialog of the period filter.
     var showCustomPeriod = false
+    /// Shows the tag filter popover of the stream header (#228).
+    var showTagFilter = false
 
     /// Sidebar selection and period as set by UI controls: the new data loads in
     /// the background, so the control responds at once. Setting `sidebarSelection`
@@ -213,6 +215,15 @@ public final class AppModel {
             guard directionFilter != oldValue else { return }
             listLimit = Self.defaultListLimit
             reloadAfterFilterChange() // the sidebar sums follow the direction (#621)
+        }
+    }
+    /// Tag filter of the booking list (#228, `AppModel+Tags`); kept while the app runs,
+    /// across sidebar selections, like the status filter. Not in „Neue Umsätze“.
+    var tagFilter = BookingTagFilter() {
+        didSet {
+            guard tagFilter != oldValue else { return }
+            listLimit = Self.defaultListLimit
+            reloadBookings()
         }
     }
     /// Accounts whose bookings the category views show („Ohne Kategorie“ and
@@ -622,6 +633,9 @@ public final class AppModel {
     /// Category refresh in flight; only a newer category change or a vault
     /// switch cancels it, so the totals it brings can't get lost.
     @ObservationIgnored var categoryRefreshTask: Task<Void, Never>?
+    /// Last "Geprüft" write for a multiple selection (#725); the next one waits
+    /// for it, so quick toggles reach the vault in order.
+    @ObservationIgnored var checkedWriteTask: Task<Void, Never>?
 
     // MARK: State used by AppModel+Connections.swift
 
@@ -746,9 +760,13 @@ public final class AppModel {
                     if name == "collection-files" { self.buildCollection(dueDate: Date().addingTimeInterval(5 * 86_400)) }
                 }
             }
-        case "tags":
-            // Konten › Tags verwalten … (#228)
+        case "tags", "tags-accounts":
+            // Konten › Tags verwalten … (#228); `tags-accounts`: the first tag's bookings per account
             showTagManager = true
+        case "tag-filter":
+            // the header's tag filter (#228, part 3) with the first tag ticked
+            if let first = tags.first { tagFilter = BookingTagFilter(tagIDs: [first.id]) }
+            showTagFilter = true
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.last
@@ -1357,7 +1375,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
-        groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; showTagManager = false; tagDraft = TagDraft(); connections = []; settings = []
+        groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; tagFilter = BookingTagFilter(); showTagFilter = false; showTagManager = false; tagDraft = TagDraft(); connections = []; settings = []
         page = nil; dashboard = nil; merchantStats = nil; merchantAccountStats = nil; logoCache = [:]
     }
 

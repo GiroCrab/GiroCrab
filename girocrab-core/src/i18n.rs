@@ -14,9 +14,8 @@
 //! while `cargo test` runs them in parallel threads.
 //!
 //! Built-in account group and starter category names are stored in German in
-//! the vault (the code finds groups by name and classifies bookings by the
-//! top-level category name). They are translated only on the way out via
-//! [`display_name`] / [`display_path`], so user-renamed entries stay as written.
+//! the vault. Immutable `builtin_role` keys identify them independently of
+//! editable names. Only unchanged names with a role are translated.
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -142,8 +141,16 @@ fn fill(template: &str, args: &[&dyn Display]) -> String {
     out
 }
 
-/// Display name of a stored account group or category name: built-in German
-/// defaults are translated, anything else (user names) is returned as is.
+/// Display an explicitly identified built-in; custom and renamed entries stay literal.
+pub(crate) fn role_name(stored: &str, role: Option<&str>) -> String {
+    if role == Some(stored) {
+        display_name(stored)
+    } else {
+        stored.to_owned()
+    }
+}
+
+/// Translate a catalog key. Callers displaying vault data must use `role_name`.
 pub fn display_name(stored: &str) -> String {
     display_name_in(current(), stored)
 }
@@ -279,6 +286,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Zeitraum endet vor seinem Beginn." => "The period ends before it begins.",
         "CAMT.053 gibt es nicht für Darlehen und Depots: Ihr Saldo ergibt sich nicht aus eigenen Umsätzen." => "CAMT.053 is not available for loans and securities accounts: their balance is not the sum of their own bookings.",
         "CAMT.053 erfordert eine lückenlose Auswahl. Markiere alle Umsätze eines zusammenhängenden Zeitraums." => "CAMT.053 requires a selection without gaps. Mark all bookings of a continuous period.",
+        "EquatePlus: Unvollständige oder nicht unterstützte Bestandsdaten. Es wurden keine Daten übernommen." => "EquatePlus: Incomplete or unsupported inventory data. No data was imported.",
+        "Bitte bei EquatePlus im Browserfenster anmelden und die Bestände abrufen." => "Please sign in to EquatePlus in the browser window and fetch your holdings.",
+        "Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet." => "Employee share plans with available and restricted holdings. Sign in in the browser window with EquateAccess or SMS. Unofficial portal interface; subject to change and restrictions under the terms of use. PDF documents can optionally be loaded; they are kept under “Belege & PostBox” and are not assigned to bookings or activities automatically.",
         "quirion: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => "quirion: Incomplete or invalid portal response. No data was imported.",
         "Bitte bei quirion im Browserfenster anmelden und die Daten abrufen." => "Please sign in to quirion in the browser window and fetch your data.",
         "Bitte bei quirion im Browserfenster abrufen." => "Please fetch your data in the quirion browser window.",

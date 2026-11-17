@@ -145,8 +145,6 @@ struct SidebarView: View {
             // a plain row styled like the group headers (not a List section
             // header, whose small caption style can't match them)
             CategoriesHeader()
-                .padding(.top, 10)
-                .listRowInsets(Self.rowInsets)
             if !model.categoriesCollapsed, let note = model.categorySumNote {
                 Text(note)
                     .appFont(.caption)
@@ -828,8 +826,8 @@ private struct DropLine: Equatable {
 /// A sidebar row as drop target. Like MoneyMoney and Finder it marks the
 /// spot with a thin line between rows instead of outlining the row. The row
 /// gets two drop zones, its upper and lower half, so the line can follow the
-/// pointer while every drop still goes through `dropDestination` (a
-/// `DropDelegate` here left the sidebar list unable to start a second drag).
+/// pointer; the drops go through `MoveStringDrop` (a `DropDelegate` that
+/// proposes `.move`, so no green "+" shows, #659).
 private struct DropSlot: ViewModifier {
     let key: String
     /// Where the line starts, so it lines up with the row's content.
@@ -888,26 +886,30 @@ private struct DropSlot: ViewModifier {
     private func zone(_ half: DropLine.Edge) -> some View {
         Color.clear
             .contentShape(Rectangle())
-            .dropDestination(for: String.self) { items, _ in
+            .onDrop(of: [.plainText], delegate: MoveStringDrop(isTargeted: { targeted in
+                setTargeted(targeted, half)
+            }, perform: { items in
                 line = nil
                 guard let edge = edge(half) else { return false }
                 return perform(items, edge)
-            } isTargeted: { targeted in
-                // SwiftUI reports a quick off/on while the pointer moves within a
-                // zone: write only real changes and clear a tick later, unless the
-                // zone came back meanwhile, so the mark doesn't flicker.
-                let zone = key + (half == .above ? "↑" : "↓")
-                if targeted, let edge = edge(half), BookingDrag.isDragged == takesBookings {
-                    Self.hovered.insert(zone)
-                    let next = DropLine(key: edge == .into ? intoKey ?? key : key, edge: edge, zone: zone)
-                    if line != next { line = next }
-                } else {
-                    Self.hovered.remove(zone)
-                    DispatchQueue.main.async {
-                        if !Self.hovered.contains(zone), line?.zone == zone { line = nil }
-                    }
-                }
+            }))
+    }
+
+    private func setTargeted(_ targeted: Bool, _ half: DropLine.Edge) {
+        // SwiftUI reports a quick off/on while the pointer moves within a
+        // zone: write only real changes and clear a tick later, unless the
+        // zone came back meanwhile, so the mark doesn't flicker.
+        let zone = key + (half == .above ? "↑" : "↓")
+        if targeted, let edge = edge(half), BookingDrag.isDragged == takesBookings {
+            Self.hovered.insert(zone)
+            let next = DropLine(key: edge == .into ? intoKey ?? key : key, edge: edge, zone: zone)
+            if line != next { line = next }
+        } else {
+            Self.hovered.remove(zone)
+            DispatchQueue.main.async {
+                if !Self.hovered.contains(zone), line?.zone == zone { line = nil }
             }
+        }
     }
 }
 
@@ -995,7 +997,7 @@ private struct CategoriesHeader: View {
     var body: some View {
         let open = !model.categoriesCollapsed
         let toggle = { withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.categoriesCollapsed.toggle() } }
-        HStack(spacing: 5) {
+        HStack(spacing: DisclosureChevron.gap) {
             // folds the category tree away (rarely used, takes room)
             Button(action: toggle) {
                 DisclosureChevron(open: open)
@@ -1009,9 +1011,12 @@ private struct CategoriesHeader: View {
                 .accessibilityAddTraits(.isHeader)
             Spacer()
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Theme.secondary)
+        .padding(.top, 10)
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
+        .listRowInsets(SidebarView.captionInsets)
+        .selectionDisabled()
     }
 }
 
