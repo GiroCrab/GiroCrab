@@ -67,6 +67,8 @@ fn main() {
         .cpp_file(manifest.join("cpp/webcookies.cpp"))
         .cpp_file(manifest.join("cpp/translator.cpp"))
         .cpp_file(manifest.join("cpp/filemanager.cpp"))
+        // GiroCode in dropped invoices: pages as grey images (QImageReader, QtPdf plugin)
+        .cpp_file(manifest.join("cpp/qrscan.cpp"))
         .file(manifest.join("src/bridge.rs"))
         .build();
     // Our C++ (printing.cpp, prepare.cpp, …) sits in the static library cxx-qt links after its

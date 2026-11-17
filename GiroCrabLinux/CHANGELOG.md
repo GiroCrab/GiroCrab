@@ -132,6 +132,11 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 - **TAN abgebrochen:** Eine abgebrochene Sammelüberweisung oder ein abgebrochener Dauerauftrag
   öffnet wieder das eigene Formular mit Hinweis; die nächste Einzelüberweisung läuft wieder als
   Einzelüberweisung (#533).
+- **GiroCode in Rechnungen:** Ein Bild (PNG, JPEG) oder PDF mit GiroCode (EPC-QR-Code), ins
+  Überweisungsformular gezogen, füllt Empfänger, IBAN, BIC, Betrag und Zweck aus – wie eine
+  ZUGFeRD-Rechnung, danach „Felder ausgefüllt – bitte prüfen“. In PDFs werden die ersten zehn
+  Seiten durchsucht (Mac-App: nur die erste); dafür braucht es Qts PDF-Bildmodul
+  (`qt6-image-formats-plugin-pdf`, wie beim Drucken).
 
 ### Geplant
 
@@ -255,7 +260,6 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 ### Noch nicht in der Linux-Oberfläche
 
 - Tags verwalten (umbenennen, Farbe, zusammenführen)
-- QR-Codes in Bildern und PDFs beim Überweisen erkennen
 - RAH-10-Texte in „Bankzugang bearbeiten“
 
 ## Funktionsstand 0.7.0 (Kern 0.7.5)

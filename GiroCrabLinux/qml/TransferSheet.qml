@@ -139,7 +139,7 @@ Sheet {
                 visible: !sheet.confirming
                 flat: true; icon.name: SF.icon("doc.on.clipboard"); text: qsTr("Einfügen")
                 onClicked: sheet.pasteFromClipboard()
-                ToolTip.text: qsTr("Erkennt IBAN, Betrag, Empfänger und Zweck (⇧Strg+V; Strg+V außerhalb von Textfeldern). Rechnung (PDF, ZUGFeRD) hierher ziehen.")
+                ToolTip.text: qsTr("Erkennt IBAN, Betrag, Empfänger und Zweck (⇧Strg+V; Strg+V außerhalb von Textfeldern). Rechnung (PDF, ZUGFeRD, GiroCode) hierher ziehen.")
                 ToolTip.visible: hovered; ToolTip.delay: 600
             }
         }
@@ -591,7 +591,7 @@ Sheet {
         }
     }
 
-    // Rechnung (PDF, ZUGFeRD-XML) hierher ziehen.
+    // TransferSheetView.swift › .onDrop: Rechnung (PDF, ZUGFeRD-XML, Bild oder PDF mit GiroCode) hierher ziehen.
     DropArea {
         parent: sheet.contentItem
         anchors.fill: parent

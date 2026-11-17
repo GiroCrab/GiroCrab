@@ -1357,9 +1357,10 @@ fn embedded_invoice_xml(pdf: &[u8]) -> Option<String> {
     None
 }
 
-/// PaymentParser.parseFile (file part): a dropped invoice as ZUGFeRD XML and,
-/// for a PDF, also its text layer (used when the XML is unusable); QML parses
-/// the fields. Other files are not read as text (Swift only OCRs images).
+/// PaymentParser.parseFile (file part): a dropped invoice as ZUGFeRD XML, the
+/// GiroCode payload of an image or PDF (`epc`, src/qr_scan.rs) and the text layer
+/// of a PDF or the OCR text of a photo (used when neither is usable); QML parses
+/// the fields.
 fn read_invoice(a: &Value) -> R {
     let path: String = arg(a, "path")?;
     let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
@@ -1375,7 +1376,17 @@ fn read_invoice(a: &Value) -> R {
     } else {
         None
     };
-    let text = if is_pdf {
+    // PaymentParser.parseFile: embedded XML → EPC QR → text layer. The XML is read in QML
+    // (parseInvoiceXML), so the GiroCode is looked for on every image or PDF.
+    let epc = if is_pdf || xml.is_none() {
+        crate::qr_scan::epc_payload(&data)
+    } else {
+        None
+    };
+    // a usable GiroCode (parseEPC: "BCD" and at least 7 lines) makes the text unnecessary
+    let text = if epc.as_ref().is_some_and(|p| p.lines().count() >= 7) {
+        String::new()
+    } else if is_pdf {
         girocrab_core::documents::extract_pdf_text(&data)
     } else if xml.is_none() {
         // a photo of an invoice: OCR text (ReceiptText.extract), when tesseract is there
@@ -1383,7 +1394,7 @@ fn read_invoice(a: &Value) -> R {
     } else {
         String::new()
     };
-    ok(json!({ "xml": xml, "text": text }))
+    ok(json!({ "xml": xml, "epc": epc, "text": text }))
 }
 
 /// Vault methods, plus the ones whose errors the sheet shows differently.
@@ -2091,6 +2102,33 @@ mod tests {
         let w = m["width"].as_u64().unwrap() as usize;
         assert!(w >= 21);
         assert_eq!(m["rows"].as_array().unwrap().len(), w);
+        // … and back: that GiroCode as a dropped image (PGM, 4 px per module, quiet zone)
+        // comes out of read_invoice as `epc`, without OCR text
+        let side = (w + 8) * 4;
+        let mut pgm = format!("P5\n{side} {side}\n255\n").into_bytes();
+        let rows: Vec<&str> = m["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.as_str().unwrap())
+            .collect();
+        for y in 0..side {
+            for x in 0..side {
+                let (mx, my) = ((x / 4).wrapping_sub(4), (y / 4).wrapping_sub(4));
+                let dark = my < w && mx < w && rows[my].as_bytes()[mx] == b'1';
+                pgm.push(if dark { 0 } else { 255 });
+            }
+        }
+        let img = std::env::temp_dir().join(format!("girocrab-qr-{}.pgm", std::process::id()));
+        std::fs::write(&img, &pgm).unwrap();
+        let r = call_ok("read_invoice", json!({ "path": img.display().to_string() }));
+        let _ = std::fs::remove_file(&img);
+        assert_eq!(
+            r["epc"],
+            json!("BCD\n002\n1\nSCT\n\nTest\nDE89370400440532013000\nEUR1.00\n\n\nx"),
+            "{r}"
+        );
+        assert_eq!(r["text"], json!(""), "{r}");
         // ZUGFeRD XML in a Flate stream of a PDF
         let xml =
             b"<rsm:CrossIndustryInvoice><ram:IBANID>DE89</ram:IBANID></rsm:CrossIndustryInvoice>";
