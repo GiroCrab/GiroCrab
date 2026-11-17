@@ -1014,15 +1014,7 @@ fn find_twin(
     name: &str,
     purpose: &str,
 ) -> CoreResult<Option<i64>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, counterparty, counterparty_iban, purpose, booking_date,
-                IFNULL(category_id, 0), trim(IFNULL(note, '')),
-                abs(julianday(booking_date) - julianday(?4))
-           FROM transactions
-          WHERE account_id = ?1 AND external_id LIKE 'mm-%' AND amount_cents = ?2
-            AND deleted_ms IS NULL AND id != ?3 AND abs(julianday(booking_date) - julianday(?4)) <= 2
-          ORDER BY id",
-    )?;
+    let mut stmt = conn.prepare_cached(TWIN_CANDIDATES_SQL)?;
     let rows = stmt.query_map(
         params![account_id, cents, exclude_id.unwrap_or(-1), date],
         |r| {
@@ -1059,6 +1051,20 @@ fn find_twin(
     }
     Ok(pick_twin(&hits))
 }
+
+/// Imported rows of amount `?2` within two days of `?4`. The BETWEEN bounds, a
+/// day wider than the window, let `tx_amount_date` find the candidates; the
+/// julianday test still decides.
+const TWIN_CANDIDATES_SQL: &str =
+    "SELECT id, counterparty, counterparty_iban, purpose, booking_date,
+        IFNULL(category_id, 0), trim(IFNULL(note, '')),
+        abs(julianday(booking_date) - julianday(?4))
+   FROM transactions
+  WHERE account_id = ?1 AND external_id LIKE 'mm-%' AND amount_cents = ?2
+    AND deleted_ms IS NULL AND id != ?3
+    AND booking_date BETWEEN date(?4, '-3 days') AND date(?4, '+3 days')
+    AND abs(julianday(booking_date) - julianday(?4)) <= 2
+  ORDER BY id";
 
 /// A MoneyMoney row that may be the twin of a bank booking.
 struct Twin {
@@ -1946,6 +1952,22 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
             crate::test_support::query_plan(&v.db().unwrap(), IMPORTED_BY_FP_SQL, params![1, "x"]);
         assert!(
             p.contains("INDEX tx_import_fp (account_id=? AND import_fp=?)"),
+            "{p}"
+        );
+    }
+
+    #[test]
+    fn twin_search_uses_the_amount_date_index() {
+        let (_dir, v) = vault();
+        let p = crate::test_support::query_plan(
+            &v.db().unwrap(),
+            TWIN_CANDIDATES_SQL,
+            params![1, -1250, -1, "2026-05-10"],
+        );
+        assert!(
+            p.contains(
+                "INDEX tx_amount_date (amount_cents=? AND booking_date>? AND booking_date<?)"
+            ),
             "{p}"
         );
     }
