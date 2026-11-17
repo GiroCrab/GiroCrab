@@ -242,6 +242,8 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 
 ### Widerrufen bei Darlehen und Startsaldo
 
+- **„Alle Buchungen als gelesen markieren“** lässt sich mit Strg+Z zurücknehmen, genau für die
+  Buchungen, die dabei markiert wurden.
 - **Bearbeiten › Rückgängig / Wiederholen** (Strg+Z / Strg+Umschalt+Z) gilt jetzt auch für
   Darlehen und Startsaldo: „Darlehenszuordnung“ (Buchung › Darlehen zuordnen oder Zuordnung
   aufheben), „Darlehen ändern“ (auch „Stand neu setzen“), „Darlehen anlegen“ (Rückgängig

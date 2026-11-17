@@ -1539,12 +1539,19 @@ QtObject {
         coreAsync("set_checked_for_filter", { filter: f, checked: true }, ids => {
             if (!isUnlocked || demoActive !== demo) return
             if (!ids.length) { toast = qsTr("Keine neuen Umsätze"); return }
+            UndoManager.register(qsTr("Alle Buchungen als gelesen markieren"), () => setCheckedIds(ids, false))
             toast = qsTr("%1 Umsätze als gelesen markiert").arg(ids.length)
             // the selected booking leaves a "Neu" list: keep it in the inspector (like setChecked)
             const b = selectedBooking
             if (statusFilter !== "all" && b && ids.indexOf(b.id) >= 0) stickyBooking = freshBooking(b)
             reloadBookings(); reloadAccounts()
         })
+    }
+    /// AppModel+Editing.swift setChecked(_:to:): undo / redo of markAllChecked for exactly the bookings it changed.
+    function setCheckedIds(ids, checked) {
+        if (!run(() => { core("set_checked_for_ids", { ids: ids, checked: checked }); return true })) return
+        UndoManager.register(qsTr("Alle Buchungen als gelesen markieren"), () => setCheckedIds(ids, !checked))
+        reloadBookings(); reloadAccounts()
     }
     function setCategory(b, categoryID) { setCategoryFor([b], categoryID) }
     function updateNote(b, note) {
