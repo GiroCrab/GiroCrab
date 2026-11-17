@@ -1134,11 +1134,7 @@ struct WealthView: View {
 
     /// The chart of the securities header: the period menu above steers what it shows.
     private var depotChartContent: AssetValueChart.Content {
-        if depotHistory.isEmpty {
-            return .unavailable(String(localized: "Noch kein Verlauf: der Wert wird ab dem ersten Abruf festgehalten"))
-        }
-        let (from, to) = model.depotPeriodRange
-        return .depot(DepotValueHistory.points(depotHistory, from: from, to: to), from: from, to: to)
+        DepotValueHistory.chartContent(depotHistory, period: model.depotPeriodRange)
     }
 
     private func loadDepotHistory(_ ids: [Int64]) async {

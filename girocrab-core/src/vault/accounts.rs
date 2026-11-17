@@ -605,18 +605,14 @@ impl Vault {
         let start = today - chrono::Duration::days(days.max(1) as i64 - 1);
         // Securities depots with a valuation history (`depot_values`) take their course from it;
         // the walk back over bookings is only for the other accounts, so nothing counts twice.
-        let depot_series = if ids.is_empty() {
-            None
-        } else {
-            crate::depot_values::series(&*self.db()?, &ids, start, today)?
-        };
+        let depot_series = crate::depot_values::series(&*self.db()?, &ids, start, today)?;
         let book_ids: Vec<i64> = ids
             .iter()
             .copied()
             .filter(|id| {
                 depot_series
                     .as_ref()
-                    .is_none_or(|s| !s.accounts.contains(id))
+                    .is_none_or(|s| s.firsts.iter().all(|f| f.0 != *id))
             })
             .collect();
         // the depots with a history enter with their values of each day, not with today's balance
@@ -627,39 +623,16 @@ impl Vault {
                 .map(|a| a.balance_cents)
                 .sum();
         }
-        let mut per_day: HashMap<String, i64> = HashMap::new();
-        if !book_ids.is_empty() {
+        let from = start.format("%Y-%m-%d").to_string();
+        let per_day = {
             let db = self.db()?;
             for a in chosen.iter().filter(|a| book_ids.contains(&a.id)) {
                 if !a.balance_derived {
                     balance += super::balances::booked_after(&db, a.id, &a.balance_date)?;
                 }
             }
-            let list = (0..book_ids.len())
-                .map(|n| format!("?{}", n + 2))
-                .collect::<Vec<_>>()
-                .join(",");
-            // the same bookings move it as in the list's running balance (#577):
-            // a computed balance counts pending ones and starts at its opening date
-            let mut stmt = db.prepare(&format!(
-                "SELECT t.booking_date, SUM(t.amount_cents) {}
-                  WHERE t.account_id IN ({list}) AND t.booking_date > ?1 AND t.deleted_ms IS NULL AND {}
-                  GROUP BY t.booking_date",
-                super::balances::COUNTED_FROM,
-                super::balances::counts_sql()
-            ))?;
-            let date = start.format("%Y-%m-%d").to_string();
-            let args: Vec<rusqlite::types::Value> = std::iter::once(date.into())
-                .chain(book_ids.iter().map(|&i| i.into()))
-                .collect();
-            let rows = stmt.query_map(rusqlite::params_from_iter(args), |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-            })?;
-            for row in rows {
-                let (d, s) = row?;
-                per_day.insert(d, s);
-            }
-        }
+            super::balances::booked_per_day(&db, &book_ids, &from, None)?
+        };
         // Sachwerte (#87): no bookings, their value moves with prices – the walk
         // back keeps today's value, the daily valuation replaces it per day
         let valuation = if ids.is_empty() {
@@ -689,15 +662,6 @@ impl Vault {
                 p.balance_cents += v;
             }
             let db = self.db()?;
-            let mut stmt = db.prepare(&format!(
-                "SELECT t.booking_date, SUM(t.amount_cents) {}
-                  WHERE t.account_id = ?1 AND t.booking_date > ?2 AND t.booking_date <= ?3
-                    AND t.deleted_ms IS NULL AND {}
-                  GROUP BY t.booking_date",
-                super::balances::COUNTED_FROM,
-                super::balances::counts_sql()
-            ))?;
-            let from = start.format("%Y-%m-%d").to_string();
             for (id, first_day, first_value) in &depots.firsts {
                 let Ok(first) = chrono::NaiveDate::parse_from_str(first_day, "%Y-%m-%d") else {
                     continue;
@@ -706,9 +670,7 @@ impl Vault {
                 if k <= 0 {
                     continue;
                 }
-                let booked: HashMap<String, i64> = stmt
-                    .query_map(params![id, from, first_day], |r| Ok((r.get(0)?, r.get(1)?)))?
-                    .collect::<Result<_, _>>()?;
+                let booked = super::balances::booked_per_day(&db, &[*id], &from, Some(first_day))?;
                 if !booked.is_empty() {
                     first_known = 0; // its walk back is real history
                 }

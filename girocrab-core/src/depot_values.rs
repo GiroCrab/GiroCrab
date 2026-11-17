@@ -21,7 +21,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::CoreResult;
 
-pub mod observations;
+pub(crate) mod observations;
 pub(crate) mod positions;
 
 /// Step 28. `depot_observations` is the raw layer ([`observations`]): one row per value a
@@ -63,28 +63,33 @@ CREATE TABLE IF NOT EXISTS depot_values (
 
 pub(crate) const QUALITY_OBSERVED: &str = "observed";
 
-fn is_iso_date(s: &str) -> bool {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
+/// A securities depot whose values are derived: the one place that decides which accounts have
+/// a value history (a Sachwerte account has its own value series).
+pub(crate) struct DepotRow {
+    pub currency: String,
+    pub balance_cents: i64,
+    pub balance_date: String,
 }
 
-/// The currency of a securities depot whose values are derived, `None` for any other account
-/// (a Sachwerte account has its own value series).
-fn depot_currency(conn: &Connection, account_id: i64) -> CoreResult<Option<String>> {
-    let row: Option<(String, String)> = conn
-        .query_row(
-            "SELECT kind, currency FROM accounts WHERE id = ?1 AND deleted_ms IS NULL",
-            [account_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+/// The depot `account_id`, `None` for any other (or a deleted) account.
+pub(crate) fn depot_row(conn: &Connection, account_id: i64) -> CoreResult<Option<DepotRow>> {
+    let row = conn
+        .prepare_cached(
+            "SELECT currency, balance_cents, balance_date FROM accounts
+             WHERE id = ?1 AND kind = 'brokerage' AND deleted_ms IS NULL",
+        )?
+        .query_row([account_id], |r| {
+            Ok(DepotRow {
+                currency: r.get(0)?,
+                balance_cents: r.get(1)?,
+                balance_date: r.get(2)?,
+            })
+        })
         .optional()?;
-    Ok(match row {
-        Some((kind, currency))
-            if kind == "brokerage" && !crate::assets::is_tangible(conn, account_id)? =>
-        {
-            Some(currency)
-        }
-        _ => None,
-    })
+    match row {
+        Some(_) if crate::assets::is_tangible(conn, account_id)? => Ok(None),
+        row => Ok(row),
+    }
 }
 
 /// Derives `depot_values` of a depot from its total observations in the account currency
@@ -95,7 +100,7 @@ pub(crate) fn rebuild(
     account_id: i64,
     fetch_day: Option<&str>,
 ) -> CoreResult<()> {
-    let Some(currency) = depot_currency(conn, account_id)? else {
+    let Some(DepotRow { currency, .. }) = depot_row(conn, account_id)? else {
         conn.execute(
             "DELETE FROM depot_values WHERE account_id = ?1",
             [account_id],
@@ -201,11 +206,9 @@ pub(crate) struct Series {
     /// Securities depots among `ids`, with or without a history. The chart reads it next to
     /// `covered` ("2 of 3 depots") in `Vault::depot_value_history`.
     pub total_depots: u32,
-    /// The depots with at least one point: the caller leaves them out of its own walk back over
-    /// bookings.
-    pub accounts: Vec<i64>,
-    /// Per depot with a point its first one (day, value), possibly before `start`: a chart without
-    /// coverage (`balance_history`) carries it back instead of letting the depot jump in.
+    /// Per depot with at least one point its first one (day, value), possibly before `start`: the
+    /// caller leaves these depots out of its own walk back over bookings, and a chart without
+    /// coverage (`balance_history`) carries the value back instead of letting the depot jump in.
     pub firsts: Vec<(i64, String, i64)>,
 }
 
@@ -221,7 +224,6 @@ pub(crate) fn series(
     let days = (end - start).num_days() as usize + 1;
     let mut total = vec![0_i64; days];
     let mut covered_days = vec![0_u32; days];
-    let mut with_points = Vec::new();
     let mut firsts = Vec::new();
     let mut total_depots = 0_u32;
     let mut q = conn.prepare(
@@ -233,15 +235,10 @@ pub(crate) fn series(
     )?;
     let last = end.format("%Y-%m-%d").to_string();
     for &id in ids {
-        let kind: Option<String> = conn
-            .query_row("SELECT kind FROM accounts WHERE id = ?1", [id], |r| {
-                r.get(0)
-            })
-            .ok();
         // another account (a former depot keeps stale values until it is derived again) has none
-        if kind.as_deref() != Some("brokerage") || crate::assets::is_tangible(conn, id)? {
+        let Some(depot) = depot_row(conn, id)? else {
             continue;
-        }
+        };
         total_depots += 1;
         let mut points: Vec<(String, i64)> = q
             .query_map(params![id, last], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -252,12 +249,11 @@ pub(crate) fn series(
             // A depot that was never recorded (a vault from before the history) is known from its
             // reported balance on: one value on its valuation day, unknown before it. Its balance
             // is never carried backwards over the days it was not seen.
-            match reported_point(conn, id, end)? {
+            match reported_point(conn, id, &depot, end)? {
                 Some(point) => points.push(point),
                 None => continue,
             }
         }
-        with_points.push(id);
         firsts.push((id, points[0].0.clone(), points[0].1));
         let mut next = 0;
         let mut current: Option<i64> = None;
@@ -275,48 +271,38 @@ pub(crate) fn series(
             }
         }
     }
-    Ok((!with_points.is_empty()).then_some(Series {
+    Ok((!firsts.is_empty()).then_some(Series {
         values: total,
         covered: covered_days,
         total_depots,
-        accounts: with_points,
         firsts,
     }))
 }
 
-/// The balance an account reports, as one point (valuation day or `end`), for a securities depot
-/// that has no recorded value and no bookings. A balance of 0 is not a reported value.
-fn reported_point(conn: &Connection, id: i64, end: NaiveDate) -> CoreResult<Option<(String, i64)>> {
-    let row: Option<(String, i64, String)> = conn
-        .query_row(
-            "SELECT kind, balance_cents, balance_date FROM accounts WHERE id = ?1 AND deleted_ms IS NULL",
-            [id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .ok();
-    let Some((kind, cents, date)) = row else {
-        return Ok(None);
-    };
-    if kind != "brokerage" || cents == 0 || crate::assets::is_tangible(conn, id)? {
+/// The balance a depot reports, as one point (valuation day or `end`), for a depot that has no
+/// recorded value and no bookings. A balance of 0 is not a reported value.
+fn reported_point(
+    conn: &Connection,
+    id: i64,
+    depot: &DepotRow,
+    end: NaiveDate,
+) -> CoreResult<Option<(String, i64)>> {
+    if depot.balance_cents == 0 {
         return Ok(None);
     }
     // An account with bookings keeps the walk back over them: that history is real. Only a depot
     // without any would show nothing but today's value carried backwards.
-    let bookings: i64 = conn.query_row(
-        "SELECT count(*) FROM transactions WHERE account_id = ?1 AND deleted_ms IS NULL",
+    let booked: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM transactions WHERE account_id = ?1 AND deleted_ms IS NULL)",
         [id],
         |r| r.get(0),
     )?;
-    if bookings > 0 {
+    if booked {
         return Ok(None);
     }
     // a missing, malformed or future date (a bank's value date) is the end of the series
-    let last = end.format("%Y-%m-%d").to_string();
-    let day = match date.trim() {
-        d if is_iso_date(d) && d <= last.as_str() => d.to_string(),
-        _ => last,
-    };
-    Ok(Some((day, cents)))
+    let (day, _) = observations::valuation_day(&depot.balance_date, end);
+    Ok(Some((day, depot.balance_cents)))
 }
 
 #[cfg(test)]
@@ -472,7 +458,7 @@ mod tests {
         );
         assert_eq!(s.covered, vec![0, 0, 1, 1, 1, 1, 1, 1, 1, 1]);
         assert_eq!(s.total_depots, 1);
-        assert_eq!(s.accounts, vec![id]);
+        assert_eq!(s.firsts.iter().map(|f| f.0).collect::<Vec<_>>(), vec![id]);
         assert!(
             series(&db, &[id + 99], day("2026-03-01"), day("2026-03-10"))
                 .unwrap()
@@ -498,7 +484,7 @@ mod tests {
             s.total_depots, 3,
             "a depot without any point is still a depot"
         );
-        assert_eq!(s.accounts, vec![a, b]);
+        assert_eq!(s.firsts.iter().map(|f| f.0).collect::<Vec<_>>(), vec![a, b]);
     }
 
     #[test]

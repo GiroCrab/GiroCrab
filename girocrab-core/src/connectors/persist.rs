@@ -515,19 +515,8 @@ pub(crate) fn store_fetch(
         // the inventory before this fetch: a position missing from the new one was sold (#578)
         let mut previous: HashMap<i64, Vec<String>> = HashMap::new();
         for acc_id in by_account.keys() {
-            let mut q =
-                tx.prepare_cached("SELECT isin, name FROM holdings WHERE account_id = ?1")?;
-            let rows = q.query_map([acc_id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?;
-            let mut keys = Vec::new();
-            for row in rows {
-                let (isin, name) = row?;
-                keys.extend(crate::depot_values::observations::position_key(
-                    &isin, &name,
-                ));
-            }
-            previous.insert(*acc_id, keys);
+            let held = crate::depot_values::positions::held_keys(&tx, *acc_id)?;
+            previous.insert(*acc_id, held.into_iter().collect());
         }
         for (acc_id, list) in &by_account {
             tx.execute("DELETE FROM holdings WHERE account_id = ?1", [acc_id])?;
@@ -788,23 +777,25 @@ pub(crate) fn store_fetch(
             .iter()
             .filter_map(|r| account_ids.get(r).copied())
             .collect();
-        for (acc_id, list) in &by_account {
-            let positions: Vec<&crate::models::Holding> = list.iter().map(|r| &r.holding).collect();
+        // every fetched account once: with its inventory, or (an overview) the total alone
+        let fetched = data
+            .accounts
+            .iter()
+            .filter_map(|acc| account_ids.get(&acc.external_ref).copied())
+            .chain(by_account.keys().copied())
+            .collect::<std::collections::BTreeSet<i64>>();
+        for id in fetched {
+            let positions: Option<Vec<&crate::models::Holding>> = by_account
+                .get(&id)
+                .map(|list| list.iter().map(|r| &r.holding).collect());
             crate::depot_values::record_fetch(
                 &tx,
-                *acc_id,
-                Some(&positions),
-                previous.get(acc_id).map_or(&[][..], |p| p.as_slice()),
-                !unknown.contains(acc_id),
+                id,
+                positions.as_deref(),
+                previous.get(&id).map_or(&[][..], |p| p.as_slice()),
+                !unknown.contains(&id),
                 observed_ms,
             )?;
-        }
-        for acc in &data.accounts {
-            if let Some(id) = account_ids.get(&acc.external_ref) {
-                if !by_account.contains_key(id) && !unknown.contains(id) {
-                    crate::depot_values::record_fetch(&tx, *id, None, &[], true, observed_ms)?;
-                }
-            }
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = data.state {

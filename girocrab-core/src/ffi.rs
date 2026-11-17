@@ -170,5 +170,5 @@ fn classify_asset(
 
 #[uniffi::export]
 fn holding_position_key(isin: String, name: String) -> Option<String> {
-    crate::depot_values::observations::holding_position_key(isin, name)
+    crate::depot_values::observations::position_key(&isin, &name)
 }

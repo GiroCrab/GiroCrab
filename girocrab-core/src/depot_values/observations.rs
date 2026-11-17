@@ -28,11 +28,7 @@ pub(crate) const SOURCE_FETCH: &str = "fetch";
 pub(crate) const SOURCE_IMPORT: &str = "import";
 const CASH: &str = "cash";
 
-/// The key of a position, `None` without ISIN and name.
-pub fn holding_position_key(isin: String, name: String) -> Option<String> {
-    position_key(&isin, &name)
-}
-
+/// The key of a position (the apps get it through `ffi.rs`), `None` without ISIN and name.
 pub(crate) fn position_key(isin: &str, name: &str) -> Option<String> {
     // only a valid ISIN: placeholders ("-", "N/A") or a WKN would join different securities
     if let Some(isin) = crate::asset_classification::normalized_isin(isin) {
@@ -54,7 +50,7 @@ fn iso(day: chrono::NaiveDate) -> String {
 
 /// The valuation day of a fetch: the bank's date, unless it is missing, malformed or in the
 /// future; then the retrieval day (`true` = assumed).
-fn valuation_day(balance_date: &str, today: chrono::NaiveDate) -> (String, bool) {
+pub(crate) fn valuation_day(balance_date: &str, today: chrono::NaiveDate) -> (String, bool) {
     match chrono::NaiveDate::parse_from_str(balance_date.trim(), "%Y-%m-%d") {
         Ok(d) if d <= today => (iso(d), false),
         _ => (iso(today), true),
@@ -85,13 +81,14 @@ struct FetchStamp<'a> {
 fn write_if_changed(conn: &Connection, s: &FetchStamp, v: &Value) -> CoreResult<bool> {
     type Latest = (String, i64, Option<f64>, Option<i64>, bool);
     let prev: Option<Latest> = conn
-        .query_row(
+        .prepare_cached(
             "SELECT value_date, value_cents, quantity, price_cents, confirmed FROM depot_observations
              WHERE account_id = ?1 AND kind = ?2 AND position = ?3 AND currency = ?4 AND source = 'fetch'
              ORDER BY value_date DESC, observed_ms DESC LIMIT 1",
-            params![s.account_id, v.kind, v.position, s.currency],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-        )
+        )?
+        .query_row(params![s.account_id, v.kind, v.position, s.currency], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
         .optional()?;
     if prev.is_some_and(|p| {
         p == (
@@ -142,20 +139,14 @@ pub(crate) fn record_fetch(
     balance_known: bool,
     observed_ms: i64,
 ) -> CoreResult<Option<String>> {
-    let row: Option<(String, String, i64, String)> = conn
-        .query_row(
-            "SELECT kind, currency, balance_cents, balance_date FROM accounts
-             WHERE id = ?1 AND deleted_ms IS NULL",
-            [account_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
-        .optional()?;
-    let Some((kind, currency, balance, balance_date)) = row else {
+    let Some(super::DepotRow {
+        currency,
+        balance_cents: balance,
+        balance_date,
+    }) = super::depot_row(conn, account_id)?
+    else {
         return Ok(None);
     };
-    if kind != "brokerage" || crate::assets::is_tangible(conn, account_id)? {
-        return Ok(None);
-    }
     let today = chrono::Local::now().date_naive();
     let (value_date, date_assumed) = if balance_known {
         valuation_day(&balance_date, today)

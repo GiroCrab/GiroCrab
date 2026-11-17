@@ -119,7 +119,7 @@ struct Group {
 }
 
 /// Keys of the positions a depot holds now (`holdings`).
-fn held_keys(conn: &Connection, account_id: i64) -> CoreResult<HashSet<String>> {
+pub(crate) fn held_keys(conn: &Connection, account_id: i64) -> CoreResult<HashSet<String>> {
     let mut q = conn.prepare_cached("SELECT isin, name FROM holdings WHERE account_id = ?1")?;
     let rows = q.query_map([account_id], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))

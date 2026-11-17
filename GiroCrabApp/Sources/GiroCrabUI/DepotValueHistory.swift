@@ -15,6 +15,14 @@ enum DepotValueHistory {
     /// How far back the view asks the core; the period then cuts what it shows.
     static let lookbackDays: UInt32 = 3650
 
+    /// The header chart of all `points` cut to `period` (ISO days, nil = open), or why there is none.
+    static func chartContent(_ points: [DepotValuePoint], period: (from: String?, to: String?)) -> AssetValueChart.Content {
+        if points.isEmpty {
+            return .unavailable(String(localized: "Noch kein Verlauf: der Wert wird ab dem ersten Abruf festgehalten"))
+        }
+        return .depot(Self.points(points, from: period.from, to: period.to), from: period.from, to: period.to)
+    }
+
     /// The points inside `from...to` (ISO dates, nil = open), oldest first.
     /// The core sends `YYYY-MM-DD`, so the comparison is a plain string comparison.
     static func points(_ all: [DepotValuePoint], from: String?, to: String?) -> [DepotValuePoint] {

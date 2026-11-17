@@ -10,20 +10,28 @@ struct DepotData {
     let transactions: [SecurityTransaction]
     /// The depot's value history (all of it; the period cuts it for the chart).
     let valuePoints: [DepotValuePoint]
-    /// Positions with a value history (#578), sold ones included.
-    let valuePositions: [ValuePosition]
+    /// Held positions with a value history (#578) by `DepotPosition.id`, worked out once per load.
+    let heldHistory: [String: ValuePosition]
+    /// Positions no longer held that have a history, the latest sale first.
+    let soldPositions: [ValuePosition]
     var holdings: [Holding] { assets.map(\.holding) }
 
-    /// The history of a held position, by its key (`holdingPositionKey`).
-    func valuePosition(_ p: DepotPosition) -> ValuePosition? {
-        guard let key = holdingPositionKey(isin: p.holding.isin, name: p.holding.name) else { return nil }
-        return valuePositions.first { $0.held && $0.position == key }
+    init(accountId: Int64, revision: Int, assets: [ClassifiedAsset], transactions: [SecurityTransaction],
+         valuePoints: [DepotValuePoint], valuePositions: [ValuePosition]) {
+        self.accountId = accountId
+        self.revision = revision
+        self.assets = assets
+        self.transactions = transactions
+        self.valuePoints = valuePoints
+        let held = Dictionary(valuePositions.filter(\.held).map { ($0.position, $0) }, uniquingKeysWith: { first, _ in first })
+        heldHistory = Dictionary(DepotPosition.make(assets).compactMap { p in
+            holdingPositionKey(isin: p.holding.isin, name: p.holding.name).flatMap { held[$0] }.map { (p.id, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+        soldPositions = valuePositions.filter { !$0.held }.sorted { $0.lastDate > $1.lastDate }
     }
 
-    /// Positions no longer held that have a history, the latest sale first.
-    var soldPositions: [ValuePosition] {
-        valuePositions.filter { !$0.held }.sorted { $0.lastDate > $1.lastDate }
-    }
+    /// The history of a held position.
+    func valuePosition(_ p: DepotPosition) -> ValuePosition? { heldHistory[p.id] }
 }
 
 enum DepotLoadState {
@@ -317,11 +325,7 @@ struct DepotDetailView: View {
     /// the depot has none: nothing is drawn there, and nothing is derived from bookings.
     private var valuationHistory: AssetValueChart.Content {
         guard let data else { return .loading }
-        if data.valuePoints.isEmpty {
-            return .unavailable(String(localized: "Noch kein Verlauf: der Wert wird ab dem ersten Abruf festgehalten"))
-        }
-        let (from, to) = model.depotPeriodRange
-        return .depot(DepotValueHistory.points(data.valuePoints, from: from, to: to), from: from, to: to)
+        return DepotValueHistory.chartContent(data.valuePoints, period: model.depotPeriodRange)
     }
 
     // MARK: activities
