@@ -135,8 +135,10 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 - **GiroCode in Rechnungen:** Ein Bild (PNG, JPEG) oder PDF mit GiroCode (EPC-QR-Code), ins
   Überweisungsformular gezogen, füllt Empfänger, IBAN, BIC, Betrag und Zweck aus – wie eine
   ZUGFeRD-Rechnung, danach „Felder ausgefüllt – bitte prüfen“. In PDFs werden die ersten zehn
-  Seiten durchsucht (Mac-App: nur die erste); dafür braucht es Qts PDF-Bildmodul
-  (`qt6-image-formats-plugin-pdf`, wie beim Drucken).
+  Seiten durchsucht (Mac-App: nur die erste), kleine Codes auf den ersten beiden Seiten in
+  höherer Auflösung; dafür braucht es Qts PDF-Bildmodul (`qt6-image-formats-plugin-pdf`, wie
+  beim Drucken). Solange die Rechnung gelesen wird, zeigt das Formular einen Fortschrittskreis
+  mit „Lese Rechnung …“.
 
 ### Geplant
 

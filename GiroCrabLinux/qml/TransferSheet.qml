@@ -14,6 +14,8 @@ Sheet {
     property bool confirming: false
     property var suggestions: []
     property string importNote: ""
+    /// Linux only: a dropped invoice is being read (large PDFs take seconds) – the sheet shows a spinner.
+    property bool readingInvoice: false
     property var templates: []
     readonly property int maxPurpose: 140
     /// "Umbuchung": the recipient is one of the user's own accounts.
@@ -75,7 +77,11 @@ Sheet {
         importNote = qsTr("Lese Rechnung …")
         const path = decodeURIComponent(url.toString().replace(/^file:\/\//, ""))
         // read off the GUI thread (large PDFs); a closed sheet drops the late answer
-        PaymentParser.parseFile(path, p => { if (sheet.visible && !sheet.confirming) sheet.report(p || {}) })
+        readingInvoice = true
+        PaymentParser.parseFile(path, p => {
+            readingInvoice = false
+            if (sheet.visible && !sheet.confirming) sheet.report(p || {})
+        })
     }
     function report(p) {
         if (PaymentParser.isEmpty(p)) { importNote = qsTr("Nichts Erkennbares gefunden"); return }
@@ -595,13 +601,32 @@ Sheet {
     DropArea {
         parent: sheet.contentItem
         anchors.fill: parent
-        enabled: !sheet.confirming
+        enabled: !sheet.confirming && !sheet.readingInvoice
         onDropped: drop => { if (drop.hasUrls) sheet.importInvoice(drop.urls[0]) }
         Rectangle {
             anchors.fill: parent; anchors.margins: 4
             visible: parent.containsDrag
             radius: 12; color: Theme.withAlpha(Theme.accent, 0.06)
             border.color: Theme.accent; border.width: 2
+        }
+    }
+
+    // Linux only: while a dropped invoice is read, a spinner over the form says so (the Mac
+    // only changes the footer text, which can be scrolled out of view here).
+    Rectangle {
+        parent: sheet.contentItem
+        anchors.fill: parent
+        visible: sheet.readingInvoice
+        z: 10
+        radius: 12; color: Theme.withAlpha(Theme.card, 0.8)
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: w => w.accepted = true }
+        Column {
+            anchors.centerIn: parent
+            spacing: 10
+            BusyIndicator { anchors.horizontalCenter: parent.horizontalCenter; running: parent.parent.visible
+                            implicitWidth: 40; implicitHeight: 40 }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: qsTr("Lese Rechnung …")
+                   font.pixelSize: Theme.body; color: Theme.text }
         }
     }
 

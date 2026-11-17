@@ -13,6 +13,9 @@ const MAX_SIDE: c_int = 4096;
 /// The Mac app looks at the first PDF page only; a GiroCode on a later page (e.g. the
 /// payment slip at the end) is found here too, up to this page.
 const MAX_PAGES: c_int = 10;
+/// The second, sharper pass (bounded by MAX_SIDE: about 4.9× for A4) covers this many pages.
+const SHARP_PAGES: usize = 2;
+const SHARP_SCALE: f64 = 8.0;
 
 type GraySink = extern "C" fn(
     ctx: *mut c_void,
@@ -74,39 +77,61 @@ extern "C" fn collect_page(
 }
 
 /// The first "BCD" payload (EPC QR) in the image or PDF `data`, page by page; `None` when
-/// Qt cannot read the data or no page carries a GiroCode.
+/// Qt cannot read the data or no page carries a GiroCode. A small code (about 2 cm) is too
+/// coarse at 3×: when no page had one, the first PDF pages are scanned again, sharper.
 pub fn epc_payload(data: &[u8]) -> Option<String> {
+    let mut sizes = Vec::new();
     let mut index = 0;
     loop {
-        let mut page: Option<Gray> = None;
-        // SAFETY: `data` outlives the call; `collect_page` gets `&mut page` back as `ctx`.
-        let count = unsafe {
-            girocrab_scan_page(
-                data.as_ptr(),
-                data.len(),
-                index,
-                PDF_SCALE,
-                MAX_SIDE,
-                (&mut page as *mut Option<Gray>).cast(),
-                collect_page,
-            )
-        };
+        let (count, page) = render(data, index, PDF_SCALE);
         if count < 0 && index == 0 {
             return None;
         }
         if let Some(g) = page {
-            let found = payloads(g.width, g.height, &g.pixels)
-                .into_iter()
-                .find(|p| p.starts_with("BCD"));
-            if found.is_some() {
-                return found;
+            sizes.push((g.width, g.height));
+            if let Some(found) = first_epc(&g) {
+                return Some(found);
             }
         }
         index += 1;
         if count < 0 || index >= count.min(MAX_PAGES) {
-            return None;
+            break;
         }
     }
+    for (index, size) in sizes.into_iter().take(SHARP_PAGES).enumerate() {
+        let (_, page) = render(data, index as c_int, SHARP_SCALE);
+        // a photo (or a page already at MAX_SIDE) comes back unchanged: nothing new to find
+        if let Some(g) = page.filter(|g| (g.width, g.height) != size) {
+            if let Some(found) = first_epc(&g) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// Page `index` of `data` as grey pixels, with the page count (-1: unreadable).
+fn render(data: &[u8], index: c_int, pdf_scale: f64) -> (c_int, Option<Gray>) {
+    let mut page: Option<Gray> = None;
+    // SAFETY: `data` outlives the call; `collect_page` gets `&mut page` back as `ctx`.
+    let count = unsafe {
+        girocrab_scan_page(
+            data.as_ptr(),
+            data.len(),
+            index,
+            pdf_scale,
+            MAX_SIDE,
+            (&mut page as *mut Option<Gray>).cast(),
+            collect_page,
+        )
+    };
+    (count, page)
+}
+
+fn first_epc(g: &Gray) -> Option<String> {
+    payloads(g.width, g.height, &g.pixels)
+        .into_iter()
+        .find(|p| p.starts_with("BCD"))
 }
 
 /// qrPayloads(_:): the text of every QR code in a grey image. A payload that is no UTF-8
