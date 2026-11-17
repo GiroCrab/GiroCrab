@@ -2471,6 +2471,104 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// Depot and Sachwerte views (DepotDetailView.qml, DepotPositionsTable.qml, DepotActivitiesView.qml,
+    /// TangibleAccountDetailView.qml, #564/#625): the fields DepotMetrics.qml reads, round-tripped as JSON.
+    #[test]
+    fn depot_view_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-depot-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![6; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let tangible = call("list_tangible_account_ids", json!({}));
+        let accounts = call("list_accounts", json!({}));
+        let depots: Vec<_> = accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| {
+                a["kind"] == "Brokerage" && !tangible.as_array().unwrap().contains(&a["id"])
+            })
+            .map(|a| a["id"].clone())
+            .collect();
+        assert!(!depots.is_empty(), "demo has a securities depot");
+        let mut holdings = 0;
+        let mut linked = 0;
+        for depot in &depots {
+            for c in call("classified_assets", json!({ "account_id": depot }))
+                .as_array()
+                .unwrap()
+            {
+                let h = &c["holding"];
+                for key in ["isin", "wkn", "name", "custody_type", "currency"] {
+                    assert!(h[key].is_string(), "holding.{key}");
+                }
+                assert!(h["quantity"].is_f64() && h["value_cents"].is_i64());
+                assert!(h["current_price_cents"].is_i64() && h["purchase_price_cents"].is_i64());
+                // optional figures and the trading currency (#625) are present, null or a number
+                for key in [
+                    "prev_day_value_cents",
+                    "profit_loss_purchase_cents",
+                    "profit_loss_prev_day_cents",
+                    "native_price_cents",
+                    "native_value_cents",
+                ] {
+                    assert!(h[key].is_null() || h[key].is_i64(), "holding.{key}");
+                }
+                assert!(c["classification"]["asset_class"].is_string());
+                assert!(c["classification"]["instrument"].is_string());
+                assert!(c["asset_item_id"].is_null());
+                // what the QML sends back for a holding (e.g. a merged position) parses again
+                let back: girocrab_core::Holding =
+                    serde_json::from_value(h.clone()).expect("holding round trip");
+                assert_eq!(serde_json::to_value(&back).unwrap(), *h);
+                holdings += 1;
+            }
+            for t in call("list_security_transactions", json!({ "account_id": depot }))
+                .as_array()
+                .unwrap()
+            {
+                assert_eq!(&t["account_id"], depot);
+                for key in [
+                    "booking_date",
+                    "settlement_date",
+                    "isin",
+                    "wkn",
+                    "name",
+                    "currency",
+                    "booking_text",
+                ] {
+                    assert!(t[key].is_string(), "transaction.{key}");
+                }
+                for key in ["value_cents", "fees_cents", "taxes_cents"] {
+                    assert!(t[key].is_i64(), "transaction.{key}");
+                }
+                assert!(
+                    ["Buy", "Sell", "Dividend", "Fee", "Tax", "Other"]
+                        .contains(&t["direction"].as_str().unwrap())
+                );
+                assert!(t["cash_transaction_id"].is_null() || t["cash_transaction_id"].is_i64());
+                if t["cash_transaction_id"].is_i64() {
+                    linked += 1;
+                }
+            }
+        }
+        assert!(holdings > 0, "demo depots hold positions");
+        assert!(linked > 0, "demo activities link to clearing bookings");
+        // Sachwerte: items as positions, yesterday's unit value of a priced item
+        for c in call("classified_assets", json!({ "account_id": tangible[0] }))
+            .as_array()
+            .unwrap()
+        {
+            assert!(c["asset_item_id"].is_i64());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
     /// Sachwerte (AssetEditorSheet.qml, AssetActionSheet.qml): the JSON the sheets send.
     #[test]
     fn tangible_asset_calls() {

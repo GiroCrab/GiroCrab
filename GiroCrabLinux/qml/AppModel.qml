@@ -1422,7 +1422,7 @@ QtObject {
     readonly property var headerBalance: {
         const sel = sidebarSelection
         if (sel === "all") return { label: qsTr("Verfügbar (Giro, Tagesgeld, Karten)"), cents: liquidBalance }
-        if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : qsTr("Kontostand"), cents: a.balance_cents } : null }
+        if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : DepotState.depotKind(a.id) === "securities" ? qsTr("Depotwert") : qsTr("Kontostand"), cents: a.balance_cents } : null }
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
@@ -4009,6 +4009,8 @@ QtObject {
         if (account) {
             sidebarSelection = "account:" + account.id
             selectedBookingID = null
+            // --depot-tab activities: a securities depot on its activities tab (#564)
+            if (launchValue("--depot-tab") === "activities") DepotState.depotTab = "activities"
         }
         switch (launchValue("--demo-filter")) {
         case "income": directionFilter = "Income"; break
