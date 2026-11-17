@@ -164,6 +164,18 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         d.copy(rules = if (exists) d.rules.map { if (it.id == rule.id) rule else it } else d.rules + rule)
     }
 
+    fun upsertLoan(loan: ManualLoan) = editData { d ->
+        d.copy(loans = if (d.loans.any { it.id == loan.id }) d.loans.map { if (it.id == loan.id) loan else it } else d.loans + loan)
+    }
+
+    fun deleteLoan(id: String) = editData { d -> d.copy(loans = d.loans.filterNot { it.id == id }) }
+
+    fun upsertAsset(asset: TangibleAsset) = editData { d ->
+        d.copy(assets = if (d.assets.any { it.id == asset.id }) d.assets.map { if (it.id == asset.id) asset else it } else d.assets + asset)
+    }
+
+    fun deleteAsset(id: String) = editData { d -> d.copy(assets = d.assets.filterNot { it.id == id }) }
+
     fun deleteRule(ruleId: String) = editData { d -> d.copy(rules = d.rules.filterNot { it.id == ruleId }) }
 
     /** Applies enabled rules to uncategorized bookings (never overrides manual categories). Returns count changed. */

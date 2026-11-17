@@ -125,10 +125,21 @@ data class Holding(
     val isin: String,
     val quantity: Double,
     val priceCents: Long,
+    /** Total purchase cost in EUR cents. */
     val costBasisCents: Long,
+    val wkn: String = "",
+    /** Native holding currency (#625); [priceCents] is quoted in it. */
+    val currency: String = "EUR",
+    /** EUR per one unit of [currency]. */
+    val fxRateToEur: Double = 1.0,
 ) {
-    val valueCents get() = (quantity * priceCents).toLong()
+    /** Current value in EUR cents. */
+    val valueCents get() = (quantity * priceCents * fxRateToEur).toLong()
     val gainCents get() = valueCents - costBasisCents
+    val gainPct get() = if (costBasisCents > 0) gainCents * 100.0 / costBasisCents else 0.0
+    /** Average purchase price per unit in the native currency (cents). */
+    val purchasePriceNativeCents get() =
+        if (quantity > 0 && fxRateToEur > 0) (costBasisCents / quantity / fxRateToEur).toLong() else 0L
 }
 
 data class ManualLoan(
