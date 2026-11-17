@@ -1204,6 +1204,10 @@ fn main() -> Result<(), slint::PlatformError> {
             match open_vault(demo) {
                 Ok(v) => {
                     *demo_active.lock().unwrap() = demo;
+                    win.set_demo_active(demo);
+                    win.set_has_own_vault(
+                        std::fs::metadata(vault_path()).is_ok_and(|m| m.len() > 0),
+                    );
                     views_ui::invalidate_planned_count();
                     show(&win, &v, None);
                     *vault.lock().unwrap() = Some(v);
@@ -1223,6 +1227,19 @@ fn main() -> Result<(), slint::PlatformError> {
         win.on_demo(move || {
             std::env::set_var("GIROCRAB_DEMO_SEED", "1");
             open(true)
+        });
+    }
+    {
+        // DemoBanner button: demo data <-> own vault.
+        let (open, demo_active) = (open.clone(), demo_active.clone());
+        win.on_demo_switch(move || {
+            let to_demo = !*demo_active.lock().unwrap();
+            if to_demo {
+                std::env::set_var("GIROCRAB_DEMO_SEED", "1");
+            } else {
+                std::env::remove_var("GIROCRAB_DEMO_SEED");
+            }
+            open(to_demo)
         });
     }
     {

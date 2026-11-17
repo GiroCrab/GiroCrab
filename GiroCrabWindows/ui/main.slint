@@ -32,15 +32,18 @@ global Theme {
     out property <color> window: dark ? #0f1218 : #f5f5f7;
     out property <color> surface: dark ? #161b22 : #ffffff;
     out property <color> sidebar: dark ? #161b22 : #ececf0;
-    out property <color> selected: dark ? #1f2633 : #e3e8f4;
-    out property <color> border: dark ? #262c36 : #dcdce1;
+    out property <color> selected: dark ? #1f2a3d : #dde7fb;
+    out property <color> bar: dark ? #12161d : #fafafc;
+    out property <color> warning-bg: dark ? #3a2f12 : #fff4d6;
+    out property <color> warning-text: dark ? #f5d27a : #7a5a00;
+    out property <color> border: dark ? #2b323d : #e2e2e7;
     out property <color> control-border: dark ? #2a2f3a : #d0d0d6;
     out property <color> text: dark ? #f0f4f8 : #1d1d1f;
     out property <color> amount: dark ? #e6edf3 : #1d1d1f;
     out property <color> muted: dark ? #8b949e : #6e6e73;
     out property <color> accent: #388bfd;
     out property <color> primary: #2f6feb;
-    out property <color> positive: dark ? #3fb950 : #1e8449;
+    out property <color> positive: dark ? #34d399 : #059669;
     out property <color> negative: dark ? #f47067 : #c0392b;
 }
 
@@ -539,6 +542,53 @@ component Swatches inherits HorizontalLayout {
 
 // Zero-size helper: runs `fire` whenever `tick` changes (a LineEdit inside an `if` cannot be
 // reached by id from the window's public functions).
+
+component MenuEntry inherits Rectangle {
+    in property <string> text;
+    in property <string> hint;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 28px;
+    background: ta.has-hover && root.enabled ? Theme.selected : transparent;
+    border-radius: 4px;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 24px;
+        Text { text: root.text; color: root.enabled ? Theme.text : Theme.muted; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { text: root.hint; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+    }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+component MenuSep inherits Rectangle {
+    height: 9px;
+    Rectangle { y: 4px; height: 1px; background: Theme.border; }
+}
+
+component MenuTitle inherits Rectangle {
+    in property <string> text;
+    in property <length> menu-width: 250px;
+    in property <length> menu-height: 200px;
+    callback open-menu();
+    width: lbl.preferred-width + 20px;
+    background: ta.has-hover ?Theme.selected : transparent;
+    border-radius: 4px;
+    lbl := Text { text: root.text; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-alignment: center; }
+    ta := TouchArea { clicked => { pop.show(); } }
+    pop := PopupWindow {
+        x: 0px;
+        y: root.height;
+        width: root.menu-width;
+        height: root.menu-height;
+        Rectangle { background: Theme.surface; border-color: Theme.border; border-width: 1px; border-radius: 6px; }
+        VerticalLayout {
+            padding: 4px;
+            @children
+        }
+    }
+}
+
 component ChangeTrigger inherits Rectangle {
     in property <int> tick;
     callback fire();
@@ -821,6 +871,9 @@ export component MainWindow inherits Window {
 
     callback unlock();
     callback demo();
+    callback demo-switch();
+    in property <bool> demo-active: false;
+    in property <bool> has-own-vault: false;
     callback select-account(int);
     callback sync();
     callback search-changed();
@@ -840,6 +893,9 @@ export component MainWindow inherits Window {
 
     fs := FocusScope {
     capture-key-pressed(event) => {
+        if (root.unlocked && event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p" || event.text == "\u{10}")) { root.privacy = !root.privacy; root.privacy-changed(); return accept; }
+        if (root.unlocked && event.modifiers.control && (event.text == "," || event.text == ";")) { SettingsImportState.request(); return accept; }
+        if (root.unlocked && !root.busy && event.modifiers.control && !event.modifiers.shift && (event.text == "e" || event.text == "\u{5}")) { SettingsImportState.request(); SettingsImportState.tab = 1; return accept; }
         if (root.shortcut(event.text, event.modifiers.control)) { return accept; }
         reject
     }
@@ -864,7 +920,69 @@ export component MainWindow inherits Window {
         Text { text: root.message; color: Theme.negative; horizontal-alignment: center; wrap: word-wrap; }
     }
 
-    if unlocked: HorizontalLayout {
+    if unlocked: VerticalLayout {
+        // ---- menu bar
+        Rectangle {
+            height: 30px;
+            background: Theme.bar;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 2px;
+                MenuTitle {
+                    text: "Datei"; menu-height: 192px;
+                    MenuEntry { text: "Alle Konten abrufen"; hint: "Strg+R"; enabled: !root.busy; clicked => { root.sync(); } }
+                    MenuEntry { text: "Neue Überweisung …"; hint: "Strg+N"; enabled: !root.busy; clicked => { root.transfer-start(); } }
+                    MenuSep {}
+                    MenuEntry { text: "Vorhandene Daten importieren …"; hint: "Strg+I"; enabled: !root.busy; clicked => { root.import-file(); } }
+                    MenuEntry { text: "Umsätze exportieren …"; hint: "Strg+E"; enabled: !root.busy; clicked => { SettingsImportState.request(); SettingsImportState.tab = 1; } }
+                    MenuSep {}
+                    MenuEntry { text: "Tresor sperren"; hint: "Strg+L"; clicked => { root.lock(); } }
+                }
+                MenuTitle {
+                    text: "Ansicht"; menu-height: 262px;
+                    MenuEntry { text: "Übersicht (Alle Konten)"; clicked => { root.side-click("all"); } }
+                    MenuEntry { text: "Neue Buchungen"; clicked => { root.side-click("new"); } }
+                    MenuEntry { text: "Geplante Zahlungen"; clicked => { root.side-click("planned"); } }
+                    MenuEntry { text: "Vermögen"; clicked => { root.side-click("wealth"); } }
+                    MenuEntry { text: "Lastschriften"; clicked => { root.side-click("mandates"); } }
+                    MenuEntry { text: "Dokumente"; clicked => { root.side-click("docs"); } }
+                    MenuSep {}
+                    MenuEntry { text: root.privacy ? "Datenschutzmodus ausschalten" : "Datenschutzmodus einschalten"; hint: "Strg+Umschalt+P"; clicked => { root.privacy = !root.privacy; root.privacy-changed(); } }
+                    MenuEntry { text: root.demo-active ? "Demo-Daten beenden" : "Demo-Daten ansehen"; clicked => { root.demo-switch(); } }
+                }
+                MenuTitle {
+                    text: "Werkzeuge"; menu-height: 200px;
+                    MenuEntry { text: "Regeln …"; clicked => { root.rules-request(); } }
+                    MenuEntry { text: "Tags verwalten …"; clicked => { root.tags-request(); } }
+                    MenuEntry { text: "Kategorien …"; clicked => { root.categories-open(); } }
+                    MenuEntry { text: "Bankverbindungen …"; clicked => { root.add-open = true; } }
+                    MenuSep {}
+                    MenuEntry { text: "Einstellungen …"; hint: "Strg+,"; clicked => { SettingsImportState.request(); SettingsImportState.tab = 3; } }
+                    MenuEntry { text: "Info"; clicked => { root.about-open = true; } }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+        // ---- demo banner
+        if root.demo-active: Rectangle {
+            height: 34px;
+            background: Theme.warning-bg;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 12px;
+                Text { text: "Demo-Daten – diese Buchungen sind frei erfunden."; color: Theme.warning-text; vertical-alignment: center; horizontal-stretch: 1; }
+                Button {
+                    text: root.has-own-vault ? "Zurück zum eigenen Tresor" : "Eigenes Konto anlegen";
+                    primary: true;
+                    clicked => { root.demo-switch(); }
+                }
+            }
+        }
+        HorizontalLayout {
+        vertical-stretch: 1;
         // ---- sidebar
         Rectangle {
             width: 260px;
@@ -1383,6 +1501,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
     }
 
     // ---- add bank dialog (overlay)
