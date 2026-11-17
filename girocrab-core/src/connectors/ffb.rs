@@ -1,5 +1,6 @@
-//! FFB (FIL Fondsbank, www.ffb.de) fund depots: positions, depot transactions
-//! and the settlement account (Abwicklungskonto). There is no API: the
+//! FFB (FIL Fondsbank, www.ffb.de) fund depots: positions and depot
+//! transactions. The settlement account (Abwicklungskonto) is deliberately
+//! left out: only the depot is synced. There is no API: the
 //! connector reads the HTML pages of the customer area (unofficial, the pages
 //! may change at any time). Page shapes checked live 2026-11-17.
 //!
@@ -14,9 +15,6 @@
 //!                                                -> invested capital per position (best effort)
 //!  GET  /api/kundenansicht/transaktion/query/?datumVon=…&datumBis=…
 //!                                                -> table `#view`, 20 orders per page, link "Nächste"
-//!  GET  …/single/abwicklungskonto/               -> settlement account number and balance
-//!  GET  /api/kundenansicht/geldkonto/abwicklungskonto/turnover/query/?…
-//!                                                -> its bookings (table `#view`, same paging)
 //!  GET  /action/logout                           -> best effort
 //!
 //! The session id travels in the URL (`;jsessionid=…`), like the site's own
@@ -37,8 +35,8 @@ use super::uberspace::{
     attr, attrs, element_by_id, parse_date, table_cells, text, FORM, INPUT, LINK,
 };
 use super::{
-    http_client, BankConnector, ChallengeResponse, ConnectContext, ContentIds, FetchResult, Phase,
-    RemoteAccount, RemoteHolding, RemoteSecurityTransaction, RemoteTransaction,
+    http_client, BankConnector, ChallengeResponse, ConnectContext, FetchResult, Phase,
+    RemoteAccount, RemoteHolding, RemoteSecurityTransaction,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::tr;
@@ -175,19 +173,6 @@ fn site_date(iso: &str) -> Option<String> {
 /// Session id from a URL or page (`;jsessionid=…`).
 fn session_id(s: &str) -> Option<String> {
     SESSION.captures(s).map(|c| c[1].to_string())
-}
-
-/// Rows of a table: `(tr attributes, td inner HTMLs)`; header rows have no cells.
-fn rows(table: &str) -> Vec<(Vec<(String, String)>, Vec<&str>)> {
-    ROW.captures_iter(table)
-        .map(|r| {
-            let cells = table_cells(r.get(0).map_or("", |m| m.as_str()))
-                .into_iter()
-                .next()
-                .unwrap_or_default();
-            (attrs(&r[1]), cells)
-        })
-        .collect()
 }
 
 /// Link of the "Nächste" pager entry, if there is a next page.
@@ -521,68 +506,6 @@ fn parse_transactions(
     Ok((out, next_page(html)))
 }
 
-// ------------------------------------------------------------------ settlement account
-
-/// Number and booked balance of the settlement account fragment, if the
-/// customer has one: the row whose first cell is the account number.
-fn parse_settlement_account(html: &str) -> Option<(String, i64)> {
-    for (_, cells) in rows(html) {
-        let cells: Vec<String> = cells.into_iter().map(text).collect();
-        if cells.len() < 2 || !cells[0].chars().all(|c| c.is_ascii_digit()) || cells[0].len() < 4 {
-            continue;
-        }
-        let (balance, _) = eur_and_native(cells.last()?);
-        return Some((cells[0].clone(), balance?));
-    }
-    None
-}
-
-/// Booked rows of one page of the settlement account's turnover search.
-fn parse_turnover(
-    html: &str,
-    account_ref: &str,
-    since: &str,
-    ids: &mut ContentIds,
-) -> CoreResult<(Vec<RemoteTransaction>, Option<String>)> {
-    let mut out = Vec::new();
-    let Some(table) = element_by_id(html, "view") else {
-        return Ok((out, None));
-    };
-    for (_, cells) in rows(table) {
-        let c: Vec<String> = cells.into_iter().map(text).collect();
-        if c.len() < 5 {
-            continue;
-        }
-        let dates: Vec<String> = c[0].split_whitespace().filter_map(parse_date).collect();
-        let Some(booking_date) = dates.first().cloned() else {
-            continue;
-        };
-        if !c[4].to_lowercase().starts_with("gebucht") {
-            continue; // pending
-        }
-        let (amount, _) = eur_and_native(&c[3]);
-        let amount_cents = amount.ok_or_else(invalid)?;
-        let mut t = RemoteTransaction {
-            account_ref: account_ref.to_string(),
-            value_date: dates
-                .get(1)
-                .cloned()
-                .unwrap_or_else(|| booking_date.clone()),
-            booking_date,
-            amount_cents,
-            currency: "EUR".into(),
-            purpose: c[2].clone(),
-            booking_text: c[1].clone(),
-            ..Default::default()
-        };
-        t.external_id = ids.next(&t);
-        if t.booking_date.as_str() >= since {
-            out.push(t);
-        }
-    }
-    Ok((out, next_page(html)))
-}
-
 // ------------------------------------------------------------------ connector
 
 #[derive(Default)]
@@ -733,65 +656,6 @@ impl FfbConnector {
         }
         Ok(())
     }
-
-    async fn fetch_settlement_account(
-        &self,
-        ctx: &ConnectContext,
-        today: &str,
-        out: &mut FetchResult,
-    ) -> CoreResult<()> {
-        let Ok(html) = self
-            .page(
-                "/api/kundenansicht/depotuebersicht/single/abwicklungskonto/",
-                &[],
-            )
-            .await
-        else {
-            return Ok(()); // no settlement account
-        };
-        let Some((no, balance)) = parse_settlement_account(&html) else {
-            return Ok(());
-        };
-        let account_ref = format!("{REF_PREFIX}konto:{no}");
-        out.accounts.push(RemoteAccount {
-            external_ref: account_ref.clone(),
-            name: "FFB Abwicklungskonto".into(),
-            owner: String::new(),
-            iban: String::new(),
-            account_number: no,
-            currency: "EUR".into(),
-            kind: AccountKind::Checking,
-            balance_cents: balance,
-            balance_date: today.to_string(),
-        });
-        let since = ctx.since_for(&account_ref).to_string();
-        let from = site_date(&since).unwrap_or_else(|| "01.01.2008".into());
-        let end = site_date(today).unwrap_or_default();
-        let mut next = Some(self.url(
-            "/api/kundenansicht/geldkonto/abwicklungskonto/turnover/query/",
-            &[
-                ("datumVon", from.as_str()),
-                ("datumBis", end.as_str()),
-                ("umsatzTyp", "UNDEFINED"),
-                ("betragVon", ""),
-                ("betragBis", ""),
-                ("buchungsStatus", "UNDEFINED"),
-                ("verwendungszweck", ""),
-            ],
-        ));
-        let mut ids = ContentIds::default();
-        let mut pages = 0;
-        while let Some(url) = next.take() {
-            let html = self.get(&url).await?;
-            let (tx, more) = parse_turnover(&html, &account_ref, &since, &mut ids)?;
-            out.transactions.extend(tx);
-            pages += 1;
-            if pages < MAX_PAGES {
-                next = more.map(|href| format!("{BASE}{href}"));
-            }
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -844,7 +708,6 @@ impl BankConnector for FfbConnector {
         let today = super::today();
         let mut out = FetchResult::default();
         self.fetch_depot(ctx, &today, &mut out).await?;
-        self.fetch_settlement_account(ctx, &today, &mut out).await?;
         Ok(out)
     }
 
@@ -1432,39 +1295,6 @@ mod tests {
         .unwrap()
         .0
         .is_empty());
-    }
-
-    #[test]
-    fn reads_settlement_account_and_booked_turnover() {
-        let summary = r#"<div id="abwicklungskontoSection"><table>
-          <tr><th>Kontonummer</th><th>Kreditlinie</th><th>Dispositionssaldo</th><th>Buchungssaldo</th></tr>
-          <tr><td>1234567890</td><td>0,00 EUR</td><td>12,00 EUR</td><td>10,50 EUR</td></tr></table></div>"#;
-        assert_eq!(
-            parse_settlement_account(summary),
-            Some(("1234567890".into(), 1_050))
-        );
-        assert_eq!(parse_settlement_account("<div></div>"), None);
-
-        let turnover = r#"<table id="view"><thead><tr><th>Buchungsdatum<br>Valuta</th><th>Umsatzart</th><th>Text</th><th>Betrag</th><th>Status</th></tr></thead>
-          <tbody>
-          <tr><td>30.09.2026<br>30.09.2026</td><td>Zins</td><td>Zinsbuchung 30.06.2026-30.09.2026</td><td>0,12 EUR</td><td>Gebucht</td></tr>
-          <tr><td>15.09.2026<br>16.09.2026</td><td>Lastschrift</td><td>Beispiel</td><td>-50,00 EUR</td><td>Gebucht</td></tr>
-          <tr><td>18.11.2026<br>18.11.2026</td><td>Gutschrift</td><td>offen</td><td>5,00 EUR</td><td>Vorgemerkt</td></tr>
-          </tbody></table>"#;
-        let mut ids = ContentIds::default();
-        let (tx, next) = parse_turnover(turnover, "ffb:konto:1", "2000-01-01", &mut ids).unwrap();
-        assert_eq!(next, None);
-        assert_eq!(tx.len(), 2, "pending rows are left out");
-        assert_eq!(
-            (tx[0].booking_date.as_str(), tx[0].amount_cents),
-            ("2026-09-30", 12)
-        );
-        assert_eq!(
-            (tx[1].value_date.as_str(), tx[1].amount_cents),
-            ("2026-09-16", -5_000)
-        );
-        assert_eq!(tx[1].booking_text, "Lastschrift");
-        assert_ne!(tx[0].external_id, tx[1].external_id);
     }
 
     #[test]

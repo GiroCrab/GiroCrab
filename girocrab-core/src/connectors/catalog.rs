@@ -176,7 +176,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             login_label: tr("Login / Benutzername").into(),
             secret_label: tr("Passwort / PIN").into(),
             required_settings: vec![],
-            note: tr("FFB-Fondsdepot: Fondsbestände (auch VL-Sparverträge), Depotumsätze wie Sparplankäufe, Erträge und Entgelte sowie das Abwicklungskonto. Nur Lesezugriff. Inoffiziell: liest die Seiten des Kundenbereichs, Änderungen sind möglich.").into(),
+            note: tr("FFB-Fondsdepot: Fondsbestände (auch VL-Sparverträge) und Depotumsätze wie Sparplankäufe, Erträge und Entgelte. Das Abwicklungskonto wird nicht abgerufen. Nur Lesezugriff. Inoffiziell: liest die Seiten des Kundenbereichs, Änderungen sind möglich.").into(),
         },
         ConnectorKind::SchwaebischHall => BankDescriptor {
             kind,
