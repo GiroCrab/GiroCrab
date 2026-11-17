@@ -8,7 +8,7 @@ Verhalten und Texte kommen dabei 1:1 aus der Mac-App, auf Deutsch und Englisch. 
 Einstellungen › Sicherheit steht deshalb „Kern-Version“: Die Nummer gehört zum Kern, nicht zum
 Funktionsumfang der Oberfläche.
 
-## Funktionsstand 0.7.5 (Kern 0.7.5)
+## Funktionsstand 0.7.5 (Kern 0.8.0)
 
 Mit diesem Schritt kann die Linux-Oberfläche alles, was die Mac-App 0.7.5 kann – bis auf die
 kleinen Lücken am Ende. Einige Funktionen sind schon aus neueren Mac-Versionen übernommen, weil
@@ -267,7 +267,7 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 
 ### Einstellungen
 
-- Unten im Einstellungsfenster steht dezent die Version („GiroCrab 0.7.5“), auf jedem Reiter.
+- Unten im Einstellungsfenster steht dezent die Version (z. B. „GiroCrab 0.8.0“), auf jedem Reiter.
   Wie „Kern-Version“ in Sicherheit ist es die Nummer des Kerns, auf dem die Linux-Oberfläche
   gebaut ist.
 
