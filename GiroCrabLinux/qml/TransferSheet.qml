@@ -10,6 +10,13 @@ import QtQuick.Layouts
 // „Einzeln | Sammelüberweisung“ under the title switches to BatchTransferSheet.
 Sheet {
     id: sheet
+    // .formStyle(.grouped) on macOS: bold section headers, hairlines between the rows,
+    // borderless right-aligned fields (FormTextField), footers at the trailing edge.
+    component GroupedSection: FormSection {
+        separators: true
+        headerFont.pixelSize: Theme.body; headerFont.weight: Font.Bold; headerColor: Theme.text
+        footerAlignment: Text.AlignRight; footerFontSize: Theme.body; footerTrailingInset: 10
+    }
     readonly property var draft: AppModel.transferDraft
     property bool confirming: false
     property var suggestions: []
@@ -184,7 +191,7 @@ Sheet {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    FormSection {
+                    GroupedSection {
                         FormRow {
                             label: qsTr("Von Konto")
                             AppComboBox {
@@ -211,7 +218,7 @@ Sheet {
                 }
 
                 // Picker("Art der Zahlung").pickerStyle(.segmented).labelsHidden()
-                FormSection {
+                GroupedSection {
                     visible: sheet.ownTargets.length > 0 || sheet.ownTransfer
                     Segmented {
                         Layout.fillWidth: true
@@ -222,7 +229,7 @@ Sheet {
                     }
                 }
 
-                FormSection {
+                GroupedSection {
                     visible: sheet.ownTransfer
                     title: qsTr("Eigenes Zielkonto")
                     footer: qsTr("Name und IBAN werden aus dem gewählten Konto übernommen.")
@@ -246,17 +253,16 @@ Sheet {
                     }
                 }
 
-                FormSection {
+                GroupedSection {
                     visible: !sheet.ownTransfer
                     title: qsTr("Empfänger")
                     footer: sheet.importNote || qsTr("Oder Rechnung hierher ziehen")
                     FormRow {
                         label: qsTr("Name")
-                        TextField {
+                        fillValue: true
+                        FormTextField {
                             id: nameField
-                            Layout.preferredWidth: 300
                             placeholderText: qsTr("Name des Empfängers")
-                            horizontalAlignment: TextInput.AlignRight
                             text: sheet.draft.name
                             onTextEdited: { AppModel.setDraft({ name: text }); sheet.refreshSuggestions() }
                             onActiveFocusChanged: sheet.refreshSuggestions()
@@ -295,46 +301,43 @@ Sheet {
                     }
                     FormRow {
                         label: qsTr("IBAN")
-                        TextField {
-                            Layout.preferredWidth: 300
+                        fillValue: true
+                        FormTextField {
                             placeholderText: "DE00 0000 0000 0000 0000 00"
-                            horizontalAlignment: TextInput.AlignRight
                             font.family: "monospace"
                             inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhPreferUppercase
                             text: sheet.draft.iban
                             onTextEdited: AppModel.setDraft({ iban: AppModel.groupedIBAN(text) })
                             Sensitive {}
                         }
-                        ValidMark { opacity: sheet.draft.iban !== "" ? 1 : 0; ok: sheet.ibanValid
+                        ValidMark { visible: sheet.draft.iban !== ""; ok: sheet.ibanValid
                                     ToolTip.text: sheet.ibanValid ? qsTr("Prüfsumme korrekt") : qsTr("IBAN ungültig (Prüfsumme/Länge)") }
                     }
                     FormRow {
                         label: qsTr("BIC (optional)")
-                        TextField {
-                            Layout.preferredWidth: 300
+                        fillValue: true
+                        FormTextField {
                             placeholderText: qsTr("z. B. GENODEF1KS2")
-                            horizontalAlignment: TextInput.AlignRight
                             font.family: "monospace"
                             inputMethodHints: Qt.ImhNoPredictiveText
                             text: sheet.draft.bic
                             onTextEdited: AppModel.setDraft({ bic: text })
                             Sensitive {}
                         }
-                        ValidMark { opacity: sheet.bicText !== "" ? 1 : 0; ok: sheet.bicValid }
+                        ValidMark { visible: sheet.bicText !== ""; ok: sheet.bicValid }
                     }
                 }
 
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 5
-                    FormSection {
+                    GroupedSection {
                         title: qsTr("Zahlung")
                         FormRow {
                             label: qsTr("Betrag")
-                            TextField {
-                                Layout.preferredWidth: 160
+                            fillValue: true
+                            FormTextField {
                                 placeholderText: Fmt.plain(0)
-                                horizontalAlignment: TextInput.AlignRight
                                 font.features: { "tnum": 1 }
                                 text: sheet.draft.amountText
                                 onTextEdited: AppModel.setDraft({ amountText: text })
@@ -342,25 +345,37 @@ Sheet {
                             }
                             Text { text: "€"; color: Theme.secondary; font.pixelSize: Theme.body }
                         }
-                        TextArea {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(implicitHeight, 52)
-                            placeholderText: qsTr("Verwendungszweck")
-                            wrapMode: TextEdit.Wrap
-                            text: sheet.draft.purpose
-                            onTextChanged: if (text !== sheet.draft.purpose) AppModel.setDraft({ purpose: text.slice(0, sheet.maxPurpose) })
-                            Accessible.name: qsTr("Verwendungszweck")
-                            Sensitive {}
+                        // TextField("Verwendungszweck", axis: .vertical).lineLimit(1...3): label left,
+                        // the text right-aligned, growing to three lines
+                        FormRow {
+                            label: qsTr("Verwendungszweck")
+                            fillValue: true
+                            TextArea {
+                                Layout.fillWidth: true
+                                Layout.maximumHeight: 3 * contentHeight / Math.max(1, lineCount) + topPadding + bottomPadding
+                                horizontalAlignment: TextEdit.AlignRight
+                                leftPadding: 0; rightPadding: 0; topPadding: 4; bottomPadding: 4
+                                font.pixelSize: Theme.body; color: Theme.text
+                                placeholderText: qsTr("Verwendungszweck"); placeholderTextColor: Theme.tertiary
+                                background: Item {}
+                                wrapMode: TextEdit.Wrap
+                                text: sheet.draft.purpose
+                                onTextChanged: if (text !== sheet.draft.purpose) AppModel.setDraft({ purpose: text.slice(0, sheet.maxPurpose) })
+                                Keys.onReturnPressed: e => e.accepted = true
+                                Keys.onEnterPressed: e => e.accepted = true
+                                Accessible.name: qsTr("Verwendungszweck")
+                                Sensitive {}
+                            }
                         }
                     }
                     // footer: amount hint left, purpose counter right
                     RowLayout {
-                        Layout.fillWidth: true; Layout.leftMargin: 10
-                        Text { visible: sheet.draft.amountText !== "" && sheet.cents === null; text: qsTr("Betrag > 0 eingeben"); font.pixelSize: Theme.caption; color: Theme.negative }
+                        Layout.fillWidth: true; Layout.leftMargin: 10; Layout.rightMargin: 10
+                        Text { visible: sheet.draft.amountText !== "" && sheet.cents === null; text: qsTr("Betrag > 0 eingeben"); font.pixelSize: Theme.body; color: Theme.negative }
                         Item { Layout.fillWidth: true }
                         Text {
                             text: sheet.draft.purpose.length + "/" + sheet.maxPurpose
-                            font.pixelSize: Theme.caption; font.features: { "tnum": 1 }
+                            font.pixelSize: Theme.body; font.features: { "tnum": 1 }
                             color: sheet.draft.purpose.length >= sheet.maxPurpose ? Theme.negative : Theme.tertiary
                         }
                     }
@@ -370,7 +385,7 @@ Sheet {
                     visible: sheet.canSend && sheet.offersInstant
                     Layout.fillWidth: true
                     spacing: 5
-                    FormSection {
+                    GroupedSection {
                         title: qsTr("Ausführung")
                         // Mutually exclusive choices: one radio group (HIG), not
                         // two checkboxes where one disables the other.
@@ -379,12 +394,20 @@ Sheet {
                             model: [{ id: "regular", title: qsTr("Normale Überweisung") },
                                     { id: "scheduled", title: qsTr("Terminüberweisung") },
                                     { id: "instant", title: qsTr("Echtzeitüberweisung (SEPA Instant)") }]
-                            RadioButton {
+                            // .pickerStyle(.radioGroup).labelsHidden() in a grouped form: the
+                            // choice's title on the left, its radio button at the trailing edge
+                            RowLayout {
                                 required property var modelData
-                                ButtonGroup.group: modeGroup
-                                text: modelData.title
-                                checked: sheet.executionMode === modelData.id
-                                onToggled: if (checked) sheet.setExecutionMode(modelData.id)
+                                Layout.fillWidth: true
+                                Text { Layout.fillWidth: true; text: modelData.title; font.pixelSize: Theme.body; color: Theme.text
+                                       MouseArea { anchors.fill: parent; onClicked: sheet.setExecutionMode(modelData.id) } }
+                                RadioButton {
+                                    ButtonGroup.group: modeGroup
+                                    padding: 0
+                                    checked: sheet.executionMode === modelData.id
+                                    onToggled: if (checked) sheet.setExecutionMode(modelData.id)
+                                    Accessible.name: modelData.title
+                                }
                             }
                         }
                         FormRow {
@@ -422,7 +445,7 @@ Sheet {
                     buttonTitle: qsTr("PIN 12345 einfügen")
                     onFill: AppModel.setDraft({ pin: "12345" })
                 }
-                FormSection {
+                GroupedSection {
                     visible: sheet.canSend && !sheet.pinStored
                     footer: sheet.isBunq ? qsTr("Der API-Schlüssel wird nicht gespeichert.") : qsTr("Die PIN wird nicht gespeichert.")
                     FormRow {
@@ -446,10 +469,10 @@ Sheet {
                 visible: sheet.confirming && sheet.canSend
                 x: 20; y: 20; width: scroll.availableWidth - 40
                 spacing: 18
-                FormSection {
+                GroupedSection {
                     BigAmount { Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 6; Layout.bottomMargin: 6 }
                 }
-                FormSection {
+                GroupedSection {
                     title: qsTr("Empfänger")
                     ReviewRow { key: qsTr("Name"); value: sheet.draft.name }
                     ReviewRow { key: qsTr("IBAN"); value: sheet.draft.iban; mono: true }
@@ -458,7 +481,7 @@ Sheet {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    FormSection {
+                    GroupedSection {
                         title: qsTr("Zahlung")
                         ReviewRow { key: qsTr("Verwendungszweck"); value: sheet.draft.purpose === "" ? "–" : sheet.draft.purpose }
                         ReviewRow { key: qsTr("Von Konto"); value: sheet.accountLabel }

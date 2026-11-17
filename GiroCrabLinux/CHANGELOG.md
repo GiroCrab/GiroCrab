@@ -126,7 +126,8 @@ sie mit dem Übrigen eng zusammenhängen; sie sind mit *(Mac-App: erst nach 0.7.
 ### Überweisungen, Sammelüberweisung und Daueraufträge
 
 - **Überweisungsformular neu geordnet** wie in der Mac-App: „Von Konto“ steht oben, darunter
-  Empfänger, Zahlung und „Ausführung“. Normale Überweisung, Terminüberweisung und
+  Empfänger, Zahlung und „Ausführung“. Die Felder stehen wie dort ohne Rahmen rechtsbündig in Zeilen mit
+  Trennlinien; der Verwendungszweck ist eine Zeile, die bis drei Zeilen wächst. Normale Überweisung, Terminüberweisung und
   Echtzeitüberweisung sind eine Auswahl statt zweier Häkchen; die Prüfansicht zeigt Betrag,
   Empfänger und Zahlung im selben Stil.
 - **Umbuchung zwischen eigenen Konten:** „Überweisung | Umbuchung“ im Formular; das eigene
