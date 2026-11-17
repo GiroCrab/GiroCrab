@@ -1,5 +1,7 @@
 import Foundation
 import CoreGraphics
+import CoreTransferable
+import UniformTypeIdentifiers
 import GiroCrabCore
 
 /// EPC QR code ("GiroCode", EPC069-12 v002) for a SEPA credit transfer, for
@@ -32,5 +34,23 @@ enum GiroCode {
         return CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: side,
                        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    }
+
+    /// The code as PNG for copy, save and share (the picture carries IBAN and amount).
+    static func png(for payload: String) -> Data? {
+        image(for: payload).flatMap(BugReport.png)
+    }
+}
+
+/// The GiroCode picture handed to `ShareLink`, composed only when asked.
+struct GiroCodeImage: Transferable {
+    let payload: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(exportedContentType: .png) { item in
+            guard let png = GiroCode.png(for: item.payload) else { throw CocoaError(.fileWriteUnknown) }
+            return png
+        }
+        .suggestedFileName("GiroCode.png")
     }
 }

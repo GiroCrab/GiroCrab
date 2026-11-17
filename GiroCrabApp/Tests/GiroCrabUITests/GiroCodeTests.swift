@@ -82,4 +82,10 @@ final class PaymentParserTests: XCTestCase {
         XCTAssertEqual(PaymentParser.normalizeAmount("1.234,56"), Money.plain(123_456))
         XCTAssertNil(PaymentParser.normalizeAmount("abc"))
     }
+
+    func testPNGEncodesTheCode() throws {
+        let payload = try XCTUnwrap(GiroCode.payload(name: "A", iban: "DE02120300000000202051", amountCents: 100, purpose: ""))
+        let png = try XCTUnwrap(GiroCode.png(for: payload))
+        XCTAssertEqual(Array(png.prefix(4)), [0x89, 0x50, 0x4E, 0x47])
+    }
 }
