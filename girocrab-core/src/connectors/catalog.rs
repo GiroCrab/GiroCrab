@@ -6,7 +6,6 @@ use crate::models::ConnectorKind;
 use super::*;
 
 /// The supported institutions with their public protocol facts.
-#[uniffi::export]
 pub fn bank_catalog() -> Vec<BankDescriptor> {
     ConnectorKind::all().into_iter().map(descriptor).collect()
 }
@@ -102,6 +101,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             required_settings: vec![],
             note: tr("Herausgeber: Open Bank S.A. (Zinia). Anmeldung im eingebetteten Browser – keine API-Schlüssel nötig. Optional: eigene PSD2-/Enable-Banking-API unter „Erweitert“.").into(),
         },
+        ConnectorKind::EquatePlus => BankDescriptor {
+            kind,
+            name: "EquatePlus".into(),
+            protocol: tr("Direkt-Login (Web-Session)").into(),
+            bank_code: String::new(),
+            sf_symbol: "person.crop.rectangle.stack".into(),
+            login_label: tr("Zugangsbezeichnung").into(),
+            secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
+            required_settings: vec![],
+            note: tr("Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.").into(),
+        },
         ConnectorKind::Quirion => BankDescriptor {
             kind,
             name: "quirion".into(),
@@ -156,6 +166,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             secret_label: tr("Passwort").into(),
             required_settings: vec![],
             note: tr("Uberspace-Hosting: Guthaben und Buchungen aller Asteroids, die zur E-Mail-Adresse des Dashboards gehören. Inoffiziell: liest die Seiten des Dashboards, Änderungen sind möglich.").into(),
+        },
+        ConnectorKind::SchwaebischHall => BankDescriptor {
+            kind,
+            name: "Schwäbisch Hall".into(),
+            protocol: tr("Direkt-Login (Web-Session)").into(),
+            bank_code: "62220000".into(),
+            sf_symbol: "house.circle".into(),
+            login_label: tr("Bezeichnung (z. B. Kontoname)").into(),
+            secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
+            required_settings: vec![],
+            note: tr("Bausparkasse Schwäbisch Hall: Bausparverträge mit Saldo und Umsätzen, optional die PDF-Dokumente aus dem Postfach. Anmeldung im Browserfenster von „Mein Konto“. Interne Portal-API; Änderungen sind möglich.").into(),
         },
         ConnectorKind::Fnz => BankDescriptor {
             kind,
@@ -442,6 +463,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "ING Business",
+        kind: None,
+        interface: Interface::EnableBanking,
+        official: Some(true),
+        capabilities: &[Capability::Transactions, Capability::Balances],
+        status: Status::TestingWanted,
+        issues: &[721],
+    },
+    MatrixEntry {
         name: "PayPal (DE)",
         kind: None,
         interface: Interface::EnableBanking,
@@ -504,6 +534,19 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Schwäbisch Hall (Bausparen)",
+        kind: Some(ConnectorKind::SchwaebischHall),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[
+            Capability::Transactions,
+            Capability::Balances,
+            Capability::Documents,
+        ],
+        status: Status::TestingWanted,
+        issues: &[290],
+    },
+    MatrixEntry {
         name: "Volkswagen Bank",
         kind: Some(ConnectorKind::VolkswagenBank),
         interface: Interface::WebPortal,
@@ -533,6 +576,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
             Capability::Documents,
         ],
         status: Status::Limited,
+        issues: &[],
+    },
+    MatrixEntry {
+        name: "EquatePlus",
+        kind: Some(ConnectorKind::EquatePlus),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[Capability::Balances, Capability::Securities],
+        status: Status::TestingWanted,
         issues: &[],
     },
     MatrixEntry {
@@ -607,6 +659,8 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::Fnz => Box::new(fnz::WebOnlyConnector),
         ConnectorKind::Ibkr => Box::new(ibkr::IbkrConnector::new()),
         ConnectorKind::Quirion => Box::new(quirion::WebOnlyConnector),
+        ConnectorKind::SchwaebischHall => Box::new(schwaebisch_hall::WebOnlyConnector),
+        ConnectorKind::EquatePlus => Box::new(equateplus::WebOnlyConnector),
         ConnectorKind::Bunq => Box::new(bunq::BunqConnector::new()),
         ConnectorKind::Easybank => Box::new(easybank::EasybankConnector::new()),
         ConnectorKind::AlteLeipziger => Box::new(fin4u::Fin4uConnector::new()),

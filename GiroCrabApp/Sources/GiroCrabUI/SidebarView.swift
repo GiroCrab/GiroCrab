@@ -18,7 +18,7 @@ struct SidebarView: View {
 
     /// One inset for every sidebar row, so chevrons and icons share their columns.
     static let captionInsets = rowInsets
-    private static let rowInsets = EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 6)
+    private static let rowInsets = EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 6)
 
     private func toggler(_ flag: Binding<Bool>) -> () -> Void {
         { withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { flag.wrappedValue.toggle() } }
@@ -145,8 +145,6 @@ struct SidebarView: View {
             // a plain row styled like the group headers (not a List section
             // header, whose small caption style can't match them)
             CategoriesHeader()
-                .padding(.top, 10)
-                .listRowInsets(Self.rowInsets)
             if !model.categoriesCollapsed, let note = model.categorySumNote {
                 Text(note)
                     .appFont(.caption)
@@ -237,7 +235,7 @@ struct SidebarView: View {
             Button("Abbrechen", role: .cancel) {}
         } message: { d in
             switch d {
-            case .archiveAccount(let a):
+            case .archiveAccount:
                 Text("Das Konto wird nicht mehr abgerufen, von Regeln nicht mehr verändert und zählt nicht mehr zur Gesamtsumme. Buchungen, Kategorien, Belege und die Gruppe bleiben erhalten. Es lässt sich jederzeit reaktivieren.")
             case .deleteAccount(let a):
                 Text("Das Konto wird samt \(a.transactionCount) Buchungen, Belegen und Depotpositionen unwiderruflich gelöscht – auch aus Auswertungen und Kategoriesummen. Ist es das letzte Konto seines Bankzugangs, wird auch der Bankzugang mit den gespeicherten Zugangsdaten entfernt.")
@@ -333,7 +331,7 @@ struct SidebarView: View {
         ForEach(model.userGroups.filter(model.isUserGroupListed)) { group in
             let open = model.isUserGroupOpen(group)
             let toggle = { withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.toggleCollapsed(group) } }
-            let indent = CGFloat(group.depth) * DisclosureChevron.iconInset
+            let indent = CGFloat(group.depth) * DisclosureChevron.indentStep
             UserGroupHeader(group: group, open: open, toggle: toggle)
                 .padding(.vertical, 3) // taller hit area for the drop zones
                 // an account goes to the top of this group; a group above it
@@ -503,7 +501,7 @@ struct SidebarView: View {
     /// The category tree at any depth (#101): a node with sub-categories is a
     /// disclosure group whose content recurses into its children.
     private func categoryRows(_ nodes: [CategoryNode], depth: Int) -> AnyView {
-        let indent = CGFloat(depth) * DisclosureChevron.iconInset
+        let indent = CGFloat(depth) * DisclosureChevron.indentStep
         return AnyView(ForEach(nodes) { node in
             if let kids = node.children {
                 let open = model.expandedCategories.contains(node.id)
@@ -593,11 +591,13 @@ private struct AccountRowHeight: ViewModifier {
 }
 
 /// Disclosure arrow of every collapsible sidebar header: `chevron.right` when
-/// closed, turned to point down when open. One 14 pt column, so the icons of
+/// closed, `chevron.down` when open. One 12 pt column, so the icons of
 /// all headers and accounts share one vertical axis.
 struct DisclosureChevron: View {
     /// The one leading column of the sidebar: every chevron sits in it, and rows without one reserve it.
-    static let leadingSlotWidth: CGFloat = 14
+    static let leadingSlotWidth: CGFloat = 12
+    /// Indent of a child account / sub-category / subgroup per depth level.
+    static let indentStep: CGFloat = 12
     static let width: CGFloat = leadingSlotWidth
     /// Gap between the chevron column and the icon (HStack spacing of the headers).
     static let gap: CGFloat = 5
@@ -605,9 +605,8 @@ struct DisclosureChevron: View {
     static let iconInset: CGFloat = width + gap
     let open: Bool
     var body: some View {
-        Image(systemName: "chevron.right")
+        Image(systemName: open ? "chevron.down" : "chevron.right")
             .appFont(.caption, weight: .bold)
-            .rotationEffect(.degrees(open ? 90 : 0))
             .frame(width: Self.width, height: 18)
             .contentShape(Rectangle())
     }
@@ -648,7 +647,7 @@ struct SectionHeader: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             Text(Money.format(balanceCents))
-                .sensitive()
+                .sensitive(.amounts)
                 .appFont(.footnote, weight: .semibold) // same size as the account balances
                 .monospacedDigit()
                 .fixedSize() // the name truncates, never the balance (#343)
@@ -665,6 +664,7 @@ struct AccountRow: View {
     /// macOS turns white on the accent-coloured selection (fixed theme colours
     /// stay dark there). `backgroundProminence` is not set in a macOS sidebar.
     private var onSelection: Bool { model.sidebarSelection == .account(account.id) }
+    @Environment(\.reportRedaction) private var redaction
     let account: Account
     var syncing: Bool = false
 
@@ -697,7 +697,7 @@ struct AccountRow: View {
                 HStack(spacing: 4) {
                     // the owner takes no room in the title line: tooltip only
                     Text(account.name).appFont(.callout, weight: .medium).lineLimit(1).sensitive()
-                        .help(account.owner.isEmpty ? "" : account.owner)
+                        .help(redaction.masking(account.owner))
                     if account.accessRevoked {
                         Image(systemName: "lock.slash")
                             .appFont(.caption2)
@@ -719,8 +719,10 @@ struct AccountRow: View {
                             .tint(Theme.loan.opacity(0.7))
                             .controlSize(.mini)
                             .frame(maxWidth: 44)
-                            .help("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+                            .sensitive(.amounts)
+                            .help(redaction.masking("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt", .amounts))
                         Text("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+                            .sensitive(.amounts)
                             .appFont(.caption2).foregroundStyle(.secondary).lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let date = account.archivedDate {
@@ -824,8 +826,8 @@ private struct DropLine: Equatable {
 /// A sidebar row as drop target. Like MoneyMoney and Finder it marks the
 /// spot with a thin line between rows instead of outlining the row. The row
 /// gets two drop zones, its upper and lower half, so the line can follow the
-/// pointer while every drop still goes through `dropDestination` (a
-/// `DropDelegate` here left the sidebar list unable to start a second drag).
+/// pointer; the drops go through `MoveStringDrop` (a `DropDelegate` that
+/// proposes `.move`, so no green "+" shows, #659).
 private struct DropSlot: ViewModifier {
     let key: String
     /// Where the line starts, so it lines up with the row's content.
@@ -884,26 +886,30 @@ private struct DropSlot: ViewModifier {
     private func zone(_ half: DropLine.Edge) -> some View {
         Color.clear
             .contentShape(Rectangle())
-            .dropDestination(for: String.self) { items, _ in
+            .onDrop(of: [.plainText], delegate: MoveStringDrop(isTargeted: { targeted in
+                setTargeted(targeted, half)
+            }, perform: { items in
                 line = nil
                 guard let edge = edge(half) else { return false }
                 return perform(items, edge)
-            } isTargeted: { targeted in
-                // SwiftUI reports a quick off/on while the pointer moves within a
-                // zone: write only real changes and clear a tick later, unless the
-                // zone came back meanwhile, so the mark doesn't flicker.
-                let zone = key + (half == .above ? "↑" : "↓")
-                if targeted, let edge = edge(half), BookingDrag.isDragged == takesBookings {
-                    Self.hovered.insert(zone)
-                    let next = DropLine(key: edge == .into ? intoKey ?? key : key, edge: edge, zone: zone)
-                    if line != next { line = next }
-                } else {
-                    Self.hovered.remove(zone)
-                    DispatchQueue.main.async {
-                        if !Self.hovered.contains(zone), line?.zone == zone { line = nil }
-                    }
-                }
+            }))
+    }
+
+    private func setTargeted(_ targeted: Bool, _ half: DropLine.Edge) {
+        // SwiftUI reports a quick off/on while the pointer moves within a
+        // zone: write only real changes and clear a tick later, unless the
+        // zone came back meanwhile, so the mark doesn't flicker.
+        let zone = key + (half == .above ? "↑" : "↓")
+        if targeted, let edge = edge(half), BookingDrag.isDragged == takesBookings {
+            Self.hovered.insert(zone)
+            let next = DropLine(key: edge == .into ? intoKey ?? key : key, edge: edge, zone: zone)
+            if line != next { line = next }
+        } else {
+            Self.hovered.remove(zone)
+            DispatchQueue.main.async {
+                if !Self.hovered.contains(zone), line?.zone == zone { line = nil }
             }
+        }
     }
 }
 
@@ -991,7 +997,7 @@ private struct CategoriesHeader: View {
     var body: some View {
         let open = !model.categoriesCollapsed
         let toggle = { withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.categoriesCollapsed.toggle() } }
-        HStack(spacing: 5) {
+        HStack(spacing: DisclosureChevron.gap) {
             // folds the category tree away (rarely used, takes room)
             Button(action: toggle) {
                 DisclosureChevron(open: open)
@@ -1005,9 +1011,12 @@ private struct CategoriesHeader: View {
                 .accessibilityAddTraits(.isHeader)
             Spacer()
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Theme.secondary)
+        .padding(.top, 10)
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
+        .listRowInsets(SidebarView.captionInsets)
+        .selectionDisabled()
     }
 }
 

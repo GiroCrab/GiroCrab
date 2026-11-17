@@ -101,6 +101,11 @@ pub fn has_mojibake(s: &str) -> bool {
     s.contains("Ãƒ") || s.contains("Ã‚") || MOJIBAKE.iter().any(|(bad, _)| s.contains(bad))
 }
 
+/// No replacement character and no UTF-8/Latin-1 mojibake.
+pub(crate) fn is_clean(s: &str) -> bool {
+    !s.contains('\u{FFFD}') && !has_mojibake(s)
+}
+
 /// Repairs "MÃ¼ller" -> "Müller", "StraÃŸe" -> "Straße" (also doubly broken text).
 pub fn fix_mojibake(s: &str) -> String {
     if !has_mojibake(s) {
@@ -155,6 +160,7 @@ const QMARK_FIXES: &[(&str, &str)] = &[
     ("Sch?fer", "Schäfer"),
     ("Schr?der", "Schröder"),
     ("K?hler", "Köhler"),
+    ("K?pper", "Köpper"),
     ("K?nig", "König"),
     ("B?cker", "Bäcker"),
     ("G?ttingen", "Göttingen"),
@@ -225,6 +231,7 @@ const FFFD_FIXES: &[(&str, &str)] = &[
     ("Sch\u{FFFD}fer", "Schäfer"),
     ("M\u{FFFD}ller", "Müller"),
     ("K\u{FFFD}hler", "Köhler"),
+    ("K\u{FFFD}pper", "Köpper"),
     ("K\u{FFFD}nig", "König"),
     ("B\u{FFFD}cker", "Bäcker"),
     ("J\u{FFFD}ger", "Jäger"),
@@ -273,11 +280,6 @@ pub fn fix_replacement_chars(s: &str) -> String {
 /// Full cleanup for bank-provided text: mojibake, U+FFFD and `?`-for-umlaut.
 pub fn clean_bank_text(s: &str) -> String {
     fix_question_marks(&fix_replacement_chars(&fix_mojibake(s)))
-}
-
-#[uniffi::export]
-pub fn repair_umlauts(text: String) -> String {
-    clean_bank_text(&text)
 }
 
 /// Startup cleanup: repairs mojibake already stored in the vault.

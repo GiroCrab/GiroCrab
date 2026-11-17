@@ -92,7 +92,6 @@ fn tested(mut b: Psd2Bank, note: &str) -> Psd2Bank {
 }
 
 /// Curated, searchable PSD2 catalog (works without any credentials).
-#[uniffi::export]
 pub fn psd2_catalog() -> Vec<Psd2Bank> {
     use ConnectorKind::{AmazonVisa, AmericanExpress};
     vec![
@@ -164,9 +163,19 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "alte leipziger alh bausparvertrag bauspar fin4u",
         ),
         (
+            ConnectorKind::EquatePlus,
+            "EquatePlus",
+            "equateplus equate plus equatex mitarbeiteraktien aktienprogramme rsu sap",
+        ),
+        (
             ConnectorKind::Quirion,
             "quirion",
             "quirion quirin privatbank depot",
+        ),
+        (
+            ConnectorKind::SchwaebischHall,
+            "Schwäbisch Hall",
+            "schwaebisch bsh bausparvertrag bauspar",
         ),
         (
             ConnectorKind::ScalableCapital,
@@ -224,6 +233,7 @@ fn fints_result(b: FinTsBankInfo) -> BankSearchResult {
 
 /// Alte Leipziger Bauspar AG: not in the FinTS directory, reached via fin4u.
 const ALTE_LEIPZIGER_BLZ: &str = "50012800";
+const SCHWAEBISCH_HALL_BLZ: &str = "62220000";
 
 fn own_result(kind: ConnectorKind, name: &str) -> BankSearchResult {
     BankSearchResult {
@@ -302,6 +312,11 @@ pub fn search(
             out.push(own_result(ConnectorKind::Fnz, "FNZ Bank"));
         } else if blz == ALTE_LEIPZIGER_BLZ {
             out.push(own_result(ConnectorKind::AlteLeipziger, "Alte Leipziger"));
+        } else if blz == SCHWAEBISCH_HALL_BLZ {
+            out.push(own_result(
+                ConnectorKind::SchwaebischHall,
+                "Schwäbisch Hall",
+            ));
         }
         return out;
     }
@@ -345,7 +360,6 @@ pub fn search(
 
 /// Searches the FinTS directory, the own-API banks and the PSD2 catalog
 /// (plus `live_psd2`, the live ASPSP list, if the app has loaded it).
-#[uniffi::export]
 pub fn search_banks(
     query: String,
     live_psd2: Vec<Psd2Bank>,
@@ -355,8 +369,8 @@ pub fn search_banks(
 }
 
 /// Offline PSD2 search over the curated catalog.
-#[uniffi::export]
-pub fn search_psd2_catalog(query: String) -> Vec<Psd2Bank> {
+#[cfg(test)]
+fn search_psd2_catalog(query: String) -> Vec<Psd2Bank> {
     let q = fold(&query);
     let words: Vec<&str> = q.split(' ').filter(|w| !w.is_empty()).collect();
     psd2_catalog()
@@ -501,7 +515,6 @@ pub(crate) fn match_psd2_bank(bank_name: &str, candidates: &[Psd2Bank]) -> Optio
 
 /// `match_psd2_bank` for the app: matches a MoneyMoney bank name against the
 /// live Enable Banking list (`list_enable_banking_aspsps`).
-#[uniffi::export]
 pub fn match_psd2_bank_by_name(bank_name: String, candidates: Vec<Psd2Bank>) -> Option<Psd2Bank> {
     match_psd2_bank(&bank_name, &candidates)
 }
@@ -705,6 +718,26 @@ mod tests {
     }
 
     #[test]
+    fn equateplus_routes_employee_plan_searches_to_browser() {
+        for query in [
+            "EquatePlus",
+            "equate plus",
+            "equatex",
+            "mitarbeiteraktien",
+            "rsu",
+        ] {
+            let result = search(query, vec![], 20);
+            assert!(
+                result
+                    .iter()
+                    .any(|r| r.id == "api:equateplus"
+                        && r.connector == Some(ConnectorKind::EquatePlus)),
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
     fn quirion_routes_names_blz_and_iban_to_browser() {
         for query in [
             "quirion",
@@ -833,5 +866,27 @@ mod tests {
             );
         }
         assert_eq!(ids(&search("50012800", vec![], 10)), vec!["api:fin4u"]);
+    }
+
+    #[test]
+    fn schwaebisch_hall_routes_names_and_blz_to_browser() {
+        for query in [
+            "Schwäbisch Hall",
+            "schwaebisch hall",
+            "Bausparvertrag",
+            "BSH",
+            "62220000",
+        ] {
+            let r = search(query, vec![], 20);
+            assert!(
+                r.iter().any(|b| b.mode == BankAccessMode::OwnApi
+                    && b.connector == Some(ConnectorKind::SchwaebischHall)),
+                "{query}"
+            );
+        }
+        assert_eq!(
+            ids(&search("62220000", vec![], 10)),
+            vec!["api:schwaebischhall"]
+        );
     }
 }

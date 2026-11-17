@@ -1,14 +1,14 @@
 //! Categorisation rules (pattern and expression rules): storage, preview and application.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, Connection};
 
-use super::Vault;
+use super::{Vault, LIVE_BOOKINGS_SQL};
 use crate::error::{CoreError, CoreResult};
-use crate::i18n::{tr, trf};
+use crate::i18n::tr;
 use crate::models::*;
-use crate::rules::{RuleInput, RuleSet};
+use crate::rules::{RuleRow, RuleSet};
 
 impl Vault {
     pub(crate) fn rule_set(conn: &Connection) -> CoreResult<RuleSet> {
@@ -99,81 +99,42 @@ impl Vault {
         only: Option<&HashSet<i64>>,
     ) -> CoreResult<u32> {
         let set = Self::rule_set(conn)?;
-        let sql = if only_uncategorised {
-            "SELECT t.id, t.account_id, t.amount_cents, t.counterparty, t.counterparty_iban, t.purpose, t.booking_text, t.category_id, t.rule_id,
-                    t.note, t.currency, IFNULL(a.iban, '')
-             FROM transactions t LEFT JOIN accounts a ON a.id = t.account_id WHERE a.archived_unix IS NULL AND a.deleted_ms IS NULL AND t.deleted_ms IS NULL AND t.category_source = 'none'"
+        let source_sql = if only_uncategorised {
+            "t.category_source = 'none'"
         } else {
-            "SELECT t.id, t.account_id, t.amount_cents, t.counterparty, t.counterparty_iban, t.purpose, t.booking_text, t.category_id, t.rule_id,
-                    t.note, t.currency, IFNULL(a.iban, '')
-             FROM transactions t LEFT JOIN accounts a ON a.id = t.account_id WHERE a.archived_unix IS NULL AND a.deleted_ms IS NULL AND t.deleted_ms IS NULL AND t.category_source != 'manual'"
+            "t.category_source != 'manual'"
         };
-        let mut stmt = conn.prepare(sql)?;
-        // (note, currency, own account IBAN) ride along for search expressions
-        #[allow(clippy::type_complexity)]
-        let rows: Vec<(
-            (
-                i64,
-                i64,
-                i64,
-                String,
-                String,
-                String,
-                String,
-                Option<i64>,
-                Option<i64>,
-            ),
-            (String, String, String),
-        )> = stmt
-            .query_map([], |r| {
-                Ok((
-                    (
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                        r.get(7)?,
-                        r.get(8)?,
-                    ),
-                    (r.get(9)?, r.get(10)?, r.get(11)?),
-                ))
-            })?
+        // Bound as one JSON array, so a large id set can't exceed SQLite's
+        // variable limit.
+        let ids_json = only.map(serde_json::to_string).transpose()?;
+        let ids_sql = if ids_json.is_some() {
+            " AND t.id IN (SELECT value FROM json_each(?1))"
+        } else {
+            ""
+        };
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {}
+             FROM transactions t LEFT JOIN accounts a ON a.id = t.account_id
+             WHERE a.archived_unix IS NULL AND a.deleted_ms IS NULL AND t.deleted_ms IS NULL AND {source_sql}{ids_sql}",
+            RuleRow::COLUMNS
+        ))?;
+        let rows: Vec<RuleRow> = stmt
+            .query_map(params_from_iter(ids_json), RuleRow::read)?
             .collect::<Result<_, _>>()?;
-        let rows = rows
-            .into_iter()
-            .filter(|r| only.is_none_or(|ids| ids.contains(&r.0 .0)));
         let mut changed = 0u32;
         let mut upd_rule = conn.prepare("UPDATE transactions SET category_id = ?1, rule_id = ?2, category_source = 'rule' WHERE id = ?3")?;
         let mut upd_none = conn.prepare("UPDATE transactions SET category_id = NULL, rule_id = NULL, category_source = 'none' WHERE id = ?1")?;
-        for (
-            (id, account_id, amount, cp, iban, purpose, bt, cat, rule),
-            (note, currency, own_iban),
-        ) in rows
-        {
-            let input = RuleInput {
-                account_id,
-                amount_cents: amount,
-                counterparty: &cp,
-                counterparty_iban: &iban,
-                purpose: &purpose,
-                booking_text: &bt,
-                note: &note,
-                currency: &currency,
-                account_iban: &own_iban,
-            };
-            match set.categorise(&input) {
+        for row in rows {
+            match set.categorise(&row.input()) {
                 Some((rule_id, cat_id)) => {
-                    if cat != Some(cat_id) || rule != Some(rule_id) {
-                        upd_rule.execute(params![cat_id, rule_id, id])?;
+                    if row.category_id != Some(cat_id) || row.rule_id != Some(rule_id) {
+                        upd_rule.execute(params![cat_id, rule_id, row.id])?;
                         changed += 1;
                     }
                 }
                 None => {
-                    if rule.is_some() {
-                        upd_none.execute(params![id])?;
+                    if row.rule_id.is_some() {
+                        upd_none.execute(params![row.id])?;
                         changed += 1;
                     }
                 }
@@ -193,28 +154,19 @@ impl Vault {
     /// Creates (id == 0) or updates a rule. Validates the pattern first.
     pub fn save_rule(&self, rule: Rule) -> Result<i64, CoreError> {
         if rule.pattern.len() > crate::rules::MAX_PATTERN_LEN {
-            return Err(CoreError::InvalidInput {
-                message: tr("Das Suchmuster ist zu lang.").into(),
-            });
+            return Err(CoreError::invalid(tr("Das Suchmuster ist zu lang.")));
         }
         crate::rules::CompiledRule::compile(rule.clone())?;
         if rule.pattern.trim().is_empty() {
-            return Err(CoreError::InvalidInput {
-                message: tr("Das Suchmuster ist leer.").into(),
-            });
+            return Err(CoreError::invalid(tr("Das Suchmuster ist leer.")));
         }
         let db = self.db()?;
         let kind = match rule.match_kind {
             MatchKind::Keyword => "keyword",
             MatchKind::Regex => "regex",
             MatchKind::Expression => {
-                let expr = crate::search_expr::SearchExpr::parse(&rule.pattern)
-                    .map_err(|message| CoreError::InvalidInput { message })?;
-                if let Some(f) = expr.unsupported_fields().first() {
-                    return Err(CoreError::InvalidInput {
-                        message: trf("Das Feld „{0}“ wird nicht unterstützt.", &[f]),
-                    });
-                }
+                // `compile` keeps unsupported fields for imported rules; a saved rule may not use them.
+                crate::search_expr::SearchExpr::parse_supported(&rule.pattern)?;
                 "expression"
             }
         };
@@ -255,41 +207,32 @@ impl Vault {
         Ok(())
     }
 
-    /// Transactions the (unsaved) rule would match, for the live preview in the
-    /// rule editor.
+    /// Newest transactions (at most `limit`) the (unsaved) rule would match, for
+    /// the live preview in the rule editor. Matches on the raw rows and stops at
+    /// `limit`; only the hits are enriched.
     pub fn preview_rule(&self, rule: Rule, limit: u32) -> Result<Vec<Booking>, CoreError> {
         let compiled = crate::rules::CompiledRule::compile(Rule {
             enabled: true,
             ..rule
         })?;
-        let page = self.list_transactions(BookingFilter {
-            limit: 20000,
-            ..Default::default()
-        })?;
-        let ibans: HashMap<i64, String> = {
-            let db = self.db()?;
-            let mut st = db.prepare("SELECT id, iban FROM accounts WHERE deleted_ms IS NULL")?;
-            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.collect::<Result<_, _>>()?
-        };
-        Ok(page
-            .transactions
-            .into_iter()
-            .filter(|t| {
-                compiled.matches(&RuleInput {
-                    account_id: t.account_id,
-                    amount_cents: t.amount_cents,
-                    counterparty: &t.counterparty,
-                    counterparty_iban: &t.counterparty_iban,
-                    purpose: &t.purpose,
-                    booking_text: &t.booking_text,
-                    note: &t.note,
-                    currency: &t.currency,
-                    account_iban: ibans.get(&t.account_id).map_or("", String::as_str),
-                })
-            })
-            .take(limit.max(1) as usize)
-            .collect())
+        let db = self.db()?;
+        let mut stmt = db.prepare(&format!(
+            "SELECT {} FROM transactions t JOIN accounts a ON a.id = t.account_id
+             WHERE {LIVE_BOOKINGS_SQL} ORDER BY t.booking_date DESC, t.id DESC",
+            RuleRow::COLUMNS
+        ))?;
+        let n = limit.max(1) as usize;
+        let mut ids = Vec::new();
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            if compiled.matches(&RuleRow::borrowed_input(row)?) {
+                ids.push(row.get(0)?);
+                if ids.len() == n {
+                    break;
+                }
+            }
+        }
+        self.bookings_by_ids(&db, &ids)
     }
 
     /// Runs all rules. `only_uncategorized = false` also re-evaluates
@@ -487,5 +430,97 @@ mod multi_account_rule_tests {
         })
         .unwrap();
         assert!(v.list_rules().unwrap()[0].account_ids.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_lists_the_newest_matches_up_to_the_limit() {
+        let p_dir = crate::test_support::TempDir::new("girocrab-preview");
+        let p = p_dir.join("v.db");
+        let v = Vault::open(p.to_string_lossy().to_string(), vec![5u8; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let rule = Rule {
+            id: 0,
+            name: "Ausgaben".into(),
+            category_id: 0,
+            field: RuleField::Any,
+            match_kind: MatchKind::Expression,
+            pattern: "amount<0".into(),
+            case_sensitive: false,
+            min_amount_cents: None,
+            max_amount_cents: None,
+            account_ids: Vec::new(),
+            priority: 0,
+            enabled: false,
+            match_count: 0,
+        };
+        // Read like the booking list, newest first.
+        let expenses: Vec<String> = v
+            .list_transactions(BookingFilter::default())
+            .unwrap()
+            .transactions
+            .iter()
+            .filter(|b| b.amount_cents < 0)
+            .map(|b| format!("{b:?}"))
+            .collect();
+        assert!(expenses.len() > 5);
+        let preview = |limit| -> Vec<String> {
+            let found = v.preview_rule(rule.clone(), limit).unwrap();
+            found.iter().map(|b| format!("{b:?}")).collect()
+        };
+        assert_eq!(preview(5), expenses[..5]);
+        assert_eq!(preview(0), expenses[..1], "limit 0 still shows one");
+        assert_eq!(preview(10_000), expenses);
+    }
+}
+
+#[cfg(test)]
+mod apply_rules_to_tests {
+    use super::*;
+
+    #[test]
+    fn categorises_only_the_given_live_uncategorised_bookings() {
+        let dir = crate::test_support::TempDir::new("girocrab-apply-to");
+        let p = dir.join("v.db");
+        let v = Vault::open(p.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
+        let c = v.db().unwrap();
+        c.execute_batch(
+            "INSERT INTO account_groups(name) VALUES ('G');
+             INSERT INTO accounts(group_id, external_ref, name) VALUES (1, 'A1', 'Konto');
+             INSERT INTO accounts(group_id, external_ref, name, archived_unix) VALUES (1, 'A2', 'Archiv', 1);
+             INSERT INTO categories(name) VALUES ('Lebensmittel');
+             INSERT INTO rules(name, category_id, field, match_kind, pattern)
+                 VALUES ('REWE', 1, 'any', 'keyword', 'REWE');
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty,
+                                      category_source, deleted_ms)
+             VALUES (1, 'hit', '2026-01-02', -100, 'REWE Markt', 'none', NULL),
+                    (1, 'manual', '2026-01-02', -100, 'REWE Markt', 'manual', NULL),
+                    (1, 'deleted', '2026-01-02', -100, 'REWE Markt', 'none', 1),
+                    (2, 'archived', '2026-01-02', -100, 'REWE Markt', 'none', NULL),
+                    (1, 'outside', '2026-01-02', -100, 'REWE Markt', 'none', NULL);",
+        )
+        .unwrap();
+        // Every booking but 'outside' (rowids follow the insert order).
+        let ids = HashSet::from([1, 2, 3, 4]);
+
+        assert_eq!(Vault::apply_rules_to(&c, &HashSet::new()).unwrap(), 0);
+        assert_eq!(Vault::apply_rules_to(&c, &ids).unwrap(), 1);
+        let source = |ext: &str| -> String {
+            c.query_row(
+                "SELECT category_source FROM transactions WHERE external_id = ?1",
+                [ext],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(source("hit"), "rule");
+        assert_eq!(source("manual"), "manual");
+        assert_eq!(source("deleted"), "none");
+        assert_eq!(source("archived"), "none");
+        assert_eq!(source("outside"), "none", "not in the set");
     }
 }

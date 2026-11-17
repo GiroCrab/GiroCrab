@@ -6,20 +6,30 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::Vault;
 use crate::error::{CoreError, CoreResult};
-use crate::i18n::{display_name, display_path, tr};
+use crate::i18n::{role_name, tr};
 use crate::models::*;
+
+/// Classification metadata never passes through a booking's display fields.
+#[derive(Default)]
+pub(super) struct CategoryFlow {
+    pub(super) top_role: String,
+    pub(super) is_transfer: bool,
+}
 
 impl Vault {
     fn category_rows(
         conn: &Connection,
     ) -> CoreResult<Vec<(i64, Option<i64>, String, String, String, i32, Option<i64>)>> {
-        let mut stmt = conn.prepare("SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents FROM categories WHERE deleted_ms IS NULL")?;
+        let mut stmt = conn.prepare("SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL")?;
         let rows = stmt
             .query_map([], |r| {
                 Ok((
                     r.get(0)?,
                     r.get(1)?,
-                    r.get(2)?,
+                    role_name(
+                        &r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(7)?.as_deref(),
+                    ),
                     r.get(3)?,
                     r.get(4)?,
                     r.get(5)?,
@@ -28,6 +38,32 @@ impl Vault {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub(super) fn category_flows(conn: &Connection) -> CoreResult<HashMap<i64, CategoryFlow>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, parent_id, builtin_role FROM categories WHERE deleted_ms IS NULL",
+        )?;
+        let rows: HashMap<i64, (Option<i64>, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
+            .collect::<Result<_, _>>()?;
+        let mut out = HashMap::new();
+        for id in rows.keys() {
+            let mut flow = CategoryFlow::default();
+            let mut cur = Some(*id);
+            // Match the display tree's depth bound; malformed cycles cannot hang a load.
+            for _ in 0..32 {
+                let Some((parent, role)) = cur.and_then(|c| rows.get(&c)) else {
+                    break;
+                };
+                flow.top_role = role.clone().unwrap_or_default();
+                flow.is_transfer |=
+                    matches!(role.as_deref(), Some("Umbuchungen" | "import:transfers"));
+                cur = *parent;
+            }
+            out.insert(*id, flow);
+        }
+        Ok(out)
     }
 
     pub(crate) fn category_paths(
@@ -88,122 +124,39 @@ impl Vault {
         checked: Option<bool>,
         direction: BookingDirection,
     ) -> Result<Vec<Category>, CoreError> {
-        let db = self.db()?;
-        let rows = Self::category_rows(&db)?;
-        let mut totals: HashMap<Option<i64>, (i64, u32)> = HashMap::new();
-        {
-            // ids are integers, so inlining them cannot inject anything
-            let accounts = if account_ids.is_empty() {
-                String::new()
-            } else {
-                let list: Vec<String> = account_ids.iter().map(i64::to_string).collect();
-                format!(" AND t.account_id IN ({})", list.join(","))
-            };
-            let side = match direction {
-                BookingDirection::All => "",
-                BookingDirection::Income => " AND t.amount_cents > 0",
-                BookingDirection::Expense => " AND t.amount_cents < 0",
-            };
-            let condition = format!("{accounts}{side} AND (?3 IS NULL OR (t.checked != 0) = ?3)");
-            let mut stmt = db.prepare(&format!(
-                "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
-                 WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
-                 GROUP BY category_id",
-                crate::planning::effective_sql("", &condition)
-            ))?;
-            let checked = checked.map(i64::from);
-            let it = stmt.query_map(params![date_from, date_to, checked], |r| {
-                Ok((
-                    r.get::<_, Option<i64>>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)? as u32,
-                ))
-            })?;
-            for row in it {
-                let (c, s, n) = row?;
-                totals.insert(c, (s, n));
-            }
-        }
-        let mut children: HashMap<
-            Option<i64>,
-            Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-        > = HashMap::new();
-        for r in &rows {
-            children.entry(r.1).or_default().push(r);
-        }
-        for list in children.values_mut() {
-            list.sort_by(|a, b| {
-                a.5.cmp(&b.5)
-                    .then_with(|| a.2.to_lowercase().cmp(&b.2.to_lowercase()))
-            });
-        }
-        fn subtotal(
-            id: i64,
-            children: &HashMap<
-                Option<i64>,
-                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-            >,
-            totals: &HashMap<Option<i64>, (i64, u32)>,
-            depth: u32,
-        ) -> (i64, u32) {
-            let own = totals.get(&Some(id)).copied().unwrap_or((0, 0));
-            if depth > 32 {
-                return own;
-            }
-            let mut sum = own;
-            if let Some(kids) = children.get(&Some(id)) {
-                for k in kids {
-                    let (s, n) = subtotal(k.0, children, totals, depth + 1);
-                    sum.0 += s;
-                    sum.1 += n;
-                }
-            }
-            sum
-        }
-        let mut out = Vec::with_capacity(rows.len());
-        fn walk(
-            parent: Option<i64>,
-            depth: u32,
-            prefix: &str,
-            children: &HashMap<
-                Option<i64>,
-                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-            >,
-            totals: &HashMap<Option<i64>, (i64, u32)>,
-            out: &mut Vec<Category>,
-        ) {
-            if depth > 32 {
-                return;
-            }
-            if let Some(kids) = children.get(&parent) {
-                for k in kids {
-                    let path = if prefix.is_empty() {
-                        k.2.clone()
-                    } else {
-                        format!("{prefix} › {}", k.2)
-                    };
-                    let own = totals.get(&Some(k.0)).copied().unwrap_or((0, 0));
-                    let (total, count) = subtotal(k.0, children, totals, 0);
-                    out.push(Category {
-                        id: k.0,
-                        parent_id: k.1,
-                        name: display_name(&k.2),
-                        sf_symbol: k.3.clone(),
-                        color_hex: k.4.clone(),
-                        sort_order: k.5,
-                        depth,
-                        path: display_path(&path),
-                        own_total_cents: own.0,
-                        total_cents: total,
-                        transaction_count: count,
-                        budget_cents: k.6,
-                    });
-                    walk(Some(k.0), depth + 1, &path, children, totals, out);
-                }
-            }
-        }
-        walk(None, 0, "", &children, &totals, &mut out);
-        Ok(out)
+        self.categories_with_filters(
+            date_from,
+            date_to,
+            account_ids,
+            checked,
+            direction,
+            None,
+            None,
+        )
+    }
+
+    /// `list_categories_filtered` plus the list's amount range (GitHub #357): only bookings whose
+    /// absolute amount lies between `amount_min_cents` and `amount_max_cents` (`None` = open).
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_categories_filtered_amount(
+        &self,
+        date_from: Option<String>,
+        date_to: Option<String>,
+        account_ids: Vec<i64>,
+        checked: Option<bool>,
+        direction: BookingDirection,
+        amount_min_cents: Option<i64>,
+        amount_max_cents: Option<i64>,
+    ) -> Result<Vec<Category>, CoreError> {
+        self.categories_with_filters(
+            date_from,
+            date_to,
+            account_ids,
+            checked,
+            direction,
+            amount_min_cents,
+            amount_max_cents,
+        )
     }
 
     /// Monthly sums of one category including its subcategories (GitHub #502), for the
@@ -347,20 +300,24 @@ impl Vault {
         }
         // The UI shows built-in names translated; saving that unchanged
         // display name keeps the stored German default (and its logic).
-        let stored: Option<(String, Option<i64>, String, String)> = db
+        let stored: Option<(String, Option<i64>, String, String, Option<String>)> = db
             .query_row(
-                "SELECT name, parent_id, sf_symbol, color_hex FROM categories WHERE id = ?1",
+                "SELECT name, parent_id, sf_symbol, color_hex, builtin_role FROM categories WHERE id = ?1",
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()?;
         let name = match &stored {
-            Some((stored, ..)) if *stored != name && display_name(stored) == name => stored.clone(),
+            Some((stored, _, _, _, role))
+                if *stored != name && role_name(stored, role.as_deref()) == name =>
+            {
+                stored.clone()
+            }
             _ => name,
         };
         // only fields that really change get a stamp (newest edit wins per field)
         let now = crate::user_groups::now_ms();
-        let (old_name, old_parent, old_symbol, old_color) = stored.unwrap_or_default();
+        let (old_name, old_parent, old_symbol, old_color, _) = stored.unwrap_or_default();
         db.execute(
             "UPDATE categories SET name = ?1, parent_id = ?2, sf_symbol = ?3, color_hex = ?4,
                     name_ms = CASE WHEN ?6 THEN ?10 ELSE name_ms END,
@@ -394,5 +351,150 @@ impl Vault {
         crate::sync_merge::soft_delete_categories(&tx, id)?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod role_tests;
+
+impl Vault {
+    #[allow(clippy::too_many_arguments)]
+    fn categories_with_filters(
+        &self,
+        date_from: Option<String>,
+        date_to: Option<String>,
+        account_ids: Vec<i64>,
+        checked: Option<bool>,
+        direction: BookingDirection,
+        amount_min_cents: Option<i64>,
+        amount_max_cents: Option<i64>,
+    ) -> Result<Vec<Category>, CoreError> {
+        let db = self.db()?;
+        let rows = Self::category_rows(&db)?;
+        let mut totals: HashMap<Option<i64>, (i64, u32)> = HashMap::new();
+        {
+            // ids are integers, so inlining them cannot inject anything
+            let accounts = if account_ids.is_empty() {
+                String::new()
+            } else {
+                let list: Vec<String> = account_ids.iter().map(i64::to_string).collect();
+                format!(" AND t.account_id IN ({})", list.join(","))
+            };
+            // `+`: no `tx_amount_date` range scan here (a row lookup per match, 10x slower
+            // than the plain pass that sums every booking anyway).
+            let side = match direction {
+                BookingDirection::All => "",
+                BookingDirection::Income => " AND +t.amount_cents > 0",
+                BookingDirection::Expense => " AND +t.amount_cents < 0",
+            };
+            // absolute amount of the booking, like the list's amount range (#357); ints are inlined
+            let mut amount = String::new();
+            if let Some(min) = amount_min_cents {
+                amount.push_str(&format!(" AND ABS(t.amount_cents) >= {min}"));
+            }
+            if let Some(max) = amount_max_cents {
+                amount.push_str(&format!(" AND ABS(t.amount_cents) <= {max}"));
+            }
+            let condition =
+                format!("{accounts}{side}{amount} AND (?3 IS NULL OR (t.checked != 0) = ?3)");
+            let mut stmt = db.prepare(&format!(
+                "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
+                 WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
+                 GROUP BY category_id",
+                crate::planning::effective_sql("", &condition)
+            ))?;
+            let checked = checked.map(i64::from);
+            let it = stmt.query_map(params![date_from, date_to, checked], |r| {
+                Ok((
+                    r.get::<_, Option<i64>>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)? as u32,
+                ))
+            })?;
+            for row in it {
+                let (c, s, n) = row?;
+                totals.insert(c, (s, n));
+            }
+        }
+        let mut children: HashMap<
+            Option<i64>,
+            Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
+        > = HashMap::new();
+        for r in &rows {
+            children.entry(r.1).or_default().push(r);
+        }
+        for list in children.values_mut() {
+            list.sort_by(|a, b| {
+                a.5.cmp(&b.5)
+                    .then_with(|| a.2.to_lowercase().cmp(&b.2.to_lowercase()))
+            });
+        }
+        fn subtotal(
+            id: i64,
+            children: &HashMap<
+                Option<i64>,
+                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
+            >,
+            totals: &HashMap<Option<i64>, (i64, u32)>,
+            depth: u32,
+        ) -> (i64, u32) {
+            let own = totals.get(&Some(id)).copied().unwrap_or((0, 0));
+            if depth > 32 {
+                return own;
+            }
+            let mut sum = own;
+            if let Some(kids) = children.get(&Some(id)) {
+                for k in kids {
+                    let (s, n) = subtotal(k.0, children, totals, depth + 1);
+                    sum.0 += s;
+                    sum.1 += n;
+                }
+            }
+            sum
+        }
+        let mut out = Vec::with_capacity(rows.len());
+        fn walk(
+            parent: Option<i64>,
+            depth: u32,
+            prefix: &str,
+            children: &HashMap<
+                Option<i64>,
+                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
+            >,
+            totals: &HashMap<Option<i64>, (i64, u32)>,
+            out: &mut Vec<Category>,
+        ) {
+            if depth > 32 {
+                return;
+            }
+            if let Some(kids) = children.get(&parent) {
+                for k in kids {
+                    let path = if prefix.is_empty() {
+                        k.2.clone()
+                    } else {
+                        format!("{prefix} › {}", k.2)
+                    };
+                    let own = totals.get(&Some(k.0)).copied().unwrap_or((0, 0));
+                    let (total, count) = subtotal(k.0, children, totals, 0);
+                    out.push(Category {
+                        id: k.0,
+                        parent_id: k.1,
+                        name: k.2.clone(),
+                        sf_symbol: k.3.clone(),
+                        color_hex: k.4.clone(),
+                        sort_order: k.5,
+                        depth,
+                        path: path.clone(),
+                        own_total_cents: own.0,
+                        total_cents: total,
+                        transaction_count: count,
+                        budget_cents: k.6,
+                    });
+                    walk(Some(k.0), depth + 1, &path, children, totals, out);
+                }
+            }
+        }
+        walk(None, 0, "", &children, &totals, &mut out);
+        Ok(out)
     }
 }

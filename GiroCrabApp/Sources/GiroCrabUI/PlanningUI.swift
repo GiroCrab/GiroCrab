@@ -30,8 +30,11 @@ extension AppModel {
     }
 
     /// `nil` = locked, cancelled or the vault changed meanwhile (keep what is shown).
-    func cashflow(_ g: PeriodGranularity, count: Int) async -> [PeriodCashflow]? {
-        try? await vaultOffMain { try $0.cashflowByPeriod(granularity: g, count: UInt32(count)) }
+    /// `accountIds` empty = all accounts.
+    func cashflow(_ g: PeriodGranularity, count: Int, accountIds: [Int64] = []) async -> [PeriodCashflow]? {
+        try? await vaultOffMain {
+            try $0.cashflowByPeriod(granularity: g, count: UInt32(count), accountIds: accountIds)
+        }
     }
 
     func transferTemplates() async -> [TransferTemplate] {
@@ -143,7 +146,7 @@ struct BudgetProgressCard: View {
                 if collapsed {
                     if !items.isEmpty {
                         Text("\(Money.format(totalSpent)) / \(Money.format(totalBudget))")
-                            .sensitive()
+                            .sensitive(.amounts)
                             .appFont(.subheadline, weight: .semibold, monospacedDigit: true).foregroundStyle(BudgetTone.color(totalPercent))
                             .fixedSize()
                         BudgetBar(percent: totalPercent).frame(width: 60)
@@ -320,7 +323,7 @@ struct CashflowCard: View {
                     if let last = rows.last {
                         let net = last.incomeCents - last.expenseCents
                         Text("\(label(last.key)): \(Money.format(net))")
-                            .sensitive()
+                            .sensitive(.amounts)
                             .appFont(.subheadline, weight: .semibold, monospacedDigit: true)
                             .foregroundStyle(net >= 0 ? Theme.inflow : Theme.outflow)
                             .fixedSize()
@@ -359,7 +362,7 @@ struct CashflowCard: View {
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
                         .foregroundStyle(Theme.border)
                     AxisValueLabel {
-                        if let d = v.as(Double.self) { Text(d, format: .number.precision(.fractionLength(0))).appFont(.caption2).fixedSize().sensitive() }
+                        if let d = v.as(Double.self) { Text(d, format: .number.precision(.fractionLength(0))).appFont(.caption2).fixedSize().sensitive(.amounts) }
                     }
                 }
             }
@@ -392,9 +395,17 @@ struct CashflowCard: View {
             }
         }
         .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))
-        .task(id: "\(granularity)#\(model.bookings.count)") {
-            if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6) { rows = loaded }
+        // Follows the sidebar: overview = all accounts, account/group = its accounts (#731).
+        .task(id: "\(granularity)#\(model.bookings.count)#\(accountIds)") {
+            if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6, accountIds: accountIds) {
+                rows = loaded
+            }
         }
+    }
+
+    /// Accounts of the sidebar selection; a category view keeps its account filter.
+    private var accountIds: [Int64] {
+        model.currentFilter.accountIds
     }
 }
 

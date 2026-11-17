@@ -48,10 +48,19 @@ func accountHolderLine(_ a: Account) -> String? {
 
 struct StreamHeaderCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.reportRedaction) private var redaction
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
     @State private var showDocuments = false
+    @AppStorage("showAccountAnalytics") private var showAnalytics: Bool = false
+    private var isOverviewSelection: Bool {
+        if case .allAccounts? = model.sidebarSelection { return true }
+        return false
+    }
+    /// Where the tag button sits in the filter row: the tag popover points at it (#228).
+    @State private var tagButtonFrame: CGRect = .zero
+    @State private var showAmountFilter = false
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics: Bool = true
     @AppStorage(ViewLayout.compactHeaderKey) private var compactHeader: Bool = false
     @AppStorage(BalanceChartStyle.defaultsKey) private var chartStyle: BalanceChartStyle = .line
@@ -86,7 +95,7 @@ struct StreamHeaderCard: View {
                                     .appFont(.caption)
                                     .foregroundStyle(Theme.secondary)
                                     .lineLimit(1)
-                                    .help(holder)
+                                    .help(redaction.masking(holder))
                             }
                             let note = model.accountNote(for: a.id)
                             if !note.isEmpty {
@@ -95,7 +104,7 @@ struct StreamHeaderCard: View {
                                     .appFont(.caption)
                                     .foregroundStyle(Theme.secondary)
                                     .lineLimit(2)
-                                    .help(note)
+                                    .help(redaction.masking(note))
                             }
                         } else {
                             Text(model.lastSyncText)
@@ -273,10 +282,19 @@ struct StreamHeaderCard: View {
                 filterContent.fixedSize(horizontal: true, vertical: false)
             }
         }
+        .coordinateSpace(.named(TagFilterButton.rowSpace))
         // Outside ViewThatFits: its candidates must not each carry the popover.
         .capturablePopover(isPresented: $model.showCustomPeriod, arrowEdge: .bottom) {
             CustomPeriodForm()
         }
+        #if os(macOS)
+        // anchored on the tag button, so its arrow points there and not at the row's middle
+        .capturablePopover(isPresented: $model.showTagFilter,
+                           attachmentAnchor: tagButtonFrame.isEmpty ? .rect(.bounds) : .rect(.rect(tagButtonFrame)),
+                           arrowEdge: .bottom) {
+            TagFilterPopover()
+        }
+        #endif
     }
 
     /// The period menu (also above Sachwerte charts).
@@ -290,7 +308,7 @@ struct StreamHeaderCard: View {
                 set: { _ in model.categoryAccountFilter = [] }
             ))
             Divider()
-            ForEach(model.allAccounts, id: \.id) { a in
+            ForEach(model.accountFilterCandidates, id: \.id) { a in
                 Toggle(isOn: Binding(
                     get: { model.categoryAccountIDs.contains(a.id) },
                     set: { _ in model.toggleCategoryAccount(a.id) }
@@ -308,6 +326,45 @@ struct StreamHeaderCard: View {
         .help("Nur Buchungen ausgewählter Konten anzeigen")
     }
 
+    /// Amount range (#357): the pill opens the popover and shows the range while one is set;
+    /// the cross next to it resets it with one click.
+    @ViewBuilder
+    private var amountFilterPill: some View {
+        let filter = model.amountFilter
+        HStack(spacing: 4) {
+            // Looks like the account menu next to it: body size, primary colour, chevron.
+            Button { showAmountFilter = true } label: {
+                HStack(spacing: 4) {
+                    if filter.isActive {
+                        Label(filter.title, systemImage: "eurosign.circle.fill")
+                            .sensitive(.amounts)
+                    } else {
+                        Label(filter.title, systemImage: "eurosign.circle")
+                    }
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                }
+                .appFont(.body)
+                .foregroundStyle(Theme.text)
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            }
+            .buttonStyle(.plain)
+            .help("Nach Betrag filtern")
+            // On the pill itself, so the arrow points at it (not at the middle of the row).
+            .capturablePopover(isPresented: $showAmountFilter, arrowEdge: .bottom) {
+                AmountFilterForm(isPresented: $showAmountFilter)
+            }
+            if filter.isActive {
+                Button { model.interactiveAmountFilter = AmountFilter() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .help("Betragsfilter zurücksetzen")
+                .accessibilityLabel("Betragsfilter zurücksetzen")
+            }
+        }
+        .fixedSize()
+    }
+
     @ViewBuilder
     private var filterContent: some View {
         @Bindable var model = model
@@ -318,14 +375,14 @@ struct StreamHeaderCard: View {
                 Menu {
                     // Inline pickers show no title in a menu: name each group with a section header.
                     Section("Status") {
-                        Picker("Status", selection: $model.statusFilter) {
+                        Picker("Status", selection: $model.interactiveStatusFilter) {
                             ForEach(StatusFilter.allCases) { Text($0.title).tag($0) }
                         }
                         .pickerStyle(.inline)
                         .labelsHidden()
                     }
                     Section("Buchungsart") {
-                        Picker("Buchungsart", selection: $model.directionFilter) {
+                        Picker("Buchungsart", selection: $model.interactiveDirectionFilter) {
                             ForEach(BookingDirection.ordered) { Text($0.title).tag($0) }
                         }
                         .pickerStyle(.inline)
@@ -349,9 +406,16 @@ struct StreamHeaderCard: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .help("Nach Status oder nach Einnahmen und Ausgaben filtern")
-                if model.showsCategoryAccountFilter && model.allAccounts.count > 1 {
+                #if os(macOS)
+                // tag filter (#228); the iOS layout follows later
+                if model.showsTagFilter {
+                    TagFilterButton { tagButtonFrame = $0 }
+                }
+                #endif
+                if model.showsAccountFilter && model.accountFilterCandidates.count > 1 {
                     categoryAccountMenu
                 }
+                amountFilterPill
                 if let a = account {
                     Button { showDocuments = true } label: {
                         Label("Dokumente", systemImage: "doc.text")
@@ -362,6 +426,20 @@ struct StreamHeaderCard: View {
                     }
                     .buttonStyle(.borderless)
                     .capturableSheet(isPresented: $showDocuments) { AccountDocumentsSheet(account: a) }
+                }
+                if showStatistics, !isOverviewSelection, model.scope != .investments, !model.allAccounts.isEmpty {
+                    Button {
+                        withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { showAnalytics.toggle() }
+                    } label: {
+                        Label("Analysen", systemImage: "chart.bar.xaxis")
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                            #if os(iOS)
+                            .labelStyle(.iconOnly)
+                            #endif
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(showAnalytics ? Color.accentColor : Theme.secondary)
+                    .help("Cashflow und Budgets für dieses Konto ein-/ausblenden")
                 }
                 Spacer()
                 #if os(iOS)
@@ -446,7 +524,7 @@ struct KPI: View {
             }
             Text(value).appFont(.title3, weight: .semibold, monospacedDigit: true).foregroundStyle(tint)
                 .lineLimit(1).minimumScaleFactor(0.75)
-                .sensitive()
+                .sensitive(.amounts)
             Spacer(minLength: 2)
             Text(subtitle).appFont(.caption2).foregroundStyle(Theme.tertiary)
                 .lineLimit(2)
@@ -504,13 +582,74 @@ struct BalanceChart: View {
         }
     }
 
-    private var pts: [Point] {
-        points.enumerated().compactMap { i, p in
-            DateText.date(p.date).map { Point(id: i, date: $0, cents: p.balanceCents) }
-        }
+    /// Prepared once per data change, not on every redraw: a scroll or hover step only moves the
+    /// marker, and parsing thousands of days each time made it stutter. Filled while the body
+    /// is evaluated (a reference type, so no state change), keyed on the data it was built
+    /// from: a frame never pairs new `points` with arrays of the old ones.
+    private final class Prepared {
+        var key = 0
+        var unit: BalanceBarUnit?
+        var pts: [Point] = []
+        /// `pts` thinned to what the chart width can show (extremes of each stretch kept).
+        var drawn: [Point] = []
+        var buckets: [BalanceBucket] = []
+    }
+    @State private var prepared = Prepared()
+
+    /// More points than this are thinned; ~2 pixels per point at the usual chart width.
+    private static let maxDrawnPoints = 900
+
+    /// "Mo. 9. Nov. 2026": the marker readout and the day bar's title.
+    private static let dayFormat = Date.FormatStyle.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()
+
+    /// Cheap fingerprint of `points`: length, ends and the sum of all balances.
+    private var dataKey: Int {
+        var h = Hasher()
+        h.combine(points.count)
+        h.combine(points.first?.date)
+        h.combine(points.last?.date)
+        h.combine(points.reduce(Int64(0)) { $0 &+ $1.balanceCents })
+        return h.finalize()
     }
 
-    private var buckets: [BalanceBucket] { BalanceBuckets.make(points, unit: barUnit) }
+    private var current: Prepared {
+        let key = dataKey
+        if prepared.key != key || prepared.unit == nil {
+            let all: [Point] = points.enumerated().compactMap { i, p in
+                DateText.date(p.date).map { Point(id: i, date: $0, cents: p.balanceCents) }
+            }
+            prepared.pts = all
+            prepared.drawn = Self.thinned(all, to: Self.maxDrawnPoints)
+            prepared.key = key
+            prepared.unit = nil
+        }
+        if prepared.unit != barUnit {
+            prepared.buckets = BalanceBuckets.make(points, unit: barUnit)
+            prepared.unit = barUnit
+        }
+        return prepared
+    }
+
+    private var pts: [Point] { current.pts }
+    private var drawPts: [Point] { current.drawn }
+    private var buckets: [BalanceBucket] { current.buckets }
+
+    /// Keeps first, lowest, highest and last point of each stretch, so peaks and dips survive.
+    private static func thinned(_ all: [Point], to limit: Int) -> [Point] {
+        guard all.count > limit else { return all }
+        let stretches = limit / 4
+        let size = Double(all.count) / Double(stretches)
+        var out: [Point] = []
+        out.reserveCapacity(limit + 8)
+        for k in 0..<stretches {
+            let s = Int(Double(k) * size), e = min(all.count, Int(Double(k + 1) * size))
+            guard s < e else { continue }
+            let slice = all[s..<e]
+            guard let lo = slice.min(by: { $0.cents < $1.cents }), let hi = slice.max(by: { $0.cents < $1.cents }) else { continue }
+            for p in [slice[s], lo, hi, slice[e - 1]].sorted(by: { $0.id < $1.id }) where out.last?.id != p.id { out.append(p) }
+        }
+        return out
+    }
 
     /// Point of the day at the top of the scrolled booking list (#593): that day's closing
     /// balance, or the latest earlier one when the day has no point of its own.
@@ -566,7 +705,7 @@ struct BalanceChart: View {
         case .year: b.start.formatted(.dateTime.year())
         case .quarter: b.start.formatted(.dateTime.quarter().year())
         case .month: b.start.formatted(.dateTime.month(.wide).year())
-        case .day, .automatic: b.start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
+        case .day, .automatic: b.start.formatted(Self.dayFormat)
         }
     }
 
@@ -655,8 +794,33 @@ struct BalanceChart: View {
 
     // MARK: line
 
+    /// Marker for the hovered day, else the day at the top of the scrolled list. Drawn in the
+    /// overlay, outside the chart's marks, so moving it does not rebuild the line.
+    @ViewBuilder private func marker(in all: [Point], proxy: ChartProxy, geo: GeometryProxy) -> some View {
+        if let m = hovered ?? followedPoint(in: all), let plot = proxy.plotFrame,
+           let x = proxy.position(forX: m.date), let y = proxy.position(forY: m.euros) {
+            let frame = geo[plot]
+            let left = m.id * 2 > all.count
+            ZStack(alignment: .topLeading) {
+                Rectangle().fill(Theme.secondary.opacity(0.45))
+                    .frame(width: 1, height: frame.height)
+                    .offset(x: frame.minX + x, y: frame.minY)
+                Circle().fill(Theme.accent).frame(width: 6, height: 6)
+                    .offset(x: frame.minX + x - 3, y: frame.minY + y - 3)
+                readout(m.date.formatted(Self.dayFormat), cents: m.cents)
+                    .fixedSize()
+                    .frame(width: max(0, left ? x - 4 : frame.width - x - 4), alignment: left ? .trailing : .leading)
+                    .offset(x: left ? frame.minX : frame.minX + x + 4, y: frame.minY)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
+    }
+
     @ViewBuilder private var lineChart: some View {
-        let pts = self.pts
+        let cur = current
+        let pts = cur.pts
+        let drawn = cur.drawn
         let minV = pts.map(\.euros).min() ?? 0
         let maxV = pts.map(\.euros).max() ?? 1
         let pad = max((maxV - minV) * 0.15, 1)
@@ -667,7 +831,7 @@ struct BalanceChart: View {
                     .foregroundStyle(Theme.tertiary.opacity(0.5))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
             }
-            ForEach(pts) { p in
+            ForEach(drawn) { p in
                 AreaMark(x: .value("Tag", p.date, unit: .day), yStart: .value("Min", minV - pad), yEnd: .value("Saldo", p.euros))
                     .foregroundStyle(LinearGradient(colors: [Theme.accent.opacity(0.14), Theme.accent.opacity(0.01)], startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.monotone)
@@ -676,35 +840,13 @@ struct BalanceChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 1.5))
                     .interpolationMethod(.monotone)
             }
-            // Scrolling the booking list: the marker follows the line; hovering takes precedence.
-            if hovered == nil, let f = followedPoint(in: pts) {
-                PointMark(x: .value("Tag", f.date, unit: .day), y: .value("Saldo", f.euros))
-                    .foregroundStyle(Theme.accent)
-                    .symbolSize(36)
-                RuleMark(x: .value("Tag", f.date, unit: .day))
-                    .foregroundStyle(Theme.secondary.opacity(0.45))
-                    .lineStyle(StrokeStyle(lineWidth: 1))
-                    .annotation(position: f.id * 2 > pts.count ? .topLeading : .topTrailing, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        readout(f.date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()), cents: f.cents)
-                    }
-            }
-            if let h = hovered {
-                PointMark(x: .value("Tag", h.date, unit: .day), y: .value("Saldo", h.euros))
-                    .foregroundStyle(Theme.accent)
-                    .symbolSize(36)
-                RuleMark(x: .value("Tag", h.date, unit: .day))
-                    .foregroundStyle(Theme.secondary.opacity(0.45))
-                    .lineStyle(StrokeStyle(lineWidth: 1))
-                    .annotation(position: h.id * 2 > pts.count ? .topLeading : .topTrailing, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        readout(h.date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()), cents: h.cents)
-                    }
-            }
         }
         .chartYScale(domain: (minV - pad)...(maxV + pad))
         .chartYAxis { yAxis(min: minV, max: maxV, domain: (minV - pad)...(maxV + pad)) }
         .chartXAxis { xAxis(span: spanDays(pts.first?.date, pts.last?.date)) }
         .chartOverlay { proxy in
             GeometryReader { geo in
+                marker(in: pts, proxy: proxy, geo: geo)
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .onContinuousHover { phase in
                         switch phase {
@@ -732,7 +874,7 @@ struct BalanceChart: View {
     // MARK: bars
 
     @ViewBuilder private var barChart: some View {
-        let bars = self.buckets
+        let bars = current.buckets
         let barUnit = resolvedBarUnit
         let unit = barUnit.calendarComponent
         let xLabel: LocalizedStringKey = switch barUnit {
@@ -747,11 +889,13 @@ struct BalanceChart: View {
         // yearly bars: every gap is already a turn of the year
         let years = barUnit == .year ? []
             : bars.first.flatMap { f in bars.last.map { BalanceBuckets.yearStarts(from: f.start, to: $0.last) } } ?? []
+        let followed = followedBar(in: bars)
+        let active = hoveredBar ?? followed
         Chart {
             ForEach(bars) { b in
                 BarMark(x: .value(xLabel, b.start, unit: unit), y: .value("Ø Saldo", b.euros))
                     .foregroundStyle(b.averageCents < 0 ? Theme.outflow : Theme.accent)
-                    .opacity((hoveredBar ?? followedBar(in: bars))?.id == b.id || (hoveredBar == nil && followedBar(in: bars) == nil) ? 0.85 : 0.35)
+                    .opacity(active?.id == b.id || active == nil ? 0.85 : 0.35)
                     .cornerRadius(1.5)
             }
             // Plain date (no unit): the rule sits on the boundary between December and January.
@@ -760,7 +904,7 @@ struct BalanceChart: View {
                     .foregroundStyle(Theme.tertiary.opacity(0.6))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
             }
-            if hoveredBar == nil, let f = followedBar(in: bars) {
+            if hoveredBar == nil, let f = followed {
                 RuleMark(x: .value(xLabel, f.start, unit: unit))
                     .foregroundStyle(.clear)
                     .annotation(position: f.id * 2 > bars.count ? .topLeading : .topTrailing, spacing: 4, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
@@ -837,7 +981,7 @@ struct BalanceChart: View {
                 if let d = v.as(Double.self) {
                     // fixed minimum width: changing values never shift the plot sideways
                     Text(verbatim: Self.compactEuros(d))
-                        .sensitive()
+                        .sensitive(.amounts)
                         .appFont(.caption2, monospacedDigit: true)
                         .foregroundStyle(Theme.tertiary)
                         .fixedSize()
@@ -916,7 +1060,7 @@ struct BalanceChart: View {
                 .appFont(.caption2)
                 .foregroundStyle(Theme.secondary)
             Text(verbatim: prefix + Money.format(cents))
-                .sensitive()
+                .sensitive(.amounts)
                 .appFont(.caption, weight: .semibold, monospacedDigit: true)
                 .foregroundStyle(cents < 0 ? Theme.outflow : Theme.text)
         }
@@ -970,5 +1114,102 @@ enum DepotChartSeries {
             pts = Array(pts[...lastChange])
         }
         return pts
+    }
+}
+
+/// Popover of the amount filter (#357): from / to as absolute amounts, empty = open.
+struct AmountFilterForm: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    @Binding var isPresented: Bool
+    @State private var minText = ""
+    @State private var maxText = ""
+
+    /// Empty = no limit; nil = not a valid, non-negative amount.
+    private static func cents(_ text: String) -> Int64?? {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return .some(nil) }
+        guard let c = Money.parseCents(t), c >= 0 else { return nil }
+        return .some(c)
+    }
+
+    private var parsed: AmountFilter? {
+        guard let lo = Self.cents(minText), let hi = Self.cents(maxText) else { return nil }
+        return AmountFilter(minCents: lo, maxCents: hi).normalized
+    }
+
+    private func apply() {
+        guard let filter = parsed else { return }
+        model.interactiveAmountFilter = filter
+        isPresented = false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                GridRow {
+                    Text("Von")
+                    field("Von", prompt: "Kein Minimum", text: $minText)
+                }
+                GridRow {
+                    Text("Bis")
+                    field("Bis", prompt: "Kein Maximum", text: $maxText)
+                }
+            }
+            Text("Betrag ohne Vorzeichen.")
+                .appFont(.caption)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Zurücksetzen") {
+                    minText = ""; maxText = ""
+                    model.interactiveAmountFilter = AmountFilter()
+                    isPresented = false
+                }
+                .disabled(!model.amountFilter.isActive && minText.isEmpty && maxText.isEmpty)
+                Spacer()
+                Button("Abbrechen", role: .cancel) { isPresented = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Übernehmen") { apply() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(parsed == nil)
+            }
+        }
+        // Like the rows of the account menu next to it: body size in the primary text colour.
+        .appFont(.body)
+        .foregroundStyle(Theme.text)
+        .padding(16)
+        .frame(minWidth: 300)
+        // The popover's own fill is darker than the account menu's panel: lift it to that translucent
+        // grey-blue in dark mode (a thin material under a light tint).
+        .background {
+            if colorScheme == .dark {
+                ZStack {
+                    Rectangle().fill(.ultraThinMaterial)
+                    Color(red: 0.62, green: 0.70, blue: 0.92).opacity(0.16) // the menu's blue-grey
+                }
+            }
+        }
+        #if os(iOS)
+        .presentationDetents([.medium])
+        #endif
+        .onAppear {
+            let f = model.amountFilter
+            minText = f.minCents.map(Money.plain) ?? ""
+            maxText = f.maxCents.map(Money.plain) ?? ""
+        }
+    }
+
+    private func field(_ title: LocalizedStringKey, prompt: LocalizedStringKey, text: Binding<String>) -> some View {
+        HStack(spacing: 4) {
+            TextField(title, text: text, prompt: Text(prompt))
+                .labelsHidden()
+                .appFont(.body, monospacedDigit: true)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 125)
+                .onSubmit { apply() }
+            Text(verbatim: "€").fixedSize()
+        }
+        .fixedSize()
     }
 }

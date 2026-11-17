@@ -8,6 +8,7 @@ import AppKit
 /// (im verschlüsselten SQLCipher-Tresor), Händler-Logos, Sicherheit.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    @State private var showKeySheet = false
 
     var body: some View {
         @Bindable var model = model
@@ -28,7 +29,7 @@ struct SettingsView: View {
                 .tabItem { Label("Dokumente", systemImage: "doc.on.doc") }
                 .tag(SettingsTab.documents)
             #endif
-            SecuritySettings()
+            SecuritySettings(showKeySheet: $showKeySheet)
                 .settingsPane(height: 760)   // incl. "Sicherheitssperre für Bankverbindungen"
                 .disabled(!model.isUnlocked)
                 .tabItem { Label("Sicherheit", systemImage: "lock.shield") }
@@ -62,8 +63,11 @@ struct GeneralSettings: View {
     @State private var showHelp = false
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics = true
     @AppStorage(ViewLayout.budgetsKey) private var showBudgets = true
+    @AppStorage(ViewLayout.runningBalanceKey) private var showRunningBalance = false
     @AppStorage(NegativeAmountStyle.defaultsKey) private var negativeAmountStyle: NegativeAmountStyle = .neutral
     @AppStorage(AppTextSize.defaultsKey) private var textSize: AppTextSize = .standard
+    @AppStorage(PrivacyMode.enabledKey) private var privacyMode = false
+    @AppStorage(PrivacyMode.scopeKey) private var privacyScope = PrivacyMode.Scope.amounts
     @AppStorage(AppAppearance.defaultsKey) private var appearance: AppAppearance = .system
     @AppStorage(BookingDensity.defaultsKey) private var bookingDensity: BookingDensity = .standard
 
@@ -108,11 +112,20 @@ struct GeneralSettings: View {
                 Text("Vergrößert die Schrift in der ganzen App. Auch im Menü Ansicht mit ⌘+ / ⌘− / ⌘0.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 #endif
+                Toggle("Privatmodus", isOn: $privacyMode)
+                Picker("Im Privatmodus ausblenden", selection: $privacyScope) {
+                    ForEach(PrivacyMode.Scope.allCases) { Text($0.title).tag($0) }
+                }
+                Text("Blendet Beträge aus, wenn du die App jemandem zeigst. Auf Wunsch auch Namen, Kontonummern und Verwendungszwecke.")
+                    .appFont(.caption).foregroundStyle(.secondary)
                 Toggle("Auswertungen in der Übersicht anzeigen", isOn: $showStatistics)
                 Text("Blendet Saldoverlauf, Cashflow und Budgets über der Buchungsliste aus. Auch im Menü Ansicht umschaltbar.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 Toggle("Budgets anzeigen", isOn: $showBudgets)
                 Text("Wer keine Monatsbudgets nutzt, blendet die Budget-Karte und „Monatsbudget festlegen …“ ganz aus. Auch im Menü Ansicht umschaltbar.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+                Toggle("Saldo in der Buchungsliste anzeigen", isOn: $showRunningBalance)
+                Text("Zeigt den Kontostand nach jeder Buchung und am Ende jedes Tages, zum Abgleich mit dem Kontoauszug. Bei mehreren Konten die Summe der Euro-Konten ohne Depots und Darlehen. Innerhalb eines Tages kann die Reihenfolge von der Bank abweichen, der Tagessaldo stimmt immer. Auch im Menü Ansicht umschaltbar.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 Picker("Negative Beträge", selection: $negativeAmountStyle) {
                     ForEach(NegativeAmountStyle.allCases) { Text($0.title).tag($0) }
@@ -436,6 +449,7 @@ struct SecuritySettings: View {
     /// Read once per vault: the core call takes the vault mutex, so not in `body`.
     @State private var vaultPath = "–"
     @State private var confirmReset = false
+    @Binding var showKeySheet: Bool
 
     var body: some View {
         Form {
@@ -463,7 +477,7 @@ struct SecuritySettings: View {
                     .textSelection(.enabled)
             } header: { Text("Tresor").appSectionHeader() }
             if model.hasOwnVault { VaultBackupSection() }
-            ICloudSyncSection()
+            ICloudSyncSection(showKeySheet: $showKeySheet)
             BankingPolicySection()
             Section {
                 Text("GiroCrab verbindet sich direkt von diesem Gerät mit Ihren Banken. Es gibt keinen GiroCrab-Server und kein Tracking. Nur wenn Sie den iCloud-Sync oben einschalten, liegt der verschlüsselte Tresor in Ihrem iCloud Drive. PINs und TANs liegen nur für einen Abruf im Speicher und werden danach gelöscht.")
@@ -482,6 +496,12 @@ struct SecuritySettings: View {
             } header: { Text("Zurücksetzen").appSectionHeader() }
         }
         .formStyle(.grouped)
+        // Present from the stable Form, not a Section that iOS distributes
+        // across its rows. Otherwise opening this nested sheet can tear down
+        // the Settings sheet as well (#768).
+        .capturableSheet(isPresented: $showKeySheet) {
+            KeyPasteSheet().environment(model)
+        }
         .task(id: model.isDemo) { vaultPath = model.vaultFilePath ?? "–" }
         .confirmationDialog("GiroCrab zurücksetzen?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("Alles löschen", role: .destructive) { Task { await model.resetApp() } }
@@ -602,7 +622,7 @@ struct ICloudSyncSection: View {
     @State private var pendingFolder: URL?
     @State private var wrongFolderHint: String?
     @State private var keychainSync = VaultKeyManager.shared.syncViaICloudKeychain
-    @State private var showKeySheet = false
+    @Binding var showKeySheet: Bool
     @State private var keyCopied = false
 
     var body: some View {
@@ -701,9 +721,6 @@ struct ICloudSyncSection: View {
                 .appFont(.caption).foregroundStyle(.secondary)
         } header: { Text("iCloud Sync").appSectionHeader() }
         .onChange(of: sync.keyMismatch) { _, bad in if bad { showKeySheet = true } }
-        .capturableSheet(isPresented: $showKeySheet) {
-            KeyPasteSheet().environment(model)
-        }
         .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { r in
             if case .success(let url) = r {
                 Task {
@@ -792,6 +809,7 @@ struct KeyPasteSheet: View {
             SecureField("Schlüssel (Base64 oder Hex)", text: $text)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
+                .sensitive()
                 .disabled(working)
             if case .failed(let message) = model.keyAdoption {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
@@ -810,6 +828,7 @@ struct KeyPasteSheet: View {
         }
         .padding(24)
         .macFrame(minWidth: 420)
+        .interactiveDismissDisabled(working)
         .onAppear { model.keyAdoption = .idle }
         .onChange(of: model.keyAdoption) { _, state in
             if state == .done { text = ""; dismiss() }
@@ -820,7 +839,6 @@ struct KeyPasteSheet: View {
 private extension View {
     /// macOS: each Settings tab has its own size and the window follows it
     /// (HIG: no large empty panes); iOS: the sheet decides.
-    @ViewBuilder
     func settingsPane(height: CGFloat) -> some View {
         // Own row under the pane: a grouped Form scrolls beneath a safe-area inset.
         let pane = VStack(spacing: 0) {

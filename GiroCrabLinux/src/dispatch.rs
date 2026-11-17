@@ -850,7 +850,7 @@ fn call(method: &str, a: &Value) -> R {
         }
         // --- Händler-Logos (AppModel+Logos.swift, #33) --- network: called with Core.callAsync
         "merchant_logo" => merchant_logo(&*vault()?, a),
-        // --- portal logins --- (src/web_login.rs: browser cookies, Amex/Amazon/FNZ/quirion imports)
+        // --- portal logins --- (src/web_login.rs: browser cookies, Amex/Amazon/FNZ/quirion/Schwäbisch Hall imports)
         m if crate::web_login::handles(m) => crate::web_login::call(m, a, vault),
         _ => {
             let v = vault()?;
@@ -1495,7 +1495,7 @@ vault_methods! {
     // insights / planning / recurring
     merchant_stats(merchant_key) merchant_history(merchant_key, account_id)
     selection_flow(account_ids, date_from, date_to)
-    cashflow_by_period(granularity, count)
+    cashflow_by_period(granularity, count, account_ids)
     list_category_budget_progress(year, month)
     list_recurring(account_ids) recurring_month(account_ids, year, month)
     // settings

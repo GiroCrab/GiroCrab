@@ -25,6 +25,83 @@ pub struct RuleInput<'a> {
     pub account_iban: &'a str,
 }
 
+/// The booking fields a rule or search expression reads, plus the current
+/// categorisation; one row of `RuleRow::COLUMNS`.
+pub(crate) struct RuleRow {
+    pub(crate) id: i64,
+    pub(crate) account_id: i64,
+    pub(crate) amount_cents: i64,
+    pub(crate) counterparty: String,
+    pub(crate) counterparty_iban: String,
+    pub(crate) purpose: String,
+    pub(crate) booking_text: String,
+    pub(crate) note: String,
+    pub(crate) currency: String,
+    pub(crate) account_iban: String,
+    pub(crate) category_id: Option<i64>,
+    pub(crate) rule_id: Option<i64>,
+}
+
+impl RuleRow {
+    /// SELECT list over `transactions t` and `accounts a`, in `read` order.
+    pub(crate) const COLUMNS: &str = "t.id, t.account_id, t.amount_cents, t.counterparty,
+        t.counterparty_iban, t.purpose, t.booking_text, t.note, t.currency, IFNULL(a.iban, ''),
+        t.category_id, t.rule_id";
+
+    pub(crate) fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        let input = Self::borrowed_input(r)?;
+        Ok(Self {
+            id: r.get(0)?,
+            account_id: input.account_id,
+            amount_cents: input.amount_cents,
+            counterparty: input.counterparty.into(),
+            counterparty_iban: input.counterparty_iban.into(),
+            purpose: input.purpose.into(),
+            booking_text: input.booking_text.into(),
+            note: input.note.into(),
+            currency: input.currency.into(),
+            account_iban: input.account_iban.into(),
+            category_id: r.get(10)?,
+            rule_id: r.get(11)?,
+        })
+    }
+
+    /// The `RuleInput` of a `COLUMNS` row, borrowing its texts (`read` copies
+    /// them): scans that keep only a few rows skip the copies (`preview_rule`).
+    pub(crate) fn borrowed_input<'r>(r: &'r rusqlite::Row<'_>) -> rusqlite::Result<RuleInput<'r>> {
+        let text = |i| r.get_ref(i)?.as_str().map_err(rusqlite::Error::from);
+        Ok(RuleInput {
+            account_id: r.get(1)?,
+            amount_cents: r.get(2)?,
+            counterparty: text(3)?,
+            counterparty_iban: text(4)?,
+            purpose: text(5)?,
+            booking_text: text(6)?,
+            note: text(7)?,
+            currency: text(8)?,
+            account_iban: text(9)?,
+        })
+    }
+
+    pub(crate) fn input(&self) -> RuleInput<'_> {
+        RuleInput {
+            account_id: self.account_id,
+            amount_cents: self.amount_cents,
+            counterparty: &self.counterparty,
+            counterparty_iban: &self.counterparty_iban,
+            purpose: &self.purpose,
+            booking_text: &self.booking_text,
+            note: &self.note,
+            currency: &self.currency,
+            account_iban: &self.account_iban,
+        }
+    }
+
+    pub(crate) fn matches_expr(&self, expr: &SearchExpr) -> bool {
+        expr.matches_prepared(&Prepared::new(expr_input(&self.input())))
+    }
+}
+
 enum Matcher {
     Regex(Regex),
     Expr(SearchExpr),
@@ -41,13 +118,12 @@ pub const MAX_PATTERN_LEN: usize = 2048;
 impl CompiledRule {
     pub fn compile(rule: Rule) -> CoreResult<Self> {
         if rule.pattern.len() > MAX_PATTERN_LEN {
-            return Err(CoreError::InvalidInput {
-                message: format!("rule pattern longer than {MAX_PATTERN_LEN} bytes"),
-            });
+            return Err(CoreError::invalid(format!(
+                "rule pattern longer than {MAX_PATTERN_LEN} bytes"
+            )));
         }
         if rule.match_kind == MatchKind::Expression {
-            let expr = SearchExpr::parse(&rule.pattern)
-                .map_err(|message| CoreError::InvalidInput { message })?;
+            let expr = SearchExpr::parse(&rule.pattern)?;
             return Ok(CompiledRule {
                 rule,
                 matcher: Matcher::Expr(expr),

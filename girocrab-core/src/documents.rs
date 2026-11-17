@@ -7,15 +7,16 @@
 //! amount, date and merchant name.
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
-use crate::models::{Booking, BookingFilter};
+use crate::models::Booking;
 use crate::money::format_cents;
-use crate::vault::Vault;
+use crate::vault::{sql_int_list, Vault};
 
 pub const DOC_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS booking_documents (
@@ -187,8 +188,10 @@ fn literal_strings(content: &[u8], out: &mut String) {
     }
 }
 
-/// Zip-bomb guards for [`extract_pdf_text`].
+/// Zip-bomb guards for [`extract_pdf_text`]. The total keeps a hostile PDF from
+/// inflating `MAX_PDF_STREAMS` streams of `MAX_INFLATED_STREAM` each (2 GB).
 const MAX_INFLATED_STREAM: usize = 8 * 1024 * 1024;
+const MAX_INFLATED_TOTAL: usize = 32 * 1024 * 1024;
 const MAX_PDF_STREAMS: usize = 256;
 const MAX_PDF_TEXT: usize = 4 * 1024 * 1024;
 
@@ -198,6 +201,7 @@ const MAX_PDF_TEXT: usize = 4 * 1024 * 1024;
 pub fn extract_pdf_text(bytes: &[u8]) -> String {
     let mut out = String::new();
     let mut streams = 0usize;
+    let mut inflate_budget = MAX_INFLATED_TOTAL;
     let mut i = 0;
     while let Some(pos) = find(bytes, b"stream", i) {
         let dict_start = bytes[..pos]
@@ -217,20 +221,33 @@ pub fn extract_pdf_text(bytes: &[u8]) -> String {
             break;
         };
         let data = &bytes[start..end];
+        i = end + 9;
         if out.len() >= MAX_PDF_TEXT || streams >= MAX_PDF_STREAMS {
             break;
         }
         streams += 1;
+        // Images hold no text; skipping them before inflation keeps them out of the budget.
+        if find(dict, b"Image", 0).is_some() {
+            continue;
+        }
         if find(dict, b"FlateDecode", 0).is_some() {
-            if let Ok(inflated) =
-                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(data, MAX_INFLATED_STREAM)
-            {
-                literal_strings(&inflated, &mut out);
+            let limit = MAX_INFLATED_STREAM.min(inflate_budget);
+            if limit > 0 {
+                let used =
+                    match miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(data, limit) {
+                        Ok(inflated) => {
+                            literal_strings(&inflated, &mut out);
+                            inflated.len()
+                        }
+                        // A stream over the limit is dropped, but its inflation still counts.
+                        Err(e) => e.output.len(),
+                    };
+                // `used <= limit <= inflate_budget`: no underflow.
+                inflate_budget -= used;
             }
-        } else if find(dict, b"Image", 0).is_none() {
+        } else {
             literal_strings(data, &mut out);
         }
-        i = end + 9;
     }
     out
 }
@@ -249,11 +266,20 @@ fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
 
 /// Amounts (cents, positive) mentioned in a text: "56,13", "1.234,56 €", "EUR 12.50".
 pub fn amounts_in(text: &str) -> Vec<i64> {
-    let re =
-        Regex::new(r"(?:^|[^\d,.])(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2})(?:[^\d]|$)")
-            .unwrap();
+    static AMOUNT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[^\d,.])(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2})").unwrap()
+    });
     let mut out: Vec<i64> = Vec::new();
-    for c in re.captures_iter(text) {
+    for c in AMOUNT.captures_iter(text) {
+        // The trailing separator is not part of the match (so "12,50 13,00"
+        // finds both); only a following digit disqualifies it.
+        if text[c.get(1).map_or(0, |m| m.end())..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit())
+        {
+            continue;
+        }
         if let Ok(v) = crate::money::parse_cents(&c[1]) {
             let v = v.abs();
             if v > 0 && !out.contains(&v) {
@@ -266,21 +292,33 @@ pub fn amounts_in(text: &str) -> Vec<i64> {
 
 /// Dates mentioned in a text as ISO strings.
 pub fn dates_in(text: &str) -> Vec<String> {
+    static GERMAN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})\b").unwrap());
+    static ISO: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?:^|\D)(20\d{2})[-_]?(\d{2})[-_]?(\d{2})").unwrap());
     let mut out = Vec::new();
-    let de = Regex::new(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})\b").unwrap();
-    for c in de.captures_iter(text) {
+    for c in GERMAN.captures_iter(text) {
         let (d, m): (u32, u32) = (c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0));
         let y: i32 = if c[3].len() == 2 {
             2000 + c[3].parse::<i32>().unwrap_or(0)
         } else {
             c[3].parse().unwrap_or(0)
         };
-        if (1..=31).contains(&d) && (1..=12).contains(&m) {
-            out.push(format!("{y:04}-{m:02}-{d:02}"));
+        if chrono::NaiveDate::from_ymd_opt(y, m, d).is_some() {
+            let iso = format!("{y:04}-{m:02}-{d:02}");
+            if !out.contains(&iso) {
+                out.push(iso);
+            }
         }
     }
-    let iso = Regex::new(r"(?:^|\D)(20\d{2})[-_]?(\d{2})[-_]?(\d{2})(?:\D|$)").unwrap();
-    for c in iso.captures_iter(text) {
+    for c in ISO.captures_iter(text) {
+        if text[c.get(3).map_or(0, |m| m.end())..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit())
+        {
+            continue;
+        }
         let s = format!("{}-{}-{}", &c[1], &c[2], &c[3]);
         if chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").is_ok() && !out.contains(&s) {
             out.push(s);
@@ -294,6 +332,10 @@ fn days_between(a: &str, b: &str) -> Option<i64> {
     let b = chrono::NaiveDate::parse_from_str(b, "%Y-%m-%d").ok()?;
     Some((a - b).num_days().abs())
 }
+
+/// Days between a receipt date and a booking that score full date points; a
+/// booking without an amount hit needs them (name 3 + date 3 >= 6).
+const CLOSE_DAYS: i64 = 3;
 
 /// Picks the booking a dropped receipt belongs to. Returns (booking, score).
 pub fn best_match<'a>(bookings: &'a [Booking], text: &str) -> Option<(&'a Booking, i32)> {
@@ -322,9 +364,9 @@ pub fn best_match<'a>(bookings: &'a [Booking], text: &str) -> Option<(&'a Bookin
             .min()
         {
             score += match min_days {
-                0..=3 => 3,
-                4..=10 => 2,
-                11..=45 => 0,
+                d if d <= CLOSE_DAYS => 3,
+                d if d <= 10 => 2,
+                d if d <= 45 => 0,
                 _ => -4,
             };
         }
@@ -416,10 +458,32 @@ fn truncate_chars(s: &mut String, max: usize) {
 }
 
 impl Vault {
-    fn bookings_for_matching(&self) -> CoreResult<Vec<Booking>> {
-        Ok(self
-            .list_transactions(BookingFilter::default())?
-            .transactions)
+    /// The bookings `best_match` can accept for `text`: those with one of its
+    /// amounts, or (for a name hit) booked within `CLOSE_DAYS` of one of its dates.
+    fn bookings_for_matching(&self, text: &str) -> CoreResult<Vec<Booking>> {
+        // Inlined values, all built here from integers and parsed dates. Two IN
+        // lists keep the SQL flat however many amounts and dates a long PDF names.
+        let amounts: Vec<i64> = amounts_in(text).iter().flat_map(|a| [*a, -a]).collect();
+        let mut days: Vec<String> = dates_in(text)
+            .iter()
+            .filter_map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+            .flat_map(|d| (-CLOSE_DAYS..=CLOSE_DAYS).map(move |k| d + chrono::Duration::days(k)))
+            .map(|d| d.format("'%Y-%m-%d'").to_string())
+            .collect();
+        days.sort_unstable();
+        days.dedup();
+        let mut ors = Vec::new();
+        if !amounts.is_empty() {
+            // `amount_cents IN` (not `ABS(…)`) can use `tx_amount_date`.
+            ors.push(format!("t.amount_cents IN ({})", sql_int_list(&amounts)));
+        }
+        if !days.is_empty() {
+            ors.push(format!("t.booking_date IN ({})", days.join(",")));
+        }
+        if ors.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.bookings_where(&*self.db()?, &ors.join(" OR "), [])
     }
 }
 
@@ -605,7 +669,7 @@ impl Vault {
             text.push(' ');
             text.push_str(&extract_pdf_text(&bytes));
         }
-        let bookings = self.bookings_for_matching()?;
+        let bookings = self.bookings_for_matching(&text)?;
         let mime = sniff_mime(&bytes, &file_name);
         let found = best_match(&bookings, &text)
             .map(|(b, _)| (b.id, b.account_id, b.booking_date.clone(), label(b)));
@@ -975,6 +1039,75 @@ mod tests {
     }
 
     #[test]
+    fn adjacent_amounts_and_dates_are_all_found() {
+        assert_eq!(amounts_in("12,50 13,00"), vec![12_50, 13_00]);
+        assert_eq!(amounts_in("12,50;13,00"), vec![12_50, 13_00]);
+        assert_eq!(
+            dates_in("2025-01-02_2025-01-31"),
+            vec!["2025-01-02".to_string(), "2025-01-31".to_string()]
+        );
+        assert!(dates_in("am 31.02.2025 fällig").is_empty());
+        assert!(dates_in("Rechnung_2025-02-30.pdf").is_empty());
+    }
+
+    fn demo_vault() -> (crate::test_support::TempDir, std::sync::Arc<Vault>) {
+        let dir = crate::test_support::TempDir::new("girocrab-docs-match");
+        let path = dir.join("v.db").to_string_lossy().to_string();
+        let v = Vault::open(path, vec![6u8; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        (dir, v)
+    }
+
+    #[test]
+    fn prefiltered_bookings_match_like_all_bookings() {
+        let (_dir, v) = demo_vault();
+        let all = v
+            .list_transactions(crate::models::BookingFilter::default())
+            .unwrap()
+            .transactions;
+        let de = |iso: &str, shift: i64| {
+            let d = chrono::NaiveDate::parse_from_str(iso, "%Y-%m-%d").unwrap();
+            (d + chrono::Duration::days(shift))
+                .format("%d.%m.%Y")
+                .to_string()
+        };
+        let mut name_date_hits = 0;
+        for b in &all {
+            let amount = format_cents(b.amount_cents.abs(), "EUR".into());
+            for text in [
+                format!("Summe {amount}"),
+                format!("{} Datum {}", b.merchant.name, de(&b.booking_date, 2)),
+                format!("{} Datum {}", b.merchant.name, de(&b.booking_date, 4)),
+                format!("Summe {amount} Datum {}", de(&b.booking_date, -60)),
+            ] {
+                let expected = best_match(&all, &text).map(|(m, s)| (m.id, s));
+                let candidates = v.bookings_for_matching(&text).unwrap();
+                let found = best_match(&candidates, &text).map(|(m, s)| (m.id, s));
+                assert_eq!(found, expected, "{text}");
+                if text.starts_with(&b.merchant.name) && found.is_some() {
+                    name_date_hits += 1;
+                }
+            }
+        }
+        assert!(name_date_hits > 0, "a match by name and date alone");
+    }
+
+    #[test]
+    fn thousands_of_dates_keep_the_prefilter_sql_valid() {
+        let (_dir, v) = demo_vault();
+        let start = chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
+        let text: String = (0..3000)
+            .map(|k| {
+                format!(
+                    "{} ",
+                    (start + chrono::Duration::days(k * 2)).format("%d.%m.%Y")
+                )
+            })
+            .collect();
+        assert!(v.bookings_for_matching(&text).is_ok());
+    }
+
+    #[test]
     fn simple_pdf_text_roundtrip() {
         let pdf = simple_pdf(&[
             "Kassenbon METRO".into(),
@@ -1071,11 +1204,15 @@ mod pdf_limit_tests {
     fn pdf_with(streams: &[Vec<u8>]) -> Vec<u8> {
         let mut pdf = b"%PDF-1.4\n".to_vec();
         for s in streams {
-            pdf.extend_from_slice(b"<< /Filter /FlateDecode >>\nstream\n");
-            pdf.extend_from_slice(s);
-            pdf.extend_from_slice(b"\nendstream\n");
+            push_stream(&mut pdf, "/Filter /FlateDecode", s);
         }
         pdf
+    }
+
+    fn push_stream(pdf: &mut Vec<u8>, dict: &str, data: &[u8]) {
+        pdf.extend_from_slice(format!("<< {dict} >>\nstream\n").as_bytes());
+        pdf.extend_from_slice(data);
+        pdf.extend_from_slice(b"\nendstream\n");
     }
 
     #[test]
@@ -1090,6 +1227,31 @@ mod pdf_limit_tests {
         big.resize(MAX_INFLATED_STREAM + 1024, b' ');
         let pdf = pdf_with(&[zlib(&big)]);
         assert!(!extract_pdf_text(&pdf).contains("Bomb"));
+    }
+
+    #[test]
+    fn total_inflated_size_is_capped() {
+        let mut big = b"BT (Chunk) Tj ET".to_vec();
+        big.resize(MAX_INFLATED_STREAM - 1024, b' ');
+        let n = MAX_INFLATED_TOTAL / big.len() + 2;
+        let pdf = pdf_with(&vec![zlib(&big); n]);
+        let extracted = extract_pdf_text(&pdf).matches("Chunk").count();
+        assert_eq!(extracted, MAX_INFLATED_TOTAL / big.len());
+    }
+
+    #[test]
+    fn image_streams_leave_the_budget_to_text() {
+        let mut image = b"BT (Pixel) Tj ET".to_vec();
+        image.resize(MAX_INFLATED_STREAM - 1024, b' ');
+        let image = zlib(&image);
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        for _ in 0..MAX_INFLATED_TOTAL / MAX_INFLATED_STREAM + 1 {
+            push_stream(&mut pdf, "/Subtype /Image /Filter /FlateDecode", &image);
+        }
+        push_stream(&mut pdf, "/Filter /FlateDecode", &zlib(b"BT (Text) Tj ET"));
+        let text = extract_pdf_text(&pdf);
+        assert!(text.contains("Text"));
+        assert!(!text.contains("Pixel"));
     }
 
     #[test]

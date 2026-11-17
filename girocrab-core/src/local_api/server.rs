@@ -98,9 +98,16 @@ impl LocalApiServer {
     /// within `WRITE_TIMEOUT`), removes the socket file and releases the lock.
     /// Returns at once: safe on the main thread.
     pub fn stop(&self) {
+        let mut lock = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        if lock.is_none() {
+            return;
+        }
+        // Cleanup belongs to the first stop only, while we still hold the
+        // instance lock. After it is released, another server may bind this
+        // path and the filesystem may even reuse our old socket's inode.
         self.stopper.stop();
         remove_own_socket(&self.path, self.file_id);
-        self.lock.lock().unwrap_or_else(|e| e.into_inner()).take();
+        lock.take();
     }
 }
 
@@ -210,13 +217,7 @@ impl Drop for Stopper {
 }
 
 fn io_error(e: std::io::Error) -> CoreError {
-    invalid(trf("Lokaler Socket: {0}", &[&e]))
-}
-
-fn invalid(message: impl Into<String>) -> CoreError {
-    CoreError::InvalidInput {
-        message: message.into(),
-    }
+    CoreError::invalid(trf("Lokaler Socket: {0}", &[&e]))
 }
 
 /// Writes one error line; the connection is closed or refused right after.
@@ -231,7 +232,7 @@ fn bind(path: &Path) -> Result<(UnixListener, (u64, u64), File), CoreError> {
     let dir = path
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
-        .ok_or_else(|| invalid(tr("Der Socket-Pfad braucht einen Ordner.")))?;
+        .ok_or_else(|| CoreError::invalid(tr("Der Socket-Pfad braucht einen Ordner.")))?;
     let created = match std::fs::symlink_metadata(dir) {
         Err(e) if e.kind() == ErrorKind::NotFound => {
             // 0700 from the start, also for missing parents (no world-readable window).
@@ -248,7 +249,7 @@ fn bind(path: &Path) -> Result<(UnixListener, (u64, u64), File), CoreError> {
     // SAFETY: getuid has no preconditions.
     let uid = unsafe { libc::getuid() };
     if !meta.is_dir() || meta.uid() != uid {
-        return Err(invalid(tr(
+        return Err(CoreError::invalid(tr(
             "Der Socket-Ordner gehört nicht diesem Benutzer.",
         )));
     }
@@ -256,7 +257,7 @@ fn bind(path: &Path) -> Result<(UnixListener, (u64, u64), File), CoreError> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(io_error)?;
     } else if meta.mode() & 0o077 != 0 {
         // Never chmod a folder someone else chose (home, a shared folder).
-        return Err(invalid(trf(
+        return Err(CoreError::invalid(trf(
             "Andere Benutzer können den Socket-Ordner öffnen: {0}",
             &[&dir.display()],
         )));
@@ -274,7 +275,7 @@ fn bind(path: &Path) -> Result<(UnixListener, (u64, u64), File), CoreError> {
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         let e = std::io::Error::last_os_error();
         if e.kind() == ErrorKind::WouldBlock {
-            return Err(invalid(tr(
+            return Err(CoreError::invalid(tr(
                 "Eine andere GiroCrab-Instanz verwendet diesen Socket bereits.",
             )));
         }
@@ -283,7 +284,7 @@ fn bind(path: &Path) -> Result<(UnixListener, (u64, u64), File), CoreError> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_socket() => std::fs::remove_file(path).map_err(io_error)?,
         Ok(_) => {
-            return Err(invalid(tr(
+            return Err(CoreError::invalid(tr(
                 "Am Socket-Pfad liegt bereits eine andere Datei.",
             )))
         }
@@ -596,7 +597,11 @@ mod tests {
             }
         }
         fn send_raw(&mut self, line: &str) -> Value {
-            writeln!(self.writer, "{line}").unwrap();
+            // A line over the limit is answered and the connection closed while
+            // the client is still writing, so `writeln!` may fail with EPIPE or
+            // ECONNRESET. The answer is already queued then: ignore the write
+            // error. If a normal request fails to send, `read` below fails.
+            let _ = writeln!(self.writer, "{line}");
             self.read()
         }
         fn read(&mut self) -> Value {
@@ -740,6 +745,29 @@ mod tests {
         drop(first);
         assert!(UnixStream::connect(&path).is_ok());
         second.stop();
+    }
+
+    #[test]
+    fn a_stopped_server_never_unlinks_a_replacement_with_a_reused_inode() {
+        for stop_again in [false, true] {
+            let d = ShortDir::new();
+            let (_v, vault, _) = vault();
+            let path: String = d.socket().to_string_lossy().into();
+            let mut first = LocalApiServer::start(vault.clone(), path.clone()).unwrap();
+            first.stop();
+            let second = LocalApiServer::start(vault.clone(), path.clone()).unwrap();
+            // Model inode reuse deterministically, independent of the host
+            // filesystem's allocation policy. The old server no longer owns
+            // this path even when the replacement has the same file identity.
+            Arc::get_mut(&mut first).unwrap().file_id = second.file_id;
+            if stop_again {
+                first.stop();
+                assert!(UnixStream::connect(&path).is_ok(), "repeated stop");
+            }
+            drop(first);
+            assert!(UnixStream::connect(&path).is_ok(), "drop after stop");
+            second.stop();
+        }
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod demo;
 pub mod dpop;
 pub mod easybank;
 pub mod enable_banking;
+pub mod equateplus;
 pub mod fin4u;
 pub mod fints;
 pub mod fints_directory;
@@ -30,6 +31,7 @@ pub mod ibkr;
 pub mod paypal;
 pub mod quirion;
 pub mod scalable;
+pub mod schwaebisch_hall;
 pub mod template;
 pub mod trade_republic;
 pub mod uberspace;
@@ -107,6 +109,7 @@ fn too_large(limit: usize) -> CoreError {
 
 /// Reads a response body, but never more than `limit` bytes (no OOM on a
 /// huge or endless body): larger bodies are an error.
+#[allow(clippy::disallowed_methods)]
 pub(crate) async fn read_body_limited(
     mut resp: reqwest::Response,
     limit: usize,
@@ -127,7 +130,7 @@ pub(crate) async fn read_body_limited(
 /// [`read_body_limited`] with [`MAX_TEXT_BYTES`], decoded as UTF-8 (lossy).
 pub(crate) async fn read_text_limited(resp: reqwest::Response) -> CoreResult<String> {
     let b = read_body_limited(resp, MAX_TEXT_BYTES).await?;
-    Ok(String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
+    Ok(crate::text::decode_bank_bytes(&b))
 }
 
 /// [`read_body_limited`] with [`MAX_TEXT_BYTES`], parsed as JSON; an

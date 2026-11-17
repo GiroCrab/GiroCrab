@@ -387,7 +387,7 @@ struct LoanEditorSheet: View {
                     FormFooter("Gleiche Schreibweise wie bei Regeln: Wörter, „Phrasen“, name:, purpose:, AND, OR, NOT. Einzelne Buchungen ordnen Sie im Kontextmenü zu oder heben die Zuordnung dort auf.")
                 }
             }
-            Section { previewRows } header: { Text("Vorschau").appSectionHeader() }
+            Section { previewRows.sensitive(.amounts) } header: { Text("Vorschau").appSectionHeader() }
         }
         .formStyle(.grouped)
     }
@@ -560,9 +560,46 @@ struct LoanAssignMenu: View {
     var hidesWhenUnavailable = false
 
     var body: some View {
+        if hidesWhenUnavailable {
+            contextMenuBody
+        } else {
+            menuBarBody
+        }
+    }
+
+    /// Repayments leave the account: offered for outflows, or to undo an existing link (#429).
+    private var isAvailable: Bool {
+        guard let b = booking, b.accountKind != .loan else { return false }
+        return b.amountCents < 0 || model.loanLink(for: b) != nil
+    }
+
+    /// Menu bar: the submenu always has the same entries (only enabled or not). SwiftUI rebuilds
+    /// menu bar menus on every focus change; items that appear and disappear while the menu is
+    /// open can crash AppKit's menu table (index beyond bounds, #734).
+    private var menuBarBody: some View {
+        Menu("Darlehen zuordnen") {
+            Picker("Darlehen", selection: Binding(
+                get: { booking.flatMap { model.loanLink(for: $0)?.loanAccountId } },
+                set: { id in if let b = booking { model.assignLoan(id, to: b) } }
+            )) {
+                Text("Keinem Darlehen").tag(Int64?.none)
+                ForEach(model.assignableLoans, id: \.accountId) { l in
+                    Text(l.setup.name).tag(Int64?.some(l.accountId))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            Button("Neues Darlehen aus dieser Buchung …") {
+                if let b = booking { model.openLoanEditor(from: b) }
+            }
+        }
+        .disabled(!isAvailable)
+    }
+
+    @ViewBuilder private var contextMenuBody: some View {
         let loans = model.assignableLoans
-        // Repayments leave the account: offered for outflows, or to undo an existing link (#429).
-        if let b = booking, b.accountKind != .loan, b.amountCents < 0 || model.loanLink(for: b) != nil {
+        if isAvailable, let b = booking {
             Menu("Darlehen zuordnen") {
                 if !loans.isEmpty {
                     Picker("Darlehen", selection: Binding(
@@ -584,8 +621,6 @@ struct LoanAssignMenu: View {
                 }
                 Button("Neues Darlehen aus dieser Buchung …") { model.openLoanEditor(from: b) }
             }
-        } else if !hidesWhenUnavailable {
-            Menu("Darlehen zuordnen") {}.disabled(true)
         }
     }
 }
@@ -616,10 +651,10 @@ struct ManualLoanDetails: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Stand \(DateText.medium(loan.setup.anchorDate)): \(Money.format(loan.setup.anchorBalanceCents))")
                 .appFont(.caption)
-                .sensitive()
+                .sensitive(.amounts)
             Text(paymentsLine(s))
                 .appFont(.caption)
-                .sensitive()
+                .sensitive(.amounts)
                 .foregroundStyle(Theme.secondary)
             if let rate = loan.setup.interestRatePpm {
                 Text("Sollzins \(PercentText.format(rate)) % · Zinsen seit Stichtag \(Money.format(s.interestCents))")
@@ -629,6 +664,7 @@ struct ManualLoanDetails: View {
             }
             if let m = s.monthsLeft, m > 0 {
                 Text("Voraussichtlich noch \(Int(m)) Monatsraten")
+                    .sensitive(.amounts)
                     .appFont(.caption)
                     .foregroundStyle(Theme.secondary)
             }

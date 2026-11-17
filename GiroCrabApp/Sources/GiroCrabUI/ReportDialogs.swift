@@ -28,9 +28,13 @@ extension View {
         sheet(item: item, onDismiss: onDismiss) { content($0).reportCapturable() }
     }
 
-    func capturablePopover<Content: View>(isPresented: Binding<Bool>, arrowEdge: Edge = .top,
+    func capturablePopover<Content: View>(isPresented: Binding<Bool>,
+                                          attachmentAnchor: PopoverAttachmentAnchor = .rect(.bounds),
+                                          arrowEdge: Edge = .top,
                                           @ViewBuilder content: @escaping () -> Content) -> some View {
-        popover(isPresented: isPresented, arrowEdge: arrowEdge) { content().reportCapturable() }
+        popover(isPresented: isPresented, attachmentAnchor: attachmentAnchor, arrowEdge: arrowEdge) {
+            content().reportCapturable()
+        }
     }
 
     /// For content presented some other way (a `UIHostingController`).
@@ -47,10 +51,16 @@ final class ReportRedactionState {
 }
 
 private struct ReportDialogContent: ViewModifier {
+    /// Privacy mode applies to dialogs too: this modifier replaces the environment of what it wraps.
+    @AppStorage(PrivacyMode.enabledKey) private var privacyEnabled = false
+    @AppStorage(PrivacyMode.scopeKey) private var privacyScope = PrivacyMode.Scope.amounts
+
     func body(content: Content) -> some View {
         content
             .background(ReportWindowTracker(role: .dialog))
-            .environment(\.reportRedaction, ReportRedactionState.shared.current.union(LaunchOptions.current.redaction))
+            .environment(\.reportRedaction, ReportRedactionState.shared.current
+                .union(LaunchOptions.current.redaction)
+                .union(PrivacyMode.redaction(enabled: privacyEnabled, scope: privacyScope)))
     }
 }
 

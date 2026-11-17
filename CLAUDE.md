@@ -42,6 +42,16 @@ Other UI files live in the same `GiroCrabUI/` dir. Ignore `cashcrab-core/` and `
 - Before every push run `cargo fmt --all`: CI fails on `cargo fmt --check` and then skips the Swift job. Enable the hook once: `git config core.hooksPath .githooks`.
 - Always pass `-q`/`--quiet` to `cargo check`, `cargo test`, `xcodebuild`. If output is still long, pipe through `tail -n 40`.
 - Before pushing a PR (also Swift-only ones; CI runs these on every PR): `cargo fmt --all -- --check` and `cargo clippy -q --workspace --all-targets -- -D warnings`. After pushing, check `gh pr checks`.
+  Under clippy the root `build.rs` skips the xcframework + Swift app build (~8 s instead of ~90 s after a core
+  edit); `cargo check/build --workspace` still run it, so set `GIROCRAB_SKIP_SWIFT=1` for core-only checks.
+- **CI runs the Linux jobs (`qt-minimum`, `debian`) of `ci.yml` for any change under `girocrab-core/**` (other than Markdown) or to `Localizable.xcstrings`**, not only for Linux files.
+  Before pushing such a change: `python3 -I GiroCrabLinux/scripts/i18n-report.py` (every Linux UI text needs English, step
+  "English UI texts") and `(cd GiroCrabLinux && cargo fmt -- --check)`. Its clippy/test steps need Qt: leave those to CI.
+- **A red check on code the PR does not touch is usually inherited from `main`.** Before debugging it: run the failing step
+  locally, check `git diff --quiet origin/main HEAD -- <dir>` (silent = same as main) and `gh run list -R GiroCrab/GiroCrab
+  --workflow <name>` (other open PRs red on the same job = main's fault). Report it in the PR instead of "fixing" it there.
+  Logs of a run that is still going: `gh api repos/GiroCrab/GiroCrab/actions/jobs/<job id>/logs --allow-escape-sequences`
+  (`gh run view --log-failed` waits for the whole run).
 - Every `uniffi::Record` / `uniffi::Enum` in `girocrab-core` carries `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` right below its `#[derive(…)]` (front ends without UniFFI, e.g. Linux, exchange JSON). `scripts/lint-serde-feature.sh` checks it (CI) and `cargo check -q -p girocrab-core --features serde` must build; run both before pushing Rust changes.
 
 ## User-visible texts (no third-party brands)
@@ -61,7 +71,11 @@ Internal code identifiers (module, function, test and file names) are exempt; `s
 - Swift: `cd GiroCrabApp && swift test -q --filter <Suite>`; whole suite ~30 s. `AppModel` tests
   run against a demo vault: `AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))`,
   pattern in `Tests/GiroCrabUITests/SelectionLoadTests.swift`. Run them before pushing.
-- Rust: `cargo test -q -p girocrab-core --lib <module>` for one module; whole run ~50 s.
+- Rust: `cargo test -q -p girocrab-core --lib <module>` for one module; whole `--lib` run ~10 s. It stays
+  that fast only because unit tests skip `cipher_memory_security` (`cfg!(test)` in `Vault::apply_key`) and
+  `.cargo/config.toml` builds SQLite with `SQLITE_DEFAULT_MEMSTATUS=0`: both make parallel test threads
+  wait on each other (147 s with both on, 417 s with only memory security on). Tests that wait on timers use
+  `#[tokio::test(start_paused = true)]`, never real sleeps.
 - Perf: `COPIES=600 cargo run --release -q -p girocrab-core --example category_perf` times the core
   calls behind a category change on ~31k bookings (reference numbers in the file). Measure before
   claiming a speed-up; `limit` on `list_transactions` does not reduce core work.
@@ -127,7 +141,8 @@ Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captur
   carry the modifier: read `@Environment(\.reportRedaction)` and substitute (see `WindowTitle`, the empty state in
   `BookingStreamView`). AppKit/UIKit-drawn search fields are handled in `BugReport` – new platform text controls
   outside SwiftUI need the same.
-- Check a view: `swift run GiroCrabMac --demo-seed --redact --screenshot /tmp/r.png` (`--redact=labels` for labels).
+- Check a view: `swift run GiroCrabMac --demo-seed --redact --screenshot /tmp/r.png` (`--redact=labels` for labels)
+  or `--privacy` / `--privacy=all` (privacy mode).
   A dialog in the picture: `--demo-seed --demo-sheet report:<sheet>` (e.g. `report:transfer`, `report:category`)
   opens the report over that demo sheet.
 - Text that goes into a public issue (log lines, messages) only via `sanitize_report_text` with the vault's known
@@ -169,9 +184,14 @@ The PR card (`tools/export-ai-provenance.py`, `docs/ai-transparency.md`) reads o
 - **Merge without waiting for the slow runners:** when the relevant local checks (`cargo test`, `swift test`, `scripts/lint-*.sh`)
   already passed on this Mac and `card` is green, do NOT wait for the cloud `CI / swift` / `CI / rust` runs: merge immediately with
   `gh pr merge <N> --squash --delete-branch --admin`.
-- CI is path-aware: `linux.yml`/`flatpak.yml` run only for `girocrab-core/**`, `GiroCrabLinux/**`, `**/Localizable.xcstrings` or their own
-  workflow; in `ci.yml` the `changes` job skips the heavy Rust steps (clippy, tests) and the whole Swift build/test when a PR cannot touch them
-  (the cheap lint steps always run, required check names stay unchanged).
+- CI is one workflow (`ci.yml`); its `changes` job sets per-job flags from the changed files (PR: against the base, push to main: against the
+  previous head, manual run: everything). Linux (`qt-minimum`, `debian`) runs for `GiroCrabLinux/**`, `girocrab-core/**` (not `*.md`) and
+  `**/Localizable.xcstrings`; Flatpak for `GiroCrabLinux/**` and `girocrab-core/Cargo.toml`; `windows-core` for the core only; `windows-app` for
+  `GiroCrabWindows/**` and the core, its release build + installer for `GiroCrabWindows/**`/`scripts/package-windows.ps1` only; `swift` for
+  `GiroCrabApp/**` and the core. The cheap lint steps of `rust` always run. In PRs Debian/Flatpak build only amd64/x86_64 (arm64/aarch64 on main).
+- `rust` (fmt, lints, clippy, `cargo test --workspace`) runs on Ubuntu; the macOS-only branches of the local API are tested in `swift`.
+  Only `main` writes the Rust cache (`save-if`), PRs restore it: the repository's 10 GB Actions cache is small, branch caches evicted main's.
+  `cache-cleanup.yml` deletes a PR's caches (`refs/pull/<N>/merge`) when it is closed or merged. Check the size: `gh api repos/GiroCrab/GiroCrab/actions/cache/usage`.
 - Branch from `upstream/main`, push to `origin` (fork), PR against `GiroCrab/GiroCrab`. PR title
   and description in German, conventional-commit prefix (`feat:`, `fix:`, `perf:`, `ci:`, `docs:`).
 - The local xcframework is whatever branch last ran `./build-xcframework.sh`. Before trusting

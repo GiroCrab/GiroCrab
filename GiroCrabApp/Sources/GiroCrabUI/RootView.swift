@@ -15,10 +15,12 @@ public struct GiroCrabScenes: Scene {
     @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics = true
     @AppStorage(ViewLayout.budgetsKey) private var showBudgets = true
+    @AppStorage(ViewLayout.runningBalanceKey) private var showRunningBalance = false
     @AppStorage(ViewLayout.compactHeaderKey) private var compactHeader = false
     @AppStorage(BalanceChartStyle.defaultsKey) private var chartStyle: BalanceChartStyle = .line
     @AppStorage(ViewLayout.headerChartCollapsedKey) private var chartCollapsed = false
     @AppStorage(AppTextSize.defaultsKey) private var textSize: AppTextSize = .standard
+    @AppStorage(PrivacyMode.enabledKey) private var privacyMode = false
     #endif
 
     public init(options: LaunchOptions = .current) {
@@ -51,6 +53,7 @@ public struct GiroCrabScenes: Scene {
             GiroCrabRootView()
                 .environment(model)
                 .modifier(AutoLockOnBackground(model: model))
+                .privacyModeEnvironment()
                 #if os(macOS)
                 .appTextSize(textSize.effective)
                 .modifier(MenuBarBridge(model: model))
@@ -67,7 +70,8 @@ public struct GiroCrabScenes: Scene {
             CommandGroup(replacing: .newItem) {
                 Button("Neue Überweisung …") { model.openTransfer() }
                     .keyboardShortcut("n", modifiers: .command)
-                    .disabled(!model.canTransfer)
+                    // ⌘N in the tag sheet is „Neuer Tag …“ (TagManagerView's key monitor)
+                    .disabled(!model.canTransfer || model.showTagManager)
                 Button("Neue Kontogruppe …") { model.groupDialog = .create() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(!model.isUnlocked)
@@ -105,6 +109,9 @@ public struct GiroCrabScenes: Scene {
                 Divider()
                 Button("Regeln …") { model.openRuleEditor() }
                     .keyboardShortcut("k", modifiers: [.command, .option])
+                    .disabled(!model.isUnlocked)
+                Button("Tags verwalten …") { model.showTagManager = true }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
                     .disabled(!model.isUnlocked)
                 Button("Wiederkehrende Buchungen …") { model.showRecurringSheet = true }
                     .disabled(!model.isUnlocked)
@@ -197,7 +204,8 @@ public struct GiroCrabScenes: Scene {
                     Divider()
                     Button("Suchen …") { ToolbarSearch.focus() }
                         .keyboardShortcut("f", modifiers: .command)
-                        .disabled(!model.isUnlocked)
+                        // not behind the tag sheet: the search field is hidden there
+                        .disabled(!model.isUnlocked || model.showTagManager)
                 }
             }
             SidebarCommands()
@@ -210,6 +218,8 @@ public struct GiroCrabScenes: Scene {
                     .disabled(!model.isUnlocked)
                 Toggle("Budgets anzeigen", isOn: $showBudgets)
                     .disabled(!model.isUnlocked)
+                Toggle("Saldo anzeigen", isOn: $showRunningBalance)
+                    .disabled(!model.isUnlocked)
                 Toggle("Kopfbereich minimieren", isOn: $compactHeader)
                     .disabled(!model.isUnlocked)
                 // the header chart (#634): same switches as its title row
@@ -219,6 +229,9 @@ public struct GiroCrabScenes: Scene {
                     ForEach(BalanceChartStyle.allCases) { Text($0.title).tag($0) }
                 }
                 .disabled(!model.isUnlocked)
+                // Hides amounts (or all personal data, Einstellungen › Allgemein).
+                Toggle("Privatmodus", isOn: $privacyMode)
+                    .keyboardShortcut("h", modifiers: [.command, .shift])
                 Divider()
                 // Like Mail/Notes: text size of the whole app (#343).
                 Button("Größer") { textSize = textSize.larger ?? textSize }
@@ -263,6 +276,7 @@ public struct GiroCrabScenes: Scene {
         Window("Abruf-Protokoll", id: "sync-log") {
             SyncLogView()
                 .environment(model)
+                .privacyModeEnvironment()
                 .appTextSize(textSize.effective)
                 .preferredColorScheme(appearance.colorScheme)
         }
@@ -288,6 +302,7 @@ public struct GiroCrabScenes: Scene {
             // views get the same redaction and mark personal data.
             SettingsView()
                 .environment(model)
+                .privacyModeEnvironment()
                 .appTextSize(textSize.effective)
                 .preferredColorScheme(appearance.colorScheme)
                 .reportCapturable()
@@ -357,7 +372,7 @@ public struct GiroCrabRootView: View {
                     // the only window the bug report may capture; inside the
                     // redaction environment, so it can report what was built
                     .background(ReportWindowTracker(role: .main))
-                    .environment(\.reportRedaction, model.reportRedaction.union(LaunchOptions.current.redaction))
+                    .transformEnvironment(\.reportRedaction) { $0.formUnion(model.reportRedaction.union(LaunchOptions.current.redaction)) }
                     .onAppear { StartupClock.mark("MainSplitView appear") }
                     #if os(macOS)
                     // screenshots: --demo-sheet report[:<sheet>] captures the open
@@ -770,6 +785,14 @@ struct MainSplitView: View {
             GroupManagerSheet()
                 .environment(model)
         }
+        #if os(macOS)
+        // the draft is stored once the sheet is really gone, not when another
+        // sheet opens on top of it
+        .capturableSheet(isPresented: $model.showTagManager, onDismiss: { model.applyTagDraft() }) {
+            TagManagerView()
+                .environment(model)
+        }
+        #endif
         .capturableSheet(isPresented: $model.showRuleEditor) {
             RuleEditorView(initialDraft: model.ruleDraft)
                 .environment(model)
@@ -848,7 +871,9 @@ struct MainSplitView: View {
                 if c.connector == .tradeRepublic { WebLoginSheet(connection: c) }
                 else if c.connector == .amazonOrders { AmazonWebSheet(connection: c) }
                 else if c.connector == .fnz { FnzWebSheet(connection: c) }
+                else if c.connector == .equatePlus { EquatePlusWebSheet(connection: c) }
                 else if c.connector == .quirion { QuirionWebSheet(connection: c) }
+                else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
             }
             .environment(model)

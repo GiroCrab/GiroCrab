@@ -97,7 +97,7 @@ extension AppModel {
     }
 
     /// Vault filter for an export: the list's filter with the sheet's accounts and period.
-    /// `ignoreListFilters` (CAMT.053) drops search, category, direction, merchant and
+    /// `ignoreListFilters` (CAMT.053) drops search, category, direction, tags, merchant and
     /// review status, so the closing balance matches the bank's.
     func exportFilter(accountIDs: [Int64]?, period: ExportPeriodPreset, options: ExportOptions?,
                       ignoreListFilters: Bool = false) -> BookingFilter {
@@ -114,6 +114,8 @@ extension AppModel {
             filter.merchantKey = nil
             filter.direction = .all
             filter.checked = nil
+            filter.tagIds = []
+            filter.untaggedOnly = false
         }
         let salary = salaryCycle?.lastDate
         if let range = period.range(customFrom: options?.customFrom ?? "", customTo: options?.customTo ?? "",
@@ -127,15 +129,21 @@ extension AppModel {
 
     /// Bookings for an export, read off the main thread (`list_transactions` enriches every
     /// row). `nil` when the vault was locked or swapped meanwhile.
-    func loadExportBookings(accountIDs: [Int64]?, period: ExportPeriodPreset, bookingIDs: Set<Int64>?,
-                            options: ExportOptions?, ignoreListFilters: Bool = false) async throws -> [Booking]? {
-        let filter = exportFilter(accountIDs: accountIDs, period: period, options: options,
+    /// `withBalances`: also the balance after each booking (#577, CSV „Saldo“ column),
+    /// only for a selection of accounts, as in the list.
+    func loadExportPage(accountIDs: [Int64]?, period: ExportPeriodPreset, bookingIDs: Set<Int64>?,
+                        options: ExportOptions?, ignoreListFilters: Bool = false, withBalances: Bool = false)
+        async throws -> (bookings: [Booking], balances: [Int64: Int64])? {
+        var filter = exportFilter(accountIDs: accountIDs, period: period, options: options,
                                   ignoreListFilters: ignoreListFilters)
-        guard var rows = try await vaultOffMain({ try $0.listTransactions(filter: filter).transactions }) else {
+        filter.withBalances = withBalances && selectionHasBalances
+        guard let page = try await vaultOffMain({ try $0.listTransactions(filter: filter) }) else {
             return nil
         }
+        var rows = page.transactions
         if let bookingIDs { rows = rows.filter { bookingIDs.contains($0.id) } }
-        return rows
+        let balances = Dictionary(uniqueKeysWithValues: page.runningBalances.map { ($0.bookingId, $0.balanceCents) })
+        return (rows, balances)
     }
 
     /// Report for already loaded export bookings (cheap: no vault access).
@@ -161,6 +169,8 @@ extension AppModel {
         case .income: report.filterNotes = [PrintDirection.income.title]
         case .expense: report.filterNotes = [PrintDirection.expenses.title]
         }
+        // and the tag filter (#228)
+        if let note = tagFilterNote { report.filterNotes.append(note) }
         return report
     }
 

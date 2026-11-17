@@ -164,23 +164,70 @@ fn demo_documents(conn: &Connection, today: NaiveDate) -> CoreResult<()> {
 pub const MAGIC_DEMO_LOGIN: &str = "demo";
 pub const MAGIC_DEMO_PIN: &str = "12345";
 
-/// A few tags across categories (#228): the car, a trip, the family.
+/// Tags across categories (#228), enough to try the tag sheet with: the car and
+/// a trip share the rental car; two tags have no bookings (one with a long name).
+/// Each: name, colour, counterparty patterns, purpose patterns (SQL `LIKE`).
+type DemoTag = (
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+);
+
+const DEMO_TAGS: [DemoTag; 12] = [
+    (
+        "Auto",
+        "#E67E22",
+        // the Autobank rates are Girokonto bookings linked to the Autokredit (#36)
+        &["Shell Station", "Aral AG", "EnBW%", "Sixt%", "Autobank AG"],
+        &[],
+    ),
+    ("Urlaub", "#2E86DE", &["Sixt%"], &["ICE Ticket%"]),
+    (
+        "Familie",
+        "#27AE60",
+        &["dm-drogerie markt", "Apotheke am Markt"],
+        &[],
+    ),
+    (
+        "Abos",
+        "#8E44AD",
+        &["Spotify%", "Netflix%", "Apple Distribution%"],
+        &[],
+    ),
+    (
+        "Wohnung",
+        "#16A085",
+        &["Hausverwaltung%", "Telekom%", "IKEA%"],
+        &[],
+    ),
+    (
+        "Lebensmittel",
+        "#D4AC0D",
+        &["REWE%", "Lidl%", "EDEKA%", "Alnatura%", "Bäckerei%"],
+        &[],
+    ),
+    ("Pendeln", "#7F8C8D", &[], &["Deutschlandticket%"]),
+    ("Online bestellt", "#C0392B", &["Amazon%"], &[]),
+    (
+        "Versicherungen",
+        "#2E86DE",
+        &["Allianz%", "Techniker%"],
+        &[],
+    ),
+    ("Steuern", "#C0392B", &["Finanzamt%", "ARD ZDF%"], &[]),
+    ("Umzug 2027", "#16A085", &[], &[]),
+    (
+        "Steuererklärung 2026 – Belege für das Finanzamt sammeln",
+        "#8E44AD",
+        &[],
+        &[],
+    ),
+];
+
 fn demo_tags(conn: &Connection) -> CoreResult<()> {
-    const TAGS: [(&str, &str, &[&str]); 3] = [
-        (
-            "Auto",
-            "#E67E22",
-            &["Shell Station", "Aral AG", "EnBW%", "Sixt%"],
-        ),
-        ("Urlaub", "#2E86DE", &["Sixt%"]),
-        (
-            "Familie",
-            "#27AE60",
-            &["dm-drogerie markt", "Apotheke am Markt"],
-        ),
-    ];
     let now = crate::user_groups::now_ms();
-    for (i, (name, color, counterparties)) in TAGS.iter().enumerate() {
+    for (i, (name, color, counterparties, purposes)) in DEMO_TAGS.iter().enumerate() {
         conn.execute(
             "INSERT INTO tags(uuid, name, color_hex, sort_order, updated_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -192,20 +239,16 @@ fn demo_tags(conn: &Connection) -> CoreResult<()> {
             ],
         )?;
         let tag = conn.last_insert_rowid();
-        for c in *counterparties {
-            conn.execute(
-                "INSERT OR IGNORE INTO transaction_tags(transaction_id, tag_id)
-                 SELECT id, ?1 FROM transactions WHERE counterparty LIKE ?2",
-                params![tag, c],
-            )?;
-        }
-        // the trip: only the long-distance ticket of the train bookings
-        if *name == "Urlaub" {
-            conn.execute(
-                "INSERT OR IGNORE INTO transaction_tags(transaction_id, tag_id)
-                 SELECT id, ?1 FROM transactions WHERE purpose LIKE 'ICE Ticket%'",
-                [tag],
-            )?;
+        for (column, patterns) in [("counterparty", counterparties), ("purpose", purposes)] {
+            for pattern in patterns.iter() {
+                conn.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO transaction_tags(transaction_id, tag_id)
+                         SELECT id, ?1 FROM transactions WHERE {column} LIKE ?2"
+                    ),
+                    params![tag, pattern],
+                )?;
+            }
         }
     }
     conn.execute(
@@ -315,140 +358,187 @@ pub const DEMO_ACCOUNTS: &[DemoAccountSpec] = &[
         bank_name: "Musterbank",
         principal_cents: None,
     },
+    // PayPal wallet, Amazon orders, a second Giro and a second savings account (#556); appended for the same reason. They share the card
+    // login: a login of their own would join "Alle abrufen" without a demo sync behind it.
+    DemoAccountSpec {
+        connector: ConnectorKind::AmericanExpress,
+        external_ref: "demo-paypal",
+        name: "PayPal",
+        kind: AccountKind::PaymentService,
+        iban: "",
+        account_number: "",
+        opening_cents: 187_45,
+        bank_name: "PayPal",
+        principal_cents: None,
+    },
+    DemoAccountSpec {
+        connector: ConnectorKind::AmericanExpress,
+        external_ref: "demo-amazon",
+        name: "Amazon Bestellungen",
+        kind: AccountKind::PaymentService,
+        iban: "",
+        account_number: "",
+        opening_cents: -164_39,
+        bank_name: "Amazon",
+        principal_cents: None,
+    },
+    DemoAccountSpec {
+        connector: ConnectorKind::VolksbankKasselGoettingen,
+        external_ref: "demo-giro2",
+        name: "Gemeinschaftskonto",
+        kind: AccountKind::Checking,
+        iban: "DE12500105170648489890",
+        account_number: "0648489890",
+        opening_cents: 1_820_30,
+        bank_name: "Musterbank",
+        principal_cents: None,
+    },
+    DemoAccountSpec {
+        connector: ConnectorKind::VolksbankKasselGoettingen,
+        external_ref: "demo-tagesgeld2",
+        name: "Tagesgeld Familie",
+        kind: AccountKind::Savings,
+        iban: "DE27100777770209299700",
+        account_number: "0209299700",
+        opening_cents: 8_500_00,
+        bank_name: "Musterbank",
+        principal_cents: None,
+    },
 ];
 
-type Tree<'a> = &'a [(
+pub(crate) type Tree<'a> = &'a [(
     &'static str,
     &'static str,
     &'static str,
     &'a [(&'static str, &'static str)],
 )];
 
+pub(crate) const STARTER_TREE: Tree = &[
+    (
+        "Einnahmen",
+        "arrow.down.circle.fill",
+        "#2E9D6A",
+        &[
+            ("Gehalt", "briefcase.fill"),
+            ("Zinsen & Dividenden", "percent"),
+            ("Erstattungen", "arrow.uturn.backward.circle"),
+            ("Sonstige Einnahmen", "plus.circle"),
+        ],
+    ),
+    (
+        "Wohnen & Energie",
+        "house.fill",
+        "#B7782F",
+        &[
+            ("Miete", "building.2.fill"),
+            ("Energie", "bolt.fill"),
+            ("Internet & Telefon", "wifi"),
+            ("Haushalt", "sofa.fill"),
+        ],
+    ),
+    (
+        "Lebensmittel",
+        "cart.fill",
+        "#B5474F",
+        &[
+            ("Supermarkt", "cart"),
+            ("Bäcker & Metzger", "fork.knife.circle"),
+            ("Lebensmittelrettung", "leaf.fill"),
+            ("Restaurants & Cafés", "fork.knife"),
+            ("Lieferdienste", "takeoutbag.and.cup.and.straw.fill"),
+        ],
+    ),
+    (
+        "Mobilität",
+        "car.fill",
+        "#3A6FB0",
+        &[
+            ("ÖPNV & Bahn", "tram.fill"),
+            ("Tanken", "fuelpump.fill"),
+            ("Fahrrad", "bicycle"),
+            ("Reisen", "airplane"),
+        ],
+    ),
+    (
+        "Einkaufen",
+        "bag.fill",
+        "#7D5BA6",
+        &[
+            ("Online-Shopping", "shippingbox.fill"),
+            ("Elektronik", "desktopcomputer"),
+            ("Drogerie", "cross.vial.fill"),
+        ],
+    ),
+    (
+        "Freizeit",
+        "sparkles",
+        "#2F8F9D",
+        &[
+            ("Streaming & Musik", "play.tv.fill"),
+            ("Sport & Fitness", "figure.run"),
+            ("Spiele", "gamecontroller.fill"),
+        ],
+    ),
+    (
+        "Versicherungen",
+        "shield.lefthalf.filled",
+        "#4B5D73",
+        &[
+            ("Krankenversicherung", "cross.case.fill"),
+            ("Haftpflicht & Hausrat", "shield.fill"),
+            ("Mitgliedschaften", "person.badge.shield.checkmark.fill"),
+        ],
+    ),
+    (
+        "Gebühren & Bargeld",
+        "eurosign.circle.fill",
+        "#7A808A",
+        &[
+            ("Bankgebühren", "building.columns"),
+            ("Bargeld", "banknote"),
+        ],
+    ),
+    (
+        "Kredite & Darlehen",
+        "house.circle.fill",
+        "#6B7280",
+        &[("Darlehensraten", "house")],
+    ),
+    (
+        "Sparen & Investieren",
+        "chart.line.uptrend.xyaxis.circle.fill",
+        "#1F7A5C",
+        &[
+            ("ETF-Sparpläne", "chart.line.uptrend.xyaxis"),
+            ("Krypto", "bitcoinsign.circle"),
+            ("Aktien", "chart.bar.fill"),
+            ("Saveback & Round up", "gift.fill"),
+        ],
+    ),
+    (
+        "Umbuchungen",
+        "arrow.left.arrow.right.circle.fill",
+        "#9AA0A6",
+        &[
+            ("Kreditkartenabrechnung", "creditcard.fill"),
+            ("Tagesgeld", "banknote.fill"),
+            ("Eigene Konten", "arrow.left.arrow.right"),
+        ],
+    ),
+];
+
 fn categories(conn: &Connection) -> CoreResult<std::collections::HashMap<&'static str, i64>> {
-    let tree: Tree = &[
-        (
-            "Einnahmen",
-            "arrow.down.circle.fill",
-            "#2E9D6A",
-            &[
-                ("Gehalt", "briefcase.fill"),
-                ("Zinsen & Dividenden", "percent"),
-                ("Erstattungen", "arrow.uturn.backward.circle"),
-                ("Sonstige Einnahmen", "plus.circle"),
-            ],
-        ),
-        (
-            "Wohnen & Energie",
-            "house.fill",
-            "#B7782F",
-            &[
-                ("Miete", "building.2.fill"),
-                ("Energie", "bolt.fill"),
-                ("Internet & Telefon", "wifi"),
-                ("Haushalt", "sofa.fill"),
-            ],
-        ),
-        (
-            "Lebensmittel",
-            "cart.fill",
-            "#B5474F",
-            &[
-                ("Supermarkt", "cart"),
-                ("Bäcker & Metzger", "fork.knife.circle"),
-                ("Lebensmittelrettung", "leaf.fill"),
-                ("Restaurants & Cafés", "fork.knife"),
-                ("Lieferdienste", "takeoutbag.and.cup.and.straw.fill"),
-            ],
-        ),
-        (
-            "Mobilität",
-            "car.fill",
-            "#3A6FB0",
-            &[
-                ("ÖPNV & Bahn", "tram.fill"),
-                ("Tanken", "fuelpump.fill"),
-                ("Fahrrad", "bicycle"),
-                ("Reisen", "airplane"),
-            ],
-        ),
-        (
-            "Einkaufen",
-            "bag.fill",
-            "#7D5BA6",
-            &[
-                ("Online-Shopping", "shippingbox.fill"),
-                ("Elektronik", "desktopcomputer"),
-                ("Drogerie", "cross.vial.fill"),
-            ],
-        ),
-        (
-            "Freizeit",
-            "sparkles",
-            "#2F8F9D",
-            &[
-                ("Streaming & Musik", "play.tv.fill"),
-                ("Sport & Fitness", "figure.run"),
-                ("Spiele", "gamecontroller.fill"),
-            ],
-        ),
-        (
-            "Versicherungen",
-            "shield.lefthalf.filled",
-            "#4B5D73",
-            &[
-                ("Krankenversicherung", "cross.case.fill"),
-                ("Haftpflicht & Hausrat", "shield.fill"),
-                ("Mitgliedschaften", "person.badge.shield.checkmark.fill"),
-            ],
-        ),
-        (
-            "Gebühren & Bargeld",
-            "eurosign.circle.fill",
-            "#7A808A",
-            &[
-                ("Bankgebühren", "building.columns"),
-                ("Bargeld", "banknote"),
-            ],
-        ),
-        (
-            "Kredite & Darlehen",
-            "house.circle.fill",
-            "#6B7280",
-            &[("Darlehensraten", "house")],
-        ),
-        (
-            "Sparen & Investieren",
-            "chart.line.uptrend.xyaxis.circle.fill",
-            "#1F7A5C",
-            &[
-                ("ETF-Sparpläne", "chart.line.uptrend.xyaxis"),
-                ("Krypto", "bitcoinsign.circle"),
-                ("Aktien", "chart.bar.fill"),
-                ("Saveback & Round up", "gift.fill"),
-            ],
-        ),
-        (
-            "Umbuchungen",
-            "arrow.left.arrow.right.circle.fill",
-            "#9AA0A6",
-            &[
-                ("Kreditkartenabrechnung", "creditcard.fill"),
-                ("Tagesgeld", "banknote.fill"),
-                ("Eigene Konten", "arrow.left.arrow.right"),
-            ],
-        ),
-    ];
     let mut map = std::collections::HashMap::new();
-    for (i, (name, sym, color, kids)) in tree.iter().enumerate() {
+    for (i, (name, sym, color, kids)) in STARTER_TREE.iter().enumerate() {
         conn.execute(
-            "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order) VALUES (NULL, ?1, ?2, ?3, ?4)",
+            "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, builtin_role) VALUES (NULL, ?1, ?2, ?3, ?4, ?1)",
             params![name, sym, color, i as i32],
         )?;
         let pid = conn.last_insert_rowid();
         map.insert(*name, pid);
         for (j, (kid, ksym)) in kids.iter().enumerate() {
             conn.execute(
-                "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, builtin_role) VALUES (?1, ?2, ?3, ?4, ?5, ?2)",
                 params![pid, kid, ksym, color, j as i32],
             )?;
             map.insert(*kid, conn.last_insert_rowid());
@@ -803,8 +893,8 @@ fn rules(conn: &Connection, cat: &std::collections::HashMap<&'static str, i64>) 
     Ok(())
 }
 
-/// (account index, days ago, cents, counterparty, purpose, booking text) – exactly 52 invented bookings
-/// (the last two are the car-loan rates of the manual demo loan).
+/// (account index, days ago, cents, counterparty, purpose, booking text) – exactly 68 invented bookings
+/// (the car-loan rates of the manual demo loan are followed by PayPal, Amazon orders and second Giro/savings bookings).
 const BOOKINGS: &[(usize, i64, i64, &str, &str, &str)] = &[
     (
         0,
@@ -1207,6 +1297,127 @@ const BOOKINGS: &[(usize, i64, i64, &str, &str, &str)] = &[
         "Autobank AG",
         "Rate Kreditvertrag 7731045 Autokredit",
         "LASTSCHRIFT",
+    ),
+    (
+        7,
+        4,
+        -2499,
+        "Spotify AB",
+        "PayPal-Zahlung Spotify Premium",
+        "ZAHLUNG",
+    ),
+    (
+        7,
+        9,
+        -5990,
+        "Zalando SE",
+        "PayPal-Zahlung Bestellung 10458-2291",
+        "ZAHLUNG",
+    ),
+    (
+        7,
+        15,
+        12000,
+        "Anna Becker",
+        "Rückzahlung Konzertkarten",
+        "ZAHLUNG ERHALTEN",
+    ),
+    (
+        7,
+        27,
+        -1899,
+        "eBay Kleinanzeigen",
+        "PayPal-Zahlung Kamerazubehör",
+        "ZAHLUNG",
+    ),
+    (
+        7,
+        41,
+        -3450,
+        "Steam Games S.a.r.l.",
+        "PayPal-Zahlung Spielekauf",
+        "ZAHLUNG",
+    ),
+    (
+        7,
+        60,
+        25000,
+        "Giro Musterbank",
+        "Aufladung vom Girokonto",
+        "GUTHABEN",
+    ),
+    (
+        8,
+        2,
+        -4799,
+        "Amazon",
+        "Kopfhörer Bluetooth – Bestellung 303-4455667-1020304",
+        "Amazon-Bestellung",
+    ),
+    (
+        8,
+        10,
+        1599,
+        "Amazon",
+        "Erstattung für Bestellung 303-5566778-2131415",
+        "Amazon-Erstattung",
+    ),
+    (
+        8,
+        14,
+        -1599,
+        "Amazon",
+        "2× USB-C Ladekabel – Bestellung 303-5566778-2131415",
+        "Amazon-Bestellung",
+    ),
+    (
+        8,
+        33,
+        -8990,
+        "Amazon",
+        "Kaffeebohnen 1 kg; Entkalker – Bestellung 303-6677889-3242526",
+        "Amazon-Bestellung",
+    ),
+    (
+        8,
+        45,
+        -2650,
+        "Amazon",
+        "Buch: Rust in Action – Bestellung 303-7788990-4353637",
+        "Amazon-Bestellung",
+    ),
+    (
+        9,
+        20,
+        280000,
+        "Erika Mustermann",
+        "Gehalt Anteil Oktober",
+        "DAUERAUFTRAG",
+    ),
+    (
+        9,
+        8,
+        -45000,
+        "Hausverwaltung Nord",
+        "Nebenkosten Abschlag",
+        "DAUERAUFTRAG",
+    ),
+    (
+        9,
+        3,
+        -12740,
+        "REWE Markt GmbH",
+        "Wocheneinkauf",
+        "KARTENZAHLUNG",
+    ),
+    (10, 30, 1250, "Musterbank", "Zinsgutschrift Q3", "ZINSEN"),
+    (
+        10,
+        12,
+        50000,
+        "Gemeinschaftskonto",
+        "Sparrate Urlaub",
+        "UEBERTRAG",
     ),
 ];
 
@@ -2327,13 +2538,21 @@ impl Vault {
             (
                 "Alltag",
                 "person",
-                &["demo-giro", "demo-visa", "demo-autokredit"][..],
+                &[
+                    "demo-giro",
+                    "demo-visa",
+                    "demo-paypal",
+                    "demo-amazon",
+                    "demo-giro2",
+                    "demo-autokredit",
+                ][..],
             ),
             (
                 "Sparen & Vorsorge",
                 "chart.pie",
                 &[
                     "demo-tagesgeld",
+                    "demo-tagesgeld2",
                     "demo-depot",
                     "demo-einzeltitel",
                     "demo-krypto",
@@ -2697,8 +2916,26 @@ mod tests {
             .map(|t| (t.name, t.booking_count))
             .collect();
         let names: Vec<&str> = tags.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, ["Auto", "Urlaub", "Familie"]);
-        assert!(tags.iter().all(|(_, n)| *n > 0), "{tags:?}");
+        assert_eq!(names.len(), DEMO_TAGS.len());
+        assert_eq!(names[..3], ["Auto", "Urlaub", "Familie"]);
+        // every tag with patterns finds bookings; the last two stay unused
+        for ((name, n), (_, _, cps, purposes)) in tags.iter().zip(DEMO_TAGS.iter()) {
+            assert_eq!(
+                *n > 0,
+                !cps.is_empty() || !purposes.is_empty(),
+                "{name}: {n}"
+            );
+        }
+        // only the rental car carries two tags
+        let all = v
+            .list_transactions(Default::default())
+            .unwrap()
+            .transactions;
+        let doubles: Vec<_> = all.iter().filter(|b| b.tags.len() > 1).collect();
+        assert!(
+            doubles.iter().all(|b| b.counterparty.starts_with("Sixt")),
+            "{doubles:?}"
+        );
         // the rental car carries two tags
         let both = v
             .list_transactions(crate::models::BookingFilter {
@@ -2746,12 +2983,12 @@ mod tests {
     }
 
     #[test]
-    fn demo_seed_has_nine_accounts_and_exactly_fifty_three_bookings() {
+    fn demo_seed_has_thirteen_accounts_and_exactly_sixty_nine_bookings() {
         let dir_dir = crate::test_support::TempDir::new("girocrab-test");
         let dir = dir_dir.join("v.db");
         let v = Vault::open(dir.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
-        assert_eq!(v.seed_demo_data().unwrap(), 53);
-        assert_eq!(v.account_count().unwrap(), 9);
+        assert_eq!(v.seed_demo_data().unwrap(), 69);
+        assert_eq!(v.account_count().unwrap(), 13);
         let car = v.list_manual_loans().unwrap();
         assert_eq!(car.len(), 1);
         assert_eq!(car[0].status.payment_count, 2);

@@ -182,26 +182,23 @@ pub fn blz_from_input(input: &str) -> Option<String> {
 
 /// Looks a bank up by its 8-digit BLZ (the Swift add-account form calls this
 /// while the user types).
-#[uniffi::export]
 pub fn lookup_fints_bank_by_blz(blz: String) -> Option<FinTsBankInfo> {
     lookup(&digits(&blz))
 }
 
 /// BLZ typed as 8 digits or taken from a German IBAN; `None` for other input.
-#[uniffi::export]
 pub fn blz_from_bank_input(input: String) -> Option<String> {
     blz_from_input(&input)
 }
 
 /// Directory lookup straight from what the user typed (BLZ or German IBAN).
-#[uniffi::export]
-pub fn lookup_fints_bank_by_input(input: String) -> Option<FinTsBankInfo> {
+#[cfg(test)]
+fn lookup_fints_bank_by_input(input: String) -> Option<FinTsBankInfo> {
     blz_from_input(&input).and_then(|b| lookup(&b))
 }
 
 /// BIC of a German IBAN's bank, from the Bundesbank BLZ list in
 /// `data/bic_directory.tsv` ("INGDDEFF"). `None` for non-German or invalid IBANs.
-#[uniffi::export]
 pub fn bic_for_iban(iban: String) -> Option<String> {
     let blz = blz_from_german_iban(&iban)?;
     let bics = bics();
@@ -397,7 +394,9 @@ mod tests {
             .collect();
         assert!(sparda.len() >= 10);
         assert!(sparda.iter().all(|b| is_valid_fints_url(&b.url)));
-        assert!(sparda.iter().all(|b| b.url == ATRUVIA));
+        assert!(sparda
+            .iter()
+            .all(|b| b.url == ATRUVIA || b.url == "https://fints2.atruvia.de/cgi-bin/hbciservlet"));
         assert!(!banks().iter().any(|e| e.2.contains("bankingonline.de")));
     }
 

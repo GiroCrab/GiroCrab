@@ -24,7 +24,8 @@ use crate::error::{CoreError, CoreResult};
 
 pub(crate) mod accounts;
 mod backup;
-mod bookings;
+mod balances;
+pub(crate) mod bookings;
 mod categories;
 mod merge;
 mod rah10;
@@ -32,7 +33,7 @@ mod rules;
 mod settings;
 mod transfer_pairs;
 
-pub(crate) use bookings::enrich;
+pub(crate) use bookings::{enrich, sql_int_list, LIVE_BOOKINGS_SQL};
 pub use merge::MergeStats;
 pub use settings::KNOWN_SETTINGS;
 
@@ -191,7 +192,14 @@ pub struct Vault {
             (crate::models::ConnectorKind, crate::connectors::FetchResult),
         >,
     >,
+    /// EquatePlus PDF import: the stored slots a download of the current run has already matched
+    /// (`connection id, group` → source keys), so identical entries claim different slots. Reset
+    /// when a run lists its pending documents.
+    pub(crate) equateplus_doc_claims:
+        Mutex<std::collections::HashMap<(i64, String), std::collections::HashSet<String>>>,
     path: String,
+    /// Finisher and booking classes for the list (see `bookings::ListCache`).
+    pub(crate) list_cache: bookings::ListCache,
     /// The master key, kept for sync snapshots and peer merges so the app
     /// doesn't ask the keychain again. Wiped on drop.
     key: Mutex<Zeroizing<Vec<u8>>>,
@@ -302,8 +310,12 @@ impl Vault {
         let pragma = Zeroizing::new(format!("PRAGMA key = \"x'{}'\";", hex::encode(key)));
         conn.execute_batch(&pragma)?;
         // Best effort: lock + wipe SQLCipher's in-memory key/page buffers.
+        // Not in unit tests: the mlock/munlock on every allocation makes the
+        // parallel test threads queue in the kernel (whole suite ~15x slower).
         let _ = conn.query_row("PRAGMA cipher_log_level = NONE;", [], |_| Ok(()));
-        let _ = conn.query_row("PRAGMA cipher_memory_security = ON;", [], |_| Ok(()));
+        if !cfg!(test) {
+            let _ = conn.query_row("PRAGMA cipher_memory_security = ON;", [], |_| Ok(()));
+        }
         Ok(())
     }
 
@@ -397,8 +409,13 @@ impl Vault {
                     Ok(())
                 });
             }
+            let mark_backup = Self::pre_fints_reg_backup(&conn, &path, &key);
             match Self::migrate(&mut conn) {
                 Ok(()) => {
+                    if mark_backup {
+                        let _ =
+                            Self::set_setting_inner(&conn, backup::PRE_FINTS_REG_BACKUP_KEY, "1");
+                    }
                     if compat.is_some() {
                         tried.push("ok");
                         eprintln!("vault: opened with cipher_compatibility={compat:?}");
@@ -440,10 +457,15 @@ impl Vault {
             return Err(first_err.unwrap_or(CoreError::WrongKey));
         };
         Self::repair(&conn);
+        // Fetch and import loops cycle through about a dozen cached statements
+        // per booking; an LRU smaller than the cycle would evict every one.
+        conn.set_prepared_statement_cache_capacity(64);
         Ok(Arc::new(Vault {
             conn: Mutex::new(conn),
             pending_account_fetches: Mutex::new(std::collections::HashMap::new()),
+            equateplus_doc_claims: Mutex::new(std::collections::HashMap::new()),
             path,
+            list_cache: bookings::ListCache::default(),
             key: Mutex::new(key),
             _open: OpenVault::new(),
         }))

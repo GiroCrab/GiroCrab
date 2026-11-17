@@ -257,11 +257,45 @@ struct MerchantFocusReturn {
     let status: StatusFilter
     let direction: BookingDirection
     let search: String
+    let tags: BookingTagFilter
+}
+
+/// Tag filter of the booking list (#228): bookings carrying every tag in `tagIDs`,
+/// or (`untagged`) only bookings without any tag. Both at once never happens.
+struct BookingTagFilter: Equatable {
+    var tagIDs: Set<Int64> = []
+    var untagged = false
+    var isActive: Bool { untagged || !tagIDs.isEmpty }
 }
 
 struct DayJump: Equatable {
     let day: String
     let token = UUID()
+}
+
+/// A running balance (#577) as the list shows it, passed into rows as a value so
+/// a new page re-renders only the rows whose balance changed. Formatted once.
+struct RunningBalance: Equatable {
+    let cents: Int64
+    let text: String
+
+    init(cents: Int64, currency: String) {
+        self.cents = cents
+        text = Money.format(cents, currency: currency)
+    }
+}
+
+/// Running balances of the loaded list pages (#577), by booking and by day.
+struct ListBalances {
+    /// One account's own currency, else EUR (the core sums only EUR accounts).
+    var currency = "EUR"
+    private(set) var bookings: [Booking.ID: RunningBalance] = [:]
+    private(set) var days: [String: RunningBalance] = [:]
+
+    mutating func merge(_ page: BookingPage) {
+        for b in page.runningBalances { bookings[b.bookingId] = RunningBalance(cents: b.balanceCents, currency: currency) }
+        for d in page.dayBalances { days[d.date] = RunningBalance(cents: d.balanceCents, currency: currency) }
+    }
 }
 
 struct DayGroup: Identifiable {
@@ -511,6 +545,35 @@ extension BookingFilter {
     /// narrowed subset), so its `flow` can stand in for `selectionFlow`.
     var listHasFlow: Bool {
         scope == .all && direction == .all && checked == nil && search == nil && categoryId == nil && !uncategorizedOnly
+            && tagIds.isEmpty && !untaggedOnly
+            && amountMinCents == nil && amountMaxCents == nil
+    }
+}
+
+/// Amount range of the booking list (#357): absolute amounts in cents (the sign is the
+/// direction filter's business). `nil` = open on that side.
+struct AmountFilter: Equatable {
+    var minCents: Int64?
+    var maxCents: Int64?
+
+    var isActive: Bool { minCents != nil || maxCents != nil }
+
+    /// A range given the wrong way round is swapped.
+    var normalized: AmountFilter {
+        guard let lo = minCents, let hi = maxCents, lo > hi else { return self }
+        return AmountFilter(minCents: hi, maxCents: lo)
+    }
+
+    /// Label of the header pill: „Betrag“, or the range („Betrag: 50,00 € – 200,00 €“, „Betrag: ≥ 100,00 €“).
+    /// Contains amounts: show it with `.sensitive(.amounts)` while a range is active.
+    var title: String {
+        switch (minCents, maxCents) {
+        case (nil, nil): String(localized: "Betrag")
+        case (let lo?, let hi?) where lo == hi: String(localized: "Betrag: \(Money.format(lo))")
+        case (let lo?, let hi?): String(localized: "Betrag: \(Money.format(lo)) – \(Money.format(hi))")
+        case (let lo?, nil): String(localized: "Betrag: ≥ \(Money.format(lo))")
+        case (nil, let hi?): String(localized: "Betrag: ≤ \(Money.format(hi))")
+        }
     }
 }
 
@@ -580,4 +643,28 @@ enum TagEntryIntent: Equatable {
 enum KeyAdoptionState: Equatable {
     case idle, working, done
     case failed(String)
+}
+
+/// What the tag sheet changed but has not stored yet (#228): names, colours,
+/// order. Stored when the sheet is dismissed (`AppModel.applyTagDraft`), so the
+/// sidebar and the booking rows behind it stay as they were until then.
+struct TagDraft: Equatable {
+    var renames: [Int64: String] = [:]
+    var colors: [Int64: String] = [:]
+    /// The arrangement (drag, „Sortieren“); nil: unchanged.
+    var order: [Int64]?
+    var isEmpty: Bool { renames.isEmpty && colors.isEmpty && order == nil }
+}
+
+/// What „Umbenennen“ in the tag window does with the typed text (#228).
+enum TagRenameIntent: Equatable {
+    case empty
+    /// The same name as now: nothing to save.
+    case unchanged
+    case rename(String)
+    /// Another tag has this name (case aside): not allowed, merge instead.
+    case taken(String)
+    /// Allowed, but looks like another tag („test 1“ / „test-1“).
+    case similar(new: String, existing: String)
+    case tooLong
 }

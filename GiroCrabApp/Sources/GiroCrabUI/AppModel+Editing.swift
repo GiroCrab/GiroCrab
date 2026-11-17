@@ -48,8 +48,8 @@ extension AppModel {
         // Rule counts and the investment dashboard: reload only when on screen,
         // otherwise when the rule editor opens / the Investments scope is shown.
         if showRuleEditor { reloadRules() } else { rulesStale = true }
-        if scope == .investments { loadDashboard() } else { dashboardStale = true }
-        refreshAfterCategoryChange()
+        reloadDashboard()
+        refreshAfterEdit()
     }
 
     /// Optimistic update: the new category on the loaded rows (and a sticky
@@ -64,10 +64,17 @@ extension AppModel {
             b.categorySymbol = c?.sfSymbol ?? ""
             b.categorySource = c == nil ? .none : .manual
         }
+        patchLoadedRows(ids, patch)
+    }
+
+    /// Shows an edit on the loaded rows (and a sticky inspector booking) before the background
+    /// refresh brings the real data; derived fields (merchant, flow) follow from the refresh.
+    private func patchLoadedRows(_ ids: Set<Booking.ID>, _ change: (inout Booking) -> Void) {
         var rows = bookings
-        for i in rows.indices where ids.contains(rows[i].id) { patch(&rows[i]) }
-        bookings = rows
-        if var s = stickyBooking, ids.contains(s.id) { patch(&s); stickyBooking = s }
+        var touched = false
+        for i in rows.indices where ids.contains(rows[i].id) { change(&rows[i]); touched = true }
+        if touched { bookings = rows }
+        if var sticky = stickyBooking, ids.contains(sticky.id) { change(&sticky); stickyBooking = sticky }
     }
 
     /// The synchronous reloads a category change needs (fallback when the write
@@ -77,13 +84,13 @@ extension AppModel {
         reloadBookings(); reloadCategories(); reloadAccounts()
     }
 
-    /// Everything a category change affects, loaded off the main thread:
+    /// Everything a category change (or another edit of a booking: checked, text, note) affects, loaded off the main thread:
     /// - the list page, published unless another list load started meanwhile
     ///   (`listGeneration`; that load already reads the new category),
     /// - KPIs and category totals, published if the accounts / period are unchanged,
     /// - the account counters ("ohne Kategorie"), published always.
     /// Quick successive assignments only publish the last result.
-    private func refreshAfterCategoryChange() {
+    private func refreshAfterEdit() {
         // A selection still loading publishes everything itself.
         if selectionLoadTask != nil { settlePendingSelectionLoad(); reloadAccounts(); return }
         categoryRefreshTask?.cancel()
@@ -92,10 +99,11 @@ extension AppModel {
         dropPendingPage()
         guard let vault else { return }
         let generation = listGeneration
-        let filter = currentFilter
+        let filter = listFilter
         let (from, to) = periodRange
         let sums = categorySumFilter
-        let listHasFlow = filter.listHasFlow
+        let uncategorizedQuery = uncategorizedCountFilter(sums)
+        let listHasFlow = filter.listHasFlow || kpiFollowsList
         categoryRefreshTask = Task { [weak self] in
             do {
                 let r = try await Self.offMain { () -> CategoryRefresh in
@@ -106,7 +114,8 @@ extension AppModel {
                     return CategoryRefresh(
                         page: page,
                         flow: flow,
-                        categories: try vault.listCategoriesFiltered(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction),
+                        categories: try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents),
+                        uncategorized: try uncategorizedQuery.map { Int(try vault.countTransactions(filter: $0)) },
                         groups: try vault.listAccountGroups(),
                         userGroups: try vault.listUserGroups()
                     )
@@ -118,11 +127,12 @@ extension AppModel {
                 }
                 let (nowFrom, nowTo) = self.periodRange
                 let nowSums = self.categorySumFilter
-                if nowFrom == from, nowTo == to, nowSums.accounts == sums.accounts, nowSums.checked == sums.checked, nowSums.direction == sums.direction {
+                if nowFrom == from, nowTo == to, nowSums.accounts == sums.accounts, nowSums.checked == sums.checked, nowSums.direction == sums.direction, nowSums.amount == sums.amount {
                     if self.currentFilter.accountIds == filter.accountIds {
                         self.selectionFlow = (r.flow.consumptionCents, r.flow.investedCents, r.flow.incomeCents)
                     }
                     self.categories = r.categories
+                    self.uncategorizedFilteredCount = r.uncategorized
                     self.categoryTree = Self.buildTree(r.categories)
                 }
                 self.applyAccountGroups(r.groups, r.userGroups)
@@ -138,6 +148,7 @@ extension AppModel {
         let page: BookingPage
         let flow: SelectionFlow
         let categories: [GiroCrabCore.Category]
+        let uncategorized: Int?
         let groups: [AccountGroup]
         let userGroups: [UserGroup]
     }
@@ -145,7 +156,14 @@ extension AppModel {
     /// The list filters by checked state: a changed booking leaves it.
     private var leavesListWhenChecked: Bool { statusFilter != .all || sidebarSelection == .newBookings }
 
+    /// "Geprüft" for a booking – or, when it is part of a multiple selection, for
+    /// every selected booking (#725, like `categorizeTargets`).
     func setChecked(_ checked: Bool, for booking: Booking) {
+        let targets = categorizeTargets(for: booking)
+        if targets.count > 1 {
+            setChecked(Set(targets.map(\.id)), to: checked)
+            return
+        }
         guard let vault else { return }
         runCore { try vault.setTransactionChecked(transactionId: booking.id, checked: checked) }
         // With "Neu" / "Geprüft" active the booking leaves the list: keep it in the inspector.
@@ -153,7 +171,8 @@ extension AppModel {
             stickyBooking = freshBooking(booking)
             lingeringBookingID = checked ? booking.id : nil
         }
-        reloadBookings(); reloadAccounts()
+        patchLoadedRows([booking.id]) { $0.checked = checked }
+        refreshAfterEdit()
     }
 
     /// "Alle Buchungen als gelesen markieren" (GitHub #236): everything new in the list as
@@ -171,7 +190,7 @@ extension AppModel {
         if let accountIDs {
             f.accountIds = accountIDs; f.categoryId = nil; f.uncategorizedOnly = false
             f.search = nil; f.dateFrom = nil; f.dateTo = nil; f.direction = .all
-            f.scope = .all; f.merchantKey = nil
+            f.scope = .all; f.merchantKey = nil; f.tagIds = []; f.untaggedOnly = false
         }
         f.checked = false; f.limit = 0; f.offset = 0; f.wholeDays = false
         let filter = f
@@ -192,30 +211,65 @@ extension AppModel {
             return
         }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.setChecked(ids, to: false) }
-            um.setActionName(String(localized: "Alle Buchungen als gelesen markieren"))
+            um.registerUndo(withTarget: self) { m in m.setChecked(ids, to: false, actionName: Self.markAllActionName) }
+            um.setActionName(Self.markAllActionName)
         }
         toast = String(localized: "\(ids.count) Umsätze als gelesen markiert")
         // With "Neu" / "Geprüft" active the bookings leave the list: keep the selected one in the inspector (like setChecked)
         if leavesListWhenChecked, let b = selectedBooking, ids.contains(b.id) { stickyBooking = freshBooking(b) }
-        reloadBookings(); reloadAccounts()
+        patchLoadedRows(Set(ids)) { $0.checked = true }
+        refreshAfterEdit()
     }
 
+    private static var markAllActionName: String { String(localized: "Alle Buchungen als gelesen markieren") }
+
     /// Undo / redo of `markAllChecked` for exactly the bookings it changed.
-    private func setChecked(_ ids: [Int64], to checked: Bool) {
+    private func setChecked(_ ids: [Int64], to checked: Bool, actionName: String) {
         guard let vault else { return }
         do { try vault.setCheckedForIds(ids: ids, checked: checked) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.setChecked(ids, to: !checked) }
-            um.setActionName(String(localized: "Alle Buchungen als gelesen markieren"))
+            um.registerUndo(withTarget: self) { m in m.setChecked(ids, to: !checked, actionName: actionName) }
+            um.setActionName(actionName)
         }
-        reloadBookings(); reloadAccounts()
+        patchLoadedRows(Set(ids)) { $0.checked = checked }
+        refreshAfterEdit()
+    }
+
+    /// "Geprüft" for a multiple selection (#725): the rows change at once, the
+    /// write runs off the main thread (⌘A can select thousands) after the
+    /// previous one, and Bearbeiten › Widerrufen restores each booking's state.
+    private func setChecked(_ ids: Set<Booking.ID>, to checked: Bool) {
+        guard let vault else { return }
+        let changed = bookings.filter { ids.contains($0.id) && $0.checked != checked }.map(\.id)
+        guard !changed.isEmpty else { return }
+        let actionName = checked ? String(localized: "Als geprüft markieren") : String(localized: "Als neu markieren")
+        // With "Neu" / "Geprüft" active the bookings leave the list: keep the selected one in the inspector.
+        if leavesListWhenChecked, let b = selectedBooking, changed.contains(b.id) { stickyBooking = freshBooking(b) }
+        patchLoadedRows(Set(changed)) { $0.checked = checked }
+        let previous = checkedWriteTask
+        checkedWriteTask = Task { [weak self] in
+            await previous?.value
+            do {
+                try await Self.offMain { try vault.setCheckedForIds(ids: changed, checked: checked) }
+                guard let self, self.vault === vault else { return }
+                if let um = self.windowUndoManager {
+                    um.registerUndo(withTarget: self) { m in m.setChecked(changed, to: !checked, actionName: actionName) }
+                    um.setActionName(actionName)
+                }
+                self.refreshAfterEdit()
+            } catch {
+                guard let self, self.vault === vault else { return }
+                self.errorMessage = describe(error)
+                self.reloadBookings()
+            }
+        }
     }
 
     func updateText(counterparty: String, purpose: String, for booking: Booking) {
         guard let vault else { return }
         runCore { try vault.updateTransactionText(transactionId: booking.id, counterparty: counterparty, purpose: purpose) }
-        reloadBookings(); reloadMerchantStats()
+        patchLoadedRows([booking.id]) { $0.counterparty = counterparty; $0.purpose = purpose }
+        refreshAfterEdit(); reloadMerchantStats()
     }
 
     /// Select the booking and put the cursor into its note field in the inspector.
@@ -231,7 +285,8 @@ extension AppModel {
     func updateNote(_ note: String, for booking: Booking) {
         guard let vault else { return }
         runCore { try vault.updateTransactionNote(transactionId: booking.id, note: note) }
-        reloadBookings()
+        // Search, flow and sums ignore the note: showing it on the rows is the whole refresh.
+        patchLoadedRows([booking.id]) { $0.note = note }
     }
 
     func createCategory(name: String, parent: Int64?, symbol: String, color: String) {

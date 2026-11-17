@@ -1110,7 +1110,7 @@ async fn demo_code_and_redirect_flows() {
     let _ = std::fs::remove_file(path);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn demo_transfer_flow_adds_pending_booking_and_suggests_recipient() {
     let (v, path) = demo_vault();
     let acc = v
@@ -1335,6 +1335,7 @@ mod account_selection;
 mod bank_name;
 mod banking_gate;
 mod batch_transfer;
+mod body_limit;
 mod content_id;
 mod direct_debit;
 mod payment_method;

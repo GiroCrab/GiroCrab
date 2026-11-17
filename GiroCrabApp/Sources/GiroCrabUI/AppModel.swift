@@ -63,8 +63,15 @@ public final class AppModel {
     private(set) var streamItems: [StreamItem] = []
     @ObservationIgnored var bookingIndexByID: [Booking.ID: Int] = [:]
     var page: BookingPage?
+    /// Balance after each loaded booking and per loaded day (#577); empty unless
+    /// Ansicht › Saldo anzeigen and the selection is accounts (`listHasBalances`).
+    var listBalances = ListBalances()
+    /// Watches Ansicht › Saldo anzeigen, which the settings window can change too.
+    @ObservationIgnored private var runningBalanceObserver: NSKeyValueObservation?
     /// Flows of the selected account/group in the selected period; nil = not loaded yet.
     var selectionFlow: (consumption: Int64, invested: Int64, income: Int64)?
+    /// „Ohne Kategorie“ badge while list filters narrow the sums; nil = the accounts' own counts (#357).
+    var uncategorizedFilteredCount: Int?
     var dashboard: InvestmentDashboard?
     var merchantStats: MerchantStats?
     /// The same history restricted to the booking's own account (#299).
@@ -98,8 +105,18 @@ public final class AppModel {
                 period = saved
                 return
             }
+            guard !resetsSelectionBeforeReloadAll else { return }
             reloadSelection(periodChanged: false)
         }
+    }
+    /// Set while a vault is adopted: `reloadAll()` follows at once, so the selection's own
+    /// reload (the same queries again, on the main thread) is skipped.
+    @ObservationIgnored var resetsSelectionBeforeReloadAll = false
+    /// Selects "Alle Konten" for a vault that is just being shown; the caller reloads everything.
+    func selectAllAccountsForReloadAll() {
+        resetsSelectionBeforeReloadAll = true
+        sidebarSelection = .allAccounts
+        resetsSelectionBeforeReloadAll = false
     }
     /// Merchant whose bookings the list shows across all accounts and categories (#495);
     /// only the period still applies. Set by `focusMerchant(of:)`, ended by
@@ -119,7 +136,7 @@ public final class AppModel {
             listLimit = Self.defaultListLimit
             if scope == .investments, dashboardStale { loadDashboard() }
             // A selection still loading in the background has to pick up the new scope.
-            if selectionLoadTask != nil { startSelectionLoad() } else { reloadScopeBookings() }
+            reloadListInBackground()
         }
     }
     var period: Period = .all { didSet { periodDidChange() } }
@@ -128,6 +145,8 @@ public final class AppModel {
     var customPeriodTo: String = UserDefaults.standard.string(forKey: "period.customTo") ?? AppModel.defaultCustomPeriod.to
     /// Shows the start/end date dialog of the period filter.
     var showCustomPeriod = false
+    /// Shows the tag filter popover of the stream header (#228).
+    var showTagFilter = false
 
     /// Sidebar selection and period as set by UI controls: the new data loads in
     /// the background, so the control responds at once. Setting `sidebarSelection`
@@ -135,6 +154,25 @@ public final class AppModel {
     var interactiveSidebarSelection: SidebarItem? {
         get { sidebarSelection }
         set { loadsSelectionInBackground = true; sidebarSelection = newValue; loadsSelectionInBackground = false }
+    }
+    /// Status / direction as set by the header menus (the list follows in the background).
+    var interactiveStatusFilter: StatusFilter {
+        get { statusFilter }
+        set { loadingFilterInBackground { statusFilter = newValue } }
+    }
+    var interactiveDirectionFilter: BookingDirection {
+        get { directionFilter }
+        set { loadingFilterInBackground { directionFilter = newValue } }
+    }
+    /// Amount range as set by the header popover (the list follows in the background, #357).
+    var interactiveAmountFilter: AmountFilter {
+        get { amountFilter }
+        set { loadingFilterInBackground { amountFilter = newValue } }
+    }
+    private func loadingFilterInBackground(_ change: () -> Void) {
+        loadsFilterInBackground = true
+        defer { loadsFilterInBackground = false }
+        change()
     }
     var interactivePeriod: Period {
         get { period }
@@ -167,8 +205,7 @@ public final class AppModel {
         didSet {
             guard statusFilter != oldValue else { return }
             listLimit = Self.defaultListLimit
-            reloadBookings()
-            reloadCategories() // the sidebar sums follow the status (#621)
+            reloadAfterFilterChange() // the sidebar sums follow the status (#621)
         }
     }
 
@@ -189,15 +226,33 @@ public final class AppModel {
         didSet {
             guard directionFilter != oldValue else { return }
             listLimit = Self.defaultListLimit
-            reloadBookings()
-            reloadCategories() // the sidebar sums follow the direction (#621)
+            reloadAfterFilterChange() // the sidebar sums follow the direction (#621)
         }
     }
-    /// Accounts whose bookings the category views show („Ohne Kategorie“ and
-    /// a category, GitHub #406); empty = all accounts. Kept while the app runs.
+    /// Tag filter of the booking list (#228, `AppModel+Tags`); kept while the app runs,
+    /// across sidebar selections, like the status filter. Not in „Neue Umsätze“.
+    var tagFilter = BookingTagFilter() {
+        didSet {
+            guard tagFilter != oldValue else { return }
+            listLimit = Self.defaultListLimit
+            reloadBookings()
+        }
+    }
+    /// Only bookings within this absolute amount range (#357); filtered in the core, so the
+    /// count, pages and exports follow. Kept while the app runs, like the other list filters.
+    var amountFilter = AmountFilter() {
+        didSet {
+            guard amountFilter != oldValue else { return }
+            listLimit = Self.defaultListLimit
+            reloadAfterFilterChange()
+        }
+    }
+    /// Accounts whose bookings the booking list shows in the category views („Ohne Kategorie“ and
+    /// a category, GitHub #406), in „Alle Konten“, account groups and „Neue Umsätze“ (#357);
+    /// empty = all accounts. Kept while the app runs.
     var categoryAccountFilter: Set<Int64> = [] {
         didSet {
-            guard categoryAccountFilter != oldValue, showsCategoryAccountFilter else { return }
+            guard categoryAccountFilter != oldValue, showsAccountFilter else { return }
             listLimit = Self.defaultListLimit
             reloadSelection(periodChanged: true) // also the sidebar sums (#621)
         }
@@ -274,6 +329,10 @@ public final class AppModel {
     var settingsRequested = false
     /// "Gruppen bearbeiten …": the account-group editor sheet (list, details, accounts).
     var showGroupManager = false
+    /// Konten › Tags verwalten … (⇧⌘T) and the tag card's „Verwalten …“: the tag sheet (#228).
+    var showTagManager = false
+    /// The tag sheet's unsaved names, colours and order.
+    var tagDraft = TagDraft()
     /// (demo, `--demo-settings banks:edit|banks:add`) sheet the bank settings open on appear.
     var demoSettingsSheet: String?
     /// The one group dialog on screen (new / rename / delete / move account).
@@ -531,6 +590,8 @@ public final class AppModel {
     @ObservationIgnored var selectionPlaceholderDelay: Duration = .milliseconds(200)
     @ObservationIgnored var selectionPlaceholderTask: Task<Void, Never>?
     @ObservationIgnored var loadsSelectionInBackground = false
+    /// Set while a header control changes status / direction: the list loads in the background.
+    @ObservationIgnored var loadsFilterInBackground = false
     @ObservationIgnored var merchantStatsTask: Task<Void, Never>?
     @ObservationIgnored var merchantStatsCache: [String: MerchantStats] = [:]
     /// Merchant whose history `merchantStats` currently shows.
@@ -594,6 +655,9 @@ public final class AppModel {
     /// Category refresh in flight; only a newer category change or a vault
     /// switch cancels it, so the totals it brings can't get lost.
     @ObservationIgnored var categoryRefreshTask: Task<Void, Never>?
+    /// Last "Geprüft" write for a multiple selection (#725); the next one waits
+    /// for it, so quick toggles reach the vault in order.
+    @ObservationIgnored var checkedWriteTask: Task<Void, Never>?
 
     // MARK: State used by AppModel+Connections.swift
 
@@ -618,6 +682,10 @@ public final class AppModel {
     public init(options: LaunchOptions = .current) {
         self.options = options
         StartupClock.mark("AppModel.init begin")
+        runningBalanceObserver = UserDefaults.standard.observe(\.showRunningBalance, options: [.old, .new]) { [weak self] _, change in
+            guard let on = change.newValue, on != change.oldValue else { return }
+            Task { @MainActor in self?.runningBalanceSettingChanged(on: on) }
+        }
         if options.freshVault || options.demoSeed {
             // Developer switches only (screenshots): synchronous, not the normal start path.
             GiroCrabCore.setLanguage(code: Bundle.main.preferredLocalizations.first ?? "de")
@@ -718,6 +786,13 @@ public final class AppModel {
                     if name == "collection-files" { self.buildCollection(dueDate: Date().addingTimeInterval(5 * 86_400)) }
                 }
             }
+        case "tags", "tags-accounts":
+            // Konten › Tags verwalten … (#228); `tags-accounts`: the first tag's bookings per account
+            showTagManager = true
+        case "tag-filter":
+            // the header's tag filter (#228, part 3) with the first tag ticked
+            if let first = tags.first { tagFilter = BookingTagFilter(tagIDs: [first.id]) }
+            showTagFilter = true
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.last
@@ -901,7 +976,7 @@ public final class AppModel {
         demoActive = true
         vaultState = .open
         selectedBookingID = nil
-        sidebarSelection = .allAccounts
+        selectAllAccountsForReloadAll()
         reloadAll()
         // Sachwerte: the demo's gold items load real prices from the API
         refreshAssetPrices()
@@ -912,20 +987,25 @@ public final class AppModel {
 
     private func openDemoVault() {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("GiroCrab-Demo.girocrab")
-        for suffix in ["", "-wal", "-shm"] {
-            try? FileManager.default.removeItem(atPath: url.path + suffix)
+        // (developer) GIROCRAB_DEMO_VAULT=<file>: a ready demo vault (e.g. 30k bookings from
+        // `OUT=<file> cargo run --release --example category_perf`) opened as is, for profiling.
+        let prepared = ProcessInfo.processInfo.environment["GIROCRAB_DEMO_VAULT"].flatMap { $0.isEmpty ? nil : $0 }
+        if prepared == nil {
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: url.path + suffix)
+            }
         }
         // Throw-away demo key (the demo vault holds only fictitious data).
         let key = Data((0..<32).map { UInt8(($0 * 7 + 3) & 0xFF) })
         do {
-            let v = try Vault.open(path: url.path, key: key)
-            _ = try v.seedDemoData()
+            let v = try Vault.open(path: prepared ?? url.path, key: key)
+            if prepared == nil { _ = try v.seedDemoData() }
             vault = v
             lockPreview = false
             demoActive = true
             vaultState = .open
             selectedBookingID = nil
-            sidebarSelection = .allAccounts
+            selectAllAccountsForReloadAll()
             reloadAll()
             refreshAssetPrices()
             #if os(macOS)
@@ -1166,7 +1246,7 @@ public final class AppModel {
         let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
         if hasData || !demoActive {
             useVault(v, demo: false)
-            CloudSyncManager.shared.startAutoSync(vault: v) { [weak self] in self?.reloadAll() }
+            CloudSyncManager.shared.startAutoSync(vault: v) { [weak self] in self?.reloadAllInBackground() }
         } else {
             reloadAll()
         }
@@ -1174,7 +1254,7 @@ public final class AppModel {
 
     private func performSyncOrAutoAdopt(vault v: Vault) async {
         await CloudSyncManager.shared.sync(vault: v)
-        CloudSyncManager.shared.startAutoSync(vault: v) { [weak self] in self?.reloadAll() }
+        CloudSyncManager.shared.startAutoSync(vault: v) { [weak self] in self?.reloadAllInBackground() }
         if CloudSyncManager.shared.legacyFolderWritten {
             self.toast = String(localized: "Ein anderes Gerät nutzt noch eine ältere GiroCrab-Version und schreibt in den alten Ordner. Bitte alle Geräte aktualisieren.")
         }
@@ -1206,7 +1286,7 @@ public final class AppModel {
         UserDefaults.standard.set(true, forKey: Self.realDataKey)
         logoCache = [:]
         // nothing of the vault shown before (demo) may appear under the new one
-        page = nil; bookings = []; history = []
+        page = nil; bookings = []; history = []; listBalances = ListBalances()
         assetClassificationVersion += 1
         // cheap, indexed calls; everything that scans bookings goes off the main thread
         reloadAccounts()
@@ -1233,7 +1313,7 @@ public final class AppModel {
         if !demo { UserDefaults.standard.set(true, forKey: Self.realDataKey) }
         vaultState = .open
         selectedBookingID = nil
-        sidebarSelection = .allAccounts
+        selectAllAccountsForReloadAll()
         logoCache = [:]
         reloadAll()
         selectedBookingID = bookings.first?.id
@@ -1293,6 +1373,8 @@ public final class AppModel {
 
     func lock() {
         guard holdsRealData else { return }
+        // an open tag sheet keeps what it changed
+        if showTagManager { applyTagDraft() }
         demoDismissedLock = true
         releaseVaultState()
         vaultState = .locked
@@ -1319,8 +1401,8 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
-        groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; connections = []; settings = []
-        page = nil; dashboard = nil; merchantStats = nil; merchantAccountStats = nil; logoCache = [:]
+        groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; tagFilter = BookingTagFilter(); showTagFilter = false; showTagManager = false; tagDraft = TagDraft(); connections = []; settings = []
+        page = nil; listBalances = ListBalances(); dashboard = nil; merchantStats = nil; merchantAccountStats = nil; logoCache = [:]
     }
 
     /// Locking ends every bank dialog: no session keeps writing into the vault,

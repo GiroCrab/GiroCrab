@@ -1524,7 +1524,7 @@ QtObject {
     /// The Buchung menu entry: nothing to do without new bookings, and not in
     /// Belege (there the list would silently mean every account).
     readonly property bool canMarkAllChecked: isUnlocked && newCount > 0 && sidebarSelection !== "documents"
-    /// "Alle als gelesen markieren": everything new in the list as filtered now, or –
+    /// "Alle Buchungen als gelesen markieren": everything new in the list as filtered now, or –
     /// with `accountIDs`, from a sidebar entry – in those accounts regardless of
     /// period, search and scope. One SQL update off the GUI thread.
     function markAllChecked(accountIDs) {
@@ -1619,7 +1619,7 @@ QtObject {
         })
     }
     function connectionStatus(id) { return run(() => core("connection_status", { connection_id: id })) || null }
-    /// Amex / Amazon Visa / FNZ / Quirion / Amazon orders: embedded web-portal login.
+    /// Amex / Amazon Visa / FNZ / Quirion / Schwäbisch Hall / Amazon orders: embedded web-portal login.
     function usesPortal(c) { return usesPortalLogin(c) }   // MARK: Web logins
 
     // MARK: - Adding banks
@@ -3085,7 +3085,7 @@ QtObject {
             pending_bookings: 5, notes_count: 312, split_parts: 14,
             date_range_start: "2009-04-01", date_range_end: "2026-11-09", replaces_starter_categories: true,
             database_path: "MoneyMoney.sqlite", statement_count: statements, statements_dir: "Statements",
-            statements_found: statements, statements_bytes: 38400000
+            statements_found: statements, statements_bytes: 38400000, transfer_template_count: 4
         }
     }
 
@@ -3098,6 +3098,7 @@ QtObject {
             banks_skipped_unsupported: 1, banks_skipped_names: ["Musterbank"], documents_imported: statements ? p.statements_found : 0,
             documents_existing: 0, documents_missing: 0, documents_mismatched: 0, documents_too_large: 0, documents_unlisted: 0,
             holdings_imported: 3, rules_created: 0, rules_disabled: 0,
+            transfer_templates_created: p.transfer_template_count, transfer_templates_existing: 0, transfer_templates_skipped: 0,
             account_checks: p.accounts.map(a => ({
                 mm_id: a.mm_id, account_id: 0, name: a.name, currency: a.currency, mm_bookings: a.booking_count,
                 found_bookings: a.booking_count, deleted_bookings: 0, other_bookings: 0,
@@ -3881,6 +3882,8 @@ QtObject {
         // Amazon Visa customer portal (Open Bank / Zinia); www.openbank.de has no card login.
         case "AmazonVisa": return "https://kunden.openbankpay.com/amazon/login"
         case "Quirion": return "https://banking.quirion.de/login/"
+        // starts the B2C sign-in (302 to login.schwaebisch-hall.de), SchwaebischHallScripts.loginURL
+        case "SchwaebischHall": return "https://www.schwaebisch-hall.de/bin/bshweb/authentication"
         case "Fnz": return "https://portal.fnz.de/"
         case "AmazonOrders": return "https://www.amazon.de/gp/css/order-history"
         case "TradeRepublic": return "https://app.traderepublic.com/login"
@@ -3897,6 +3900,7 @@ QtObject {
         case "AmazonOrders": return ["amazon.de", "amazon.com"]
         case "Fnz": return ["portal.fnz.de"]
         case "Quirion": return ["banking.quirion.de"]
+        case "SchwaebischHall": return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         case "TradeRepublic": return ["traderepublic.com"]
         default: return []
         }
@@ -3926,7 +3930,7 @@ QtObject {
     /// under "Erweitert" *and* the credentials are set (PortalUI.swift › usesPortal).
     function usesPortalLogin(c) {
         if (isMagicDemoLogin(c.login_name)) return false
-        if (!isDemo && ["AmazonOrders", "Fnz", "Quirion"].indexOf(c.connector) >= 0) return true
+        if (!isDemo && ["AmazonOrders", "Fnz", "Quirion", "SchwaebischHall"].indexOf(c.connector) >= 0) return true
         if (isDemo || (c.connector !== "AmericanExpress" && c.connector !== "AmazonVisa")) return false
         const optIn = settingEntry(enableBankingOptInKey(c.connector))
         const app = settingEntry("enablebanking.application_id"), key = settingEntry("enablebanking.private_key_pem")

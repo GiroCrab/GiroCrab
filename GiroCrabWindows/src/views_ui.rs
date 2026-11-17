@@ -56,6 +56,7 @@ struct Ui {
     /// Cached "Geplant" count; `None` = recompute on the next sidebar refresh.
     planned_count: Option<usize>,
     mandate_count: u32,
+    document_count: u32,
     folded: HashSet<String>,
     side_rows: Vec<nav::SideRow>,
     side_model: Option<Rc<VecModel<SideRow>>>,
@@ -147,6 +148,7 @@ pub fn render_sidebar(win: &MainWindow) {
                 categories: &u.categories,
                 planned_count: u.planned_count.unwrap_or(0),
                 mandate_count: u.mandate_count,
+                document_count: u.document_count,
                 mode,
                 query: &query,
                 folded: &u.folded,
@@ -168,6 +170,19 @@ pub fn invalidate_planned_count() {
 }
 
 /// Reloads accounts, groups, categories and counts for the sidebar on a worker thread.
+/// Stores the accounts and draws the sidebar at once (before the background refresh returns).
+pub fn set_accounts_now(win: &MainWindow, vault: &Vault) {
+    let accounts = vault.list_accounts().unwrap_or_default();
+    let user_groups = vault.list_user_groups().unwrap_or_default();
+    let tangible_ids = vault.list_tangible_account_ids().unwrap_or_default();
+    with_ui(|u| {
+        u.accounts = accounts;
+        u.user_groups = user_groups;
+        u.tangible_ids = tangible_ids;
+    });
+    render_sidebar(win);
+}
+
 pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
     let (weak, v) = (win.as_weak(), vault.clone());
     let cached = with_ui(|u| u.planned_count);
@@ -178,6 +193,9 @@ pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
         let tangible_ids = v.list_tangible_account_ids().unwrap_or_default();
         let planned_count = cached.or_else(|| v.list_recurring(Vec::new()).ok().map(|s| s.len()));
         let mandate_count = v.count_active_mandates().unwrap_or(0);
+        let document_count = v
+            .list_all_documents(DocumentFilter::default())
+            .map_or(0, |d| d.len() as u32);
         let v2 = v.clone();
         let _ = weak.upgrade_in_event_loop(move |win| {
             with_ui(|u| {
@@ -187,6 +205,7 @@ pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
                 u.tangible_ids = tangible_ids;
                 u.planned_count = planned_count;
                 u.mandate_count = mandate_count;
+                u.document_count = document_count;
             });
             render_sidebar(&win);
             // The account kinds are known now: a depot opened before shows its own view.
@@ -220,8 +239,8 @@ fn is_depot_like(u: &Ui, id: i64) -> bool {
 
 fn wants_view(target: Target) -> i32 {
     match target {
-        Target::Wealth => MODE_WEALTH,
-        Target::Planned => MODE_PLANNED,
+        Target::Wealth | Target::Depot => MODE_WEALTH,
+        Target::Planned | Target::Subscriptions => MODE_PLANNED,
         Target::Mandates => MODE_MANDATES,
         Target::Documents => MODE_DOCUMENTS,
         Target::Account(id) if with_ui(|u| is_depot_like(u, id)) => MODE_DEPOT,
@@ -341,7 +360,7 @@ fn load(
                 .ok_or("Konto nicht gefunden.")?;
             depot_data(vault, account, tangible.contains(&id)).map(|d| Loaded::Depot(Box::new(d)))
         }
-        Target::Wealth => {
+        Target::Wealth | Target::Depot => {
             let mut positions = Vec::new();
             for a in accounts {
                 let is_tangible = tangible.contains(&a.id);
@@ -364,7 +383,7 @@ fn load(
                 positions,
             }))
         }
-        Target::Planned => vault
+        Target::Planned | Target::Subscriptions => vault
             .list_recurring(Vec::new())
             .map(Loaded::Planned)
             .map_err(e),
@@ -612,6 +631,24 @@ pub fn apply_header(win: &MainWindow) {
         })
         .unwrap_or_default(),
     };
+    let subtitle = match target {
+        Target::Account(id) => with_ui(|u| {
+            u.accounts
+                .iter()
+                .find(|a| a.id == id)
+                .map(|a| crate::daily::account_subtitle(&a.bank_name, &a.iban, privacy))
+        })
+        .unwrap_or_default(),
+        Target::AllAccounts => {
+            let n = with_ui(|u| u.accounts.len());
+            format!("{n} Konten")
+        }
+        Target::NewBookings => "Ungeprüfte Umsätze aller Konten".into(),
+        Target::Uncategorized => "Umsätze ohne Kategorie".into(),
+        Target::Category(_) => "Kategorie inklusive Unterkategorien".into(),
+        _ => String::new(),
+    };
+    win.set_selected_subtitle(subtitle.into());
     win.set_selected_name(name.into());
     win.set_selected_balance(balance.into());
 }
@@ -642,6 +679,12 @@ pub fn on_lock(win: &MainWindow) {
     win.set_side_query(SharedString::new());
     win.set_link_open(false);
     win.set_rules_open(false);
+    crate::tags_ui::on_lock(win);
+    crate::groups_ui::on_lock(win);
+    crate::assets_loans_ui::on_lock(win);
+    crate::recurring_ui::on_lock(win);
+    crate::mandates_ui::on_lock(win);
+    crate::settings_import_ui::on_lock(win);
     clear_table(win, "");
 }
 
@@ -929,6 +972,10 @@ fn clear_rule_form(win: &MainWindow) {
     win.set_rule_field(0);
     win.set_rule_kind(0);
     win.set_rule_enabled(true);
+    win.set_rule_case(false);
+    win.set_rule_min(SharedString::new());
+    win.set_rule_max(SharedString::new());
+    win.set_rule_preview(SharedString::new());
     win.set_rule_armed(false);
     with_ui(|u| u.rule_gate.reset());
 }
@@ -951,6 +998,10 @@ fn fill_rule_form(win: &MainWindow, index: usize) {
     win.set_rule_field(lists::rule_field_index(rule.field));
     win.set_rule_kind(lists::rule_kind_index(rule.match_kind));
     win.set_rule_enabled(rule.enabled);
+    win.set_rule_case(rule.case_sensitive);
+    win.set_rule_min(lists::bound_text(rule.min_amount_cents).into());
+    win.set_rule_max(lists::bound_text(rule.max_amount_cents).into());
+    win.set_rule_preview(SharedString::new());
     win.set_rule_armed(false);
     with_ui(|u| u.rule_gate.reset());
 }
@@ -1039,6 +1090,9 @@ fn wire_rules(win: &MainWindow, slot: &VaultSlot) {
             field_index: field,
             kind_index: kind,
             enabled,
+            case_sensitive: win.get_rule_case(),
+            min_amount: win.get_rule_min().to_string(),
+            max_amount: win.get_rule_max().to_string(),
         };
         let built = with_ui(|u| {
             let existing = usize::try_from(win.get_rule_selected())
@@ -1068,6 +1122,82 @@ fn wire_rules(win: &MainWindow, slot: &VaultSlot) {
             });
         });
     });
+
+    // Preview (apply = false) and scoped apply (#759): only the bookings the form's rule matches,
+    // and only uncategorised ones, get its category. Other bookings stay untouched.
+    for apply in [false, true] {
+        let (weak, slot2) = (win.as_weak(), slot.clone());
+        let handler = move || {
+            let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+                return;
+            };
+            let form = RuleForm {
+                name: win.get_rule_name().to_string(),
+                pattern: win.get_rule_pattern().to_string(),
+                category_index: win.get_rule_category(),
+                field_index: win.get_rule_field(),
+                kind_index: win.get_rule_kind(),
+                enabled: true,
+                case_sensitive: win.get_rule_case(),
+                min_amount: win.get_rule_min().to_string(),
+                max_amount: win.get_rule_max().to_string(),
+            };
+            let built = with_ui(|u| {
+                lists::validate_rule(
+                    &form,
+                    None,
+                    &u.rule_categories,
+                    lists::next_priority(&u.rules),
+                )
+            });
+            let rule = match built {
+                Ok(r) => r,
+                Err(e) => {
+                    win.set_rule_status(e.into());
+                    return;
+                }
+            };
+            win.set_rule_status("Wird geprüft …".into());
+            let weak = win.as_weak();
+            std::thread::spawn(move || {
+                let category = rule.category_id;
+                let result = v.preview_rule(rule, 100_000).map_err(|e| e.to_string());
+                let result = result.and_then(|hits| {
+                    let open: Vec<i64> = hits
+                        .iter()
+                        .filter(|b| b.category_id.is_none())
+                        .map(|b| b.id)
+                        .collect();
+                    if apply {
+                        for id in &open {
+                            v.set_transaction_category(*id, Some(category))
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok((hits.len(), open.len()))
+                });
+                let _ = weak.upgrade_in_event_loop(move |win| match result {
+                    Ok((all, open)) => {
+                        win.set_rule_status(SharedString::new());
+                        win.set_rule_preview(
+                            if apply {
+                                format!("{open} unkategorisierte Buchung(en) zugeordnet ({all} Treffer).")
+                            } else {
+                                format!("{all} Treffer, davon {open} ohne Kategorie.")
+                            }
+                            .into(),
+                        );
+                    }
+                    Err(e) => win.set_rule_status(e.into()),
+                });
+            });
+        };
+        if apply {
+            win.on_rule_apply_scoped(handler);
+        } else {
+            win.on_rule_preview_request(handler);
+        }
+    }
 
     let (weak, slot2) = (win.as_weak(), slot.clone());
     win.on_rule_delete(move || {
@@ -1152,6 +1282,12 @@ pub fn wire(win: &MainWindow, vault: VaultSlot) {
 
     wire_documents(win, &vault);
     wire_rules(win, &vault);
+    crate::tags_ui::wire(win, vault.clone());
+    crate::groups_ui::wire(win, vault.clone());
+    crate::assets_loans_ui::wire(win, vault.clone());
+    crate::recurring_ui::wire(win, vault.clone());
+    crate::mandates_ui::wire(win, vault.clone());
+    crate::settings_import_ui::wire(win, vault.clone());
 }
 
 #[cfg(test)]
@@ -1177,7 +1313,12 @@ mod tests {
         let eur = |c: i64| money(c, "EUR");
         let date = |d: &str| german_date(d);
 
-        for target in [Target::Planned, Target::Mandates, Target::Documents] {
+        for target in [
+            Target::Planned,
+            Target::Subscriptions,
+            Target::Mandates,
+            Target::Documents,
+        ] {
             assert!(load(&vault, target, &accounts, &tangible).is_ok());
         }
         match load(&vault, Target::Wealth, &accounts, &tangible).unwrap() {
@@ -1220,6 +1361,7 @@ mod tests {
                     categories: &categories,
                     planned_count: 0,
                     mandate_count: 0,
+                    document_count: 0,
                     mode,
                     query: "",
                     folded: &folded,
@@ -1251,6 +1393,9 @@ mod tests {
             field_index: 1,
             kind_index: 0,
             enabled: true,
+            case_sensitive: false,
+            min_amount: String::new(),
+            max_amount: String::new(),
         };
         let rules = vault.list_rules().unwrap();
         let rule = lists::validate_rule(&form, None, &cats, lists::next_priority(&rules)).unwrap();

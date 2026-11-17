@@ -108,6 +108,7 @@ extension AppModel {
         isLoadingSelection = true
         page = nil
         bookings = []
+        listBalances = ListBalances()
         history = []
         categoryHistory = []
     }
@@ -115,7 +116,9 @@ extension AppModel {
     /// Everything a selection change needs, loaded off the main thread and
     /// published in one go. The previous data stays until then, at most for
     /// `selectionPlaceholderDelay`; after that list and chart show the placeholder.
-    func startSelectionLoad() {
+    /// `keepingShown`: the data changed under the same selection (sync, merge), so the old
+    /// list stays until the new one arrives instead of showing the placeholder.
+    func startSelectionLoad(keepingShown: Bool = false) {
         selectionPlaceholderTask?.cancel()
         selectionPlaceholderTask = nil
         selectionLoadTask?.cancel()
@@ -124,7 +127,9 @@ extension AppModel {
         guard let vault else { return }
         let ids = selectionAccountIDs
         let month = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: Date())
-        if selectionPlaceholderDelay <= .zero || isLoadingSelection {
+        if keepingShown && !isLoadingSelection {
+            // the old data stays until the new one arrives
+        } else if selectionPlaceholderDelay <= .zero || isLoadingSelection {
             showSelectionPlaceholder()
         } else {
             let delay = selectionPlaceholderDelay
@@ -143,25 +148,27 @@ extension AppModel {
                 let cycle = try await Self.offMain { try vault.salaryCycle(accountIds: ids) }
                 guard !Task.isCancelled, let self else { return }
                 self.salaryCycle = cycle
-                let filter = self.currentFilter
+                let filter = self.listFilter
                 let (from, to) = self.periodRange
                 let chart = self.historyRequest
                 let categoryChart = self.categoryHistoryRequest
                 let sums = self.categorySumFilter
-                let listHasFlow = filter.listHasFlow
+                let uncategorizedQuery = self.uncategorizedCountFilter(sums)
+                let listHasFlow = filter.listHasFlow || self.kpiFollowsList
                 let loaded = try await Self.offMain {
                     let page = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
                     try Task.checkCancellation()
                     let flow = listHasFlow ? page.flow : try vault.selectionFlow(accountIds: filter.accountIds, dateFrom: from, dateTo: to)
                     try Task.checkCancellation()
                     let recurring = try vault.recurringSnapshot(accountIds: ids, year: Int32(month.year ?? 2026), month: UInt32(month.month ?? 1))
-                    let categories = try vault.listCategoriesFiltered(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction)
+                    let categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents)
+                    let uncategorized = try uncategorizedQuery.map { Int(try vault.countTransactions(filter: $0)) }
                     try Task.checkCancellation()
                     let history = try vault.balanceHistory(accountIds: chart.ids, days: chart.days)
                     let categoryHistory = try categoryChart.map {
                         try vault.categoryHistoryByUnit(categoryId: $0.id, accountIds: $0.accounts, dateFrom: $0.from, dateTo: $0.to, keyLength: $0.keyLength)
                     } ?? []
-                    return (page: page, flow: flow, recurring: recurring, categories: categories, history: history, categoryHistory: categoryHistory)
+                    return (page: page, flow: flow, recurring: recurring, categories: categories, uncategorized: uncategorized, history: history, categoryHistory: categoryHistory)
                 }
                 // A newer selection or a synchronous reload cancelled this request.
                 guard !Task.isCancelled else { return }
@@ -174,6 +181,7 @@ extension AppModel {
                 self.recurringHidden = loaded.recurring.ignored
                 self.recurringMonth = loaded.recurring.month
                 self.categories = loaded.categories
+                self.uncategorizedFilteredCount = loaded.uncategorized
                 self.categoryTree = Self.buildTree(loaded.categories)
                 self.history = Self.trimmedHistory(loaded.history, from: from, to: to)
                 self.categoryHistory = loaded.categoryHistory
@@ -191,7 +199,7 @@ extension AppModel {
     // MARK: - Merchant list (GitHub #495)
 
     /// Shows every booking of the booking's merchant in the current period: all
-    /// accounts, no category, status, direction, scope or search filter. The
+    /// accounts, no category, status, direction, tag, scope or search filter. The
     /// merchant key covers differing counterparty spellings of one merchant.
     func focusMerchant(of booking: Booking) {
         let key = booking.merchant.key
@@ -199,11 +207,12 @@ extension AppModel {
         // A second merchant from within a merchant list still returns to the original view.
         let back = merchantFocusReturn ?? MerchantFocusReturn(
             selection: sidebarSelection, scope: scope, status: statusFilter,
-            direction: directionFilter, search: searchText)
+            direction: directionFilter, search: searchText, tags: tagFilter)
         // Filters first: their reloads still run on the old, cheaper selection.
         scope = .all
         statusFilter = .all
         directionFilter = .all
+        tagFilter = BookingTagFilter()
         if !searchText.isEmpty { searchText = "" }
         searchTask?.cancel()
         merchantFocus = MerchantFocus(key: key, name: booking.merchantName)
@@ -225,6 +234,7 @@ extension AppModel {
         scope = back.scope
         statusFilter = back.status
         directionFilter = back.direction
+        tagFilter = back.tags
         if searchText != back.search { searchText = back.search }
     }
 
@@ -239,7 +249,7 @@ extension AppModel {
         searchTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
-            self?.reloadBookings()
+            self?.reloadListInBackground()
         }
     }
 

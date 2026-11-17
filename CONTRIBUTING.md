@@ -14,7 +14,16 @@ cargo test -p girocrab-core -q
 cargo run -- --demo-seed               # or GIROCRAB_DEMO_SEED=1
 ```
 
+`cargo run` builds the app in debug configuration with `-O`: incremental, so a one-file change
+rebuilds in seconds. `#if DEBUG` code is active, e.g. the banking policy lives in
+`banking-policy-debug.json` instead of the keychain. `cargo run --release` builds it as shipped
+(whole-module optimization), which is much slower and recompiles all of the UI on every edit.
+
 Swift-only changes: `cd GiroCrabApp && swift build -q` (no core rebuild needed).
+
+Optional: `nix develop` (flake.nix) sets up the pinned Rust toolchain plus Apple targets and the
+native build tools the dependency tree needs (SQLCipher/OpenSSL, AWS-LC). Xcode itself still has to
+be installed separately – see [docs/nix.md](docs/nix.md).
 
 Free disk space with `scripts/clean.sh [--deep]`: the default run removes `dist/`, `build/`, stray
 temp files, GiroCrab DerivedData, incremental Rust caches and merged local branches while keeping

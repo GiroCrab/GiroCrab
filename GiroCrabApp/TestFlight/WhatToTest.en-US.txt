@@ -1,0 +1,12 @@
+GiroCrab v0.8.0 (iOS Build under Version 0.7.5, Schema v27)
+
+Note on the TestFlight version number:
+Because our development moves faster than Apple's version review for new release trains, the complete v0.8.0 release ships immediately as a new build under 0.7.5.
+
+What to test:
+- Built-in FinTS product registration & automatic encrypted vault backup before upgrade.
+- Tag filtering & analytics (#228, #777): Filter bookings by tags and analyze them in charts.
+- EquatePlus & per-holding currencies (#750, #625): New EquatePlus connector and native currency per holding.
+- Revolut OAuth popup (#289), ING Business (#721), Sparda Hannover (#619) & C24 categories (#763).
+- iOS Fix (#768): Paste Key sheet in Settings -> Security stays open reliably.
+- Performance & UI polish: ListCache (#760), split booking categories (#654), inline Analytics toggle (#757) and sidebar counts (#592).

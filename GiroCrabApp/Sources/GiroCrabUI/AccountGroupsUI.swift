@@ -1,7 +1,35 @@
 import SwiftUI
 import GiroCrabCore
+import UniformTypeIdentifiers
 
 // MARK: - Drag payloads (plain strings, so no custom UTType is needed)
+
+/// Drop target for string payloads that proposes `.move`. `dropDestination`
+/// always proposes a copy, so the pointer shows the green "+" while an
+/// account is only moved (#659).
+struct MoveStringDrop: DropDelegate {
+    var isTargeted: (Bool) -> Void = { _ in }
+    let perform: ([String]) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.plainText]) }
+    func dropEntered(info: DropInfo) { isTargeted(true) }
+    func dropExited(info: DropInfo) { isTargeted(false) }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        isTargeted(false)
+        let providers = info.itemProviders(for: [.plainText])
+        guard !providers.isEmpty else { return false }
+        let perform = perform
+        for provider in providers {
+            _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let string = object as? String else { return }
+                DispatchQueue.main.async { _ = perform([string]) }
+            }
+        }
+        return true
+    }
+}
 
 enum GroupDrag {
     static let accountPrefix = "girocrab-account:"
@@ -56,11 +84,10 @@ struct AccountsSectionHeader: View {
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 2) {
+            HStack(spacing: DisclosureChevron.gap) {
                 Button(action: toggle) { DisclosureChevron(open: open) }
                     .buttonStyle(.plain)
                     .foregroundStyle(Theme.secondary)
-                    .padding(.trailing, DisclosureChevron.gap - 2)
                     .accessibilityLabel(open ? "Konten einklappen" : "Konten ausklappen")
                     .accessibilityValue(open ? "Ausgeklappt" : "Eingeklappt")
                 Text("Konten")
@@ -170,7 +197,7 @@ struct UserGroupHeader: View {
             }
             Spacer()
             Text(Money.format(group.balanceCents))
-                .sensitive()
+                .sensitive(.amounts)
                 .appFont(.footnote, weight: .semibold) // same size as in SectionHeader (#602)
                 .monospacedDigit()
                 .fixedSize() // the name truncates, never the balance (#343)
@@ -669,9 +696,9 @@ struct AccountGroupsSettings: View {
                             ForEach(listedGroups) { g in
                                 GroupListRow(group: g, hitCount: isSearching ? g.accounts.filter { $0.matchesSidebarSearch(search) }.count : nil)
                                     .tag(g.uuid)
-                                    .dropDestination(for: String.self) { items, _ in
+                                    .onDrop(of: [.plainText], delegate: MoveStringDrop { items in
                                         acceptAccountDrop(items, into: g.uuid)
-                                    }
+                                    })
                             }
                             .onMove(perform: isSearching ? nil : { model.moveUserGroups(from: $0, to: $1) })
                             // fixed at the end, like in the sidebar: where "−" puts accounts
@@ -681,9 +708,9 @@ struct AccountGroupsSettings: View {
                                     hitCount: isSearching ? model.ungroupedForSettings.accounts.filter { $0.matchesSidebarSearch(search) }.count : nil
                                 )
                                 .tag("")
-                                .dropDestination(for: String.self) { items, _ in
+                                .onDrop(of: [.plainText], delegate: MoveStringDrop { items in
                                     acceptAccountDrop(items, into: nil)
-                                }
+                                })
                             }
                         }
                         .listStyle(.plain)
@@ -758,9 +785,9 @@ struct AccountGroupsSettings: View {
                     NavigationLink(value: g.uuid) {
                         GroupListRow(group: g, hitCount: isSearching ? g.accounts.filter { $0.matchesSidebarSearch(search) }.count : nil)
                     }
-                    .dropDestination(for: String.self) { items, _ in
+                    .onDrop(of: [.plainText], delegate: MoveStringDrop { items in
                         acceptAccountDrop(items, into: g.uuid)
-                    }
+                    })
                 }
                 .onMove(perform: isSearching ? nil : { model.moveUserGroups(from: $0, to: $1) })
                 .onDelete { idx in dialog = idx.first.map { .delete(listedGroups[$0]) } }
@@ -771,9 +798,9 @@ struct AccountGroupsSettings: View {
                             hitCount: isSearching ? model.ungroupedForSettings.accounts.filter { $0.matchesSidebarSearch(search) }.count : nil
                         )
                     }
-                    .dropDestination(for: String.self) { items, _ in
+                    .onDrop(of: [.plainText], delegate: MoveStringDrop { items in
                         acceptAccountDrop(items, into: nil)
-                    }
+                    })
                 }
             } footer: {
                 Text(footer).leadingFooter()

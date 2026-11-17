@@ -102,9 +102,10 @@ struct RecurringMenuItems: View {
             set: { _ in model.customRecurringBooking = booking }
         ))
         Divider()
-        if let s = series, s.source == .manual {
-            Button("Automatisch erkennen") { model.resetRecurring(s) }
-        }
+        // Always present (disabled instead of hidden): menu bar menus must not change their
+        // number of entries while open (#734).
+        Button("Automatisch erkennen") { if let s = series, s.source == .manual { model.resetRecurring(s) } }
+            .disabled(series?.source != .manual)
         Button("Nicht wiederkehrend") { if let s = series { model.ignoreRecurring(s) } }
             .disabled(series == nil)
     }
@@ -139,7 +140,7 @@ struct RecurringCard: View {
                 Text(s.source == .manual
                      ? "Manuell markiert · ca. \(Money.format(s.amountCents))"
                      : "Automatisch erkannt aus \(s.occurrences) Buchungen · ca. \(Money.format(s.amountCents))")
-                    .sensitive()
+                    .sensitive(.amounts)
                     .appFont(.caption)
                     .foregroundStyle(Theme.secondary)
             } else {
@@ -297,7 +298,7 @@ struct RecurringSheet: View {
             }
             Spacer()
             Text(Money.format(item.amountCents))
-                .sensitive()
+                .sensitive(.amounts)
                 .monospacedDigit()
                 .foregroundStyle(item.amountCents < 0 ? Theme.outflow : Theme.inflow)
         }
@@ -328,7 +329,7 @@ struct RecurringSheet: View {
             }
             Spacer()
             Text(Money.format(s.amountCents))
-                .sensitive()
+                .sensitive(.amounts)
                 .monospacedDigit()
                 .foregroundStyle(s.amountCents < 0 ? Theme.outflow : Theme.inflow)
             Menu {
@@ -379,7 +380,7 @@ struct RecurringSheet: View {
             }
             Spacer()
             Text(Money.format(h.amountCents))
-                .sensitive()
+                .sensitive(.amounts)
                 .monospacedDigit()
                 .foregroundStyle(Theme.secondary)
             Button("Einblenden") { model.resetRecurring(key: h.seriesKey) }

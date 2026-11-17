@@ -33,7 +33,7 @@ fn adopt_legacy_content_id(
         return Ok(());
     }
     let pattern = format!("h{}", "[0-9a-f]".repeat(16));
-    tx.execute(
+    tx.prepare_cached(
         "UPDATE transactions SET external_id = ?1
           WHERE id = (SELECT id FROM transactions
                        WHERE account_id = ?2 AND external_id GLOB ?3
@@ -41,17 +41,90 @@ fn adopt_legacy_content_id(
                          AND counterparty = ?7 AND purpose = ?8
                        ORDER BY id LIMIT 1)
             AND NOT EXISTS (SELECT 1 FROM transactions WHERE account_id = ?2 AND external_id = ?1)",
-        params![
-            t.external_id,
-            account_id,
-            pattern,
-            t.booking_date,
-            t.value_date,
-            t.amount_cents,
-            t.counterparty,
-            t.purpose
-        ],
-    )?;
+    )?
+    .execute(params![
+        t.external_id,
+        account_id,
+        pattern,
+        t.booking_date,
+        t.value_date,
+        t.amount_cents,
+        t.counterparty,
+        t.purpose
+    ])?;
+    Ok(())
+}
+
+/// A booking the bank delivers again: fills bank fields an older version did
+/// not store yet (codes, SEPA references, product ids) and heals corrupted text
+/// (U+FFFD / mojibake) with the freshly decoded one. Writes only when a column
+/// changes, since most bookings of every fetch are already stored.
+fn refresh_existing(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+) -> CoreResult<()> {
+    // A group is filled only while all of it is empty, so a row never mixes
+    // codes or references of two deliveries.
+    fn fill<'a, const N: usize>(stored: [&str; N], fresh: [&'a String; N]) -> [Option<&'a str>; N] {
+        let take = stored.iter().all(|s| s.is_empty()) && fresh.iter().any(|f| !f.is_empty());
+        fresh.map(|f| take.then_some(f.as_str()))
+    }
+    fn heal<'a>(stored: &str, fresh: &'a str) -> Option<&'a str> {
+        let clean = crate::text::is_clean;
+        (!clean(stored) && !fresh.is_empty() && clean(fresh)).then_some(fresh)
+    }
+    let changes = tx
+        .prepare_cached(
+            // includes soft-deleted rows
+            "SELECT id, counterparty, purpose, purpose_code, gvc, end_to_end_id, mandate_id, creditor_id, item_refs
+               FROM transactions WHERE account_id = ?1 AND external_id = ?2",
+        )?
+        .query_row(params![account_id, t.external_id], |r| {
+            let s = |i| r.get_ref(i)?.as_str().map_err(rusqlite::Error::from);
+            let [code, gvc] = fill([s(3)?, s(4)?], [&t.purpose_code, &t.gvc]);
+            let [e2e, mandate, creditor] = fill(
+                [s(5)?, s(6)?, s(7)?],
+                [&t.end_to_end_id, &t.mandate_id, &t.creditor_id],
+            );
+            let [items] = fill([s(8)?], [&t.item_refs]);
+            Ok((
+                r.get::<_, i64>(0)?,
+                [
+                    heal(s(1)?, &t.counterparty),
+                    heal(s(2)?, &t.purpose),
+                    code,
+                    gvc,
+                    e2e,
+                    mandate,
+                    creditor,
+                    items,
+                ],
+            ))
+        })
+        .optional()?;
+    let Some((id, set)) = changes.filter(|(_, set)| *set != [None; 8]) else {
+        return Ok(());
+    };
+    let [counterparty, purpose, code, gvc, e2e, mandate, creditor, items] = set;
+    tx.prepare_cached(
+        "UPDATE transactions SET counterparty = COALESCE(?2, counterparty), purpose = COALESCE(?3, purpose),
+                purpose_code = COALESCE(?4, purpose_code), gvc = COALESCE(?5, gvc),
+                end_to_end_id = COALESCE(?6, end_to_end_id), mandate_id = COALESCE(?7, mandate_id),
+                creditor_id = COALESCE(?8, creditor_id), item_refs = COALESCE(?9, item_refs)
+          WHERE id = ?1",
+    )?
+    .execute(params![
+        id,
+        counterparty,
+        purpose,
+        code,
+        gvc,
+        e2e,
+        mandate,
+        creditor,
+        items
+    ])?;
     Ok(())
 }
 
@@ -255,7 +328,12 @@ pub(crate) fn store_fetch(
                     }
                     // Brokerage: depots found later. Savings: PSD2 savings accounts
                     // first stored as checking (e.g. C24 PocketZINS, typed by product).
-                    if acc.kind == AccountKind::Brokerage || acc.kind == AccountKind::Savings {
+                    // Loan: a Schwäbisch Hall Bausparvertrag moving on to its loan phase
+                    // (same contract id), which must not stay a savings account.
+                    if acc.kind == AccountKind::Brokerage
+                        || acc.kind == AccountKind::Savings
+                        || (acc.kind == AccountKind::Loan && kind == ConnectorKind::SchwaebischHall)
+                    {
                         let (group, sym, order) = group_for(acc.kind);
                         let gid = Vault::ensure_group(&tx, group, sym, order)?;
                         tx.execute(
@@ -365,15 +443,7 @@ pub(crate) fn store_fetch(
                 if !is_card {
                     continue;
                 }
-                let mut st = tx.prepare(
-                    "SELECT booking_date, amount_cents, counterparty || ' ' || purpose || ' ' || booking_text
-                     FROM transactions WHERE account_id = ?1 AND deleted_ms IS NULL ORDER BY booking_date, id",
-                )?;
-                let rows: Vec<(String, i64, String)> = st
-                    .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                    .collect::<Result<_, _>>()?;
-                drop(st);
-                if let Some(open) = open_card_balance(&rows) {
+                if let Some(open) = card_open_balance(&tx, id)? {
                     tx.execute(
                         "UPDATE accounts SET balance_cents = ?1 WHERE id = ?2",
                         params![open, id],
@@ -445,11 +515,13 @@ pub(crate) fn store_fetch(
                 tx.execute(
                     "INSERT INTO holdings(account_id, isin, wkn, name, quantity, current_price_cents, purchase_price_cents, value_cents,
                             prev_day_price_cents, prev_day_value_cents, profit_loss_purchase_cents, profit_loss_purchase_rel,
-                            profit_loss_prev_day_cents, profit_loss_prev_day_rel, custody_type)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                            profit_loss_prev_day_cents, profit_loss_prev_day_rel, custody_type,
+                            currency, native_price_cents, native_purchase_price_cents, native_value_cents)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                     params![acc_id, h.isin, h.wkn, h.name, h.quantity, h.current_price_cents, h.purchase_price_cents, h.value_cents,
                             h.prev_day_price_cents, h.prev_day_value_cents, h.profit_loss_purchase_cents, h.profit_loss_purchase_rel,
-                            h.profit_loss_prev_day_cents, h.profit_loss_prev_day_rel, h.custody_type],
+                            h.profit_loss_prev_day_cents, h.profit_loss_prev_day_rel, h.custody_type,
+                            h.currency, h.native_price_cents, h.native_purchase_price_cents, h.native_value_cents],
                 )?;
                 tx.execute("INSERT INTO holding_classifications(holding_id,asset_class,instrument,direct_crypto) VALUES (?1,?2,?3,?4)",
                     params![tx.last_insert_rowid(),remote.classification.asset_class.map(|a|a.as_str()),remote.classification.instrument.map(|a|a.as_str()),remote.direct_crypto])?;
@@ -467,12 +539,12 @@ pub(crate) fn store_fetch(
             for t in &data.transactions {
                 let Some(acc_id) = account_ids.get(&t.account_ref) else {
                     if let Some(id) = archived_ids.get(&t.account_ref) {
-                        let known: bool = tx.query_row(
-                            // includes soft-deleted rows
-                            "SELECT EXISTS (SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2)",
-                            params![id, t.external_id],
-                            |r| r.get(0),
-                        )?;
+                        let known = tx
+                            .prepare_cached(
+                                // includes soft-deleted rows
+                                "SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2",
+                            )?
+                            .exists(params![id, t.external_id])?;
                         if !deleted_refs.contains(&t.account_ref) {
                             skipped_archived += u32::from(!known);
                         }
@@ -520,10 +592,10 @@ pub(crate) fn store_fetch(
                     t.item_refs
                 ])? as u32;
                 if n > 0 && data.adjust_balances {
-                    tx.execute(
+                    tx.prepare_cached(
                         "UPDATE accounts SET balance_cents = balance_cents + ?1, balance_date = ?2 WHERE id = ?3",
-                        params![t.amount_cents, t.booking_date, acc_id],
-                    )?;
+                    )?
+                    .execute(params![t.amount_cents, t.booking_date, acc_id])?;
                 }
                 imported += n;
                 if n == 0 {
@@ -543,57 +615,7 @@ pub(crate) fn store_fetch(
                     {
                         continue;
                     }
-                    // Existing row: heal corrupted text (U+FFFD / mojibake) with freshly decoded text.
-                    let bad = |s: &str| s.contains('\u{FFFD}') || crate::text::has_mojibake(s);
-                    let good = |s: &str| !bad(s);
-                    let existing: Option<(i64, String, String)> = tx
-                        .query_row(
-                            // includes soft-deleted rows
-                            "SELECT id, counterparty, purpose FROM transactions WHERE account_id = ?1 AND external_id = ?2",
-                            params![acc_id, t.external_id],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                        )
-                        .ok();
-                    if let Some((row_id, cp, pu)) = existing {
-                        // Backfill bank codes for bookings imported before they were stored.
-                        if !t.purpose_code.is_empty() || !t.gvc.is_empty() {
-                            tx.execute(
-                                "UPDATE transactions SET purpose_code = ?1, gvc = ?2
-                                 WHERE id = ?3 AND purpose_code = '' AND gvc = ''",
-                                params![t.purpose_code, t.gvc, row_id],
-                            )?;
-                        }
-                        // Same for the SEPA references (bookings imported before step 12).
-                        if !t.end_to_end_id.is_empty()
-                            || !t.mandate_id.is_empty()
-                            || !t.creditor_id.is_empty()
-                        {
-                            tx.execute(
-                                "UPDATE transactions SET end_to_end_id = ?1, mandate_id = ?2, creditor_id = ?3
-                                 WHERE id = ?4 AND end_to_end_id = '' AND mandate_id = '' AND creditor_id = ''",
-                                params![t.end_to_end_id, t.mandate_id, t.creditor_id, row_id],
-                            )?;
-                        }
-                        // Product ids of earlier imports (before step 15).
-                        if !t.item_refs.is_empty() {
-                            tx.execute(
-                                "UPDATE transactions SET item_refs = ?1 WHERE id = ?2 AND item_refs = ''",
-                                params![t.item_refs, row_id],
-                            )?;
-                        }
-                        if bad(&cp) && good(&t.counterparty) {
-                            tx.execute(
-                                "UPDATE transactions SET counterparty = ?1 WHERE id = ?2",
-                                params![t.counterparty, row_id],
-                            )?;
-                        }
-                        if bad(&pu) && good(&t.purpose) {
-                            tx.execute(
-                                "UPDATE transactions SET purpose = ?1 WHERE id = ?2",
-                                params![t.purpose, row_id],
-                            )?;
-                        }
-                    }
+                    refresh_existing(&tx, *acc_id, t)?;
                 }
             }
         }
@@ -1180,6 +1202,7 @@ impl Vault {
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
+            OrderKind::Single,
             job,
             request.account_id,
         )))
@@ -1271,11 +1294,11 @@ impl Vault {
             batch_booking: request.batch_booking,
             execution_date: exec_date,
         };
-        Ok(Arc::new(TransferSession::new_batch(
+        Ok(Arc::new(TransferSession::new(
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
-            batch,
+            OrderKind::Batch(batch),
             summary,
             request.account_id,
         )))
@@ -1434,11 +1457,11 @@ impl Vault {
             execution_date: None,
             end_to_end_id: new_end_to_end_id(),
         };
-        Ok(Arc::new(TransferSession::new_standing(
+        Ok(Arc::new(TransferSession::new(
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
-            order,
+            OrderKind::Standing(order),
             summary,
             request.account_id,
         )))
@@ -1544,14 +1567,14 @@ impl Vault {
             collections,
             batch_booking: request.batch_booking,
         };
-        Ok(Arc::new(TransferSession::new_debit(
+        Ok(Arc::new(TransferSession::new(
             self.clone(),
             make_connector_for(kind, &key_str, demo),
             ctx,
-            DebitSubmission {
+            OrderKind::Debit(DebitSubmission {
                 job,
                 mandate_ids: ids,
-            },
+            }),
             summary,
             request.account_id,
         )))
@@ -1904,6 +1927,21 @@ fn adopt_unlinked(
 fn is_amex_name(s: &str) -> bool {
     let l = s.to_lowercase();
     l.contains("amex") || l.contains("american express")
+}
+
+/// `open_card_balance` of an account's live bookings; `None` without bookings.
+pub(crate) fn card_open_balance(
+    conn: &rusqlite::Connection,
+    account_id: i64,
+) -> CoreResult<Option<i64>> {
+    let mut st = conn.prepare_cached(
+        "SELECT booking_date, amount_cents, counterparty || ' ' || purpose || ' ' || booking_text
+         FROM transactions WHERE account_id = ?1 AND deleted_ms IS NULL ORDER BY booking_date, id",
+    )?;
+    let rows: Vec<(String, i64, String)> = st
+        .query_map([account_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(open_card_balance(&rows))
 }
 
 /// Open card balance (negative = owed) from `(date, amount_cents, text)` rows

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use rusqlite::params;
 
 use crate::error::CoreError;
-use crate::i18n::{display_name, display_path, tr, trf};
+use crate::i18n::{role_name, tr, trf};
 use crate::models::*;
 use crate::vault::Vault;
 
@@ -115,14 +115,17 @@ impl Vault {
             }
         }
         let mut stmt = db.prepare(
-            "SELECT id, parent_id, name, sf_symbol, color_hex, budget_cents FROM categories WHERE deleted_ms IS NULL ORDER BY sort_order, name",
+            "SELECT id, parent_id, name, sf_symbol, color_hex, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL ORDER BY sort_order, name",
         )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
                     r.get::<_, Option<i64>>(1)?,
-                    r.get::<_, String>(2)?,
+                    role_name(
+                        &r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(6)?.as_deref(),
+                    ),
                     r.get::<_, String>(3)?,
                     r.get::<_, String>(4)?,
                     r.get::<_, Option<i64>>(5)?,
@@ -152,7 +155,7 @@ impl Vault {
                 }
             }
             parts.reverse();
-            display_path(&parts.join(" › "))
+            parts.join(" › ")
         };
         let mut out = Vec::new();
         for r in rows.iter().filter(|r| r.5.is_some()) {
@@ -173,7 +176,7 @@ impl Vault {
             let spent = (-sum).max(0);
             out.push(CategoryBudgetStatus {
                 category_id: r.0,
-                name: display_name(&r.2),
+                name: r.2.clone(),
                 path: path_of(r.0),
                 sf_symbol: r.3.clone(),
                 color_hex: r.4.clone(),
@@ -282,14 +285,25 @@ impl Vault {
 
     /// Income vs. expenses for the last `count` periods (oldest first, the
     /// current period last; empty periods are included with zeros).
+    /// `account_ids` limits the sums to these accounts, so the cashflow card can
+    /// follow the sidebar selection (#731); `None` or empty = all accounts.
+    #[uniffi::method(default(account_ids = None))]
     pub fn cashflow_by_period(
         &self,
         granularity: PeriodGranularity,
         count: u32,
+        account_ids: Option<Vec<i64>>,
     ) -> Result<Vec<PeriodCashflow>, CoreError> {
         use chrono::{Datelike, Local};
         let today = Local::now().date_naive();
-        crate::planning::cashflow_for(self, granularity, count, today.year(), today.month())
+        crate::planning::cashflow_for(
+            self,
+            granularity,
+            count,
+            account_ids.as_deref().unwrap_or_default(),
+            today.year(),
+            today.month(),
+        )
     }
 
     // ---------------------------------------------------------- templates
@@ -372,6 +386,7 @@ pub(crate) fn cashflow_for(
     v: &Vault,
     granularity: PeriodGranularity,
     count: u32,
+    account_ids: &[i64],
     year: i32,
     month: u32,
 ) -> Result<Vec<PeriodCashflow>, CoreError> {
@@ -420,12 +435,13 @@ pub(crate) fn cashflow_for(
     };
     // Same bookings, transfer detection and flow classification as the booking
     // list and its KPI tiles (`list_transactions` / `SelectionFlow`).
-    let page = v.list_transactions(BookingFilter {
+    let filter = BookingFilter {
+        account_ids: account_ids.to_vec(),
         date_from: Some(from),
         ..Default::default()
-    })?;
+    };
     let mut acc: HashMap<String, (i64, i64)> = HashMap::new();
-    for b in &page.transactions {
+    v.visit_bookings(&*v.db()?, &filter, |_, b| {
         let (date, amt) = (&b.booking_date, b.amount_cents);
         // Non-ASCII / malformed dates are skipped instead of panicking on a slice.
         let key = match granularity {
@@ -440,7 +456,7 @@ pub(crate) fn cashflow_for(
             }
             PeriodGranularity::Year => date.get(..4).map(str::to_string),
         };
-        let Some(key) = key else { continue };
+        let Some(key) = key else { return };
         let e = acc.entry(key).or_default();
         match kpi_side(b.flow, amt) {
             KpiSide::Income => e.0 += amt,
@@ -448,7 +464,7 @@ pub(crate) fn cashflow_for(
             KpiSide::Expense => e.1 -= amt,
             KpiSide::Neutral => {}
         }
-    }
+    })?;
     Ok(keys
         .into_iter()
         .map(|k| {
@@ -649,19 +665,19 @@ mod tests {
         tx(&v, "2", "2025-02-10", -30_000, None);
         tx(&v, "3", "2025-05-10", -10_000, None);
         tx(&v, "4", "2024-12-31", -5_000, None);
-        let m = cashflow_for(&v, PeriodGranularity::Month, 3, 2025, 2).unwrap();
+        let m = cashflow_for(&v, PeriodGranularity::Month, 3, &[], 2025, 2).unwrap();
         assert_eq!(
             m.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(),
             ["2024-12", "2025-01", "2025-02"]
         );
         assert_eq!((m[1].income_cents, m[2].expense_cents), (100_000, 30_000));
-        let q = cashflow_for(&v, PeriodGranularity::Quarter, 2, 2025, 5).unwrap();
+        let q = cashflow_for(&v, PeriodGranularity::Quarter, 2, &[], 2025, 5).unwrap();
         assert_eq!(q[0].key, "2025-Q1");
         assert_eq!(
             (q[0].income_cents, q[0].expense_cents, q[1].expense_cents),
             (100_000, 30_000, 10_000)
         );
-        let y = cashflow_for(&v, PeriodGranularity::Year, 2, 2025, 5).unwrap();
+        let y = cashflow_for(&v, PeriodGranularity::Year, 2, &[], 2025, 5).unwrap();
         assert_eq!(
             (y[0].key.as_str(), y[0].expense_cents, y[1].expense_cents),
             ("2024", 5_000, 40_000)
@@ -763,9 +779,55 @@ mod tests {
             .unwrap();
         }
         tx(&v, "real", &date, -1_000, None);
-        let cf =
-            cashflow_for(&v, PeriodGranularity::Month, 1, today.year(), today.month()).unwrap();
+        let cf = cashflow_for(
+            &v,
+            PeriodGranularity::Month,
+            1,
+            &[],
+            today.year(),
+            today.month(),
+        )
+        .unwrap();
         assert_eq!(cf.last().unwrap().expense_cents, 1_000);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn cashflow_limited_to_selected_accounts() {
+        let (v, dir) = vault();
+        let other = {
+            let c = v.db().unwrap();
+            c.execute(
+                "INSERT INTO accounts(group_id, external_ref, name) VALUES ((SELECT id FROM account_groups), 'B', 'L')",
+                [],
+            )
+            .unwrap();
+            let other = c.last_insert_rowid();
+            c.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 VALUES (?1, 'b1', '2025-02-10', -7000)",
+                [other],
+            )
+            .unwrap();
+            other
+        };
+        tx(&v, "a1", "2025-02-05", -3_000, None);
+        let first: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM accounts WHERE external_ref = 'A'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let expense = |ids: &[i64]| {
+            cashflow_for(&v, PeriodGranularity::Month, 1, ids, 2025, 2).unwrap()[0].expense_cents
+        };
+        assert_eq!(expense(&[]), 10_000);
+        assert_eq!(expense(&[first]), 3_000);
+        assert_eq!(expense(&[other]), 7_000);
+        assert_eq!(expense(&[first, other]), 10_000);
         std::fs::remove_dir_all(dir).ok();
     }
 }

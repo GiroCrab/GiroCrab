@@ -2,16 +2,30 @@
 //! Unlock / create vault, demo mode (`GIROCRAB_DEMO_SEED=1`), accounts with balances,
 //! bookings of the selected account and bank sync (FinTS PIN/TAN dialog, PSD2 browser redirect).
 
+mod analytics;
+mod announcements;
+mod assets_loans;
+mod assets_loans_ui;
 mod cockpit;
 mod daily;
+mod groups;
+mod groups_ui;
 mod lists;
 mod logos;
 mod manage;
 mod manage_ui;
+mod mandates_ui;
+mod mandates_view;
 mod nav;
+mod planning;
 mod policy;
 mod portfolio;
+mod recurring_ui;
+mod recurring_view;
+mod settings_import;
+mod settings_import_ui;
 mod sync_flow;
+mod tags_ui;
 mod transfer_flow;
 mod vault_key;
 mod views_ui;
@@ -24,11 +38,12 @@ use std::time::Duration;
 
 use girocrab_core::connectors::bank_directory::{BankAccessMode, BankSearchResult};
 use girocrab_core::connectors::PayeeCheck;
+use girocrab_core::sync_log::{SyncLogOutcome, SyncLogSource};
 use girocrab_core::{
     BookingFilter, Category, Challenge, ChallengeKind, ConnectorKind, PeriodGranularity, SyncStep,
     TransferStep, Vault,
 };
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use zeroize::Zeroizing;
 
 use daily::{Filter, Row, StatusFilter};
@@ -244,6 +259,8 @@ struct State {
     categories: Vec<Category>,
     filter: Filter,
     selected_booking: Option<i64>,
+    /// Bookings ticked for a batch action.
+    marked: std::collections::HashSet<i64>,
     /// Drops the result of a superseded background load.
     generation: u64,
     /// (account id, label, bank name) of the accounts a transfer can start from.
@@ -285,6 +302,11 @@ fn logo_of(st: &State, r: &Row, privacy: bool) -> Option<slint::Image> {
 
 fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
     let logo = logo_of(st, b, privacy);
+    let detail = if b.booking_text.is_empty() {
+        b.purpose.clone()
+    } else {
+        cockpit::booking_type_label(&b.booking_text)
+    };
     BookingRow {
         id: b.id as i32,
         counterparty: daily::mask(&b.counterparty, privacy).into(),
@@ -295,18 +317,22 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
             b.category_name.clone().into()
         },
         category_color: tint(&b.category_color_hex),
-        detail: daily::mask(
-            if b.booking_text.is_empty() {
-                &b.purpose
-            } else {
-                &b.booking_text
-            },
-            privacy,
-        )
-        .into(),
+        detail: daily::mask(&detail, privacy).into(),
         amount: daily::mask(&money(b.amount_cents, &b.currency), privacy).into(),
         negative: b.amount_cents < 0 && !privacy,
         checked: b.checked,
+        marked: st.marked.contains(&b.id),
+        tags_text: if privacy {
+            "".into()
+        } else {
+            b.tags
+                .iter()
+                .map(|t| format!("#{}", t.name))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .into()
+        },
+        has_note: !b.note.is_empty() && !privacy,
         monogram: if privacy {
             "•".into()
         } else if b.monogram.is_empty() {
@@ -321,13 +347,111 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
 }
 
 /// Builds the day cards and the inspector from the cached rows; never touches the vault.
+/// Distinct tag names of the loaded rows, sorted (the tag filter's choices).
+fn tag_names(rows: &[Row]) -> Vec<String> {
+    let mut v: Vec<String> = rows
+        .iter()
+        .flat_map(|r| r.tags.iter().map(|t| t.name.clone()))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Fills the inline analytics (category breakdown, tag evaluation) from the filtered rows.
+fn render_analytics(win: &MainWindow, privacy: bool) {
+    let (inc, exp, exp_cats, inc_cats, tags) = with_state(|st| {
+        let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
+        let (inc, exp, _) = analytics::totals(&shown);
+        (
+            inc,
+            exp,
+            analytics::categories(&shown, true, 6),
+            analytics::categories(&shown, false, 6),
+            analytics::tags(&shown, 8),
+        )
+    });
+    let lines = |v: Vec<analytics::Slice>| -> ModelRc<BudgetLine> {
+        ModelRc::new(VecModel::from(
+            v.into_iter()
+                .map(|s| {
+                    let cents = s.cents;
+                    BudgetLine {
+                        name: daily::mask(&s.name, false).into(),
+                        amount: daily::mask(
+                            &format!(
+                                "{} · {} Buch. · {:.0} %",
+                                money(cents, "EUR"),
+                                s.count,
+                                s.share * 100.0
+                            ),
+                            privacy,
+                        )
+                        .into(),
+                        progress: s.share,
+                        over: false,
+                        color: tint(&s.color_hex),
+                    }
+                })
+                .collect::<Vec<_>>(),
+        ))
+    };
+    win.set_analytics_expense_cats(lines(exp_cats));
+    win.set_analytics_income_cats(lines(inc_cats));
+    win.set_analytics_tags(lines(tags));
+    win.set_analytics_summary(
+        daily::mask(
+            &format!(
+                "Einnahmen {} · Ausgaben {} · Saldo {}",
+                money(inc, "EUR"),
+                money(exp, "EUR"),
+                money(inc - exp, "EUR")
+            ),
+            privacy,
+        )
+        .into(),
+    );
+}
+
 fn render_bookings(win: &MainWindow) {
     let privacy = privacy_on(win);
+    let (count, tags) = with_state(|st| (st.shown.len(), tag_names(&st.rows)));
+    win.set_booking_count(format!("{count} Buchungen").into());
+    let mut labels = vec![SharedString::from("Alle Tags")];
+    labels.extend(tags.into_iter().map(SharedString::from));
+    if win.get_tag_index() as usize >= labels.len() {
+        win.set_tag_index(0);
+    }
+    win.set_tag_labels(ModelRc::new(VecModel::from(labels)));
+    render_analytics(win, privacy);
     let (days, inspector, cat_index) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
-        let days: Vec<DayGroup> = cockpit::group_by_day(&shown)
+        let buckets = cockpit::group_by_day(&shown);
+        let mut last_month = String::new();
+        let days: Vec<DayGroup> = buckets
             .into_iter()
-            .map(|d| DayGroup {
+            .map(|d| {
+                let ym = d.date.get(..7).unwrap_or("").to_string();
+                let show_month = ym != last_month;
+                let (mut inc, mut exp) = (0i64, 0i64);
+                if show_month {
+                    for r in shown.iter().filter(|r| r.booking_date.starts_with(&ym)) {
+                        if r.amount_cents >= 0 {
+                            inc += r.amount_cents;
+                        } else {
+                            exp += r.amount_cents;
+                        }
+                    }
+                    last_month = ym;
+                }
+                let cur = d.currency.clone();
+                (d, show_month, inc, exp, cur)
+            })
+            .map(|(d, show_month, inc, exp, cur)| DayGroup {
+                show_month,
+                month: cockpit::month_title(&d.date).into(),
+                month_income: daily::mask(&money(inc, &cur), privacy).into(),
+                month_expense: daily::mask(&money(exp, &cur), privacy).into(),
                 title: cockpit::day_title(&d.date).into(),
                 sum: daily::mask(
                     &cockpit::day_sum_text(d.sum_cents, &money, &d.currency),
@@ -359,6 +483,7 @@ fn render_bookings(win: &MainWindow) {
         (days, insp, idx)
     });
     win.set_days(ModelRc::new(VecModel::from(days)));
+    win.set_marked_count(with_state(|st| st.marked.len()) as i32);
     match inspector {
         Some((i, row, logo, recurring)) => {
             // The note box keeps unsaved typing while the same booking stays selected.
@@ -378,7 +503,7 @@ fn render_bookings(win: &MainWindow) {
                 iban: i.iban.into(),
                 purpose: i.purpose.into(),
                 booking_date: german_date(&i.booking_date).into(),
-                value_date: i.value_date.into(),
+                value_date: german_date(&i.value_date).into(),
                 account: i.account.into(),
                 amount: i.amount.into(),
                 note: i.note.into(),
@@ -389,9 +514,13 @@ fn render_bookings(win: &MainWindow) {
                 logo: logo.unwrap_or_default(),
                 subtitle: subtitle.into(),
                 recurring,
+                reference: i.reference.into(),
+                transfer_reason: i.transfer_reason.into(),
+                booking_text: i.booking_text.into(),
             });
             win.set_inspector_category(cat_index);
             win.set_has_inspector(true);
+            tags_ui::refresh_inspector_tags(win);
         }
         None => {
             win.set_selected_booking(-1);
@@ -436,9 +565,23 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
         _ => PeriodGranularity::Month,
     };
     let (year, month) = cockpit::current_year_month();
+    let period = win.get_cashflow_period();
+    let account_flow = with_state(|st| match st.target {
+        Target::Account(_) => Some(cockpit::cashflow_from_rows(
+            &st.rows,
+            period,
+            (year, month),
+            6,
+        )),
+        _ => None,
+    });
     let weak = win.as_weak();
     std::thread::spawn(move || {
-        let flow = vault.cashflow_by_period(gran, 6).unwrap_or_default();
+        // One account: sum its loaded bookings; everything else: the core's all-account figures.
+        let flow = match account_flow {
+            Some(f) => f,
+            None => vault.cashflow_by_period(gran, 6, None).unwrap_or_default(),
+        };
         let status = vault
             .list_category_budget_progress(year, month)
             .unwrap_or_default();
@@ -487,7 +630,10 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
                             },
                             progress: l.progress,
                             over: l.limit_cents.is_some() && l.progress > 1.0,
-                            color: tint(&l.color_hex),
+                            color: match l.limit_cents {
+                                Some(_) => tint(cockpit::budget_color_hex(l.progress)),
+                                None => tint(&l.color_hex),
+                            },
                         }
                     })
                     .collect::<Vec<_>>(),
@@ -503,9 +649,23 @@ fn apply_filter(win: &MainWindow) {
             search: win.get_search_text().to_string(),
             uncategorized_only: win.get_uncategorized_only(),
             status: StatusFilter::from_index(win.get_status_index()),
+            from_date: daily::range_from(win.get_range_index()),
+            with_documents: win.get_documents_only(),
+            tag: {
+                let i = win.get_tag_index();
+                if i > 0 {
+                    tag_names(&st.rows)
+                        .get(i as usize - 1)
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            },
         };
         st.shown = daily::visible(&st.rows, &st.filter);
-        st.selected_booking = daily::keep_selection(&st.rows, &st.shown, st.selected_booking);
+        st.selected_booking = daily::keep_selection(&st.rows, &st.shown, st.selected_booking)
+            .or_else(|| st.shown.first().map(|&i| st.rows[i].id));
     });
     render_bookings(win);
 }
@@ -753,8 +913,25 @@ fn run_sync(vault: Arc<Vault>, demo: bool, ui: &DialogBridge) -> Result<String, 
             Ok(s) => {
                 done += 1;
                 imported += s.transactions_imported;
+                let _ = vault.log_sync(
+                    Some(c.id),
+                    SyncLogSource::Manual,
+                    SyncLogOutcome::Ok,
+                    String::new(),
+                    s.transactions_imported,
+                );
             }
-            Err(e) => problems.push(format!("{}: {e}", c.display_name)),
+            Err(e) => {
+                // the core scrubs logins, PINs, TANs and IBANs from the text
+                let _ = vault.log_sync(
+                    Some(c.id),
+                    SyncLogSource::Manual,
+                    SyncLogOutcome::Error,
+                    e.clone(),
+                    0,
+                );
+                problems.push(format!("{}: {e}", c.display_name));
+            }
         }
     }
     ui.hide();
@@ -894,7 +1071,6 @@ fn render_header(
     selected: Option<i64>,
 ) -> Result<Option<i64>, String> {
     let (rows, total) = account_rows(vault, win.get_privacy())?;
-    let first = rows.first().map(|r| r.id as i64);
     let header: Vec<(i64, String, String, String)> = rows
         .iter()
         .map(|r| {
@@ -908,7 +1084,7 @@ fn render_header(
         .collect();
     win.set_accounts(ModelRc::new(VecModel::from(rows)));
     win.set_total(total.clone().into());
-    let sel = selected.or(first);
+    let sel = selected.or(Some(0));
     win.set_selected(sel.map_or(-1, |s| s as i32));
     let cur = if sel == Some(0) {
         ("Alle Konten".to_string(), total, "EUR".to_string())
@@ -930,8 +1106,17 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     match render_header(win, vault, selected) {
         Ok(sel) => {
             refresh_transfer_sources(win, vault);
+            // Fill the sidebar and the account count now; the background refresh follows.
+            views_ui::set_accounts_now(win, vault);
             views_ui::sync_target(sel);
             if sel.is_some() {
+                // First paint: load the scope's bookings synchronously (selects the first one);
+                // the background reload in `apply_view` then refreshes them.
+                let target = with_state(|st| st.target);
+                if let Ok(rows) = load_rows(vault, target) {
+                    with_state(|st| st.rows = rows);
+                    apply_filter(win);
+                }
                 views_ui::apply_view(win, vault);
             } else {
                 with_state(|st| {
@@ -942,6 +1127,7 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 render_bookings(win);
             }
             views_ui::refresh_sidebar(win, vault);
+            settings_import_ui::refresh_news(win, vault);
             win.set_unlocked(true);
             manage_ui::refocus_later(win);
         }
@@ -1019,6 +1205,7 @@ fn import_file(
                 import_statements: false,
                 statements_dir: None,
                 bank_choices: vec![],
+                import_transfer_templates: true,
             };
             let r = vault
                 .import_moneymoney_database(location, pw.to_string(), options)
@@ -1157,6 +1344,10 @@ fn main() -> Result<(), slint::PlatformError> {
             match open_vault(demo) {
                 Ok(v) => {
                     *demo_active.lock().unwrap() = demo;
+                    win.set_demo_active(demo);
+                    win.set_has_own_vault(
+                        std::fs::metadata(vault_path()).is_ok_and(|m| m.len() > 0),
+                    );
                     views_ui::invalidate_planned_count();
                     show(&win, &v, None);
                     *vault.lock().unwrap() = Some(v);
@@ -1176,6 +1367,19 @@ fn main() -> Result<(), slint::PlatformError> {
         win.on_demo(move || {
             std::env::set_var("GIROCRAB_DEMO_SEED", "1");
             open(true)
+        });
+    }
+    {
+        // DemoBanner button: demo data <-> own vault.
+        let (open, demo_active) = (open.clone(), demo_active.clone());
+        win.on_demo_switch(move || {
+            let to_demo = !*demo_active.lock().unwrap();
+            if to_demo {
+                std::env::set_var("GIROCRAB_DEMO_SEED", "1");
+            } else {
+                std::env::remove_var("GIROCRAB_DEMO_SEED");
+            }
+            open(to_demo)
         });
     }
     {
@@ -1298,6 +1502,7 @@ fn main() -> Result<(), slint::PlatformError> {
             render_bookings(&win);
         });
     }
+    wire_batch_actions(&win, vault.clone());
     {
         // Privacy mode: only the rendering changes; the cached rows stay as they are.
         let (weak, vault) = (win.as_weak(), vault.clone());
@@ -1474,7 +1679,7 @@ fn main() -> Result<(), slint::PlatformError> {
             demo_active.clone(),
             bridge.clone(),
         );
-        win.on_transfer_submit(move |index, name, iban, amount, purpose| {
+        win.on_transfer_submit(move |index, name, iban, amount, purpose, instant, date| {
             let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
                 return;
             };
@@ -1485,6 +1690,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 iban: iban.to_string(),
                 amount: amount.to_string(),
                 purpose: purpose.to_string(),
+                instant,
+                date: date.to_string(),
             };
             let request = match daily::validate_transfer(&input) {
                 Ok(r) => r,
@@ -1580,5 +1787,213 @@ mod tests {
     fn iban_is_masked() {
         assert_eq!(mask_iban("DE89 3704 0044 0532 0130 00", ""), "•••• 3000");
         assert_eq!(mask_iban("", ""), "");
+    }
+}
+
+/// Multi-select and batch actions of the booking list.
+fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
+    {
+        let weak = win.as_weak();
+        win.on_toggle_booking_mark(move |id| {
+            let Some(win) = weak.upgrade() else { return };
+            with_state(|st| {
+                if !st.marked.remove(&(id as i64)) {
+                    st.marked.insert(id as i64);
+                }
+            });
+            render_bookings(&win);
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_batch_select_all(move || {
+            let Some(win) = weak.upgrade() else { return };
+            with_state(|st| {
+                st.marked = st.shown.iter().map(|&i| st.rows[i].id).collect();
+            });
+            render_bookings(&win);
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_batch_clear(move || {
+            let Some(win) = weak.upgrade() else { return };
+            with_state(|st| st.marked.clear());
+            render_bookings(&win);
+        });
+    }
+    // Runs one vault edit on the marked bookings (or on one id), then updates the cached rows.
+    let run = {
+        let (weak, vault) = (win.as_weak(), vault.clone());
+        Arc::new(
+            move |ids: Vec<i64>,
+                  f: Box<dyn Fn(&Vault, &[i64]) -> Result<(), String>>,
+                  apply: Box<dyn Fn(&mut Row)>| {
+                let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
+                    return;
+                };
+                if ids.is_empty() {
+                    return;
+                }
+                if let Err(e) = f(&v, &ids) {
+                    win.set_sync_status(e.into());
+                    return;
+                }
+                with_state(|st| {
+                    for r in st.rows.iter_mut().filter(|r| ids.contains(&r.id)) {
+                        apply(r);
+                    }
+                });
+                apply_filter(&win);
+            },
+        )
+    };
+    {
+        let run = run.clone();
+        win.on_toggle_booking_checked(move |id| {
+            let id = id as i64;
+            let Some(now) =
+                with_state(|st| st.rows.iter().find(|r| r.id == id).map(|r| !r.checked))
+            else {
+                return;
+            };
+            run(
+                vec![id],
+                Box::new(move |v, ids| {
+                    v.set_transaction_checked(ids[0], now)
+                        .map_err(|e| e.to_string())
+                }),
+                Box::new(move |r| r.checked = now),
+            );
+        });
+    }
+    {
+        let run = run.clone();
+        win.on_batch_checked(move |checked| {
+            let ids: Vec<i64> = with_state(|st| st.marked.iter().copied().collect());
+            run(
+                ids,
+                Box::new(move |v, ids| {
+                    v.set_checked_for_ids(ids.to_vec(), checked)
+                        .map_err(|e| e.to_string())
+                }),
+                Box::new(move |r| r.checked = checked),
+            );
+        });
+    }
+    {
+        let run = run.clone();
+        win.on_batch_category(move |index| {
+            let ids: Vec<i64> = with_state(|st| st.marked.iter().copied().collect());
+            let cat = with_state(|st| {
+                (index > 0)
+                    .then(|| st.categories.get(index as usize - 1).cloned())
+                    .flatten()
+            });
+            let cat2 = cat.clone();
+            run(
+                ids,
+                Box::new(move |v, ids| {
+                    for id in ids {
+                        v.set_transaction_category(*id, cat.as_ref().map(|c| c.id))
+                            .map_err(|e| e.to_string())?;
+                    }
+                    Ok(())
+                }),
+                Box::new(move |r| {
+                    r.category_id = cat2.as_ref().map(|c| c.id);
+                    r.category_name = cat2.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+                    r.category_color_hex = cat2
+                        .as_ref()
+                        .map(|c| c.color_hex.clone())
+                        .unwrap_or_default();
+                }),
+            );
+        });
+    }
+    {
+        let (weak, vault) = (win.as_weak(), vault.clone());
+        win.on_batch_tag(move |index, add| {
+            let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
+                return;
+            };
+            if index <= 0 {
+                win.set_sync_status("Bitte zuerst einen Tag wählen.".into());
+                return;
+            }
+            let name = win
+                .get_tag_labels()
+                .row_data(index as usize)
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let tag = with_state(|st| {
+                st.rows
+                    .iter()
+                    .flat_map(|r| r.tags.iter())
+                    .find(|t| t.name == name)
+                    .cloned()
+            });
+            let (Some(tag), ids) = (
+                tag,
+                with_state(|st| st.marked.iter().copied().collect::<Vec<i64>>()),
+            ) else {
+                return;
+            };
+            let res = if add {
+                v.add_tag_to_bookings(ids.clone(), tag.id)
+            } else {
+                v.remove_tag_from_bookings(ids.clone(), tag.id)
+            };
+            match res {
+                Ok(_) => with_state(|st| {
+                    for r in st.rows.iter_mut().filter(|r| ids.contains(&r.id)) {
+                        r.tags.retain(|t| t.id != tag.id);
+                        if add {
+                            r.tags.push(tag.clone());
+                        }
+                    }
+                }),
+                Err(e) => {
+                    win.set_sync_status(e.to_string().into());
+                    return;
+                }
+            }
+            apply_filter(&win);
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_batch_export(move || {
+            let Some(win) = weak.upgrade() else { return };
+            let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+            let csv = with_state(|st| {
+                let mut out = String::from("Datum;Gegenpartei;Verwendungszweck;Kategorie;Betrag\n");
+                for r in st.rows.iter().filter(|r| st.marked.contains(&r.id)) {
+                    out.push_str(&format!(
+                        "{};{};{};{};{}\n",
+                        r.booking_date,
+                        q(&r.counterparty),
+                        q(&r.purpose),
+                        q(&r.category_name),
+                        format!("{:.2}", r.amount_cents as f64 / 100.0).replace('.', ",")
+                    ));
+                }
+                out
+            });
+            let base = std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            let dir = if base.join("Downloads").is_dir() {
+                base.join("Downloads")
+            } else {
+                base
+            };
+            let path = dir.join("GiroCrab-Auswahl.csv");
+            match std::fs::write(&path, csv) {
+                Ok(()) => win.set_sync_status(format!("Exportiert: {}", path.display()).into()),
+                Err(e) => win.set_sync_status(format!("Export fehlgeschlagen: {e}").into()),
+            }
+        });
     }
 }

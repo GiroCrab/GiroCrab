@@ -48,6 +48,11 @@ pub enum ConnectorKind {
     VolkswagenBank,
     /// Uberspace hosting accounts (balance and bookings per Asteroid) via the web dashboard.
     Uberspace,
+    /// Bausparkasse Schwäbisch Hall (Bausparverträge, postbox PDFs) via the
+    /// "Mein Konto" portal, authenticated inside the embedded browser (#290).
+    SchwaebischHall,
+    /// Employee share plans via authenticated EquatePlus browser session.
+    EquatePlus,
 }
 
 impl ConnectorKind {
@@ -72,6 +77,8 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
             ConnectorKind::Uberspace => "uberspace",
+            ConnectorKind::SchwaebischHall => "schwaebischhall",
+            ConnectorKind::EquatePlus => "equateplus",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -125,6 +132,8 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,
             ConnectorKind::Uberspace,
+            ConnectorKind::SchwaebischHall,
+            ConnectorKind::EquatePlus,
         ]
     }
 }
@@ -222,6 +231,18 @@ pub struct Holding {
     /// Custody type as the bank names it (e.g. "Girosammelverwahrung"), "" = unknown.
     #[uniffi(default = "")]
     pub custody_type: String,
+    /// Native currency of the position (ISO code), "" = the account currency (#625).
+    /// `current_price_cents`, `purchase_price_cents` and `value_cents` are always in
+    /// the account currency so depot sums stay correct; the `native_*` fields carry
+    /// the same figures in `currency` when it differs.
+    #[uniffi(default = "")]
+    pub currency: String,
+    #[uniffi(default = None)]
+    pub native_price_cents: Option<i64>,
+    #[uniffi(default = None)]
+    pub native_purchase_price_cents: Option<i64>,
+    #[uniffi(default = None)]
+    pub native_value_cents: Option<i64>,
 }
 
 /// What a securities transaction was (#314).
@@ -570,6 +591,18 @@ pub struct BookingFilter {
     #[uniffi(default)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub untagged_only: bool,
+    /// Fill `BookingPage::running_balances` / `day_balances` (#577).
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub with_balances: bool,
+    /// Only bookings whose absolute amount (sign ignored) is at least this many cents (#357).
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub amount_min_cents: Option<i64>,
+    /// Only bookings whose absolute amount (sign ignored) is at most this many cents (#357).
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub amount_max_cents: Option<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -589,6 +622,24 @@ pub struct BookingPage {
     pub perk_cents: i64,
     /// KPI flows of all matching bookings (not only the loaded page).
     pub flow: SelectionFlow,
+    /// Balance after each booking of the page (#577), only with
+    /// `BookingFilter::with_balances`: of the chosen account, or the sum of
+    /// the chosen accounts (see `vault/balances.rs`). Pending bookings, rows of
+    /// other accounts and days before an opening balance have none.
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub running_balances: Vec<BookingBalance>,
+    /// End-of-day balance for every day on the page (same accounts).
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub day_balances: Vec<DailyBalance>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BookingBalance {
+    pub booking_id: i64,
+    pub balance_cents: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]

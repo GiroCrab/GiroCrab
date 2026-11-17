@@ -136,7 +136,7 @@ struct ReceiptCard: View {
                 Spacer()
             }
             Text(Money.signed(booking.amountCents))
-                .sensitive()
+                .sensitive(.amounts)
                 .font(.system(.largeTitle, design: .rounded, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Money.ink(booking.amountCents))
             HStack(spacing: 6) {
@@ -147,6 +147,23 @@ struct ReceiptCard: View {
             }
             .appFont(.caption)
             .foregroundStyle(Theme.secondary)
+            if booking.flow == .transfer {
+                // #574: why this booking counts as an internal transfer
+                let ownIban = !booking.counterpartyIban.isEmpty && model.accountsByID.values.contains {
+                    $0.iban.replacingOccurrences(of: " ", with: "").caseInsensitiveCompare(booking.counterpartyIban.replacingOccurrences(of: " ", with: "")) == .orderedSame
+                }
+                let reason: LocalizedStringKey = if ownIban {
+                    "Umbuchung erkannt: Die Gegenkonto-IBAN gehört zu einem eigenen Konto."
+                } else if booking.categoryName == "Umbuchungen" || booking.categoryPath.hasPrefix("Umbuchungen") {
+                    "Umbuchung erkannt: Die Buchung hat die Kategorie „Umbuchungen“."
+                } else {
+                    "Umbuchung erkannt: Der Buchungstext deutet auf eine Übertragung zwischen eigenen Konten oder eine Abrechnung hin."
+                }
+                Label(reason, systemImage: "arrow.left.arrow.right")
+                    .appFont(.caption)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let ref = AmazonOrderRef.parse(purpose: booking.purpose, merchantDomain: booking.merchantDomain, bookingText: booking.bookingText, itemRefs: booking.itemRefs), !ref.itemList.isEmpty {
                 // Amazon order: one item per line instead of the ";" purpose run;
                 // an item with a stored ASIN opens its product page (#354)
@@ -451,7 +468,7 @@ struct MerchantHistoryCard: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).appFont(.caption2).foregroundStyle(Theme.secondary)
             Text(value).appFont(.callout, weight: .semibold, monospacedDigit: true).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
-                .sensitive(sensitive ? .personal : [])
+                .sensitive(sensitive ? .amounts : [])
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -667,9 +684,9 @@ struct MultiSelectionCard: View {
             Label("\(many.count) Buchungen ausgewählt", systemImage: "checkmark.circle")
                 .appFont(.headline)
             VStack(alignment: .leading, spacing: 4) {
-                LabeledContent("Summe") { Text(Money.format(income + expense)).sensitive() }
-                if income != 0 { LabeledContent("Einnahmen") { Text(Money.format(income)).sensitive() } }
-                if expense != 0 { LabeledContent("Ausgaben") { Text(Money.format(expense)).sensitive() } }
+                LabeledContent("Summe") { Text(Money.format(income + expense)).sensitive(.amounts) }
+                if income != 0 { LabeledContent("Einnahmen") { Text(Money.format(income)).sensitive(.amounts) } }
+                if expense != 0 { LabeledContent("Ausgaben") { Text(Money.format(expense)).sensitive(.amounts) } }
             }
             .appFont(.callout, monospacedDigit: true)
             MultiSelectionTags(bookings: many)
@@ -679,6 +696,15 @@ struct MultiSelectionCard: View {
                 Label("Kategorisieren …", systemImage: "tag").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            // #725: like the single booking's "Geprüft" switch, for the whole selection
+            let allChecked = !many.isEmpty && many.allSatisfy(\.checked)
+            Button {
+                if let first = many.first { model.setChecked(!allChecked, for: first) }
+            } label: {
+                Label(allChecked ? "Als neu markieren" : "Als geprüft markieren", systemImage: "checkmark.circle")
+                    .frame(maxWidth: .infinity)
+            }
             .controlSize(.large)
             Button("Auswahl aufheben") {
                 if let id = model.selectedBookingID { model.selectBooking(id) }
