@@ -11,15 +11,17 @@
 //! - account: `<connection key>|external_ref` (`|external_ref` without connection)
 //! - booking: `<account key>|external_id`
 //!
-//! Stamps are milliseconds from [`crate::user_groups::now_ms`]; `deleted_ms`
+//! Stamps are milliseconds from [`crate::dates::now_ms`]; `deleted_ms`
 //! NULL means live. A merge never stamps anything itself.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
+use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::models::ConnectorKind;
+use crate::schema::{has_column, has_table};
 
 /// Fixed namespace for the deterministic (v5) uuids.
 const NAMESPACE: Uuid = Uuid::from_bytes([
@@ -63,12 +65,7 @@ const COLUMNS: &[(&str, &str, &str)] = &[
 /// Repair step up to schema 9 (`schema::repair_to_v8`); new changes go in `schema.rs`.
 pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
     for (table, col, def) in COLUMNS {
-        let has: i64 = conn.query_row(
-            "SELECT count(*) FROM pragma_table_info(?1) WHERE name = ?2",
-            [table, col],
-            |r| r.get(0),
-        )?;
-        if has == 0 {
+        if !has_column(conn, "main", table, col)? {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {col} {def};"))?;
         }
     }
@@ -167,6 +164,26 @@ pub(crate) fn rule_uuid_for_content(
     Uuid::new_v5(&NAMESPACE, parts.join(&SEP.to_string()).as_bytes()).to_string()
 }
 
+/// The category part of a rule's content identity: the category uuid, plus the
+/// rule's tags (#580) when it has any, so rules without tags keep the identity
+/// they had before tags existed (older devices compute the same uuid).
+fn rule_target_key(category_uuid: &str, tag_uuids: &str) -> String {
+    if tag_uuids.is_empty() {
+        category_uuid.to_string()
+    } else {
+        format!("{category_uuid}{SEP}tags{SEP}{tag_uuids}")
+    }
+}
+
+/// Whether `schema.rules` has `tag_uuids` (a vault from before step 28 has not).
+fn rules_have_tags(conn: &Connection, schema: &str) -> CoreResult<bool> {
+    Ok(conn.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('rules', '{schema}') WHERE name = 'tag_uuids')"),
+        [],
+        |r| r.get(0),
+    )?)
+}
+
 type RuleRow = (
     i64,
     String,
@@ -176,7 +193,8 @@ type RuleRow = (
     Option<i64>,
     Option<i64>,
     rusqlite::types::Value,
-    i64,
+    Option<i64>,
+    String,
 );
 
 /// Gives every category and rule without a uuid one: the deterministic uuid if
@@ -229,21 +247,23 @@ pub(crate) fn fill_missing_uuids(conn: &Connection) -> CoreResult<()> {
     }
     // rules
     // runs during migrations too: before step 24 the column is the account set
-    let has_set: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'rule_accounts')",
-        [],
-        |r| r.get(0),
-    )?;
+    let has_set = has_table(conn, "main", "rule_accounts")?;
     let accounts = if has_set {
         "COALESCE((SELECT group_concat(account_id) FROM rule_accounts
                    WHERE rule_id = rules.id), account_id)"
     } else {
         "account_id"
     };
+    // and before step 28 there are no rule tags
+    let tags = if rules_have_tags(conn, "main")? {
+        "tag_uuids"
+    } else {
+        "''"
+    };
     let rules: Vec<RuleRow> = conn
         .prepare(&format!(
             "SELECT id, field, match_kind, pattern, case_sensitive, min_amount_cents,
-                    max_amount_cents, {accounts}, category_id
+                    max_amount_cents, {accounts}, category_id, {tags}
              FROM rules WHERE uuid IS NULL ORDER BY id"
         ))?
         .query_map([], |r| {
@@ -257,6 +277,7 @@ pub(crate) fn fill_missing_uuids(conn: &Connection) -> CoreResult<()> {
                 r.get(6)?,
                 r.get(7)?,
                 r.get(8)?,
+                r.get(9)?,
             ))
         })?
         .collect::<Result<_, _>>()?;
@@ -264,15 +285,18 @@ pub(crate) fn fill_missing_uuids(conn: &Connection) -> CoreResult<()> {
         .prepare("SELECT uuid FROM rules WHERE uuid IS NOT NULL")?
         .query_map([], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
-    for (id, field, kind, pattern, cs, min, max, account, category) in rules {
-        let cat_uuid: String = conn
-            .query_row(
-                "SELECT uuid FROM categories WHERE id = ?1",
-                [category],
-                |r| r.get(0),
-            )
-            .optional()?
-            .unwrap_or_default();
+    for (id, field, kind, pattern, cs, min, max, account, category, tag_uuids) in rules {
+        let cat_uuid: String = match category {
+            Some(category) => conn
+                .query_row(
+                    "SELECT uuid FROM categories WHERE id = ?1",
+                    [category],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .unwrap_or_default(),
+            None => String::new(),
+        };
         let account_key = accounts_key(conn, &crate::rules::parse_account_ids(&account))?;
         let mut u = rule_uuid_for_content(
             &field,
@@ -282,7 +306,7 @@ pub(crate) fn fill_missing_uuids(conn: &Connection) -> CoreResult<()> {
             min,
             max,
             account_key.as_deref(),
-            &cat_uuid,
+            &rule_target_key(&cat_uuid, &tag_uuids),
         );
         if used.contains(&u) {
             u = Uuid::new_v4().to_string();
@@ -305,7 +329,7 @@ fn not_found(what: &str, id: i64) -> CoreError {
 /// before deletions became soft). The uncategorising is a derived change: no
 /// `category_ms` stamp.
 pub(crate) fn soft_delete_categories(conn: &Connection, root: i64) -> CoreResult<()> {
-    let now = crate::user_groups::now_ms();
+    let now = now_ms();
     conn.execute_batch(
         "CREATE TEMP TABLE IF NOT EXISTS doomed_categories(id INTEGER PRIMARY KEY);
          DELETE FROM doomed_categories;",
@@ -349,14 +373,14 @@ pub(crate) fn soft_delete_booking(conn: &Connection, id: i64) -> CoreResult<()> 
     conn.execute("DELETE FROM loan_links WHERE transaction_id = ?1", [id])?;
     conn.execute(
         "UPDATE transactions SET deleted_ms = ?1 WHERE id = ?2 AND deleted_ms IS NULL",
-        params![crate::user_groups::now_ms(), id],
+        params![now_ms(), id],
     )?;
     Ok(())
 }
 
 /// Soft-deletes an account and its bookings (what the FK cascade did).
 pub(crate) fn soft_delete_account(conn: &Connection, id: i64) -> CoreResult<()> {
-    soft_delete_account_at(conn, id, crate::user_groups::now_ms())
+    soft_delete_account_at(conn, id, now_ms())
 }
 
 /// The cascade shares one stamp, so a revive can tell the bookings deleted
@@ -387,7 +411,7 @@ pub(crate) fn soft_delete_connection(conn: &Connection, id: i64) -> CoreResult<(
         let rows = q.query_map([id], |r| r.get(0))?;
         rows.collect::<Result<_, _>>()?
     };
-    let now = crate::user_groups::now_ms();
+    let now = now_ms();
     for a in accounts {
         soft_delete_account_at(conn, a, now)?;
     }
@@ -407,7 +431,7 @@ pub(crate) fn soft_delete_connection(conn: &Connection, id: i64) -> CoreResult<(
 pub(crate) fn revive_connection(conn: &Connection, id: i64) -> CoreResult<()> {
     conn.execute(
         "UPDATE bank_connections SET deleted_ms = NULL, created_ms = ?1 WHERE id = ?2",
-        params![crate::user_groups::now_ms(), id],
+        params![now_ms(), id],
     )?;
     Ok(())
 }
@@ -455,7 +479,7 @@ pub(crate) fn revive_account_if_deleted(conn: &Connection, id: i64) -> CoreResul
                 archived_ms = CASE WHEN archived_unix IS NULL THEN archived_ms ELSE ?1 END,
                 archived_unix = NULL
           WHERE id = ?2",
-        params![crate::user_groups::now_ms(), id],
+        params![now_ms(), id],
     )?;
     conn.execute(
         "UPDATE transactions SET deleted_ms = NULL WHERE account_id = ?1 AND deleted_ms = ?2",
@@ -1011,6 +1035,8 @@ struct RuleBody {
     name: String,
     priority: i64,
     enabled: bool,
+    /// The tags the rule adds (#580): a JSON array of tag uuids, "" = none.
+    tags: String,
 }
 
 impl RuleBody {
@@ -1023,7 +1049,7 @@ impl RuleBody {
             self.min,
             self.max,
             self.account.as_deref(),
-            &self.category,
+            &rule_target_key(&self.category, &self.tags),
         )
     }
 }
@@ -1062,7 +1088,7 @@ type RawRule = (
     i64,
     String,
     String,
-    i64,
+    Option<i64>,
     String,
     String,
     String,
@@ -1075,18 +1101,13 @@ type RawRule = (
     i64,
     Option<i64>,
     Option<String>,
+    String,
 );
 
 fn load_rules(conn: &Connection, schema: &str) -> CoreResult<Vec<RawRule>> {
     // includes soft-deleted rows
     // a vault from before step 24 has no `rule_accounts`: its column is the set
-    let has_set: bool = conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM {schema}.sqlite_master WHERE name = 'rule_accounts')"
-        ),
-        [],
-        |r| r.get(0),
-    )?;
+    let has_set = has_table(conn, schema, "rule_accounts")?;
     let accounts = if has_set {
         format!(
             "COALESCE((SELECT group_concat(account_id) FROM {schema}.rule_accounts
@@ -1095,10 +1116,15 @@ fn load_rules(conn: &Connection, schema: &str) -> CoreResult<Vec<RawRule>> {
     } else {
         "r.account_id".to_string()
     };
+    let tags = if rules_have_tags(conn, schema)? {
+        "r.tag_uuids"
+    } else {
+        "''"
+    };
     let sql = format!(
         "SELECT r.id, r.uuid, r.name, r.category_id, r.field, r.match_kind, r.pattern,
                 r.case_sensitive, r.min_amount_cents, r.max_amount_cents, {accounts},
-                r.priority, r.enabled, r.updated_ms, r.deleted_ms, r.merged_into
+                r.priority, r.enabled, r.updated_ms, r.deleted_ms, r.merged_into, {tags}
          FROM {schema}.rules r ORDER BY r.id"
     );
     let rows = conn
@@ -1121,6 +1147,7 @@ fn load_rules(conn: &Connection, schema: &str) -> CoreResult<Vec<RawRule>> {
                 r.get(13)?,
                 r.get(14)?,
                 r.get(15)?,
+                r.get(16)?,
             ))
         })?
         .collect::<Result<_, _>>()?;
@@ -1170,52 +1197,72 @@ pub(crate) fn merge_rules(
         keys.insert(id, k.clone());
         Ok(k)
     };
-    let mut build = |conn: &Connection,
-                     raw: RawRule,
-                     cat: i64,
-                     acc: Vec<i64>|
-     -> CoreResult<MRule> {
-        let (id, uuid, name, _, field, kind, pattern, cs, min, max, _, prio, en, upd, del, merged) =
-            raw;
-        let mut keys_of = acc
-            .iter()
-            .map(|a| key_of(conn, *a))
-            .collect::<CoreResult<Vec<_>>>()?;
-        keys_of.sort();
-        let account = (!keys_of.is_empty()).then(|| keys_of.join(ACCOUNT_KEY_SEP));
-        Ok(MRule {
-            id,
-            uuid,
-            body: RuleBody {
-                category: cats.get(&cat).map(|c| c.0.clone()).unwrap_or_default(),
+    let mut build =
+        |conn: &Connection, raw: RawRule, cat: i64, acc: Vec<i64>| -> CoreResult<MRule> {
+            let (
+                id,
+                uuid,
+                name,
+                _,
                 field,
                 kind,
                 pattern,
-                case_sensitive: cs,
+                cs,
                 min,
                 max,
-                account,
-                name,
-                priority: prio,
-                enabled: en,
-            },
-            category_id: cat,
-            account_ids: acc,
-            updated_ms: upd,
-            deleted_ms: del,
-            merged_into: merged,
-        })
-    };
+                _,
+                prio,
+                en,
+                upd,
+                del,
+                merged,
+                tags,
+            ) = raw;
+            let mut keys_of = acc
+                .iter()
+                .map(|a| key_of(conn, *a))
+                .collect::<CoreResult<Vec<_>>>()?;
+            keys_of.sort();
+            let account = (!keys_of.is_empty()).then(|| keys_of.join(ACCOUNT_KEY_SEP));
+            Ok(MRule {
+                id,
+                uuid,
+                body: RuleBody {
+                    category: cats.get(&cat).map(|c| c.0.clone()).unwrap_or_default(),
+                    field,
+                    kind,
+                    pattern,
+                    case_sensitive: cs,
+                    min,
+                    max,
+                    account,
+                    name,
+                    priority: prio,
+                    enabled: en,
+                    tags,
+                },
+                category_id: cat,
+                account_ids: acc,
+                updated_ms: upd,
+                deleted_ms: del,
+                merged_into: merged,
+            })
+        };
 
     let mut local = Vec::new();
     for raw in load_rules(conn, "main")? {
-        let (cat, acc) = (raw.3, crate::rules::parse_account_ids(&raw.10));
+        // 0 = no category: a rule that only adds tags (#580)
+        let (cat, acc) = (raw.3.unwrap_or(0), crate::rules::parse_account_ids(&raw.10));
         local.push(build(conn, raw, cat, acc)?);
     }
     let mut other = Vec::new();
     for raw in load_rules(conn, "other")? {
-        let Some(&cat) = cat_map.get(&raw.3) else {
-            continue;
+        let cat = match raw.3 {
+            None => 0,
+            Some(theirs) => match cat_map.get(&theirs) {
+                Some(&cat) => cat,
+                None => continue,
+            },
         };
         if raw.6.len() > crate::rules::MAX_PATTERN_LEN {
             continue;
@@ -1336,7 +1383,12 @@ pub(crate) fn merge_rules(
         if r.id == 0 {
             conn.execute(
                 "INSERT INTO rules(uuid, name, category_id, pattern) VALUES (?1, ?2, ?3, ?4)",
-                params![r.uuid, b.name, r.category_id, b.pattern],
+                params![
+                    r.uuid,
+                    b.name,
+                    (r.category_id != 0).then_some(r.category_id),
+                    b.pattern
+                ],
             )?;
             ids.insert(r.uuid.clone(), conn.last_insert_rowid());
             if r.deleted_ms.is_none() {
@@ -1347,12 +1399,12 @@ pub(crate) fn merge_rules(
             "UPDATE rules SET name = ?2, category_id = ?3, field = ?4, match_kind = ?5,
                     pattern = ?6, case_sensitive = ?7, min_amount_cents = ?8,
                     max_amount_cents = ?9, account_id = ?10, priority = ?11, enabled = ?12,
-                    updated_ms = ?13, deleted_ms = ?14, merged_into = ?15
+                    updated_ms = ?13, deleted_ms = ?14, merged_into = ?15, tag_uuids = ?16
              WHERE id = ?1",
             params![
                 ids[&r.uuid],
                 b.name,
-                r.category_id,
+                (r.category_id != 0).then_some(r.category_id),
                 b.field,
                 b.kind,
                 b.pattern,
@@ -1364,7 +1416,8 @@ pub(crate) fn merge_rules(
                 b.enabled,
                 r.updated_ms,
                 r.deleted_ms,
-                r.merged_into
+                r.merged_into,
+                b.tags
             ],
         )?;
         crate::rules::store_rule_accounts(conn, ids[&r.uuid], &r.account_ids)?;
@@ -2371,7 +2424,7 @@ fn synced_state(v: &crate::vault::Vault) -> Vec<String> {
                     COALESCE((SELECT group_concat(account_id) FROM rule_accounts
                               WHERE rule_id = r.id), r.account_id),
                     r.priority, r.enabled,
-                    r.updated_ms, r.deleted_ms, r.merged_into
+                    r.updated_ms, r.deleted_ms, r.merged_into, r.tag_uuids
              FROM rules r LEFT JOIN categories c ON c.id = r.category_id",
         )
         .into_iter()

@@ -10,6 +10,7 @@
 
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
+use crate::iban::{has_iban_shape, normalize_iban};
 use crate::models::{Account, AccountKind};
 use crate::vault::Vault;
 use rusqlite::{params, Connection};
@@ -23,9 +24,17 @@ pub struct ExportCsvRow {
     pub date: String,
     pub account_name: String,
     pub counterparty: String,
+    /// Counterparty IBAN (column "IBAN").
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub counterparty_iban: String,
     pub purpose: String,
     pub category: String,
     pub note: String,
+    /// Tag names, comma-separated (column "Tags", #228).
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub tags: String,
     pub amount_cents: i64,
     pub currency: String,
     /// End-of-day balance, set on the last row of a day; `None` = empty cell.
@@ -57,6 +66,14 @@ pub struct ExportCsvColumns {
     #[uniffi(default)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub running_balance: bool,
+    /// Counterparty IBAN after "Name".
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub iban: bool,
+    /// Tag names after "Notiz".
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub tags: bool,
 }
 
 /// Excel CSV (UTF-8 BOM, semicolon, decimal comma, CRLF).
@@ -75,12 +92,19 @@ pub fn export_csv(
             csv_field(&l.date, false)
         ));
     }
-    let mut header = vec!["Datum", "Konto", "Name", "Verwendungszweck"];
+    let mut header = vec!["Datum", "Konto", "Name"];
+    if columns.iban {
+        header.push("IBAN");
+    }
+    header.push("Verwendungszweck");
     if columns.category {
         header.push("Kategorie");
     }
     if columns.note {
         header.push("Notiz");
+    }
+    if columns.tags {
+        header.push("Tags");
     }
     header.extend(["Betrag", "Währung"]);
     if columns.running_balance {
@@ -96,13 +120,19 @@ pub fn export_csv(
             csv_field(&r.date, false),
             csv_field(&r.account_name, true),
             csv_field(&r.counterparty, true),
-            csv_field(&r.purpose, true),
         ];
+        if columns.iban {
+            cols.push(csv_field(&r.counterparty_iban, false));
+        }
+        cols.push(csv_field(&r.purpose, true));
         if columns.category {
             cols.push(csv_field(&r.category, true));
         }
         if columns.note {
             cols.push(csv_field(&r.note, true));
+        }
+        if columns.tags {
+            cols.push(csv_field(&r.tags, true));
         }
         cols.push(csv_amount(r.amount_cents));
         cols.push(csv_field(&r.currency, true));
@@ -482,8 +512,8 @@ fn statement_xml(
     let ns = if v08 { "08" } else { "02" };
     // Unique per export (ISO 20022): readers drop a repeated message id.
     let msg_id = format!("GC{}", uuid::Uuid::new_v4().simple());
-    let iban = compact_iban(&account.iban);
-    let own_bic = if is_iban(&iban) {
+    let iban = normalize_iban(&account.iban);
+    let own_bic = if has_iban_shape(&iban) {
         crate::connectors::fints_directory::bic_for_iban(iban.clone()).unwrap_or_default()
     } else {
         String::new()
@@ -676,8 +706,8 @@ fn entry_xml(b: &CamtEntry, account_currency: &str, owner: &str, v08: bool) -> S
         .strip_prefix("camt:")
         .map(str::trim)
         .filter(|s| !s.is_empty() && *s != "NONREF");
-    let peer_iban = compact_iban(&b.counterparty_iban);
-    let peer_bic = if is_iban(&peer_iban) {
+    let peer_iban = normalize_iban(&b.counterparty_iban);
+    let peer_bic = if has_iban_shape(&peer_iban) {
         crate::connectors::fints_directory::bic_for_iban(peer_iban.clone())
     } else {
         None
@@ -826,28 +856,12 @@ fn account_currency_or(s: &str, account_currency: &str) -> String {
 /// `<IBAN>` when `iban` is one, else `<Othr><Id>` (Max34Text): the schema's
 /// IBAN pattern rejects account and card numbers.
 fn account_id_xml(iban: &str, other: &str, fallback: &str) -> String {
-    if is_iban(iban) {
+    if has_iban_shape(iban) {
         return format!("<IBAN>{}</IBAN>", esc(iban));
     }
     let other = other.trim();
     let id = if other.is_empty() { fallback } else { other };
     format!("<Othr><Id>{}</Id></Othr>", esc(&truncate(id, 34)))
-}
-
-fn compact_iban(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_whitespace())
-        .collect::<String>()
-        .to_uppercase()
-}
-
-/// ISO 20022 IBAN2007Identifier: `[A-Z]{2}[0-9]{2}[a-zA-Z0-9]{1,30}`.
-pub fn is_iban(s: &str) -> bool {
-    let b = s.as_bytes();
-    (5..=34).contains(&b.len())
-        && b[..2].iter().all(u8::is_ascii_uppercase)
-        && b[2..4].iter().all(u8::is_ascii_digit)
-        && b[4..].iter().all(u8::is_ascii_alphanumeric)
 }
 
 /// Remittance text as `Ustrd` lines of at most 140 characters (Max140Text).
@@ -1623,9 +1637,11 @@ mod tests {
             date: "2025-03-02".into(),
             account_name: "Giro".into(),
             counterparty: "Supermarkt <Nord>".into(),
+            counterparty_iban: "DE02120300000000202051".into(),
             purpose: "Einkauf".into(),
             category: "Lebensmittel".into(),
             note: "Woche".into(),
+            tags: "Urlaub, Bar".into(),
             amount_cents: -4_599,
             currency: "EUR".into(),
             day_balance_cents: Some(1_000_000),
@@ -1642,15 +1658,17 @@ mod tests {
             note: true,
             daily_balance: true,
             running_balance: true,
+            iban: true,
+            tags: true,
         };
         let csv = export_csv(vec![row.clone()], all, vec![line]);
         assert!(csv.starts_with('\u{FEFF}'));
         assert!(csv.contains("# \"'=HYPERLINK(\"\"x\"\")\";10000,00;EUR;2025-03-31\r\n"));
         assert!(csv.contains(
-            "Datum;Konto;Name;Verwendungszweck;Kategorie;Notiz;Betrag;Währung;Saldo;Tagessaldo\r\n"
+            "Datum;Konto;Name;IBAN;Verwendungszweck;Kategorie;Notiz;Tags;Betrag;Währung;Saldo;Tagessaldo\r\n"
         ));
         assert!(csv.contains(
-            "2025-03-02;Giro;Supermarkt <Nord>;Einkauf;Lebensmittel;Woche;-45,99;EUR;25,00;10000,00\r\n"
+            "2025-03-02;Giro;Supermarkt <Nord>;DE02120300000000202051;Einkauf;Lebensmittel;Woche;Urlaub, Bar;-45,99;EUR;25,00;10000,00\r\n"
         ));
         let lean = export_csv(vec![row], ExportCsvColumns::default(), vec![]);
         assert!(lean.contains("Datum;Konto;Name;Verwendungszweck;Betrag;Währung\r\n"));
@@ -1662,8 +1680,8 @@ mod tests {
         assert_eq!(esc("a\u{0}b\u{1f}c\u{fffe}"), "abc");
         assert_eq!(esc("a\tb\nc\r\nd"), "a\tb\nc\r\nd");
         assert_eq!(esc("<&>\"'"), "&lt;&amp;&gt;&quot;&#39;");
-        assert!(is_iban("DE02120300000000202051"));
-        assert!(!is_iban("1234567890"));
-        assert!(!is_iban("de02120300000000202051"));
+        assert!(has_iban_shape("DE02120300000000202051"));
+        assert!(!has_iban_shape("1234567890"));
+        assert!(!has_iban_shape("de02120300000000202051"));
     }
 }

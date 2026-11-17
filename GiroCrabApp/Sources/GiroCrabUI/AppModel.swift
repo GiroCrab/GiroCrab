@@ -546,8 +546,6 @@ public final class AppModel {
     var standingUnknown: String?
     /// Bumped whenever a sync wrote a row to the Abrufprotokoll (#238); the log window reloads on it.
     var syncLogVersion = 0
-    var csvExport = CSVFileDocument(data: Data())
-    var showCSVExporter = false
     /// Unified booking export (PDF / CSV / XML).
     var showExportSheet = false
     var exportFile = ExportFileDocument(data: Data())
@@ -593,6 +591,10 @@ public final class AppModel {
     /// A selection load has run longer than `selectionPlaceholderDelay`: list and chart are
     /// empty and show the loading placeholder until it publishes.
     var isLoadingSelection = false
+    /// Counts the ends of selection loads. `selectionLoadTask` is not observed, and a load that finishes
+    /// before the placeholder shows never changes `isLoadingSelection`: a view asking `selectionSettled`
+    /// would stay on its loading state. Reading this makes the answer observable.
+    var selectionLoadStamp = 0
     /// Grace period before a running selection load clears the previous data. Loads that
     /// finish sooner (most) swap list, chart and tiles in one step: no empty flash.
     /// Slower ones never leave the old figures under the new title for longer than this.
@@ -818,6 +820,10 @@ public final class AppModel {
             if let c = categories.first(where: { $0.depth == 0 }) {
                 newCategoryRequest = NewCategoryRequest(parent: c.id)
             }
+        case "export":
+            // Export dialog on the current view's demo bookings.
+            period = Period.previousMonth()
+            openBookingExport()
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = Period.previousMonth()
@@ -863,6 +869,11 @@ public final class AppModel {
         case "rule-edit":
             // a rule opened in the editor (#179 pattern field)
             ruleDraft = rules.first
+            showRuleEditor = true
+        case "rule-tags":
+            // a rule that only adds tags (#580)
+            reloadRules()
+            ruleDraft = rules.first { $0.categoryId == 0 } ?? rules.first
             showRuleEditor = true
         case "palette":
             showCommandPalette = true
@@ -969,8 +980,21 @@ public final class AppModel {
         StartupClock.mark("demo data loaded & shown")
     }
 
+    /// The demo or fresh vault in the temp folder. Unit tests get one per
+    /// process: `swift test --parallel` runs suites in several processes,
+    /// which would otherwise lock each other's file. The app keeps the fixed
+    /// name (`--keep-fresh-vault` reopens it on the next launch).
+    nonisolated static func tempVaultURL(
+        _ name: String,
+        unitTests: Bool = runningUnitTests,
+        pid: Int32 = ProcessInfo.processInfo.processIdentifier
+    ) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(unitTests ? "\(name)-\(pid).girocrab" : "\(name).girocrab")
+    }
+
     nonisolated private static func makeDemoVault() throws -> Vault {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("GiroCrab-Demo.girocrab")
+        let url = Self.tempVaultURL("GiroCrab-Demo")
         for suffix in ["", "-wal", "-shm"] {
             try? FileManager.default.removeItem(atPath: url.path + suffix)
         }
@@ -997,7 +1021,7 @@ public final class AppModel {
     }
 
     private func openDemoVault() {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("GiroCrab-Demo.girocrab")
+        let url = Self.tempVaultURL("GiroCrab-Demo")
         // (developer) GIROCRAB_DEMO_VAULT=<file>: a ready demo vault (e.g. 30k bookings from
         // `OUT=<file> cargo run --release --example category_perf`) opened as is, for profiling.
         let prepared = ProcessInfo.processInfo.environment["GIROCRAB_DEMO_VAULT"].flatMap { $0.isEmpty ? nil : $0 }
@@ -1036,7 +1060,7 @@ public final class AppModel {
     /// (`State(initialValue:)` runs on every `RootView` init), and wiping again
     /// would delete the file the live model is still writing to.
     private func openFreshVault() {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("GiroCrab-Fresh.girocrab")
+        let url = Self.tempVaultURL("GiroCrab-Fresh")
         // --keep-fresh-vault reopens the file as it is (e.g. a restored copy).
         if !Self.freshVaultWiped, !options.keepFreshVault {
             Self.freshVaultWiped = true
@@ -1320,6 +1344,7 @@ public final class AppModel {
         selectedBookingID = bookings.first?.id
         startAutoSync()
         reconcileEnableBankingKey()
+        writeSuggestionEvalIfAsked()
     }
 
     func useVault(_ v: Vault, demo: Bool) {
@@ -1334,6 +1359,18 @@ public final class AppModel {
         selectedBookingID = bookings.first?.id
         if demo { stopAutoSync() } else { startAutoSync() }
         if !demo { reconcileEnableBankingKey() }
+        if !demo { writeSuggestionEvalIfAsked() }
+    }
+
+    /// (developer) `--eval-suggestions <file>`: the accuracy report of the own vault (#664).
+    func writeSuggestionEvalIfAsked() {
+        guard let path = options.evalSuggestions else { return }
+        Task { [weak self] in
+            let report = (try? await self?.vaultOffMain { try $0.evaluateSuggestions() }) ?? nil
+            let text = report ?? "evaluate_suggestions failed or the vault was locked\n"
+            try? text.write(toFile: path, atomically: true, encoding: .utf8)
+            print(text)
+        }
     }
 
     /// Switch to the demo data (own vault stays unlocked in the background).

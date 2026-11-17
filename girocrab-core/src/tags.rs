@@ -18,8 +18,10 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
+use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::tr;
+use crate::schema::has_column;
 use crate::vault::Vault;
 
 pub(crate) mod merge;
@@ -54,12 +56,7 @@ const MAX_NAME: usize = 64;
 /// `transactions.tags_ms`. Idempotent like the steps before it.
 pub(crate) fn tags_tables(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(TAGS)?;
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM pragma_table_info('transactions') WHERE name = 'tags_ms'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has == 0 {
+    if !has_column(conn, "main", "transactions", "tags_ms")? {
         conn.execute_batch(
             "ALTER TABLE transactions ADD COLUMN tags_ms INTEGER NOT NULL DEFAULT 0;",
         )?;
@@ -292,6 +289,129 @@ pub(crate) fn normalize_links(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// Every tag uuid (deleted and merged ones too) -> the id of its live tag:
+/// itself, or the survivor its merge chain leads to. Deleted tags without a
+/// survivor are missing. Rules keep their tags as uuids (#580), so a rename or
+/// a merge on any device carries over.
+pub(crate) fn live_tag_ids_by_uuid(conn: &Connection) -> CoreResult<HashMap<String, i64>> {
+    let rows: Vec<(i64, String, bool, Option<String>)> = conn
+        .prepare("SELECT id, uuid, deleted_ms IS NULL, merged_into FROM tags")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    let by_uuid: HashMap<&str, (i64, bool, Option<&str>)> = rows
+        .iter()
+        .map(|(id, u, live, m)| (u.as_str(), (*id, *live, m.as_deref())))
+        .collect();
+    let mut out = HashMap::new();
+    for (_, uuid, _, _) in &rows {
+        let mut cur = Some(uuid.as_str());
+        let mut seen = HashSet::new();
+        while let Some(u) = cur {
+            if !seen.insert(u) {
+                break;
+            }
+            match by_uuid.get(u) {
+                Some(&(id, true, _)) => {
+                    out.insert(uuid.clone(), id);
+                    break;
+                }
+                Some(&(_, false, next)) => cur = next,
+                None => break,
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The uuids of the live tags `ids` as a rule stores them (JSON array, sorted);
+/// an id that is no live tag is refused.
+pub(crate) fn rule_tag_uuids(conn: &Connection, ids: &[i64]) -> CoreResult<String> {
+    let mut uuids = Vec::new();
+    for id in ids {
+        let uuid: Option<String> = conn
+            .query_row(
+                "SELECT uuid FROM tags WHERE id = ?1 AND deleted_ms IS NULL",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        uuids.push(uuid.ok_or_else(|| not_found(*id))?);
+    }
+    uuids.sort();
+    uuids.dedup();
+    if uuids.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(serde_json::to_string(&uuids)?)
+}
+
+/// The live tag ids of a rule's stored `tag_uuids`, sorted; tags deleted since
+/// drop out, merged ones become their survivor.
+pub(crate) fn rule_tag_ids(stored: &str, live: &HashMap<String, i64>) -> Vec<i64> {
+    let uuids: Vec<String> = serde_json::from_str(stored).unwrap_or_default();
+    let mut ids: Vec<i64> = uuids.iter().filter_map(|u| live.get(u).copied()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+/// Adds the tags of the matching rules to bookings (#580); never removes one.
+/// `all`: every live booking of an active account ("Regeln anwenden", saving a
+/// rule); otherwise only bookings whose tags nobody has touched yet
+/// (`tags_ms = 0`), so a tag removed by hand stays removed on the next fetch.
+/// `only` restricts the run to these bookings. Changed tag sets are stamped like
+/// an edit, so they sync. Returns the bookings that got a tag.
+pub(crate) fn tag_by_rules(
+    conn: &Connection,
+    set: &crate::rules::RuleSet,
+    all: bool,
+    only: Option<&HashSet<i64>>,
+) -> CoreResult<HashSet<i64>> {
+    let mut changed = HashSet::new();
+    if !set.sets_tags() {
+        return Ok(changed);
+    }
+    let scope = if all { "" } else { " AND t.tags_ms = 0" };
+    let ids_json = only.map(serde_json::to_string).transpose()?;
+    let ids_sql = if ids_json.is_some() {
+        " AND t.id IN (SELECT value FROM json_each(?1))"
+    } else {
+        ""
+    };
+    let mut have: HashMap<i64, HashSet<i64>> = HashMap::new();
+    for row in conn
+        .prepare("SELECT transaction_id, tag_id FROM transaction_tags")?
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
+    {
+        let (b, t) = row?;
+        have.entry(b).or_default().insert(t);
+    }
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM transactions t JOIN accounts a ON a.id = t.account_id
+         WHERE a.archived_unix IS NULL AND a.deleted_ms IS NULL AND t.deleted_ms IS NULL{scope}{ids_sql}",
+        crate::rules::RuleRow::COLUMNS
+    ))?;
+    let mut add = conn.prepare(
+        "INSERT OR IGNORE INTO transaction_tags(transaction_id, tag_id) VALUES (?1, ?2)",
+    )?;
+    let mut rows = stmt.query(params_from_iter(ids_json))?;
+    while let Some(row) = rows.next()? {
+        let input = crate::rules::RuleRow::borrowed_input(row)?;
+        let id: i64 = row.get(0)?;
+        let current = have.get(&id);
+        for tag in set.tags_for(&input) {
+            if current.is_some_and(|c| c.contains(&tag)) {
+                continue;
+            }
+            add.execute(params![id, tag])?;
+            changed.insert(id);
+        }
+    }
+    let ids: Vec<i64> = changed.iter().copied().collect();
+    stamp_bookings(conn, &ids, now_ms())?;
+    Ok(changed)
+}
+
 impl Vault {
     /// The id of the live tag named `name`, created if missing; for importers
     /// and the "new tag" field of the booking detail.
@@ -319,7 +439,7 @@ impl Vault {
         )?;
         conn.execute(
             "INSERT INTO tags(uuid, name, sort_order, updated_ms) VALUES (?1, ?2, ?3, ?4)",
-            params![uuid, name, order, crate::user_groups::now_ms()],
+            params![uuid, name, order, now_ms()],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -394,7 +514,7 @@ impl Vault {
         }
         db.execute(
             "UPDATE tags SET name = ?2, updated_ms = ?3 WHERE id = ?1",
-            params![id, name, crate::user_groups::now_ms()],
+            params![id, name, now_ms()],
         )?;
         tag_row(&db, id)
     }
@@ -406,7 +526,7 @@ impl Vault {
         ensure_live(&db, id)?;
         db.execute(
             "UPDATE tags SET color_hex = ?2, updated_ms = ?3 WHERE id = ?1",
-            params![id, color, crate::user_groups::now_ms()],
+            params![id, color, now_ms()],
         )?;
         Ok(())
     }
@@ -415,7 +535,7 @@ impl Vault {
     pub fn reorder_tags(&self, ids: Vec<i64>) -> Result<(), CoreError> {
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
-        let now = crate::user_groups::now_ms();
+        let now = now_ms();
         for (i, id) in ids.iter().enumerate() {
             tx.execute(
                 "UPDATE tags SET sort_order = ?2, updated_ms = ?3
@@ -434,7 +554,7 @@ impl Vault {
         let tx = db.unchecked_transaction()?;
         tx.execute(
             "UPDATE tags SET deleted_ms = ?2, updated_ms = ?2 WHERE id = ?1",
-            params![id, crate::user_groups::now_ms()],
+            params![id, now_ms()],
         )?;
         normalize_links(&tx)?;
         tx.commit()?;
@@ -453,7 +573,7 @@ impl Vault {
         ensure_live(&db, source)?;
         ensure_live(&db, target)?;
         let tx = db.unchecked_transaction()?;
-        let now = crate::user_groups::now_ms();
+        let now = now_ms();
         tx.execute(
             "UPDATE tags SET deleted_ms = ?3, updated_ms = ?3,
                     merged_into = (SELECT uuid FROM tags WHERE id = ?2)
@@ -500,7 +620,7 @@ impl Vault {
                 params![booking_id, id],
             )?;
         }
-        stamp_bookings(&tx, &[booking_id], crate::user_groups::now_ms())?;
+        stamp_bookings(&tx, &[booking_id], now_ms())?;
         tx.commit()?;
         Ok(())
     }
@@ -526,7 +646,7 @@ impl Vault {
                 changed.push(id);
             }
         }
-        stamp_bookings(&tx, &changed, crate::user_groups::now_ms())?;
+        stamp_bookings(&tx, &changed, now_ms())?;
         tx.commit()?;
         Ok(changed)
     }
@@ -550,7 +670,7 @@ impl Vault {
                 changed.push(id);
             }
         }
-        stamp_bookings(&tx, &changed, crate::user_groups::now_ms())?;
+        stamp_bookings(&tx, &changed, now_ms())?;
         tx.commit()?;
         Ok(changed)
     }

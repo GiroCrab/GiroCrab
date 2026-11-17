@@ -444,19 +444,6 @@ extension AppModel {
         showExportSheet = true
     }
 
-    /// Exports every booking matching the current list filter as Excel-friendly CSV
-    /// (quick path; the export sheet offers CSV with Salden and other formats).
-    func exportFilteredBookingsCSV() {
-        guard let vault else { return }
-        do {
-            let csv = try vault.exportBookingsCsv(filter: currentFilter)
-            csvExport = CSVFileDocument(data: Data(csv.utf8))
-            showCSVExporter = true
-        } catch {
-            showError(String(localized: "Export fehlgeschlagen"), error.localizedDescription)
-        }
-    }
-
     // MARK: - Booking list, KPIs & history
 
     func reloadBookings() {
@@ -867,11 +854,27 @@ extension AppModel {
     var lastSyncText: String {
         let latest = connections.compactMap(\.lastSyncUnix).max()
         guard let latest else { return String(localized: "Noch nie aktualisiert") }
+        let relative = Self.relativeSyncText(latest)
+        return String(localized: "Aktualisiert \(relative)")
+    }
+
+    /// Last fetch of the account's bank connection (#815). The core stores the time per connection, not per
+    /// account, so accounts of one bank show the same value. `nil` for offline accounts (they are never fetched).
+    func lastFetchText(for account: Account) -> (text: String, help: String?)? {
+        guard !isOffline(account.id) else { return nil }
+        guard let latest = connections.first(where: { $0.id == account.connectionId })?.lastSyncUnix else {
+            return (String(localized: "Noch nie abgerufen"), nil)
+        }
+        let relative = Self.relativeSyncText(latest)
+        let exact = Date(timeIntervalSince1970: TimeInterval(latest)).formatted(date: .long, time: .shortened)
+        return (String(localized: "Abgerufen \(relative)"), exact)
+    }
+
+    private static func relativeSyncText(_ unix: Int64) -> String {
         let f = RelativeDateTimeFormatter()
         f.locale = .autoupdatingCurrent
         f.unitsStyle = .full
-        let relative = f.localizedString(for: Date(timeIntervalSince1970: TimeInterval(latest)), relativeTo: Date())
-        return String(localized: "Aktualisiert \(relative)")
+        return f.localizedString(for: Date(timeIntervalSince1970: TimeInterval(unix)), relativeTo: Date())
     }
 
     func account(for id: Int64) -> Account? { accountsByID[id] }

@@ -5,7 +5,8 @@
 
 use std::collections::HashSet;
 
-use girocrab_core::export::{esc, is_iban, ExportCsvRow};
+use girocrab_core::export::{esc, ExportCsvRow};
+use girocrab_core::iban::has_iban_shape;
 use girocrab_core::importers::amazon_orders::{
     bookings, is_asin, parse_date, price_cents, Capture,
 };
@@ -121,7 +122,7 @@ pub fn check_rows(format: &'static str, rows: &[MmRow]) -> FileCheck {
     FileCheck {
         format,
         rows: rows.len(),
-        with_valid_iban: rows.iter().filter(|r| is_iban(&r.iban)).count(),
+        with_valid_iban: rows.iter().filter(|r| has_iban_shape(&r.iban)).count(),
         repeated_in_file: repeated,
         categories: cats,
     }
@@ -273,9 +274,11 @@ pub fn export_rows(list: &[Booking]) -> Vec<ExportCsvRow> {
             date: b.booking_date.chars().take(10).collect(),
             account_name: b.account_name.clone(),
             counterparty: b.counterparty.clone(),
+            counterparty_iban: b.counterparty_iban.clone(),
             purpose: b.purpose.clone(),
             category: b.category_path.clone(),
             note: b.note.clone(),
+            tags: crate::planning::tag_summary(&b.tags),
             amount_cents: b.amount_cents,
             currency: b.currency.clone(),
             day_balance_cents: None,

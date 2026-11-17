@@ -49,10 +49,12 @@ use zeroize::Zeroizing;
 use super::moneymoney_import::{find_or_create_category, fingerprint, merge_rows, MmRow, Stats};
 use crate::asset_classification::{AssetClass, ClassificationValues, InstrumentKind};
 use crate::connectors::bank_directory::{match_psd2_bank, psd2_catalog, Psd2Bank};
-use crate::connectors::fints::sepa;
 use crate::connectors::group_for;
+use crate::dates::now_ms;
+use crate::depot_values::observations::{self, ObservedValue};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
+use crate::iban::{normalize_iban, validate_iban};
 use crate::models::{AccountKind, ConnectorKind, Holding};
 use crate::secret::SecretString;
 use crate::vault::Vault;
@@ -94,6 +96,9 @@ pub struct MoneyMoneyDbAccount {
     pub pending_count: u32,
     /// Securities positions (depots) that would be imported.
     pub holding_count: u32,
+    /// Values of the depot history (total and positions per day) that would be imported.
+    #[uniffi(default = 0)]
+    pub value_history_count: u32,
     pub notes_count: u32,
     pub first_date: Option<String>,
     pub last_date: Option<String>,
@@ -346,6 +351,9 @@ pub struct MoneyMoneyDbImportResult {
     pub documents_unlisted: u32,
     /// Securities positions stored for depot accounts (replaced per account).
     pub holdings_imported: u32,
+    /// Values of the depot history taken over (total and positions per day, #578).
+    #[uniffi(default = 0)]
+    pub value_history_imported: u32,
     /// Category rules taken over as search-expression rules.
     pub rules_created: u32,
     /// Of those, switched off: unsupported fields, account restriction or
@@ -537,6 +545,8 @@ struct Source {
     holdings: HashMap<i64, Vec<SrcHolding>>,
     /// transfer templates (not deleted), in MoneyMoney order
     templates: Vec<SrcTemplate>,
+    /// value history of depots per MoneyMoney account id (`portfolio_chart`, #578)
+    value_history: HashMap<i64, Vec<ObservedValue>>,
 }
 
 // ------------------------------------------------------------------ helpers
@@ -634,7 +644,7 @@ fn apply_category_colors(
 ) -> CoreResult<()> {
     // the colour is a field edit: stamp it, so a sync merge keeps it
     // ("newest edit wins") instead of reverting it to another device's grey
-    let now = crate::user_groups::now_ms();
+    let now = now_ms();
     for (path, color) in &src.category_colors {
         let key: String = path
             .iter()
@@ -684,7 +694,7 @@ fn norm_account_id(s: &str) -> String {
 
 /// (account number, BLZ) of a German IBAN, normalised like [`norm_account_id`].
 fn de_iban_parts(iban: &str) -> Option<(String, String)> {
-    let iban = sepa::normalize_iban(iban);
+    let iban = normalize_iban(iban);
     if iban.len() != 22 || !iban.starts_with("DE") {
         return None;
     }
@@ -862,7 +872,7 @@ fn is_bunq_account(bic: &str, iban: &str, bankcode: &str) -> bool {
     if code == BUNQ_DE_BLZ {
         return true;
     }
-    let iban = sepa::normalize_iban(iban);
+    let iban = normalize_iban(iban);
     match iban.get(..2) {
         Some("NL") => iban.get(4..8) == Some("BUNQ"),
         Some("DE") => iban.get(4..12) == Some(BUNQ_DE_BLZ),
@@ -1039,6 +1049,112 @@ fn select(conn: &Connection, table: &str, cols: &[&str], tail: &str) -> CoreResu
     Ok(format!("SELECT {list} FROM \"{table}\" {tail}"))
 }
 
+/// The daily value history of depots (`portfolio_chart`, #578) as MoneyMoney stores it: per
+/// position (`securities_key` = its `securities` row, sold ones included) and the depot total
+/// (key 0), one row per day at noon. Duplicates (two rows of one ISIN) and zeros are kept; the
+/// derivation resolves them (`depot_values::observations::day_values`).
+fn read_value_history(
+    conn: &Connection,
+    currencies: &HashMap<i64, String>,
+) -> CoreResult<HashMap<i64, Vec<ObservedValue>>> {
+    // rowid -> (account, position key, name)
+    let mut positions: HashMap<i64, (i64, String, String)> = HashMap::new();
+    {
+        let sql = select(
+            conn,
+            "securities",
+            &["rowid", "account_key", "ident", "isin"],
+            "",
+        )?;
+        let mut st = conn.prepare(&sql)?;
+        let rows = st.query_map([], |r| {
+            Ok((
+                vint(get(r, 0)?),
+                vint(get(r, 1)?),
+                vtext(get(r, 2)?),
+                vtext(get(r, 3)?),
+            ))
+        })?;
+        for row in rows {
+            let (Some(id), Some(acc), ident, isin) = row? else {
+                continue;
+            };
+            let name = crate::text::clean_bank_text(ident.trim());
+            if let Some(key) = observations::position_key(&isin, &name) {
+                positions.insert(id, (acc, key, name));
+            }
+        }
+    }
+    let sql = select(
+        conn,
+        "portfolio_chart",
+        &[
+            "account_key",
+            "currency",
+            "timestamp",
+            "balance",
+            "securities_key",
+        ],
+        "ORDER BY account_key, timestamp",
+    )?;
+    let mut st = conn.prepare(&sql)?;
+    let rows = st.query_map([], |r| {
+        Ok((
+            vint(get(r, 0)?),
+            vtext(get(r, 1)?).trim().to_uppercase(),
+            vint(get(r, 2)?),
+            vreal(get(r, 3)?),
+            vint(get(r, 4)?).unwrap_or(0),
+        ))
+    })?;
+    let mut out: HashMap<i64, Vec<ObservedValue>> = HashMap::new();
+    for row in rows {
+        let (Some(acc), currency, Some(ts), Some(balance), key) = row? else {
+            continue;
+        };
+        let (Some(cents), Some(day)) = (real_to_cents(balance), unix_to_date(ts)) else {
+            continue;
+        };
+        let currency = if currency.is_empty() {
+            currencies
+                .get(&acc)
+                .cloned()
+                .unwrap_or_else(|| "EUR".into())
+        } else {
+            currency
+        };
+        let (kind, position, source_ref, name) = if key == 0 {
+            (
+                observations::KIND_TOTAL,
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+        } else {
+            match positions.get(&key) {
+                Some((a, position, name)) if *a == acc => (
+                    observations::KIND_POSITION,
+                    position.clone(),
+                    key.to_string(),
+                    name.clone(),
+                ),
+                _ => continue,
+            }
+        };
+        out.entry(acc).or_default().push(ObservedValue {
+            kind,
+            position,
+            source_ref,
+            name,
+            currency,
+            observed_ms: ts.saturating_mul(1000),
+            value_date: day,
+            value_cents: cents,
+        });
+    }
+    Ok(out)
+}
+
 /// Reads everything the importer needs (never the `pins` table).
 fn read_source(path: &str, password: &SecretString) -> CoreResult<Source> {
     let conn = open_source(path, password)?;
@@ -1082,7 +1198,7 @@ fn read_source(path: &str, password: &SecretString) -> CoreResult<Source> {
                 account: vtext(get(r, 2)?),
                 bankcode: vtext(get(r, 3)?),
                 portfolio: vint(get(r, 4)?).unwrap_or(0) != 0,
-                iban: sepa::normalize_iban(&vtext(get(r, 5)?)),
+                iban: normalize_iban(&vtext(get(r, 5)?)),
                 currency: {
                     let c = vtext(get(r, 6)?).to_uppercase();
                     if c.is_empty() {
@@ -1161,6 +1277,15 @@ fn read_source(path: &str, password: &SecretString) -> CoreResult<Source> {
                 classification: moneymoney_classification(asset_class),
             });
         }
+    }
+
+    if have.contains("portfolio_chart") && have.contains("securities") {
+        let currencies = src
+            .accounts
+            .iter()
+            .map(|a| (a.id, a.currency.clone()))
+            .collect();
+        src.value_history = read_value_history(&conn, &currencies)?;
     }
 
     // banks – never credential / keys / systemid / bpd / upd / local_storage / userdata
@@ -1752,7 +1877,7 @@ impl Source {
         if cp.len() < 4 {
             return None;
         }
-        let cp_iban = sepa::validate_iban(cp_account).then(|| sepa::normalize_iban(cp_account));
+        let cp_iban = validate_iban(cp_account).then(|| normalize_iban(cp_account));
         // (account number, bank code) as written in a German IBAN
         let cp_de = cp_iban.as_deref().and_then(de_iban_parts);
         let cp_bank = norm_account_id(cp_bankcode);
@@ -1841,11 +1966,11 @@ impl Source {
             if own.is_some() && path.is_empty() {
                 path = vec!["Umbuchungen".to_string()];
             }
-            let iban = if sepa::validate_iban(&t.cp_account) {
-                sepa::normalize_iban(&t.cp_account)
+            let iban = if validate_iban(&t.cp_account) {
+                normalize_iban(&t.cp_account)
             } else {
                 own.map(|o| o.iban.clone())
-                    .filter(|i| sepa::validate_iban(i))
+                    .filter(|i| validate_iban(i))
                     .unwrap_or_default()
             };
             out.rows.push(MmRow {
@@ -2029,7 +2154,7 @@ pub(crate) fn adopt_account(
     currency: &str,
     kind: AccountKind,
 ) -> CoreResult<Option<i64>> {
-    let iban = sepa::normalize_iban(iban);
+    let iban = normalize_iban(iban);
     // „Abrufweg umstellen“ marked it: the same way back finds it by its old
     // reference, also without an IBAN (a depot next to a deleted twin, #537)
     let switched: Option<i64> = conn
@@ -2188,6 +2313,7 @@ fn preview(
             booking_count: r.rows.len() as u32,
             pending_count: r.pending,
             holding_count: src.holdings.get(&a.id).map_or(0, |h| h.len() as u32),
+            value_history_count: src.value_history.get(&a.id).map_or(0, |h| h.len() as u32),
             statement_count: src.docs.iter().filter(|d| d.account_key == a.id).count() as u32,
             notes_count: n,
             first_date: f,
@@ -2370,7 +2496,7 @@ fn import_category_rules(
                 expr,
                 IMPORTED_RULE_PRIORITY + i as i32,
                 enabled,
-                crate::user_groups::now_ms()
+                now_ms()
             ],
         )?;
         res.rules_created += 1;
@@ -2579,7 +2705,7 @@ fn import(
                         a.currency,
                         kind.as_str(),
                         kind.sf_symbol(),
-                        crate::user_groups::now_ms()
+                        now_ms()
                     ],
                 )?;
                 res.accounts_created += 1;
@@ -2649,6 +2775,10 @@ fn import(
                 res.holdings_imported += list.len() as u32;
             }
         }
+        if let Some(rows) = src.value_history.get(&a.id) {
+            res.value_history_imported += observations::record_import(conn, account_id, rows)?;
+            crate::depot_values::rebuild(conn, account_id, None)?;
+        }
         if options.import_groups && !a_groups.is_empty() {
             // never placed by the user (an explicit "Ohne Gruppe" is kept, too)
             let ungrouped: bool = conn.query_row(
@@ -2657,7 +2787,7 @@ fn import(
                 |r| r.get(0),
             )?;
             if ungrouped {
-                let now = crate::user_groups::now_ms();
+                let now = now_ms();
                 // the MoneyMoney groups from the top level down to the account's own
                 let mut parent: Option<String> = None;
                 for (key, name) in &a_groups {
@@ -2715,7 +2845,7 @@ fn import(
         }
         slots.sort_unstable();
         created_groups.sort_by_key(|(key, _)| rank.get(key).copied().unwrap_or(usize::MAX));
-        let now = crate::user_groups::now_ms();
+        let now = now_ms();
         for ((_, uuid), slot) in created_groups.iter().zip(slots) {
             conn.execute(
                 "UPDATE user_groups SET sort_order = ?2, order_ms = ?3, updated_ms = max(updated_ms, ?3)

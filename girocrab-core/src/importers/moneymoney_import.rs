@@ -18,11 +18,14 @@ use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::portal_import::{parse_date, split_csv};
+use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
+use crate::iban::{normalize_iban, validate_iban};
 use crate::merchants::{FlowKind, MerchantResolver};
 use crate::models::*;
 use crate::money::parse_cents;
+use crate::text::parse_bool_loose;
 use crate::vault::{enrich, Vault};
 
 const ARCHIVE_GROUP: &str = "Importierte Konten";
@@ -164,13 +167,6 @@ fn amount(s: &str) -> Option<i64> {
     })
 }
 
-fn truthy(s: &str) -> bool {
-    matches!(
-        s.trim().to_lowercase().as_str(),
-        "1" | "true" | "yes" | "ja" | "x" | "✓" | "✔"
-    )
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Field {
     Date,
@@ -279,17 +275,14 @@ fn build_row(get: impl Fn(Field) -> String) -> Option<MmRow> {
             }
         },
         name: clean(get(Field::Name)),
-        iban: get(Field::Iban)
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>(),
+        iban: normalize_iban(&get(Field::Iban)),
         bic: get(Field::Bic).trim().to_string(),
         purpose: clean(get(Field::Purpose)),
         booking_text: clean(get(Field::Text)),
         category: get(Field::Category).trim().to_string(),
         category_parts: Vec::new(),
         note: get(Field::Note).trim().to_string(),
-        checkmark: truthy(&get(Field::Check)),
+        checkmark: parse_bool_loose(&get(Field::Check)),
         mandate_ref: get(Field::Mandate).trim().to_string(),
         creditor_id: get(Field::Creditor).trim().to_string(),
         end_to_end: get(Field::EndToEnd).trim().to_string(),
@@ -625,7 +618,7 @@ pub(crate) fn find_or_create_category(
                 conn.execute(
                     "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, name_ms, parent_ms, symbol_ms, color_ms, order_ms)
                      VALUES (?1, ?2, 'tag', '#8E8E93', ?3, ?4, ?4, ?4, ?4, ?4)",
-                    params![parent, part, order, crate::user_groups::now_ms()],
+                    params![parent, part, order, now_ms()],
                 )?;
                 *created += 1;
                 let id = conn.last_insert_rowid();
@@ -656,7 +649,6 @@ pub(crate) fn find_or_create_category(
 /// (IBAN + currency) or MT940 `:25:` when it holds an IBAN. Files with
 /// several statements name no single account.
 fn statement_account(text: &str) -> Option<(String, String)> {
-    use crate::connectors::fints::sepa;
     static STMT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"<(?:\w+:)?(?:Stmt|Rpt|Ntfctn)>").unwrap());
     static ACCT: LazyLock<Regex> =
@@ -672,20 +664,20 @@ fn statement_account(text: &str) -> Option<(String, String)> {
             return None;
         }
         let block = ACCT.captures(text)?.get(1)?.as_str();
-        let i = sepa::normalize_iban(IBAN.captures(block)?.get(1)?.as_str());
+        let i = normalize_iban(IBAN.captures(block)?.get(1)?.as_str());
         let c = CCY
             .captures(block)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().to_uppercase())
             .unwrap_or_default();
-        return sepa::validate_iban(&i).then_some((i, c));
+        return validate_iban(&i).then_some((i, c));
     }
     let mut it = FIELD_25.captures_iter(text);
-    let first = sepa::normalize_iban(it.next()?.get(1)?.as_str().trim());
-    if it.any(|c| sepa::normalize_iban(c[1].trim()) != first) {
+    let first = normalize_iban(it.next()?.get(1)?.as_str().trim());
+    if it.any(|c| normalize_iban(c[1].trim()) != first) {
         return None;
     }
-    sepa::validate_iban(&first).then(|| (first, String::new()))
+    validate_iban(&first).then(|| (first, String::new()))
 }
 
 /// The existing account an export most likely belongs to, so the assistant
@@ -700,7 +692,6 @@ pub(crate) fn suggest_account(
     rows: &[MmRow],
     file_name: &str,
 ) -> CoreResult<Option<i64>> {
-    use crate::connectors::fints::sepa;
     let mut accounts: Vec<(i64, String, String, String)> = Vec::new();
     {
         let mut q = conn.prepare(
@@ -713,7 +704,7 @@ pub(crate) fn suggest_account(
     if let Some((iban, ccy)) = statement_account(text) {
         let same: Vec<_> = accounts
             .iter()
-            .filter(|a| sepa::normalize_iban(&a.1) == iban)
+            .filter(|a| normalize_iban(&a.1) == iban)
             .collect();
         let pick: Vec<_> = if same.len() > 1 && !ccy.is_empty() {
             same.iter()
@@ -840,7 +831,7 @@ fn run(
                     format!("moneymoney-{}", uuid::Uuid::new_v4()),
                     account_name_from_file(file_name),
                     account_currency,
-                    crate::user_groups::now_ms()
+                    now_ms()
                 ],
             )?;
             st.account_id = conn.last_insert_rowid();
@@ -954,14 +945,14 @@ pub(crate) fn merge_rows(
             if let Some(c) = cat_id.filter(|_| e.category_source != "manual") {
                 conn.execute(
                     "UPDATE transactions SET category_id = ?1, rule_id = NULL, category_source = 'manual', category_ms = ?3 WHERE id = ?2",
-                    params![c, e.id, crate::user_groups::now_ms()],
+                    params![c, e.id, now_ms()],
                 )?;
                 changed = true;
             }
             if !note.is_empty() && e.note.trim().is_empty() {
                 conn.execute(
                     "UPDATE transactions SET note = ?1, note_ms = ?3 WHERE id = ?2",
-                    params![note, e.id, crate::user_groups::now_ms()],
+                    params![note, e.id, now_ms()],
                 )?;
                 st.notes += 1;
                 changed = true;
@@ -991,8 +982,8 @@ pub(crate) fn merge_rows(
             if cat_id.is_some() { "manual" } else { "none" },
             note,
             fp,
-            if cat_id.is_some() { crate::user_groups::now_ms() } else { 0 },
-            if note.is_empty() { 0 } else { crate::user_groups::now_ms() }
+            if cat_id.is_some() { now_ms() } else { 0 },
+            if note.is_empty() { 0 } else { now_ms() }
         ])?;
         st.new += 1;
         st.balance_cents = st.balance_cents.saturating_add(r.amount_cents);
@@ -1006,7 +997,12 @@ pub(crate) fn merge_rows(
 /// Finds the one not-yet-adopted MoneyMoney row (`mm-*`) that is the twin of a bank
 /// booking: same amount, booking date within ±2 days and a matching counterparty
 /// (IBAN, name, or the MoneyMoney name appearing in the bank's name/purpose).
-/// Ambiguous (≥ 2) or missing candidates yield `None`.
+///
+/// Several candidates (#830, e.g. two equal card payments at comdirect, where the
+/// bank names itself as counterparty) are resolved only when that is safe:
+/// the one closest in date wins; among equally close ones that the bank cannot tell
+/// apart either (see [`same_twin`]), the first is taken – the second bank booking then
+/// finds the other. Anything else stays ambiguous and yields `None`.
 fn find_twin(
     conn: &Connection,
     account_id: i64,
@@ -1018,26 +1014,34 @@ fn find_twin(
     purpose: &str,
 ) -> CoreResult<Option<i64>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, counterparty, counterparty_iban, purpose FROM transactions
+        "SELECT id, counterparty, counterparty_iban, purpose, booking_date,
+                IFNULL(category_id, 0), trim(IFNULL(note, '')),
+                abs(julianday(booking_date) - julianday(?4))
+           FROM transactions
           WHERE account_id = ?1 AND external_id LIKE 'mm-%' AND amount_cents = ?2
-            AND deleted_ms IS NULL AND id != ?3 AND abs(julianday(booking_date) - julianday(?4)) <= 2",
+            AND deleted_ms IS NULL AND id != ?3 AND abs(julianday(booking_date) - julianday(?4)) <= 2
+          ORDER BY id",
     )?;
     let rows = stmt.query_map(
         params![account_id, cents, exclude_id.unwrap_or(-1), date],
         |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-            ))
+            Ok(Twin {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                iban: r.get(2)?,
+                purpose: r.get(3)?,
+                date: r.get(4)?,
+                category: r.get(5)?,
+                note: r.get(6)?,
+                days: r.get::<_, f64>(7)?.round() as i64,
+            })
         },
     )?;
     let (n_iban, n_name, n_purpose) = (norm(iban), norm(name), norm(purpose));
     let mut hits = Vec::new();
     for row in rows {
-        let (id, mm_name, mm_iban, mm_purpose) = row?;
-        let (m_iban, m_name) = (norm(&mm_iban), norm(&mm_name));
+        let t = row?;
+        let (m_iban, m_name) = (norm(&t.iban), norm(&t.name));
         let ok = if !n_iban.is_empty() && !m_iban.is_empty() {
             n_iban == m_iban
         } else {
@@ -1046,13 +1050,65 @@ fn find_twin(
                 || (m_name.len() >= 3 && (n_purpose.contains(&m_name) || n_name.contains(&m_name)))
                 // the bank sends no counterparty (comdirect REST, some debits): the
                 // purposes still start the same (reference numbers, invoice text)
-                || purposes_alike(&n_purpose, &norm(&mm_purpose))
+                || purposes_alike(&n_purpose, &norm(&t.purpose))
         };
         if ok {
-            hits.push(id);
+            hits.push(t);
         }
     }
-    Ok(if hits.len() == 1 { Some(hits[0]) } else { None })
+    Ok(pick_twin(&hits))
+}
+
+/// A MoneyMoney row that may be the twin of a bank booking.
+struct Twin {
+    id: i64,
+    name: String,
+    iban: String,
+    purpose: String,
+    date: String,
+    category: i64,
+    note: String,
+    /// distance of the booking dates in days
+    days: i64,
+}
+
+/// The candidate to adopt: the only one, else the unique closest in date, else the
+/// first of equally close candidates that are interchangeable ([`same_twin`]).
+/// Candidates come ordered by id.
+fn pick_twin(hits: &[Twin]) -> Option<i64> {
+    let closest = hits.iter().map(|t| t.days).min()?;
+    let best: Vec<&Twin> = hits.iter().filter(|t| t.days == closest).collect();
+    let first = best[0];
+    best.iter().all(|t| same_twin(first, t)).then_some(first.id)
+}
+
+/// Two MoneyMoney rows the bank booking cannot tell apart: same date, counterparty,
+/// IBAN, category and note, and the same purpose apart from the SEPA references
+/// MoneyMoney appends (`EREF: …`, `MREF: …`, `CRED: …`), which the bank may not send
+/// for card payments. Rows that differ in content (e.g. "Brötchen" / "Kuchen") are not
+/// twins: guessing would put the bank's id on the wrong one.
+fn same_twin(a: &Twin, b: &Twin) -> bool {
+    a.date == b.date
+        && norm(&a.name) == norm(&b.name)
+        && norm(&a.iban) == norm(&b.iban)
+        && a.category == b.category
+        && a.note == b.note
+        && norm(&purpose_without_refs(&a.purpose)) == norm(&purpose_without_refs(&b.purpose))
+}
+
+/// Purpose without the `EREF: …` / `MREF: …` / `CRED: …` parts that
+/// [`MmRow::stored_purpose`] appends.
+fn purpose_without_refs(p: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut words = p.split_whitespace();
+    while let Some(w) = words.next() {
+        if matches!(w, "EREF:" | "MREF:" | "CRED:") {
+            words.next();
+        } else {
+            out.push(w);
+        }
+    }
+    out.join(" ")
 }
 
 /// Two normalised purposes that share a long common start (≥ 24 characters).
@@ -1879,6 +1935,167 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
         )
         .unwrap());
         assert!(ext_ids(&db, acc).iter().all(|e| e.starts_with("mm-")));
+    }
+
+    /// Active rows of an account as (booking date, external id), by date then id.
+    fn date_ids(db: &Connection, acc: i64) -> Vec<(String, String)> {
+        let mut st = db
+            .prepare(
+                "SELECT booking_date, external_id FROM transactions
+                  WHERE account_id = ?1 AND deleted_ms IS NULL ORDER BY booking_date, id",
+            )
+            .unwrap();
+        st.query_map([acc], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect()
+    }
+
+    // #830: comdirect card payments via FinTS name the bank as counterparty and put the
+    // merchant into the purpose; MoneyMoney has the merchant as counterparty and an
+    // EREF the bank does not send. Invented data.
+
+    #[test]
+    fn identical_card_payments_on_one_day_are_both_adopted() {
+        let (_dir, v) = vault();
+        let acc = mm_acct(
+            &v,
+            "17.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 1111;-4,20;Essen;\n17.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 2222;-4,20;Essen;\n",
+        );
+        let db = v.db().unwrap();
+        for ext in ["f1", "f2"] {
+            assert!(
+                adopt_import(
+                    &db,
+                    acc,
+                    ext,
+                    "2026-09-17",
+                    -420,
+                    "",
+                    "comdirect",
+                    "Bäckerei Sonne Berlin Kartenzahlung",
+                    "",
+                )
+                .unwrap(),
+                "{ext} adopted"
+            );
+        }
+        assert_eq!(ext_ids(&db, acc), vec!["f1", "f2"]);
+        // a third bank booking finds nothing left: no wrong adoption
+        assert!(!adopt_import(
+            &db,
+            acc,
+            "f3",
+            "2026-09-17",
+            -420,
+            "",
+            "comdirect",
+            "Bäckerei Sonne Berlin Kartenzahlung",
+            ""
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn equal_payments_two_days_apart_go_to_the_closest_date() {
+        let (_dir, v) = vault();
+        let acc = mm_acct(
+            &v,
+            "07.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 1111;-4,20;;\n09.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 2222;-4,20;;\n",
+        );
+        let db = v.db().unwrap();
+        // the later one first: it must not take the 7.9. row
+        for (ext, date) in [("f9", "2026-09-09"), ("f7", "2026-09-07")] {
+            assert!(adopt_import(
+                &db,
+                acc,
+                ext,
+                date,
+                -420,
+                "",
+                "comdirect",
+                "Bäckerei Sonne Berlin Kartenzahlung",
+                "",
+            )
+            .unwrap());
+        }
+        assert_eq!(
+            date_ids(&db, acc),
+            vec![
+                ("2026-09-07".to_string(), "f7".to_string()),
+                ("2026-09-09".to_string(), "f9".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn twins_with_different_category_stay_ambiguous() {
+        let (_dir, v) = vault();
+        let acc = mm_acct(
+            &v,
+            "17.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 1111;-4,20;Essen;\n17.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 2222;-4,20;Geschenke;\n",
+        );
+        let db = v.db().unwrap();
+        assert!(!adopt_import(
+            &db,
+            acc,
+            "f1",
+            "2026-09-17",
+            -420,
+            "",
+            "comdirect",
+            "Bäckerei Sonne Berlin Kartenzahlung",
+            ""
+        )
+        .unwrap());
+        assert!(ext_ids(&db, acc).iter().all(|e| e.starts_with("mm-")));
+    }
+
+    #[test]
+    fn existing_twin_duplicates_are_repaired_on_resync() {
+        // a vault synced before #830: both bank rows exist next to the MoneyMoney twins
+        let (_dir, v) = vault();
+        let acc = mm_acct(
+            &v,
+            "17.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 1111;-4,20;Essen;\n17.09.2026;Bäckerei Sonne;Kartenzahlung EREF: 2222;-4,20;Essen;\n",
+        );
+        let db = v.db().unwrap();
+        for ext in ["f1", "f2"] {
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose)
+                 VALUES (?1, ?2, '2026-09-17', -420, 'comdirect', 'Bäckerei Sonne Berlin Kartenzahlung')",
+                params![acc, ext],
+            )
+            .unwrap();
+        }
+        for ext in ["f1", "f2"] {
+            assert!(merge_synced_twin(
+                &db,
+                acc,
+                ext,
+                "2026-09-17",
+                -420,
+                "",
+                "comdirect",
+                "Bäckerei Sonne Berlin Kartenzahlung"
+            )
+            .unwrap());
+        }
+        let active: Vec<String> = date_ids(&db, acc).into_iter().map(|(_, e)| e).collect();
+        assert_eq!(
+            active,
+            vec!["f1", "f2"],
+            "two rows left, both under the bank ids"
+        );
+    }
+
+    #[test]
+    fn purpose_without_refs_drops_only_moneymoney_references() {
+        assert_eq!(
+            purpose_without_refs("Kartenzahlung EREF: 1111 MREF: M-1 CRED: DE98ZZZ09999999999"),
+            "Kartenzahlung"
+        );
+        assert_eq!(purpose_without_refs("EREF+123 Einkauf"), "EREF+123 Einkauf");
     }
 
     #[test]

@@ -692,6 +692,7 @@ pub struct Rule {
     /// 0 when creating a new rule.
     pub id: i64,
     pub name: String,
+    /// 0 = no category: the rule only adds `tag_ids` (#580).
     pub category_id: i64,
     pub field: RuleField,
     pub match_kind: MatchKind,
@@ -708,6 +709,22 @@ pub struct Rule {
     pub enabled: bool,
     /// Filled when listing: how many transactions this rule categorised.
     pub match_count: u32,
+    /// Tags the rule adds to every booking it matches (#580); live tags only.
+    /// Every matching rule adds its tags, not only the first; a rule never
+    /// removes a tag.
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub tag_ids: Vec<i64>,
+}
+
+/// For the rule list (#580): the bookings an active rule that adds tags matches
+/// and that carry all of its tags. Which rule gave a tag is not stored, so a
+/// tag set by hand or by another rule counts too.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RuleTagCount {
+    pub rule_id: i64,
+    pub booking_count: u32,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -739,6 +756,18 @@ pub struct PeriodSummary {
 pub struct DailyBalance {
     pub date: String,
     pub balance_cents: i64,
+}
+
+/// One day of the value history of securities depots (`Vault::depot_value_history`): the sum of
+/// the depots that had a value that day. `covered_depots` of `total_depots` says how complete
+/// the sum is; a depot adds nothing before its first known value (it is not counted as 0).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DepotValuePoint {
+    pub date: String,
+    pub value_cents: i64,
+    pub covered_depots: u32,
+    pub total_depots: u32,
 }
 
 /// Sum of one category (with subcategories) over one calendar day, month or year (`period` = `yyyy-MM-dd`, `yyyy-MM` or `yyyy`).

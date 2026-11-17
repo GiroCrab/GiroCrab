@@ -64,6 +64,7 @@ struct GeneralSettings: View {
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics = true
     @AppStorage(ViewLayout.budgetsKey) private var showBudgets = true
     @AppStorage(ViewLayout.runningBalanceKey) private var showRunningBalance = false
+    @AppStorage(ViewLayout.lastFetchKey) private var showLastFetch = false
     @AppStorage(NegativeAmountStyle.defaultsKey) private var negativeAmountStyle: NegativeAmountStyle = .neutral
     @AppStorage(AppTextSize.defaultsKey) private var textSize: AppTextSize = .standard
     @AppStorage(PrivacyMode.enabledKey) private var privacyMode = false
@@ -126,6 +127,9 @@ struct GeneralSettings: View {
                     .appFont(.caption).foregroundStyle(.secondary)
                 Toggle("Saldo in der Buchungsliste anzeigen", isOn: $showRunningBalance)
                 Text("Zeigt den Kontostand nach jeder Buchung und am Ende jedes Tages, zum Abgleich mit dem Kontoauszug. Bei mehreren Konten die Summe der Euro-Konten ohne Depots und Darlehen. Innerhalb eines Tages kann die Reihenfolge von der Bank abweichen, der Tagessaldo stimmt immer. Auch im Menü Ansicht umschaltbar.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+                Toggle("Letzten Abruf anzeigen", isOn: $showLastFetch)
+                Text("Zeigt unter dem Kontostand, wann die Bankverbindung des Kontos zuletzt abgerufen wurde. Der Zeitpunkt gilt je Bankverbindung, Konten derselben Bank zeigen also denselben Wert. Nur in der Ansicht eines einzelnen Kontos und bei ausgeklapptem Kopfbereich. Auch im Menü Ansicht umschaltbar.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 Picker("Negative Beträge", selection: $negativeAmountStyle) {
                     ForEach(NegativeAmountStyle.allCases) { Text($0.title).tag($0) }
@@ -556,7 +560,7 @@ struct UpdateSettings: View {
                             Text("Update-Kanal")
                         } else {
                             Label("Update-Kanal", systemImage: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Theme.warning)
                         }
                     }
                 }
@@ -643,19 +647,19 @@ struct ICloudSyncSection: View {
                 LabeledContent("Ordner") { Text(sync.folderName ?? "iCloud Drive / GiroCrab").sensitive() }
                 if sync.folderNotice {
                     Text("Der Ordner „GiroCrab“ in iCloud Drive enthält bereits andere Dateien. Ihre bisherigen Daten bleiben unverändert im bisherigen Ordner und werden dort weiter synchronisiert.")
-                        .appFont(.caption).foregroundStyle(.orange)
+                        .appFont(.caption).foregroundStyle(Theme.warning)
                 }
                 if sync.legacyFolderWritten {
                     Text("Ein anderes Gerät nutzt noch eine ältere GiroCrab-Version und schreibt in den alten Ordner. Bitte alle Geräte aktualisieren.")
-                        .appFont(.caption).foregroundStyle(.orange)
+                        .appFont(.caption).foregroundStyle(Theme.warning)
                 }
                 if sync.folderBothVaults {
                     Text("Der bisherige Ordner und der Ordner „GiroCrab“ in iCloud Drive enthalten beide einen Tresor. GiroCrab wechselt nicht automatisch und nutzt weiter den bisherigen Ordner. Bitte prüfen Sie, welcher Tresor aktuell ist, bevor Sie Daten zusammenführen.")
-                        .appFont(.caption).foregroundStyle(.orange)
+                        .appFont(.caption).foregroundStyle(Theme.warning)
                 }
                 if sync.repickFolderHint {
                     Label("Die Daten wurden in den Ordner „GiroCrab“ in iCloud Drive verschoben. Bitte wechseln Sie über „Ordner wählen …“ zu diesem Ordner, damit alle Geräte denselben Ordner nutzen.", systemImage: "exclamationmark.triangle.fill")
-                        .appFont(.callout).foregroundStyle(.orange)
+                        .appFont(.callout).foregroundStyle(Theme.warning)
                 }
                 if sync.location == .folder {
                     HStack {
@@ -685,7 +689,7 @@ struct ICloudSyncSection: View {
                     LabeledContent("Letzter Sync", value: d.formatted(date: .abbreviated, time: .shortened))
                 }
                 if let s = sync.lastStats { Text(s).appFont(.caption).foregroundStyle(.secondary) }
-                if let e = sync.lastError { Text(e).appFont(.caption).foregroundStyle(.red) }
+                if let e = sync.lastError { Text(e).appFont(.caption).foregroundStyle(Theme.negative) }
                 #if os(macOS)
                 // „Ordner wählen …“ above grants access as well, without the system settings.
                 if sync.folderAccessDenied {
@@ -721,7 +725,7 @@ struct ICloudSyncSection: View {
                 }
                 if sync.keyMismatch {
                     Label("Der iCloud-Tresor nutzt einen anderen Schlüssel. Fügen Sie den Schlüssel von Ihrem anderen Gerät ein.", systemImage: "exclamationmark.triangle.fill")
-                        .appFont(.caption).foregroundStyle(.orange)
+                        .appFont(.caption).foregroundStyle(Theme.warning)
                 }
             }
             Text(sync.location == .container
@@ -826,7 +830,7 @@ struct KeyPasteSheet: View {
             .disabled(working)
             if case .failed(let message) = model.keyAdoption {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .appFont(.caption).foregroundStyle(.red)
+                    .appFont(.caption).foregroundStyle(Theme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {

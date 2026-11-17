@@ -190,6 +190,17 @@
         }
       }
     },
+    "%@ in %lld Dateien" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ in %lld files"
+          }
+        }
+      }
+    },
     "%@ kopieren" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -737,6 +748,17 @@
         }
       }
     },
+    "%lld Dateien gespeichert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld files saved"
+          }
+        }
+      }
+    },
     "%lld Dateien in Downloads gespeichert" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -995,6 +1017,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld payments since balance date · %2$@"
+          }
+        }
+      }
+    },
+    "%lld Regeln" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld rules"
           }
         }
       }
@@ -1310,10 +1343,40 @@
     "%lld neue Buchungen" : {
       "extractionState" : "manual",
       "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld neue Buchung"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld neue Buchungen"
+                }
+              }
+            }
+          }
+        },
         "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld new bookings"
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld new booking"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld new bookings"
+                }
+              }
+            }
           }
         }
       }
@@ -1947,6 +2010,17 @@
         }
       }
     },
+    "%u Wertverlauf-Einträge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%u value history entries"
+          }
+        }
+      }
+    },
     "%u bereits vorhanden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2310,6 +2384,17 @@
         }
       }
     },
+    "1 Umsatz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 transaction"
+          }
+        }
+      }
+    },
     "1 Woche" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2548,6 +2633,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Outgoing"
+          }
+        }
+      }
+    },
+    "Abgerufen %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetched %@"
           }
         }
       }
@@ -2889,6 +2985,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Current view"
+          }
+        }
+      }
+    },
+    "Aktuelle Ansicht (%@)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current view (%@)"
           }
         }
       }
@@ -3465,6 +3572,28 @@
         }
       }
     },
+    "Alle von %@ abwählen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deselect all of %@"
+          }
+        }
+      }
+    },
+    "Alle von %@ wählen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select all of %@"
+          }
+        }
+      }
+    },
     "Alle zuklappen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3929,6 +4058,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Opening balance"
+          }
+        }
+      }
+    },
+    "Anfangssaldo und Endsaldo stehen immer im Kopf." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening and closing balances always appear in the header."
           }
         }
       }
@@ -5361,6 +5501,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "BIC (optional)"
+          }
+        }
+      }
+    },
+    "BIC gültig" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "BIC valid"
+          }
+        }
+      }
+    },
+    "BIC ungültig" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "BIC invalid"
           }
         }
       }
@@ -6862,17 +7024,6 @@
         }
       }
     },
-    "Bewertungsverlauf noch nicht verfügbar" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Valuation history not available yet"
-          }
-        }
-      }
-    },
     "Bezahldienst" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7617,6 +7768,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "CAMT.053 always applies to exactly one account (#372)."
+          }
+        }
+      }
+    },
+    "CAMT.053 gilt immer für genau ein Konto." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CAMT.053 always covers exactly one account."
           }
         }
       }
@@ -8805,6 +8967,17 @@
         }
       }
     },
+    "Depotwert von %@ am %@ auf %@ am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Depot value from %@ on %@ to %@ on %@"
+          }
+        }
+      }
+    },
     "Der API-Schlüssel wird nicht gespeichert." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9713,6 +9886,17 @@
         }
       }
     },
+    "Die Regel braucht eine Kategorie oder mindestens einen Tag." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The rule needs a category or at least one tag."
+          }
+        }
+      }
+    },
     "Die Registrierung dauert meist einige Tage. Bis dahin können Sie GiroCrab mit den Demo-Daten ausprobieren." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10061,6 +10245,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "These accounts are no longer included in the consent. Their bookings are kept; delete an account yourself if you no longer need it."
+          }
+        }
+      }
+    },
+    "Diese Tags bekommt jede passende Buchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Every matching booking gets these tags"
           }
         }
       }
@@ -10546,6 +10741,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Printer"
+          }
+        }
+      }
+    },
+    "Du wählst gleich einen Ordner für die Dateien." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You'll choose a folder for the files next."
           }
         }
       }
@@ -14892,6 +15098,17 @@
         }
       }
     },
+    "IBAN der Gegenseite" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Counterparty IBAN"
+          }
+        }
+      }
+    },
     "IBAN kopieren" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16505,6 +16722,17 @@
         }
       }
     },
+    "Keine (nur Tags)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "None (tags only)"
+          }
+        }
+      }
+    },
     "Keine (oberste Ebene)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16824,6 +17052,17 @@
         }
       }
     },
+    "Keine Regel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No rule"
+          }
+        }
+      }
+    },
     "Keine Regel ausgewählt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16831,6 +17070,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Rule Selected"
+          }
+        }
+      }
+    },
+    "Keine Regel vergibt diesen Tag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No rule adds this tag"
           }
         }
       }
@@ -16897,6 +17147,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No matches in this group"
+          }
+        }
+      }
+    },
+    "Keine Umsätze" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No transactions"
           }
         }
       }
@@ -18557,6 +18818,17 @@
         }
       }
     },
+    "Letzten Abruf anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Last Fetch"
+          }
+        }
+      }
+    },
     "Letzter Abruf" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18619,6 +18891,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Last day of the month"
+          }
+        }
+      }
+    },
+    "Letzter Wert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Latest value"
           }
         }
       }
@@ -18927,6 +19210,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mark"
+          }
+        }
+      }
+    },
+    "Markierte Umsätze (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selected transactions (%lld)"
+          }
+        }
+      }
+    },
+    "Markierter Umsatz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selected transaction"
           }
         }
       }
@@ -20857,6 +21162,17 @@
         }
       }
     },
+    "Nicht mehr im Depot seit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No longer in the depot since"
+          }
+        }
+      }
+    },
     "Nicht verbinden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21007,6 +21323,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not fetched yet"
+          }
+        }
+      }
+    },
+    "Noch kein Verlauf für diese Position" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No history for this position yet"
+          }
+        }
+      }
+    },
+    "Noch kein Verlauf: der Wert wird ab dem ersten Abruf festgehalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No history yet: the value is kept from the first fetch on"
           }
         }
       }
@@ -21183,6 +21521,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Never"
+          }
+        }
+      }
+    },
+    "Noch nie abgerufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Never fetched"
           }
         }
       }
@@ -21414,6 +21763,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Icon only"
+          }
+        }
+      }
+    },
+    "Nur Tags" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tags only"
+          }
+        }
+      }
+    },
+    "Nur Tags zeigen, die noch keine Regel vergibt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show only tags no rule adds yet"
           }
         }
       }
@@ -21721,6 +22092,17 @@
         }
       }
     },
+    "Ohne Depots in anderer Währung (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluding depots in another currency (%lld)"
+          }
+        }
+      }
+    },
     "Ohne Empfänger, ohne gültige IBAN oder nicht in Euro" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21820,6 +22202,17 @@
         }
       }
     },
+    "Ohne Regel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Without rule"
+          }
+        }
+      }
+    },
     "Ohne Tag" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21886,6 +22279,17 @@
         }
       }
     },
+    "Optionen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Options"
+          }
+        }
+      }
+    },
     "Orange" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21904,6 +22308,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Folder"
+          }
+        }
+      }
+    },
+    "Ordner für %lld Dateien wählen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a folder for %lld files"
           }
         }
       }
@@ -22256,6 +22671,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Parking"
+          }
+        }
+      }
+    },
+    "Passend und mit ihren Tags: %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Matching and carrying its tags: %lld"
           }
         }
       }
@@ -22757,6 +23183,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Private person – no logo"
+          }
+        }
+      }
+    },
+    "Pro Konto eine Datei" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "One file per account"
           }
         }
       }
@@ -26279,6 +26716,17 @@
         }
       }
     },
+    "Tags werden nur hinzugefügt, nie entfernt. Jede passende Regel gibt ihre Tags dazu; die Kategorie kommt von der ersten passenden Regel mit Kategorie." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tags are only added, never removed. Every matching rule adds its tags; the category comes from the first matching rule that has one."
+          }
+        }
+      }
+    },
     "Tags zusammenführen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26385,6 +26833,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Add part"
+          }
+        }
+      }
+    },
+    "Teilsumme · %lld von %lld Depots" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Partial sum · %lld of %lld depots"
           }
         }
       }
@@ -26891,6 +27350,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Internal transfer"
+          }
+        }
+      }
+    },
+    "Umfang" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scope"
           }
         }
       }
@@ -27506,6 +27976,17 @@
         }
       }
     },
+    "Vergeben von: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Added by: %@"
+          }
+        }
+      }
+    },
     "Vergrößert die Schrift in der ganzen App. Auch im Menü Ansicht mit ⌘+ / ⌘− / ⌘0." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27572,6 +28053,17 @@
         }
       }
     },
+    "Verkaufte Positionen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sold positions (%lld)"
+          }
+        }
+      }
+    },
     "Verknüpfung lösen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27590,6 +28082,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sales"
+          }
+        }
+      }
+    },
+    "Verlauf ab" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History since"
           }
         }
       }
@@ -27920,6 +28423,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GiroCrab can’t send transfers from this account directly. You’ll get a GiroCode at the end to scan in your bank’s app."
+          }
+        }
+      }
+    },
+    "Von dieser Regel kategorisiert: %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Categorised by this rule: %lld"
           }
         }
       }
@@ -28661,6 +29175,17 @@
         }
       }
     },
+    "Wert der Position (Menge × Kurs). Käufe und Verkäufe verändern ihn – er ist kein Kursverlauf." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Value of the position (quantity × price). Purchases and sales change it – it is not a price chart."
+          }
+        }
+      }
+    },
     "Wert gesamt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28712,6 +29237,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "value of %@"
+          }
+        }
+      }
+    },
+    "Werte ab %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Values from %@"
           }
         }
       }
@@ -28793,6 +29329,50 @@
         }
       }
     },
+    "Wertverlauf anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show value history"
+          }
+        }
+      }
+    },
+    "Wertverlauf konnte nicht geladen werden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Value history could not be loaded"
+          }
+        }
+      }
+    },
+    "Wertverlauf-Einträge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Value history entries"
+          }
+        }
+      }
+    },
+    "Wertänderung, keine Rendite: Käufe, Verkäufe und Übertragungen verändern den Wert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change in value, not a return: purchases, sales and transfers change the value."
+          }
+        }
+      }
+    },
     "Widerrufen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28822,6 +29402,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Like %1$lld of %2$lld bookings at this merchant; closer in time counts more, rule bookings less"
+          }
+        }
+      }
+    },
+    "Wie %lld von %lld Buchungen mit ähnlichem Text; ähnlichere und zeitnahe zählen mehr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Like %1$lld of %2$lld bookings with similar text; more similar and closer in time count more"
           }
         }
       }
@@ -28866,6 +29457,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Like all %lld bookings at this merchant"
+          }
+        }
+      }
+    },
+    "Wie alle %lld Buchungen mit ähnlichem Text" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Like all %lld bookings with similar text"
           }
         }
       }
@@ -29284,6 +29886,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Shows the balance after each booking and at the end of each day, to check it against the bank statement. For several accounts, the sum of the euro accounts without depots and loans. Within a day the order may differ from the bank's; the end-of-day balance is always exact. Can also be switched in the View menu."
+          }
+        }
+      }
+    },
+    "Zeigt unter dem Kontostand, wann die Bankverbindung des Kontos zuletzt abgerufen wurde. Der Zeitpunkt gilt je Bankverbindung, Konten derselben Bank zeigen also denselben Wert. Nur in der Ansicht eines einzelnen Kontos und bei ausgeklapptem Kopfbereich. Auch im Menü Ansicht umschaltbar." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shows below the balance when the account's bank connection was last fetched. The time applies per bank connection, so accounts of the same bank show the same value. Only in the view of a single account and with the header expanded. Also available in the View menu."
           }
         }
       }
@@ -30522,6 +31135,17 @@
         }
       }
     },
+    "verkauft %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "sold %@"
+          }
+        }
+      }
+    },
     "verkauft am %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30859,6 +31483,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Similar to “%@”."
+          }
+        }
+      }
+    },
+    "Älter, für ältere Programme" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Older, for legacy software"
           }
         }
       }

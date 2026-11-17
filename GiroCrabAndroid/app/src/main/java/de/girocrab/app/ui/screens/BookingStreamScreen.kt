@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,6 +21,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import de.girocrab.app.ui.theme.GiroColors
+import de.girocrab.app.ui.theme.LocalGiroColors
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -27,7 +30,7 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AssistChip
@@ -78,13 +81,14 @@ import java.util.Locale
 import kotlin.math.abs
 
 enum class TimeRange(val label: String) {
-    All("Gesamter Zeitraum"), Days30("30 Tage"), Days90("90 Tage"), ThisYear("Dieses Jahr");
+    All("Zeitraum"), Days30("30 Tage"), Days90("90 Tage"), ThisYear("Dieses Jahr"), PayPeriod("Gehaltsperiode (15.–14.)");
 
     fun from(today: LocalDate): LocalDate? = when (this) {
         All -> null
         Days30 -> today.minusDays(30)
         Days90 -> today.minusDays(90)
         ThisYear -> today.withDayOfYear(1)
+        PayPeriod -> if (today.dayOfMonth >= 15) today.withDayOfMonth(15) else today.minusMonths(1).withDayOfMonth(15)
     }
 }
 
@@ -260,51 +264,66 @@ fun BalanceHeaderCard(
     val shownCents = if (showLiquid) {
         data.accounts.filter { it.id in state.scopedAccountIds && it.kind == AccountKind.Giro }.sumOf { it.balanceCents }
     } else state.totalBalanceCents
-    Card(
-        modifier.fillMaxWidth().padding(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "$title · $subtitle",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
             if (state.scope == Scope.All) {
+                Spacer(Modifier.width(8.dp))
                 Surface(
                     onClick = { liquid = !liquid },
                     shape = RoundedCornerShape(50),
-                    color = Color(0xFF0067C0).copy(alpha = if (showLiquid) 0.22f else 0.10f),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = if (showLiquid) 0.28f else GiroColors.SelectionAlpha),
                 ) {
                     Text(
-                        if (showLiquid) "Verfügbar" else "Gesamtvermögen",
-                        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        (if (showLiquid) "Verfügbar" else "Gesamtvermögen") + " ▾",
+                        Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelMedium,
                     )
                 }
             }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 formatMoney(shownCents, masked = masked),
-                style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"),
+                style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
                 fontFamily = tabular,
                 fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
             )
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onFetch,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0067C0), contentColor = Color.White),
-                ) {
-                    Icon(Icons.Filled.Sync, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Jetzt abrufen")
-                }
-                FilledTonalButton(
-                    onClick = onNewTransfer,
-                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFE8F1FB), contentColor = Color(0xFF004E8C)),
-                ) {
-                    Icon(Icons.Filled.Send, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Neue Überweisung")
-                }
-                if (account != null) {
-                    FilledTonalButton(onClick = onAccountSettings) {
-                        Icon(Icons.Filled.Settings, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Kontoeinstellungen")
-                    }
+            HeaderPill("Abrufen", Icons.Filled.Sync, filled = true, onClick = onFetch)
+            Spacer(Modifier.width(6.dp))
+            HeaderPill("Überweisen", Icons.AutoMirrored.Filled.Send, filled = false, onClick = onNewTransfer)
+            if (account != null) {
+                Spacer(Modifier.width(2.dp))
+                IconButton(onClick = onAccountSettings, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Settings, "Kontoeinstellungen", Modifier.size(18.dp))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun HeaderPill(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, filled: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = if (filled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = GiroColors.SelectionAlpha),
+        contentColor = if (filled) Color.White else MaterialTheme.colorScheme.primary,
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
         }
     }
 }
@@ -334,23 +353,36 @@ private fun FilterBar(
     onAnalytics: (Boolean) -> Unit,
     count: Int,
 ) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedTextField(
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+        androidx.compose.foundation.text.BasicTextField(
             value = search,
             onValueChange = onSearch,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).height(34.dp),
             singleLine = true,
-            placeholder = { Text("Suchen") },
-            leadingIcon = { Icon(Icons.Filled.Search, null) },
-            trailingIcon = {
-                if (search.isNotEmpty()) IconButton({ onSearch("") }) { Icon(Icons.Filled.Close, "Suche löschen") }
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+            decorationBox = { inner ->
+                Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Search, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(8.dp))
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                            if (search.isEmpty()) {
+                                Text("Suchen", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            inner()
+                        }
+                        if (search.isNotEmpty()) {
+                            IconButton({ onSearch("") }, Modifier.size(28.dp)) { Icon(Icons.Filled.Close, "Suche löschen", Modifier.size(16.dp)) }
+                        }
+                    }
+                }
             },
-            keyboardOptions = KeyboardOptions.Default,
         )
         LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             item { DropdownChip(range.label, TimeRange.entries.map { it.label to { onRange(it) } }, selected = range != TimeRange.All) }
@@ -363,41 +395,35 @@ private fun FilterBar(
                     selected = cat != null,
                 )
             }
+            item {
+                FilterChip(
+                    selected = analytics,
+                    onClick = { onAnalytics(!analytics) },
+                    label = { Text("Analysen", Modifier.padding(horizontal = 6.dp)) },
+                    modifier = Modifier.height(30.dp),
+                    leadingIcon = { Icon(Icons.Filled.Insights, null, Modifier.size(16.dp)) },
+                )
+            }
+            item {
+                FilterChip(selected = compact, onClick = { onCompact(!compact) }, label = { Text("Kompakt", Modifier.padding(horizontal = 6.dp)) }, modifier = Modifier.height(30.dp))
+            }
             items(tags, key = { it.id }) { t ->
                 FilterChip(
                     selected = tagId == t.id,
                     onClick = { onTag(if (tagId == t.id) null else t.id) },
-                    label = { Text("#${t.name}") },
+                    label = { Text("#${t.name}", Modifier.padding(horizontal = 6.dp)) },
+                    modifier = Modifier.height(30.dp),
                 )
             }
             item {
                 FilterChip(
                     selected = docsOnly,
                     onClick = { onDocs(!docsOnly) },
-                    label = { Text("Dokumente") },
+                    label = { Text("Dokumente", Modifier.padding(horizontal = 6.dp)) },
+                    modifier = Modifier.height(30.dp),
                     leadingIcon = { Icon(Icons.Filled.AttachFile, null, Modifier.size(16.dp)) },
                 )
             }
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            FilterChip(
-                selected = analytics,
-                onClick = { onAnalytics(!analytics) },
-                label = { Text("Analysen") },
-                leadingIcon = { Icon(Icons.Filled.Insights, null, Modifier.size(16.dp)) },
-            )
-            Spacer(Modifier.width(8.dp))
-            FilterChip(
-                selected = compact,
-                onClick = { onCompact(!compact) },
-                label = { Text("Kompakt") },
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                if (count == 1) "1 Buchung" else "$count Buchungen",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -408,8 +434,9 @@ private fun DropdownChip(label: String, options: List<Pair<String, () -> Unit>>,
     Box {
         AssistChip(
             onClick = { open = true },
-            label = { Text(label, maxLines = 1) },
-            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(18.dp)) },
+            label = { Text(label, Modifier.padding(horizontal = 6.dp), maxLines = 1) },
+            modifier = Modifier.height(30.dp),
+            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(16.dp)) },
             border = if (selected) androidx.compose.material3.AssistChipDefaults.assistChipBorder(
                 enabled = true, borderColor = MaterialTheme.colorScheme.primary,
             ) else androidx.compose.material3.AssistChipDefaults.assistChipBorder(enabled = true),
@@ -430,7 +457,12 @@ private fun AnalyticsPanel(bookings: List<Booking>, categories: List<Category>, 
         .groupBy { it.categoryId }
         .mapValues { -it.value.sumOf { b -> b.amountCents } }
         .entries.sortedByDescending { it.value }.take(5)
-    Card(Modifier.fillMaxWidth().padding(12.dp)) {
+    Card(
+        Modifier.fillMaxWidth().padding(12.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SumRow("Einnahmen", income, masked)
             SumRow("Ausgaben", expense, masked)
@@ -465,16 +497,16 @@ private fun SumRow(label: String, cents: Long, masked: Boolean) {
 @Composable
 private fun MonthHeader(g: MonthGroup, masked: Boolean) {
     Row(
-        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().height(26.dp).background(MaterialTheme.colorScheme.surface).padding(start = 10.dp, end = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             "${g.month.month.getDisplayName(TextStyle.FULL, DE)} ${g.month.year}",
             Modifier.weight(1f),
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
         )
-        Text(formatMoney(g.income, masked = masked), fontFamily = tabular, style = tnum, fontSize = 12.sp, color = Color(0xFF2E7D32))
+        Text(formatMoney(g.income, masked = masked), fontFamily = tabular, style = tnum, fontSize = 12.sp, color = LocalGiroColors.current.positive)
         Spacer(Modifier.width(10.dp))
         Text(formatMoney(g.expense, masked = masked), fontFamily = tabular, style = tnum, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -496,41 +528,93 @@ private fun BookingRow(
 ) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = if (compact) 2.dp else 6.dp),
+            .padding(start = 10.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.size(20.dp).clickable(onClick = onToggleChecked), contentAlignment = Alignment.Center) {
-            if (unchecked) Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF1E88E5)))
-        }
-        Surface(
-            modifier = Modifier.padding(end = 12.dp).size(if (compact) 28.dp else 38.dp),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    if (masked) "••" else merchantInitials(booking.counterparty),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
+        Box(Modifier.padding(end = 8.dp).clickable(onClick = onToggleChecked)) {
+            Surface(
+                modifier = Modifier.size(32.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        if (masked) "••" else merchantInitials(booking.counterparty),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
             }
+            if (unchecked) Box(Modifier.align(Alignment.TopEnd).size(9.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
         }
-        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+        Column(Modifier.weight(1f).padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 if (masked) "••••••" else booking.counterparty.ifBlank { "—" },
-                fontWeight = if (unchecked) FontWeight.SemiBold else FontWeight.Normal,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            if (booking.purpose.isNotBlank()) {
-                Text(
-                    if (masked) "••••••••••" else booking.purpose,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (expanded) Int.MAX_VALUE else if (compact) 1 else 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(booking.bookingDate.format(dayFmt), fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (category != null) {
+                    Text(
+                        category.name,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        color = color(category.colorHex),
+                        modifier = Modifier.clip(RoundedCornerShape(50))
+                            .background(color(category.colorHex).copy(alpha = 0.15f))
+                            .padding(vertical = 1.dp, horizontal = 6.dp),
+                    )
+                } else {
+                    Text("Ohne Kategorie", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "⟲ Vorschlag",
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                            .clickable(onClick = onOpen)
+                            .padding(vertical = 1.dp, horizontal = 6.dp),
+                    )
+                }
+                if (booking.splits.isNotEmpty()) {
+                    Text(
+                        "⑂ ${booking.splits.size} Teile",
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f))
+                            .clickable(onClick = onOpen)
+                            .padding(vertical = 1.dp, horizontal = 6.dp),
+                    )
+                }
+                if (hasDocument) Icon(Icons.Filled.AttachFile, "Dokument", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (booking.purpose.isNotBlank() && !expanded) {
+                    Text(
+                        if (masked) "••••••••••" else booking.purpose,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
             if (expanded) {
+                if (booking.purpose.isNotBlank()) {
+                    Text(
+                        if (masked) "••••••••••" else booking.purpose,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Column(Modifier.padding(top = 2.dp)) {
                     Text(
                         "Valuta ${booking.valueDate.format(dayFmt)}",
@@ -546,23 +630,19 @@ private fun BookingRow(
                     }
                     TextButton(onClick = onOpen) { Text("Details öffnen") }
                 }
-            }
-            if (!compact || expanded) Row(
-                Modifier.padding(top = 4.dp).horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(booking.bookingDate.format(dayFmt), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (category != null) Pill(category.name, color(category.colorHex))
-                tags.forEach { Pill("#${it.name}", color(it.colorHex)) }
-                if (hasDocument) Icon(Icons.Filled.AttachFile, "Dokument", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (tags.isNotEmpty()) Row(
+                    Modifier.padding(top = 4.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    tags.forEach { Pill("#${it.name}", color(it.colorHex)) }
+                }
             }
         }
         Text(
             formatMoney(booking.amountCents, booking.currency, masked),
             fontFamily = tabular, style = tnum,
             fontWeight = FontWeight.Medium,
-            color = if (booking.amountCents > 0) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
+            color = if (booking.amountCents > 0) LocalGiroColors.current.positive else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             softWrap = false,
         )

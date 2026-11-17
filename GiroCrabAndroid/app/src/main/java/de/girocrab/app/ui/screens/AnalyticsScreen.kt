@@ -29,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -39,6 +40,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.fillMaxSize
+import de.girocrab.app.ui.theme.GiroColors
+import de.girocrab.app.ui.theme.LocalGiroColors
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import de.girocrab.app.model.AppUiState
 import de.girocrab.app.model.AppViewModel
 import de.girocrab.app.model.Booking
@@ -50,9 +59,10 @@ import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
 
-private val IncomeColor = Color(0xFF2E7D32)
-private val ExpenseColor = Color(0xFFC62828)
-private val NetColor = Color(0xFF1565C0)
+// 1:1 with Swift Theme (Formatting.swift): inflow / outflow / accent, see de.girocrab.app.ui.theme.GiroColors.
+private val IncomeColor: Color @Composable get() = LocalGiroColors.current.positive
+private val ExpenseColor: Color @Composable get() = LocalGiroColors.current.outflow
+private val NetColor: Color @Composable get() = LocalGiroColors.current.accent
 
 private data class MonthFlow(val month: YearMonth, val incomeCents: Long, val expenseCents: Long) {
     val netCents get() = incomeCents - expenseCents
@@ -89,8 +99,11 @@ private fun shortEur(cents: Long): String {
     return if (v >= 1000) String.format(Locale.GERMANY, "%.1fk", v / 1000.0) else v.toString()
 }
 
+private val IosPalette = listOf(0xFF007AFF, 0xFF5856D6, 0xFF34C759, 0xFFFF9500, 0xFFAF52DE, 0xFF5AC8FA).map { Color(it) }
 private fun parseColor(hex: Long) = Color(hex)
+private fun paletteColor(i: Int) = IosPalette[i % IosPalette.size]
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnalyticsScreen(
     state: AppUiState,
@@ -133,8 +146,8 @@ fun AnalyticsScreen(
         }
         sums.map { (id, cents) ->
             val c = id?.let { byId[it] }
-            CategoryShare(id, c?.name ?: "Ohne Kategorie", c?.let { parseColor(it.colorHex) } ?: Color.Gray, cents)
-        }.sortedByDescending { it.cents }
+            CategoryShare(id, c?.name ?: "Ohne Kategorie", Color.Gray, cents)
+        }.sortedByDescending { it.cents }.mapIndexed { i, s -> s.copy(color = paletteColor(i)) }
     }
 
     val tags = remember(inPeriod, state.data.tags) {
@@ -155,16 +168,35 @@ fun AnalyticsScreen(
         verticalArrangement = spacedBy(16.dp),
     ) {
         item {
-            Row(horizontalArrangement = spacedBy(8.dp)) {
-                listOf(3, 6, 12).forEach { m ->
-                    FilterChip(selected = months == m, onClick = { months = m }, label = { Text("$m Monate") })
+            val opts = listOf(3, 6, 12)
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                opts.forEachIndexed { i, m ->
+                    SegmentedButton(
+                        selected = months == m,
+                        onClick = { months = m },
+                        shape = SegmentedButtonDefaults.itemShape(i, opts.size, RoundedCornerShape(8.dp)),
+                        colors = SegmentedButtonDefaults.colors(
+                            activeContainerColor = MaterialTheme.colorScheme.surface,
+                            activeContentColor = MaterialTheme.colorScheme.onSurface,
+                            activeBorderColor = MaterialTheme.colorScheme.outline,
+                            inactiveContainerColor = MaterialTheme.colorScheme.background,
+                            inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            inactiveBorderColor = MaterialTheme.colorScheme.outline,
+                        ),
+                        icon = {},
+                    ) { Text("$m Monate", style = MaterialTheme.typography.labelLarge) }
                 }
             }
         }
         item {
             val inc = monthly.sumOf { it.incomeCents }
             val exp = monthly.sumOf { it.expenseCents }
-            Card(Modifier.fillMaxWidth()) {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = spacedBy(12.dp)) {
                     Text("Einnahmen & Ausgaben", style = MaterialTheme.typography.titleMedium)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -173,6 +205,20 @@ fun AnalyticsScreen(
                         SummaryCell("Netto", formatEur(inc - exp, hide, signed = true), NetColor)
                     }
                     CashflowChart(monthly, hide)
+                    run {
+                        val rate = if (inc > 0) ((inc - exp) * 100f / inc) else 0f
+                        androidx.compose.material3.Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = RoundedCornerShape(50),
+                        ) {
+                            Text(
+                                "Sparen & Investieren vs. Konsum (#614): Sparquote " +
+                                    (if (hide) "•••" else "%.0f %%".format(Locale.GERMANY, rate)),
+                                Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
                     Row(horizontalArrangement = spacedBy(16.dp)) {
                         LegendDot(IncomeColor, "Einnahmen")
                         LegendDot(ExpenseColor, "Ausgaben")
@@ -182,7 +228,12 @@ fun AnalyticsScreen(
             }
         }
         item {
-            Card(Modifier.fillMaxWidth()) {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = spacedBy(10.dp)) {
                     Text("Ausgaben nach Kategorie", style = MaterialTheme.typography.titleMedium)
                     val total = categories.sumOf { it.cents }
@@ -212,7 +263,88 @@ fun AnalyticsScreen(
             }
         }
         item {
-            Card(Modifier.fillMaxWidth()) {
+            var prorate by rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+            val budgets = remember { androidx.compose.runtime.mutableStateMapOf("Lebensmittel" to 45000L, "Restaurants" to 15000L, "Freizeit" to 20000L) }
+            var editing by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            var newName by remember { androidx.compose.runtime.mutableStateOf("") }
+            var editText by remember { androidx.compose.runtime.mutableStateOf("") }
+            val curMonth = YearMonth.from(today)
+            val spent = remember(all) {
+                all.filter { it.amountCents < 0 && YearMonth.from(it.bookingDate) == curMonth }
+            }
+            val catNames = remember(state.data.categories) { state.data.categories.associate { it.id to it.name } }
+            val income = monthly.lastOrNull()?.incomeCents ?: 0L
+            val expense = monthly.lastOrNull()?.expenseCents ?: 0L
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = spacedBy(10.dp)) {
+                    Text("Monatsbudgets & Sparquote", style = MaterialTheme.typography.titleMedium)
+                    val rate = if (income > 0) (income - expense) * 100f / income else 0f
+                    Text(
+                        "Sparquote diesen Monat: " + (if (hide) "•••" else "%.0f %%".format(Locale.GERMANY, rate)),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    budgets.entries.sortedBy { it.key }.forEach { (name, limit) ->
+                        val used = spent.filter { (catNames[it.categoryId] ?: "").equals(name, ignoreCase = true) }.sumOf { -it.amountCents }
+                            .let { if (it == 0L && !prorate && spent.isEmpty()) 0L else it }
+                        val frac = if (limit > 0) used.toFloat() / limit else 0f
+                        val col = if (frac > 1f) ExpenseColor else if (frac > 0.85f) Color(0xFFFF9500) else IncomeColor
+                        Column(Modifier.clickable { editing = name; editText = (limit / 100).toString() }) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(name, style = MaterialTheme.typography.bodyMedium)
+                                Text("${formatEur(used, hide)} / ${formatEur(limit, hide)}", style = MaterialTheme.typography.bodySmall, color = col)
+                            }
+                            ShareBar(frac, col)
+                        }
+                    }
+                    androidx.compose.material3.TextButton(onClick = { editing = "Neues Budget"; editText = "100" }) {
+                        Text("Budget hinzufügen / ändern")
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Jahreszahlungen anteilig umlegen (1/12, #253)", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        androidx.compose.material3.Switch(prorate, { prorate = it })
+                    }
+                }
+            }
+            editing?.let { key ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { editing = null },
+                    title = { Text(if (key == "Neues Budget") "Budget hinzufügen" else "Limit für $key (€)") },
+                    text = {
+                        Column {
+                            if (key == "Neues Budget") {
+                                androidx.compose.material3.OutlinedTextField(
+                                    value = newName, onValueChange = { newName = it }, label = { Text("Kategorie") }, singleLine = true,
+                                )
+                            }
+                            androidx.compose.material3.OutlinedTextField(
+                                value = editText, onValueChange = { editText = it }, label = { Text("Limit pro Monat (€)") }, singleLine = true,
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            val v = editText.replace(',', '.').toDoubleOrNull()
+                            val name = if (key == "Neues Budget") newName.trim() else key
+                            if (v != null && name.isNotEmpty()) budgets[name] = (v * 100).toLong()
+                            editing = null; newName = ""
+                        }) { Text("Speichern") }
+                    },
+                    dismissButton = { androidx.compose.material3.TextButton(onClick = { editing = null }) { Text("Abbrechen") } },
+                )
+            }
+        }
+        item {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = spacedBy(10.dp)) {
                     Text("Auswertung nach Tags", style = MaterialTheme.typography.titleMedium)
                     if (tags.isEmpty()) {
@@ -309,6 +441,11 @@ private fun ShareRow(name: String, color: Color, fraction: Float, amount: String
 private fun CashflowChart(data: List<MonthFlow>, hide: Boolean) {
     val axis = MaterialTheme.colorScheme.outlineVariant
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val incomeBar = IncomeColor.copy(alpha = GiroColors.BarAlpha)
+    val expenseBar = ExpenseColor.copy(alpha = GiroColors.BarAlpha)
+    val netColor = NetColor.copy(alpha = 0.8f)
+    val gridColor = LocalGiroColors.current.tertiary.copy(alpha = 0.45f)
+    val pointFill = MaterialTheme.colorScheme.surface
     val maxVal = (data.maxOfOrNull { maxOf(it.incomeCents, it.expenseCents) } ?: 0L).coerceAtLeast(1L)
     val minNet = (data.minOfOrNull { it.netCents } ?: 0L).coerceAtMost(0L)
 
@@ -322,16 +459,20 @@ private fun CashflowChart(data: List<MonthFlow>, hide: Boolean) {
             fun y(v: Long) = size.height * (1f - (v - minNet) / range)
             val zeroY = y(0)
             val slot = size.width / data.size
-            val barW = slot * 0.3f
+            val barW = slot * 0.26f
 
+            for (g in 1..3) {
+                val gy = size.height * g / 4f
+                drawLine(gridColor, Offset(0f, gy), Offset(size.width, gy), strokeWidth = 1.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 8f)))
+            }
             drawLine(axis, Offset(0f, zeroY), Offset(size.width, zeroY), strokeWidth = 2f)
 
             data.forEachIndexed { i, m ->
                 val cx = slot * i + slot / 2
                 val incTop = y(m.incomeCents)
-                drawRect(IncomeColor, Offset(cx - barW - 1f, incTop), Size(barW, zeroY - incTop))
+                drawRoundRect(incomeBar, Offset(cx - barW - 4.dp.toPx() / 2, incTop), Size(barW, (zeroY - incTop).coerceAtLeast(0f)), CornerRadius(1.5.dp.toPx()))
                 val expTop = y(m.expenseCents)
-                drawRect(ExpenseColor, Offset(cx + 1f, expTop), Size(barW, zeroY - expTop))
+                drawRoundRect(expenseBar, Offset(cx + 4.dp.toPx() / 2, expTop), Size(barW, (zeroY - expTop).coerceAtLeast(0f)), CornerRadius(1.5.dp.toPx()))
             }
 
             val path = Path()
@@ -339,9 +480,10 @@ private fun CashflowChart(data: List<MonthFlow>, hide: Boolean) {
                 val p = Offset(slot * i + slot / 2, y(m.netCents))
                 if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
             }
-            drawPath(path, NetColor, style = Stroke(width = 5f, cap = StrokeCap.Round))
+            drawPath(path, netColor, style = Stroke(width = 5f, cap = StrokeCap.Round))
             data.forEachIndexed { i, m ->
-                drawCircle(NetColor, 7f, Offset(slot * i + slot / 2, y(m.netCents)))
+                drawCircle(pointFill, 10f, Offset(slot * i + slot / 2, y(m.netCents)))
+                drawCircle(netColor, 7f, Offset(slot * i + slot / 2, y(m.netCents)))
             }
         }
         Row(Modifier.fillMaxWidth()) {

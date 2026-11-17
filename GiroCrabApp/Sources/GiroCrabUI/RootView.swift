@@ -16,6 +16,7 @@ public struct GiroCrabScenes: Scene {
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics = true
     @AppStorage(ViewLayout.budgetsKey) private var showBudgets = true
     @AppStorage(ViewLayout.runningBalanceKey) private var showRunningBalance = false
+    @AppStorage(ViewLayout.lastFetchKey) private var showLastFetch = false
     @AppStorage(ViewLayout.compactHeaderKey) private var compactHeader = false
     @AppStorage(BalanceChartStyle.defaultsKey) private var chartStyle: BalanceChartStyle = .line
     @AppStorage(ViewLayout.headerChartCollapsedKey) private var chartCollapsed = false
@@ -91,8 +92,7 @@ public struct GiroCrabScenes: Scene {
                 Button("Vorhandene Daten importieren …") { model.openMoneyMoneyImport() }
                     .disabled(!model.isUnlocked)
                 Button("Umsätze exportieren …") { model.openBookingExport() }
-                    .disabled(!model.isUnlocked)
-                Button("Umsätze als CSV exportieren …") { model.exportFilteredBookingsCSV() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
                     .disabled(!model.isUnlocked)
             }
             CommandGroup(replacing: .printItem) {
@@ -232,6 +232,8 @@ public struct GiroCrabScenes: Scene {
                 Toggle("Saldo anzeigen", isOn: $showRunningBalance)
                     .disabled(!model.isUnlocked)
                 Toggle("Kopfbereich minimieren", isOn: $compactHeader)
+                    .disabled(!model.isUnlocked)
+                Toggle("Letzten Abruf anzeigen", isOn: $showLastFetch)
                     .disabled(!model.isUnlocked)
                 // the header chart (#634): same switches as its title row
                 Toggle("Diagramm anzeigen", isOn: Binding(get: { !chartCollapsed }, set: { chartCollapsed = !$0 }))
@@ -639,7 +641,7 @@ struct LockView: View {
                 }
             }
             if let error {
-                Text(error).appFont(.callout).foregroundStyle(.red).multilineTextAlignment(.center)
+                Text(error).appFont(.callout).foregroundStyle(Theme.negative).multilineTextAlignment(.center)
             }
             if model.lockPreview && !AppModel.vaultMayHoldRealData && model.vaultState != .unlocking {
                 Button("Zurück zur Demo") { model.endLockPreview() }
@@ -659,8 +661,10 @@ struct MainSplitView: View {
     #if os(macOS)
     @State private var columns: NavigationSplitViewVisibility = .all
     @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
-    @State private var inspectorWidth: CGFloat = 320
+    @State private var inspectorWidth: CGFloat = InspectorWidth.standard
     @State private var inspectorDragStart: CGFloat?
+    @State private var splitterHovered = false
+    @State private var splitterCursorPushed = false
     @Environment(\.openSettings) private var openSettings
     #else
     @State private var columns: NavigationSplitViewVisibility = .automatic
@@ -732,9 +736,11 @@ struct MainSplitView: View {
                 }
             }
             .frame(minHeight: 0, maxHeight: .infinity)
-            // min widths: 240 (sidebar) + 560 + 280 (inspector) keep the minimum window size
-            .macColumnWidth(min: showInspector ? 560 + inspectorWidth : 560,
-                            ideal: showInspector ? 700 + inspectorWidth : 700)
+            // min widths: 240 (sidebar) + 560 + 280 (inspector) keep the minimum window size.
+            // Must not depend on `inspectorWidth`: the split view re-lays out whenever these
+            // change, which made the column jump while the splitter was dragged (#828).
+            .macColumnWidth(min: showInspector ? 560 + InspectorWidth.minimum * textScale : 560,
+                            ideal: showInspector ? 700 + InspectorWidth.standard * textScale : 700)
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -749,17 +755,43 @@ struct MainSplitView: View {
         .contentShape(Rectangle())
         .frame(width: 10)
         .onHover { inside in
-            if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            splitterHovered = inside
+            updateSplitterCursor()
+        }
+        .onDisappear {
+            splitterHovered = false
+            inspectorDragStart = nil
+            updateSplitterCursor()
         }
         .gesture(
-            DragGesture(minimumDistance: 0)
+            // The splitter moves with the column while it is dragged, so its own (local)
+            // coordinates would shift under the pointer and feed back into the width (#828).
+            // Window coordinates stay put.
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { value in
                     if inspectorDragStart == nil { inspectorDragStart = inspectorWidth }
-                    let proposed = (inspectorDragStart ?? inspectorWidth) - value.translation.width
-                    inspectorWidth = min(380, max(280, proposed))
+                    inspectorWidth = InspectorWidth.dragged(from: inspectorDragStart ?? inspectorWidth,
+                                                            translation: value.translation.width,
+                                                            textScale: textScale)
+                    updateSplitterCursor()
                 }
-                .onEnded { _ in inspectorDragStart = nil }
+                .onEnded { _ in
+                    inspectorDragStart = nil
+                    updateSplitterCursor()
+                }
         )
+    }
+
+    /// Resize cursor while hovering or dragging; push and pop stay paired so it cannot stick.
+    private func updateSplitterCursor() {
+        let wanted = splitterHovered || inspectorDragStart != nil
+        if wanted, !splitterCursorPushed {
+            NSCursor.resizeLeftRight.push()
+            splitterCursorPushed = true
+        } else if !wanted, splitterCursorPushed {
+            NSCursor.pop()
+            splitterCursorPushed = false
+        }
     }
     #else
     private var splitView: some View {

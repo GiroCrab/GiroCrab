@@ -213,7 +213,7 @@ fn account_rows(vault: &Vault, privacy: bool) -> Result<(Vec<AccountRow>, String
     let accounts = vault.list_accounts().map_err(|e| e.to_string())?;
     let total: i64 = accounts
         .iter()
-        .filter(|a| a.in_total && a.currency == "EUR")
+        .filter(|a| a.in_total && a.currency == "EUR" && a.archived_unix.is_none())
         .map(|a| a.balance_cents)
         .sum();
     // Accounts are grouped under their bank; the sort is stable, so the order inside a group stays.
@@ -1464,9 +1464,75 @@ fn apply_transfer_prefill(win: &MainWindow, p: &TransferPrefill) {
     win.set_transfer_open(true);
 }
 
+/// Value of `--screenshot <path.png>` / `--screenshot=<path.png>`.
+fn screenshot_path_from_args(args: impl IntoIterator<Item = String>) -> Option<String> {
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        if a == "--screenshot" {
+            return it.next();
+        }
+        if let Some(v) = a.strip_prefix("--screenshot=") {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
+/// Captures only this process's own window (`screencapture -l <window id>`), found by PID AND the
+/// exact title, so no other app, Finder or desktop background can end up in the picture. The
+/// software backend renders into an isolated window texture, which `screencapture -l` reads reliably.
+fn capture_own_window(path: &str, title: &str) -> bool {
+    let script = "import sys,Quartz\n\
+pid,title=int(sys.argv[1]),sys.argv[2]\n\
+for w in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly,Quartz.kCGNullWindowID):\n\
+    if w.get('kCGWindowOwnerPID')==pid and w.get('kCGWindowName')==title:\n\
+        print(w['kCGWindowNumber']);break\n";
+    let Ok(out) = std::process::Command::new("python3")
+        .args(["-I", "-c", script])
+        .arg(std::process::id().to_string())
+        .arg(title)
+        .output()
+    else {
+        return false;
+    };
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if id.is_empty() {
+        eprintln!("screenshot: no window with this PID and title \"{title}\"");
+        return false;
+    }
+    std::process::Command::new("screencapture")
+        .args(["-x", "-o", "-l", &id, path])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     views_ui::purge_stale_documents();
+    let screenshot = screenshot_path_from_args(std::env::args().skip(1));
+    if screenshot.is_some() && std::env::var_os("SLINT_BACKEND").is_none() {
+        // Software rendering: the isolated window texture is capturable (Metal is not).
+        std::env::set_var("SLINT_BACKEND", "winit-software");
+    }
     let win = MainWindow::new()?;
+    let demo_title = std::env::var_os("GIROCRAB_DEMO_SEED").is_some() || screenshot.is_some();
+    if demo_title {
+        win.set_window_title("GiroCrab Windows Demo".into());
+    }
+    if let Some(path) = screenshot {
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_secs(4),
+            move || {
+                let ok = capture_own_window(&path, "GiroCrab Windows Demo");
+                let _ = slint::quit_event_loop();
+                if !ok {
+                    std::process::exit(1);
+                }
+            },
+        );
+        std::mem::forget(timer);
+    }
     // Splash: dark at night (19:00-07:00 local); otherwise it follows the system theme.
     // No timezone database here, so local time is approximated as UTC+1 (CET).
     {
@@ -1511,6 +1577,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(v) => {
                     *demo_active.lock().unwrap() = demo;
                     win.set_demo_active(demo);
+                    if demo {
+                        win.set_allowance_total("Einzelperson 1.000 € / Ehepaar 2.000 €".into());
+                        win.set_allowance_allocated(800);
+                        win.set_allowance_banks(ModelRc::new(VecModel::from(vec![
+                            SharedString::from("Musterbank: 450 €"),
+                            SharedString::from("Trade Republic: 350 €"),
+                        ])));
+                        win.set_allowance_income(
+                            "Ausgeschöpft: 312,40 € aus Zinsen & Dividenden".into(),
+                        );
+                    }
                     win.set_has_own_vault(
                         std::fs::metadata(vault_path()).is_ok_and(|m| m.len() > 0),
                     );
@@ -1685,6 +1762,101 @@ fn main() -> Result<(), slint::PlatformError> {
             render_bookings(&win);
             views_ui::rerender(&win);
         });
+    }
+    {
+        // Mehrere Tresore (#410) und Tresor-Synchronisation: UI-Zustand. Die Tresorliste lebt nur
+        // in dieser Sitzung; Datei-Isolation je Tresor und der Ordnerabgleich sind noch nicht
+        // angebunden, die Statuszeile sagt das ausdrücklich.
+        let names = std::rc::Rc::new(RefCell::new(vec!["Haupttresor".to_string()]));
+        let publish = {
+            let (weak, names) = (win.as_weak(), names.clone());
+            move |active: i32, status: &str| {
+                if let Some(w) = weak.upgrade() {
+                    let list: Vec<slint::SharedString> =
+                        names.borrow().iter().map(|n| n.as_str().into()).collect();
+                    w.set_vault_names(slint::ModelRc::new(slint::VecModel::from(list)));
+                    w.set_vault_index(active);
+                    w.set_vault_status(status.into());
+                }
+            }
+        };
+        publish(0, "");
+        {
+            let (names, publish) = (names.clone(), publish.clone());
+            win.on_vault_create(move |name| {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return;
+                }
+                let mut list = names.borrow_mut();
+                if list.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+                    drop(list);
+                    publish(0, "Ein Tresor mit diesem Namen existiert bereits.");
+                    return;
+                }
+                list.push(name.clone());
+                let idx = list.len() as i32 - 1;
+                drop(list);
+                publish(idx, &format!("Tresor „{name}“ angelegt."));
+            });
+        }
+        {
+            let (names, publish) = (names.clone(), publish.clone());
+            win.on_vault_switch(move |i| {
+                let label = names.borrow().get(i as usize).cloned().unwrap_or_default();
+                publish(i, &format!("Aktiver Tresor: {label}."));
+            });
+        }
+        {
+            let (names, publish) = (names.clone(), publish.clone());
+            win.on_vault_delete(move |i| {
+                // Der Haupttresor (Index 0) bleibt immer erhalten.
+                if i <= 0 || i as usize >= names.borrow().len() {
+                    return;
+                }
+                let removed = names.borrow_mut().remove(i as usize);
+                publish(0, &format!("Tresor „{removed}“ gelöscht."));
+            });
+        }
+        {
+            let weak = win.as_weak();
+            win.on_vault_sync_toggled(move |on| {
+                if let Some(w) = weak.upgrade() {
+                    w.set_vault_status(
+                        if on {
+                            "Synchronisation eingeschaltet. Ordner wählen."
+                        } else {
+                            "Synchronisation ausgeschaltet."
+                        }
+                        .into(),
+                    );
+                }
+            });
+        }
+        {
+            let weak = win.as_weak();
+            win.on_vault_sync_now(move || {
+                if let Some(w) = weak.upgrade() {
+                    let folder = w.get_vault_sync_folder().to_string();
+                    let msg = if std::path::Path::new(&folder).is_dir() {
+                        "Ordner erreichbar. Der Tresor-Abgleich ist in dieser Version noch nicht angebunden."
+                    } else {
+                        "Ordner nicht gefunden. Bitte den Pfad prüfen."
+                    };
+                    w.set_vault_status(msg.into());
+                }
+            });
+        }
+        {
+            let weak = win.as_weak();
+            win.on_vault_copy_key(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_vault_status(
+                        "Schlüssel-Export ist in dieser Version noch nicht verfügbar.".into(),
+                    );
+                }
+            });
+        }
     }
     {
         let (weak, vault) = (win.as_weak(), vault.clone());

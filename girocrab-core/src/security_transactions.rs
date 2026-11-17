@@ -10,12 +10,10 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
+use crate::dates::now_ms;
 use crate::error::CoreResult;
 use crate::models::{SecurityDirection, SecurityTransaction};
-
-fn now_ms() -> i64 {
-    crate::user_groups::now_ms()
-}
+use crate::schema::has_table;
 
 /// Inserts or refreshes a transaction of `account_id`, keyed by `external_id`.
 pub(crate) fn upsert(
@@ -271,12 +269,7 @@ pub(crate) fn link_by_external_id(
 /// `(account, external_id)`; the newer edit wins, a deletion stays deleted.
 /// Cash links are local ids and are recomputed instead of copied.
 pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> CoreResult<()> {
-    let has: i64 = conn.query_row(
-        "SELECT count(*) FROM other.sqlite_master WHERE type = 'table' AND name = 'security_transactions'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has == 0 {
+    if !has_table(conn, "other", "security_transactions")? {
         return Ok(());
     }
     struct Other {
@@ -574,6 +567,89 @@ mod tests {
         assert_eq!(h.profit_loss_purchase_rel, Some(-4.76));
         assert_eq!(h.custody_type, "GS");
         assert_eq!(h.profit_loss_prev_day_cents, Some(4));
+    }
+
+    fn holding_fetch() -> FetchResult {
+        let mut data = fetch(vec![], vec![]);
+        data.holdings = vec![RemoteHolding {
+            classification: Default::default(),
+            direct_crypto: false,
+            account_ref: "depot".into(),
+            holding: Holding {
+                isin: "DE0001234567".into(),
+                quantity: 2.0,
+                value_cents: 100,
+                ..Default::default()
+            },
+        }];
+        data
+    }
+
+    fn value_points(v: &Vault) -> Vec<(String, i64)> {
+        v.db()
+            .unwrap()
+            .prepare("SELECT value_date, value_cents FROM depot_values ORDER BY value_date")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn every_fetched_depot_leaves_one_value_point_per_day_and_cash_accounts_none() {
+        let dir = crate::test_support::TempDir::new("sectx-values");
+        let v = open(&dir, "v.db");
+        let c = v
+            .add_bank_connection(ConnectorKind::Comdirect, String::new(), "l".into())
+            .unwrap();
+        store_fetch(&v, ConnectorKind::Comdirect, c, holding_fetch()).unwrap();
+        store_fetch(&v, ConnectorKind::Comdirect, c, holding_fetch()).unwrap();
+        // two fetches on one day: one point, and only for the depot (not the checking account)
+        assert_eq!(value_points(&v).len(), 1);
+        let depot = depot_id(&v);
+        let n: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT count(DISTINCT account_id) FROM depot_values",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        let only: i64 = v
+            .db()
+            .unwrap()
+            .query_row("SELECT account_id FROM depot_values", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(only, depot);
+    }
+
+    #[test]
+    fn a_vault_merge_brings_the_value_points_along() {
+        let dir = crate::test_support::TempDir::new("sectx-values-merge");
+        let key = vec![5u8; 32];
+        let a = open(&dir, "a.db");
+        let b = open(&dir, "b.db");
+        for v in [&a, &b] {
+            let c = v
+                .add_bank_connection(ConnectorKind::Comdirect, String::new(), "l".into())
+                .unwrap();
+            store_fetch(v, ConnectorKind::Comdirect, c, holding_fetch()).unwrap();
+        }
+        // only the observations travel; the other vault's fetch saw an older day
+        b.db()
+            .unwrap()
+            .execute(
+                "UPDATE depot_observations SET value_date = '2020-01-01', observed_ms = 1",
+                [],
+            )
+            .unwrap();
+        a.merge_other_vault(b.file_path(), key).unwrap();
+        let dates: Vec<String> = value_points(&a).into_iter().map(|p| p.0).collect();
+        assert_eq!(dates.len(), 2);
+        assert_eq!(dates[0], "2020-01-01");
     }
 
     #[test]

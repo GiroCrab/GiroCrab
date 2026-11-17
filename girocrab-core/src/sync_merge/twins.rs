@@ -281,7 +281,7 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     // stamped: a device still holding the rule on the twin's key loses
     conn.execute(
         "UPDATE rules SET account_id = ?2, updated_ms = max(updated_ms + 1, ?3) WHERE account_id = ?1",
-        params![twin, bank, crate::user_groups::now_ms()],
+        params![twin, bank, crate::dates::now_ms()],
     )?;
     conn.execute(
         "UPDATE OR IGNORE rule_accounts SET account_id = ?2 WHERE account_id = ?1",
@@ -318,6 +318,8 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
         ),
         params![twin, bank],
     )?;
+    // the imported depot history belongs to the bank's account from now on (#578)
+    crate::depot_values::move_account(conn, twin, bank)?;
     super::soft_delete_account(conn, twin)?;
     Ok(())
 }
