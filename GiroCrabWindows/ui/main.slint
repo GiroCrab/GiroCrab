@@ -876,6 +876,12 @@ export component MainWindow inherits Window {
     in-out property <bool> rule-enabled: true;
     in property <bool> rule-armed: false;
     in property <string> rule-status;
+    in-out property <bool> rule-case: false;
+    in-out property <string> rule-min;
+    in-out property <string> rule-max;
+    in property <string> rule-preview;
+    callback rule-preview-request();
+    callback rule-apply-scoped();
     callback rules-request();
     callback rule-select(int);
     callback rule-new();
@@ -1955,7 +1961,22 @@ export component MainWindow inherits Window {
             ComboBox { horizontal-stretch: 1; model: root.rule-field-labels; current-index <=> root.rule-field; }
             ComboBox { horizontal-stretch: 1; model: root.rule-kind-labels; current-index <=> root.rule-kind; }
         }
-        CheckBox { text: "Regel aktiv"; checked <=> root.rule-enabled; }
+        HorizontalLayout {
+            spacing: 8px;
+            LineEdit { horizontal-stretch: 1; placeholder-text: "Betrag ab (€, z. B. -50)"; text <=> root.rule-min; }
+            LineEdit { horizontal-stretch: 1; placeholder-text: "Betrag bis (€)"; text <=> root.rule-max; }
+        }
+        HorizontalLayout {
+            spacing: 16px;
+            CheckBox { text: "Regel aktiv"; checked <=> root.rule-enabled; }
+            CheckBox { text: "Groß-/Kleinschreibung beachten"; checked <=> root.rule-case; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Vorschau"; clicked => { root.rule-preview-request(); } }
+            Button { text: "Auf unkategorisierte Treffer anwenden"; clicked => { root.rule-apply-scoped(); } }
+        }
+        if root.rule-preview != "": Text { text: root.rule-preview; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
         if root.rule-status != "": Text { text: root.rule-status; color: Theme.negative; font-size: 12px; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 8px;

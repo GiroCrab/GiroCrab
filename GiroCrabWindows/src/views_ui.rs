@@ -935,6 +935,10 @@ fn clear_rule_form(win: &MainWindow) {
     win.set_rule_field(0);
     win.set_rule_kind(0);
     win.set_rule_enabled(true);
+    win.set_rule_case(false);
+    win.set_rule_min(SharedString::new());
+    win.set_rule_max(SharedString::new());
+    win.set_rule_preview(SharedString::new());
     win.set_rule_armed(false);
     with_ui(|u| u.rule_gate.reset());
 }
@@ -957,6 +961,10 @@ fn fill_rule_form(win: &MainWindow, index: usize) {
     win.set_rule_field(lists::rule_field_index(rule.field));
     win.set_rule_kind(lists::rule_kind_index(rule.match_kind));
     win.set_rule_enabled(rule.enabled);
+    win.set_rule_case(rule.case_sensitive);
+    win.set_rule_min(lists::bound_text(rule.min_amount_cents).into());
+    win.set_rule_max(lists::bound_text(rule.max_amount_cents).into());
+    win.set_rule_preview(SharedString::new());
     win.set_rule_armed(false);
     with_ui(|u| u.rule_gate.reset());
 }
@@ -1045,6 +1053,9 @@ fn wire_rules(win: &MainWindow, slot: &VaultSlot) {
             field_index: field,
             kind_index: kind,
             enabled,
+            case_sensitive: win.get_rule_case(),
+            min_amount: win.get_rule_min().to_string(),
+            max_amount: win.get_rule_max().to_string(),
         };
         let built = with_ui(|u| {
             let existing = usize::try_from(win.get_rule_selected())
@@ -1074,6 +1085,82 @@ fn wire_rules(win: &MainWindow, slot: &VaultSlot) {
             });
         });
     });
+
+    // Preview (apply = false) and scoped apply (#759): only the bookings the form's rule matches,
+    // and only uncategorised ones, get its category. Other bookings stay untouched.
+    for apply in [false, true] {
+        let (weak, slot2) = (win.as_weak(), slot.clone());
+        let handler = move || {
+            let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+                return;
+            };
+            let form = RuleForm {
+                name: win.get_rule_name().to_string(),
+                pattern: win.get_rule_pattern().to_string(),
+                category_index: win.get_rule_category(),
+                field_index: win.get_rule_field(),
+                kind_index: win.get_rule_kind(),
+                enabled: true,
+                case_sensitive: win.get_rule_case(),
+                min_amount: win.get_rule_min().to_string(),
+                max_amount: win.get_rule_max().to_string(),
+            };
+            let built = with_ui(|u| {
+                lists::validate_rule(
+                    &form,
+                    None,
+                    &u.rule_categories,
+                    lists::next_priority(&u.rules),
+                )
+            });
+            let rule = match built {
+                Ok(r) => r,
+                Err(e) => {
+                    win.set_rule_status(e.into());
+                    return;
+                }
+            };
+            win.set_rule_status("Wird geprüft …".into());
+            let weak = win.as_weak();
+            std::thread::spawn(move || {
+                let category = rule.category_id;
+                let result = v.preview_rule(rule, 100_000).map_err(|e| e.to_string());
+                let result = result.and_then(|hits| {
+                    let open: Vec<i64> = hits
+                        .iter()
+                        .filter(|b| b.category_id.is_none())
+                        .map(|b| b.id)
+                        .collect();
+                    if apply {
+                        for id in &open {
+                            v.set_transaction_category(*id, Some(category))
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok((hits.len(), open.len()))
+                });
+                let _ = weak.upgrade_in_event_loop(move |win| match result {
+                    Ok((all, open)) => {
+                        win.set_rule_status(SharedString::new());
+                        win.set_rule_preview(
+                            if apply {
+                                format!("{open} unkategorisierte Buchung(en) zugeordnet ({all} Treffer).")
+                            } else {
+                                format!("{all} Treffer, davon {open} ohne Kategorie.")
+                            }
+                            .into(),
+                        );
+                    }
+                    Err(e) => win.set_rule_status(e.into()),
+                });
+            });
+        };
+        if apply {
+            win.on_rule_apply_scoped(handler);
+        } else {
+            win.on_rule_preview_request(handler);
+        }
+    }
 
     let (weak, slot2) = (win.as_weak(), slot.clone());
     win.on_rule_delete(move || {
@@ -1263,6 +1350,9 @@ mod tests {
             field_index: 1,
             kind_index: 0,
             enabled: true,
+            case_sensitive: false,
+            min_amount: String::new(),
+            max_amount: String::new(),
         };
         let rules = vault.list_rules().unwrap();
         let rule = lists::validate_rule(&form, None, &cats, lists::next_priority(&rules)).unwrap();
