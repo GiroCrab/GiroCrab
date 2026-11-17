@@ -9,7 +9,8 @@ accounts (kind = 'brokerage')
   ├── holdings                 aktueller Bestand, bei jedem Abruf ersetzt
   │     └── holding_classifications   Klasse/Instrument je Position (Schritt 16)
   ├── security_transactions    Käufe, Verkäufe, Ausschüttungen, Gebühren, Steuern
-  └── depot_values             Wert des Depots je Tag und Quelle
+  ├── depot_observations       gemeldete Werte von Depot und Positionen (Rohdaten)
+  └── depot_values             Wert des Depots je Tag und Quelle (abgeleitet)
 
 security_classifications       Nutzerwahl je Wertpapier (security_key), unabhängig vom Konto
 ```
@@ -53,7 +54,7 @@ Wertpapier statt auf eine Position bezieht.
 
 ### Depotwert aus dem Konto
 `accounts.balance_cents` und `balance_date` tragen den vom Anbieter gemeldeten Depotwert und sein Stichtag. Das ist der
-aktuelle Gesamtwert des Kontos. Die historischen Depotgesamtwerte stehen getrennt davon in `depot_values`.
+aktuelle Gesamtwert des Kontos. Die historischen Werte stehen getrennt davon in `depot_observations` / `depot_values`.
 
 ## Wer schreibt und wer liest
 
@@ -63,17 +64,63 @@ aktuelle Gesamtwert des Kontos. Die historischen Depotgesamtwerte stehen getrenn
 | `security_transactions` | `connectors/persist.rs` (`security_transactions::upsert` beim Abruf); ein Import schreibt keine Umsätze | Aktivitäten im Depot, Kennzahlen |
 | `security_classifications` | `set_asset_class_override`, `set_instrument_override` (Kontextmenü) | Zusammensetzung (`classified_assets`) |
 
-## Wertverlauf eines Depots (`depot_values`, Schritt 28)
+## Wertverlauf eines Depots (`depot_observations` → `depot_values`, Schritt 28)
 
-**Umfang:** Gespeichert werden ausschließlich Zeitreihen der **Depotgesamtwerte**, keine historischen Kurse,
-Bestände oder Marktwerte einzelner Wertpapierpositionen. `holdings` bleibt der aktuelle Bestand; eine Zeitreihe
-einer Einzelposition lässt sich aus `depot_values` nicht wiederherstellen. Ein späterer Import kann fertige
-Depotgesamtwerte übernehmen; Zeitreihen einzelner Positionen werden in diesem Modell nicht übernommen.
+**Umfang:** Gespeichert werden die **Werte** von Depots und ihren Positionen, so wie eine Quelle sie gemeldet hat:
+keine Kurse je Stück (außer Menge und Kurs eines Abrufs), keine berechneten Werte. Ein Depot hat keine Buchungen, über
+die man den Wert zurückrechnen könnte, und die angebundenen Banken melden nur den aktuellen Wert. Der Verlauf entsteht
+deshalb aus Punkten: je Abruf der gemeldete Depotwert mit seinem Stichtag, dazu die Historie eines Datenbank-Imports.
+Eine Kursquelle gibt es nicht und ist nicht geplant (ein Verlauf aus Kursen bräuchte Kursserien je Handelsplatz und
+Währung, die Menge je Tag und eine Weitergabe von Kennungen an Dritte).
 
-Ein Depot hat keine Buchungen, über die man den Wert zurückrechnen könnte, und die angebundenen Banken melden nur
-den aktuellen Wert. Der Verlauf entsteht deshalb aus Punkten: je Abruf der gemeldete Depotwert mit seinem Stichtag, dazu
-Werte aus einem Import. Eine Kursquelle gibt es nicht und ist nicht geplant (ein Verlauf aus Kursen bräuchte
-Kursserien je Handelsplatz und Währung, die Menge je Tag und eine Weitergabe von Kennungen an Dritte).
+Zwei Schichten (`girocrab-core/src/depot_values.rs`, `depot_values/`):
+
+```
+accounts (kind = 'brokerage')
+  └── depot_observations   was ein Abruf oder Import geliefert hat (Rohdaten, abgeglichen)
+        └── depot_values   je Depot, Tag und Quelle ein Wert (abgeleitet, je Gerät)
+```
+
+### `depot_observations` (Rohdaten)
+
+```
+depot_observations(
+  account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  kind         TEXT    NOT NULL,             -- total | position
+  position     TEXT    NOT NULL DEFAULT '',  -- '' (total) | ISIN | 'cash' | 'name:<normalisiert>'
+  currency     TEXT    NOT NULL,
+  source       TEXT    NOT NULL,             -- fetch | import
+  value_date   TEXT    NOT NULL,             -- YYYY-MM-DD, Bewertungstag der Bank
+  observed_ms  INTEGER NOT NULL,             -- Abrufzeit; Import: Zeitstempel der Quelle
+  source_ref   TEXT    NOT NULL DEFAULT '',  -- Import: Zeile der Position in der Quelle
+  date_assumed INTEGER NOT NULL DEFAULT 0,   -- 1 = kein Bewertungstag, der Abruftag
+  value_cents  INTEGER NOT NULL,
+  confirmed    INTEGER NOT NULL DEFAULT 0,   -- 1 = Bestand geliefert: eine 0 ist echt
+  quantity     REAL,                         -- nur Abruf
+  price_cents  INTEGER,                      -- nur Abruf
+  name         TEXT    NOT NULL DEFAULT '',  -- Name der Position zu diesem Zeitpunkt
+  PRIMARY KEY (account_id, kind, position, currency, source, value_date, observed_ms, source_ref)
+) WITHOUT ROWID;
+```
+
+- Eine Zeile ist ein Wert, den eine Quelle gemeldet hat: der Depotwert (`total`) oder eine Position. Zeilen werden
+  **nie geändert**. Der Tresor-Abgleich vereinigt sie (`INSERT OR IGNORE` je Konto), danach wird `depot_values` der
+  betroffenen Depots neu abgeleitet.
+- Die Tabelle liegt in der Reihenfolge, in der sie gelesen wird (eine Reihe nach Quelle, Tag und Zeit): eine Reihe
+  und alle Positionen eines Depots sind je ein Bereich.
+- Positionen werden über ihren Schlüssel gefunden (ISIN, `cash` für die Liquidität im Depot, sonst
+  `name:<normalisierter Name>`), nicht über `holdings.id`: verkaufte Positionen behalten ihren Verlauf.
+- **Abruf** (`observations::record_fetch`, aus `connectors/persist.rs` nach allen Saldo-Änderungen): der Kontostand als
+  Depotwert (0 neben Positionen = deren Summe) und jede Position, in der Kontowährung. Geschrieben wird nur bei einer
+  Änderung gegenüber der letzten Abruf-Zeile oder an einem neuen Bewertungstag. Kam der Bestand (auch ein leerer), ist
+  eine 0 bestätigt und eine fehlende Position bekommt eine 0 (Verkauf); Positionen, die nur ein Import unter `cash` oder
+  `name:` kennt, werden nicht geschlossen. Ist der Kontostand als unbekannt markiert, entsteht nichts. Bewertungstag:
+  `accounts.balance_date`, bei fehlendem, ungültigem oder künftigem Datum der Abruftag (`date_assumed`).
+- **Import** (`observations::record_import`, Datenbank-Import `portfolio_chart`): je Tag der Depotwert und der Wert
+  jeder Position, verkaufte eingeschlossen, unverändert mit eigener Währung und Quellzeile. Nullwerte gelten als
+  bestätigt. Ein zweiter Lauf fügt nichts hinzu.
+
+### `depot_values` (abgeleitet)
 
 ```
 depot_values(
@@ -82,20 +129,23 @@ depot_values(
   source      TEXT    NOT NULL DEFAULT 'fetch',    -- fetch | import | prices
   quality     TEXT    NOT NULL DEFAULT 'observed', -- observed | reconstructed | estimated
   value_cents INTEGER NOT NULL,
-  changed_ms  INTEGER NOT NULL DEFAULT 0,
+  observed_ms INTEGER NOT NULL DEFAULT 0,          -- die Beobachtung, aus der der Wert stammt
   PRIMARY KEY (account_id, value_date, source)
 ) WITHOUT ROWID;
 ```
 
-**Quellen und Güte**
-- `fetch`: der Depotwert, den die Bank bei einem Abruf meldet. `import`: Werte aus einer Datei oder Datenbank.
-  `prices` und die Güten `reconstructed` / `estimated` sind für berechnete Werte reserviert; heute entsteht nur
-  `observed`.
-- Mehrere Quellen für denselben Tag liegen nebeneinander. Angezeigt wird je Tag die beste: erst nach Güte, dann
-  `fetch` vor `import` vor `prices`.
-- Abgleich zwischen Geräten: je (Konto, Tag, Quelle) gewinnt `changed_ms`. Die Zeilen verschwinden mit ihrem Konto.
-  Ein weiches Löschen einer Quelle (damit andere Geräte einen entfernten Import nicht zurückbringen) ist noch offen
-  und gehört zum Import.
+- Nur Depotwerte, nicht abgeglichen: `depot_values::rebuild` leitet sie nach einem Abruf (nur dieser Tag), einem
+  Import und einem Tresor-Abgleich (ganze Depots) aus `depot_observations` ab.
+- **Regeln je Tag und Quelle** (`observations::day_values`, dieselben für die Reihen einzelner Positionen):
+  - `fetch`: die letzte Beobachtung des Tages; eine 0 nur, wenn sie bestätigt ist.
+  - `import`: der größte Wert ungleich 0 des Tages (eine Quelle kann eine ISIN in mehreren Zeilen führen, etwa nach
+    Verkauf und Neukauf); eine 0 nur nach einem Wert und nur die erste einer Folge (ein geschlossenes Depot meldet
+    weiter 0).
+  - Werte in einer anderen Währung als der des Depots bleiben draußen.
+- `prices` und die Güten `reconstructed` / `estimated` sind für berechnete Werte reserviert; heute entsteht nur
+  `observed`. Mehrere Quellen für denselben Tag liegen nebeneinander. Angezeigt wird je Tag die beste: erst nach Güte,
+  dann `fetch` vor `import` vor `prices`.
+- Ein weiches Löschen eines Imports (damit andere Geräte ihn nicht zurückbringen) gibt es noch nicht.
 
 **Regeln der Reihe** (`depot_values::series`, `Vault::depot_value_history`)
 - Vor dem ersten Punkt eines Depots ist sein Wert **unbekannt**: nicht 0 und nicht der erste Wert.
@@ -105,25 +155,18 @@ depot_values(
 - Je Tag liefert die Abfrage `covered_depots` und `total_depots` (`DepotValuePoint`). Die Abdeckung wird berechnet,
   nicht gespeichert. Die Reihe beginnt am ersten Tag, an dem mindestens ein Depot einen Wert hat. Eine Summe über mehrere
   Depots ist eine Teilsumme, solange nicht alle abgedeckt sind („2 von 3 Depots“); wo ein weiteres Depot erstmals
-  hinzukommt, darf der Sprung nicht als Wertzuwachs gezeigt werden.
+  hinzukommt, darf der Sprung nicht als Wertzuwachs gezeigt werden. Summiert werden nur Depots in EUR.
 - Der Wert ist der gemeldete Depotwert und **keine Rendite**: Käufe, Verkäufe und Übertragungen verändern ihn.
 
-**Wer schreibt**
-- `depot_values::record` beim Abruf (`connectors/persist.rs`): für Depots mit gelieferten Positionen (ein leerer
-  Bestand bestätigt eine 0) und für Depots, deren Gesamtwert ohne Positionen kommt. Ist der Kontostand als unbekannt
-  markiert, entsteht kein Punkt. Sachwerte haben ein eigenes Modell und bleiben außen vor.
-- Import (geplant): Werte je Tag aus einer Datenbank oder einer CSV-Datei mit Datum und Wert, geschrieben als
-  `import` / `observed`.
-  - Ein Wert 0 ist ein bestätigter Nullwert, wenn davor positive Werte lagen; sonst ist er kein Punkt.
-  - Ein Abruf-Wert desselben Tages geht vor. Wiederholtes Einlesen derselben Daten ändert nichts.
-  - Beim CSV-Import: Spaltenzuordnung, Datums- und Zahlenformat, Vorschau mit Zeitraum und Zeilenzahl; fehlerhafte
-    Zeilen werden gezählt und gemeldet, zukünftige Daten abgelehnt.
-  - Werte in einer anderen Währung als der des Depots werden ausgewiesen und nicht eingerechnet.
+**Wer liest**
+- `Vault::depot_value_history(account_ids, days)`: Diagramm der Depotansicht und von Vermögen › Wertpapiere
+  (`DepotValueChart`, zugeschnitten auf den Zeitraum durch `DepotValueHistory`). `balance_history` nimmt die
+  Depotwerte direkt, nicht als Differenz zum Kontostand.
+- `Vault::depot_value_positions(account_id)`: Positionen mit Verlauf, verkaufte eingeschlossen (`held`), mit erstem und
+  letztem Tag. `Vault::position_value_history(account_id, position)`: Tageswert einer Position aus `depot_observations`
+  ab ihrem ersten Wert, bis heute oder bis zum Verkauf (`PositionHistorySheet`). Eine Reihe in anderer Währung wird in
+  ihrer eigenen gezeigt.
 
-**Wer liest:** `Vault::depot_value_history(account_ids, days)` für das Diagramm der Depotansicht
-(`DepotDetailView`, zugeschnitten auf den Zeitraum durch `DepotValueHistory`). `balance_history` nimmt die Depotwerte
-direkt, nicht als Differenz zum Kontostand.
-
-**Demo** (`--demo-seed`): Das Welt-Depot hat ein Jahr lückenloser Abruf-Werte, das Einzeltitel-Depot beginnt erst vor
-120 Tagen (Teilsumme in der Summe), das Krypto-Depot hat Lücken von ein bis drei Tagen und eine ältere importierte
-Strecke, an deren Überlappung der Abruf gewinnt.
+**Demo** (`--demo-seed`): Das Welt-Depot hat ein Jahr lückenloser Abruf-Werte mit Positionen und einer vor 60 Tagen
+verkauften Position, das Einzeltitel-Depot beginnt erst vor 120 Tagen (Teilsumme in der Summe), das Krypto-Depot hat
+Lücken von ein bis drei Tagen und eine ältere importierte Strecke, an deren Überlappung der Abruf gewinnt.
