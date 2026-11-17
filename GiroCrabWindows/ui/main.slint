@@ -101,7 +101,7 @@ component GhostButton inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
     height: 30px;
-    width: label.preferred-width + 24px;
+    preferred-width: label.preferred-width + 24px;
     border-radius: 4px;
     border-width: 1px;
     border-color: Theme.control-border;
@@ -1059,20 +1059,20 @@ export component MainWindow inherits Window {
         }
         // ---- project announcement banner (announcements.rs)
         if SettingsImportState.banner-title != "": Rectangle {
-            height: 28px;
+            height: 30px;
             background: SettingsImportState.banner-important ? Theme.warning-bg : Theme.bar;
             HorizontalLayout {
                 padding-left: 14px;
                 padding-right: 14px;
                 spacing: 12px;
                 Text { text: SettingsImportState.banner-title; color: SettingsImportState.banner-important ? Theme.warning-text : Theme.text; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-                Button { height: 24px; y: 2px; text: "Lesen"; clicked => { SettingsImportState.banner-show(); } }
-                Button { height: 24px; y: 2px; text: "Ausblenden"; clicked => { SettingsImportState.banner-dismiss(); } }
+                Button { height: 24px; y: 3px; text: "Lesen"; clicked => { SettingsImportState.banner-show(); } }
+                Button { height: 24px; y: 3px; text: "Ausblenden"; clicked => { SettingsImportState.banner-dismiss(); } }
             }
         }
         // ---- demo banner
         if root.demo-active: Rectangle {
-            height: 28px;
+            height: 30px;
             background: Theme.warning-bg;
             HorizontalLayout {
                 padding-left: 14px;
@@ -1080,7 +1080,7 @@ export component MainWindow inherits Window {
                 spacing: 12px;
                 Text { text: "Demo-Daten – diese Buchungen sind frei erfunden."; color: Theme.warning-text; vertical-alignment: center; horizontal-stretch: 1; }
                 Button {
-                    height: 24px; y: 2px;
+                    height: 24px; y: 3px;
                     text: root.has-own-vault ? "Zurück zum eigenen Tresor" : "Eigenes Konto anlegen";
                     primary: true;
                     clicked => { root.demo-switch(); }
@@ -1157,7 +1157,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     GhostButton {
-                        width: parent.width;
+                        horizontal-stretch: 1;
                         text: "+ Konto hinzufügen";
                         clicked => {
                             root.add-status = "";
@@ -1165,7 +1165,6 @@ export component MainWindow inherits Window {
                             root.add-open = true;
                         }
                     }
-                    Rectangle { horizontal-stretch: 1; }
                 }
             }
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
@@ -1200,7 +1199,7 @@ export component MainWindow inherits Window {
                             font-size: 16px; font-weight: 700; color: Theme.text; overflow: elide;
                         }
                         if root.selected-subtitle != "": Text { text: root.selected-subtitle; color: Theme.muted; font-size: 12px; overflow: elide; }
-                        Text { text: root.selected-balance; font-size: 18px; font-weight: 700; color: Theme.text; overflow: elide; }
+                        bal := Text { text: root.selected-balance; font-size: 18px; font-weight: 700; color: Theme.text; overflow: clip; wrap: no-wrap; }
                     }
                     HorizontalLayout {
                         horizontal-stretch: 0;
@@ -1215,10 +1214,9 @@ export component MainWindow inherits Window {
                         }
                         if root.selected > 0: GhostButton {
                             y: (parent.height - self.height) / 2;
-                            text: "⚙";
-                            width: 34px;
-                            enabled: root.selected > 0 && !root.busy;
-                            visible: root.selected > 0;
+                            text: "Einstellungen";
+                            min-width: 96px;
+                            enabled: !root.busy;
                             clicked => { root.account-edit(); }
                         }
                         Rectangle {
@@ -1581,13 +1579,14 @@ export component MainWindow inherits Window {
                                 padding: 12px;
                                 spacing: 8px;
                                 Text { text: "Kategorie"; font-size: 12px; font-weight: 700; color: Theme.text; }
-                                ScrollView {
+                                cat-sv := ScrollView {
                                     vertical-stretch: 1;
-                                    content-height: ceil(root.category-tiles.length / 2) * 38px;
+                                    min-height: 180px;
+                                    viewport-height: ceil(root.category-tiles.length / 2) * 38px;
                                     for t[i] in root.category-tiles: Rectangle {
-                                        x: mod(i, 2) * (parent.width / 2);
+                                        x: mod(i, 2) * (cat-sv.visible-width / 2);
                                         y: floor(i / 2) * 38px;
-                                        width: parent.width / 2 - 4px;
+                                        width: cat-sv.visible-width / 2 - 4px;
                                         height: 32px;
                                         property <bool> on: root.inspector-category == t.index;
                                         border-radius: 4px;
