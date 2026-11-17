@@ -299,7 +299,7 @@ impl Vault {
         // scheduled direct debits are incoming.
         let mut t = PlannedTotals {
             count: u32::try_from(count).unwrap_or(u32::MAX),
-            outgoing_cents: -out,
+            outgoing_cents: out.saturating_neg(),
             incoming_cents: inc,
         };
         // Standing orders only exist as computed executions (few orders, no row load of
@@ -310,9 +310,9 @@ impl Vault {
             for p in crate::standing_orders::planned_executions(&db, f, end, &account_ids)? {
                 t.count += 1;
                 if p.amount_cents < 0 {
-                    t.outgoing_cents += p.amount_cents;
+                    t.outgoing_cents = t.outgoing_cents.saturating_add(p.amount_cents);
                 } else {
-                    t.incoming_cents += p.amount_cents;
+                    t.incoming_cents = t.incoming_cents.saturating_add(p.amount_cents);
                 }
             }
         }
