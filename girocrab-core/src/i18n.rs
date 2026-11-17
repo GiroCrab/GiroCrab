@@ -381,6 +381,8 @@ fn english(de: &str) -> Option<&'static str> {
         "Diese Mandatsreferenz gibt es für dieses Konto schon." => "This mandate reference already exists for this account.",
         "Das Mandat gibt es nicht mehr." => "The mandate no longer exists.",
         "Die Datei enthält keine SEPA-Lastschrift (pain.008)." => "The file contains no SEPA direct debit (pain.008).",
+        "Die Datei enthält einen unlesbaren Betrag (pain.008)." => "The file contains an unreadable amount (pain.008).",
+        "Anzahl oder Kontrollsumme der Datei stimmen nicht mit den Lastschriften überein (pain.008)." => "The count or control sum of the file does not match its direct debits (pain.008).",
         "Die Datei gehört zu einem anderen Gläubigerkonto als dem gewählten." => "The file belongs to a different creditor account than the one selected.",
         "Die Mandatsreferenz enthält Zeichen, die SEPA nicht erlaubt (nur Buchstaben ohne Umlaute, Ziffern und / - ? : ( ) . , ' + Leerzeichen)." => "The mandate reference contains characters SEPA does not allow (only letters without umlauts, digits and / - ? : ( ) . , ' + space).",
         "Das Fälligkeitsdatum ist ungültig." => "The due date is invalid.",
