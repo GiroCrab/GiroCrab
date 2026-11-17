@@ -704,6 +704,11 @@ struct ICloudSyncSection: View {
                             catch { keychainSync = VaultKeyManager.shared.syncViaICloudKeychain; model.toast = error.localizedDescription }
                         }
                     }
+                    // without the entitlement it could only fail (#909); switching off always works
+                    .disabled(!VaultKeyManager.canShareViaICloudKeychain && !keychainSync)
+                if let note = KeychainSyncNote.text(available: VaultKeyManager.canShareViaICloudKeychain) {
+                    Text(note).appFont(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
                     Button(keyCopied ? "Schlüssel kopiert (60 s)" : "Tresor-Schlüssel kopieren", systemImage: "key") {
                         confirmKeyCopy = true
@@ -723,6 +728,11 @@ struct ICloudSyncSection: View {
                     }
                     Button("Schlüssel einfügen …", systemImage: "square.and.pencil") { showKeySheet = true }
                 }
+                #if os(iOS)
+                // Two plain buttons in one Form row: iOS fires both on every tap, so
+                // "Tresor-Schlüssel kopieren" opened the paste sheet too (#909).
+                .buttonStyle(.borderless)
+                #endif
                 if sync.keyMismatch {
                     Label("Der iCloud-Tresor nutzt einen anderen Schlüssel. Fügen Sie den Schlüssel von Ihrem anderen Gerät ein.", systemImage: "exclamationmark.triangle.fill")
                         .appFont(.caption).foregroundStyle(Theme.warning)
@@ -946,5 +956,12 @@ struct OwnProductIDField: View {
         guard model.focusOwnProductID else { return }
         model.focusOwnProductID = false
         focused = true
+    }
+}
+
+/// Why the iCloud Keychain switch is off in this build (#909), or nil when it works.
+enum KeychainSyncNote {
+    static func text(available: Bool) -> String? {
+        available ? nil : String(localized: "In dieser Version nicht verfügbar. Übertragen Sie den Schlüssel mit „Tresor-Schlüssel kopieren“ und fügen Sie ihn auf dem anderen Gerät mit „Schlüssel einfügen …“ ein.")
     }
 }

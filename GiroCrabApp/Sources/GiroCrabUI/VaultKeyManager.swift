@@ -51,6 +51,30 @@ public final class VaultKeyManager: @unchecked Sendable {
 
     public static let shared = VaultKeyManager()
 
+    /// Whether this build may use the data-protection keychain that iCloud Keychain
+    /// sharing needs. The notarized Mac app has no keychain entitlement (#909):
+    /// the switch could only fail there, so Settings disables it up front.
+    public static let canShareViaICloudKeychain = iCloudKeychainAvailable(probe: probeDataProtectionKeychain())
+
+    /// Only a missing entitlement rules sharing out; "not found" means the keychain is reachable.
+    static func iCloudKeychainAvailable(probe status: OSStatus) -> Bool {
+        status != errSecMissingEntitlement
+    }
+
+    /// Looks up an item that never exists, without any prompt.
+    private static func probeDataProtectionKeychain() -> OSStatus {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "de.girocrab.keychain-probe",
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecUseAuthenticationContext as String: context,
+        ]
+        return SecItemCopyMatching(q as CFDictionary, nil)
+    }
+
     private let service = "de.girocrab.vault"
     private let account = "sqlcipher-master-key"
 
