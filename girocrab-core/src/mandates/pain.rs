@@ -3,9 +3,10 @@
 //! are taken over.
 
 use crate::connectors::fints::pain008::{parse_pain008, validate_creditor_id, SequenceType};
-use crate::connectors::fints::sepa::{normalize_iban, validate_creditor_iban_matches};
+use crate::connectors::fints::sepa::validate_creditor_iban_matches;
 use crate::error::CoreError;
 use crate::i18n::tr;
+use crate::iban::normalize_iban;
 use crate::vault::Vault;
 
 use super::{MandateImportResult, MandateInput, MandateScheme};

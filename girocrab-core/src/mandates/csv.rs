@@ -3,10 +3,9 @@
 //! their errors. Dates may be `YYYY-MM-DD` or `DD.MM.YYYY`.
 
 use crate::batch_csv::{detect_delimiter, is_blank, split_records};
-use crate::connectors::fints::sepa::{
-    is_sepa_identifier, normalize_iban, validate_bic, validate_iban,
-};
+use crate::connectors::fints::sepa::{is_sepa_identifier, validate_bic};
 use crate::i18n::{tr, trf};
+use crate::iban::{normalize_iban, validate_iban};
 use crate::money::parse_cents;
 
 use super::{MandateInput, MandateScheme};

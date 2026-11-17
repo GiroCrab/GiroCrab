@@ -7,6 +7,7 @@ use rusqlite::params;
 
 use crate::error::CoreError;
 use crate::i18n::{role_name, tr, trf};
+use crate::iban::normalize_iban;
 use crate::models::*;
 use crate::vault::Vault;
 
@@ -334,12 +335,7 @@ impl Vault {
     pub fn save_transfer_template(&self, template: TransferTemplate) -> Result<i64, CoreError> {
         let name = template.name.trim().to_string();
         let rname = template.recipient_name.trim().to_string();
-        let iban: String = template
-            .recipient_iban
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-            .to_uppercase();
+        let iban = normalize_iban(&template.recipient_iban);
         if name.is_empty() || rname.is_empty() || iban.is_empty() {
             return Err(CoreError::InvalidInput {
                 message: tr("Name, Empfänger und IBAN der Vorlage dürfen nicht leer sein.").into(),

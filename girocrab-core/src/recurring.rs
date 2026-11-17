@@ -15,6 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::tr;
+use crate::iban::normalize_iban;
 use crate::merchants::FlowKind;
 use crate::models::{Booking, BookingFilter};
 use crate::vault::Vault;
@@ -165,13 +166,6 @@ pub struct RecurringMonthOverview {
     pub open_income_cents: i64,
     /// Recurring expenses already booked this month (positive cents).
     pub booked_expense_cents: i64,
-}
-
-fn normalize_iban(iban: &str) -> String {
-    iban.chars()
-        .filter(|c| !c.is_whitespace())
-        .collect::<String>()
-        .to_ascii_uppercase()
 }
 
 /// Separates a known merchant from the IBAN in a series key (#615).

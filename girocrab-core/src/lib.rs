@@ -38,6 +38,7 @@ pub mod error;
 pub mod export;
 mod ffi;
 pub mod i18n;
+pub mod iban;
 pub mod importers;
 pub mod insights;
 pub mod loans;

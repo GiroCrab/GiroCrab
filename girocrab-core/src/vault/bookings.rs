@@ -8,6 +8,7 @@ use rusqlite::{params, params_from_iter, ToSql};
 use super::Vault;
 use crate::error::CoreError;
 use crate::i18n::trf;
+use crate::iban::normalize_iban;
 use crate::merchants::{classify, clean_purpose, payment_method, FlowKind, MerchantResolver};
 use crate::models::*;
 use crate::money::parse_cents;
@@ -27,7 +28,7 @@ fn is_own_transfer(t: &Booking, own_ibans: &HashSet<String>, transfer_category: 
     if t.category_id.is_some() || matches!(t.flow, FlowKind::Investment | FlowKind::Perk) {
         return false;
     }
-    let iban = crate::connectors::fints::sepa::normalize_iban(&t.counterparty_iban);
+    let iban = normalize_iban(&t.counterparty_iban);
     !iban.is_empty() && own_ibans.contains(&iban)
 }
 
@@ -359,7 +360,7 @@ impl Vault {
         let ibans = st
             .query_map([], |r| r.get::<_, String>(0))?
             .filter_map(Result::ok)
-            .map(|i| crate::connectors::fints::sepa::normalize_iban(&i))
+            .map(|i| normalize_iban(&i))
             .filter(|i| !i.is_empty())
             .collect();
         Ok(ibans)

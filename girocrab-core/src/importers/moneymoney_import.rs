@@ -20,6 +20,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::portal_import::{parse_date, split_csv};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
+use crate::iban::{normalize_iban, validate_iban};
 use crate::merchants::{FlowKind, MerchantResolver};
 use crate::models::*;
 use crate::money::parse_cents;
@@ -279,10 +280,7 @@ fn build_row(get: impl Fn(Field) -> String) -> Option<MmRow> {
             }
         },
         name: clean(get(Field::Name)),
-        iban: get(Field::Iban)
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>(),
+        iban: normalize_iban(&get(Field::Iban)),
         bic: get(Field::Bic).trim().to_string(),
         purpose: clean(get(Field::Purpose)),
         booking_text: clean(get(Field::Text)),
@@ -656,7 +654,6 @@ pub(crate) fn find_or_create_category(
 /// (IBAN + currency) or MT940 `:25:` when it holds an IBAN. Files with
 /// several statements name no single account.
 fn statement_account(text: &str) -> Option<(String, String)> {
-    use crate::connectors::fints::sepa;
     static STMT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"<(?:\w+:)?(?:Stmt|Rpt|Ntfctn)>").unwrap());
     static ACCT: LazyLock<Regex> =
@@ -672,20 +669,20 @@ fn statement_account(text: &str) -> Option<(String, String)> {
             return None;
         }
         let block = ACCT.captures(text)?.get(1)?.as_str();
-        let i = sepa::normalize_iban(IBAN.captures(block)?.get(1)?.as_str());
+        let i = normalize_iban(IBAN.captures(block)?.get(1)?.as_str());
         let c = CCY
             .captures(block)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().to_uppercase())
             .unwrap_or_default();
-        return sepa::validate_iban(&i).then_some((i, c));
+        return validate_iban(&i).then_some((i, c));
     }
     let mut it = FIELD_25.captures_iter(text);
-    let first = sepa::normalize_iban(it.next()?.get(1)?.as_str().trim());
-    if it.any(|c| sepa::normalize_iban(c[1].trim()) != first) {
+    let first = normalize_iban(it.next()?.get(1)?.as_str().trim());
+    if it.any(|c| normalize_iban(c[1].trim()) != first) {
         return None;
     }
-    sepa::validate_iban(&first).then(|| (first, String::new()))
+    validate_iban(&first).then(|| (first, String::new()))
 }
 
 /// The existing account an export most likely belongs to, so the assistant
@@ -700,7 +697,6 @@ pub(crate) fn suggest_account(
     rows: &[MmRow],
     file_name: &str,
 ) -> CoreResult<Option<i64>> {
-    use crate::connectors::fints::sepa;
     let mut accounts: Vec<(i64, String, String, String)> = Vec::new();
     {
         let mut q = conn.prepare(
@@ -713,7 +709,7 @@ pub(crate) fn suggest_account(
     if let Some((iban, ccy)) = statement_account(text) {
         let same: Vec<_> = accounts
             .iter()
-            .filter(|a| sepa::normalize_iban(&a.1) == iban)
+            .filter(|a| normalize_iban(&a.1) == iban)
             .collect();
         let pick: Vec<_> = if same.len() > 1 && !ccy.is_empty() {
             same.iter()

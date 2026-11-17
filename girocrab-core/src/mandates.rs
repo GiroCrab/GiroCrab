@@ -8,11 +8,10 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::connectors::fints::pain008::{validate_creditor_id, DebitScheme, SequenceType};
-use crate::connectors::fints::sepa::{
-    is_sepa_identifier, normalize_iban, validate_bic, validate_iban,
-};
+use crate::connectors::fints::sepa::{is_sepa_identifier, validate_bic};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::tr;
+use crate::iban::{normalize_iban, validate_iban};
 use crate::vault::Vault;
 
 mod collect;
