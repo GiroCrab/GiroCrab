@@ -3212,6 +3212,11 @@ QtObject {
     function groupedIBAN(raw) { return (raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/(.{4})(?=.)/g, "$1 ") }
     function looksLikeBIC(s) { return /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test((s || "").toUpperCase()) }
     function validateIban(iban) { try { return core("validate_iban", { iban: iban }) } catch (e) { return false } }
+    /// ClipboardPaymentCheck (#663): opt-in (off), per device. Only a hash of the content last
+    /// offered is kept, in memory; the text itself is never stored or logged.
+    property bool clipboardCheck: String(defaults.value("transfer/clipboardCheck", false)) === "true"
+    onClipboardCheckChanged: defaults.setValue("transfer/clipboardCheck", clipboardCheck)
+    property var clipboardHandledHash: null
     /// parseAmountToCents: null when unparsable.
     function clipboardText() { clipboardHelper.text = ""; clipboardHelper.paste(); const t = clipboardHelper.text; clipboardHelper.text = ""; return t }
 
@@ -3871,10 +3876,11 @@ QtObject {
             period = previousMonthPeriod()
             showPrintSheet = true
             break
-        case "transfer": case "transfer-confirm":
+        case "transfer": case "transfer-confirm": case "transfer-clipboard":
             if (transferAccounts.length) sidebarSelection = "account:" + transferAccounts[0].id
             openTransfer()
-            setDraft({ name: "Stadtwerke München", iban: groupedIBAN("DE89370400440532013000"), amountText: Fmt.plain(8500),
+            // transfer-clipboard: empty form, the sheet offers the payment in its clipboard banner (#663)
+            if (demoSheet !== "transfer-clipboard") setDraft({ name: "Stadtwerke München", iban: groupedIBAN("DE89370400440532013000"), amountText: Fmt.plain(8500),
                        purpose: "Abschlag Strom Kd-Nr 482910" })
             break
         case "moneymoney":
