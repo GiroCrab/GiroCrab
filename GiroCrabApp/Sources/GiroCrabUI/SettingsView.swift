@@ -627,7 +627,8 @@ struct ICloudSyncSection: View {
     @State private var wrongFolderHint: String?
     @State private var keychainSync = VaultKeyManager.shared.syncViaICloudKeychain
     @Binding var showKeySheet: Bool
-    @State private var keyCopied = false
+    /// When the copied key leaves the clipboard; the button counts down to it (#909).
+    @State private var keyCopiedUntil: Date?
     @State private var confirmKeyCopy = false
 
     var body: some View {
@@ -710,15 +711,22 @@ struct ICloudSyncSection: View {
                     Text(note).appFont(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
-                    Button(keyCopied ? "Schlüssel kopiert (60 s)" : "Tresor-Schlüssel kopieren", systemImage: "key") {
+                    Button {
                         confirmKeyCopy = true
+                    } label: {
+                        // ticks every second while the key is on the clipboard, then offers copying again
+                        TimelineView(.periodic(from: .now, by: 1)) { tick in
+                            Label(KeyCopyCountdown.title(secondsLeft: KeyCopyCountdown.secondsLeft(until: keyCopiedUntil, now: tick.date)),
+                                  systemImage: "key")
+                                .monospacedDigit()
+                        }
                     }
                     .confirmationDialog("Tresor-Schlüssel kopieren?", isPresented: $confirmKeyCopy, titleVisibility: .visible) {
                         Button("Schlüssel kopieren") {
                             Task {
                                 if let k = try? await VaultKeyManager.shared.exportKeyBase64() {
                                     VaultKeyManager.copyKeyToPasteboard(k)
-                                    keyCopied = true
+                                    keyCopiedUntil = Date().addingTimeInterval(VaultKeyManager.keyClipboardLifetime)
                                 }
                             }
                         }
@@ -963,5 +971,20 @@ struct OwnProductIDField: View {
 enum KeychainSyncNote {
     static func text(available: Bool) -> String? {
         available ? nil : String(localized: "In dieser Version nicht verfügbar. Übertragen Sie den Schlüssel mit „Tresor-Schlüssel kopieren“ und fügen Sie ihn auf dem anderen Gerät mit „Schlüssel einfügen …“ ein.")
+    }
+}
+
+/// Label of "Tresor-Schlüssel kopieren": while the key is on the clipboard, how
+/// long it stays there (#909; a fixed "(60 s)" stayed after the key was gone).
+enum KeyCopyCountdown {
+    /// Whole seconds until `until`, rounded up; nil once it has passed.
+    static func secondsLeft(until: Date?, now: Date) -> Int? {
+        guard let until, until > now else { return nil }
+        return Int(until.timeIntervalSince(now).rounded(.up))
+    }
+
+    static func title(secondsLeft: Int?) -> String {
+        guard let secondsLeft else { return String(localized: "Tresor-Schlüssel kopieren") }
+        return String(localized: "Schlüssel noch \(secondsLeft) s in der Zwischenablage")
     }
 }

@@ -24674,6 +24674,17 @@
         }
       }
     },
+    "Schlüssel noch %lld s in der Zwischenablage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Key on the clipboard for another %lld s"
+          }
+        }
+      }
+    },
     "Schlüssel und Application-ID übernommen" : {
       "extractionState" : "manual",
       "localizations" : {
