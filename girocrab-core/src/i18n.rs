@@ -640,6 +640,7 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ vault/backup.rs
         "Falsches Passwort oder keine GiroCrab-Sicherung." => "Wrong password or not a GiroCrab backup.",
         "Bitte ein Passwort für die Sicherung angeben." => "Please enter a password for the backup.",
+        "Das Passwort für die Sicherung muss mindestens 8 Zeichen lang sein." => "The backup password must be at least 8 characters long.",
         // ------------------------------------------------------------ importers/moneymoney_import.rs
         "Keine Kopfzeile (Datum/Buchungstag und Betrag) gefunden." => "No header row (date/booking date and amount) found.",
         // ------------------------------------------------------------ importers/moneymoney_db.rs
