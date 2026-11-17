@@ -29,7 +29,7 @@ QtObject {
     /// AppModel.makeBackup + the file exporter: Linux writes straight to the chosen path
     /// (off the GUI thread). `done(ok)`.
     function writeBackup(path, password, done) {
-        if (busy) return
+        if (busy) { if (done) done(false, qsTr("Eine Sicherung läuft gerade. Bitte warten Sie, bis sie fertig ist.")); return }
         busy = true
         AppModel.coreAsync("write_backup", { dest_path: path, password: password }, () => {
             busy = false
@@ -46,7 +46,7 @@ QtObject {
     /// it. `done(ok, error)`; on failure nothing changed and `error` says why (the Mac shows
     /// it as a toast, the import assistant below its form).
     function restoreBackup(path, password, done) {
-        if (busy) return
+        if (busy) { if (done) done(false, qsTr("Eine Sicherung läuft gerade. Bitte warten Sie, bis sie fertig ist.")); return }
         if (!AppModel.hasOwnVault) {
             const msg = qsTr("Bitte zuerst Ihren eigenen Tresor öffnen, dann die Sicherung wiederherstellen.")
             if (done) done(false, msg)

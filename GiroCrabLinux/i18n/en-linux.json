@@ -70,6 +70,7 @@
   "Die empfangenen Schlüssel sind noch nicht vertrauenswürdig. Tragen Sie für beide Schlüssel den vollständigen SHA-256-Prüfwert aus der offiziellen Commerzbank-Quelle ein. Ein abweichender Prüfwert verhindert die Übernahme.": "The received keys are not trusted yet. For both keys, enter the full SHA-256 fingerprint from the official Commerzbank source. A differing fingerprint prevents the import.",
   "Druckvorschau": "Print Preview",
   "Eigenes Konto anlegen": "Create Own Account",
+  "Eine Sicherung läuft gerade. Bitte warten Sie, bis sie fertig ist.": "A backup is in progress. Please wait until it has finished.",
   "Eine neue Aufnahme verwirft die Markierungen, weil sich der Inhalt verschoben haben kann.": "Taking a new screenshot discards the annotations because the content may have shifted.",
   "Einrichtung läuft …": "Setting up…",
   "Entwickler-Schlüssel (GIROCRAB_NO_KEYCHAIN, Schlüsselbund unbenutzt)": "Developer key (GIROCRAB_NO_KEYCHAIN, keyring unused)",

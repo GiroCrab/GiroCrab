@@ -1811,7 +1811,11 @@ mod tests {
     #[test]
     fn backup_roundtrip_and_suggested_password() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("girocrab-backup-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("girocrab-backup-pw-{}", std::process::id()));
+        let saved: Vec<_> = ["XDG_DATA_HOME", "GIROCRAB_NO_KEYCHAIN"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
         std::env::set_var("XDG_DATA_HOME", dir.join("data"));
         std::env::set_var("GIROCRAB_NO_KEYCHAIN", "1");
         let p = call_ok("suggested_backup_password", json!({}));
@@ -1854,6 +1858,12 @@ mod tests {
         );
         call_ok("lock", json!({}));
         let _ = std::fs::remove_dir_all(dir);
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
     }
 
     /// The categorizer / rules / split arms with the JSON the QML sends.

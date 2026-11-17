@@ -459,7 +459,10 @@ QtObject {
     readonly property bool canEditStandingOrders: AppModel.canTransfer && standingOrderAccounts.length > 0 && AppModel.activeTransfer === null
 
     function reloadStandingOrders() {
-        AppModel.coreAsync("list_standing_orders", { account_ids: [] }, r => standingOrders = r, () => {})
+        const vgen = AppModel.vaultGeneration
+        AppModel.coreAsync("list_standing_orders", { account_ids: [] }, r => {
+            if (vgen === AppModel.vaultGeneration && AppModel.isUnlocked) standingOrders = r
+        }, () => {})
     }
     /// The stored order behind a „Geplant“ row (ids look like `standing-<row>-<date>`), if any.
     function standingOrderFor(payment) {

@@ -465,6 +465,7 @@ QtObject {
     /// A different vault is in front (or none): answers still on their way belong to the old one.
     function vaultSwitched() {
         vaultGeneration++
+        dropPendingPage()   // a "load more" page of the previous vault must not land in this list
         vaultLoaded = true
         afterAccountsQueue = []
         afterBookingsQueue = []

@@ -22,7 +22,8 @@ QtObject {
 
     function reload() {
         if (!AppModel.isUnlocked) { tags = []; return }
-        tags = AppModel.run(() => AppModel.core("list_tags")) || []
+        // quiet: a lock empties the vault before vaultReplaced fires (no error over the lock screen)
+        try { tags = AppModel.core("list_tags") || [] } catch (e) { tags = [] }
     }
     Component.onCompleted: reload()
     /// Another vault (demo / own, lock, reset): other tags, nothing to undo.
