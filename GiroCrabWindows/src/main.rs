@@ -41,7 +41,7 @@ use girocrab_core::{
     BookingFilter, Category, Challenge, ChallengeKind, ConnectorKind, PeriodGranularity, SyncStep,
     TransferStep, Vault,
 };
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use zeroize::Zeroizing;
 
 use daily::{Filter, Row, StatusFilter};
@@ -257,6 +257,8 @@ struct State {
     categories: Vec<Category>,
     filter: Filter,
     selected_booking: Option<i64>,
+    /// Bookings ticked for a batch action.
+    marked: std::collections::HashSet<i64>,
     /// Drops the result of a superseded background load.
     generation: u64,
     /// (account id, label, bank name) of the accounts a transfer can start from.
@@ -317,6 +319,18 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
         amount: daily::mask(&money(b.amount_cents, &b.currency), privacy).into(),
         negative: b.amount_cents < 0 && !privacy,
         checked: b.checked,
+        marked: st.marked.contains(&b.id),
+        tags_text: if privacy {
+            "".into()
+        } else {
+            b.tags
+                .iter()
+                .map(|t| format!("#{}", t.name))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .into()
+        },
+        has_note: !b.note.is_empty() && !privacy,
         monogram: if privacy {
             "•".into()
         } else if b.monogram.is_empty() {
@@ -354,9 +368,32 @@ fn render_bookings(win: &MainWindow) {
     win.set_tag_labels(ModelRc::new(VecModel::from(labels)));
     let (days, inspector, cat_index) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
-        let days: Vec<DayGroup> = cockpit::group_by_day(&shown)
+        let buckets = cockpit::group_by_day(&shown);
+        let mut last_month = String::new();
+        let days: Vec<DayGroup> = buckets
             .into_iter()
-            .map(|d| DayGroup {
+            .map(|d| {
+                let ym = d.date.get(..7).unwrap_or("").to_string();
+                let show_month = ym != last_month;
+                let (mut inc, mut exp) = (0i64, 0i64);
+                if show_month {
+                    for r in shown.iter().filter(|r| r.booking_date.starts_with(&ym)) {
+                        if r.amount_cents >= 0 {
+                            inc += r.amount_cents;
+                        } else {
+                            exp += r.amount_cents;
+                        }
+                    }
+                    last_month = ym;
+                }
+                let cur = d.currency.clone();
+                (d, show_month, inc, exp, cur)
+            })
+            .map(|(d, show_month, inc, exp, cur)| DayGroup {
+                show_month,
+                month: cockpit::month_title(&d.date).into(),
+                month_income: daily::mask(&money(inc, &cur), privacy).into(),
+                month_expense: daily::mask(&money(exp, &cur), privacy).into(),
                 title: cockpit::day_title(&d.date).into(),
                 sum: daily::mask(
                     &cockpit::day_sum_text(d.sum_cents, &money, &d.currency),
@@ -388,6 +425,7 @@ fn render_bookings(win: &MainWindow) {
         (days, insp, idx)
     });
     win.set_days(ModelRc::new(VecModel::from(days)));
+    win.set_marked_count(with_state(|st| st.marked.len()) as i32);
     match inspector {
         Some((i, row, logo, recurring)) => {
             // The note box keeps unsaved typing while the same booking stays selected.
@@ -1393,6 +1431,7 @@ fn main() -> Result<(), slint::PlatformError> {
             render_bookings(&win);
         });
     }
+    wire_batch_actions(&win, vault.clone());
     {
         // Privacy mode: only the rendering changes; the cached rows stay as they are.
         let (weak, vault) = (win.as_weak(), vault.clone());
@@ -1675,5 +1714,213 @@ mod tests {
     fn iban_is_masked() {
         assert_eq!(mask_iban("DE89 3704 0044 0532 0130 00", ""), "•••• 3000");
         assert_eq!(mask_iban("", ""), "");
+    }
+}
+
+/// Multi-select and batch actions of the booking list.
+fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
+    {
+        let weak = win.as_weak();
+        win.on_toggle_booking_mark(move |id| {
+            let Some(win) = weak.upgrade() else { return };
+            with_state(|st| {
+                if !st.marked.remove(&(id as i64)) {
+                    st.marked.insert(id as i64);
+                }
+            });
+            render_bookings(&win);
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_batch_select_all(move || {
+            let Some(win) = weak.upgrade() else { return };
+            with_state(|st| {
+                st.marked = st.shown.iter().map(|&i| st.rows[i].id).collect();
+            });
+            render_bookings(&win);
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_batch_clear(move || {
+            let Some(win) = weak.upgrade() else { return };
+            with_state(|st| st.marked.clear());
+            render_bookings(&win);
+        });
+    }
+    // Runs one vault edit on the marked bookings (or on one id), then updates the cached rows.
+    let run = {
+        let (weak, vault) = (win.as_weak(), vault.clone());
+        Arc::new(
+            move |ids: Vec<i64>,
+                  f: Box<dyn Fn(&Vault, &[i64]) -> Result<(), String>>,
+                  apply: Box<dyn Fn(&mut Row)>| {
+                let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
+                    return;
+                };
+                if ids.is_empty() {
+                    return;
+                }
+                if let Err(e) = f(&v, &ids) {
+                    win.set_sync_status(e.into());
+                    return;
+                }
+                with_state(|st| {
+                    for r in st.rows.iter_mut().filter(|r| ids.contains(&r.id)) {
+                        apply(r);
+                    }
+                });
+                apply_filter(&win);
+            },
+        )
+    };
+    {
+        let run = run.clone();
+        win.on_toggle_booking_checked(move |id| {
+            let id = id as i64;
+            let Some(now) =
+                with_state(|st| st.rows.iter().find(|r| r.id == id).map(|r| !r.checked))
+            else {
+                return;
+            };
+            run(
+                vec![id],
+                Box::new(move |v, ids| {
+                    v.set_transaction_checked(ids[0], now)
+                        .map_err(|e| e.to_string())
+                }),
+                Box::new(move |r| r.checked = now),
+            );
+        });
+    }
+    {
+        let run = run.clone();
+        win.on_batch_checked(move |checked| {
+            let ids: Vec<i64> = with_state(|st| st.marked.iter().copied().collect());
+            run(
+                ids,
+                Box::new(move |v, ids| {
+                    v.set_checked_for_ids(ids.to_vec(), checked)
+                        .map_err(|e| e.to_string())
+                }),
+                Box::new(move |r| r.checked = checked),
+            );
+        });
+    }
+    {
+        let run = run.clone();
+        win.on_batch_category(move |index| {
+            let ids: Vec<i64> = with_state(|st| st.marked.iter().copied().collect());
+            let cat = with_state(|st| {
+                (index > 0)
+                    .then(|| st.categories.get(index as usize - 1).cloned())
+                    .flatten()
+            });
+            let cat2 = cat.clone();
+            run(
+                ids,
+                Box::new(move |v, ids| {
+                    for id in ids {
+                        v.set_transaction_category(*id, cat.as_ref().map(|c| c.id))
+                            .map_err(|e| e.to_string())?;
+                    }
+                    Ok(())
+                }),
+                Box::new(move |r| {
+                    r.category_id = cat2.as_ref().map(|c| c.id);
+                    r.category_name = cat2.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+                    r.category_color_hex = cat2
+                        .as_ref()
+                        .map(|c| c.color_hex.clone())
+                        .unwrap_or_default();
+                }),
+            );
+        });
+    }
+    {
+        let (weak, vault) = (win.as_weak(), vault.clone());
+        win.on_batch_tag(move |index, add| {
+            let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
+                return;
+            };
+            if index <= 0 {
+                win.set_sync_status("Bitte zuerst einen Tag wählen.".into());
+                return;
+            }
+            let name = win
+                .get_tag_labels()
+                .row_data(index as usize)
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let tag = with_state(|st| {
+                st.rows
+                    .iter()
+                    .flat_map(|r| r.tags.iter())
+                    .find(|t| t.name == name)
+                    .cloned()
+            });
+            let (Some(tag), ids) = (
+                tag,
+                with_state(|st| st.marked.iter().copied().collect::<Vec<i64>>()),
+            ) else {
+                return;
+            };
+            let res = if add {
+                v.add_tag_to_bookings(ids.clone(), tag.id)
+            } else {
+                v.remove_tag_from_bookings(ids.clone(), tag.id)
+            };
+            match res {
+                Ok(_) => with_state(|st| {
+                    for r in st.rows.iter_mut().filter(|r| ids.contains(&r.id)) {
+                        r.tags.retain(|t| t.id != tag.id);
+                        if add {
+                            r.tags.push(tag.clone());
+                        }
+                    }
+                }),
+                Err(e) => {
+                    win.set_sync_status(e.to_string().into());
+                    return;
+                }
+            }
+            apply_filter(&win);
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_batch_export(move || {
+            let Some(win) = weak.upgrade() else { return };
+            let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+            let csv = with_state(|st| {
+                let mut out = String::from("Datum;Gegenpartei;Verwendungszweck;Kategorie;Betrag\n");
+                for r in st.rows.iter().filter(|r| st.marked.contains(&r.id)) {
+                    out.push_str(&format!(
+                        "{};{};{};{};{}\n",
+                        r.booking_date,
+                        q(&r.counterparty),
+                        q(&r.purpose),
+                        q(&r.category_name),
+                        format!("{:.2}", r.amount_cents as f64 / 100.0).replace('.', ",")
+                    ));
+                }
+                out
+            });
+            let base = std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            let dir = if base.join("Downloads").is_dir() {
+                base.join("Downloads")
+            } else {
+                base
+            };
+            let path = dir.join("GiroCrab-Auswahl.csv");
+            match std::fs::write(&path, csv) {
+                Ok(()) => win.set_sync_status(format!("Exportiert: {}", path.display()).into()),
+                Err(e) => win.set_sync_status(format!("Export fehlgeschlagen: {e}").into()),
+            }
+        });
     }
 }

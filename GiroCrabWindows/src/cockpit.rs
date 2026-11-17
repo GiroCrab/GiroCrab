@@ -85,6 +85,14 @@ pub fn day_title(iso: &str) -> String {
     format!("{}, {d}. {}", WEEKDAYS[wd], MONTHS[m as usize - 1])
 }
 
+/// `2026-11-13` -> "November 2026"; unparsable input is returned unchanged.
+pub fn month_title(iso: &str) -> String {
+    let Some((y, m, _)) = parse_iso(iso) else {
+        return iso.to_string();
+    };
+    format!("{} {y}", MONTHS[m as usize - 1])
+}
+
 /// One day of the booking list: the indices (into the shown rows) of its bookings and the net sum.
 #[derive(Debug, PartialEq)]
 pub struct DayBucket {
