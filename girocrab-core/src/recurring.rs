@@ -827,7 +827,8 @@ pub fn pro_rate_splits_monthly(splits: &[(i64, i64)], interval_months: u8) -> Ve
         return out;
     }
     let total: i64 = splits.iter().map(|s| s.1).sum();
-    let diff = monthly_accrual_share_cents(total, interval_months) - out.iter().map(|s| s.1).sum::<i64>();
+    let diff =
+        monthly_accrual_share_cents(total, interval_months) - out.iter().map(|s| s.1).sum::<i64>();
     if diff != 0 {
         let mut idx = 0;
         for (i, s) in splits.iter().enumerate() {
