@@ -81,7 +81,7 @@ impl Vault {
         let db = self.db()?;
         let n = db.execute(
             "UPDATE categories SET budget_cents = ?1, budget_ms = ?3 WHERE id = ?2",
-            params![budget_cents, category_id, crate::user_groups::now_ms()],
+            params![budget_cents, category_id, crate::dates::now_ms()],
         )?;
         if n == 0 {
             return Err(CoreError::NotFound {
@@ -252,7 +252,7 @@ impl Vault {
         }
         tx.execute(
             "UPDATE transactions SET splits_ms = ?1 WHERE id = ?2",
-            params![crate::user_groups::now_ms(), transaction_id],
+            params![crate::dates::now_ms(), transaction_id],
         )?;
         tx.commit()?;
         Ok(())

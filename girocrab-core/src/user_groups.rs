@@ -56,6 +56,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::connectors::group_for;
+use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::{Account, UserGroup};
@@ -233,10 +234,6 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
         }
     }
     Ok(())
-}
-
-pub(crate) fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
 }
 
 fn group_exists(conn: &Connection, uuid: &str) -> CoreResult<bool> {

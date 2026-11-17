@@ -7,6 +7,11 @@ use std::sync::LazyLock;
 use chrono::NaiveDate;
 use regex::Regex;
 
+/// The current time as a change stamp: Unix milliseconds, UTC.
+pub(crate) fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
 /// `d` as stored: `YYYY-MM-DD`.
 pub(crate) fn iso(d: NaiveDate) -> String {
     d.format("%Y-%m-%d").to_string()

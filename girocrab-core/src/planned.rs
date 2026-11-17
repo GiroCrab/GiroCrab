@@ -132,7 +132,7 @@ impl Vault {
                 job.recipient_iban,
                 job.amount_cents,
                 job.purpose,
-                crate::user_groups::now_ms()
+                crate::dates::now_ms()
             ],
         )?;
         Ok(())
@@ -165,7 +165,7 @@ impl Vault {
                 debtor_iban,
                 amount_cents,
                 purpose,
-                crate::user_groups::now_ms()
+                crate::dates::now_ms()
             ],
         )?;
         Ok(())

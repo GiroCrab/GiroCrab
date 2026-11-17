@@ -588,7 +588,7 @@ impl Vault {
         ids: &[i64],
         checked: bool,
     ) -> Result<(), CoreError> {
-        let now = crate::user_groups::now_ms();
+        let now = crate::dates::now_ms();
         for chunk in ids.chunks(500) {
             let ph = vec!["?"; chunk.len()].join(",");
             let sql =
@@ -1241,7 +1241,7 @@ impl Vault {
         let db = self.db()?;
         let n = db.execute(
             "UPDATE transactions SET category_id = ?1, rule_id = NULL, category_source = CASE WHEN ?1 IS NULL THEN 'none' ELSE 'manual' END, category_ms = ?3 WHERE id = ?2",
-            params![category_id, transaction_id, crate::user_groups::now_ms()],
+            params![category_id, transaction_id, crate::dates::now_ms()],
         )?;
         if n == 0 {
             return Err(CoreError::NotFound {
@@ -1283,7 +1283,7 @@ impl Vault {
     ) -> Result<(), CoreError> {
         self.db()?.execute(
             "UPDATE transactions SET checked = ?1, checked_ms = ?3 WHERE id = ?2",
-            params![checked as i64, transaction_id, crate::user_groups::now_ms()],
+            params![checked as i64, transaction_id, crate::dates::now_ms()],
         )?;
         Ok(())
     }
@@ -1301,7 +1301,7 @@ impl Vault {
                 counterparty.trim(),
                 purpose.trim(),
                 transaction_id,
-                crate::user_groups::now_ms()
+                crate::dates::now_ms()
             ],
         )?;
         if n == 0 {
@@ -1320,7 +1320,7 @@ impl Vault {
     ) -> Result<(), CoreError> {
         let n = self.db()?.execute(
             "UPDATE transactions SET note = ?1, note_ms = ?3 WHERE id = ?2",
-            params![note.trim(), transaction_id, crate::user_groups::now_ms()],
+            params![note.trim(), transaction_id, crate::dates::now_ms()],
         )?;
         if n == 0 {
             return Err(CoreError::NotFound {

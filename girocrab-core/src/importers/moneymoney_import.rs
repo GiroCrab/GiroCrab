@@ -18,6 +18,7 @@ use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::portal_import::{parse_date, split_csv};
+use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::iban::{normalize_iban, validate_iban};
@@ -623,7 +624,7 @@ pub(crate) fn find_or_create_category(
                 conn.execute(
                     "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, name_ms, parent_ms, symbol_ms, color_ms, order_ms)
                      VALUES (?1, ?2, 'tag', '#8E8E93', ?3, ?4, ?4, ?4, ?4, ?4)",
-                    params![parent, part, order, crate::user_groups::now_ms()],
+                    params![parent, part, order, now_ms()],
                 )?;
                 *created += 1;
                 let id = conn.last_insert_rowid();
@@ -836,7 +837,7 @@ fn run(
                     format!("moneymoney-{}", uuid::Uuid::new_v4()),
                     account_name_from_file(file_name),
                     account_currency,
-                    crate::user_groups::now_ms()
+                    now_ms()
                 ],
             )?;
             st.account_id = conn.last_insert_rowid();
@@ -950,14 +951,14 @@ pub(crate) fn merge_rows(
             if let Some(c) = cat_id.filter(|_| e.category_source != "manual") {
                 conn.execute(
                     "UPDATE transactions SET category_id = ?1, rule_id = NULL, category_source = 'manual', category_ms = ?3 WHERE id = ?2",
-                    params![c, e.id, crate::user_groups::now_ms()],
+                    params![c, e.id, now_ms()],
                 )?;
                 changed = true;
             }
             if !note.is_empty() && e.note.trim().is_empty() {
                 conn.execute(
                     "UPDATE transactions SET note = ?1, note_ms = ?3 WHERE id = ?2",
-                    params![note, e.id, crate::user_groups::now_ms()],
+                    params![note, e.id, now_ms()],
                 )?;
                 st.notes += 1;
                 changed = true;
@@ -987,8 +988,8 @@ pub(crate) fn merge_rows(
             if cat_id.is_some() { "manual" } else { "none" },
             note,
             fp,
-            if cat_id.is_some() { crate::user_groups::now_ms() } else { 0 },
-            if note.is_empty() { 0 } else { crate::user_groups::now_ms() }
+            if cat_id.is_some() { now_ms() } else { 0 },
+            if note.is_empty() { 0 } else { now_ms() }
         ])?;
         st.new += 1;
         st.balance_cents += r.amount_cents;

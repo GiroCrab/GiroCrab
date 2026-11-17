@@ -53,7 +53,7 @@ impl Vault {
                         rusqlite::params![
                             account_id,
                             block.creditor_id.trim().to_ascii_uppercase(),
-                            crate::user_groups::now_ms()
+                            crate::dates::now_ms()
                         ],
                     )?;
                 }

@@ -181,7 +181,7 @@ pub(crate) fn store(
         "INSERT INTO opening_balances(account_id, opening_date, opening_cents, updated_ms)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(account_id) DO UPDATE SET opening_date = ?2, opening_cents = ?3, updated_ms = ?4",
-        params![account_id, date, cents, crate::user_groups::now_ms()],
+        params![account_id, date, cents, crate::dates::now_ms()],
     )?;
     Ok(())
 }

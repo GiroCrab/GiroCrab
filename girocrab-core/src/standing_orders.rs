@@ -94,7 +94,7 @@ pub(crate) fn replace_for_account(
                 o.exec_day,
                 o.can_change,
                 o.can_delete,
-                crate::user_groups::now_ms()
+                crate::dates::now_ms()
             ],
         )?;
     }
@@ -440,7 +440,7 @@ impl Vault {
                         o.time_unit,
                         o.interval,
                         o.exec_day,
-                        crate::user_groups::now_ms()
+                        crate::dates::now_ms()
                     ],
                 )?;
             }

@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::dates::{iso, parse_iso};
+use crate::dates::{iso, now_ms, parse_iso};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::*;
@@ -115,10 +115,6 @@ fn has_column(conn: &Connection, schema: &str, table: &str, col: &str) -> CoreRe
         params![table, schema, col],
         |r| r.get::<_, i64>(0),
     )? > 0)
-}
-
-fn now_ms() -> i64 {
-    crate::user_groups::now_ms()
 }
 
 /// Sets a dated point (`asset_quantities.quantity` / `asset_values.value_cents`),
@@ -866,7 +862,7 @@ fn store_item(
                     s.purchase_date,
                     s.purchase_price_cents,
                     s.note,
-                    crate::user_groups::now_ms(),
+                    now_ms(),
                     s.symbol
                 ],
             )?;

@@ -1035,7 +1035,7 @@ fn merchant_key(text: &str) -> Option<String> {
 /// Moves category, note and check mark from `from` to `to` where `to` has none,
 /// then deletes `from` (tombstone, so other devices drop it too).
 fn hand_over(db: &rusqlite::Connection, from: i64, to: i64) -> Result<(), CoreError> {
-    let now = crate::user_groups::now_ms();
+    let now = crate::dates::now_ms();
     db.execute(
         "UPDATE transactions SET (category_id, category_source, rule_id, category_ms) =
                 (SELECT f.category_id, f.category_source, f.rule_id, ?3 FROM transactions f WHERE f.id = ?1)

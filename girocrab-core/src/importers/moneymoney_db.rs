@@ -50,6 +50,7 @@ use super::moneymoney_import::{find_or_create_category, fingerprint, merge_rows,
 use crate::asset_classification::{AssetClass, ClassificationValues, InstrumentKind};
 use crate::connectors::bank_directory::{match_psd2_bank, psd2_catalog, Psd2Bank};
 use crate::connectors::group_for;
+use crate::dates::now_ms;
 use crate::depot_values::observations::{self, ObservedValue};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -643,7 +644,7 @@ fn apply_category_colors(
 ) -> CoreResult<()> {
     // the colour is a field edit: stamp it, so a sync merge keeps it
     // ("newest edit wins") instead of reverting it to another device's grey
-    let now = crate::user_groups::now_ms();
+    let now = now_ms();
     for (path, color) in &src.category_colors {
         let key: String = path
             .iter()
@@ -2495,7 +2496,7 @@ fn import_category_rules(
                 expr,
                 IMPORTED_RULE_PRIORITY + i as i32,
                 enabled,
-                crate::user_groups::now_ms()
+                now_ms()
             ],
         )?;
         res.rules_created += 1;
@@ -2704,7 +2705,7 @@ fn import(
                         a.currency,
                         kind.as_str(),
                         kind.sf_symbol(),
-                        crate::user_groups::now_ms()
+                        now_ms()
                     ],
                 )?;
                 res.accounts_created += 1;
@@ -2786,7 +2787,7 @@ fn import(
                 |r| r.get(0),
             )?;
             if ungrouped {
-                let now = crate::user_groups::now_ms();
+                let now = now_ms();
                 // the MoneyMoney groups from the top level down to the account's own
                 let mut parent: Option<String> = None;
                 for (key, name) in &a_groups {
@@ -2844,7 +2845,7 @@ fn import(
         }
         slots.sort_unstable();
         created_groups.sort_by_key(|(key, _)| rank.get(key).copied().unwrap_or(usize::MAX));
-        let now = crate::user_groups::now_ms();
+        let now = now_ms();
         for ((_, uuid), slot) in created_groups.iter().zip(slots) {
             conn.execute(
                 "UPDATE user_groups SET sort_order = ?2, order_ms = ?3, updated_ms = max(updated_ms, ?3)

@@ -10,12 +10,9 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
+use crate::dates::now_ms;
 use crate::error::CoreResult;
 use crate::models::{SecurityDirection, SecurityTransaction};
-
-fn now_ms() -> i64 {
-    crate::user_groups::now_ms()
-}
 
 /// Inserts or refreshes a transaction of `account_id`, keyed by `external_id`.
 pub(crate) fn upsert(

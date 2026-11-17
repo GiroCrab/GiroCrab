@@ -12,8 +12,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
 
+use crate::dates::now_ms;
 use crate::error::CoreResult;
-use crate::user_groups::now_ms;
 use crate::vault::Vault;
 use crate::CoreError;
 

@@ -358,7 +358,7 @@ pub(crate) fn store_fetch(
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, (SELECT IFNULL(MAX(sort_order),0)+1 FROM accounts), ?14)",
                         params![connection_id, gid, acc.external_ref, acc.name, bank_name, acc.owner, acc.iban, acc.account_number,
                                 acc.currency, acc.kind.as_str(), acc.balance_cents, acc.balance_date, acc.kind.sf_symbol(),
-                                crate::user_groups::now_ms()],
+                                crate::dates::now_ms()],
                     )?;
                     let id = tx.last_insert_rowid();
                     crate::user_groups::place_new_account(&tx, id)?;
@@ -679,7 +679,7 @@ pub(crate) fn store_fetch(
                                AND (r.booking_text LIKE '%Sammel%' OR r.purpose LIKE '%Sammel%')
                                AND r.booking_date <= date(transactions.booking_date, '+7 days')))
                       AND r.booking_date >= transactions.booking_date))",
-            [crate::user_groups::now_ms()],
+            [crate::dates::now_ms()],
         )?;
         // Card holds: keep exactly the ones the bank still reports as open.
         if let Some(prefix) = data.hold_prefix.as_deref().filter(|p| !p.is_empty()) {
@@ -772,7 +772,7 @@ pub(crate) fn store_fetch(
         // reported per depot. A depot whose inventory came (maybe an empty one) confirms a 0 and
         // closes sold positions; one whose total came without positions (an overview) records the
         // total alone. An unread balance records no total (its positions still count).
-        let observed_ms = chrono::Utc::now().timestamp_millis();
+        let observed_ms = crate::dates::now_ms();
         let unknown: std::collections::HashSet<i64> = data
             .balances_unknown
             .iter()
@@ -1868,7 +1868,7 @@ impl Vault {
                 // the switch-off is an edit: the stamp lets a vault merge carry it over
                 tx.execute(
                     "UPDATE mandates SET active = 0, updated_ms = ?2 WHERE id = ?1",
-                    params![id, crate::user_groups::now_ms()],
+                    params![id, crate::dates::now_ms()],
                 )?;
             }
         }

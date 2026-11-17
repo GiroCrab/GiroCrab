@@ -485,7 +485,7 @@ impl Vault {
             "UPDATE accounts SET name = ?1, name_ms = ?2, initial_balance_cents = ?3 WHERE id = ?4",
             params![
                 s.name,
-                crate::user_groups::now_ms(),
+                crate::dates::now_ms(),
                 s.original_cents.unwrap_or(s.anchor_balance_cents),
                 id
             ],
@@ -520,7 +520,7 @@ pub(crate) fn create_in(conn: &Connection, setup: &LoanSetup) -> CoreResult<i64>
             format!("manual-loan-{}", uuid::Uuid::new_v4()),
             s.name,
             AccountKind::Loan.sf_symbol(),
-            crate::user_groups::now_ms()
+            crate::dates::now_ms()
         ],
     )?;
     let id = conn.last_insert_rowid();
