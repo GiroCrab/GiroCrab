@@ -218,7 +218,7 @@ fun AddBankDialog(
 // Rule editor (#759)
 // ---------------------------------------------------------------------------------------------
 
-private fun parseCents(s: String): Long? =
+private fun parseRuleCents(s: String): Long? =
     s.trim().replace(',', '.').toDoubleOrNull()?.let { Math.round(it * 100) }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -241,7 +241,7 @@ fun RuleEditorDialog(
     var maxText by remember { mutableStateOf(initial?.maxCents?.let { "%.2f".format(it / 100.0) }.orEmpty()) }
     var applied by remember { mutableStateOf<Int?>(null) }
 
-    val rule = Rule(id, field, kind, pattern.trim(), categoryId, tagIds, initial?.enabled ?: true, parseCents(minText), parseCents(maxText))
+    val rule = Rule(id, field, kind, pattern.trim(), categoryId, tagIds, initial?.enabled ?: true, parseRuleCents(minText), parseRuleCents(maxText))
     val scoped = state.scopedAccountIds
     val preview: List<Booking> = remember(rule, state.data.bookings, scoped) {
         state.data.bookings.filter { it.accountId in scoped && rule.matches(it) }
@@ -320,7 +320,7 @@ private fun <T : Enum<T>> EnumDropdown(label: String, value: T, options: List<T>
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) },
             modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
-        androidx.compose.material3.ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEach { o -> DropdownMenuItem(text = { Text(o.name) }, onClick = { onSelect(o); open = false }) }
         }
     }

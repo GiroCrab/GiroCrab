@@ -16,7 +16,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFeature
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
@@ -84,7 +83,6 @@ private val DarkScheme = darkColorScheme(
 /** Tabular (fixed-width) digits so amounts align in columns, like `monospacedDigit()` on iOS. */
 fun TextStyle.tabular(): TextStyle = copy(fontFeatureSettings = "tnum")
 
-val TabularFeature = FontFeature("tnum")
 
 private val GiroTypography = Typography().let { base ->
     base.copy(

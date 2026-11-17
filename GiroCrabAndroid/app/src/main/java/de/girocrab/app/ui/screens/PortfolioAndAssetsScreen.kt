@@ -62,7 +62,7 @@ private fun pct(value: Double, masked: Boolean): String =
 
 private fun parseDecimal(s: String): Double? = s.trim().replace(".", "").replace(',', '.').toDoubleOrNull()
 
-private fun parseCents(s: String): Long? = parseDecimal(s)?.let { Math.round(it * 100) }
+private fun parsePortfolioCents(s: String): Long? = parseDecimal(s)?.let { Math.round(it * 100) }
 
 private fun qtyText(q: Double): String =
     NumberFormat.getNumberInstance(Locale.GERMANY).apply { maximumFractionDigits = 6 }.format(q)
@@ -230,10 +230,10 @@ private fun LoanEditorDialog(
     var payment by remember { mutableStateOf(initial?.let { plainCents(it.monthlyPaymentCents) } ?: "") }
     var start by remember { mutableStateOf((initial?.startDate ?: LocalDate.now()).toString()) }
 
-    val principalC = parseCents(principal)
-    val remainingC = parseCents(remaining)
+    val principalC = parsePortfolioCents(principal)
+    val remainingC = parsePortfolioCents(remaining)
     val rateV = if (rate.isBlank()) 0.0 else parseDecimal(rate)
-    val paymentC = if (payment.isBlank()) 0L else parseCents(payment)
+    val paymentC = if (payment.isBlank()) 0L else parsePortfolioCents(payment)
     val startD = parseDate(start)
     val error = when {
         name.isBlank() -> "Bitte einen Namen angeben."
@@ -348,7 +348,7 @@ private fun AssetEditorDialog(
     var date by remember { mutableStateOf((initial?.acquiredDate ?: LocalDate.now()).toString()) }
     var note by remember { mutableStateOf(initial?.note ?: "") }
 
-    val valueC = parseCents(value)
+    val valueC = parsePortfolioCents(value)
     val dateD = parseDate(date)
     val error = when {
         name.isBlank() -> "Bitte einen Namen angeben."
