@@ -221,7 +221,55 @@ extension AppModel {
     }
 
     func documentData(_ doc: DocumentInfo) -> Data? {
-        try? vault?.getDocumentBytes(docId: doc.id)
+        // a linked receipt (#590) has no file: no core call that could only fail
+        guard !doc.isLink else { return nil }
+        return try? vault?.getDocumentBytes(docId: doc.id)
+    }
+
+    // MARK: - Linked receipts (#590)
+
+    /// `http`/`https`: the only addresses stored as a linked receipt. Anything
+    /// else that is not a file (ftp:, data:, …) is never read nor stored.
+    nonisolated static func isWebLink(_ url: URL) -> Bool {
+        ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+    }
+
+    /// Links a document kept elsewhere to a booking: only the address and a
+    /// title go into the vault, GiroCrab never fetches it. Returns the core's
+    /// message when the link is refused (shown next to the field), else nil.
+    func attachLink(_ link: String, title: String, to booking: Booking) -> String? {
+        guard let vault else { return nil }
+        do {
+            _ = try vault.attachDocumentLink(bookingId: booking.id, url: link, title: title)
+        } catch CoreError.InvalidInput(let message) {
+            // the core's own sentence ("Der Link ist ungültig."), without the alert's prefix
+            return message
+        } catch {
+            return describe(error)
+        }
+        documentsChanged()
+        return nil
+    }
+
+    /// Opens a linked receipt in the default browser.
+    func openDocumentLink(_ doc: DocumentInfo) {
+        guard let url = doc.webURL else { return }
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        #else
+        UIApplication.shared.open(url)
+        #endif
+    }
+
+    /// Puts the address of a linked receipt on the clipboard.
+    func copyDocumentLink(_ doc: DocumentInfo) {
+        guard doc.isLink else { return }
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(doc.linkUrl, forType: .string)
+        #else
+        UIPasteboard.general.string = doc.linkUrl
+        #endif
     }
 
     /// Marks documents read or unread (opened in the list, or by hand).
@@ -249,15 +297,23 @@ extension AppModel {
         reloadBookings()
     }
 
-    /// Dropped onto a booking row / the inspector drop zone. Takes files only:
-    /// a dragged booking (`BookingDrag`) and a web link also arrive as URLs.
-    /// False when there is no file to attach.
+    /// Dropped onto a booking row / the inspector drop zone: a file is stored
+    /// in the vault, a web address becomes a linked receipt (#590). Only file
+    /// URLs are ever read: `Data(contentsOf:)` on a web address would fetch it.
+    /// A dragged booking (`BookingDrag`) also arrives as a URL and is neither.
+    /// False when there is nothing to attach.
     @discardableResult
     func attach(_ urls: [URL], to booking: Booking) -> Bool {
-        let urls = urls.filter(\.isFileURL)
+        let urls = urls.filter { $0.isFileURL || Self.isWebLink($0) }
         guard let vault, !urls.isEmpty else { return false }
         var n = 0
         for url in urls {
+            guard url.isFileURL else {
+                if Self.isWebLink(url) {
+                    runCore { _ = try vault.attachDocumentLink(bookingId: booking.id, url: url.absoluteString, title: ""); n += 1 }
+                }
+                continue
+            }
             let ok = url.startAccessingSecurityScopedResource()
             defer { if ok { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { continue }
@@ -269,16 +325,23 @@ extension AppModel {
     }
 
     /// Dropped anywhere: Rust matches amount/date/merchant (with PDFKit/Vision text as hint).
-    /// Files only, as in `attach`; false when there is none.
+    /// Only files take part, as in `attach`; false when there is none. A web
+    /// address has no content to match and is never fetched: it belongs on a
+    /// booking (#590).
     @discardableResult
     func dropAnywhere(_ urls: [URL]) -> Bool {
-        let urls = urls.filter(\.isFileURL)
-        guard !urls.isEmpty, let pin = pinVault() else { return false }
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else {
+            guard urls.contains(where: Self.isWebLink) else { return false }
+            toast = String(localized: "Einen Link bitte auf den passenden Umsatz ziehen")
+            return true
+        }
+        guard let pin = pinVault() else { return false }
         Task {
             var linked: [String] = []
             var unmatched = 0
             var failure: Error?
-            for url in urls {
+            for url in files {
                 let ok = url.startAccessingSecurityScopedResource()
                 defer { if ok { url.stopAccessingSecurityScopedResource() } }
                 guard let data = try? Data(contentsOf: url) else { continue }
@@ -331,6 +394,7 @@ extension AppModel {
     }
 
     /// Writes the document to a temp file and shows it in QuickLook.
+    /// A linked receipt (#590) has no file: nothing to show.
     func quickLook(_ doc: DocumentInfo) {
         guard let url = writeTemporaryFile(for: doc) else { return }
         quickLookURL = url

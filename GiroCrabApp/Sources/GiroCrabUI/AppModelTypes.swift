@@ -98,8 +98,24 @@ extension DocumentInfo {
         !sourceUrl.isEmpty && !sourceUrl.hasPrefix("demo-doc-")
     }
     var originTitle: String {
-        isBankDocument ? String(localized: "PostBox") : String(localized: "Beleg")
+        if isLink { return String(localized: "Link") }
+        return isBankDocument ? String(localized: "PostBox") : String(localized: "Beleg")
     }
+
+    /// A receipt that is only a reference to a document kept elsewhere (#590):
+    /// it has no file in the vault, the app opens its address in the browser.
+    var isLink: Bool { !linkUrl.isEmpty }
+
+    /// The address of a linked receipt, if it is one the app may open: only
+    /// `http(s)` with a host, as the core stores it (checked again here, the
+    /// vault may come from another device).
+    var webURL: URL? {
+        guard isLink, let url = URL(string: linkUrl), AppModel.isWebLink(url), url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
+    /// Host of a linked receipt, for the second line of its row.
+    var linkHost: String { webURL?.host ?? "" }
 }
 
 /// Period of the booking list and its sums. The menu follows MoneyMoney

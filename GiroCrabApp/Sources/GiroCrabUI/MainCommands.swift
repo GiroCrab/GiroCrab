@@ -109,7 +109,8 @@ struct BookingCommands: Commands {
                 .disabled(model.selectedBooking == nil)
             // like the Finder (⌘Y); Space in the list does the same
             Button("Beleg in Quick Look anzeigen") {
-                if let b = model.selectedBooking, let d = model.documents(for: b).first { model.quickLook(d) }
+                // a linked receipt (#590) has no file to show
+                if let b = model.selectedBooking, let d = model.documents(for: b).first(where: { !$0.isLink }) { model.quickLook(d) }
             }
             .keyboardShortcut("y", modifiers: .command)
             // the booking's own count: a vault query here ran on every selection change

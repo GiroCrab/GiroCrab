@@ -130,13 +130,24 @@ final class CategoryAssignTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    /// A booking dropped onto the list also arrives as a URL; like a web link
-    /// it is no receipt to attach or match.
+    /// A booking dropped onto the list also arrives as a URL: it is no receipt
+    /// to attach or match. A web link is never read either; on a booking it
+    /// becomes a linked receipt (#590), anywhere else it has nothing to match.
     func testDraggedBookingIsNoReceipt() throws {
         let b = try XCTUnwrap(model.bookings.first)
-        let urls = try [BookingDrag.payload([b.id]), "https://example.com/beleg.pdf"].map { try XCTUnwrap(URL(string: $0)) }
-        XCTAssertFalse(model.attach(urls, to: b))
-        XCTAssertFalse(model.dropAnywhere(urls))
+        let dragged = try [XCTUnwrap(URL(string: BookingDrag.payload([b.id])))]
+        XCTAssertFalse(model.attach(dragged, to: b))
+        XCTAssertFalse(model.dropAnywhere(dragged))
+
+        let before = model.documents(for: b).count
+        let urls = try dragged + [XCTUnwrap(URL(string: "https://example.com/beleg.pdf"))]
+        XCTAssertTrue(model.attach(urls, to: b))
+        let added = model.documents(for: b)
+        XCTAssertEqual(added.count, before + 1)
+        XCTAssertEqual(added.filter(\.isLink).map(\.linkUrl), ["https://example.com/beleg.pdf"])
+        // told where a link belongs; nothing is fetched or stored
+        XCTAssertTrue(model.dropAnywhere(urls))
+        XCTAssertEqual(model.documents(for: b).count, before + 1)
     }
 
     /// Rule counts are reloaded right away while the rule editor is open.

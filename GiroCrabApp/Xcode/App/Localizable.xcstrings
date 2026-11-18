@@ -2961,6 +2961,17 @@
         }
       }
     },
+    "Adresse (https://…)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Address (https://…)"
+          }
+        }
+      }
+    },
     "Advanzia Bank (Zugang mein.advanzia.com)" : {
       "localizations" : {
         "en" : {
@@ -6908,6 +6919,17 @@
         }
       }
     },
+    "Beleg verlinken" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link a Receipt"
+          }
+        }
+      }
+    },
     "Beleg zugeordnet: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9943,6 +9965,17 @@
         }
       }
     },
+    "Der Beleg bleibt, wo er ist. GiroCrab speichert nur die Adresse und ruft sie nicht ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The receipt stays where it is. GiroCrab only stores the address and never fetches it."
+          }
+        }
+      }
+    },
     "Der Dauerauftrag wird bei der Bank gelöscht. Danach werden keine weiteren Zahlungen mehr ausgeführt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11374,6 +11407,17 @@
         }
       }
     },
+    "Dieser Beleg liegt nicht im Tresor. GiroCrab ruft ihn nicht ab, sondern öffnet ihn im Browser." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This receipt is not stored in the vault. GiroCrab does not fetch it and opens it in the browser instead."
+          }
+        }
+      }
+    },
     "Dieser Beta-Build enthält die FinTS-Registrierung von GiroCrab nicht. Bitte melden Sie das den Entwicklern." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12414,6 +12458,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "A missing pending charge may be outside the loaded window. Discard it only after checking it yourself. Posted transactions are retained."
+          }
+        }
+      }
+    },
+    "Einen Beleg verlinken, der in einem eigenen Dokumentenarchiv liegt, statt ihn im Tresor zu speichern" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link a receipt kept in your own document archive instead of storing it in the vault"
+          }
+        }
+      }
+    },
+    "Einen Link bitte auf den passenden Umsatz ziehen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag a link onto the transaction it belongs to"
           }
         }
       }
@@ -16614,6 +16680,17 @@
         }
       }
     },
+    "Im Browser öffnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open in Browser"
+          }
+        }
+      }
+    },
     "Im Browser-Fenster anmelden …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20454,6 +20531,61 @@
         }
       }
     },
+    "Link" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link"
+          }
+        }
+      }
+    },
+    "Link entfernen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Link…"
+          }
+        }
+      }
+    },
+    "Link entfernen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove link?"
+          }
+        }
+      }
+    },
+    "Link hinzufügen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Link…"
+          }
+        }
+      }
+    },
+    "Link kopieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Link"
+          }
+        }
+      }
+    },
     "Liquidität & Geldmarkt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23476,6 +23608,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Only when the form is empty. The content is read on this device only and is never stored or logged. Fields are filled in only after you confirm in the notice."
+          }
+        }
+      }
+    },
+    "Nur der Link „%@“ wird entfernt. Das verlinkte Dokument bleibt unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only the link “%@” will be removed. The linked document stays unchanged."
           }
         }
       }
@@ -28934,6 +29077,17 @@
         }
       }
     },
+    "Titel (optional)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Title (optional)"
+          }
+        }
+      }
+    },
     "Trade Republic Perks" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30113,6 +30267,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The history could not be loaded"
+          }
+        }
+      }
+    },
+    "Verlinken" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Link"
+          }
+        }
+      }
+    },
+    "Verlinkter Beleg" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Receipt Link"
           }
         }
       }
