@@ -923,3 +923,39 @@ fn a_merge_reports_the_references_it_changed() {
     assert_eq!(merge(&b, &a).documents_updated, 0);
     assert_eq!(merge(&a, &b).documents_updated, 0);
 }
+
+#[test]
+fn bookings_without_a_document_can_be_listed_and_counted() {
+    let dir = TempDir::new("links-missing");
+    let v = open(&dir, "v.db");
+    seed(&v, &["T1", "T2", "T3", "T4"]);
+    v.attach_document_link(id_of(&v, "T1"), URL.into(), String::new())
+        .unwrap();
+    v.attach_document_to_booking(
+        id_of(&v, "T2"),
+        "bon.pdf".into(),
+        crate::documents::simple_pdf(&["Kassenbon".into()]),
+    )
+    .unwrap();
+    // a removed reference no longer counts
+    let gone = v
+        .attach_document_link(id_of(&v, "T3"), URL.into(), String::new())
+        .unwrap();
+    v.delete_document(gone).unwrap();
+
+    let missing = BookingFilter {
+        without_document: true,
+        ..Default::default()
+    };
+    let mut ids: Vec<i64> = v
+        .list_transactions(missing.clone())
+        .unwrap()
+        .transactions
+        .iter()
+        .map(|b| b.id)
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, [id_of(&v, "T3"), id_of(&v, "T4")]);
+    assert_eq!(v.count_transactions(missing).unwrap(), 2);
+    assert_eq!(v.count_transactions(BookingFilter::default()).unwrap(), 4);
+}

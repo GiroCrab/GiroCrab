@@ -483,6 +483,16 @@ impl Vault {
                 ));
             }
         }
+        if filter.without_document {
+            // both conditions come from an index (the second one partial:
+            // `deleted_ms IS NULL` must stay literal)
+            wh.push(
+                "NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)
+                 AND NOT EXISTS (SELECT 1 FROM document_links l
+                                  WHERE l.booking_id = t.id AND l.deleted_ms IS NULL)"
+                    .into(),
+            );
+        }
         match filter.checked {
             None => {}
             Some(true) => wh.push("t.checked != 0".into()),
