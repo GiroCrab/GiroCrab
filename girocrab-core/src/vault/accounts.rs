@@ -871,24 +871,37 @@ impl Vault {
     /// Changes the account type (Kontoart), e.g. a checking account that is really a card.
     pub fn set_account_kind(&self, account_id: i64, kind: AccountKind) -> Result<(), CoreError> {
         let db = self.db()?;
+        let tx = db.unchecked_transaction()?;
+        // valued by its items or loan terms until now (see below)
+        let valued = crate::assets::is_tangible(&tx, account_id)?
+            || crate::loans::is_manual_loan(&tx, account_id)?;
         // The "by kind" sidebar sections are the `account_groups`: move the
         // account into the section of its new kind (#575).
         let (group, sym, order) = crate::connectors::group_for(kind);
-        let gid = Self::ensure_group(&db, group, sym, order)?;
-        let n = db.execute(
+        let gid = Self::ensure_group(&tx, group, sym, order)?;
+        let n = tx.execute(
             "UPDATE accounts SET kind = ?1, group_id = ?2,
                 include_in_total=CASE WHEN ?1='order' AND kind<>'order' THEN 0 ELSE include_in_total END,
                 total_ms=CASE WHEN ?1='order' AND kind<>'order' AND include_in_total<>0 THEN MAX(?4,total_ms+1) ELSE total_ms END
              WHERE id = ?3",
-            params![kind.as_str(), gid, account_id, crate::dates::now_ms()],
-        )?;
+            params![kind.as_str(), gid, account_id, crate::dates::now_ms()],        )?;
         if n == 0 {
             return Err(CoreError::NotFound {
                 what: trf("Konto {0}", &[&account_id]),
             });
         }
         // a depot's value history counts only while it is one (#578)
-        crate::depot_values::rebuild(&db, account_id, None)?;
+        crate::depot_values::rebuild(&tx, account_id, None)?;
+        // Sachwerte accounts and manual loans value themselves only while
+        // they keep their kind: recompute the balance on the way in and out.
+        crate::assets::refresh_balances(&tx)?;
+        crate::loans::refresh_all(&tx)?;
+        let still = crate::assets::is_tangible(&tx, account_id)?
+            || crate::loans::is_manual_loan(&tx, account_id)?;
+        if valued && !still {
+            crate::opening_balance::recompute(&tx, account_id)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
