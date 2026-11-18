@@ -129,11 +129,8 @@ public final class AppModel {
             if oldValue != sidebarSelection {
                 oldValue.flatMap { sidebarRowSelections[$0] }?.isSelected = false
                 sidebarSelection.flatMap { sidebarRowSelections[$0] }?.isSelected = true
-                untrackedSidebarSelection = sidebarSelection
+                requestStreamTop()
             }
-            selectionIsOverview = sidebarSelection == .allAccounts
-            selectionIsNewBookings = sidebarSelection == .newBookings
-            if oldValue != sidebarSelection { requestStreamTop(withData: selectionLoadsInBackground) }
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
             listLimit = Self.defaultListLimit
@@ -154,13 +151,9 @@ public final class AppModel {
     /// Per sidebar row: is it the selected one (`sidebarRowSelection(for:)`), kept in step by
     /// `sidebarSelection`.
     @ObservationIgnored var sidebarRowSelections: [SidebarItem: SidebarRowSelection] = [:]
-    /// `sidebarSelection` for code that must not observe it (a row's first lookup of its flag).
-    @ObservationIgnored var untrackedSidebarSelection: SidebarItem? = .allAccounts
-    /// „Alle Konten“ / „Neue Umsätze“ is selected: the booking stream changes its layout for
-    /// these. Stored like `mainColumn`, so a switch between accounts or categories leaves the
-    /// stream view alone until the new list arrives.
-    private(set) var selectionIsOverview = true
-    private(set) var selectionIsNewBookings = false
+    /// `sidebarSelection` for code that must not observe it (a row's first lookup of its flag):
+    /// the macro's untracked backing store.
+    var untrackedSidebarSelection: SidebarItem? { _sidebarSelection }
     /// Bumped when the booking stream should scroll back to its top for a new selection
     /// (`requestStreamTop`).
     var streamTopRequest = 0
@@ -198,7 +191,7 @@ public final class AppModel {
     }
     var period: Period = .all {
         didSet {
-            if oldValue != period { requestStreamTop(withData: selectionLoadsInBackground) }
+            if oldValue != period { requestStreamTop() }
             periodDidChange()
         }
     }

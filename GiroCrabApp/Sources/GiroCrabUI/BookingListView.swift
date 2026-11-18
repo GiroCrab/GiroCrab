@@ -19,9 +19,11 @@ struct BookingStreamView: View {
 
     var body: some View {
         @Bindable var model = model
-        let isOverview = model.selectionIsOverview
+        // Per-item flags instead of `sidebarSelection`: they change only when „Alle Konten“ /
+        // „Neue Umsätze“ is entered or left, so a switch between categories leaves this view alone.
+        let isOverview = model.sidebarRowSelection(for: .allAccounts).isSelected
         // „Neue Umsätze“: account cards instead of day cards, no charts
-        let isNewBookings = model.selectionIsNewBookings
+        let isNewBookings = model.sidebarRowSelection(for: .newBookings).isSelected
         let emptyVault = !model.demoActive && model.allAccounts.isEmpty
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
@@ -59,7 +61,7 @@ struct BookingStreamView: View {
                         if !emptyVault && model.scope != .investments {
                             MerchantLogoTipView()
                         }
-                        StreamAnalysisCards(isOverview: isOverview, isNewBookings: isNewBookings)
+                        StreamAnalysisCards(isOverview: isOverview, isNewBookings: isNewBookings, hasAccounts: !model.allAccounts.isEmpty)
                         if model.isLoadingSelection {
                             ProgressView().controlSize(.small)
                                 .frame(maxWidth: .infinity)
@@ -300,6 +302,7 @@ private struct StreamAnalysisCards: View {
     @Environment(AppModel.self) private var model
     let isOverview: Bool
     let isNewBookings: Bool
+    let hasAccounts: Bool
     @AppStorage("showAccountAnalytics") private var showAnalytics: Bool = false
     /// View › "Auswertungen anzeigen" (GitHub #233): hides the charts and analysis cards.
     @AppStorage(ViewLayout.statisticsKey) private var showStatistics: Bool = true
@@ -312,7 +315,7 @@ private struct StreamAnalysisCards: View {
         let cards = ViewLayout.cards(statistics: showStatistics, budgets: showBudgets)
         if model.scope == .investments {
             InvestmentDashboardView()
-        } else if cards.any, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
+        } else if cards.any, !isNewBookings, hasAccounts, isOverview || showAnalytics {
             // Overview: always; single account: only when toggled on.
             #if os(iOS)
             if cards.cashflow {
@@ -1167,16 +1170,18 @@ struct AccountChip: View {
     var compact = false
 
     var body: some View {
-        AccountChipLayout(showsLabel: !compact) {
+        AccountChipLayout {
             Capsule().fill(color.opacity(0.12))
             Image(systemName: symbol)
                 .appFont(.caption, weight: .semibold)
                 .foregroundStyle(color)
-            Text(label)
-                .sensitive()
-                .appFont(.subheadline, weight: .medium)
-                .foregroundStyle(color)
-                .lineLimit(1)
+            if !compact {
+                Text(label)
+                    .sensitive()
+                    .appFont(.subheadline, weight: .medium)
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+            }
         }
         // a label that does not fit is placed outside the chip
         .clipped()
@@ -1187,41 +1192,56 @@ struct AccountChip: View {
 }
 
 /// Symbol and label in a tinted capsule, or only the symbol when the full chip does not fit
-/// the offered width. One layout instead of `ViewThatFits` over a full and a compact chip,
-/// which built and measured both for every booking row on screen. Subviews: capsule,
-/// symbol, label.
+/// the offered width (or there is no label). One layout instead of `ViewThatFits` over a full
+/// and a compact chip, which built and measured both for every booking row on screen.
+/// Subviews: capsule, symbol, optional label.
 private struct AccountChipLayout: Layout {
-    var showsLabel: Bool
     private static let padding: CGFloat = 6
     private static let spacing: CGFloat = 4
     private static let vertical: CGFloat = 1.5
 
-    private func sizes(_ subviews: Subviews) -> (icon: CGSize, label: CGSize, full: CGSize, compact: CGSize) {
+    /// Ideal sizes, measured once per subview change: the stack around the chip asks for its
+    /// size several times per layout pass.
+    struct Sizes {
+        var icon: CGSize
+        var label: CGSize?
+        var full: CGSize?
+        var compact: CGSize
+    }
+
+    func makeCache(subviews: Subviews) -> Sizes {
         let icon = subviews[1].sizeThatFits(.unspecified)
-        let label = subviews[2].sizeThatFits(.unspecified)
-        let full = CGSize(width: Self.padding * 2 + icon.width + Self.spacing + label.width,
-                          height: max(icon.height, label.height) + Self.vertical * 2)
-        return (icon, label, full, CGSize(width: icon.width, height: icon.height + Self.vertical * 2))
+        let label = subviews.count > 2 ? subviews[2].sizeThatFits(.unspecified) : nil
+        let full = label.map {
+            CGSize(width: Self.padding * 2 + icon.width + Self.spacing + $0.width,
+                   height: max(icon.height, $0.height) + Self.vertical * 2)
+        }
+        return Sizes(icon: icon, label: label, full: full,
+                     compact: CGSize(width: icon.width, height: icon.height + Self.vertical * 2))
     }
 
-    private func fits(_ width: CGFloat?, _ full: CGSize) -> Bool {
-        showsLabel && (width ?? .infinity) >= full.width
+    func updateCache(_ cache: inout Sizes, subviews: Subviews) {
+        cache = makeCache(subviews: subviews)
     }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let s = sizes(subviews)
-        return fits(proposal.width, s.full) ? s.full : s.compact
+    /// The full chip when it fits `width` (nil: ideal size, no limit).
+    private func full(_ cache: Sizes, within width: CGFloat?) -> CGSize? {
+        cache.full.flatMap { (width ?? .infinity) >= $0.width ? $0 : nil }
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let s = sizes(subviews)
-        let full = fits(bounds.width + 0.5, s.full)
-        let iconX = bounds.minX + (full ? Self.padding : 0)
-        subviews[0].place(at: bounds.origin, proposal: full ? ProposedViewSize(bounds.size) : .zero)
-        subviews[1].place(at: CGPoint(x: iconX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(s.icon))
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Sizes) -> CGSize {
+        full(cache, within: proposal.width) ?? cache.compact
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Sizes) {
+        let showsLabel = full(cache, within: bounds.width + 0.5) != nil
+        let iconX = bounds.minX + (showsLabel ? Self.padding : 0)
+        subviews[0].place(at: bounds.origin, proposal: showsLabel ? ProposedViewSize(bounds.size) : .zero)
+        subviews[1].place(at: CGPoint(x: iconX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(cache.icon))
+        guard subviews.count > 2, let label = cache.label else { return }
         // outside the clipped bounds when it does not fit
-        let labelX = full ? iconX + s.icon.width + Self.spacing : bounds.maxX + 1000
-        subviews[2].place(at: CGPoint(x: labelX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(s.label))
+        let labelX = showsLabel ? iconX + cache.icon.width + Self.spacing : bounds.maxX + 1000
+        subviews[2].place(at: CGPoint(x: labelX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(label))
     }
 }
 
@@ -1276,10 +1296,9 @@ struct LoadMoreBookingsFooter: View {
     }
 }
 
-/// macOS: the window carries the view's title, the toolbar does not show it
-/// (macOS 15+). iOS keeps the empty navigation title as before.
-/// Window title from `model.title`. Read here, in the modifier's own body, so a title change
-/// re-runs only this modifier and not the view that applies it.
+/// Window title from `model.title`, read in the modifier's own body so a title change re-runs
+/// only this modifier, not the view that applies it. macOS: the window carries the view's
+/// title, the toolbar does not show it (macOS 15+). iOS keeps the empty navigation title.
 struct WindowTitle: ViewModifier {
     @Environment(AppModel.self) private var model
     /// The title bar is drawn by AppKit, so `.sensitive()` cannot cover it:
@@ -1407,9 +1426,9 @@ private struct ScopeToolbarControl: View {
 
     var body: some View {
         // Keep one customizable toolbar item, with the filter for the current view.
-        if model.sidebarSelection == .wealth {
+        if model.mainColumn == .wealth {
             WealthScopePicker()
-        } else if model.sidebarSelection == .documents {
+        } else if model.mainColumn == .documents {
             DocumentsScopePicker()
         } else {
             switch model.presentation {
@@ -1417,7 +1436,7 @@ private struct ScopeToolbarControl: View {
             // Sachwerte have neither booking scopes nor depot tabs; the item stays so the
             // customizable toolbar keeps its layout
             case .tangible: Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
-            case .bookings: BookingScopePicker().disabled(model.sidebarSelection == .newBookings)
+            case .bookings: BookingScopePicker().disabled(model.sidebarRowSelection(for: .newBookings).isSelected)
             }
         }
     }
@@ -1480,9 +1499,7 @@ private struct LockToolbarButton: View {
             .disabled(!model.hasOwnVault)
     }
 }
-#endif
 
-#if os(macOS)
 /// Modifier keys held at the last mouse-down in the app. SwiftUI runs a tap
 /// gesture after the event has passed, so `NSApp.currentEvent` no longer
 /// carries them; a local monitor records them as the click arrives.

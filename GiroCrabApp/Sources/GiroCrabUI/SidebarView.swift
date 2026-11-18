@@ -643,21 +643,22 @@ struct DisclosureChevron: View {
 
 struct SectionHeader: View {
     @Environment(AppModel.self) private var model
-    /// Selected header: hierarchical styles so macOS can draw them light on the
-    /// accent-coloured selection (fixed theme colours stay dark there).
     let name: String
     let sfSymbol: String
     let balanceCents: Int64
-    /// The header's own sidebar item. The header compares it with the selection itself, so a
-    /// selection change re-runs the headers and not `SidebarView.body` (the whole outline).
-    var item: SidebarItem?
+    /// The header's own sidebar item. Its selection flag (`sidebarRowSelection(for:)`) is read
+    /// here, so a selection change re-runs only the old and the new header, not
+    /// `SidebarView.body` (the whole outline).
+    let item: SidebarItem
     var isLoanGroup: Bool = false
     /// Bug report screenshot (#301): category-like group names hide on request, bank names stay visible.
     var nameRedaction: ReportRedaction = .labels
     var open: Bool = true
     var toggle: () -> Void = {}
 
-    private var selected: Bool { item.map { model.sidebarRowSelection(for: $0).isSelected } ?? false }
+    /// Selected header: hierarchical styles so macOS can draw them light on the
+    /// accent-coloured selection (fixed theme colours stay dark there).
+    private var selected: Bool { model.sidebarRowSelection(for: item).isSelected }
 
     var body: some View {
         HStack(spacing: 5) {
