@@ -1625,6 +1625,17 @@
         }
       }
     },
+    "%lld× im Monat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lu× a month"
+          }
+        }
+      }
+    },
     "%u" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2587,6 +2598,17 @@
         }
       }
     },
+    "API-Benutzername, API-Passwort und Signatur finden Sie bei PayPal unter Kontoeinstellungen › API-Zugriff (klassische NVP-API). Geeignet für Privatkonten mit bestehenden API-Zugangsdaten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You find the API username, API password and signature at PayPal under Account settings › API access (classic NVP API). Suited to personal accounts with existing API credentials."
+          }
+        }
+      }
+    },
     "API-Schlüssel (wird nicht gespeichert)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2605,6 +2627,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Store API Key in Vault"
+          }
+        }
+      }
+    },
+    "API-Signatur" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API signature"
           }
         }
       }
@@ -3437,6 +3470,17 @@
         }
       }
     },
+    "Alle %lld anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show all %lld"
+          }
+        }
+      }
+    },
     "Alle (%lld)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4005,6 +4049,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Everyday & Spending"
+          }
+        }
+      }
+    },
+    "Als CSV exportieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export as CSV …"
           }
         }
       }
@@ -5330,6 +5385,17 @@
         }
       }
     },
+    "Aus: Das Konto wird archiviert und ausgeblendet, seine Daten bleiben erhalten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off: the account is archived and hidden, its data is kept."
+          }
+        }
+      }
+    },
     "Ausbildung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6589,6 +6655,17 @@
         }
       }
     },
+    "Beim Zugang „Dokumente abrufen“ einschalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switch on “Fetch documents” in the connection"
+          }
+        }
+      }
+    },
     "Beim nächsten Abruf ist eine neue Anmeldung mit SMS-Freigabe erforderlich." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6838,6 +6915,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Documents arrive when fetching (Trade Republic, comdirect PostBox, FinTS statement) or via drag and drop."
+          }
+        }
+      }
+    },
+    "Belege, Kontoauszüge und PostBox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Receipts, statements and PostBox documents are fetched with every sync. Off: no new documents, stored ones stay. Switching it on again lets the next sync fetch missing documents."
           }
         }
       }
@@ -11406,6 +11494,17 @@
         }
       }
     },
+    "Dokumente abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch documents"
+          }
+        }
+      }
+    },
     "Dokumente ausgelassen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11457,6 +11556,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Documents are kept under “Belege & PostBox” (search: equateplus) and are not assigned to bookings or activities automatically. Only if the plan name in the document matches a plan does it also appear with that plan’s account."
+          }
+        }
+      }
+    },
+    "Dokumentenabruf ausgeschaltet für: %@. Neue Dokumente kommen erst wieder, wenn er eingeschaltet ist." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Document retrieval is switched off for: %@. New documents only arrive again once it is switched on."
           }
         }
       }
@@ -12133,6 +12243,17 @@
         }
       }
     },
+    "Eine REST-App mit der Berechtigung „Transaction Search“ legen Sie auf developer.paypal.com an. PayPal gibt diese Berechtigung nur für Geschäftskonten frei." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create a REST app with the “Transaction Search” permission on developer.paypal.com. PayPal grants this permission to business accounts only."
+          }
+        }
+      }
+    },
     "Eine Sammelbuchung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12397,6 +12518,17 @@
         }
       }
     },
+    "Einstandskurs" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cost price"
+          }
+        }
+      }
+    },
     "Einstandswert" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12448,6 +12580,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Settings… (⌘,)"
+          }
+        }
+      }
+    },
+    "Einstellungen › Banken öffnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Settings › Banks"
           }
         }
       }
@@ -13068,6 +13211,17 @@
         }
       }
     },
+    "Erweitert: API-Signatur (klassische NVP-API)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advanced: API Signature (Classic NVP API)"
+          }
+        }
+      }
+    },
     "Erweitert: Eigene PSD2/Enable-Banking API (Optional)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13262,6 +13416,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Export…"
+          }
+        }
+      }
+    },
+    "Exportiert, was die Tabelle gerade zeigt (Suche, Zeitraum und Filter)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exports what the table shows (search, period and filter)"
           }
         }
       }
@@ -13950,6 +14115,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hairdresser"
+          }
+        }
+      }
+    },
+    "Frühere Monate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Earlier months"
           }
         }
       }
@@ -14735,6 +14911,17 @@
         }
       }
     },
+    "Gewinn/Verlust %" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Profit/Loss %"
+          }
+        }
+      }
+    },
     "Gibt es den Zugang schon (gleiche Bank, gleiche Kennung), wird er aktualisiert statt doppelt angelegt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15302,6 +15489,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Google"
+          }
+        }
+      }
+    },
+    "Grafik als Bild teilen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share chart as image"
           }
         }
       }
@@ -16721,6 +16919,17 @@
         }
       }
     },
+    "In diesem Zeitraum wurden keine wiederkehrenden Sparplan-Käufe erkannt. Sparplan-Ausführungen erscheinen hier, sobald das Depot sie liefert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recurring savings plan purchases were found in this period. Savings plan executions appear here as soon as the depot delivers them."
+          }
+        }
+      }
+    },
     "In dieser Datei wurden keine Umsätze erkannt (erwartet: CSV mit Datum/Betrag, XML <transactions>, camt.053 oder MT940)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16952,6 +17161,17 @@
         }
       }
     },
+    "Investiert im Zeitraum" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invested in the period"
+          }
+        }
+      }
+    },
     "Investment" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16996,6 +17216,17 @@
         }
       }
     },
+    "Ist die API-Signatur gesetzt, ruft GiroCrab per API-Benutzername, API-Passwort und Signatur ab; Client-ID und Secret werden dann nicht gebraucht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When the API signature is set, GiroCrab fetches with API username, API password and signature; client ID and secret are then not needed."
+          }
+        }
+      }
+    },
     "Ja" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17025,6 +17256,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Year %@"
+          }
+        }
+      }
+    },
+    "Jahr: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Year: %@"
           }
         }
       }
@@ -18158,6 +18400,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No third-party registration needed"
+          }
+        }
+      }
+    },
+    "Keine Sparpläne erkannt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No savings plans found"
           }
         }
       }
@@ -19708,6 +19961,17 @@
         }
       }
     },
+    "Kurseinheit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Price unit"
+          }
+        }
+      }
+    },
     "Käufe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20628,6 +20892,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Quantity / unit"
+          }
+        }
+      }
+    },
+    "Mengeneinheit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quantity unit"
           }
         }
       }
@@ -22877,6 +23152,17 @@
         }
       }
     },
+    "Nur Aktivitäten dieses Kalenderjahres" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only activities of this calendar year"
+          }
+        }
+      }
+    },
     "Nur Ausgaben" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24324,6 +24610,17 @@
         }
       }
     },
+    "Positionen, Wertpapieraktivitäten oder Sparpläne (⌘1, ⌘2, ⌘3)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Positions, securities activity or savings plans (⌘1, ⌘2, ⌘3)"
+          }
+        }
+      }
+    },
     "Positionen: %@ (%@ Differenz)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24821,6 +25118,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Landscape"
+          }
+        }
+      }
+    },
+    "REST-App" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "REST app"
           }
         }
       }
@@ -26853,6 +27161,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Set up later"
+          }
+        }
+      }
+    },
+    "Spätere Monate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Later months"
           }
         }
       }
@@ -30614,6 +30933,17 @@
         }
       }
     },
+    "Weniger anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show fewer"
+          }
+        }
+      }
+    },
     "Wenigste Buchungen zuerst" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31164,6 +31494,17 @@
         }
       }
     },
+    "Wird nicht abgerufen, solange „Dokumente abrufen“ oben ausgeschaltet ist." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not fetched while “Fetch documents” above is switched off."
+          }
+        }
+      }
+    },
     "Wird nie als Gehalt gezählt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31292,6 +31633,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose where the data comes from. The original data stays unchanged."
+          }
+        }
+      }
+    },
+    "Währung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Currency"
           }
         }
       }
@@ -31666,6 +32018,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Connection"
+          }
+        }
+      }
+    },
+    "Zugang über" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Access via"
           }
         }
       }
@@ -32127,6 +32490,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "every %lld weeks"
+          }
+        }
+      }
+    },
+    "am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "on the %@"
           }
         }
       }

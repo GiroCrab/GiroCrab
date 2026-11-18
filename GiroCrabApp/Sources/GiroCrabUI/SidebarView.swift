@@ -811,7 +811,9 @@ struct AccountRow: View {
     /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
         let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
-        return [account.bankName, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        // the owner tells accounts of the same name apart
+        let owner = model.accountDistinction(account)
+        return [account.bankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private var searchAwareSubtitle: String {
@@ -1125,7 +1127,5 @@ private struct CategoryChipToggle: View {
         }
     }
 
-    private var hiddenIDs: Set<Int64> {
-        Set(hiddenRaw.split(separator: ",").compactMap { Int64($0) })
-    }
+    private var hiddenIDs: Set<Int64> { ViewLayout.hiddenCategoryChipAccounts(raw: hiddenRaw) }
 }

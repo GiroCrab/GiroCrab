@@ -17,7 +17,12 @@
 </p>
 
 <p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.8.5</sub></p>
-
+<p align="center">
+  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe"><img src="docs/assets/download-windows-alpha.svg" alt="Für Windows laden (Alpha – Frühe Vorschau)" width="260" height="56"></a>
+  &nbsp;
+  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-Android-alpha.apk"><img src="docs/assets/download-android-alpha.svg" alt="Für Android laden (Alpha – Frühe Vorschau)" width="260" height="56"></a>
+</p>
+<p align="center"><sub>🧪 <strong>Windows &amp; Android (frühes Alpha-Stadium):</strong> Vorab-Builds zum Ausprobieren (idealerweise im Demo-Modus) – noch nicht auf dem Stand von macOS &amp; iOS.</sub></p>
 <p align="center">
   <a href="https://github.com/GiroCrab/GiroCrab/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/GiroCrab/GiroCrab?label=release&color=2ea44f"></a>
   <a href="https://github.com/GiroCrab/GiroCrab/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/GiroCrab/GiroCrab/total?color=007AFF"></a>
@@ -193,42 +198,43 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 ### Unterstützte Banken & Schnittstellen
 
 <!-- sync:connectors:start -->
-| Bank | Schnittstelle | Umsätze | Salden | Depot | Überweisung | Dauerauftrag | PDF/Postfach | Status |
-|---|---|---|---|---|---|---|---|---|
-| 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
-| Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✅ Verifiziert |
-| FinTS-Bank (BLZ + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verifiziert |
-| ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
-| Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
-| Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verifiziert |
-| bunq | REST-API | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
-| comdirect | REST-API | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
-| Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
-| PayPal | REST-API | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
-| Scalable Capital | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
-| Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
-| American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
-| ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
-| PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
-| Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
-| Weitere Banken per PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen |
-| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
-| Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | 🧪 Test gesucht |
-| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
-| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
-| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
-| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
-| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
-| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
-| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
-| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
-| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
-| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
-| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen |
+| Bank | Schnittstelle | Umsätze | Salden | Depot | Depot-Aktivitäten | Überweisung | Dauerauftrag | PDF/Postfach | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verifiziert |
+| Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Test gesucht |
+| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
+| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
+| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
+| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
+| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
+| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
+| 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
+| Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
+| FinTS-Bank (BLZ + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
+| ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
+| Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
+| bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verifiziert |
+| comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
+| Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
+| PayPal | REST-API | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
+| Scalable Capital | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
+| Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
+| PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
+| Weitere Banken per PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
 
 Weitere deutsche Banken mit FinTS 3.0 (PIN/TAN) lassen sich über BLZ und FinTS-URL anbinden (2.011 Institute im FinTS-Verzeichnis); europäische PSD2-Banken über Enable Banking mit einer eigenen, kostenlosen Anwendung.
 
-<sub>✅ mit echten Konten getestet · 🧪 implementiert, Rückmeldungen aus der Praxis willkommen (Issue verlinkt) · ⚠️ bekannte Einschränkungen · ✓ umgesetzt · – nicht umgesetzt. Bei FinTS hängen Depot und PDF-Kontoauszüge vom Angebot der jeweiligen Bank ab.</sub>
+<sub>✅ mit echten Konten getestet · 🧪 implementiert, Rückmeldungen aus der Praxis willkommen (Issue verlinkt) · ⚠️ bekannte Einschränkungen · ✓ umgesetzt · – nicht umgesetzt. Bei FinTS hängen Depot und PDF-Kontoauszüge vom Angebot der jeweiligen Bank ab. Depot: Positionen; Depot-Aktivitäten: Käufe, Verkäufe und Ausschüttungen als eigene Einträge. Anlageklasse und Instrument ermittelt GiroCrab für jedes Depot selbst, einige Konnektoren übernehmen sie von der Bank.</sub>
 <!-- sync:connectors:end -->
 
 quirion: Einrichtung, technische Details und geprüfter Umfang stehen in [docs/quirion-connector.md](docs/quirion-connector.md).
@@ -423,42 +429,43 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 ### Supported Banks & Interfaces
 
 <!-- sync:connectors:start -->
-| Bank | Interface | Transactions | Balances | Securities | Transfers | Standing orders | PDF/post box | Status |
-|---|---|---|---|---|---|---|---|---|
-| 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
-| Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✅ Verified |
-| FinTS bank (bank code + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verified |
-| ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
-| Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | ✅ Verified |
-| Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verified |
-| bunq | REST-API | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
-| comdirect | REST-API | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
-| Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
-| PayPal | REST-API | ✓ | ✓ | – | – | – | – | ⚠️ Limited [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
-| Scalable Capital | REST-API | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
-| Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verified |
-| American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verified |
-| ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
-| More banks via PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ⚠️ Limited |
-| PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verified |
-| Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
-| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
-| Amazon orders | Web-Portal | ✓ | – | – | – | – | – | 🧪 Testing wanted |
-| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
-| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
-| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
-| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
-| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
-| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
-| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
-| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
-| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
-| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | ✅ Verified |
-| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ⚠️ Limited |
+| Bank | Interface | Transactions | Balances | Securities | Securities activity | Transfers | Standing orders | PDF/post box | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verified |
+| Amazon orders | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Testing wanted |
+| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
+| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
+| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
+| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
+| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
+| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
+| 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
+| Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verified |
+| FinTS bank (bank code + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
+| ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
+| Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
+| bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verified |
+| comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
+| Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
+| PayPal | REST-API | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
+| Scalable Capital | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
+| Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
+| More banks via PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
+| PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
 
 Further German banks with FinTS 3.0 (PIN/TAN) can be connected via bank code and FinTS URL (2,011 institutions in the FinTS directory); European PSD2 banks via Enable Banking with your own free application.
 
-<sub>✅ tested with real accounts · 🧪 implemented, feedback from real accounts welcome (issue linked) · ⚠️ known limitations · ✓ implemented · – not implemented. For FinTS, securities and PDF statements depend on what the individual bank offers.</sub>
+<sub>✅ tested with real accounts · 🧪 implemented, feedback from real accounts welcome (issue linked) · ⚠️ known limitations · ✓ implemented · – not implemented. For FinTS, securities and PDF statements depend on what the individual bank offers. Securities: positions; securities activity: buys, sells and distributions as entries of their own. GiroCrab works out asset class and instrument for every depot itself; some connectors take them over from the bank.</sub>
 <!-- sync:connectors:end -->
 
 Adding a bank usually takes under 100 lines – start from
@@ -467,7 +474,9 @@ Adding a bank usually takes under 100 lines – start from
 ### Download (macOS)
 
 The pre-built disk image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) is available under
-[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.5**. Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
+[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.5**.
+
+> 🧪 **Windows & Android (Early Alpha):** Experimental preview installers for [Windows (`x86_64-setup.exe`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe) and [Android (`.apk`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-Android-alpha.apk) are available for early testing (best tried in demo mode). Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
 **iPhone / iPad:** [join the TestFlight beta](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel Macs:** the official binaries are Apple Silicon (`arm64`) only. On Intel Macs you can build GiroCrab yourself from source with Swift/Xcode (see [Quickstart](#quickstart)).

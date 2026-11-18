@@ -101,7 +101,12 @@ public final class AppModel {
     /// Bar width of the category chart (#557); `.automatic` follows the global setting (months if that is automatic too).
     var categoryBarUnit: BalanceBarUnit = .automatic
     var advanziaWorkflow: AdvanziaWorkflow?
-    var connections: [BankConnection] = []
+    var connections: [BankConnection] = [] {
+        didSet { refreshDocumentsOff() }
+    }
+    /// Connections whose bank delivers documents but whose retrieval is switched off ("Dokumente
+    /// abrufen"). Kept here so views never ask the core while they render (`refreshDocumentsOff`).
+    var documentsOffConnectionIDs: Set<Int64> = []
     /// Login with accounts that another login already delivers: asks which to fetch (#346).
     var accountSelectionConnection: BankConnection?
     var settings: [SettingEntry] = []
@@ -326,6 +331,10 @@ public final class AppModel {
             // Cached per merchant; reloadMerchantStats() would drop the cache on every click.
             loadMerchantStats()
             if selectedBookingID != oldValue {
+                // The balance chart's marker follows the selected booking (#593). Set here, it
+                // lands in the selection's own update; set by the list's `onChange` afterwards,
+                // it cost the whole window one more pass (after every click, arrow key and load).
+                if let day = selectedBooking?.bookingDate, scrollFocusDay != day { scrollFocusDay = day }
                 loadCategorySuggestion()
                 scheduleAutoReview()
             }
@@ -799,6 +808,7 @@ public final class AppModel {
                 } else if let a = allAccounts.first(where: { $0.name.lowercased().contains(q) }) {
                     sidebarSelection = .account(a.id)
                     if options.depotTab == "activities" { depotTab = .activities }
+                    if options.depotTab == "plans" { depotTab = .plans }
                     selectedBookingID = bookings.first?.id
                 } else if let g = userGroups.first(where: { $0.name.lowercased().contains(q) && !$0.isUngrouped }) {
                     sidebarSelection = .userGroup(g.uuid)
