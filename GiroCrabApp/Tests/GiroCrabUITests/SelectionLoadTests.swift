@@ -15,7 +15,10 @@ final class SelectionLoadTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    override func tearDown() async throws { model = nil }
+    override func tearDown() async throws {
+        UserDefaults.standard.removeObject(forKey: AppModel.markAccountBookingsReadOnSelectionDefaultsKey)
+        model = nil
+    }
 
     private func unreadBookingCount(accountID: Int64) throws -> Int {
         var filter = model.currentFilter
