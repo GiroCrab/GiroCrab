@@ -24,18 +24,20 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use zeroize::Zeroizing;
 
-use super::backend::{Backend, Filed, Labels, Page, TaskState, Upload, Uploaded};
+use super::backend::{Backend, FactKind, Filed, Labels, Page, TaskState, Upload, Uploaded};
 use super::client::{Client, Failure, Watch};
+use super::facts::{Facts, FIELDS};
 use super::{invalid, unexpected, valid_date, ArchiveDocument, ArchiveFile, ArchiveInfo};
 use crate::connectors::{MAX_DOC_BYTES, MAX_TEXT_BYTES};
-use crate::error::CoreResult;
-use crate::i18n::tr;
+use crate::error::{CoreError, CoreResult};
+use crate::i18n::{tr, trf};
 
 /// API version asked for with every request.
 const API_VERSION: &str = "application/json; version=9";
 /// Largest page the archive is asked for.
 const MAX_PAGE: u32 = 50;
 pub(crate) const MAX_THUMB_BYTES: usize = 2 * 1024 * 1024;
+const FIELD_PAGES: u32 = 20;
 /// Longest name the archive takes for a sender, a type or a tag.
 const MAX_LABEL: usize = 128;
 
@@ -574,6 +576,125 @@ async fn known_document(client: &Client, ours: &[u8]) -> Result<Option<i64>, Fai
     Ok(None)
 }
 
+// ------------------------------------------------------------------ booking data
+
+/// The archive's data type for a field.
+fn data_type(kind: FactKind) -> String {
+    match kind {
+        FactKind::Date => "date",
+        FactKind::Money => "monetary",
+        FactKind::Text => "string",
+    }
+    .to_string()
+}
+
+/// The ids of the four fields in the archive, in the order of [`FIELDS`].
+/// A field that is missing is created, after a look whether the writing is
+/// still `wanted` (none when it is not: nothing more is made).
+async fn field_ids(
+    client: &Client,
+    wanted: &(dyn Fn() -> CoreResult<bool> + Sync),
+) -> CoreResult<Option<[i64; 4]>> {
+    if !wanted()? {
+        return Ok(None);
+    }
+    let mut found = existing_fields(client).await?;
+    let mut ids = [0i64; 4];
+    for (i, (name, kind)) in FIELDS.iter().enumerate() {
+        let data_type = &data_type(*kind);
+        if !found.contains_key(*name) {
+            if !wanted()? {
+                return Ok(None);
+            }
+            let body = json!({ "name": name, "data_type": data_type });
+            match client.post_json("/api/custom_fields/", &body).await {
+                Ok(reply) => {
+                    let made = reply.json()?;
+                    if let Some(id) = made.get("id").and_then(Value::as_i64) {
+                        found.insert((*name).to_string(), (id, (*data_type).to_string()));
+                    }
+                }
+                // another device was faster: the field is there now
+                Err(Failure::Status(status)) if status.as_u16() == 400 => {
+                    found = existing_fields(client).await?;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        match found.get(*name) {
+            Some((id, kind)) if kind == data_type => ids[i] = *id,
+            Some(_) => {
+                return Err(CoreError::InvalidInput {
+                    message: trf(
+                        "Im Dokumentenarchiv gibt es das Feld „{0}“ schon mit einem anderen Typ. Bitte dort umbenennen oder löschen.",
+                        &[name],
+                    ),
+                })
+            }
+            None => {
+                return Err(CoreError::Protocol {
+                    message: tr("Das Dokumentenarchiv hat unerwartet geantwortet.").into(),
+                })
+            }
+        }
+    }
+    Ok(Some(ids))
+}
+
+/// Name → (id, data type) of the archive's custom fields. Pages are asked
+/// for by number; a `next` link is never followed.
+async fn existing_fields(client: &Client) -> CoreResult<HashMap<String, (i64, String)>> {
+    let mut out = HashMap::new();
+    for page in 1..=FIELD_PAGES {
+        let reply = client
+            .get(
+                "/api/custom_fields/",
+                &[("page", page.to_string()), ("page_size", "100".into())],
+                MAX_TEXT_BYTES,
+            )
+            .await?
+            .json()?;
+        let results = reply
+            .get("results")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for f in &results {
+            if let (Some(id), Some(name), Some(kind)) = (
+                f.get("id").and_then(Value::as_i64),
+                f.get("name").and_then(Value::as_str),
+                f.get("data_type").and_then(Value::as_str),
+            ) {
+                out.insert(name.to_string(), (id, kind.to_string()));
+            }
+        }
+        if results.is_empty() || reply.get("next").is_none_or(Value::is_null) {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// The request that makes `doc` carry `facts` in the fields `ids`. A field
+/// without a value is taken off the document only where it `carried` one
+/// from this device.
+pub(crate) fn change(ids: &[i64; 4], doc: i64, facts: &Facts, carried: [bool; 4]) -> Value {
+    let mut add = serde_json::Map::new();
+    let mut remove = Vec::new();
+    for ((id, value), had) in ids.iter().zip(facts.values()).zip(carried) {
+        if !value.is_empty() {
+            add.insert(id.to_string(), Value::String(value.to_string()));
+        } else if had {
+            remove.push(*id);
+        }
+    }
+    json!({
+        "documents": [doc],
+        "method": "modify_custom_fields",
+        "parameters": { "add_custom_fields": add, "remove_custom_fields": remove },
+    })
+}
+
 // ------------------------------------------------------------------ the interface
 
 #[async_trait]
@@ -811,5 +932,37 @@ impl Backend for Paperless {
             )
             .await?
             .body)
+    }
+
+    async fn fact_fields(
+        &self,
+        wanted: &(dyn Fn() -> CoreResult<bool> + Sync),
+    ) -> CoreResult<Option<[String; 4]>> {
+        Ok(field_ids(&self.client, wanted)
+            .await?
+            .map(|ids| ids.map(|id| id.to_string())))
+    }
+
+    async fn write_facts(
+        &self,
+        fields: &[String; 4],
+        doc: i64,
+        facts: &Facts,
+        carried: [bool; 4],
+    ) -> Result<(), Failure> {
+        let mut ids = [0i64; 4];
+        for (id, field) in ids.iter_mut().zip(fields) {
+            *id = field.parse().map_err(|_| Failure::NotSent)?;
+        }
+        let body = change(&ids, doc, facts, carried);
+        match self
+            .client
+            .post_json("/api/documents/bulk_edit/", &body)
+            .await
+        {
+            // an answer too long to read is still a yes
+            Ok(_) | Err(Failure::TooLarge) => Ok(()),
+            Err(f) => Err(f),
+        }
     }
 }

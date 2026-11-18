@@ -879,6 +879,8 @@ fn english(de: &str) -> Option<&'static str> {
         "Diese Art von Dokumentenarchiv kennt diese Version von GiroCrab nicht." => "This version of GiroCrab does not know this kind of document archive.",
         "Das Dokumentenarchiv gibt die Datei nicht unverändert zurück. Sie bleibt im Tresor." => "The document archive does not return the file unchanged. It stays in the vault.",
         "Für eine neue Adresse oder ein anderes Archiv bitte den Token erneut eingeben." => "Please enter the token again for a new address or another archive.",
+        "Das Dokumentenarchiv hat die Buchungsdaten nicht angenommen." => "The document archive did not accept the booking data.",
+        "Im Dokumentenarchiv gibt es das Feld „{0}“ schon mit einem anderen Typ. Bitte dort umbenennen oder löschen." => "The document archive already has a field “{0}” of another type. Please rename or delete it there.",
         "Das Dokumentenarchiv hat die Anmeldung abgelehnt. Bitte Token und Berechtigungen prüfen." => "The document archive refused the sign-in. Please check the token and its permissions.",
         "Dokument im Archiv" => "document in the archive",
         "Das Dokumentenarchiv unterstützt die benötigte API-Version nicht. Bitte das Archiv aktualisieren." => "The document archive does not support the required API version. Please update the archive.",

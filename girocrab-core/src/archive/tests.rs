@@ -926,6 +926,7 @@ async fn a_locked_vault_sends_nothing_whatever_is_still_called() {
             ("T2", "2026-11-08", -1999, "Baumarkt Nord"),
         ],
     );
+    v.set_archive_facts(true).unwrap();
     let archive = aid(&v);
     v.attach_archive_document(id_of(&v, "T1"), archive, 11, "Rechnung".into())
         .unwrap();
@@ -941,6 +942,8 @@ async fn a_locked_vault_sends_nothing_whatever_is_still_called() {
         .await
         .is_err());
     assert!(v.clone().archive_matches(None, None, 5).await.is_err());
+    let facts = v.clone().process_archive_facts().await;
+    assert!(facts.is_err(), "{facts:?}");
     let _ = v.clone().process_archive_moves().await;
     assert_eq!(server.seen().len(), before, "not one request");
 }
@@ -2890,6 +2893,759 @@ mod moving {
     }
 }
 
+// ------------------------------------------------------------------ booking data on documents
+
+mod booking_data {
+    use serde_json::json;
+
+    use super::super::facts::*;
+    use super::*;
+
+    /// An archive with the custom fields `fields` (id, name, type); fields
+    /// made later get ids from 20 on. `refuse` may answer a change to
+    /// documents (its body) with a status of its own.
+    async fn with_fields(
+        fields: &[(i64, &str, &str)],
+        refuse: impl Fn(&str) -> Option<u16> + Send + Sync + 'static,
+    ) -> Archive {
+        let fields: Vec<(i64, String, String)> = fields
+            .iter()
+            .map(|(id, n, t)| (*id, n.to_string(), t.to_string()))
+            .collect();
+        let fields = Arc::new(Mutex::new(fields));
+        archive(move |r| match (r.method.as_str(), r.path()) {
+            ("GET", "/api/custom_fields/") => {
+                let list: Vec<Value> = fields
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(id, n, t)| json!({"id": id, "name": n, "data_type": t}))
+                    .collect();
+                json(&json!({"count": list.len(), "next": null, "results": list}).to_string())
+            }
+            ("POST", "/api/custom_fields/") => {
+                let asked: Value = serde_json::from_slice(&r.body).unwrap();
+                let mut fields = fields.lock().unwrap();
+                let id = 20 + fields.iter().filter(|f| f.0 >= 20).count() as i64;
+                fields.push((
+                    id,
+                    asked["name"].as_str().unwrap().into(),
+                    asked["data_type"].as_str().unwrap().into(),
+                ));
+                let mut made = json(&json!({"id": id}).to_string());
+                made.status = 201;
+                made
+            }
+            ("POST", "/api/documents/bulk_edit/") => {
+                match refuse(&String::from_utf8_lossy(&r.body)) {
+                    Some(code) => status(code),
+                    None => json(r#"{"result": "OK"}"#),
+                }
+            }
+            // documents exist, except those numbered from 900 on
+            ("GET", p) if p.starts_with("/api/documents/") => {
+                let id: i64 = p
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(999);
+                if id >= 900 {
+                    status(404)
+                } else {
+                    json(&format!(r#"{{"id": {id}}}"#))
+                }
+            }
+            _ => status(404),
+        })
+        .await
+    }
+
+    const OWN: [(i64, &str, &str); 4] = [
+        (3, "Buchungsdatum (GiroCrab)", "date"),
+        (4, "Buchungsbetrag (GiroCrab)", "monetary"),
+        (5, "Gegenpartei (GiroCrab)", "string"),
+        (6, "Buchungskonto (GiroCrab)", "string"),
+    ];
+
+    /// The changes to documents the archive was asked for, in order.
+    fn changes(server: &Archive) -> Vec<Value> {
+        server
+            .seen()
+            .iter()
+            .filter(|r| r.path() == "/api/documents/bulk_edit/")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect()
+    }
+
+    fn rows(v: &Vault) -> i64 {
+        v.db()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM archive_facts", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Connected, T1 and T2 seeded, booking data switched on.
+    fn ready(dir: &TempDir, server: &Archive) -> (Arc<Vault>, i64, i64) {
+        let v = connected(dir, server);
+        seed(
+            &v,
+            &[
+                ("T1", "2026-11-07", -23800, "Elektro Weber"),
+                ("T2", "2026-11-03", -1200, "Schrauben Schulz"),
+            ],
+        );
+        v.set_archive_facts(true).unwrap();
+        let (t1, t2) = (id_of(&v, "T1"), id_of(&v, "T2"));
+        (v, t1, t2)
+    }
+
+    fn link(v: &Vault, booking: i64, archive_doc: i64) -> i64 {
+        let archive = aid(v);
+        v.attach_archive_document(booking, archive, archive_doc, "Rechnung".into())
+            .unwrap()
+    }
+
+    #[test]
+    fn what_a_document_carries_follows_from_its_bookings() {
+        let b = |date: &str, cents: i64, currency: &str, party: &str, account: &str| Source {
+            date: Some(date.into()),
+            cents: Some(cents),
+            currency: Some(currency.into()),
+            party: Some(party.into()),
+            account: Some(account.into()),
+        };
+        // nothing linked: nothing to carry
+        assert_eq!(Facts::of(&[]).key(), "");
+        assert_eq!(Facts::of(&[Source::default()]).key(), "");
+
+        let one = Facts::of(&[b("2026-11-07", -23800, "EUR", "Elektro Weber", "Giro")]);
+        assert_eq!(
+            one,
+            Facts {
+                date: "2026-11-07".into(),
+                amount: "EUR-238.00".into(),
+                party: "Elektro Weber".into(),
+                account: "Giro".into(),
+            }
+        );
+        assert_eq!(
+            one.key(),
+            r#"["2026-11-07","EUR-238.00","Elektro Weber","Giro"]"#
+        );
+
+        // several bookings: earliest date, sum, every name once
+        let two = Facts::of(&[
+            b("2026-11-07", -23800, "EUR", "Elektro Weber", "Giro"),
+            b("2026-11-03", -5, "EUR", "Elektro Weber", "Karte"),
+            b("kein Datum", 10000, "EUR", " ", "Giro"),
+        ]);
+        assert_eq!(two.date, "2026-11-03");
+        assert_eq!(two.amount, "EUR-138.05");
+        assert_eq!(two.party, "Elektro Weber");
+        assert_eq!(two.account, "Giro, Karte");
+
+        // amounts in different currencies have no sum; an odd currency no amount
+        let mixed = Facts::of(&[
+            b("2026-11-07", -100, "EUR", "A", "Giro"),
+            b("2026-11-08", -100, "USD", "B", "Giro"),
+        ]);
+        assert_eq!(mixed.amount, "");
+        assert_eq!(mixed.party, "A, B");
+        assert_eq!(Facts::of(&[b("2026-11-07", 5, "eur", "A", "G")]).amount, "");
+        assert_eq!(
+            Facts::of(&[b("2026-11-07", 5, "EUR", "A", "G")]).amount,
+            "EUR0.05"
+        );
+        assert_eq!(
+            Facts::of(&[
+                b("2026-11-07", i64::MAX, "EUR", "A", "G"),
+                b("2026-11-07", 1, "EUR", "A", "G")
+            ])
+            .amount,
+            ""
+        );
+
+        // a text field takes 128 characters
+        let long = "Ä".repeat(200);
+        let cut = Facts::of(&[b("2026-11-07", 1, "EUR", &long, "G")]).party;
+        assert_eq!(cut.chars().count(), 128);
+        assert!(cut.ends_with('…'));
+
+        // values are set by field id; a field without a value is taken off
+        // only where the document carries it from this device
+        assert_eq!(carried(""), [false; 4]);
+        assert_eq!(carried(&one.key()), [true; 4]);
+        assert_eq!(carried(&mixed.key()), [true, false, true, true]);
+        assert_eq!(carried("?"), [true; 4], "a write nobody saw the answer of");
+        assert_eq!(
+            change(&[3, 4, 5, 6], 11, &mixed, carried(&one.key())),
+            json!({"documents": [11], "method": "modify_custom_fields", "parameters": {
+                "add_custom_fields": {"3": "2026-11-07", "5": "A, B", "6": "Giro"},
+                "remove_custom_fields": [4]}})
+        );
+        assert_eq!(
+            change(&[3, 4, 5, 6], 11, &mixed, carried(""))["parameters"]["remove_custom_fields"],
+            json!([]),
+            "a first write takes nothing off a document"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn booking_data_goes_onto_the_document_and_follows_the_references() {
+        let dir = TempDir::new("archive-facts");
+        // two of the fields exist, next to one of the user's own
+        // (a field of the user's own with a plain name is none of the app's business)
+        let server = with_fields(
+            &[
+                OWN[0],
+                OWN[1],
+                (7, "Gegenpartei", "string"),
+                (8, "Buchungskonto", "select"),
+            ],
+            |_| None,
+        )
+        .await;
+        let v = connected(&dir, &server);
+        seed(
+            &v,
+            &[
+                ("T1", "2026-11-07", -23800, "Elektro Weber"),
+                ("T2", "2026-11-03", -1200, "Schrauben Schulz"),
+            ],
+        );
+        let (t1, t2) = (id_of(&v, "T1"), id_of(&v, "T2"));
+        let first = link(&v, t1, 11);
+
+        // switched off: nothing is sent
+        assert!(!v.archive_facts_enabled().unwrap());
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(report, ArchiveFactsReport::default());
+        assert!(server.seen().is_empty());
+
+        v.set_archive_facts(true).unwrap();
+        assert!(v.archive_facts_enabled().unwrap());
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting, report.failed), (1, 0, 0));
+
+        // the missing fields were made, the token went along in the header only
+        let made: Vec<Value> = server
+            .seen()
+            .iter()
+            .filter(|r| r.method == "POST" && r.path() == "/api/custom_fields/")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect();
+        assert_eq!(
+            made,
+            vec![
+                json!({"name": "Gegenpartei (GiroCrab)", "data_type": "string"}),
+                json!({"name": "Buchungskonto (GiroCrab)", "data_type": "string"}),
+            ]
+        );
+        for r in server.seen() {
+            assert!(r.head.contains(&format!("authorization: token {TOKEN}")));
+            assert!(!String::from_utf8_lossy(&r.body).contains(TOKEN));
+            assert!(!r.target.contains(TOKEN));
+        }
+        assert_eq!(
+            changes(&server),
+            vec![
+                json!({"documents": [11], "method": "modify_custom_fields", "parameters": {
+                "add_custom_fields": {"3": "2026-11-07", "4": "EUR-238.00", "20": "Elektro Weber", "21": "Konto"},
+                "remove_custom_fields": []}})
+            ]
+        );
+
+        // nothing differs: nothing is sent, not even a question
+        let quiet = server.seen().len();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting, report.failed), (0, 0, 0));
+        assert_eq!(server.seen().len(), quiet);
+
+        // a second booking on the same document: earliest date, the sum, both names
+        let second = link(&v, t2, 11);
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(
+            changes(&server)[1]["parameters"]["add_custom_fields"],
+            json!({"3": "2026-11-03", "4": "EUR-250.00", "20": "Schrauben Schulz, Elektro Weber", "21": "Konto"})
+        );
+
+        // one reference removed: the other booking's data stays
+        v.delete_document(first).unwrap();
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(
+            changes(&server)[2]["parameters"]["add_custom_fields"],
+            json!({"3": "2026-11-03", "4": "EUR-12.00", "20": "Schrauben Schulz", "21": "Konto"})
+        );
+
+        // moved to the other booking: that one's data
+        v.link_document(second, Some(t1)).unwrap();
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(
+            changes(&server)[3]["parameters"]["add_custom_fields"]["4"],
+            json!("EUR-238.00")
+        );
+
+        // the last reference gone: the four fields are taken off, nothing else
+        v.delete_document(second).unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting), (1, 0));
+        assert_eq!(
+            changes(&server)[4]["parameters"],
+            json!({"add_custom_fields": {}, "remove_custom_fields": [3, 4, 20, 21]})
+        );
+        assert_eq!(rows(&v), 0);
+        let quiet = server.seen().len();
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(server.seen().len(), quiet);
+    }
+
+    /// Fields of the user's own are in no request, whatever they are called.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fields_the_user_keeps_by_hand_are_never_touched() {
+        let dir = TempDir::new("archive-facts-foreign");
+        let server = with_fields(
+            &[(7, "Gegenpartei", "string"), (8, "Buchungsdatum", "date")],
+            |_| None,
+        )
+        .await;
+        let (v, t1, _) = ready(&dir, &server);
+        let doc = link(&v, t1, 11);
+        v.clone().process_archive_facts().await.unwrap();
+        v.delete_document(doc).unwrap();
+        v.clone().process_archive_facts().await.unwrap();
+        let all = changes(&server);
+        assert_eq!(all.len(), 2);
+        for c in all {
+            let text = c["parameters"].to_string();
+            assert!(!text.contains("\"7\"") && !text.contains("\"8\""), "{text}");
+            let removed = c["parameters"]["remove_custom_fields"].as_array().unwrap();
+            assert!(!removed.contains(&json!(7)) && !removed.contains(&json!(8)));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_field_of_that_name_with_another_type_is_never_written() {
+        let dir = TempDir::new("archive-facts-type");
+        let server = with_fields(&[(3, "Buchungsdatum (GiroCrab)", "string")], |_| None).await;
+        let (v, t1, _) = ready(&dir, &server);
+        link(&v, t1, 11);
+        let e = v.clone().process_archive_facts().await.unwrap_err();
+        assert!(matches!(e, CoreError::InvalidInput { .. }));
+        let text = message(&e);
+        assert!(text.contains("Buchungsdatum"));
+        assert!(!text.contains(TOKEN) && !text.contains(&server.base));
+        assert!(changes(&server).is_empty());
+        assert_eq!(rows(&v), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_document_the_archive_refuses_is_given_up_on_until_asked_or_changed() {
+        let dir = TempDir::new("archive-facts-refused");
+        let server = with_fields(&OWN, |body| body.contains("[12]").then_some(400)).await;
+        let (v, t1, t2) = ready(&dir, &server);
+        link(&v, t1, 11);
+        link(&v, t2, 12);
+
+        // the one is written, the other refused: three tries, then it rests
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting, report.failed), (1, 1, 0));
+        v.clone().process_archive_facts().await.unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting, report.failed), (0, 0, 1));
+        assert!(report.problem.contains("400"));
+        assert!(!report.problem.contains("geheimnis") && !report.problem.contains(&server.base));
+        assert_eq!(changes(&server).len(), 4);
+        let quiet = server.seen().len();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(report.failed, 1);
+        assert_eq!(server.seen().len(), quiet);
+
+        // asked for: tried again
+        v.retry_archive_facts().unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.waiting, report.failed), (1, 0));
+        assert_eq!(changes(&server).len(), 5);
+        v.clone().process_archive_facts().await.unwrap();
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(changes(&server).len(), 7);
+
+        // other data for the document: a new try without being asked
+        link(&v, t1, 12);
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.waiting, report.failed), (1, 0));
+        assert_eq!(changes(&server).len(), 8);
+
+        // storing the connection anew (a token with more rights) starts over too
+        v.clone().process_archive_facts().await.unwrap();
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(v.clone().process_archive_facts().await.unwrap().failed, 1);
+        let archive = aid(&v);
+        v.set_archive_connection(server.base.clone(), "neuer-token".into(), Some(archive))
+            .unwrap();
+        assert_eq!(v.clone().process_archive_facts().await.unwrap().waiting, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn trouble_with_the_archive_as_a_whole_counts_against_no_document() {
+        let dir = TempDir::new("archive-facts-down");
+        for code in [401u16, 500, 429] {
+            let server = with_fields(&OWN, move |_| Some(code)).await;
+            let (v, t1, _) = ready(&dir, &server);
+            link(&v, t1, 11);
+            let e = v.clone().process_archive_facts().await.unwrap_err();
+            let text = message(&e);
+            assert!(
+                !text.contains(TOKEN) && !text.contains("geheimnis"),
+                "{code}"
+            );
+            // no try is counted; the document is only marked as "may carry
+            // something" (a 500 can follow a change that was made)
+            let (unsure, tried): (i64, i64) = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT IFNULL(sum(written = '?'), 0), IFNULL(sum(attempts), 0) FROM archive_facts",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!((unsure, tried), (1, 0), "{code}");
+            drop(v);
+            std::fs::remove_file(dir.join("v.db")).unwrap();
+        }
+        // nobody there at all
+        let v = open(&dir, "v.db");
+        v.set_archive_connection("http://127.0.0.1:9".into(), TOKEN.into(), None)
+            .unwrap();
+        seed(&v, &[("T1", "2026-11-07", -23800, "Elektro Weber")]);
+        v.set_archive_facts(true).unwrap();
+        link(&v, id_of(&v, "T1"), 11);
+        assert!(v.clone().process_archive_facts().await.is_err());
+        assert_eq!(rows(&v), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn only_documents_of_the_connected_archive_are_written() {
+        let dir = TempDir::new("archive-facts-other");
+        let server = with_fields(&OWN, |_| None).await;
+        let (v, t1, t2) = ready(&dir, &server);
+        link(&v, t1, 11);
+        v.attach_document_link(t2, "https://anderswo.example/beleg".into(), "Bon".into())
+            .unwrap();
+        // the reference belongs to an archive this device is not connected to
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE document_links SET archive_id = 'anderes' WHERE archive_doc = 11",
+                [],
+            )
+            .unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(report, ArchiveFactsReport::default());
+        assert!(server.seen().is_empty());
+
+        // disconnected: an error, and nothing sent; the switch goes with the connection
+        v.remove_archive_connection().unwrap();
+        assert!(!v.archive_facts_enabled().unwrap());
+        assert_eq!(
+            v.clone().process_archive_facts().await.unwrap(),
+            ArchiveFactsReport::default()
+        );
+        assert!(server.seen().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_document_that_is_gone_from_the_archive_needs_no_clearing() {
+        let dir = TempDir::new("archive-facts-gone");
+        let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = gone.clone();
+        let server = with_fields(&OWN, move |_| {
+            flag.load(std::sync::atomic::Ordering::SeqCst)
+                .then_some(400)
+        })
+        .await;
+        let (v, t1, t2) = ready(&dir, &server);
+        let doc = link(&v, t1, 911);
+        let kept = link(&v, t2, 12);
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(rows(&v), 2);
+
+        gone.store(true, std::sync::atomic::Ordering::SeqCst);
+        v.delete_document(doc).unwrap();
+        v.delete_document(kept).unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        // 911 is gone from the archive (asked for: 404): nothing to clear.
+        // 12 is there and the archive refuses to clear it: the booking data
+        // would stay, so that is not forgotten but tried again and shown.
+        assert_eq!((report.waiting, report.refused, report.failed), (1, 1, 0));
+        assert_eq!(rows(&v), 1);
+        assert!(server
+            .seen()
+            .iter()
+            .any(|r| r.path() == "/api/documents/911/"));
+        v.clone().process_archive_facts().await.unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.waiting, report.failed), (0, 1));
+        assert!(report.problem.contains("400"));
+        let quiet = server.seen().len();
+        assert_eq!(v.clone().process_archive_facts().await.unwrap().failed, 1);
+        assert_eq!(server.seen().len(), quiet);
+
+        // the archive takes it after all
+        gone.store(false, std::sync::atomic::Ordering::SeqCst);
+        v.retry_archive_facts().unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting, report.failed), (1, 0, 0));
+        assert_eq!(rows(&v), 0);
+    }
+
+    /// The app locks the vault, the user switches the writing off, or the
+    /// connection changes while a run is under way: a front end cannot end
+    /// the call, so the run ends itself before the next write.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_ends_before_its_next_write_when_it_is_no_longer_wanted() {
+        for how in ["stopped", "switched off", "other archive"] {
+            let dir = TempDir::new(&format!("archive-facts-end-{}", how.replace(' ', "-")));
+            let vault: Arc<Mutex<Option<Arc<Vault>>>> = Arc::new(Mutex::new(None));
+            let inside = vault.clone();
+            let server = with_fields(&OWN, move |_| {
+                // the first write arrives; then the app (or the user) acts
+                if let Some(v) = inside.lock().unwrap().take() {
+                    match how {
+                        "stopped" => v.archive_stop(),
+                        "switched off" => v.set_archive_facts(false).unwrap(),
+                        _ => {
+                            v.set_archive_connection(
+                                "https://neu.example".into(),
+                                "t2".into(),
+                                None,
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+                None
+            })
+            .await;
+            let (v, t1, _) = ready(&dir, &server);
+            for doc in [11, 12, 13] {
+                link(&v, t1, doc);
+            }
+            *vault.lock().unwrap() = Some(v.clone());
+            let report = v.clone().process_archive_facts().await.unwrap();
+            assert_eq!(report.written, 1, "{how}");
+            assert_eq!(changes(&server).len(), 1, "{how}");
+            if how == "stopped" {
+                // asked again (the vault is still open): the rest follows
+                let report = v.clone().process_archive_facts().await.unwrap();
+                assert_eq!((report.written, report.waiting), (2, 0));
+            }
+        }
+    }
+
+    /// Switched off while the fields are being made: no further field is
+    /// made and no document written.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn switched_off_while_fields_are_made_nothing_more_is_made() {
+        let dir = TempDir::new("archive-facts-off-early");
+        let vault: Arc<Mutex<Option<Arc<Vault>>>> = Arc::new(Mutex::new(None));
+        let inside = vault.clone();
+        let server = archive(move |r| match (r.method.as_str(), r.path()) {
+            ("GET", "/api/custom_fields/") => json(r#"{"count": 0, "next": null, "results": []}"#),
+            ("POST", "/api/custom_fields/") => {
+                if let Some(v) = inside.lock().unwrap().take() {
+                    v.set_archive_facts(false).unwrap();
+                }
+                let mut made = json(r#"{"id": 20}"#);
+                made.status = 201;
+                made
+            }
+            _ => status(404),
+        })
+        .await;
+        let (v, t1, _) = ready(&dir, &server);
+        link(&v, t1, 11);
+        *vault.lock().unwrap() = Some(v.clone());
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(report.written, 0);
+        let posts = server.seen().iter().filter(|r| r.method == "POST").count();
+        assert_eq!(posts, 1, "the one that was under way");
+        assert_eq!(rows(&v), 0);
+    }
+
+    /// One of the fields was made anew in the archive. A document whose
+    /// clearing the archive kept refusing still carries data in the other
+    /// fields: it stays in the report instead of counting as clean.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn other_fields_do_not_hide_a_clearing_that_was_refused() {
+        let dir = TempDir::new("archive-facts-fields-refused");
+        let server = with_fields(&OWN, |_| Some(400)).await;
+        let (v, t1, _) = ready(&dir, &server);
+        let doc = link(&v, t1, 11);
+        let archive = aid(&v);
+        {
+            let db = v.db().unwrap();
+            assert!(
+                !fields_are(&db, &archive, &[3, 4, 5, 6].map(|id: i64| id.to_string())).unwrap()
+            );
+            // written once, then the reference went and the archive refused
+            // to clear it three times
+            db.execute(
+                "INSERT INTO archive_facts(archive_id, archive_doc, written, tried, attempts, problem)
+                 VALUES (?1, 11, '[\"2026-11-07\",\"EUR-238.00\",\"Elektro Weber\",\"Konto\"]', '', 3, 'abgelehnt')",
+                [&archive],
+            )
+            .unwrap();
+        }
+        v.delete_document(doc).unwrap();
+        assert_eq!(v.clone().process_archive_facts().await.unwrap().failed, 1);
+
+        {
+            let db = v.db().unwrap();
+            assert!(
+                fields_are(&db, &archive, &[3, 4, 20, 6].map(|id: i64| id.to_string())).unwrap()
+            );
+            assert!(
+                !fields_are(&db, &archive, &[3, 4, 20, 6].map(|id: i64| id.to_string())).unwrap()
+            );
+        }
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.waiting, report.failed), (0, 1));
+        assert_eq!(report.problem, "abgelehnt");
+        assert!(
+            changes(&server).is_empty(),
+            "given up on until the user asks"
+        );
+        // asked: all four fields are to come off, also those written under the old ids
+        v.retry_archive_facts().unwrap();
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(
+            changes(&server)[0]["parameters"]["remove_custom_fields"],
+            json!([3, 4, 5, 6])
+        );
+    }
+
+    /// A write went out and its answer never came (or the app quit): the
+    /// document may carry the data. When its reference is removed then, the
+    /// fields are taken off all the same.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_with_an_unknown_outcome_is_cleared_like_a_written_one() {
+        let dir = TempDir::new("archive-facts-unsure");
+        let server = with_fields(&OWN, |_| None).await;
+        let (v, t1, _) = ready(&dir, &server);
+        let doc = link(&v, t1, 11);
+        // as the run leaves it right before the request
+        // (the id first: the vault lock is not re-entrant)
+        let archive = aid(&v);
+        v.db()
+            .unwrap()
+            .execute(
+                "INSERT INTO archive_facts(archive_id, archive_doc, written) VALUES (?1, 11, '?')",
+                [archive],
+            )
+            .unwrap();
+        v.delete_document(doc).unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting), (1, 0));
+        assert_eq!(
+            changes(&server)[0]["parameters"],
+            json!({"add_custom_fields": {}, "remove_custom_fields": [3, 4, 5, 6]})
+        );
+        assert_eq!(rows(&v), 0);
+    }
+
+    /// Somebody deletes one of the fields in the archive. The next run makes
+    /// it anew, under another id: what the documents carried in the old
+    /// field is gone, so all of them are written again, not just the new one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_field_made_anew_gets_every_document_written_again() {
+        let dir = TempDir::new("archive-facts-anew");
+        let server = with_fields(&OWN, |_| None).await;
+        let (v, t1, t2) = ready(&dir, &server);
+        link(&v, t1, 11);
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(changes(&server).len(), 1);
+        drop(v);
+        std::fs::copy(dir.join("v.db"), dir.join("w.db")).unwrap();
+
+        // the same vault, the same archive, but "Gegenpartei" is gone there
+        let other = with_fields(&[OWN[0], OWN[1], OWN[3]], |_| None).await;
+        let v = open(&dir, "w.db");
+        let archive = aid(&v);
+        v.set_archive_connection(other.base.clone(), TOKEN.into(), Some(archive))
+            .unwrap();
+        link(&v, t2, 12);
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting), (1, 1));
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting), (1, 0));
+        let written: Vec<i64> = changes(&other)
+            .iter()
+            .map(|c| c["documents"][0].as_i64().unwrap())
+            .collect();
+        assert_eq!(written, vec![12, 11]);
+        assert!(changes(&other)
+            .iter()
+            .all(|c| c["parameters"]["add_custom_fields"]["20"].is_string()));
+        // and then it is quiet again
+        let quiet = other.seen().len();
+        v.clone().process_archive_facts().await.unwrap();
+        assert_eq!(other.seen().len(), quiet);
+    }
+
+    /// A reference on a booking in the trash says nothing about a booking;
+    /// a reference on an account alone names the account.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_deleted_booking_gives_no_data_an_account_its_name() {
+        let dir = TempDir::new("archive-facts-deleted");
+        let server = with_fields(&OWN, |_| None).await;
+        let (v, t1, t2) = ready(&dir, &server);
+        link(&v, t1, 11);
+        link(&v, t2, 12);
+        v.clone().process_archive_facts().await.unwrap();
+        {
+            let db = v.db().unwrap();
+            db.execute("UPDATE transactions SET deleted_ms = 5 WHERE id = ?1", [t1])
+                .unwrap();
+            db.execute(
+                "UPDATE document_links SET booking_id = NULL,
+                        account_id = (SELECT id FROM accounts WHERE external_ref = 'A1')
+                  WHERE archive_doc = 12",
+                [],
+            )
+            .unwrap();
+        }
+        v.clone().process_archive_facts().await.unwrap();
+        let after = changes(&server);
+        assert_eq!(after.len(), 4);
+        assert_eq!(
+            after[2]["parameters"],
+            json!({"add_custom_fields": {}, "remove_custom_fields": [3, 4, 5, 6]})
+        );
+        assert_eq!(
+            after[3]["parameters"],
+            json!({"add_custom_fields": {"6": "Konto"}, "remove_custom_fields": [3, 4, 5]})
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn many_documents_are_written_a_handful_per_run() {
+        let dir = TempDir::new("archive-facts-many");
+        let server = with_fields(&OWN, |_| None).await;
+        let (v, t1, _) = ready(&dir, &server);
+        for doc in 100..125 {
+            link(&v, t1, doc);
+        }
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting), (20, 5));
+        let report = v.clone().process_archive_facts().await.unwrap();
+        assert_eq!((report.written, report.waiting), (5, 0));
+        assert_eq!(changes(&server).len(), 25);
+        assert_eq!(rows(&v), 25);
+    }
+}
+
 // ------------------------------------------------------------------ against a real archive
 
 /// The whole way against a real archive, for whoever has one at hand:
@@ -2925,6 +3681,39 @@ mod live_archive {
             .await
             .unwrap();
         crate::connectors::read_json_or_null(answer).await
+    }
+
+    /// The values of the app's four fields on a document, by field name.
+    async fn fields_on(
+        base: &str,
+        token: &str,
+        doc: i64,
+    ) -> std::collections::BTreeMap<String, Value> {
+        let all = raw(base, token, "/api/custom_fields/?page_size=100").await;
+        let names: std::collections::HashMap<i64, String> = all["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["id"].as_i64().unwrap(),
+                    f["name"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let document = raw(base, token, &format!("/api/documents/{doc}/")).await;
+        document["custom_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|f| {
+                Some((
+                    names.get(&f["field"].as_i64()?)?.clone(),
+                    f["value"].clone(),
+                ))
+            })
+            .filter(|(name, _)| name.ends_with("(GiroCrab)"))
+            .collect()
     }
 
     /// Runs the queue until nothing waits (the archive reads the text of a
@@ -3044,10 +3833,38 @@ mod live_archive {
         let copy = v.list_documents_for_booking(t2).unwrap().remove(0);
         assert_eq!(copy.archive_doc, Some(archive_doc));
 
+        // --- booking data on the document: both bookings, then one, then none
+        v.set_archive_facts(true).unwrap();
+        let report = v.clone().process_archive_facts().await.unwrap();
+        println!("facts: {report:?}");
+        assert_eq!((report.written, report.waiting, report.failed), (1, 0, 0));
+        let fields = fields_on(&base, &token, archive_doc).await;
+        println!("fields: {fields:?}");
+        let sum = cents - 1234;
+        assert_eq!(fields["Buchungsdatum (GiroCrab)"], day.as_str());
+        assert_eq!(
+            fields["Buchungsbetrag (GiroCrab)"],
+            format!("EUR-{}.{:02}", sum.abs() / 100, sum.abs() % 100).as_str()
+        );
+        assert_eq!(fields["Buchungskonto (GiroCrab)"], "Konto");
+        assert_eq!(v.clone().process_archive_facts().await.unwrap().written, 0);
+
         v.delete_document(copy.id).unwrap();
+        assert_eq!(v.clone().process_archive_facts().await.unwrap().written, 1);
+        let fields = fields_on(&base, &token, archive_doc).await;
+        assert_eq!(fields["Gegenpartei (GiroCrab)"], "Elektro Weber");
+        assert_eq!(
+            fields["Buchungsbetrag (GiroCrab)"],
+            format!("EUR-{}.{:02}", cents.abs() / 100, cents.abs() % 100).as_str()
+        );
 
         // --- unlinked, the document is suggested for its booking and matched in one pass
         v.delete_document(reference.id).unwrap();
+        assert_eq!(v.clone().process_archive_facts().await.unwrap().written, 1);
+        assert!(
+            fields_on(&base, &token, archive_doc).await.is_empty(),
+            "the fields came off"
+        );
         let suggested = v.clone().archive_suggestions(t1, 5).await.unwrap();
         println!(
             "suggested: {:?}",

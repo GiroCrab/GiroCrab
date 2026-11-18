@@ -36,6 +36,7 @@ use crate::vault::Vault;
 
 pub(crate) mod backend;
 pub(crate) mod client;
+pub(crate) mod facts;
 pub(crate) mod moves;
 pub(crate) mod paperless;
 #[cfg(test)]
@@ -457,6 +458,8 @@ impl Vault {
         }
         // files queued for another archive stay in the vault, off the queue
         tx.execute("DELETE FROM archive_moves WHERE archive_id != ?1", [&id])?;
+        // a new token may be allowed what the old one was refused
+        facts::forget_refusals(&tx)?;
         tx.commit()?;
         // whatever is under way was for the connection before
         self.archive_stop();
@@ -469,7 +472,7 @@ impl Vault {
     pub fn remove_archive_connection(&self) -> Result<(), CoreError> {
         let db = self.db()?;
         db.execute(
-            "DELETE FROM settings WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "DELETE FROM settings WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 KEY_URL,
                 KEY_TOKEN,
@@ -477,7 +480,8 @@ impl Vault {
                 KEY_KIND,
                 moves::KEY_UPLOAD,
                 moves::KEY_BANK,
-                moves::KEY_LABELS
+                moves::KEY_LABELS,
+                facts::KEY_FACTS
             ],
         )?;
         // files that were queued stay in the vault

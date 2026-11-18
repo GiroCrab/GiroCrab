@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use url::Url;
 
 use super::client::{Failure, Watch};
+use super::facts::Facts;
 use super::{ArchiveDocument, ArchiveFile, ArchiveInfo};
 use crate::error::CoreResult;
 
@@ -152,6 +153,17 @@ pub(crate) enum TaskState {
     Unknown,
 }
 
+/// What a field for booking data holds (`facts::FIELDS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FactKind {
+    /// `YYYY-MM-DD`
+    Date,
+    /// Currency and signed amount, as `Facts::amount` writes it (`EUR-238.00`).
+    Money,
+    /// At most `facts::MAX_TEXT` characters.
+    Text,
+}
+
 /// One archive, connected. Document ids are the archive's own.
 ///
 /// `CoreResult` errors are worded for the user. Where the caller must know
@@ -225,4 +237,26 @@ pub(crate) trait Backend: Send + Sync {
     /// The file a document was first stored with, as the archive hands it
     /// back: not a later version the document may have got there since.
     async fn original(&self, doc: i64) -> Result<Vec<u8>, Failure>;
+
+    // ------------------------------------------------------------ booking data
+
+    /// Handles of the four fields of `facts::FIELDS`, in that order. A
+    /// missing field is made, after a look whether that is still `wanted`
+    /// (`None` when it is not). A field of that name with another type is an
+    /// error: it is not the app's.
+    async fn fact_fields(
+        &self,
+        wanted: &(dyn Fn() -> CoreResult<bool> + Sync),
+    ) -> CoreResult<Option<[String; 4]>>;
+
+    /// Makes `doc` carry `facts` in `fields`. A field without a value is
+    /// taken off only where the document `carried` one from this device.
+    /// Nothing else on the document is touched.
+    async fn write_facts(
+        &self,
+        fields: &[String; 4],
+        doc: i64,
+        facts: &Facts,
+        carried: [bool; 4],
+    ) -> Result<(), Failure>;
 }
