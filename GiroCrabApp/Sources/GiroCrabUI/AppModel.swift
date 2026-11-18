@@ -72,9 +72,13 @@ public final class AppModel {
     /// it, so a computed value made all visible rows re-run at the click, with the old bookings.
     var showsAccountMarkers = false
     /// Derived from `bookings` once per reload instead of on every view access.
-    var dayGroups: [DayGroup] = [] { didSet { streamItems = StreamItem.flatten(dayGroups) } }
+    var dayGroups: [DayGroup] = [] {
+        didSet { (streamItems, streamSlots) = StreamItem.flatten(dayGroups) }
+    }
     /// `dayGroups` flattened into headers and rows for the lazy booking stream.
     private(set) var streamItems: [StreamItem] = []
+    /// Scroll targets of days and bookings in `streamItems` (read in actions, not observed).
+    @ObservationIgnored private(set) var streamSlots = StreamSlots()
     @ObservationIgnored var bookingIndexByID: [Booking.ID: Int] = [:]
     var page: BookingPage?
     /// Balance after each loaded booking and per loaded day (#577); empty unless

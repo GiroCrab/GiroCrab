@@ -85,14 +85,15 @@ struct BookingStreamView: View {
                                 if density == .compact, case .header = item { return false }
                                 return true
                             }) { item in
+                                // No `.id(day/booking)` here: identity is the position (`StreamItem`),
+                                // an explicit id would rebuild every row of a new list.
                                 switch item {
-                                case .header(let day):
-                                    DayHeader(day: day, balance: model.listBalances.days[day.date]).padding(.top, day.id == firstDayID ? ViewLayout.cardGap : 14)
-                                        .trackScrollDay(day.date).id(day.id)
-                                case .row(let b, let isLast):
+                                case .header(let day, let n):
+                                    DayHeader(day: day, balance: model.listBalances.days[day.date]).padding(.top, n == 0 ? ViewLayout.cardGap : 14)
+                                        .trackScrollDay(day.date)
+                                case .row(let b, let isLast, _):
                                     DayCardRow(booking: b, isLast: isLast, balance: model.listBalances.bookings[b.id])
                                         .trackScrollDay(b.bookingDate)
-                                        .id(b.id)
                                 }
                             }
                         }
@@ -147,11 +148,12 @@ struct BookingStreamView: View {
             .onChange(of: model.scrollToDay) { _, jump in
                 guard let day = jump?.day else { return }
                 let first = model.dayGroups.first(where: { $0.date == day })?.bookings.first
+                let slots = model.streamSlots
                 withAnimation(Motion.animation(.easeOut(duration: 0.25))) {
-                    if density == .compact, let first {
-                        proxy.scrollTo(first.id, anchor: .top)
-                    } else {
-                        proxy.scrollTo(day, anchor: .top)
+                    if density == .compact, let first, let slot = slots.booking[first.id] {
+                        proxy.scrollTo(slot, anchor: .top)
+                    } else if let slot = slots.day[day] {
+                        proxy.scrollTo(slot, anchor: .top)
                     }
                 }
                 // select the day's first booking so the detail pane follows
@@ -165,9 +167,9 @@ struct BookingStreamView: View {
                     let token = jump?.token
                     Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(350))
-                        guard model.scrollToDay?.token == token else { return }
+                        guard model.scrollToDay?.token == token, let slot = model.streamSlots.booking[first.id] else { return }
                         withAnimation(Motion.animation(.easeOut(duration: 0.15))) {
-                            proxy.scrollTo(first.id, anchor: density == .standard ? nil : .top)
+                            proxy.scrollTo(slot, anchor: density == .standard ? nil : .top)
                         }
                     }
                 }
@@ -276,11 +278,6 @@ struct BookingStreamView: View {
         #else
         0
         #endif
-    }
-
-    private var firstDayID: String? {
-        for case .header(let d) in model.streamItems { return d.id }
-        return nil
     }
 
     private static let topID = "stream-top"
@@ -501,7 +498,11 @@ private struct StreamDayTracker: ViewModifier {
     /// Distance from the top edge of the scroll view in points.
     private static let line: CGFloat = 24
     @Environment(AppModel.self) private var model
-    @State private var crossing = false
+    /// The day this element counted in `scrollCrossing` while it crosses the line; nil = not on
+    /// the line. Kept instead of a flag because elements are reused for other days (positional
+    /// identity, `StreamItem`): a release must hit the day that was counted, whichever of the
+    /// geometry callback and the day change runs first.
+    @State private var counted: String?
     let day: String
 
     func body(content: Content) -> some View {
@@ -510,26 +511,36 @@ private struct StreamDayTracker: ViewModifier {
                 let f = proxy.frame(in: .named(Self.space))
                 return f.minY <= Self.line && f.maxY > Self.line
             } action: { crosses in
-                guard crosses != crossing else { return }
-                crossing = crosses
+                guard crosses != (counted != nil) else { return }
                 if crosses {
-                    model.scrollCrossing[day, default: 0] += 1
+                    count(day)
                     if model.scrollFocusDay != day { model.scrollFocusDay = day }
                 } else {
-                    release()
+                    releaseCounted()
                 }
             }
             // the lazy stack drops rows that scrolled far away without a last callback
-            .onDisappear {
-                guard crossing else { return }
-                crossing = false
-                release()
+            .onDisappear { releaseCounted() }
+            // Reused for another day while on the line: the count moves to the new day. The
+            // chart marker is left alone; a new list brings its own (`requestStreamTop`), and
+            // pointing it at whatever day sits at the old offset made it jump.
+            .onChange(of: day) {
+                guard counted != nil else { return }
+                releaseCounted()
+                count(day)
             }
+    }
+
+    private func count(_ day: String) {
+        model.scrollCrossing[day, default: 0] += 1
+        counted = day
     }
 
     /// A day has several elements (header, rows): the focus ends only when none of them is
     /// left on the line. A short delay covers the hand-over to the next day's element.
-    private func release() {
+    private func releaseCounted() {
+        guard let day = counted else { return }
+        counted = nil
         let left = (model.scrollCrossing[day] ?? 1) - 1
         model.scrollCrossing[day] = left > 0 ? left : nil
         guard left <= 0, model.scrollFocusDay == day else { return }
@@ -541,8 +552,8 @@ private struct StreamDayTracker: ViewModifier {
 }
 
 private extension View {
-    /// Must come before `.id(...)`: after it, the geometry modifier takes the scroll target away
-    /// from `ScrollViewProxy.scrollTo` and every jump to a day or booking does nothing.
+    /// Rows carry no `.id(...)` (see `StreamItem`); one placed after this modifier would take the
+    /// scroll target away from `ScrollViewProxy.scrollTo`, so every jump would do nothing.
     func trackScrollDay(_ day: String) -> some View { modifier(StreamDayTracker(day: day)) }
 }
 
@@ -605,6 +616,8 @@ struct DayCardRow: View {
         .onChange(of: model.selectedBookingID) { _, id in
             if id != booking.id { compactDetailsCollapsed = false }
         }
+        // the row is reused for another booking (positional identity, `StreamItem`)
+        .onChange(of: booking.id) { compactDetailsCollapsed = false }
     }
 
     @ViewBuilder
@@ -985,6 +998,8 @@ struct BookingRow: View {
                 RowSelectionBackground(id: booking.id)
             }
         }
+        // the row is reused for another booking (positional identity, `StreamItem`)
+        .onChange(of: booking.id) { amazonExpanded = false }
     }
 }
 
@@ -1091,10 +1106,11 @@ private struct SelectionScroller: View {
                 // the day jump already scrolled to the day: do not override it
                 if model.jumpSelectedBookingID == id { model.jumpSelectedBookingID = nil; return }
                 // Every row is an element of the lazy stream, so the proxy finds it
-                // even while it is off-screen.
+                // even while it is off-screen; its target is its position (`StreamItem`).
+                guard let slot = model.streamSlots.booking[id] else { return }
                 withAnimation(Motion.animation(.easeOut(duration: 0.15))) {
                     // Expanded rows can exceed the viewport: keep their title visible.
-                    proxy.scrollTo(id, anchor: density == .standard ? nil : .top)
+                    proxy.scrollTo(slot, anchor: density == .standard ? nil : .top)
                 }
             }
     }
