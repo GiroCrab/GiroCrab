@@ -861,6 +861,14 @@ fn english(de: &str) -> Option<&'static str> {
         "Export fehlgeschlagen: {0}" => "Export failed: {0}",
         "GiroCrab-Belege" => "GiroCrab Receipts",
         "ohne-Datum" => "no-date",
+        // ------------------------------------------------------------ document_links.rs
+        "Der Link fehlt." => "The link is missing.",
+        "Der Link ist länger als 2048 Zeichen." => "The link is longer than 2048 characters.",
+        "Der Link ist ungültig." => "The link is not valid.",
+        "Nur Links, die mit http:// oder https:// beginnen, lassen sich verknüpfen." => "Only links that start with http:// or https:// can be attached.",
+        "Links mit eingebetteten Zugangsdaten werden nicht gespeichert." => "Links with embedded credentials are not stored.",
+        "Dieser Link hängt schon an der Buchung." => "This link is already attached to the transaction.",
+        "Ein verlinkter Beleg hat keine Datei." => "A linked receipt has no file.",
         // ------------------------------------------------------------ money.rs
         "Kein Betrag angegeben" => "No amount entered",
         "Kein gültiger Betrag: „{0}“" => "Not a valid amount: “{0}”",

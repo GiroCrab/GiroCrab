@@ -5,6 +5,10 @@
 //! connectors (Trade Republic timelineDetailV2, comdirect PostBox, FinTS
 //! HKEKA) or by drag & drop; dropped files are matched to a booking by
 //! amount, date and merchant name.
+//!
+//! A receipt can also be a reference to a document kept elsewhere (#590,
+//! `document_links.rs`): the lists here return both kinds as [`DocumentInfo`],
+//! a reference with `link_url` set and a negative `id`.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -56,6 +60,13 @@ pub struct DocumentInfo {
     pub file_name: String,
     pub size_bytes: u64,
     pub source_url: String,
+    /// Set for a receipt that is only a reference (#590): the `http(s)` URL
+    /// the app opens in the browser. Such a document has no file
+    /// (`size_bytes` 0, empty `mime_type`) and a negative `id`. Empty for a
+    /// file stored in the vault.
+    #[uniffi(default = "")]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub link_url: String,
     pub doc_date: String,
     pub created_at: i64,
     /// "METRO · −56,13 EUR · 2026-11-07" (empty if not linked)
@@ -417,17 +428,24 @@ fn label(b: &Booking) -> String {
     )
 }
 
-fn row_to_info(r: &rusqlite::Row) -> rusqlite::Result<DocumentInfo> {
-    let cp: Option<String> = r.get(12)?;
-    let amount: Option<i64> = r.get(13)?;
-    let date: Option<String> = r.get(14)?;
-    let booking_label = match (cp, amount, date) {
+/// "METRO · −56,13 EUR · 2026-11-07" from the columns of the linked booking
+/// (empty without one).
+pub(crate) fn booking_label_of(
+    counterparty: Option<String>,
+    amount_cents: Option<i64>,
+    booking_date: Option<String>,
+) -> String {
+    match (counterparty, amount_cents, booking_date) {
         (Some(cp), Some(a), Some(d)) => {
             let m = crate::merchants::MerchantResolver::resolve(&cp, "");
             format!("{} · {} · {}", m.name, format_cents(a, "EUR".into()), d)
         }
         _ => String::new(),
-    };
+    }
+}
+
+fn row_to_info(r: &rusqlite::Row) -> rusqlite::Result<DocumentInfo> {
+    let booking_label = booking_label_of(r.get(12)?, r.get(13)?, r.get(14)?);
     Ok(DocumentInfo {
         id: r.get(0)?,
         booking_id: r.get(1)?,
@@ -438,6 +456,7 @@ fn row_to_info(r: &rusqlite::Row) -> rusqlite::Result<DocumentInfo> {
         file_name: r.get(6)?,
         size_bytes: r.get::<_, i64>(7)? as u64,
         source_url: r.get(8)?,
+        link_url: String::new(),
         doc_date: r.get(9)?,
         created_at: r.get(10)?,
         account_name: r.get::<_, Option<String>>(11)?.unwrap_or_default(),
@@ -538,8 +557,21 @@ fn list_all_documents_sql() -> String {
     )
 }
 
+/// Adds the references (#590) to the stored files of a list, newest first
+/// like the files alone; on one day the files come first.
+fn with_links(mut docs: Vec<DocumentInfo>, links: Vec<DocumentInfo>) -> Vec<DocumentInfo> {
+    if links.is_empty() {
+        return docs;
+    }
+    docs.extend(links);
+    // stable: files keep the order of their query
+    docs.sort_by(|a, b| b.doc_date.cmp(&a.doc_date));
+    docs
+}
+
 #[uniffi::export]
 impl Vault {
+    /// Stored files and references (#590) of a booking, newest first.
     pub fn list_documents_for_booking(
         &self,
         booking_id: i64,
@@ -551,7 +583,8 @@ impl Vault {
         let rows = st
             .query_map([booking_id], row_to_info)?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let links = crate::document_links::list_for_booking(&db, booking_id)?;
+        Ok(with_links(rows, links))
     }
 
     pub fn list_all_documents(
@@ -562,6 +595,7 @@ impl Vault {
         let mut st = db.prepare(&list_all_documents_sql())?;
         let search = filter
             .search
+            .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| format!("%{}%", s.trim()));
         let rows = st
@@ -576,7 +610,8 @@ impl Vault {
                 row_to_info,
             )?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let links = crate::document_links::list_all(&db, &filter, search.as_deref())?;
+        Ok(with_links(rows, links))
     }
 
     /// Marks documents read (`seen` true) or unread. Returns how many changed.
@@ -608,7 +643,11 @@ impl Vault {
         )? as u32)
     }
 
+    /// The file of a stored document. A reference (#590) has none.
     pub fn get_document_bytes(&self, doc_id: i64) -> Result<Vec<u8>, CoreError> {
+        if crate::document_links::row_id_of(doc_id).is_some() {
+            return Err(crate::document_links::no_file());
+        }
         let db = self.db()?;
         db.query_row(
             "SELECT pdf_bytes FROM booking_documents WHERE id = ?1",
@@ -691,9 +730,12 @@ impl Vault {
         Ok(id)
     }
 
-    /// Re-links (or unlinks) a document.
+    /// Re-links (or unlinks) a document, stored file or reference (#590).
     pub fn link_document(&self, doc_id: i64, booking_id: Option<i64>) -> Result<(), CoreError> {
         let db = self.db()?;
+        if let Some(row) = crate::document_links::row_id_of(doc_id) {
+            return crate::document_links::relink(&db, row, booking_id);
+        }
         db.execute(
             "UPDATE booking_documents SET booking_id = ?1,
                 account_id = COALESCE((SELECT account_id FROM transactions WHERE id = ?1), account_id) WHERE id = ?2",
@@ -723,6 +765,9 @@ impl Vault {
                 });
             }
         }
+        if let Some(row) = crate::document_links::row_id_of(doc_id) {
+            return crate::document_links::set_account(&db, row, account_id);
+        }
         let n = db.execute(
             "UPDATE booking_documents SET account_id = ?1,
                 booking_id = CASE WHEN ?1 IS NOT NULL AND
@@ -739,9 +784,14 @@ impl Vault {
         Ok(())
     }
 
+    /// Deletes a stored file, or a reference (#590): then only the
+    /// reference goes, the document it points at is not touched.
     pub fn delete_document(&self, doc_id: i64) -> Result<(), CoreError> {
-        self.db()?
-            .execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
+        let db = self.db()?;
+        if let Some(row) = crate::document_links::row_id_of(doc_id) {
+            return crate::document_links::delete(&db, row);
+        }
+        db.execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
         Ok(())
     }
 
@@ -822,7 +872,11 @@ impl Vault {
     }
 
     /// Writes one document. `dest_path` may be a folder or a full file path.
+    /// A reference (#590) has no file to write.
     pub fn export_document(&self, doc_id: i64, dest_path: String) -> Result<String, CoreError> {
+        if crate::document_links::row_id_of(doc_id).is_some() {
+            return Err(crate::document_links::no_file());
+        }
         let db = self.db()?;
         let (name, bytes): (String, Vec<u8>) = db
             .query_row(
@@ -851,7 +905,8 @@ impl Vault {
     }
 
     /// Exports every document into `dest_dir/<Jahr>/<Datum>_<Händler>_<Titel>.pdf`
-    /// (für die Steuererklärung). Returns the number of files written.
+    /// (für die Steuererklärung). References (#590) are skipped: their
+    /// documents are not in the vault. Returns the number of files written.
     pub fn export_all_documents(&self, dest_dir: String) -> Result<u32, CoreError> {
         self.export_documents(dest_dir, Vec::new(), tr("GiroCrab-Belege").to_string())
     }
@@ -889,7 +944,7 @@ impl Vault {
         };
         let mut used = HashSet::new();
         let mut n = 0u32;
-        for d in docs {
+        for d in docs.into_iter().filter(|d| d.link_url.is_empty()) {
             let year = year_folder(&d.doc_date);
             let dir = base.join(&year);
             std::fs::create_dir_all(&dir).map_err(|e| CoreError::InvalidInput {
@@ -963,7 +1018,8 @@ impl Vault {
     /// Copies every document not mirrored yet into
     /// `dest_dir/<Konto>/<Jahr>/<Datum>_<Händler>_<Titel>.pdf` (GitHub #57,
     /// e.g. a folder in iCloud Drive). Existing files are never overwritten.
-    /// Returns the number of files written.
+    /// References (#590) have no file and are skipped. Returns the number of
+    /// files written.
     pub fn mirror_new_documents(&self, dest_dir: String) -> Result<u32, CoreError> {
         let base = std::path::Path::new(&dest_dir);
         if dest_dir.trim().is_empty() || !base.is_dir() {
@@ -988,7 +1044,7 @@ impl Vault {
         for d in self
             .list_all_documents(DocumentFilter::default())?
             .into_iter()
-            .filter(|d| pending.contains(&d.id))
+            .filter(|d| d.link_url.is_empty() && pending.contains(&d.id))
         {
             let account = if d.account_name.trim().is_empty() {
                 tr("Ohne Konto").to_string()

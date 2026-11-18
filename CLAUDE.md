@@ -18,6 +18,7 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `girocrab-core/src/tags.rs` – booking tags (#228): schema step, `impl Vault` API, booking tag loading; `tags/merge.rs` (iCloud merge of tags and tag sets), `tags/tests.rs`
 - `girocrab-core/src/merchants.rs` – merchant matching
 - `girocrab-core/src/documents.rs` – booking documents / PDF text extraction
+- `girocrab-core/src/document_links.rs` – linked receipts (#590): references to documents kept outside the vault (schema step, `impl Vault` API, iCloud merge by uuid), listed together with the stored files of `documents.rs`; `document_links/tests.rs`
 - `girocrab-core/src/text.rs` – text helpers (mojibake repair etc.)
 - `girocrab-core/src/local_api.rs` + `local_api/server.rs` – read-only local interface for external analysis (#136): queries, scope/token, Unix socket server (`docs/local-api.md`)
 - `girocrab-mcp/` – MCP stdio adapter for that socket (own crate, no core dependency outside tests; architecture, bundling, local testing: `docs/local-api-entwicklung.md`)

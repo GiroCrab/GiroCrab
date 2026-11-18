@@ -1267,6 +1267,8 @@ pub(crate) fn resolve_holds(
               WHERE t.account_id = ?1 AND t.deleted_ms IS NULL AND {}
                 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
                 AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)
+                AND NOT EXISTS (SELECT 1 FROM document_links l
+                                 WHERE l.booking_id = t.id AND l.deleted_ms IS NULL)
               ORDER BY t.booking_date, t.id",
             hold_sql(legacy)
         ))?;
@@ -1365,7 +1367,9 @@ fn convert_legacy_copies(db: &rusqlite::Connection, account_id: i64) -> Result<u
             "SELECT t.id FROM transactions t
               WHERE t.account_id = ?1 AND t.deleted_ms IS NULL AND t.external_id LIKE 'id:P%'
                 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
-                AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)",
+                AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)
+                AND NOT EXISTS (SELECT 1 FROM document_links l
+                                 WHERE l.booking_id = t.id AND l.deleted_ms IS NULL)",
         )?;
         let rows = q.query_map([account_id], |r| r.get(0))?;
         rows.collect::<Result<_, _>>()?
@@ -1421,6 +1425,8 @@ pub(crate) fn merge_imported_split_parts(
                 AND t.purpose LIKE '%EREF: %'
                 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
                 AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)
+                AND NOT EXISTS (SELECT 1 FROM document_links l
+                                 WHERE l.booking_id = t.id AND l.deleted_ms IS NULL)
               ORDER BY t.id",
         )?;
         let rows = q.query_map([account_id], |r| {
