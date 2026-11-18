@@ -191,11 +191,12 @@ pub fn kind_label(k: AccountKind) -> &'static str {
         AccountKind::Brokerage => "Depots",
         AccountKind::Cash => "Bargeld",
         AccountKind::Loan => "Darlehen",
+        AccountKind::Order => "Bestellkonten",
     }
 }
 
 /// Order of the account kinds in "Kontoart" mode.
-const KIND_ORDER: [AccountKind; 7] = [
+const KIND_ORDER: [AccountKind; 8] = [
     AccountKind::Checking,
     AccountKind::Savings,
     AccountKind::CreditCard,
@@ -203,6 +204,7 @@ const KIND_ORDER: [AccountKind; 7] = [
     AccountKind::Brokerage,
     AccountKind::Cash,
     AccountKind::Loan,
+    AccountKind::Order,
 ];
 
 /// Accounts that count as "new" in the badge: archived accounts are skipped by syncs.
@@ -308,6 +310,7 @@ fn account_icon(kind: AccountKind) -> &'static str {
         AccountKind::CreditCard | AccountKind::PaymentService => "card",
         AccountKind::Brokerage => "chart",
         AccountKind::Loan => "house",
+        AccountKind::Order => "package",
     }
 }
 
@@ -626,6 +629,7 @@ pub(crate) mod testing {
             new_count: 0,
             initial_balance_cents: None,
             user_group_uuid: None,
+            include_in_total: true,
             in_total: true,
             color_hex: String::new(),
             archived_unix: None,

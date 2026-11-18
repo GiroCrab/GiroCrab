@@ -13,7 +13,7 @@ struct AccountTotalExclusionIndicator: View {
             indicator.padding(2).contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .popover(isPresented: $showingHelp, arrowEdge: .trailing) {
+        .capturablePopover(isPresented: $showingHelp, arrowEdge: .trailing) {
             Text(verbatim: help)
                 .appFont(.callout)
                 .foregroundStyle(.primary)
