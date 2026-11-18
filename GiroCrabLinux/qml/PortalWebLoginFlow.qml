@@ -8,6 +8,10 @@ import QtCore
 // the card portal; the portal's own JSON responses (captured by the traffic hook) or the
 // visible booking table are handed to the core (`import_portal_capture`). Recognised
 // bookings are counted live; the import starts by itself once the count is stable.
+// Amex (#243): every card of the switcher is opened once; each response carries a short hash
+// of its card token, so each card gets its own account (`import_portal_capture_cards`).
+// Unlike the Mac, a login stored in the vault is not typed into the sign-in form: the user
+// signs in in the window themselves.
 WebLoginFlow {
     id: flow
     title: connection ? qsTr("%1 – Direkt-Login").arg(connection.display_name) : ""
@@ -30,6 +34,7 @@ WebLoginFlow {
             return qsTr("Öffnen Sie im Portal frühere Abrechnungszeiträume. „Umsätze übernehmen“ übernimmt alle erkannten Umsätze und schließt das Fenster.")
         if (importedCount > 0 && olderOffered)
             return qsTr("%1 Umsätze übernommen. Für ältere Umsätze im Portal „Umsätze anzeigen“ wählen und den SMS-Code bestätigen – die Übernahme läuft danach automatisch weiter.").arg(importedCount)
+        if (loadingCard !== "") return qsTr("Umsätze der Karte „%1“ werden geladen …").arg(loadingCard)
         if (importedCount > 0) return qsTr("%1 Umsätze übernommen – weitere werden geladen …").arg(importedCount)
         if (recognized === 0) return qsTr("Angemeldet – öffnen Sie die Umsatzübersicht, damit das Portal die Buchungen lädt.")
         return qsTr("%1 Umsätze erkannt – Übernahme startet automatisch, sobald die Seite fertig geladen ist.").arg(recognized)
@@ -63,6 +68,115 @@ WebLoginFlow {
     /// Stored pending charges the portal no longer lists, found before importing: they are
     /// matched on the blue button, so the automatic import (which closes) stays off.
     property int holdsToCheck: 0
+
+    // MARK: Amex cards (#243), PortalBrowser.bodyCards / cards / listCard, PortalWebSheet.cardQueue
+    /// Card of each body (`cardKey`, "" = unknown), parallel to `bodies`.
+    property var bodyCards: []
+    /// Labels of the card keys seen so far ([PortalCard]).
+    property var cards: []
+    /// Card of the latest booking-list response: the card the portal shows.
+    property string listCard: ""
+    /// The card the portal is being switched to, and the card shown before the switch.
+    property var expectedCard: null
+    /// Cards of the switcher still to open; null until the switcher was read.
+    property var cardQueue: null
+    /// The card the portal is switching to right now ("" = none).
+    property string loadingCard: ""
+    /// Not every card of the switcher has been opened yet: importing now would take only the
+    /// cards loaded so far and close the sheet, so it waits.
+    readonly property bool cardsPending: kind === "AmericanExpress" && (cardQueue === null || cardQueue.length > 0 || loadingCard !== "")
+    // GiroCrab switches the cards itself: the page stays hidden meanwhile, so nobody clicks
+    // into it or imports a half-loaded card.
+    covering: cardsPending && recognized > 0 && !browser.onLoginPage
+    cover: Component {
+        Rectangle {
+            color: Theme.canvas
+            ColumnLayout {
+                anchors.centerIn: parent
+                spacing: 12
+                BusyIndicator { running: true; Layout.alignment: Qt.AlignHCenter }
+                Text { text: qsTr("Karten werden geladen …"); font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text
+                       Layout.alignment: Qt.AlignHCenter }
+                Text { visible: flow.loadingCard !== ""; text: flow.loadingCard; font.pixelSize: Theme.callout; color: Theme.secondary
+                       Layout.alignment: Qt.AlignHCenter }
+            }
+        }
+    }
+    /// The portal's booking list (not balances or summaries).
+    function isBookingList(url) {
+        const u = browser.urlParts(url)
+        return (u ? u.pathname : url).toLowerCase().endsWith("/transactions")
+    }
+    /// Names the card the booking list shows now.
+    function labelCurrentCard(name, number) {
+        if (listCard === "" || cards.some(c => c.key === listCard)) return
+        cards = cards.concat([{ key: listCard, name: name, number: number }])
+    }
+    /// Shared part of the switcher scripts: `sw` is the switcher button ("-12345"),
+    /// `entries()` lists `[button, name, digits]` of the open menu.
+    readonly property string amexSwitcherJS: `var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+var txt = function(e) { return (e.innerText || '').trim().replace(/\\s+/g, ' '); };
+var buttons = function() { return Array.prototype.filter.call(document.querySelectorAll('button'), vis); };
+var sw = buttons().find(function(b) { return /^-[0-9]{4,5}$/.test(txt(b)); });
+var entries = function() { return buttons().map(function(b) {
+  var m = /^(.+?)\\s*•+\\s*([0-9]{4,5})$/.exec(txt(b)); return m ? [b, m[1], m[2]] : null; }).filter(Boolean); };
+`
+    /// PortalBrowser.amexCards: opens the Amex card switcher, reads its entries and closes it again.
+    readonly property string amexCardsJS: amexSwitcherJS + `if (!sw) return JSON.stringify({current: '', cards: []});
+var current = txt(sw).replace(/[^0-9]/g, '');
+sw.click(); await new Promise(function(r) { setTimeout(r, 800); });
+var seen = {}, cards = [];
+entries().forEach(function(m) { if (!seen[m[2]]) { seen[m[2]] = 1; cards.push({name: m[1].trim(), number: m[2]}); } });
+sw.click();
+return JSON.stringify({current: current, cards: cards});`
+    /// PortalBrowser.selectAmexCard: switches the portal to the card with these last digits.
+    readonly property string selectAmexCardJS: amexSwitcherJS + `if (!sw) return false;
+sw.click(); await new Promise(function(r) { setTimeout(r, 800); });
+var hit = entries().find(function(m) { return m[2] === number; });
+if (!hit) { sw.click(); return false; }
+hit[0].click();
+return true;`
+    function amexCards(done) {
+        browser.runAsync(amexCardsJS, {}, browser.mainWorld).then(s => {
+            let list = { current: "", cards: [] }
+            try { list = Object.assign(list, JSON.parse(s)) } catch (e) {}
+            done(list)
+        }, () => done({ current: "", cards: [] }))
+    }
+    function selectAmexCard(name, number, done) {
+        expectedCard = { name: name, number: number, previous: listCard }
+        browser.runAsync(selectAmexCardJS, { number: number }, browser.mainWorld).then(ok => {
+            if (ok !== true) expectedCard = null
+            done()
+        }, () => { expectedCard = null; done() })
+    }
+    /// PortalWebSheet.openNextCard: switches the portal to the next card not seen yet.
+    /// `done(true)` while switching (the caller waits for its bookings), `done(false)` once
+    /// every card was opened.
+    function openNextCard(done) {
+        const next = () => {
+            if (!cardQueue || !cardQueue.length) { loadingCard = ""; done(false); return }
+            const card = cardQueue[0]
+            cardQueue = cardQueue.slice(1)
+            loadingCard = card.name
+            selectAmexCard(card.name, card.number, () => done(true))
+        }
+        if (cardQueue !== null) { next(); return }
+        amexCards(list => {
+            let queue = list.cards
+            const current = list.cards.find(c => c.number === list.current)
+            if (current) {
+                labelCurrentCard(current.name, current.number)
+                queue = queue.filter(c => c.number !== current.number)
+            }
+            // A single card: nothing to switch to. Without a card key on the booking list
+            // the cards could not be told apart, and switching would mix their bookings.
+            cardQueue = list.cards.length > 1 && listCard !== "" ? queue : []
+            console.info("portal cards: " + list.cards.length)
+            next()
+        })
+    }
+
     // Billing-period portals: the first sync of a connection offers the older periods.
     Component.onCompleted: if (hasBillingPeriods && !portalDefaults.value(historyOfferedKey, false)) browsingHistory = true
 
@@ -77,14 +191,28 @@ WebLoginFlow {
     /// Customer profile / login endpoints: never handed to the parser.
     readonly property var privateURLWords: ["customer", "profile", "personal", "authentication", "authorize", "login", "kyc"]
 
-    function captured(body, url) {
+    /// `key`: the card's short hash from the capture hook (WebLoginSheet.captureHook), "" = unknown.
+    function captured(body, url, key) {
+        key = key || ""
         seenPaths.push(maskedPath(url))
         if (seenPaths.length > 200) seenPaths.splice(0, seenPaths.length - 200)
         const lower = url.toLowerCase()
         if (!relevantURLWords.some(w => lower.indexOf(w) >= 0) || privateURLWords.some(w => lower.indexOf(w) >= 0)) return
         bodies.push(body)
+        bodyCards.push(key)
         // room for a long history paged in with "mehr anzeigen" (≈20 bookings per page)
-        if (bodies.length > 300) bodies.splice(0, bodies.length - 300)
+        if (bodies.length > 300) {
+            bodies.splice(0, bodies.length - 300)
+            bodyCards.splice(0, bodyCards.length - 300)
+        }
+        if (key !== "" && isBookingList(url)) {
+            listCard = key
+            const e = expectedCard
+            if (e && key !== e.previous) {
+                expectedCard = null
+                if (!cards.some(c => c.key === key)) cards = cards.concat([{ key: key, name: e.name, number: e.number }])
+            }
+        }
     }
     /// Host + path without query, digits masked – no ids or card numbers.
     function maskedPath(url) {
@@ -171,6 +299,15 @@ WebLoginFlow {
                 console.info("portal pager: older=" + p.older + " buttons=" + p.labels.join(" | "))
             }
         }
+        // Amex: open every card of the switcher once before importing (#243).
+        if (!browsingHistory && kind === "AmericanExpress" && n > 0 && !away && Date.now() - lastChange > 4000 && !p.cardsOpened) {
+            openNextCard(switching => {
+                if (finished) return
+                if (switching) { lastChange = Date.now(); ticking = false }
+                else afterPager(n, away, Object.assign({}, p, { cardsOpened: true }))
+            })
+            return
+        }
         // Never while browsing older periods: the automatic import closes the sheet.
         if (!browsingHistory && n > importedCount && !away && !p.more && Date.now() - lastChange > 4000) {
             // The automatic import closes the sheet, so it never runs while stored pending
@@ -209,7 +346,7 @@ WebLoginFlow {
     function attempt(closing, fromButton, done) {
         importing = true
         domRows(rows => {
-            const ok = AppModel.importPortalCapture(connection, bodies, rows)
+            const ok = AppModel.importPortalCapture(connection, bodies, rows, bodyCards, cards)
             if (!ok) { importing = false; if (done) done(false); return }
             importedCount = Math.max(importedCount, recognized)
             holdsToCheck = 0
@@ -287,7 +424,7 @@ WebLoginFlow {
     Button {
         text: qsTr("Umsätze übernehmen (%1 erkannt)").arg(flow.recognized)
         highlighted: true
-        enabled: !flow.importing && flow.recognized > 0
+        enabled: !flow.importing && flow.recognized > 0 && !flow.cardsPending
         onClicked: flow.attempt(true, true)
     }
 }
