@@ -4,7 +4,7 @@
 
 use super::syntax::{self, SegmentBuilder};
 use super::{camt, fints_date, kku, mt940, FinTsConnector, SepaAccount, UpdAccount};
-use crate::connectors::{fnv1a64, today, ConnectContext, RemoteTransaction};
+use crate::connectors::{today, ConnectContext, RemoteTransaction};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 
@@ -478,7 +478,7 @@ impl FinTsConnector {
                                 // id; the bank re-sends unacknowledged statements,
                                 // so the content keeps them from being stored twice.
                                 let source_url = if pdf_only {
-                                    format!("fints:hkekp:{label}:{:016x}", fnv1a64(pdf))
+                                    format!("fints:hkekp:{label}:{:016x}", crate::fnv::fnv1a64(pdf))
                                 } else {
                                     format!("fints:hkeka:{label}:{period}")
                                 };

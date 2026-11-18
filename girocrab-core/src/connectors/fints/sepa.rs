@@ -138,7 +138,7 @@ pub fn format_amount(cents: i64) -> String {
     format!("{}.{:02}", cents / 100, cents % 100)
 }
 
-/// Group header fields shared by the pain.001 and pain.008 messages sent over FinTS.
+/// Group header fields of every pain.001 and pain.008 message GiroCrab builds.
 pub(crate) struct PainHeader<'a> {
     pub(crate) message_id: String,
     /// Local time, `YYYY-MM-DDTHH:MM:SS`.
