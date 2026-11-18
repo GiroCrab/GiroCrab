@@ -25,6 +25,8 @@ Rectangle {
     }
     property int historyDays: 90
     property var history: []
+    /// Value history of the depots shown in the securities tab (`depot_value_history`, #578).
+    property var depotHistory: []
     /// ClassifiedAsset lists per depot / Sachwerte account id (loaded for all owners).
     property var classified: ({})
     property var income: ({ dividends: 0, fees: 0, taxes: 0 })
@@ -228,8 +230,22 @@ Rectangle {
                                          + "|" + historyDays + "|" + syncStamp
     onPositionsKeyChanged: Qt.callLater(loadPositions)
     onHistoryKeyChanged: Qt.callLater(loadHistory)
+    /// depotHistoryKey: a new value, a sync, an import or another vault reloads the history; the
+    /// period only cuts what is shown.
+    readonly property string depotHistoryKey: summary.securities.map(a => a.id + ":" + a.balance_cents + ":" + a.balance_date).join(",")
+                                              + "|" + AssetClassification.version + "|" + AppModel.vaultGeneration + "|" + syncStamp
+    onDepotHistoryKeyChanged: Qt.callLater(loadDepotHistory)
+    property int depotHistoryGeneration: 0
+    function loadDepotHistory() {
+        const ids = summary.securities.map(a => a.id)
+        const gen = ++depotHistoryGeneration
+        if (!ids.length) { depotHistory = []; return }
+        AppModel.coreAsync("depot_value_history", { account_ids: ids, days: DepotValueHistory.lookbackDays }, pts => {
+            if (gen === depotHistoryGeneration) depotHistory = pts
+        }, () => {})
+    }
     Component.onCompleted: {
-        loadPositions(); loadHistory()
+        loadPositions(); loadHistory(); loadDepotHistory()
         // (developer) `--demo-filter wealth:<slice id>`: a selected donut slice for screenshots
         const f = AppModel.launchValue("--demo-filter")
         if (f.startsWith("wealth:")) demoFilter = f.slice(7)
@@ -710,6 +726,16 @@ Rectangle {
                         font.pixelSize: Theme.caption; color: Theme.secondary
                     }
                 }
+            }
+            // under the title and the total over the full width, as in the depot header (735f8de)
+            AssetValueChart {
+                readonly property var currencies: sc.s.securities.map(a => a.currency)
+                visible: wv.scope === "securities" && sc.s.securities.length > 0
+                Layout.fillWidth: true
+                content: DepotValueHistory.chartContent(wv.depotHistory, DepotState.depotPeriodRange)
+                currency: DepotValueHistory.chartCurrency(currencies)
+                footnote: DepotValueHistory.footnote
+                excludedNote: DepotValueHistory.excludedNote(currencies)
             }
             Bar { visible: wv.scope === "all"; title: qsTr("Vermögenswerte"); cents: sc.assets; fraction: sc.assets / sc.maxCents; tint: Theme.accent }
             Bar { visible: wv.scope === "all"; title: qsTr("Verbindlichkeiten"); cents: -sc.debts; fraction: sc.debts / sc.maxCents; tint: Theme.negative

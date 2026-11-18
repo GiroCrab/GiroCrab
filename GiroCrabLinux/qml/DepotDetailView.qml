@@ -16,6 +16,15 @@ AssetAccountFrame {
     property string failure: ""
     property var assets: []
     property var transactions: []
+    /// The depot's value history (all of it; the period cuts it for the chart, #578).
+    property var valuePoints: []
+    /// Held positions with a value history by position id (DepotMetrics.makePositions), worked out once per load.
+    property var heldHistory: ({})
+    /// Positions no longer held that have a history, the latest sale first.
+    property var soldPositions: []
+    /// PositionHistoryRequest for PositionHistorySheet (null: closed).
+    property var historyRequest: null
+    property bool demoSheetShown: false
     property int dataAccount: -1
     readonly property bool loaded: loadState === "loaded" && account !== null && dataAccount === account.id
     readonly property var holdings: loaded ? assets.map(a => a.holding) : []
@@ -41,14 +50,41 @@ AssetAccountFrame {
         const id = account.id, gen = ++generation
         if (!(loadState === "loaded" && dataAccount === id)) loadState = "loading"
         Promise.all([AppModel.corePromise("classified_assets", { account_id: id }),
-                     AppModel.corePromise("list_security_transactions", { account_id: id })]).then(r => {
+                     AppModel.corePromise("list_security_transactions", { account_id: id }),
+                     AppModel.corePromise("depot_value_history", { account_ids: [id], days: DepotValueHistory.lookbackDays }),
+                     AppModel.corePromise("depot_value_positions", { account_id: id })]).then(r => {
             if (gen !== generation) return
-            assets = r[0]; transactions = r[1]; dataAccount = id; loadState = "loaded"
+            // DepotData.init: held positions find their history by `holding_position_key`
+            const held = {}
+            for (const v of r[3]) if (v.held && !held[v.position]) held[v.position] = v
+            const byId = {}
+            for (const p of DepotMetrics.makePositions(r[0])) {
+                const key = AppModel.core("holding_position_key", { isin: p.holding.isin, name: p.holding.name })
+                if (key && held[key] && !byId[p.id]) byId[p.id] = held[key]
+            }
+            assets = r[0]; transactions = r[1]; valuePoints = r[2]; heldHistory = byId
+            soldPositions = r[3].filter(v => !v.held).sort((a, b) => a.last_date < b.last_date ? 1 : a.last_date > b.last_date ? -1 : 0)
+            dataAccount = id; loadState = "loaded"
+            // (developer) `--demo-sheet position-history`: once, the first position that has a history
+            if (AppModel.demoSheet === "position-history" && !demoSheetShown) {
+                const first = DepotMetrics.makePositions(r[0]).find(p => byId[p.id])
+                if (first) { demoSheetShown = true; openHistory(byId[first.id]) }
+            }
         }, err => {
             if (gen !== generation) return
             failure = err && err.message ? err.message : String(err)
             loadState = "failed"
         })
+    }
+
+    /// PositionHistoryRequest(accountId:position:)
+    function openHistory(v) {
+        historyRequest = { accountId: account.id, key: v.position, name: v.name, currency: v.currency }
+    }
+    /// A sold position matches the search by name or key (ISIN).
+    function matchesSold(v, query) {
+        const q = query.trim().toLowerCase()
+        return q === "" || v.name.toLowerCase().indexOf(q) >= 0 || v.position.toLowerCase().indexOf(q) >= 0
     }
 
     readonly property var value: DepotMetrics.resolveValue(account ? account.balance_cents : 0, holdings)
@@ -67,9 +103,11 @@ AssetAccountFrame {
         valueNote: dv.value.differenceCents !== null
                    ? qsTr("Positionen: %1 (%2 Differenz)").arg(Fmt.money(dv.value.positionSumCents, dv.currency)).arg(DepotMetrics.signedMoney(dv.value.differenceCents, dv.currency)) : ""
         valueNoteHelp: qsTr("Der gemeldete Depotwert und die Summe der Positionen weichen voneinander ab, z. B. durch unterschiedliche Bewertungszeitpunkte.")
-        // The depot's valuation history: there is no reliable one yet, so the chart says so
-        // (nothing is derived from bookings or activities).
-        chartContent: ({ kind: "unavailable", text: qsTr("Bewertungsverlauf noch nicht verfügbar") })
+        // The depot's valuation history: the values the core holds (the bank's own reports at each
+        // fetch, imported values), cut to the selected period. Before its first value the depot
+        // has none: nothing is drawn there, and nothing is derived from bookings.
+        chartContent: dv.loaded ? DepotValueHistory.chartContent(dv.valuePoints, dv.periodRange) : ({ kind: "loading" })
+        chartFootnote: DepotValueHistory.footnote
         subtitle: [
             Text { visible: !!dv.account && dv.account.bank_name !== ""; text: dv.account ? dv.account.bank_name : ""
                    font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight },
@@ -152,6 +190,19 @@ AssetAccountFrame {
         currency: dv.currency
         onSortRequested: s => dv.sort = s
         onCopyAll: AppModel.copyToClipboard(dv.positions.map(p => DepotMetrics.clipboardLine(p.holding)).join("\n"))
+        historyAvailable: p => !!dv.heldHistory[p.id]
+        onHistoryRequested: p => { const v = dv.heldHistory[p.id]; if (v) dv.openHistory(v) }
+    }
+    readonly property var shownSold: loaded ? soldPositions.filter(v => matchesSold(v, DepotState.query)) : []
+    SoldPositionsSection {
+        visible: dv.loaded && DepotState.depotTab === "positions" && dv.shownSold.length > 0 && dv.compositionFilter === null
+        Layout.fillWidth: true
+        positions: dv.shownSold
+        onOpen: v => dv.openHistory(v)
+    }
+    PositionHistorySheet {
+        request: dv.historyRequest
+        onDismissed: dv.historyRequest = null
     }
 
     // activities
