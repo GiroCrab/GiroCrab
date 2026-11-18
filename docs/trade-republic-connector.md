@@ -139,9 +139,12 @@ nur verknüpft, nicht erneut geladen. Den Stand halten `trade_history_v3_before`
 im Status der Verbindung; solange die Historie nicht vollständig ist, zeigt die App einen Banner mit
 „Weiter abrufen“.
 
-Schlägt die Detailansicht eines Trades fehl, merkt sich der Zugang seine Kennung (`trade_history_v3_retry`)
-und liest ihn im nächsten Abruf erneut, auch wenn der Historienzeiger schon weiter ist (dann wird die Zeitleiste bis
-zum Ende gelesen); solange einer aussteht, gilt die Historie als nicht vollständig.
+Erreicht die Buchungszeitleiste das Seitenlimit, bleibt die Historie offen. Sobald die Datumsblöcke
+der gelesenen Seiten verarbeitet sind, merkt sich der Zugang die nächste Seite. Aktuelle Buchungen
+werden währenddessen weiter vom Anfang der Zeitleiste abgerufen.
+
+Schlägt eine Trade-Detailansicht fehl, speichert der Zugang den Eintrag zur Wiederholung. Der
+nächste Abruf kann sie so auch nach einem Seitenwechsel erneut anfragen.
 
 Unter Bankzugang › Status setzt **„Historie und Zuordnung neu aufbauen …“** den Stand zurück, sortiert die
 gespeicherten Belege anhand ihrer Titel neu (Typ und Dokumentkonto, auch bei bereits verknüpften Belegen;

@@ -143,7 +143,7 @@ Die Erfahrung mit comdirect, DKB, Quirion und Trade Republic: Am meisten Zeit ko
 | Welcher Betrag belegt die Buchung | `DocumentMatchRules::amount_labels` (Etikett im Text, auch als Spaltenüberschrift mit den Werten in der Zeile darunter) |
 | Wie nennt die Buchung das Wertpapier | `DocumentMatchRules::subjects` (ISIN, WKN, Name); **im Verwendungszweck der Umsatzliste nachsehen, nicht im PDF** |
 | Kauf, Verkauf, Ertrag | `document_matching::inflow_in` |
-| Es fehlen alte Dokumente oder Umsätze | Abrufzeitraum („Tage beim ersten Abruf“, 90), PostBox-Seitenlimit (500 Dokumente), Zeitfenster des Abrufs |
+| Es fehlen alte Dokumente oder Umsätze | Abrufzeitraum („Tage beim ersten Abruf“, 90), PostBox-Seitenlimit bei FinTS (500 Dokumente), Zeitfenster des Abrufs |
 
 4. **Einbauen, mit Tests:** Prüfbeispiele in der Regeldatei (Skript und Core prüfen dieselben Titel), ein Integrationstest mit
    Buchung und PDF durch `store_fetch` in beiden Ankunftsreihenfolgen (`connectors/tests/mod.rs`, Muster: die `cd_*`-Tests).

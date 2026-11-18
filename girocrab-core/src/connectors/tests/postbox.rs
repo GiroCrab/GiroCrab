@@ -187,6 +187,38 @@ fn comdirect_postbox_window_rides_on_the_document_request() {
 }
 
 #[test]
+fn a_partial_comdirect_postbox_keeps_the_previous_fetch_window() {
+    let (_dir, v) = vault("girocrab-partial-postbox");
+    let c = connection(&v, "comdirect");
+    let summary = store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        c,
+        FetchResult {
+            documents: vec![doc("", "first")],
+            documents_incomplete: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(summary.postbox_documents, Some(1));
+    assert_eq!(v.get_setting(postbox_last_key(c)).unwrap(), None);
+
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        c,
+        FetchResult {
+            documents: vec![doc("", "first"), doc("", "retried")],
+            postbox_fetched: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(v.get_setting(postbox_last_key(c)).unwrap(), Some(today()));
+}
+
+#[test]
 fn postbox_is_fetched_weekly_with_a_week_of_overlap() {
     let today = day("2026-11-17");
     // never fetched: everything

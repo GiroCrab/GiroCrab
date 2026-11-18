@@ -467,6 +467,7 @@ impl Vault {
         if let Some(o) = v.as_object_mut() {
             o.remove("trade_history_v3_before");
             o.remove("trade_history_v3_complete");
+            o.remove("transaction_history_cursor_v1");
             o.remove("doc_listing_cursor_v1");
             o.insert("doc_listing_open_v1".into(), serde_json::json!(true));
         }

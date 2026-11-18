@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 
 use super::{
     http_client, paginate, BankConnector, Challenge, ChallengeKind, ChallengeResponse,
-    ConnectContext, FetchResult, Phase, RemoteAccount, RemoteTransaction,
+    ConnectContext, FetchResult, Paged, Phase, RemoteAccount, RemoteTransaction,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -183,13 +183,15 @@ impl ComdirectConnector {
     }
 
     /// PostBox PDFs created on or after `since` (`YYYY-MM-DD`, empty = all),
-    /// without an account (`account_ref` empty). `None` when the listing
-    /// failed, so the caller does not take an empty PostBox for a fetched one.
+    /// Returns downloaded PDFs and whether the entire requested window was fetched.
     pub(crate) async fn postbox_documents(
         &mut self,
         since: &str,
-    ) -> Option<Vec<crate::documents::RemoteDocument>> {
-        let entries = self.postbox_entries(since).await?;
+    ) -> (Vec<crate::documents::RemoteDocument>, bool) {
+        let Some(listing) = self.list_postbox(since, usize::MAX).await else {
+            return (Vec::new(), false);
+        };
+        let entries = listing.items;
         let mut out = Vec::new();
         for e in &entries {
             if let Some(d) = self.postbox_download(e).await {
@@ -201,33 +203,56 @@ impl ComdirectConnector {
             out.len(),
             entries.len()
         ));
-        Some(out)
+        let complete = listing.stopped.is_none() && out.len() == entries.len();
+        (out, complete)
     }
 
     /// The PostBox PDFs created on or after `since` (empty = all), as listed by
     /// the bank; advertisements are left out. `None` when the listing failed.
     pub(crate) async fn postbox_entries(&self, since: &str) -> Option<Vec<Value>> {
-        // A later page failing keeps the earlier ones. The cursor carries the
-        // route: v2 may be missing for some contracts, so the first page picks it.
-        let listed = paginate(POSTBOX_MAX_PAGES, (None, 0), |(route, first)| async move {
-            let (route, page) = match route {
-                Some(r) => (r, self.get(&postbox_path(r, first)).await?),
-                None => match self.get(&postbox_path(POSTBOX_V2, first)).await {
-                    Ok(page) => (POSTBOX_V2, page),
-                    Err(_) => (
-                        POSTBOX_V1,
-                        self.get(&postbox_path(POSTBOX_V1, first)).await?,
-                    ),
-                },
-            };
-            let (values, next) = next_page(page, first, POSTBOX_PAGE);
-            Ok((values, next.map(|next| (Some(route), next))))
-        })
+        Some(self.list_postbox(since, POSTBOX_MAX_PAGES).await?.items)
+    }
+
+    async fn list_postbox(&self, since: &str, max_pages: usize) -> Option<Paged<Value>> {
+        // Keep partial results, but let the direct sync distinguish them from a full archive.
+        let mut listing = paginate(
+            max_pages,
+            (None, 0, std::collections::HashSet::new()),
+            |(route, first, mut seen)| async move {
+                let (route, page) = match route {
+                    Some(r) => (r, self.get(&postbox_path(r, first)).await?),
+                    None => match self.get(&postbox_path(POSTBOX_V2, first)).await {
+                        Ok(page) => (POSTBOX_V2, page),
+                        Err(_) => (
+                            POSTBOX_V1,
+                            self.get(&postbox_path(POSTBOX_V1, first)).await?,
+                        ),
+                    },
+                };
+                if !page["values"].is_array() {
+                    return Err(CoreError::protocol("invalid comdirect PostBox page"));
+                }
+                let (values, next) = next_page(page, first, POSTBOX_PAGE);
+                let seen_before = seen.len();
+                seen.extend(
+                    values
+                        .iter()
+                        .filter_map(|d| d["documentId"].as_str())
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_owned),
+                );
+                if next.is_some() && seen.len() == seen_before {
+                    return Err(CoreError::protocol(
+                        "comdirect PostBox pagination did not advance",
+                    ));
+                }
+                Ok((values, next.map(|next| (Some(route), next, seen))))
+            },
+        )
         .await
         .ok()?;
-        let mut entries = listed.items;
-        let listed = entries.len();
-        entries.retain(|d| {
+        let listed = listing.items.len();
+        listing.items.retain(|d| {
             let date = postbox_date(d);
             d["mimeType"].as_str().unwrap_or("application/pdf") == "application/pdf"
                 && !d["advertisement"].as_bool().unwrap_or(false)
@@ -235,11 +260,15 @@ impl ComdirectConnector {
                 && !d["documentId"].as_str().unwrap_or_default().is_empty()
         });
         crate::depot_debug::log(&format!(
-            "comdirect postbox: listed {listed} entries (limit {POSTBOX_MAX_PAGES} pages), {} kept from {}",
-            entries.len(),
-            if since.is_empty() { "the beginning" } else { "a day" }
+            "comdirect postbox: listed {listed} entries, {} kept from {}",
+            listing.items.len(),
+            if since.is_empty() {
+                "the beginning"
+            } else {
+                "a day"
+            }
         ));
-        Some(entries)
+        Some(listing)
     }
 
     /// Downloads one listed PostBox PDF (without an account). The API allows
@@ -572,15 +601,14 @@ impl BankConnector for ComdirectConnector {
         // PostBox documents (optional, errors are ignored; not when document retrieval is off).
         // The API does not say which account one belongs to: they get theirs below, once every
         // account and depot is read (`comdirect_postbox::assign_documents`).
-        let listed = if ctx.documents.enabled() {
+        let mut postbox_docs = Vec::new();
+        if ctx.documents.enabled() {
             let since = ctx.documents.postbox_since().unwrap_or(&ctx.since);
-            self.postbox_documents(since).await
-        } else {
-            None
-        };
-        // a listing that worked is remembered by the vault (the next one starts from there)
-        out.postbox_fetched = listed.is_some();
-        let mut postbox_docs = listed.unwrap_or_default();
+            let (docs, complete) = self.postbox_documents(since).await;
+            postbox_docs = docs;
+            out.postbox_fetched = complete;
+            out.documents_incomplete = !complete;
+        }
         // Securities accounts (value only)
         crate::depot_debug::log("comdirect REST: fetching depots");
         let depots_res = self.get("/api/brokerage/clients/user/v3/depots").await;

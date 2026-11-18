@@ -921,7 +921,8 @@ pub(crate) fn store_fetch(
                 _ => {}
             }
         }
-        let postbox_documents = data.postbox_fetched.then_some(postbox_added);
+        let postbox_documents =
+            (data.postbox_fetched || postbox_added > 0).then_some(postbox_added);
         if data.postbox_fetched {
             tx.execute(
                 "INSERT INTO settings(key, value) VALUES (?1, ?2)

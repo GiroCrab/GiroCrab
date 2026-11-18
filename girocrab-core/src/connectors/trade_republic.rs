@@ -250,6 +250,7 @@ fn parse_trade_detail(item_icon: &str, detail: &Value) -> TradeDetail {
 }
 
 /// A timeline row of a trade, dividend or savings plan that has a detail screen.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct TradeRow {
     id: String,
     date: String,
@@ -1273,6 +1274,10 @@ pub struct TradeRepublicConnector {
     /// Trades whose detail screen failed: read again next time, whatever the history cursor says
     /// (their securities activity would be missing for good).
     trade_history_retry: Vec<String>,
+    /// Older rows may no longer be in the current page range when a detail request is retried.
+    trade_retry_rows: Vec<TradeRow>,
+    /// Start of the current history segment, separate from the day checkpoint within it.
+    transaction_history_cursor: Option<String>,
     /// Document candidates a pass did not get to (over the limit of one pass) or whose detail or
     /// download failed. They are tried again on the next syncs until they are stored, whatever the
     /// history cursor or the sync window say.
@@ -1299,6 +1304,8 @@ impl TradeRepublicConnector {
             trade_history_before: None,
             trade_history_complete: false,
             trade_history_retry: Vec::new(),
+            trade_retry_rows: Vec::new(),
+            transaction_history_cursor: None,
             doc_pending: Vec::new(),
             doc_listing_open: false,
             doc_listing_cursor: None,
@@ -1381,6 +1388,27 @@ impl TradeRepublicConnector {
         Phase::Challenge(c)
     }
 
+    fn advance_history(
+        &mut self,
+        before: Option<String>,
+        segment_complete: bool,
+        next_page: Option<String>,
+    ) {
+        // Advance the page cursor only once all date batches in this segment were processed.
+        // A new segment starts a fresh date range, including when it begins on the same day.
+        if segment_complete && next_page.is_some() {
+            self.transaction_history_cursor = next_page;
+            self.trade_history_before = None;
+            self.trade_history_complete = false;
+        } else {
+            self.trade_history_before = before;
+            self.trade_history_complete = segment_complete;
+            if segment_complete {
+                self.transaction_history_cursor = None;
+            }
+        }
+    }
+
     fn state(&self) -> Value {
         let keep: Vec<&String> = self.known_doc_items.iter().rev().take(6000).collect();
         json!({
@@ -1392,6 +1420,8 @@ impl TradeRepublicConnector {
             "trade_history_v3_before": self.trade_history_before,
             "trade_history_v3_complete": self.trade_history_complete,
             "trade_history_v3_retry": self.trade_history_retry,
+            "trade_retry_rows_v1": self.trade_retry_rows,
+            "transaction_history_cursor_v1": self.transaction_history_cursor,
             "doc_pending_v1": self.doc_pending,
             "doc_listing_open_v1": self.doc_listing_open,
             "doc_listing_cursor_v1": self.doc_listing_cursor,
@@ -1467,6 +1497,11 @@ impl BankConnector for TradeRepublicConnector {
                     .collect()
             })
             .unwrap_or_default();
+        self.trade_retry_rows =
+            serde_json::from_value(ctx.state["trade_retry_rows_v1"].clone()).unwrap_or_default();
+        self.transaction_history_cursor = ctx.state["transaction_history_cursor_v1"]
+            .as_str()
+            .map(str::to_string);
         self.doc_pending =
             serde_json::from_value(ctx.state["doc_pending_v1"].clone()).unwrap_or_default();
         self.doc_listing_open = ctx.state["doc_listing_open_v1"].as_bool().unwrap_or(false);
@@ -1726,7 +1761,6 @@ impl BankConnector for TradeRepublicConnector {
             balance_date: super::today(),
         });
 
-        let mut cursor: Option<String> = None;
         let mut sub_id = 2u32;
         let mut doc_candidates: Vec<(String, String, String, String, String)> = Vec::new();
         let mut trade_rows: Vec<TradeRow> = Vec::new();
@@ -1737,117 +1771,138 @@ impl BankConnector for TradeRepublicConnector {
         // the history pass pages through the whole timeline (cheap); details are batched below
         // (trades to read again lie anywhere in the timeline: it is paged through to the end)
         let history_done = self.trade_history_complete && self.trade_history_retry.is_empty();
-        let page_limit = if history_done { 200 } else { 600 };
-        'pages: for _ in 0..page_limit {
-            let mut payload = json!({"type": "timelineTransactions"});
-            if let Some(c) = &cursor {
-                payload["after"] = json!(c);
+        let resume = self.transaction_history_cursor.clone();
+        let mut next_history_page = None;
+        let mut seen = std::collections::HashSet::new();
+        // While backfilling older pages, still refresh the recent window from the head.
+        for recent_only in [true, false] {
+            if recent_only && resume.is_none() {
+                continue;
             }
-            let page = request(&mut ws, sub_id, payload, &token).await?;
-            sub_id += 2;
-            for item in page["items"].as_array().cloned().unwrap_or_default() {
-                let date: String = item["timestamp"]
-                    .as_str()
-                    .unwrap_or("")
-                    .chars()
-                    .take(10)
-                    .collect();
-                // Older than the sync window: only trades are read, once, so that the depot's
-                // activities cover the history (bookings and documents stay incremental).
-                let below_window = !date.is_empty() && date.as_str() < window_start.as_str();
-                if below_window && history_done {
-                    break 'pages;
+            let mut cursor = if recent_only { None } else { resume.clone() };
+            let page_limit = if recent_only || history_done {
+                200
+            } else {
+                600
+            };
+            'pages: for _ in 0..page_limit {
+                let mut payload = json!({"type": "timelineTransactions"});
+                if let Some(c) = &cursor {
+                    payload["after"] = json!(c);
                 }
-                if item["amount"].is_null() || item["status"].as_str() == Some("CANCELED") {
-                    continue;
-                }
-                let subtitle = item["subtitle"].as_str().unwrap_or_default().to_string();
-                let item_id = item["id"].as_str().unwrap_or_default().to_string();
-                let kind_text = format!(
-                    "{} {} {}",
-                    subtitle,
-                    item["eventType"].as_str().unwrap_or(""),
-                    item["title"].as_str().unwrap_or("")
-                )
-                .to_lowercase();
-                if !item_id.is_empty()
-                    && !below_window
-                    && !self.known_doc_items.contains(&item_id)
-                    && [
-                        "sparplan",
-                        "savings_plan",
-                        "kauf",
-                        "verkauf",
-                        "order",
-                        "trade",
-                        "zinsen",
-                        "interest",
-                        "dividende",
-                        "dividend",
-                        "steuer",
-                        "tax",
-                        "saveback",
-                        "round up",
-                        "spare_change",
-                        "ausschüttung",
-                        "corporate_action",
-                    ]
-                    .iter()
-                    .any(|k| kind_text.contains(k))
-                {
-                    doc_candidates.push((
-                        item_id.clone(),
-                        date.clone(),
-                        item["title"].as_str().unwrap_or_default().to_string(),
-                        "tr:cash".to_string(),
-                        kind_text.clone(),
-                    ));
-                }
-                if !item_id.is_empty() && is_trade_kind(&kind_text) {
-                    trade_rows.push(TradeRow {
-                        id: item_id.clone(),
-                        date: date.clone(),
-                        title: item["title"].as_str().unwrap_or_default().to_string(),
-                        kind_text: kind_text.clone(),
-                        subtitle: subtitle.clone(),
+                let page = request(&mut ws, sub_id, payload, &token).await?;
+                sub_id += 2;
+                for item in page["items"].as_array().cloned().unwrap_or_default() {
+                    let date: String = item["timestamp"]
+                        .as_str()
+                        .unwrap_or("")
+                        .chars()
+                        .take(10)
+                        .collect();
+                    // Older than the sync window: only trades are read, once, so that the depot's
+                    // activities cover the history (bookings and documents stay incremental).
+                    let below_window = !date.is_empty() && date.as_str() < window_start.as_str();
+                    if below_window && (recent_only || history_done) {
+                        cursor = None;
+                        break 'pages;
+                    }
+                    if item["amount"].is_null() || item["status"].as_str() == Some("CANCELED") {
+                        continue;
+                    }
+                    let subtitle = item["subtitle"].as_str().unwrap_or_default().to_string();
+                    let item_id = item["id"].as_str().unwrap_or_default().to_string();
+                    if !item_id.is_empty() && !seen.insert(item_id.clone()) {
+                        continue;
+                    }
+                    let kind_text = format!(
+                        "{} {} {}",
+                        subtitle,
+                        item["eventType"].as_str().unwrap_or(""),
+                        item["title"].as_str().unwrap_or("")
+                    )
+                    .to_lowercase();
+                    if !item_id.is_empty()
+                        && !below_window
+                        && !self.known_doc_items.contains(&item_id)
+                        && [
+                            "sparplan",
+                            "savings_plan",
+                            "kauf",
+                            "verkauf",
+                            "order",
+                            "trade",
+                            "zinsen",
+                            "interest",
+                            "dividende",
+                            "dividend",
+                            "steuer",
+                            "tax",
+                            "saveback",
+                            "round up",
+                            "spare_change",
+                            "ausschüttung",
+                            "corporate_action",
+                        ]
+                        .iter()
+                        .any(|k| kind_text.contains(k))
+                    {
+                        doc_candidates.push((
+                            item_id.clone(),
+                            date.clone(),
+                            item["title"].as_str().unwrap_or_default().to_string(),
+                            "tr:cash".to_string(),
+                            kind_text.clone(),
+                        ));
+                    }
+                    if !item_id.is_empty() && is_trade_kind(&kind_text) {
+                        trade_rows.push(TradeRow {
+                            id: item_id.clone(),
+                            date: date.clone(),
+                            title: item["title"].as_str().unwrap_or_default().to_string(),
+                            kind_text: kind_text.clone(),
+                            subtitle: subtitle.clone(),
+                            amount_cents: amount_cents(&item["amount"]["value"]),
+                            currency: item["amount"]["currency"]
+                                .as_str()
+                                .unwrap_or("EUR")
+                                .to_string(),
+                            icon: item["icon"].as_str().unwrap_or_default().to_string(),
+                        });
+                    }
+                    let mut booking = RemoteTransaction {
+                        account_ref: "tr:cash".into(),
+                        external_id: item["id"].as_str().unwrap_or_default().to_string(),
+                        booking_date: date.clone(),
+                        value_date: date,
                         amount_cents: amount_cents(&item["amount"]["value"]),
                         currency: item["amount"]["currency"]
                             .as_str()
                             .unwrap_or("EUR")
                             .to_string(),
-                        icon: item["icon"].as_str().unwrap_or_default().to_string(),
-                    });
+                        counterparty: item["title"].as_str().unwrap_or_default().to_string(),
+                        counterparty_iban: String::new(),
+                        purpose: subtitle.clone(),
+                        booking_text: if subtitle.is_empty() {
+                            item["eventType"].as_str().unwrap_or_default().to_string()
+                        } else {
+                            subtitle
+                        },
+                        ..Default::default()
+                    };
+                    if below_window {
+                        booking.checked = true;
+                        older_bookings.push(booking);
+                        continue;
+                    }
+                    out.transactions.push(booking);
                 }
-                let mut booking = RemoteTransaction {
-                    account_ref: "tr:cash".into(),
-                    external_id: item["id"].as_str().unwrap_or_default().to_string(),
-                    booking_date: date.clone(),
-                    value_date: date,
-                    amount_cents: amount_cents(&item["amount"]["value"]),
-                    currency: item["amount"]["currency"]
-                        .as_str()
-                        .unwrap_or("EUR")
-                        .to_string(),
-                    counterparty: item["title"].as_str().unwrap_or_default().to_string(),
-                    counterparty_iban: String::new(),
-                    purpose: subtitle.clone(),
-                    booking_text: if subtitle.is_empty() {
-                        item["eventType"].as_str().unwrap_or_default().to_string()
-                    } else {
-                        subtitle
-                    },
-                    ..Default::default()
-                };
-                if below_window {
-                    booking.checked = true;
-                    older_bookings.push(booking);
-                    continue;
+                cursor = page["cursors"]["after"].as_str().map(|s| s.to_string());
+                if cursor.is_none() {
+                    break;
                 }
-                out.transactions.push(booking);
             }
-            cursor = page["cursors"]["after"].as_str().map(|s| s.to_string());
-            if cursor.is_none() {
-                break;
+            if !recent_only {
+                next_history_page = cursor;
             }
         }
 
@@ -1974,6 +2029,19 @@ impl BankConnector for TradeRepublicConnector {
             self.trade_history_complete,
         );
         add_retries(&mut plan.selected, &trade_rows, &self.trade_history_retry);
+        // Old connection states stored only IDs. Keep unresolved ones until the full scan ends.
+        if !plan.complete || next_history_page.is_some() {
+            self.trade_history_retry
+                .retain(|id| !plan.selected.iter().any(|row| &row.id == id));
+        } else {
+            self.trade_history_retry.clear();
+        }
+        let retry_rows = self.trade_retry_rows.clone();
+        for row in &retry_rows {
+            if !plan.selected.iter().any(|selected| selected.id == row.id) {
+                plan.selected.push(row);
+            }
+        }
         // The bookings of the history batch: the days from the oldest trade of this batch up to
         // where the last sync stopped (everything left, in the final batch).
         {
@@ -2190,7 +2258,7 @@ impl BankConnector for TradeRepublicConnector {
         // --- Wertpapierseite (#314): units, price, fees and taxes of the newest
         // trades from their detail screens (cached from the document pass).
         // A trade whose screen fails is skipped; the cash booking stays.
-        let mut failed_trades: Vec<String> = Vec::new();
+        let mut failed_trades = Vec::new();
         for row in plan.selected {
             let detail = match details.remove(&row.id) {
                 Some(d) => d,
@@ -2206,7 +2274,7 @@ impl BankConnector for TradeRepublicConnector {
                     {
                         Ok(d) => d,
                         Err(_) => {
-                            failed_trades.push(row.id.clone());
+                            failed_trades.push(row.clone());
                             continue;
                         }
                     }
@@ -2257,15 +2325,14 @@ impl BankConnector for TradeRepublicConnector {
             });
         }
         let _ = ws.close(None).await;
-        self.trade_history_before = plan.before;
-        self.trade_history_complete = plan.complete;
+        self.advance_history(plan.before, plan.complete, next_history_page);
         // the history is not complete while a trade is still to be read again
         // documents still open (downloads, a listing that stopped early) keep "Weiter abrufen" on
-        out.history_incomplete = !plan.complete
+        out.history_incomplete = !self.trade_history_complete
             || !failed_trades.is_empty()
             || !self.doc_pending.is_empty()
             || self.doc_listing_open;
-        self.trade_history_retry = failed_trades;
+        self.trade_retry_rows = failed_trades;
         out.history_remaining = plan.remaining as u32;
         out.history_total = trade_rows.len() as u32;
         out.state = Some(self.state());
@@ -3093,6 +3160,24 @@ mod tests {
             c.state()["trade_history_v3_retry"],
             json!(["old1", "old2", "new"])
         );
+    }
+
+    #[test]
+    fn history_resumes_at_the_page_limit_after_finishing_the_current_date_batches() {
+        let mut c = TradeRepublicConnector::new();
+        c.advance_history(Some("2024-05-01".into()), false, Some("next".into()));
+        assert!(c.transaction_history_cursor.is_none());
+        assert_eq!(c.trade_history_before.as_deref(), Some("2024-05-01"));
+        assert!(!c.trade_history_complete);
+
+        c.advance_history(Some("2024-05-01".into()), true, Some("next".into()));
+        assert_eq!(c.state()["transaction_history_cursor_v1"], json!("next"));
+        assert!(c.trade_history_before.is_none());
+        assert!(!c.trade_history_complete);
+
+        c.advance_history(None, true, None);
+        assert!(c.transaction_history_cursor.is_none());
+        assert!(c.trade_history_complete);
     }
 
     #[test]
