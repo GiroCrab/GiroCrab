@@ -800,12 +800,8 @@ struct BookingRow: View {
                     HStack(spacing: 6) {
                         #if !os(iOS)
                         if model.showsAccountMarkers {
-                            ViewThatFits(in: .horizontal) {
-                                AccountChip(label: model.accountShortLabel(booking.accountId), color: model.accountColor(booking.accountId),
-                                            symbol: model.accountSymbol(booking.accountId), compact: compactChip)
-                                AccountChip(label: model.accountShortLabel(booking.accountId), color: model.accountColor(booking.accountId),
-                                            symbol: model.accountSymbol(booking.accountId), compact: true)
-                            }
+                            AccountChip(label: model.accountShortLabel(booking.accountId), color: model.accountColor(booking.accountId),
+                                        symbol: model.accountSymbol(booking.accountId), compact: compactChip)
                         }
                         #endif
                         // category with the sidebar's icon and colour, then the payment method
@@ -1167,29 +1163,66 @@ struct AccountChip: View {
     let label: String
     let color: Color
     var symbol = "building.columns"
-    /// Narrow rows: just the symbol (the category keeps the room).
+    /// Narrow rows: just the symbol (the category keeps the room). Otherwise the label shows
+    /// whenever the whole chip fits the room the row offers.
     var compact = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        AccountChipLayout(showsLabel: !compact) {
+            Capsule().fill(color.opacity(0.12))
             Image(systemName: symbol)
                 .appFont(.caption, weight: .semibold)
                 .foregroundStyle(color)
-            if !compact {
-                Text(label)
-                    .sensitive()
-                    .appFont(.subheadline, weight: .medium)
-                    .foregroundStyle(color)
-                    .lineLimit(1)
-            }
+            Text(label)
+                .sensitive()
+                .appFont(.subheadline, weight: .medium)
+                .foregroundStyle(color)
+                .lineLimit(1)
         }
-        .padding(.horizontal, compact ? 0 : 6)
-        .padding(.vertical, 1.5)
-        .background(Capsule().fill(color.opacity(compact ? 0 : 0.12)))
-        .fixedSize()
+        // a label that does not fit is placed outside the chip
+        .clipped()
         .help(label)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Konto: \(label)"))
+    }
+}
+
+/// Symbol and label in a tinted capsule, or only the symbol when the full chip does not fit
+/// the offered width. One layout instead of `ViewThatFits` over a full and a compact chip,
+/// which built and measured both for every booking row on screen. Subviews: capsule,
+/// symbol, label.
+private struct AccountChipLayout: Layout {
+    var showsLabel: Bool
+    private static let padding: CGFloat = 6
+    private static let spacing: CGFloat = 4
+    private static let vertical: CGFloat = 1.5
+
+    private func sizes(_ subviews: Subviews) -> (icon: CGSize, label: CGSize, full: CGSize, compact: CGSize) {
+        let icon = subviews[1].sizeThatFits(.unspecified)
+        let label = subviews[2].sizeThatFits(.unspecified)
+        let full = CGSize(width: Self.padding * 2 + icon.width + Self.spacing + label.width,
+                          height: max(icon.height, label.height) + Self.vertical * 2)
+        return (icon, label, full, CGSize(width: icon.width, height: icon.height + Self.vertical * 2))
+    }
+
+    private func fits(_ width: CGFloat?, _ full: CGSize) -> Bool {
+        showsLabel && (width ?? .infinity) >= full.width
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let s = sizes(subviews)
+        return fits(proposal.width, s.full) ? s.full : s.compact
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let s = sizes(subviews)
+        let full = fits(bounds.width + 0.5, s.full)
+        let iconX = bounds.minX + (full ? Self.padding : 0)
+        subviews[0].place(at: bounds.origin, proposal: full ? ProposedViewSize(bounds.size) : .zero)
+        subviews[1].place(at: CGPoint(x: iconX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(s.icon))
+        // outside the clipped bounds when it does not fit
+        let labelX = full ? iconX + s.icon.width + Self.spacing : bounds.maxX + 1000
+        subviews[2].place(at: CGPoint(x: labelX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(s.label))
     }
 }
 
