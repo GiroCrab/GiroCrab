@@ -141,9 +141,8 @@ struct BookingStreamView: View {
             }
             .background(SelectionScroller(proxy: proxy))
             // another account, group, period or view: back to the newest day; for a sidebar
-            // selection once its data is in (`AppModel.requestStreamTop`)
+            // selection or a period once its data is in (`AppModel.requestStreamTop`)
             .onChange(of: model.streamTopRequest) { _, _ in proxy.scrollTo(Self.topID, anchor: .top) }
-            .onChange(of: model.period) { _, _ in scrollToTop(proxy) }
             .onChange(of: model.scope) { _, _ in scrollToTop(proxy) }
             .onChange(of: model.scrollToDay) { _, jump in
                 guard let day = jump?.day else { return }

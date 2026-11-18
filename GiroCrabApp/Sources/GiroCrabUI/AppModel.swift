@@ -133,7 +133,7 @@ public final class AppModel {
             }
             selectionIsOverview = sidebarSelection == .allAccounts
             selectionIsNewBookings = sidebarSelection == .newBookings
-            requestStreamTop(withData: loadsSelectionInBackground)
+            if oldValue != sidebarSelection { requestStreamTop(withData: selectionLoadsInBackground) }
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
             listLimit = Self.defaultListLimit
@@ -196,7 +196,12 @@ public final class AppModel {
             reloadListInBackground()
         }
     }
-    var period: Period = .all { didSet { periodDidChange() } }
+    var period: Period = .all {
+        didSet {
+            if oldValue != period { requestStreamTop(withData: selectionLoadsInBackground) }
+            periodDidChange()
+        }
+    }
     /// Start/end of the `.custom` period (ISO, inclusive); remembered across launches.
     var customPeriodFrom: String = UserDefaults.standard.string(forKey: "period.customFrom") ?? AppModel.defaultCustomPeriod.from
     var customPeriodTo: String = UserDefaults.standard.string(forKey: "period.customTo") ?? AppModel.defaultCustomPeriod.to

@@ -80,8 +80,11 @@ extension AppModel {
 
     // MARK: - Selection change (account, group, category, period)
 
+    /// A selection or period change now loads in the background (`reloadSelection`).
+    var selectionLoadsInBackground: Bool { loadsSelectionInBackground && vault != nil }
+
     func reloadSelection(periodChanged: Bool) {
-        if loadsSelectionInBackground, vault != nil {
+        if selectionLoadsInBackground {
             startSelectionLoad()
         } else if selectionLoadTask != nil {
             settlePendingSelectionLoad() // reloads everything
@@ -122,8 +125,8 @@ extension AppModel {
         if streamTopPending { requestStreamTop(withData: false) }
     }
 
-    /// Back to the top of the booking stream for a new sidebar selection. `withData`: the list
-    /// loads in the background, so the scroll waits for it (`endSelectionLoad`). Scrolling the old
+    /// Back to the top of the booking stream for a new sidebar selection or period. `withData`:
+    /// the list loads in the background, so the scroll waits for it (`endSelectionLoad`). Scrolling the old
     /// list at the click cost a layout pass of its own, and clearing the chart marker's day then
     /// re-ran every day header on screen, all for data about to be replaced.
     func requestStreamTop(withData: Bool) {
