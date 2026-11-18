@@ -133,7 +133,13 @@ struct ConnectionEditSheet: View {
     @State private var tanMedium = ""
     private var isFinTs: Bool { [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric].contains(connection.connector) }
     private var tanMediumKey: String { "fints.tan_medium.\(connection.id)" }
+    /// Application-ID / key: shown and saved for this login only (#824).
+    private static let ebIDKey = "enablebanking.application_id"
+    private static let ebPemKey = "enablebanking.private_key_pem"
+    private func isEBAppKey(_ key: String) -> Bool { key == Self.ebIDKey || key == Self.ebPemKey }
     @State private var values: [String: String] = [:]
+    /// Enable Banking application of this login as loaded (#824): saved per login, only when changed.
+    @State private var loadedEBApp: (id: String, pem: String) = ("", "")
     @State private var revealed: Set<String> = []
     @State private var importingKey = false
     @State private var status: ConnectionStatus?
@@ -178,7 +184,7 @@ struct ConnectionEditSheet: View {
         case .americanExpress, .amazonVisa, .advanzia: return []
         case .bunq: return ["bunq.environment"]
         case .enableBanking: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
-        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank: return []
+        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank, .finpension: return []
         }
     }
 
@@ -241,6 +247,7 @@ struct ConnectionEditSheet: View {
 
     private var isPortal: Bool { connection.connector == .americanExpress || connection.connector == .amazonVisa }
     @State private var importingStatement = false
+    @State private var importingFinpension = false
     @State private var confirmSwitch = false
     /// comdirect via FinTS: PostBox through the bank's API as well (#838).
     @State private var postbox = false
@@ -320,6 +327,22 @@ struct ConnectionEditSheet: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             ForEach(advancedKeys, id: \.self) { key in field(key) }
                         }
+                    }
+                }
+                if connection.connector == .finpension {
+                    Section {
+                        Text("Finpension hat keine Schnittstelle: Laden Sie in Ihrem Finpension-Konto den Export (CSV oder JSON) mit Positionen und Cash-Buchungen herunter und lesen Sie ihn hier ein. Säule 3a, Freizügigkeit und 1e werden gleich behandelt. Es gibt keine Anmeldung und keinen Netzwerkzugriff.")
+                            .appFont(.caption).foregroundStyle(Theme.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button { importingFinpension = true } label: { Label("Finpension-Export importieren …", systemImage: "doc.badge.plus") }
+                            .buttonStyle(.borderedProminent)
+                            .fileImporter(isPresented: $importingFinpension, allowedContentTypes: [.commaSeparatedText, .json, .plainText, .data]) { result in
+                                if case .success(let url) = result {
+                                    save()
+                                    model.importFinpension(connection, url: url)
+                                    dismiss()
+                                }
+                            }
                     }
                 }
                 if isPortal {
@@ -552,7 +575,8 @@ struct ConnectionEditSheet: View {
                         .appFont(.caption, design: .monospaced)
                         .frame(height: 90)
                 } else {
-                    Text(entry?.hasValue == true ? "•••••• (gespeichert)" : "nicht gesetzt").foregroundStyle(Theme.secondary)
+                    let stored = isEBAppKey(key) ? !(values[key] ?? "").isEmpty : entry?.hasValue == true
+                    Text(stored ? "•••••• (gespeichert)" : "nicht gesetzt").foregroundStyle(Theme.secondary)
                 }
             } else if secret {
                 HStack {
@@ -572,6 +596,10 @@ struct ConnectionEditSheet: View {
             if let help = entry?.help {
                 Text(help).appFont(.caption2).foregroundStyle(Theme.secondary)
             }
+            if key == Self.ebPemKey {
+                Text("Gilt nur für diesen Bankzugang. Eine andere Anwendung braucht beim nächsten Abruf eine neue Zustimmung bei der Bank.")
+                    .appFont(.caption2).foregroundStyle(Theme.secondary)
+            }
         }
     }
 
@@ -580,7 +608,9 @@ struct ConnectionEditSheet: View {
             if revealed.contains(key) {
                 revealed.remove(key)
             } else {
-                if (values[key] ?? "").isEmpty { values[key] = model.revealSetting(key) }
+                if (values[key] ?? "").isEmpty {
+                    values[key] = key == Self.ebPemKey ? model.connectionEnableBankingKey(connection.id) : model.revealSetting(key)
+                }
                 revealed.insert(key)
             }
         } label: {
@@ -674,7 +704,14 @@ struct ConnectionEditSheet: View {
             initialPortalUser = portalUser
             initialStorePortalLogin = storePortalLogin
         }
-        for key in keys + advancedKeys + postboxKeys {
+        if (keys + advancedKeys).contains(where: isEBAppKey) {
+            let id = model.connectionEnableBankingApp(connection.id)?.applicationId ?? ""
+            let pem = model.connectionEnableBankingKey(connection.id)
+            loadedEBApp = (id, pem)
+            values[Self.ebIDKey] = id
+            values[Self.ebPemKey] = pem
+        }
+        for key in keys + advancedKeys + postboxKeys where !isEBAppKey(key) {
             let e = model.settingEntry(key)
             if e?.isSecret == true {
                 values[key] = model.revealSetting(key)
@@ -687,7 +724,7 @@ struct ConnectionEditSheet: View {
     }
 
     private func saveSettings(_ keys: [String]) {
-        for key in keys {
+        for key in keys where !isEBAppKey(key) {
             let v = values[key] ?? ""
             let current = (model.settingEntry(key)?.isSecret ?? false) ? model.revealSetting(key) : (model.settingEntry(key)?.value ?? "")
             if v != current {
@@ -722,6 +759,14 @@ struct ConnectionEditSheet: View {
             }
         }
         saveSettings(keys + advancedKeys + postboxKeys)
+        if (keys + advancedKeys).contains(where: isEBAppKey) {
+            let id = (values[Self.ebIDKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let pem = (values[Self.ebPemKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if id != loadedEBApp.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                || pem != loadedEBApp.pem.trimmingCharacters(in: .whitespacesAndNewlines) {
+                model.setConnectionEnableBankingApp(connection.id, applicationID: id, pem: pem)
+            }
+        }
         if isFinTs {
             let medium = tanMedium.trimmingCharacters(in: .whitespaces)
             if medium != model.revealSetting(tanMediumKey) { model.saveSetting(tanMediumKey, medium) }

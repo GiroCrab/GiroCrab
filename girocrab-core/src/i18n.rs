@@ -547,6 +547,13 @@ fn english(de: &str) -> Option<&'static str> {
         "Eine TAN wurde an {0} gesendet." => "A TAN was sent to {0}.",
         "Ihr Telefon" => "your phone",
         "Vorgemerkt" => "Pending",
+        // ------------------------------------------------------------ connectors/finpension.rs
+        "Datei-Import (CSV/JSON-Export)" => "File import (CSV/JSON export)",
+        "Bezeichnung" => "Label",
+        "Finpension (Schweiz): Säule 3a, Freizügigkeit und 1e. Die CSV- oder JSON-Exportdatei (Positionen und Cash-Buchungen) wird über „Datei importieren“ eingelesen; es gibt keine Anmeldung und keinen Netzwerkzugriff." => "Finpension (Switzerland): pillar 3a, vested benefits and 1e. The CSV or JSON export (holdings and cash transactions) is read with “Import file”; there is no login and no network access.",
+        "Bitte die Exportdatei über „Datei importieren“ einlesen." => "Please read the export file with “Import file”.",
+        "Die Verbindung gehört nicht zu Finpension." => "The connection does not belong to Finpension.",
+        "Keine Positionen oder Buchungen erkannt." => "No holdings or transactions recognised.",
         // ------------------------------------------------------------ connectors/scalable.rs
         "OAuth-Geräteanmeldung + GraphQL-API der offiziellen CLI" => "OAuth device login + GraphQL API of the official CLI",
         "(nicht nötig – Anmeldung im Browser)" => "(not needed – sign in in the browser)",
@@ -613,6 +620,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Das ist eine Sandbox-Anwendung. Für echte Konten auf enablebanking.com eine Anwendung mit „Production“ registrieren." => "This is a sandbox application. For real accounts, register an application with “Production” on enablebanking.com.",
         "Die Anwendung ist noch nicht aktiv. Auf enablebanking.com bei der Anwendung „Activate by linking accounts“ wählen und alle gewünschten Konten verknüpfen." => "The application isn’t active yet. On enablebanking.com, choose “Activate by linking accounts” for the application and link every account you want.",
         "Die Redirect-URL „{0}“ ist in der Anwendung nicht eingetragen. Bitte auf enablebanking.com unter „Allowed redirect URLs“ ergänzen." => "The redirect URL “{0}” isn’t registered in the application. Please add it on enablebanking.com under “Allowed redirect URLs”.",
+        "Application-ID und privater Schlüssel gehören zusammen: bitte beide angeben." => "Application ID and private key belong together: please enter both.",
         "Enable Banking kennt diese Kombination aus Application-ID und Schlüssel nicht. Bitte die .pem-Datei der Anwendung wählen." => "Enable Banking doesn’t recognise this combination of application ID and key. Please choose the application’s .pem file.",
         "Automatischer PSD2-Abruf (Stunden)" => "Automatic PSD2 sync (hours)",
         "Solange GiroCrab läuft, werden PSD2-Bankzugänge (Enable Banking) alle N Stunden ohne TAN abgerufen, solange die Zustimmung gilt. Banken erlauben meist nur 4 Abrufe pro Tag. 0 = aus." => "While GiroCrab is running, PSD2 bank connections (Enable Banking) are synced every N hours without a TAN as long as the consent is valid. Banks usually allow only 4 syncs per day. 0 = off.",
@@ -818,6 +826,7 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Der Kategoriename ist leer." => "The category name is empty.",
         "Eine Kategorie kann nicht in sich selbst verschoben werden." => "A category can’t be moved into itself.",
+        "Die Zielkategorie existiert nicht mehr." => "The target category no longer exists.",
         "Das Suchmuster ist leer." => "The pattern is empty.",
         "Die Regel braucht eine Kategorie oder mindestens einen Tag." => "The rule needs a category or at least one tag.",
         "Das Suchmuster ist zu lang." => "The pattern is too long.",
