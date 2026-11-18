@@ -12,8 +12,9 @@
 //! fingerprint). Issue #94: MoneyMoney keeps closed accounts with the same
 //! IBAN; `mm-` ids are content hashes, so a closed account shares the few
 //! bookings MoneyMoney fetched again for its successor, but not most of its
-//! own. Accounts without any booking (depots) are twins when name and
-//! account number match too. A MoneyMoney account linked to no login (the
+//! own. Accounts without any booking (depots) are twins when name (ignoring
+//! spaces and punctuation) and account number match too; a depot may also sit
+//! on another login of the same connector. A MoneyMoney account linked to no login (the
 //! login was added after the import, e.g. Enable Banking) can be the twin of
 //! a bank account of any login, but only by IBAN and currency.
 
@@ -58,10 +59,21 @@ fn same_account(a: &Ident, b: &Ident) -> bool {
     a.iban == b.iban && (a.currency.is_empty() || b.currency.is_empty() || a.currency == b.currency)
 }
 
+/// Names compared without case, spaces and punctuation ("FFB-Fondsdepot").
+fn same_name(a: &str, b: &str) -> bool {
+    let plain = |s: &str| {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    plain(a) == plain(b)
+}
+
 /// How well the bank account `bank` (in schema `bank_schema`) holds the
 /// MoneyMoney account `mm` (in `mm_schema`): the number of its bookings found
 /// there, if that is most of them. Two accounts without any booking and with
-/// the same name score 0.
+/// the same name ([`same_name`]) score 0.
 fn twin_score(
     conn: &Connection,
     mm_schema: &str,
@@ -96,7 +108,7 @@ fn twin_score(
         [bank.id],
         |r| r.get(0),
     )?;
-    Ok((bank_empty && mm.name == bank.name).then_some(0))
+    Ok((bank_empty && same_name(&mm.name, &bank.name)).then_some(0))
 }
 
 /// The candidate with the best score, if any qualifies.
@@ -162,7 +174,8 @@ pub(crate) fn adopt_on_merge(
 }
 
 /// The live bank account the MoneyMoney account `mm` (on login
-/// `connection_id`, or none) is a twin of.
+/// `connection_id`, or none) is a twin of. A depot, identified by its number,
+/// may be on another login of the same connector.
 fn bank_twin(conn: &Connection, mm: &Ident, connection_id: Option<i64>) -> CoreResult<Option<i64>> {
     // unlinked: any login, but only by IBAN
     if connection_id.is_none() && mm.iban.is_empty() {
@@ -171,11 +184,16 @@ fn bank_twin(conn: &Connection, mm: &Ident, connection_id: Option<i64>) -> CoreR
     let banks: Vec<Ident> = conn
         .prepare(&format!(
             "SELECT {IDENT_COLUMNS} FROM main.accounts
-              WHERE connection_id IS NOT NULL AND (?1 IS NULL OR connection_id = ?1)
+              WHERE connection_id IS NOT NULL
+                AND (?1 IS NULL OR connection_id = ?1
+                     OR (?2 = 'brokerage' AND connection_id IN (
+                            SELECT b.id FROM main.bank_connections b
+                              JOIN main.bank_connections m ON m.connector = b.connector
+                             WHERE m.id = ?1 AND b.deleted_ms IS NULL)))
                 AND external_ref NOT LIKE 'moneymoney-db:%' AND deleted_ms IS NULL
               ORDER BY id"
         ))?
-        .query_map([connection_id], ident)?
+        .query_map(params![connection_id, mm.kind], ident)?
         .collect::<Result<_, _>>()?;
     best(banks.iter().filter(|b| same_account(mm, b)), |bank| {
         twin_score(conn, "main", mm, "main", bank)
