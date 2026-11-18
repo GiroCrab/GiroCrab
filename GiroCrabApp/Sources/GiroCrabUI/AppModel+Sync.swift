@@ -303,6 +303,14 @@ extension AppModel {
     }
 
     /// Toast suffix: new bookings the bank delivered for archived accounts (not stored).
+    /// Shown after a sync that left history for the next one.
+    static func historyNote(_ s: SyncSummary) -> String {
+        guard s.historyIncomplete else { return "" }
+        let progress = HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal)).text
+        return " · " + String(localized: "Historie noch nicht vollständig – bitte noch einmal abrufen")
+            + (progress.isEmpty ? "" : " (\(progress))")
+    }
+
     static func skippedArchivedNote(_ s: SyncSummary) -> String {
         s.transactionsSkippedArchived == 0 ? "" : " · " + String(localized: "\(s.transactionsSkippedArchived) Buchungen archivierter Konten übersprungen")
     }
@@ -415,10 +423,15 @@ extension AppModel {
             schedulePoll(connection: connection, interval: c.pollIntervalSeconds)
         case .finished(let s):
             logSync(connectionID: connection.id, source: syncLogSource(for: connection.id), outcome: .ok,
-                    imported: Int(s.transactionsImported))
+                    message: Self.syncLogMessage(s), imported: Int(s.transactionsImported))
             activeChallenge = nil
             syncingConnectionID = nil
             activeSession = nil
+            if s.historyIncomplete {
+                historyIncomplete[connection.id] = HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal))
+            } else {
+                historyIncomplete[connection.id] = nil
+            }
             if let accountID = statementsAccountID {
                 statementsAccountID = nil
                 documentsVersion += 1
@@ -434,7 +447,7 @@ extension AppModel {
                 let quiet = quietSyncConnectionID == connection.id
                 // scheduled syncs only speak up when something changed
                 if !quiet || s.transactionsImported > 0 || !s.newAccounts.isEmpty || !s.revokedAccounts.isEmpty {
-                    var note = syncNotice(connection, s) + Self.skippedArchivedNote(s)
+                    var note = syncNotice(connection, s) + Self.skippedArchivedNote(s) + Self.historyNote(s)
                     if let n = s.postboxDocuments, n > 0 { note += " · " + Self.postboxNote(s, connection) }
                     toast = note
                 }
@@ -634,6 +647,16 @@ extension AppModel {
             showError(String(localized: "Abruf von „\(conn.displayName)“ fehlgeschlagen"),
                       String(localized: "Diese Version enthält keine FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein."))
             errorAlternatives = [(String(localized: "Eigene Registrierung eintragen …"), { [weak self] in self?.enterOwnProductID() })]
+            return
+        }
+        // Trade Republic: the stored session expired and the attempt had no PIN. A retry would
+        // run the same PIN-less path again, so ask for the PIN (the sheet also offers the browser login).
+        if let ce = error as? CoreError, case .Authentication(let m) = ce,
+           retrySecret?.isEmpty ?? true,
+           let conn = connections.first(where: { $0.id == syncingConnectionIDBeforeError }),
+           conn.connector == .tradeRepublic {
+            toast = m
+            pendingLogin = PendingLogin(connection: conn)
             return
         }
         if let ce = error as? CoreError, case .MissingSetting(let key) = ce,

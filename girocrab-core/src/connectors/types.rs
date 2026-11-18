@@ -63,6 +63,34 @@ pub struct SyncSummary {
     /// New documents from the comdirect PostBox when this sync fetched it
     /// next to FinTS (#838); `None` = not fetched (not due, off or failed).
     pub postbox_documents: Option<u32>,
+    /// New documents (PDFs) this sync stored; ones already in the vault are not counted.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub documents_imported: u32,
+    /// Securities transactions (depot activities) the bank delivered.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub security_transactions: u32,
+    /// Depot positions the bank delivered.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub holdings: u32,
+    /// The sync read only part of the history (it continues with the next sync).
+    #[uniffi(default = false)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub history_incomplete: bool,
+    /// Trades of the history still to read, and all trades of the timeline (0 = unknown).
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub history_remaining: u32,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub history_total: u32,
+    /// Document retrieval is switched off for this connection (and its bank delivers documents):
+    /// the sync fetched none, which the log says.
+    #[uniffi(default = false)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub documents_off: bool,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -283,6 +311,9 @@ pub enum Documents {
         /// since then are not all fetched yet. Connectors that read documents
         /// from a window (timeline, receipts) reach back to it.
         catchup_since: Option<String>,
+        /// `YYYY-MM-DD` the direct comdirect PostBox is listed from: its own
+        /// window, independent of the bookings' (`None` = the sync window).
+        postbox_since: Option<String>,
     },
     /// "Kontoauszüge abrufen" for one account (external ref): its statements,
     /// no bookings.
@@ -294,6 +325,7 @@ impl Default for Documents {
         Documents::On {
             statements: Vec::new(),
             catchup_since: None,
+            postbox_since: None,
         }
     }
 }
@@ -308,6 +340,13 @@ impl Documents {
         match self {
             Documents::On { statements, .. } => statements,
             _ => &[],
+        }
+    }
+
+    pub fn postbox_since(&self) -> Option<&str> {
+        match self {
+            Documents::On { postbox_since, .. } => postbox_since.as_deref(),
+            _ => None,
         }
     }
 
@@ -436,6 +475,8 @@ pub struct RemoteTransaction {
     /// Product ids (ASIN) of an order's items, comma separated, one entry per
     /// item in purpose order; "" = none (#354).
     pub item_refs: String,
+    /// Stored as already checked ("geprüft"): bookings of an imported history are not "new".
+    pub checked: bool,
 }
 
 impl RemoteTransaction {
@@ -523,6 +564,10 @@ pub struct RemoteSecurityTransaction {
 
 #[derive(Debug, Default, Clone)]
 pub struct FetchResult {
+    /// More history is left for the next sync (securities activities and their documents).
+    pub history_incomplete: bool,
+    pub history_remaining: u32,
+    pub history_total: u32,
     pub accounts: Vec<RemoteAccount>,
     pub transactions: Vec<RemoteTransaction>,
     /// Depot positions; replace the stored holdings of each listed account.

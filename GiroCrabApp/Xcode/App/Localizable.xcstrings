@@ -855,6 +855,28 @@
         }
       }
     },
+    "%lld Dokumente neu einsortiert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld documents sorted again"
+          }
+        }
+      }
+    },
+    "%lld Dokumente neu einsortiert · %lld Umsätzen zugeordnet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld documents sorted again · %lld linked to bookings"
+          }
+        }
+      }
+    },
     "%lld Kategorien: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1186,6 +1208,17 @@
         }
       }
     },
+    "%lld Wertpapiergeschäfte" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld securities transactions"
+          }
+        }
+      }
+    },
     "%lld Wochen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1421,6 +1454,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld new transactions imported. Bank balance updated."
+          }
+        }
+      }
+    },
+    "%lld neue Dokumente" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld new documents"
           }
         }
       }
@@ -2962,6 +3006,7 @@
       }
     },
     "Advanzia Bank (Zugang mein.advanzia.com)" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2972,6 +3017,7 @@
       }
     },
     "Advanzia hat die Anmeldung abgelehnt. Bitte das Passwort prüfen und erneut bestätigen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2982,6 +3028,7 @@
       }
     },
     "Advanzia hat die Anmeldung oder den Code abgelehnt. Prüfen Sie die Bankseite; GiroCrab wiederholt die Eingabe nicht automatisch." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3003,6 +3050,7 @@
       }
     },
     "Advanzia konnte nicht sicher abgerufen werden. Bitte die Bankseite prüfen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3035,6 +3083,7 @@
       }
     },
     "Advanzia konnte nicht vorbereitet werden. Bitte den Abruf erneut starten." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3056,6 +3105,7 @@
       }
     },
     "Advanzia meldet sich an …" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3088,6 +3138,7 @@
       }
     },
     "Advanzia-Abruf abgeschlossen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3098,6 +3149,7 @@
       }
     },
     "Advanzia-Abruf anzeigen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6317,6 +6369,7 @@
       }
     },
     "Bankseite ausblenden" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6327,6 +6380,7 @@
       }
     },
     "Bankseite öffnen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7128,6 +7182,17 @@
         }
       }
     },
+    "Bereits gespeicherte Dokumente werden anhand ihrer Titel neu einsortiert und, wo möglich, über Betrag, Datum und Wertpapier im PDF den Buchungen zugeordnet, ohne sie erneut zu laden. Die folgenden Abrufe holen Buchungen und Wertpapieraktivitäten nach und ordnen weitere Dokumente zu. Das kann einige Abrufe dauern." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stored documents are sorted again by their titles and, where possible, linked to bookings by the amount, date and security in the PDF, without downloading them again. The following syncs fetch bookings and securities activity and link more documents. This can take several syncs."
+          }
+        }
+      }
+    },
     "Bereits vorhanden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7856,6 +7921,7 @@
       }
     },
     "Bitte das Advanzia-Passwort eingeben. Die Anmeldung wird im Hintergrund fortgesetzt." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7899,6 +7965,7 @@
       }
     },
     "Bitte den SMS-Code eingeben. Anschließend läuft der Abruf automatisch weiter." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9159,6 +9226,7 @@
       }
     },
     "Das Passwort konnte nicht sicher übermittelt werden. Sie können es erneut versuchen oder die Bankseite öffnen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9169,6 +9237,7 @@
       }
     },
     "Das Passwort wird lokal im Schlüsselbund gespeichert und für spätere Abrufe verwendet." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9179,6 +9248,7 @@
       }
     },
     "Das Passwort wird nur für diesen Abruf verwendet. Bei einem späteren Abruf kann GiroCrab erneut danach fragen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9222,6 +9292,7 @@
       }
     },
     "Das gespeicherte Passwort ist nicht verfügbar. Öffnen Sie die Bankseite oder prüfen Sie die Zugangseinstellungen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9881,6 +9952,7 @@
       }
     },
     "Der Advanzia-Abruf benötigt Ihre Aufmerksamkeit." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9902,6 +9974,7 @@
       }
     },
     "Der Advanzia-Zugang konnte nicht vollständig gespeichert werden. Bitte erneut versuchen. Der Abruf wurde noch nicht gestartet." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -9912,6 +9985,7 @@
       }
     },
     "Der Advanzia-Zugang konnte nicht vorbereitet werden. Bitte den Tresor und die Sicherheitshinweise prüfen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10010,6 +10084,7 @@
       }
     },
     "Der SMS-Code konnte nicht sicher übermittelt werden. Bitte die Bankseite öffnen und dort bestätigen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10493,6 +10568,7 @@
       }
     },
     "Die Advanzia-Anmeldung konnte nicht automatisch fortgesetzt werden. Bei Bedarf können Sie die Bankseite öffnen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10503,6 +10579,7 @@
       }
     },
     "Die Advanzia-Anmeldung wartet zu lange. Öffnen Sie die Bankseite, um die Freigabe zu prüfen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10926,6 +11003,7 @@
       }
     },
     "Die SMS-Freigabe wird geprüft …" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10936,6 +11014,7 @@
       }
     },
     "Die SMS-Freigabe wurde noch nicht bestätigt. Prüfen Sie den Code oder öffnen Sie die Bankseite." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11183,6 +11262,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Export the entire document collection, regardless of the filters"
+          }
+        }
+      }
+    },
+    "Die gespeicherten Dokumente dieses Zugangs werden anhand ihrer Titel neu eingeordnet und, wo der Zugang es unterstützt, über Betrag, Datum und Wertpapier den Buchungen zugeordnet. Es wird nichts erneut geladen. Bei vielen Dokumenten kann das etwas dauern." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The stored documents of this connection are sorted again by their titles and, where the connection supports it, linked to bookings by amount, date and security. Nothing is downloaded again. With many documents this can take a while."
           }
         }
       }
@@ -11452,6 +11542,7 @@
       }
     },
     "Dieses Konto stammt aus einer früheren Version. Wählen Sie es einmalig aus, um es mit seinen vorhandenen Umsätzen weiterzuverwenden." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11669,6 +11760,39 @@
         }
       }
     },
+    "Dokumente neu einsortieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort documents again"
+          }
+        }
+      }
+    },
+    "Dokumente neu einsortieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort documents again …"
+          }
+        }
+      }
+    },
+    "Dokumente neu einsortieren?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort documents again?"
+          }
+        }
+      }
+    },
     "Dokumente werden unter „Belege & PostBox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11676,6 +11800,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Documents are kept under “Belege & PostBox” (search: equateplus) and are not assigned to bookings or activities automatically. Only if the plan name in the document matches a plan does it also appear with that plan’s account."
+          }
+        }
+      }
+    },
+    "Dokumentenabruf aus" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "document retrieval off"
           }
         }
       }
@@ -14361,6 +14496,7 @@
       }
     },
     "Für Karten mit Zugang über mein.advanzia.com. Nach dem Hinzufügen läuft die Anmeldung im Hintergrund; nur eine erforderliche Freigabe wird angezeigt." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -15252,6 +15388,7 @@
       }
     },
     "GiroCrab meldet sich mit den gespeicherten Zugangsdaten an. Geben Sie anschließend den SMS-Code ein oder bestätigen Sie die Freigabe in der Advanzia-App. Danach werden die Umsätze automatisch übernommen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -16273,6 +16410,72 @@
         }
       }
     },
+    "Historie neu aufbauen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebuild history?"
+          }
+        }
+      }
+    },
+    "Historie noch nicht vollständig" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History not complete yet"
+          }
+        }
+      }
+    },
+    "Historie noch nicht vollständig – bitte noch einmal abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History not complete yet – please sync again"
+          }
+        }
+      }
+    },
+    "Historie noch nicht vollständig: Aktivitäten und Belege werden mit jedem Abruf weiter nachgeladen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History not complete yet: activities and documents are loaded further with each sync."
+          }
+        }
+      }
+    },
+    "Historie und Zuordnung neu aufbauen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebuild history and assignment …"
+          }
+        }
+      }
+    },
+    "Historie wird neu aufgebaut · %lld Dokumente neu einsortiert · %lld Umsätzen zugeordnet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History is being rebuilt · %lld documents sorted again · %lld linked to bookings"
+          }
+        }
+      }
+    },
     "Hochformat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16648,6 +16851,7 @@
       }
     },
     "Im Hintergrund warten" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -21984,6 +22188,17 @@
         }
       }
     },
+    "Neu aufbauen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebuild"
+          }
+        }
+      }
+    },
     "Neu aufnehmen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21991,6 +22206,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Retake"
+          }
+        }
+      }
+    },
+    "Neu einsortieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort again"
           }
         }
       }
@@ -24135,6 +24361,17 @@
         }
       }
     },
+    "Ordnet die gespeicherten PDFs anhand ihrer Titel neu ein: Kontoauszüge, Steuerbescheinigungen, Mitteilungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sorts the stored PDFs again by their titles: account statements, tax certificates, notices"
+          }
+        }
+      }
+    },
     "Originalgröße" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25948,6 +26185,7 @@
       }
     },
     "SMS-Code" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -31030,6 +31268,17 @@
         }
       }
     },
+    "Weiter abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue syncing"
+          }
+        }
+      }
+    },
     "Weiter suchen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32317,6 +32566,7 @@
       }
     },
     "Zugangsdaten und Freigabeverfahren festlegen. Danach startet der Abruf im Hintergrund." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {

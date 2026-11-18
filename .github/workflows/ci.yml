@@ -170,7 +170,7 @@ jobs:
       - name: Linux UI texts have English (Localizable.xcstrings or i18n/en-linux.json)
         run: python3 -I GiroCrabLinux/scripts/i18n-report.py
       - name: Test String-Catalog-Merge-Driver
-        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py
+        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py scripts/test_analyse_dokumente.py
       - name: Test AI provenance classifier
         run: python3 -m unittest tools/test_export_ai_provenance.py
       - name: Test FNZ portal browser scripts

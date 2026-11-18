@@ -43,6 +43,8 @@
 //! - 30: `tx_date_id` covers `deleted_ms`, `account_id` and `category_id` ([`TX_DATE_ID_COVERING`]).
 //! - 31: `booking_documents.seen_at`: read status of documents (NULL = unread); documents that exist
 //!   count as read; the list index carries the column, a partial index finds the unread ones.
+//! - 32: `booking_documents.account_manual`: the user chose the document's account (1), not the import or the
+//!   rules (0); sorting documents anew leaves a chosen account alone.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -90,7 +92,20 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::depot_values::SCHEMA),                    // 29: depot value history
     Step::Sql(TX_DATE_ID_COVERING),                            // 30
     Step::Hook(document_seen),                                 // 31: read status of documents
+    Step::Hook(document_account_origin),                       // 32: who chose a document's account
 ];
+
+/// Step 32: `booking_documents.account_manual` (0 = the import or the rules put the document on its
+/// account, 1 = the user did, see `Vault::set_document_account`). Existing documents count as 0: what
+/// the user moved earlier cannot be told apart from what the import chose. Idempotent.
+fn document_account_origin(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "booking_documents", "account_manual")? {
+        conn.execute_batch(
+            "ALTER TABLE booking_documents ADD COLUMN account_manual INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
 
 /// Step 31: `booking_documents.seen_at` (NULL = unread). The documents a vault has already count
 /// as read: an update must not turn a whole archive into "new". The index the document list is
@@ -961,7 +976,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 31);
+        assert_eq!(SCHEMA_VERSION, 32);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

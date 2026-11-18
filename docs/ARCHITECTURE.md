@@ -33,6 +33,7 @@ and `migrate` runs the missing ones in a single transaction.
 | 29 | `depot_values`: value history of securities depots |
 | 30 | `tx_date_id` also covers `deleted_ms`, `account_id` and `category_id` (counts and period sums from the index) |
 | 31 | `booking_documents.seen_at`: read status of documents; the document list index carries the column, a partial index finds the unread ones |
+| 32 | `booking_documents.account_manual`: 1 = the user chose the document's account (`set_document_account`), 0 = import or rules; sorting documents anew leaves a chosen account alone |
 | 32+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**

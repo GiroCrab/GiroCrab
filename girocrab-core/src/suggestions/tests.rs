@@ -579,3 +579,34 @@ fn similar_text_never_overrides_a_mixed_merchant() {
     let id = f.add(b("Fernwärme Nord GmbH", -80_00).purpose("Abschlag"));
     assert_eq!(f.suggest(id), None);
 }
+
+/// Trade Republic cash bookings carry the security as counterparty and the kind of event as
+/// text: savings plan executions and dividends of the same security are suggested like any payee.
+#[test]
+fn trade_republic_savings_plans_and_dividends_get_suggestions() {
+    let f = vault();
+    let plan = |cp| {
+        let mut x = b(cp, -50_00);
+        x.purpose = "Sparplan ausgeführt";
+        x.booking_text = "Sparplan ausgeführt";
+        x
+    };
+    let dividend = |cp| {
+        let mut x = b(cp, 12_34);
+        x.purpose = "Bardividende";
+        x.booking_text = "Bardividende";
+        x
+    };
+    f.add_n(3, plan("Realty Income").manual("Geldanlage"));
+    f.add_n(2, dividend("Realty Income").manual("Dividenden"));
+    let next_plan = f.add(plan("Realty Income"));
+    let next_dividend = f.add(dividend("Realty Income"));
+    assert_eq!(
+        f.suggest(next_plan).map(|s| s.category_id),
+        Some(f.category("Geldanlage"))
+    );
+    assert_eq!(
+        f.suggest(next_dividend).map(|s| s.category_id),
+        Some(f.category("Dividenden"))
+    );
+}

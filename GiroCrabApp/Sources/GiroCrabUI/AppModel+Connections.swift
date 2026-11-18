@@ -367,6 +367,38 @@ extension AppModel {
         }.map(\.id))
     }
 
+    /// FNZ / Quirion: sorts the stored PDFs anew by their titles (they were all "PostBox" before).
+    func resortPortalDocuments(_ id: Int64) {
+        Task {
+            do {
+                guard let r = try await vaultOffMain({ try $0.resortPortalDocuments(connectionId: id) }) else { return }
+                let message = String(localized: "\(Int(r.resorted)) Dokumente neu einsortiert · \(Int(r.linked)) Umsätzen zugeordnet")
+                toast = message
+                // the Abrufprotokoll keeps what the toast shows only for a moment
+                logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
+                reloadAll()
+            } catch {
+                toast = error.localizedDescription
+            }
+        }
+    }
+
+    /// Trade Republic: starts the history again and sorts the stored documents anew by their titles.
+    /// The next syncs ("Weiter abrufen") fetch the missing bookings and link the documents.
+    func resetTradeRepublicHistory(_ id: Int64) {
+        Task {
+            do {
+                guard let r = try await vaultOffMain({ try $0.resetTradeRepublicHistory(connectionId: id) }) else { return }
+                let message = String(localized: "Historie wird neu aufgebaut · \(Int(r.resorted)) Dokumente neu einsortiert · \(Int(r.linked)) Umsätzen zugeordnet")
+                toast = message
+                logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
+                reloadAll()
+            } catch {
+                toast = error.localizedDescription
+            }
+        }
+    }
+
     func revealSetting(_ key: String) -> String {
         ((try? vault?.getSetting(key: key)) ?? nil) ?? ""
     }

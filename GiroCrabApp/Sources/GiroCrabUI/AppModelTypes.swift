@@ -414,6 +414,18 @@ struct SetupRequest: Identifiable {
 }
 
 /// Form state of "Neue Überweisung" (kept while the TAN sheet is shown).
+/// How far a sync that reads a long history got (the rest comes with the next syncs).
+struct HistoryProgress: Equatable {
+    var remaining: Int
+    var total: Int
+    /// 0…1 of the timeline already read; 0 when the total is unknown.
+    var fraction: Double { total > 0 ? min(1, max(0, Double(total - remaining) / Double(total))) : 0 }
+    /// "noch ca. 600 von 2.900 Trades" – empty when the total is unknown.
+    var text: String {
+        total > 0 ? String(localized: "noch ca. \(remaining.formatted()) von \(total.formatted()) Trades") : ""
+    }
+}
+
 /// CSV handed to `.fileExporter`.
 struct CSVFileDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.commaSeparatedText] }

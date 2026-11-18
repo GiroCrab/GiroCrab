@@ -69,6 +69,89 @@ fn store_fetch_matches_depot_holdings_without_iban() {
 }
 
 #[test]
+fn history_bookings_arrive_checked_and_stored_documents_get_linked() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-history-docs");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(
+            ConnectorKind::TradeRepublic,
+            String::new(),
+            "+491701234567".into(),
+        )
+        .unwrap();
+    let account = RemoteAccount {
+        external_ref: "tr:cash".into(),
+        name: "Verrechnungskonto".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 1000,
+        balance_date: "2026-11-10".into(),
+    };
+    let doc = |bytes: &[u8], booking: Option<&str>| crate::documents::RemoteDocument {
+        account_ref: "tr:cash".into(),
+        booking_external_id: booking.map(str::to_string),
+        title: "Abrechnung – Beispiel".into(),
+        doc_type: "abrechnung".into(),
+        mime_type: "application/pdf".into(),
+        file_name: "a.pdf".into(),
+        bytes: bytes.to_vec(),
+        source_url: "https://example.invalid/doc/1".into(),
+        date: "2024-05-02".into(),
+    };
+    // first the PDF alone (its booking is older than the sync window of that time)
+    let first = FetchResult {
+        accounts: vec![account.clone()],
+        documents: vec![doc(b"%PDF-1.4 test", None)],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::TradeRepublic, conn, first).unwrap();
+    assert_eq!(s.documents_imported, 1);
+    let acc = v.list_accounts().unwrap().pop().unwrap();
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert!(docs.iter().all(|d| d.booking_id.is_none()));
+
+    // later the history pass brings the booking (as checked) and the link-only document
+    let booking = RemoteTransaction {
+        account_ref: "tr:cash".into(),
+        external_id: "item-1".into(),
+        booking_date: "2024-05-02".into(),
+        value_date: "2024-05-02".into(),
+        amount_cents: -7500,
+        currency: "EUR".into(),
+        counterparty: "Beispiel".into(),
+        checked: true,
+        ..Default::default()
+    };
+    let second = FetchResult {
+        accounts: vec![account],
+        transactions: vec![booking],
+        documents: vec![doc(&[], Some("item-1"))],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::TradeRepublic, conn, second).unwrap();
+    assert_eq!(
+        s.documents_imported, 0,
+        "a link-only document is no new document"
+    );
+    assert_eq!(
+        v.list_accounts().unwrap().pop().unwrap().new_count,
+        0,
+        "history is not new"
+    );
+    let _ = acc;
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs.len(), 1);
+    assert!(
+        docs[0].booking_id.is_some(),
+        "the stored document is linked now"
+    );
+}
+
+#[test]
 fn unread_depot_keeps_its_positions_and_value() {
     // A sync that could not read the depot (Trade Republic: portfolio request failed)
     // still lists the account, with a placeholder balance of 0.
@@ -1658,26 +1741,29 @@ fn a_fetch_stores_no_documents_while_retrieval_is_off() {
         .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
         .unwrap();
     v.set_documents_fetch(conn, false).unwrap();
-    store_fetch(
+    let summary = store_fetch(
         &v,
         ConnectorKind::TradeRepublic,
         conn,
         fetch_with_document(),
     )
     .unwrap();
+    // the log can say why no document came
+    assert!(summary.documents_off);
     assert!(v
         .list_all_documents(crate::documents::DocumentFilter::default())
         .unwrap()
         .is_empty());
     // on again: the same delivery is stored
     v.set_documents_fetch(conn, true).unwrap();
-    store_fetch(
+    let on = store_fetch(
         &v,
         ConnectorKind::TradeRepublic,
         conn,
         fetch_with_document(),
     )
     .unwrap();
+    assert!(!on.documents_off);
     assert_eq!(
         v.list_all_documents(crate::documents::DocumentFilter::default())
             .unwrap()
@@ -1704,4 +1790,1138 @@ fn portal_connections_list_nothing_to_download_while_retrieval_is_off() {
         .pending_fnz_documents(conn, "kein json".into())
         .unwrap()
         .is_empty());
+}
+
+// ---- documents linked to bookings by their content (`document_matching`), either order ----
+
+fn tr_cash_account() -> RemoteAccount {
+    RemoteAccount {
+        external_ref: "tr:cash".into(),
+        name: "Verrechnungskonto".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 0,
+        balance_date: "2025-12-10".into(),
+    }
+}
+
+fn tr_booking(id: &str, date: &str, cents: i64, counterparty: &str) -> RemoteTransaction {
+    RemoteTransaction {
+        account_ref: "tr:cash".into(),
+        external_id: id.into(),
+        booking_date: date.into(),
+        value_date: date.into(),
+        amount_cents: cents,
+        currency: "EUR".into(),
+        counterparty: counterparty.into(),
+        ..Default::default()
+    }
+}
+
+/// A PDF whose text carries what the matching reads: event word, amount and a date.
+fn tr_pdf(event: &str, subject: &str, amount: &str, date: &str) -> Vec<u8> {
+    crate::documents::simple_pdf(&[
+        format!("WERTPAPIERABRECHNUNG {event} {subject}"),
+        format!("{amount} EUR"),
+        date.to_string(),
+    ])
+}
+
+#[test]
+fn an_unstructured_trade_document_with_several_amounts_stays_unlinked() {
+    let subject = "JPM USD EM Bond USD (Dist)";
+    let (_dir, v) = open_vault("girocrab-tr-ambiguous-amounts");
+    let connection = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
+        .unwrap();
+    let pdf = crate::documents::simple_pdf(&[
+        format!("WERTPAPIERABRECHNUNG KAUF {subject}"),
+        "Kurs 100,00 EUR".into(),
+        "Gesamt 500,00 EUR".into(),
+        "04.12.2025".into(),
+    ]);
+    store_fetch(
+        &v,
+        ConnectorKind::TradeRepublic,
+        connection,
+        FetchResult {
+            accounts: vec![tr_cash_account()],
+            transactions: vec![tr_booking("different-buy", "2025-12-04", -100_00, subject)],
+            documents: vec![tr_document("ambiguous", subject, pdf, "2025-12-04")],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        v.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        None
+    );
+}
+
+fn tr_document(
+    source: &str,
+    subject: &str,
+    bytes: Vec<u8>,
+    date: &str,
+) -> crate::documents::RemoteDocument {
+    crate::documents::RemoteDocument {
+        account_ref: "tr:cash".into(),
+        booking_external_id: None,
+        title: format!("Abrechnung \u{2013} {subject}"),
+        doc_type: "abrechnung".into(),
+        mime_type: "application/pdf".into(),
+        file_name: format!("{source}.pdf"),
+        bytes,
+        source_url: format!("https://example.invalid/{source}"),
+        date: date.into(),
+    }
+}
+
+fn open_vault(tag: &str) -> (crate::test_support::TempDir, std::sync::Arc<Vault>) {
+    let dir = crate::test_support::TempDir::new(tag);
+    let v = Vault::open(
+        dir.join("v.db").to_string_lossy().to_string(),
+        vec![8u8; 32],
+    )
+    .unwrap();
+    (dir, v)
+}
+
+fn booking_id_of(v: &Vault, external_id: &str) -> i64 {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE external_id = ?1",
+            [external_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_late_pdf_is_linked_to_an_older_stored_booking_and_stays_put() {
+    let subject = "JPM USD EM Bond USD (Dist)";
+    let (_dir, v) = open_vault("girocrab-late-pdf");
+    let conn = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
+        .unwrap();
+    // the booking is stored first, in a fetch without documents
+    let first = FetchResult {
+        accounts: vec![tr_cash_account()],
+        transactions: vec![tr_booking("b1", "2025-12-04", -25_00, subject)],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::TradeRepublic, conn, first).unwrap();
+    // the PDF comes later, alone, under another id than the booking
+    let pdf = tr_pdf("KAUF", subject, "25,00", "02.12.2025");
+    let later = |bytes: &Vec<u8>| FetchResult {
+        accounts: vec![tr_cash_account()],
+        documents: vec![tr_document("d1", subject, bytes.clone(), "2025-12-04")],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::TradeRepublic, conn, later(&pdf)).unwrap();
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0].booking_id, Some(booking_id_of(&v, "b1")));
+    let account = docs[0].account_id;
+    assert!(account.is_some());
+    // the same delivery again: no second document, the link and the account do not change
+    store_fetch(&v, ConnectorKind::TradeRepublic, conn, later(&pdf)).unwrap();
+    let again = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(again.len(), 1);
+    assert_eq!(
+        (again[0].booking_id, again[0].account_id),
+        (docs[0].booking_id, account)
+    );
+}
+
+#[test]
+fn a_purchase_pdf_is_not_linked_to_the_credit_of_an_equal_sale() {
+    let subject = "JPM USD EM Bond USD (Dist)";
+    let (_dir, v) = open_vault("girocrab-pdf-direction");
+    let conn = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
+        .unwrap();
+    let data = FetchResult {
+        accounts: vec![tr_cash_account()],
+        transactions: vec![
+            // the sale's credit is on the very day of the PDF, the purchase's debit two days later
+            tr_booking("sale", "2025-12-02", 25_00, subject),
+            tr_booking("buy", "2025-12-04", -25_00, subject),
+        ],
+        documents: vec![tr_document(
+            "d2",
+            subject,
+            tr_pdf("KAUF", subject, "25,00", "02.12.2025"),
+            "2025-12-02",
+        )],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::TradeRepublic, conn, data).unwrap();
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0].booking_id, Some(booking_id_of(&v, "buy")));
+}
+
+#[test]
+fn a_manual_link_and_another_login_are_left_alone() {
+    let subject = "JPM USD EM Bond USD (Dist)";
+    let (_dir, v) = open_vault("girocrab-pdf-isolation");
+    let a = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "a".into())
+        .unwrap();
+    let b = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "b".into())
+        .unwrap();
+    // login b owns the only matching booking
+    let other = FetchResult {
+        accounts: vec![tr_cash_account()],
+        transactions: vec![tr_booking("only-b", "2025-12-04", -25_00, subject)],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::TradeRepublic, b, other).unwrap();
+    // login a gets the PDF: nothing in its own accounts matches, so it stays unlinked
+    let pdf = tr_pdf("KAUF", subject, "25,00", "02.12.2025");
+    let mine = FetchResult {
+        accounts: vec![tr_cash_account()],
+        documents: vec![tr_document("d3", subject, pdf, "2025-12-04")],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::TradeRepublic, a, mine).unwrap();
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!(
+        docs[0].booking_id, None,
+        "a booking of another login is no candidate"
+    );
+    // the user links it by hand to a booking of login a; a later fetch keeps that choice
+    let own = FetchResult {
+        accounts: vec![tr_cash_account()],
+        transactions: vec![
+            tr_booking("mine-1", "2025-12-04", -25_00, subject),
+            tr_booking("mine-2", "2025-12-20", -99_00, "Etwas anderes"),
+        ],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::TradeRepublic, a, own).unwrap();
+    let manual = booking_id_of(&v, "mine-2");
+    v.link_document(docs[0].id, Some(manual)).unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::TradeRepublic,
+        a,
+        FetchResult {
+            accounts: vec![tr_cash_account()],
+            transactions: vec![tr_booking("mine-1", "2025-12-04", -25_00, subject)],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let kept = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(
+        kept[0].booking_id,
+        Some(manual),
+        "a manual link is never replaced"
+    );
+}
+
+// ---- comdirect: trade documents belong to the depot and document a booking on the Girokonto ----
+
+const CD_GIRO: &str = "DE02200411550123456700";
+const CD_GIRO2: &str = "DE75200411550765432100";
+const CD_DEPOT: &str = "123456700";
+const CD_ISIN: &str = "IE00B3RBWM25";
+
+fn cd_account(external_ref: &str, kind: AccountKind) -> RemoteAccount {
+    RemoteAccount {
+        external_ref: external_ref.into(),
+        name: external_ref.into(),
+        owner: String::new(),
+        iban: if kind == AccountKind::Checking {
+            external_ref.into()
+        } else {
+            String::new()
+        },
+        // the depot is named by its number in the documents
+        account_number: if kind == AccountKind::Brokerage {
+            external_ref.into()
+        } else {
+            String::new()
+        },
+        currency: "EUR".into(),
+        kind,
+        balance_cents: 0,
+        balance_date: "2025-12-10".into(),
+    }
+}
+
+fn cd_accounts(two_girokonten: bool) -> Vec<RemoteAccount> {
+    let mut all = vec![
+        cd_account(CD_GIRO, AccountKind::Checking),
+        cd_account(CD_DEPOT, AccountKind::Brokerage),
+    ];
+    if two_girokonten {
+        all.push(cd_account(CD_GIRO2, AccountKind::Checking));
+    }
+    all
+}
+
+fn cd_booking(
+    account: &str,
+    id: &str,
+    date: &str,
+    cents: i64,
+    currency: &str,
+    purpose: &str,
+) -> RemoteTransaction {
+    RemoteTransaction {
+        account_ref: account.into(),
+        external_id: id.into(),
+        booking_date: date.into(),
+        value_date: date.into(),
+        amount_cents: cents,
+        currency: currency.into(),
+        counterparty: "comdirect".into(),
+        // what a trade booking names: the security by its ISIN
+        purpose: format!("{purpose} {CD_ISIN}"),
+        ..Default::default()
+    }
+}
+
+/// A trade confirmation as text: event word, ISIN, amount with currency and a date.
+fn cd_pdf(event: &str, amount: &str, date: &str, currency: &str) -> Vec<u8> {
+    crate::documents::simple_pdf(&[
+        format!("GESCHAEFTSABRECHNUNG {event}"),
+        format!("Wertpapier ISIN {CD_ISIN}"),
+        format!("Ausmachender Betrag {amount} {currency}"),
+        format!("Geschaeftstag {date}"),
+    ])
+}
+
+/// Like `cd_pdf`, with the settlement account the confirmation names.
+fn cd_pdf_for(iban: &str, event: &str, amount: &str, date: &str) -> Vec<u8> {
+    crate::documents::simple_pdf(&[
+        format!("GESCHAEFTSABRECHNUNG {event}"),
+        format!("Verrechnungskonto IBAN {iban}"),
+        format!("Wertpapier ISIN {CD_ISIN}"),
+        format!("Ausmachender Betrag {amount} EUR"),
+        format!("Geschaeftstag {date}"),
+    ])
+}
+
+fn cd_document(
+    source: &str,
+    account_ref: &str,
+    title: &str,
+    doc_type: &str,
+    bytes: Vec<u8>,
+    date: &str,
+) -> crate::documents::RemoteDocument {
+    crate::documents::RemoteDocument {
+        account_ref: account_ref.into(),
+        booking_external_id: None,
+        title: title.into(),
+        doc_type: doc_type.into(),
+        mime_type: "application/pdf".into(),
+        file_name: format!("{source}.pdf"),
+        bytes,
+        source_url: format!("comdirect:postbox:{source}"),
+        date: date.into(),
+    }
+}
+
+fn cd_purchase_title() -> &'static str {
+    "Wertpapierabrechnung Kauf 12,5 St. WKN A1JX52 (VANGUARD TEST FONDS) vom 04.12.2025"
+}
+
+#[test]
+fn deleting_a_comdirect_login_does_not_transfer_its_orphan_documents() {
+    let (_dir, v) = open_vault("girocrab-cd-deleted-origin");
+    let (kind, remaining) = cd_connection(&v, false, "remaining");
+    store_fetch(&v, kind, remaining, cd_fetch(false, vec![], vec![])).unwrap();
+    let (_, deleted) = cd_connection(&v, false, "deleted");
+    store_fetch(
+        &v,
+        kind,
+        deleted,
+        cd_fetch(
+            false,
+            vec![],
+            vec![cd_document(
+                "deleted-orphan",
+                "",
+                "Information",
+                "postbox",
+                crate::documents::simple_pdf(&["Neue Bedingungen".into()]),
+                "2025-12-05",
+            )],
+        ),
+    )
+    .unwrap();
+    v.delete_bank_connection(deleted).unwrap();
+    assert_eq!(v.resort_portal_documents(remaining).unwrap().resorted, 0);
+    let account: Option<i64> = v.db().unwrap().query_row(
+        "SELECT account_id FROM booking_documents WHERE source_url = 'comdirect:postbox:deleted-orphan'",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(account, None);
+}
+
+fn account_id_of(v: &Vault, external_ref: &str) -> i64 {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM accounts WHERE external_ref = ?1",
+            [external_ref],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+/// A comdirect connection: the REST kind, or a FinTS login (kind `FinTsGeneric`, key with a comdirect BLZ).
+fn cd_connection(v: &Vault, fints: bool, login: &str) -> (ConnectorKind, i64) {
+    if fints {
+        let (id, _) = Vault::add_bank_connection_keyed(
+            &v.db().unwrap(),
+            ConnectorKind::FinTsGeneric,
+            "fints:20041155",
+            Some("20041155"),
+            String::new(),
+            login.into(),
+        )
+        .unwrap();
+        (ConnectorKind::FinTsGeneric, id)
+    } else {
+        let id = v
+            .add_bank_connection(ConnectorKind::Comdirect, String::new(), login.into())
+            .unwrap();
+        (ConnectorKind::Comdirect, id)
+    }
+}
+
+fn cd_fetch(
+    two_girokonten: bool,
+    transactions: Vec<RemoteTransaction>,
+    documents: Vec<crate::documents::RemoteDocument>,
+) -> FetchResult {
+    FetchResult {
+        accounts: cd_accounts(two_girokonten),
+        transactions,
+        documents,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_comdirect_trade_document_stays_with_the_depot_and_documents_the_girokonto_booking_in_either_order(
+) {
+    for fints in [false, true] {
+        // 0: both in one fetch, 1: the booking first, 2: the PDF first
+        for order in 0..3 {
+            let (_dir, v) = open_vault("girocrab-cd-order");
+            let (kind, conn) = cd_connection(&v, fints, "login");
+            let booking = cd_booking(
+                CD_GIRO,
+                "b1",
+                "2025-12-04",
+                -801_50,
+                "EUR",
+                "Wertpapierkauf",
+            );
+            let doc = cd_document(
+                "d1",
+                CD_DEPOT,
+                cd_purchase_title(),
+                "abrechnung",
+                cd_pdf("Wertpapierkauf", "801,50", "04.12.2025", "EUR"),
+                "2025-12-05",
+            );
+            match order {
+                0 => {
+                    store_fetch(&v, kind, conn, cd_fetch(false, vec![booking], vec![doc])).unwrap();
+                }
+                1 => {
+                    store_fetch(&v, kind, conn, cd_fetch(false, vec![booking], vec![])).unwrap();
+                    store_fetch(&v, kind, conn, cd_fetch(false, vec![], vec![doc])).unwrap();
+                }
+                _ => {
+                    store_fetch(&v, kind, conn, cd_fetch(false, vec![], vec![doc])).unwrap();
+                    store_fetch(&v, kind, conn, cd_fetch(false, vec![booking], vec![])).unwrap();
+                }
+            }
+            let docs = v.list_all_documents(Default::default()).unwrap();
+            assert_eq!(docs.len(), 1, "fints={fints} order={order}");
+            // the document keeps the depot, the booking is the one on the Girokonto
+            assert_eq!(docs[0].account_id, Some(account_id_of(&v, CD_DEPOT)));
+            assert_eq!(
+                docs[0].booking_id,
+                Some(booking_id_of(&v, "b1")),
+                "fints={fints} order={order}"
+            );
+            // fetching it again changes nothing and creates no second document
+            let again_doc = cd_document(
+                "d1",
+                CD_DEPOT,
+                cd_purchase_title(),
+                "abrechnung",
+                cd_pdf("Wertpapierkauf", "801,50", "04.12.2025", "EUR"),
+                "2025-12-05",
+            );
+            store_fetch(&v, kind, conn, cd_fetch(false, vec![], vec![again_doc])).unwrap();
+            let after = v.list_all_documents(Default::default()).unwrap();
+            assert_eq!(after.len(), 1);
+            assert_eq!(
+                (after[0].booking_id, after[0].account_id),
+                (docs[0].booking_id, docs[0].account_id)
+            );
+        }
+    }
+}
+
+#[test]
+fn comdirect_leaves_ambiguous_wrong_way_and_wrong_currency_candidates_alone() {
+    let (_dir, v) = open_vault("girocrab-cd-ambiguous");
+    let (kind, conn) = cd_connection(&v, false, "login");
+    let pdf = cd_pdf("Wertpapierkauf", "100,00", "04.12.2025", "EUR");
+    let doc = |source: &str| {
+        cd_document(
+            source,
+            CD_DEPOT,
+            cd_purchase_title(),
+            "abrechnung",
+            pdf.clone(),
+            "2025-12-05",
+        )
+    };
+    // the same debit on two Girokonten: nothing tells them apart
+    let twin = |account: &str, id: &str| {
+        cd_booking(account, id, "2025-12-04", -100_00, "EUR", "Wertpapierkauf")
+    };
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        cd_fetch(
+            true,
+            vec![twin(CD_GIRO, "t1"), twin(CD_GIRO2, "t2")],
+            vec![doc("d1")],
+        ),
+    )
+    .unwrap();
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs[0].booking_id, None, "ambiguous: left unlinked");
+    assert_eq!(docs[0].account_id, Some(account_id_of(&v, CD_DEPOT)));
+
+    // a credit of the same amount is no candidate for a purchase, a USD booking none for a EUR document
+    let (_dir2, v2) = open_vault("girocrab-cd-direction");
+    let (kind2, conn2) = cd_connection(&v2, false, "login");
+    store_fetch(
+        &v2,
+        kind2,
+        conn2,
+        cd_fetch(
+            false,
+            vec![
+                cd_booking(
+                    CD_GIRO,
+                    "credit",
+                    "2025-12-04",
+                    100_00,
+                    "EUR",
+                    "Wertpapierverkauf",
+                ),
+                cd_booking(
+                    CD_GIRO,
+                    "usd",
+                    "2025-12-04",
+                    -100_00,
+                    "USD",
+                    "Wertpapierkauf",
+                ),
+            ],
+            vec![doc("d2")],
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        v2.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        None
+    );
+    // a sale confirmation does take the credit
+    store_fetch(
+        &v2,
+        kind2,
+        conn2,
+        cd_fetch(
+            false,
+            vec![],
+            vec![cd_document(
+                "d3",
+                CD_DEPOT,
+                "Wertpapierabrechnung Verkauf 12,5 St. WKN A1JX52 (VANGUARD TEST FONDS) vom 04.12.2025",
+                "abrechnung",
+                cd_pdf("Wertpapierverkauf", "100,00", "04.12.2025", "EUR"),
+                "2025-12-05",
+            )],
+        ),
+    )
+    .unwrap();
+    let sale = v2
+        .list_all_documents(Default::default())
+        .unwrap()
+        .into_iter()
+        .find(|d| d.title.contains("Verkauf"))
+        .unwrap();
+    assert_eq!(sale.booking_id, Some(booking_id_of(&v2, "credit")));
+}
+
+#[test]
+fn comdirect_period_documents_and_other_logins_get_no_booking_and_a_manual_link_stays() {
+    let (_dir, v) = open_vault("girocrab-cd-period");
+    let (kind, a) = cd_connection(&v, false, "a");
+    let (_, b) = cd_connection(&v, false, "b");
+    let amount = "100,00";
+    // login b owns a matching booking (on an account of its own)
+    store_fetch(
+        &v,
+        kind,
+        b,
+        FetchResult {
+            accounts: vec![cd_account(CD_GIRO2, AccountKind::Checking)],
+            transactions: vec![cd_booking(
+                CD_GIRO2,
+                "only-b",
+                "2025-12-04",
+                -100_00,
+                "EUR",
+                "Wertpapierkauf",
+            )],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let pdf = cd_pdf("Wertpapierkauf", amount, "04.12.2025", "EUR");
+    let finanzreport = cd_document(
+        "report",
+        CD_DEPOT,
+        "Finanzreport Nr. 12 per 31.12.2025",
+        "kontoauszug",
+        pdf.clone(),
+        "2025-12-05",
+    );
+    let tax = cd_document(
+        "tax",
+        CD_DEPOT,
+        "Steuermitteilung WKN A1JX52 vom 05.12.2025",
+        "steuer",
+        pdf.clone(),
+        "2025-12-05",
+    );
+    let trade = cd_document(
+        "trade",
+        CD_DEPOT,
+        cd_purchase_title(),
+        "abrechnung",
+        pdf,
+        "2025-12-05",
+    );
+    store_fetch(
+        &v,
+        kind,
+        a,
+        cd_fetch(
+            false,
+            vec![cd_booking(
+                CD_GIRO,
+                "mine-1",
+                "2025-12-04",
+                -100_00,
+                "EUR",
+                "Wertpapierkauf",
+            )],
+            vec![finanzreport, tax, trade],
+        ),
+    )
+    .unwrap();
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs.len(), 3);
+    for d in &docs {
+        if d.title.starts_with("Finanzreport") || d.title.starts_with("Steuermitteilung") {
+            assert_eq!(d.booking_id, None, "{}: a period document", d.title);
+        } else {
+            // its own login's booking, not the one of login b
+            assert_eq!(d.booking_id, Some(booking_id_of(&v, "mine-1")));
+        }
+    }
+    // the user moves the trade document to another booking; sorting and fetching again keep that
+    store_fetch(
+        &v,
+        kind,
+        a,
+        cd_fetch(
+            false,
+            vec![cd_booking(
+                CD_GIRO,
+                "other",
+                "2025-12-20",
+                -5_00,
+                "EUR",
+                "Etwas anderes",
+            )],
+            vec![],
+        ),
+    )
+    .unwrap();
+    let trade_id = docs.iter().find(|d| d.title.contains("Kauf")).unwrap().id;
+    let manual = booking_id_of(&v, "other");
+    v.link_document(trade_id, Some(manual)).unwrap();
+    assert_eq!(
+        v.resort_portal_documents(a).unwrap().resorted,
+        0,
+        "nothing left to sort"
+    );
+    assert_eq!(v.resort_portal_documents(a).unwrap().resorted, 0);
+    let kept = v
+        .list_all_documents(Default::default())
+        .unwrap()
+        .into_iter()
+        .find(|d| d.id == trade_id)
+        .unwrap();
+    assert_eq!(kept.booking_id, Some(manual));
+}
+
+#[test]
+fn a_comdirect_document_goes_to_the_girokonto_it_names_or_stays_open() {
+    let (_dir, v) = open_vault("girocrab-cd-accounts");
+    let (kind, conn) = cd_connection(&v, false, "login");
+    let twin = |account: &str, id: &str, date: &str| {
+        cd_booking(account, id, date, -100_00, "EUR", "Wertpapierkauf")
+    };
+    // the same purchase on both Girokonten; the wrong one is nearer to the date in the PDF
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        cd_fetch(
+            true,
+            vec![
+                twin(CD_GIRO, "wrong", "2025-12-04"),
+                twin(CD_GIRO2, "right", "2025-12-08"),
+            ],
+            vec![cd_document(
+                "named",
+                CD_DEPOT,
+                cd_purchase_title(),
+                "abrechnung",
+                cd_pdf_for(CD_GIRO2, "Wertpapierkauf", "100,00", "04.12.2025"),
+                "2025-12-05",
+            )],
+        ),
+    )
+    .unwrap();
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs[0].booking_id, Some(booking_id_of(&v, "right")));
+    assert_eq!(docs[0].account_id, Some(account_id_of(&v, CD_DEPOT)));
+
+    // a second confirmation names no account: with two Girokonten that is no evidence, it stays open
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        cd_fetch(
+            true,
+            vec![twin(CD_GIRO, "only-here", "2025-12-04")],
+            vec![cd_document(
+                "unnamed",
+                CD_DEPOT,
+                "Wertpapierabrechnung Kauf 3 St. WKN A1JX52 (VANGUARD TEST FONDS) vom 04.12.2025",
+                "abrechnung",
+                cd_pdf("Wertpapierkauf", "100,00", "04.12.2025", "EUR"),
+                "2025-12-05",
+            )],
+        ),
+    )
+    .unwrap();
+    let open = v
+        .list_all_documents(Default::default())
+        .unwrap()
+        .into_iter()
+        .find(|d| d.title.contains("3 St."))
+        .unwrap();
+    assert_eq!(open.booking_id, None);
+}
+
+#[test]
+fn comdirect_information_and_cost_documents_never_take_a_booking() {
+    let (_dir, v) = open_vault("girocrab-cd-info");
+    let (kind, conn) = cd_connection(&v, false, "login");
+    // a cost information names the ISIN and an amount, a date: the same traits as a trade confirmation
+    let cost = cd_document(
+        "cost",
+        CD_DEPOT,
+        "Kosteninformation VANGUARD TEST FONDS WKN A1JX52 vom 04.12.2025",
+        "postbox",
+        cd_pdf("Wertpapierkauf", "100,00", "04.12.2025", "EUR"),
+        "2025-12-05",
+    );
+    // an unclassified document with a trade's words, and a dividend notice without a direction word
+    let notice = cd_document(
+        "notice",
+        CD_DEPOT,
+        "Mitteilung WKN A1JX52 (VANGUARD TEST FONDS)",
+        "postbox",
+        cd_pdf("Wertpapierkauf", "100,00", "04.12.2025", "EUR"),
+        "2025-12-05",
+    );
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        cd_fetch(
+            false,
+            vec![cd_booking(
+                CD_GIRO,
+                "b",
+                "2025-12-04",
+                -100_00,
+                "EUR",
+                "Wertpapierkauf",
+            )],
+            vec![cost, notice],
+        ),
+    )
+    .unwrap();
+    for d in v.list_all_documents(Default::default()).unwrap() {
+        assert_eq!(d.booking_id, None, "{}", d.title);
+        assert_eq!(d.account_id, Some(account_id_of(&v, CD_DEPOT)));
+    }
+}
+
+#[test]
+fn comdirect_links_only_the_settled_amount_not_a_price_or_a_fee() {
+    let (_dir, v) = open_vault("girocrab-cd-settled");
+    let (kind, conn) = cd_connection(&v, false, "login");
+    // the confirmation settles 500,00; a 100,00 booking of the same security exists, the 500,00 one does not
+    let pdf = crate::documents::simple_pdf(&[
+        "GESCHAEFTSABRECHNUNG Wertpapierkauf".to_string(),
+        format!("Wertpapier ISIN {CD_ISIN}"),
+        "Kurs 100,00 EUR".to_string(),
+        "Provision 1,50 EUR".to_string(),
+        "Ausmachender Betrag 500,00 EUR".to_string(),
+        "Geschaeftstag 04.12.2025".to_string(),
+    ]);
+    let doc = cd_document(
+        "settled",
+        CD_DEPOT,
+        cd_purchase_title(),
+        "abrechnung",
+        pdf.clone(),
+        "2025-12-05",
+    );
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        cd_fetch(
+            false,
+            vec![cd_booking(
+                CD_GIRO,
+                "price",
+                "2025-12-04",
+                -100_00,
+                "EUR",
+                "Wertpapierkauf",
+            )],
+            vec![doc],
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        v.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        None
+    );
+    // the booking of the settled amount arrives later: now it is linked
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        cd_fetch(
+            false,
+            vec![cd_booking(
+                CD_GIRO,
+                "settled",
+                "2025-12-04",
+                -500_00,
+                "EUR",
+                "Wertpapierkauf",
+            )],
+            vec![],
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        v.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        Some(booking_id_of(&v, "settled"))
+    );
+}
+
+#[test]
+fn sorting_comdirect_documents_anew_repairs_the_account_an_earlier_version_chose() {
+    let (_dir, v) = open_vault("girocrab-cd-repair");
+    let (kind, conn) = cd_connection(&v, false, "login");
+    let trade = |source: &str, account: &str| {
+        cd_document(
+            source,
+            account,
+            cd_purchase_title(),
+            "abrechnung",
+            cd_pdf_for(CD_DEPOT, "Wertpapierkauf", "100,00", "04.12.2025"),
+            "2025-12-05",
+        )
+    };
+    // as the old REST path stored them: a depot document on the first Girokonto, another without account;
+    // one the user moved to the second Girokonto on purpose
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        cd_fetch(
+            true,
+            vec![],
+            vec![
+                trade("on-giro", CD_GIRO),
+                trade("nowhere", ""),
+                trade("by-hand", CD_GIRO2),
+            ],
+        ),
+    )
+    .unwrap();
+    let depot = account_id_of(&v, CD_DEPOT);
+    let account_of = |title_source: &str| -> Option<i64> {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT account_id FROM booking_documents WHERE source_url = ?1",
+                [format!("comdirect:postbox:{title_source}")],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(account_of("on-giro"), Some(account_id_of(&v, CD_GIRO)));
+    assert_eq!(account_of("nowhere"), None);
+    assert_eq!(v.resort_portal_documents(conn).unwrap().resorted, 2);
+    assert_eq!(account_of("on-giro"), Some(depot));
+    assert_eq!(account_of("nowhere"), Some(depot));
+    assert_eq!(
+        account_of("by-hand"),
+        Some(account_id_of(&v, CD_GIRO2)),
+        "a document the user put elsewhere stays"
+    );
+    // running it again changes nothing
+    assert_eq!(v.resort_portal_documents(conn).unwrap().resorted, 0);
+
+    // with a second comdirect login the origin of a document without account is not certain
+    let (_dir2, v2) = open_vault("girocrab-cd-repair-two");
+    let (kind2, a) = cd_connection(&v2, false, "a");
+    let (_, _b) = cd_connection(&v2, false, "b");
+    store_fetch(
+        &v2,
+        kind2,
+        a,
+        cd_fetch(true, vec![], vec![trade("nowhere", "")]),
+    )
+    .unwrap();
+    assert_eq!(v2.resort_portal_documents(a).unwrap().resorted, 0);
+    let orphan: Option<i64> = v2
+        .db()
+        .unwrap()
+        .query_row("SELECT account_id FROM booking_documents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(orphan, None);
+}
+
+// ---- Trade Republic: one account rule for every way a document arrives ----
+
+fn tr_depot_account() -> RemoteAccount {
+    RemoteAccount {
+        external_ref: "tr:depot".into(),
+        name: "Depot".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Brokerage,
+        balance_cents: 0,
+        balance_date: "2025-12-10".into(),
+    }
+}
+
+/// A dividend confirmation as Trade Republic hands it out, with the account and booking the way
+/// of arrival gives it.
+fn tr_dividend(
+    source: &str,
+    account_ref: &str,
+    booking_external_id: Option<&str>,
+) -> crate::documents::RemoteDocument {
+    crate::documents::RemoteDocument {
+        account_ref: account_ref.into(),
+        booking_external_id: booking_external_id.map(str::to_string),
+        title: "Dividendenbeleg \u{2013} Realty Income".into(),
+        doc_type: "abrechnung".into(),
+        mime_type: "application/pdf".into(),
+        file_name: format!("{source}.pdf"),
+        bytes: tr_pdf("DIVIDENDE", "Realty Income", "17,28", "16.11.2025"),
+        source_url: format!("https://example.invalid/{source}"),
+        date: "2025-11-16".into(),
+    }
+}
+
+fn tr_fetch(
+    transactions: Vec<RemoteTransaction>,
+    documents: Vec<crate::documents::RemoteDocument>,
+) -> FetchResult {
+    FetchResult {
+        accounts: vec![tr_cash_account(), tr_depot_account()],
+        transactions,
+        documents,
+        ..Default::default()
+    }
+}
+
+/// (account `external_ref`, `external_id` of the booking) of a stored document.
+fn doc_places(v: &Vault, source: &str) -> (String, Option<String>) {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT COALESCE(a.external_ref, ''), t.external_id FROM booking_documents d
+               LEFT JOIN accounts a ON a.id = d.account_id
+               LEFT JOIN transactions t ON t.id = d.booking_id
+              WHERE d.source_url = ?1",
+            [format!("https://example.invalid/{source}")],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_dividend_confirmation_sits_at_the_depot_and_documents_the_cash_booking_whichever_way_it_came()
+{
+    let credit = || tr_booking("div-1", "2025-11-16", 17_28, "Realty Income");
+    let expected = ("tr:depot".to_string(), Some("div-1".to_string()));
+    // 1: with the booking's own detail screen (the confirmation names the booking), bookings first
+    let (_d1, v1) = open_vault("girocrab-tr-div-id");
+    let c1 = v1
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "a".into())
+        .unwrap();
+    store_fetch(
+        &v1,
+        ConnectorKind::TradeRepublic,
+        c1,
+        tr_fetch(
+            vec![credit()],
+            vec![tr_dividend("d", "tr:depot", Some("div-1"))],
+        ),
+    )
+    .unwrap();
+    assert_eq!(doc_places(&v1, "d"), expected);
+    // 2: from the activity list (no booking id), the document first, the booking later: by content
+    let (_d2, v2) = open_vault("girocrab-tr-div-content");
+    let c2 = v2
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "a".into())
+        .unwrap();
+    store_fetch(
+        &v2,
+        ConnectorKind::TradeRepublic,
+        c2,
+        tr_fetch(vec![], vec![tr_dividend("d", "tr:depot", None)]),
+    )
+    .unwrap();
+    assert_eq!(doc_places(&v2, "d"), ("tr:depot".to_string(), None));
+    store_fetch(
+        &v2,
+        ConnectorKind::TradeRepublic,
+        c2,
+        tr_fetch(vec![credit()], vec![]),
+    )
+    .unwrap();
+    assert_eq!(doc_places(&v2, "d"), expected);
+    // 3: stored by an earlier version at the cash account with its booking: sorting anew moves the
+    // document to the depot and keeps the booking, the PDF and the source; a second run changes nothing
+    let (_d3, v3) = open_vault("girocrab-tr-div-legacy");
+    let c3 = v3
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "a".into())
+        .unwrap();
+    store_fetch(
+        &v3,
+        ConnectorKind::TradeRepublic,
+        c3,
+        tr_fetch(
+            vec![credit()],
+            vec![tr_dividend("d", "tr:cash", Some("div-1"))],
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        doc_places(&v3, "d"),
+        ("tr:cash".to_string(), Some("div-1".to_string()))
+    );
+    let first = v3.reset_trade_republic_history(c3).unwrap();
+    assert_eq!(first.resorted, 1);
+    assert_eq!(doc_places(&v3, "d"), expected);
+    assert_eq!(v3.reset_trade_republic_history(c3).unwrap().resorted, 0);
+    assert_eq!(doc_places(&v3, "d"), expected);
+    assert_eq!(v3.list_all_documents(Default::default()).unwrap().len(), 1);
+}
+
+#[test]
+fn linking_by_hand_keeps_the_documents_account_and_a_chosen_account_survives_sorting_anew() {
+    let (_dir, v) = open_vault("girocrab-tr-manual");
+    let c = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "a".into())
+        .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::TradeRepublic,
+        c,
+        tr_fetch(
+            vec![
+                tr_booking("div-1", "2025-11-16", 17_28, "Realty Income"),
+                tr_booking("other", "2025-12-20", -5_00, "Etwas anderes"),
+            ],
+            vec![tr_dividend("d", "tr:depot", Some("div-1"))],
+        ),
+    )
+    .unwrap();
+    let id = v.list_all_documents(Default::default()).unwrap()[0].id;
+    // the user links another booking: the document stays at the depot
+    v.link_document(id, Some(booking_id_of(&v, "other")))
+        .unwrap();
+    assert_eq!(
+        doc_places(&v, "d"),
+        ("tr:depot".to_string(), Some("other".to_string()))
+    );
+    // the user chooses the cash account: the link stays, the choice is remembered
+    let cash = account_id_of(&v, "tr:cash");
+    v.set_document_account(id, Some(cash)).unwrap();
+    assert_eq!(
+        doc_places(&v, "d"),
+        ("tr:cash".to_string(), Some("other".to_string()))
+    );
+    let manual: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT account_manual FROM booking_documents WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(manual, 1);
+    // sorting anew (and the history rebuild) leaves that choice alone
+    assert_eq!(v.reset_trade_republic_history(c).unwrap().resorted, 0);
+    assert_eq!(doc_places(&v, "d").0, "tr:cash");
 }

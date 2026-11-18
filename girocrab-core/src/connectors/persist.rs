@@ -684,6 +684,12 @@ pub(crate) fn store_fetch(
                                 t.item_refs
                             ])?;
                             imported += 1;
+                            if t.checked {
+                                tx.prepare_cached(
+                                    "UPDATE transactions SET checked = 1 WHERE account_id = ?1 AND external_id = ?2",
+                                )?
+                                .execute(params![acc_id, t.external_id])?;
+                            }
                             if data.adjust_balances {
                                 tx.prepare_cached(
                                     "UPDATE accounts SET balance_cents = balance_cents + ?1, balance_date = ?2 WHERE id = ?3",
@@ -800,6 +806,9 @@ pub(crate) fn store_fetch(
         }
         let mut postbox_added = 0u32;
         let mut documents_stored = 0u32;
+        // switched off at a bank that delivers documents: the log says so
+        let documents_off =
+            !documents_fetch_on(&db, connection_id)? && kind_delivers_documents(kind);
         let documents_incomplete = data.documents_incomplete;
         for d in &data.documents {
             if archived_ids.contains_key(&d.account_ref) || blocked_refs.contains(&d.account_ref) {
@@ -830,47 +839,79 @@ pub(crate) fn store_fetch(
                 };
                 Some(id)
             };
-            let booking_id: Option<i64> = match (&d.booking_external_id, acc_id) {
-                (Some(ext), Some(acc_id)) => tx
-                    .query_row(
-                        // includes soft-deleted rows
-                        "SELECT id FROM transactions WHERE account_id = ?1 AND external_id = ?2",
-                        params![acc_id, ext],
-                        |r| r.get(0),
-                    )
-                    .optional()?,
-                _ => None,
+            let booking_id: Option<i64> = match &d.booking_external_id {
+                Some(ext) => {
+                    let own: Option<i64> = match acc_id {
+                        Some(acc_id) => tx
+                            .query_row(
+                                // includes soft-deleted rows
+                                "SELECT id FROM transactions WHERE account_id = ?1 AND external_id = ?2",
+                                params![acc_id, ext],
+                                |r| r.get(0),
+                            )
+                            .optional()?,
+                        None => None,
+                    };
+                    match own {
+                        Some(id) => Some(id),
+                        // A Trade Republic confirmation belongs to the depot and documents a booking
+                        // of the settlement account: look in the whole login.
+                        None if kind == ConnectorKind::TradeRepublic => tx
+                            .query_row(
+                                "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+                                  WHERE a.connection_id = ?1 AND t.external_id = ?2 ORDER BY t.id LIMIT 1",
+                                params![connection_id, ext],
+                                |r| r.get(0),
+                            )
+                            .optional()?,
+                        None => None,
+                    }
+                }
+                None => None,
             };
-            // without bytes (download failed) only a stored copy gets its account
-            let added = if d.bytes.is_empty() {
-                Ok(None)
-            } else {
-                crate::documents::insert_doc(
-                    &tx,
-                    booking_id,
-                    acc_id,
-                    &d.title,
-                    &d.doc_type,
-                    &d.mime_type,
-                    &d.file_name,
-                    &d.bytes,
-                    &d.source_url,
-                    &d.date,
-                )
-            };
-            if matches!(added, Ok(Some(_))) {
-                documents_stored += 1;
+            // A document without bytes only links an already stored one to its booking (the
+            // history pass imports the booking after the PDF was stored) or gives a stored copy
+            // without an account the one found now. Only unlinked ones.
+            if d.bytes.is_empty() {
+                if let Some(booking_id) = booking_id {
+                    tx.execute(
+                        "UPDATE booking_documents SET booking_id = ?1
+                          WHERE source_url = ?2 AND source_url != '' AND booking_id IS NULL",
+                        params![booking_id, d.source_url],
+                    )?;
+                }
+                if let (Some(acc_id), false) = (acc_id, d.source_url.is_empty()) {
+                    tx.execute(
+                        "UPDATE booking_documents SET account_id = ?1
+                          WHERE source_url = ?2 AND account_id IS NULL AND booking_id IS NULL",
+                        params![acc_id, d.source_url],
+                    )?;
+                }
+                continue;
             }
-            match (added, acc_id) {
-                (Ok(Some(_)), _)
+            match crate::documents::insert_doc(
+                &tx,
+                booking_id,
+                acc_id,
+                &d.title,
+                &d.doc_type,
+                &d.mime_type,
+                &d.file_name,
+                &d.bytes,
+                &d.source_url,
+                &d.date,
+            ) {
+                Ok(Some(_)) => {
+                    documents_stored += 1;
                     if d.source_url.starts_with("comdirect:postbox:")
                         || d.source_url
-                            .starts_with(super::consorsbank_archive::SOURCE_PREFIX) =>
-                {
-                    postbox_added += 1
+                            .starts_with(super::consorsbank_archive::SOURCE_PREFIX)
+                    {
+                        postbox_added += 1;
+                    }
                 }
                 // stored before without an account: it gets the one found now
-                (Ok(None), Some(acc_id)) if !d.source_url.is_empty() => {
+                Ok(None) if acc_id.is_some() && !d.source_url.is_empty() => {
                     tx.execute(
                         "UPDATE booking_documents SET account_id = ?1
                           WHERE source_url = ?2 AND account_id IS NULL AND booking_id IS NULL",
@@ -935,6 +976,28 @@ pub(crate) fn store_fetch(
         if kind == ConnectorKind::Advanzia {
             super::advanzia::settle_holds(&tx, &account_ids, &mut data)?;
         }
+        // A PDF the bank handed out under another id than its booking is linked by its content
+        // (`document_matching`), whichever of the two arrives later: the window spans the bookings
+        // of this batch and the documents of this batch (a late PDF finds an older stored booking).
+        // Only banks with rules take part.
+        if let Some(rules) =
+            crate::connectors::document_matching::rules_for_connection(&tx, connection_id, kind)?
+        {
+            let dates = data
+                .transactions
+                .iter()
+                .map(|t| t.booking_date.as_str())
+                .chain(data.documents.iter().map(|d| d.date.as_str()))
+                .filter(|d| !d.is_empty());
+            if let (Some(lo), Some(hi)) = (dates.clone().min(), dates.max()) {
+                crate::connectors::document_matching::link_unlinked_by_content(
+                    &tx,
+                    connection_id,
+                    &rules,
+                    Some((lo, hi)),
+                )?;
+            }
+        }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = data.state {
             tx.execute(
@@ -971,6 +1034,13 @@ pub(crate) fn store_fetch(
             new_accounts,
             revoked_accounts,
             postbox_documents,
+            documents_imported: documents_stored,
+            security_transactions: data.security_transactions.len() as u32,
+            holdings: data.holdings.len() as u32,
+            history_incomplete: data.history_incomplete,
+            history_remaining: data.history_remaining,
+            history_total: data.history_total,
+            documents_off,
         })
     }
 }
@@ -1017,6 +1087,15 @@ pub(crate) fn clear_documents_settings(
         ],
     )?;
     Ok(())
+}
+
+/// Whether the bank of this connector delivers documents (`Capability::Documents` in the bank matrix).
+pub(crate) fn kind_delivers_documents(kind: ConnectorKind) -> bool {
+    super::catalog::BANK_MATRIX.iter().any(|e| {
+        e.kind == Some(kind)
+            && e.capabilities
+                .contains(&super::catalog::Capability::Documents)
+    })
 }
 
 /// Whether the connection fetches documents (default: yes).
@@ -1183,11 +1262,7 @@ impl Vault {
     /// row in the bank matrix): only then the settings offer to switch the retrieval.
     pub fn documents_fetch_supported(&self, connection_id: i64) -> Result<bool, CoreError> {
         let (kind, _) = self.portal_connection(connection_id)?;
-        Ok(super::catalog::BANK_MATRIX.iter().any(|e| {
-            e.kind == Some(kind)
-                && e.capabilities
-                    .contains(&super::catalog::Capability::Documents)
-        }))
+        Ok(kind_delivers_documents(kind))
     }
 
     /// Whether syncs of this connection fetch documents (PDFs: receipts, statements, PostBox).
@@ -1337,7 +1412,27 @@ impl Vault {
                 &*self.db()?,
                 &documents_catchup_key(connection_id),
             )?,
+            postbox_since: None,
         })
+    }
+
+    /// The direct comdirect login lists the PostBox on its own window, like FinTS with PostBox: the
+    /// whole PostBox the first time, then from a week before the last listing. The sync window of
+    /// the bookings (days back, newest booking) would cut the documents off for good.
+    pub(super) fn with_comdirect_postbox_window(
+        &self,
+        connection_id: i64,
+        kind: ConnectorKind,
+        mut documents: Documents,
+    ) -> CoreResult<Documents> {
+        if let (ConnectorKind::Comdirect, Documents::On { postbox_since, .. }) =
+            (kind, &mut documents)
+        {
+            let last = Vault::setting_inner(&*self.db()?, &postbox_last_key(connection_id))?
+                .and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", &d).ok());
+            *postbox_since = postbox_window(last, crate::dates::today(), PostboxMode::Now);
+        }
+        Ok(documents)
     }
 
     /// External refs of this connection's accounts whose automatic statement
@@ -1505,6 +1600,7 @@ impl Vault {
         };
         let (since, since_by_account) = since;
         let documents = self.documents_request(connection_id, statements_only)?;
+        let documents = self.with_comdirect_postbox_window(connection_id, kind, documents)?;
         let ctx = ConnectContext {
             connection_id,
             login_name: login,

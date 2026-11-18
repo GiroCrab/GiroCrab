@@ -255,9 +255,246 @@ struct TradeRow {
     date: String,
     title: String,
     kind_text: String,
+    /// The row's own subtitle ("Sparplan ausgeführt"), without the event code.
+    subtitle: String,
     amount_cents: i64,
     currency: String,
     icon: String,
+}
+
+/// Document type of a Trade Republic PDF from its (lower-cased) title (shared keyword rules).
+fn document_type(lower_title: &str) -> &'static str {
+    crate::documents::type_from_title(lower_title)
+}
+
+/// How Trade Republic documents are matched to bookings by content (`document_matching`): they
+/// belong to the cash account, the security is the part after the dash of the stored title
+/// (`"<Dokument> – <Eintrag>"`), statements and tax papers are left out.
+pub(crate) const DOCUMENT_MATCH: crate::connectors::document_matching::DocumentMatchRules =
+    crate::connectors::document_matching::DocumentMatchRules {
+        booking_account: |external_ref, _| external_ref == "tr:cash",
+        subjects: |title, _| {
+            title
+                .split(" \u{2013} ")
+                .nth(1)
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default()
+        },
+        subjects_from_text: false,
+        link_types: &["abrechnung", "beleg"],
+        direction_required: false,
+        account_from_text: false,
+        amount_labels: &[],
+        account_for: None,
+        orphan_source_prefix: "",
+        slack_days: 5,
+        inflow: document_inflow,
+        retype: |title, current, account_level| reclassify_document(title, current, account_level),
+    };
+
+/// The direction of a Trade Republic document, from the first event word in its head (title and the
+/// start of the text): a sale, a dividend or interest is a credit, a purchase or a savings plan a
+/// debit. Boilerplate further down ("Kauf und Verkauf …") is not read. `None`: no event word.
+fn document_inflow(title: &str, text: &str) -> Option<bool> {
+    crate::connectors::document_matching::inflow_in(title, text, 400)
+}
+
+/// The account a Trade Republic document belongs to (`tr:depot` or `tr:cash`), decided by what the
+/// document is, never by the way it arrived (a booking's detail screen or the activity list): a
+/// confirmation or credit for a security (trade, savings plan, dividend, corporate action, the
+/// depot statement) belongs to the depot and documents a booking of the settlement account; account
+/// statements, interest and fees belong to the settlement account. `None`: nothing says so, the
+/// document stays where it is (tax papers, general information, an older document just called
+/// "Dokumente" whose event is not known).
+///
+/// `head`: the lower-cased document name before the dash; `doc_type`: its type; `generic`: the name
+/// says nothing ("Dokumente").
+fn document_account_ref(head: &str, doc_type: &str, generic: bool) -> Option<&'static str> {
+    if generic {
+        // the type came from the timeline event: a trade, a savings plan or a dividend
+        return (doc_type == "abrechnung").then_some("tr:depot");
+    }
+    if doc_type == "kontoauszug" {
+        return Some(if head.contains("depot") {
+            "tr:depot"
+        } else {
+            "tr:cash"
+        });
+    }
+    // interest and fees of the settlement account (a dividend is no interest)
+    if !head.contains("dividende")
+        && ["zins", "gebühr", "kontoführung"]
+            .iter()
+            .any(|k| head.contains(k))
+    {
+        return Some("tr:cash");
+    }
+    if is_securities_notice(head) || doc_type == "abrechnung" {
+        return Some("tr:depot");
+    }
+    None
+}
+
+/// New type and account (`tr:depot`/`tr:cash`, `None` = keep) of a stored document, from its title
+/// `"<Dokument> – <Eintrag>"`. A generic "Dokumente" keeps its type (it came from the timeline
+/// event when it was stored, which is not known any more). `account_level`: no booking behind it.
+pub(crate) fn reclassify_document(
+    title: &str,
+    current: &str,
+    account_level: bool,
+) -> (&'static str, Option<&'static str>) {
+    let head = title
+        .split(" \u{2013} ")
+        .next()
+        .unwrap_or(title)
+        .to_lowercase();
+    let generic = head == "dokumente" || head == "dokument";
+    let kept: &'static str = match current {
+        "abrechnung" => "abrechnung",
+        "kontoauszug" => "kontoauszug",
+        "steuer" => "steuer",
+        "postbox" => "postbox",
+        _ => "beleg",
+    };
+    let mut doc_type = if generic { kept } else { document_type(&head) };
+    if account_level && doc_type == "beleg" {
+        doc_type = "postbox";
+    }
+    (doc_type, document_account_ref(&head, doc_type, generic))
+}
+
+/// Trade Republic names older documents just "Dokumente": what they are follows from the event of
+/// the timeline entry they belong to (a dividend, a savings plan execution, a tax booking).
+fn refine_document_type(doc_type: &'static str, event_text: &str) -> &'static str {
+    if doc_type != "beleg" || event_text.is_empty() {
+        return doc_type;
+    }
+    let has = |k: &str| event_text.contains(k);
+    if has("steuer") || has("tax") {
+        "steuer"
+    } else if has("dividend")
+        || has("ausschüttung")
+        || has("sparplan")
+        || has("savings_plan")
+        || has("kauf")
+        || has("trade")
+        || has("order")
+    {
+        "abrechnung"
+    } else {
+        doc_type
+    }
+}
+
+/// An account-level notice about a security (dividend election, corporate action):
+/// it belongs to the depot, not to the settlement account.
+fn is_securities_notice(lower_title: &str) -> bool {
+    [
+        "dividende",
+        "wahlweise",
+        "kapitalmaßnahme",
+        "split",
+        "umtausch",
+        "spin-off",
+        "fusion",
+        "hauptversammlung",
+        "rückkaufangebot",
+        "prospekt",
+    ]
+    .iter()
+    .any(|k| lower_title.contains(k))
+}
+
+/// Trades of the securities history one sync reads (newest first).
+const HISTORY_BATCH: usize = 400;
+
+/// Trades whose detail screens one sync reads.
+struct TradePlan<'a> {
+    selected: Vec<&'a TradeRow>,
+    /// Oldest date the history pass has reached (None: not started).
+    before: Option<String>,
+    complete: bool,
+    /// Older trades still to read after this batch.
+    remaining: usize,
+}
+
+/// Newest trades in the sync window each time, and the older history in batches, newest
+/// first, so a long history (thousands of savings plan executions) is read over a few syncs
+/// instead of one very long one. `rows` are newest first. A date at the batch border is
+/// read again next time: activities are keyed by the trade id, so that is harmless.
+fn plan_trades<'a>(
+    rows: &'a [TradeRow],
+    since: &str,
+    before: Option<&str>,
+    complete: bool,
+) -> TradePlan<'a> {
+    let is_older = |r: &TradeRow| !r.date.is_empty() && r.date.as_str() < since;
+    // Recent trades have no history cursor. Capping them would repeatedly read the same newest
+    // entries and permanently omit the rest once the history has already been completed.
+    let mut selected: Vec<&TradeRow> = rows.iter().filter(|r| !is_older(r)).collect();
+    if complete {
+        return TradePlan {
+            selected,
+            before: before.map(str::to_string),
+            complete: true,
+            remaining: 0,
+        };
+    }
+    let older: Vec<&TradeRow> = rows
+        .iter()
+        .filter(|r| is_older(r) && before.is_none_or(|b| r.date.as_str() <= b))
+        .collect();
+    let mut batch: Vec<&TradeRow> = older.iter().copied().take(HISTORY_BATCH).collect();
+    // The checkpoint is a day, not an item id: finish its whole day so that more than one batch
+    // on the same day cannot repeat forever without advancing the cursor.
+    if let Some(border) = batch.last().map(|r| r.date.clone()) {
+        batch.extend(
+            older
+                .iter()
+                .copied()
+                .skip(HISTORY_BATCH)
+                .take_while(|r| r.date == border),
+        );
+        if before == Some(border.as_str()) {
+            if let Some(next_day) = older.get(batch.len()).map(|r| r.date.clone()) {
+                let offset = batch.len();
+                batch.extend(
+                    older
+                        .iter()
+                        .copied()
+                        .skip(offset)
+                        .take_while(|r| r.date == next_day),
+                );
+            }
+        }
+    }
+    let done = older.len() == batch.len();
+    let next = if done {
+        before.map(str::to_string)
+    } else {
+        batch.last().map(|r| r.date.clone())
+    };
+    let remaining = older.len().saturating_sub(batch.len());
+    selected.extend(batch);
+    TradePlan {
+        selected,
+        before: next,
+        complete: done,
+        remaining,
+    }
+}
+
+/// A document candidate not downloaded yet: (timeline item id, date, title, account ref, kind text).
+type DocCandidate = (String, String, String, String, String);
+
+/// Adds the trades that failed last time to the ones this sync reads (once each), wherever they are
+/// in the timeline: the history cursor has moved on, so only this brings them back.
+fn add_retries<'a>(selected: &mut Vec<&'a TradeRow>, rows: &'a [TradeRow], retry: &[String]) {
+    for row in rows {
+        if retry.contains(&row.id) && !selected.iter().any(|s| s.id == row.id) {
+            selected.push(row);
+        }
+    }
 }
 
 fn is_trade_kind(kind_text: &str) -> bool {
@@ -334,7 +571,11 @@ fn trade_security(row: &TradeRow, detail: &Value) -> Option<super::RemoteSecurit
             value_cents: value,
             fees_cents: fees,
             taxes_cents: taxes,
-            booking_text: row.kind_text.trim().to_string(),
+            booking_text: if row.subtitle.trim().is_empty() {
+                row.title.trim().to_string()
+            } else {
+                row.subtitle.trim().to_string()
+            },
             ..Default::default()
         },
     })
@@ -1025,6 +1266,23 @@ pub struct TradeRepublicConnector {
     challenge: Option<Challenge>,
     /// Timeline item ids whose documents were already downloaded.
     known_doc_items: Vec<String>,
+    /// The securities history (trades older than the sync window) is read in batches, newest
+    /// first: everything on or after this date has been read; `complete` = all of it.
+    trade_history_before: Option<String>,
+    trade_history_complete: bool,
+    /// Trades whose detail screen failed: read again next time, whatever the history cursor says
+    /// (their securities activity would be missing for good).
+    trade_history_retry: Vec<String>,
+    /// Document candidates a pass did not get to (over the limit of one pass) or whose detail or
+    /// download failed. They are tried again on the next syncs until they are stored, whatever the
+    /// history cursor or the sync window say.
+    doc_pending: Vec<DocCandidate>,
+    /// The last listing of the account-level documents (`timelineActivityLog`) did not reach its end
+    /// (a failed page, the page limit): the next sync lists on, even below the sync window, as long
+    /// as this is set. Entries not listed cannot be in `doc_pending`.
+    doc_listing_open: bool,
+    /// Next Activity Log page after a partial listing. A flag alone would repeat the same pages.
+    doc_listing_cursor: Option<String>,
 }
 
 impl TradeRepublicConnector {
@@ -1038,6 +1296,12 @@ impl TradeRepublicConnector {
             session_token: String::new(),
             challenge: None,
             known_doc_items: Vec::new(),
+            trade_history_before: None,
+            trade_history_complete: false,
+            trade_history_retry: Vec::new(),
+            doc_pending: Vec::new(),
+            doc_listing_open: false,
+            doc_listing_cursor: None,
         }
     }
 
@@ -1118,13 +1382,19 @@ impl TradeRepublicConnector {
     }
 
     fn state(&self) -> Value {
-        let keep: Vec<&String> = self.known_doc_items.iter().rev().take(2000).collect();
+        let keep: Vec<&String> = self.known_doc_items.iter().rev().take(6000).collect();
         json!({
             "cookies": self.cookies,
             "session_token": self.session_token,
             "phone": self.phone,
             "saved_unix": jiff::Timestamp::now().as_second(),
             "doc_items": keep,
+            "trade_history_v3_before": self.trade_history_before,
+            "trade_history_v3_complete": self.trade_history_complete,
+            "trade_history_v3_retry": self.trade_history_retry,
+            "doc_pending_v1": self.doc_pending,
+            "doc_listing_open_v1": self.doc_listing_open,
+            "doc_listing_cursor_v1": self.doc_listing_cursor,
         })
     }
 
@@ -1183,6 +1453,26 @@ impl BankConnector for TradeRepublicConnector {
             .as_str()
             .unwrap_or_default()
             .to_string();
+        self.trade_history_before = ctx.state["trade_history_v3_before"]
+            .as_str()
+            .map(str::to_string);
+        self.trade_history_complete = ctx.state["trade_history_v3_complete"]
+            .as_bool()
+            .unwrap_or(false);
+        self.trade_history_retry = ctx.state["trade_history_v3_retry"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.doc_pending =
+            serde_json::from_value(ctx.state["doc_pending_v1"].clone()).unwrap_or_default();
+        self.doc_listing_open = ctx.state["doc_listing_open_v1"].as_bool().unwrap_or(false);
+        self.doc_listing_cursor = ctx.state["doc_listing_cursor_v1"]
+            .as_str()
+            .map(str::to_string);
         self.known_doc_items = ctx.state["doc_items"]
             .as_array()
             .map(|a| {
@@ -1438,15 +1728,17 @@ impl BankConnector for TradeRepublicConnector {
 
         let mut cursor: Option<String> = None;
         let mut sub_id = 2u32;
-        let mut doc_candidates: Vec<(String, String, String)> = Vec::new();
+        let mut doc_candidates: Vec<(String, String, String, String, String)> = Vec::new();
         let mut trade_rows: Vec<TradeRow> = Vec::new();
         // After document retrieval was switched on again: reach back to the day it was switched off.
-        let cutoff = ctx
-            .documents
-            .catchup_since()
-            .map_or(ctx.since.as_str(), |d| d.min(&ctx.since))
-            .to_string();
-        'pages: for _ in 0..200 {
+        let window_start = window_start(ctx.documents.catchup_since(), &ctx.since);
+        // bookings older than the sync window, read in the history pass (stored as checked)
+        let mut older_bookings: Vec<RemoteTransaction> = Vec::new();
+        // the history pass pages through the whole timeline (cheap); details are batched below
+        // (trades to read again lie anywhere in the timeline: it is paged through to the end)
+        let history_done = self.trade_history_complete && self.trade_history_retry.is_empty();
+        let page_limit = if history_done { 200 } else { 600 };
+        'pages: for _ in 0..page_limit {
             let mut payload = json!({"type": "timelineTransactions"});
             if let Some(c) = &cursor {
                 payload["after"] = json!(c);
@@ -1460,7 +1752,10 @@ impl BankConnector for TradeRepublicConnector {
                     .chars()
                     .take(10)
                     .collect();
-                if !date.is_empty() && date.as_str() < cutoff.as_str() {
+                // Older than the sync window: only trades are read, once, so that the depot's
+                // activities cover the history (bookings and documents stay incremental).
+                let below_window = !date.is_empty() && date.as_str() < window_start.as_str();
+                if below_window && history_done {
                     break 'pages;
                 }
                 if item["amount"].is_null() || item["status"].as_str() == Some("CANCELED") {
@@ -1476,6 +1771,7 @@ impl BankConnector for TradeRepublicConnector {
                 )
                 .to_lowercase();
                 if !item_id.is_empty()
+                    && !below_window
                     && !self.known_doc_items.contains(&item_id)
                     && [
                         "sparplan",
@@ -1503,6 +1799,8 @@ impl BankConnector for TradeRepublicConnector {
                         item_id.clone(),
                         date.clone(),
                         item["title"].as_str().unwrap_or_default().to_string(),
+                        "tr:cash".to_string(),
+                        kind_text.clone(),
                     ));
                 }
                 if !item_id.is_empty() && is_trade_kind(&kind_text) {
@@ -1511,6 +1809,7 @@ impl BankConnector for TradeRepublicConnector {
                         date: date.clone(),
                         title: item["title"].as_str().unwrap_or_default().to_string(),
                         kind_text: kind_text.clone(),
+                        subtitle: subtitle.clone(),
                         amount_cents: amount_cents(&item["amount"]["value"]),
                         currency: item["amount"]["currency"]
                             .as_str()
@@ -1519,7 +1818,7 @@ impl BankConnector for TradeRepublicConnector {
                         icon: item["icon"].as_str().unwrap_or_default().to_string(),
                     });
                 }
-                out.transactions.push(RemoteTransaction {
+                let mut booking = RemoteTransaction {
                     account_ref: "tr:cash".into(),
                     external_id: item["id"].as_str().unwrap_or_default().to_string(),
                     booking_date: date.clone(),
@@ -1538,24 +1837,218 @@ impl BankConnector for TradeRepublicConnector {
                         subtitle
                     },
                     ..Default::default()
-                });
+                };
+                if below_window {
+                    booking.checked = true;
+                    older_bookings.push(booking);
+                    continue;
+                }
+                out.transactions.push(booking);
             }
             cursor = page["cursors"]["after"].as_str().map(|s| s.to_string());
             if cursor.is_none() {
                 break;
             }
         }
+
+        let transaction_candidates = doc_candidates.len();
+        // --- Activity Log: timelineActivityLog
+        // Covers non-transaction documents such as quarterly account/depot statements,
+        // annual tax certificates, and corporate actions (which carry no cash movements).
+        let mut act_cursor = self.doc_listing_cursor.clone();
+        // whether the listing got to its end (or to the window, where an earlier pass had finished)
+        let mut listing_complete = false;
+        'activity_pages: for _ in 0..100 {
+            let mut payload = json!({"type": "timelineActivityLog"});
+            if let Some(c) = &act_cursor {
+                payload["after"] = json!(c);
+            }
+            sub_id += 2;
+            let page = match request(&mut ws, sub_id, payload, &token).await {
+                Ok(p) => p,
+                // timelineActivityLog not available or failing: the listing stays open
+                Err(_) => break,
+            };
+            for item in page["items"].as_array().cloned().unwrap_or_default() {
+                let date: String = item["timestamp"]
+                    .as_str()
+                    .unwrap_or("")
+                    .chars()
+                    .take(10)
+                    .collect();
+                // below the window the account-level documents are read during the history pass
+                if !date.is_empty()
+                    && date.as_str() < window_start.as_str()
+                    && self.trade_history_complete
+                    && !self.doc_listing_open
+                {
+                    listing_complete = true;
+                    break 'activity_pages;
+                }
+                let item_id = item["id"].as_str().unwrap_or_default().to_string();
+                if item_id.is_empty()
+                    || self.known_doc_items.contains(&item_id)
+                    || doc_candidates.iter().any(|(id, _, _, _, _)| id == &item_id)
+                {
+                    continue;
+                }
+                let subtitle = item["subtitle"].as_str().unwrap_or_default().to_string();
+                let title = item["title"].as_str().unwrap_or_default().to_string();
+                let kind_text = format!(
+                    "{} {} {}",
+                    subtitle,
+                    item["eventType"].as_str().unwrap_or(""),
+                    title
+                )
+                .to_lowercase();
+
+                let is_candidate = [
+                    "sparplan",
+                    "savings_plan",
+                    "kauf",
+                    "verkauf",
+                    "order",
+                    "trade",
+                    "zinsen",
+                    "interest",
+                    "dividende",
+                    "dividend",
+                    "steuer",
+                    "tax",
+                    "ertragsaufstellung",
+                    "auszug",
+                    "statement",
+                    "abschluss",
+                    "rechnung",
+                    "report",
+                    "saveback",
+                    "round up",
+                    "spare_change",
+                    "ausschüttung",
+                    "corporate_action",
+                    "kapitalmaßnahme",
+                    "split",
+                    "übertrag",
+                    "transfer",
+                    "einbuchung",
+                    "ausbuchung",
+                ]
+                .iter()
+                .any(|k| kind_text.contains(k))
+                    || item["action"]["type"].as_str() == Some("timelineDetail")
+                    || item["action"]["type"].as_str() == Some("timelineDetailV2");
+
+                if is_candidate {
+                    let acc_ref = if kind_text.contains("depot")
+                        || kind_text.contains("wertpapier")
+                        || kind_text.contains("aktie")
+                    {
+                        "tr:depot".to_string()
+                    } else {
+                        "tr:cash".to_string()
+                    };
+                    doc_candidates.push((item_id, date, title, acc_ref, kind_text.clone()));
+                }
+            }
+            act_cursor = page["cursors"]["after"].as_str().map(|s| s.to_string());
+            if act_cursor.is_none() {
+                listing_complete = true;
+                break;
+            }
+        }
+        // a listing that stopped early is picked up again, whatever the trade history says
+        if ctx.documents.enabled() {
+            self.doc_listing_open = !listing_complete;
+            self.doc_listing_cursor = if listing_complete { None } else { act_cursor };
+        }
+
+        // Account-level documents (statements, tax certificates) are rare: they go first, so
+        // the per-sync limit never starves them behind the many booking receipts.
+        doc_candidates.rotate_left(transaction_candidates);
+        // This sync's trades (the recent ones and a batch of the history) and their detail
+        // screens: the documents of the older ones are fetched from the same screens.
+        let mut plan = plan_trades(
+            &trade_rows,
+            &window_start,
+            self.trade_history_before.as_deref(),
+            self.trade_history_complete,
+        );
+        add_retries(&mut plan.selected, &trade_rows, &self.trade_history_retry);
+        // The bookings of the history batch: the days from the oldest trade of this batch up to
+        // where the last sync stopped (everything left, in the final batch).
+        {
+            let upper = self.trade_history_before.as_deref();
+            let lower = if plan.complete {
+                None
+            } else {
+                plan.before.as_deref()
+            };
+            out.transactions
+                .extend(older_bookings.into_iter().filter(|t| {
+                    !t.booking_date.is_empty()
+                        && upper.is_none_or(|u| t.booking_date.as_str() <= u)
+                        && lower.is_none_or(|l| t.booking_date.as_str() >= l)
+                }));
+        }
+        for row in &plan.selected {
+            let older = !row.date.is_empty() && row.date.as_str() < window_start.as_str();
+            // a known document of a trade whose booking is imported now is only linked (no download)
+            let linkable = out.transactions.iter().any(|t| t.external_id == row.id);
+            if older
+                && (!self.known_doc_items.contains(&row.id) || linkable)
+                && !doc_candidates.iter().any(|(id, _, _, _, _)| id == &row.id)
+            {
+                doc_candidates.push((
+                    row.id.clone(),
+                    row.date.clone(),
+                    row.title.clone(),
+                    "tr:cash".to_string(),
+                    row.kind_text.clone(),
+                ));
+            }
+        }
         // Document retrieval switched off: no detail screens for documents, nothing remembered
         // (the securities page below fetches the trade screens it needs itself).
-        if !ctx.documents.enabled() {
+        let documents_off = !ctx.documents.enabled();
+        if documents_off {
             doc_candidates.clear();
+        } else {
+            // what an earlier pass left open comes after the new ones
+            for pending in std::mem::take(&mut self.doc_pending) {
+                if !self.known_doc_items.contains(&pending.0)
+                    && !doc_candidates
+                        .iter()
+                        .any(|(id, _, _, _, _)| id == &pending.0)
+                {
+                    doc_candidates.push(pending);
+                }
+            }
         }
+        let doc_limit = if self.trade_history_complete {
+            50
+        } else {
+            50 + HISTORY_BATCH
+        };
+        // Documents not looked at (more than one pass takes, a failed request): kept in
+        // `doc_pending`, a catch-up goes on.
+        let beyond_limit: Vec<DocCandidate> = if doc_candidates.len() > doc_limit {
+            doc_candidates.split_off(doc_limit)
+        } else {
+            Vec::new()
+        };
+        let mut docs_incomplete = !beyond_limit.is_empty();
+        let mut still_open: Vec<DocCandidate> = Vec::new();
         // --- Beleg-Abruf: timelineDetailV2 -> "Dokumente" section -> PDF download
         let client = self.client()?;
         let mut details: std::collections::HashMap<String, Value> = Default::default();
-        // Documents not looked at (more than one pass takes, a failed request): a catch-up goes on.
-        let mut docs_incomplete = doc_candidates.len() > 40;
-        for (item_id, date, title) in doc_candidates.into_iter().take(40) {
+        for (item_id, date, title, default_account_ref, kind_hint) in doc_candidates {
+            let candidate: DocCandidate = (
+                item_id.clone(),
+                date.clone(),
+                title.clone(),
+                default_account_ref.clone(),
+                kind_hint.clone(),
+            );
             sub_id += 2;
             let Ok(detail) = request(
                 &mut ws,
@@ -1566,9 +2059,12 @@ impl BankConnector for TradeRepublicConnector {
             .await
             else {
                 docs_incomplete = true;
+                still_open.push(candidate);
                 continue;
             };
             details.insert(item_id.clone(), detail.clone());
+            let known_item = self.known_doc_items.contains(&item_id);
+            let mut download_failed = false;
             for section in detail["sections"].as_array().cloned().unwrap_or_default() {
                 let is_docs = section["type"].as_str() == Some("documents")
                     || section["title"]
@@ -1589,6 +2085,23 @@ impl BankConnector for TradeRepublicConnector {
                     if parsed.scheme() != "https" {
                         continue;
                     }
+                    // Stored earlier: no second download, only the link to the booking (if it exists now).
+                    if known_item {
+                        if out.transactions.iter().any(|t| t.external_id == item_id) {
+                            out.documents.push(crate::documents::RemoteDocument {
+                                account_ref: default_account_ref.clone(),
+                                booking_external_id: Some(item_id.clone()),
+                                title: String::new(),
+                                doc_type: String::new(),
+                                mime_type: String::new(),
+                                file_name: String::new(),
+                                bytes: Vec::new(),
+                                source_url: url.split('?').next().unwrap_or(&url).to_string(),
+                                date: date.clone(),
+                            });
+                        }
+                        continue;
+                    }
                     // Only send the session cookie to Trade Republic hosts; presigned
                     // CDN/S3 URLs get a cookie-free request. (reqwest also strips the
                     // Cookie header on cross-host redirects.)
@@ -1597,39 +2110,58 @@ impl BankConnector for TradeRepublicConnector {
                         req = req.header("Cookie", self.cookies.clone());
                     }
                     let Ok(resp) = req.send().await else {
-                        docs_incomplete = true;
+                        download_failed = true;
                         continue;
                     };
                     if !resp.status().is_success() {
-                        docs_incomplete = true;
+                        download_failed = true;
                         continue;
                     }
                     let Ok(bytes) = super::read_body_limited(resp, super::MAX_DOC_BYTES).await
                     else {
-                        docs_incomplete = true;
+                        download_failed = true;
                         continue;
                     };
                     if !bytes.starts_with(b"%PDF") {
+                        // an error or login page with HTTP 200 is no document: try again later
+                        download_failed = true;
                         continue;
                     }
                     let doc_title = d["title"].as_str().unwrap_or("Dokument").to_string();
                     let lower = doc_title.to_lowercase();
-                    let doc_type = if lower.contains("steuer") {
-                        "steuer"
-                    } else if lower.contains("abrechnung") || lower.contains("bestätigung") {
-                        "abrechnung"
-                    } else {
-                        "beleg"
-                    };
+                    let doc_type = refine_document_type(document_type(&lower), &kind_hint);
                     let doc_date = d["detail"]
                         .as_str()
                         .and_then(|s| crate::documents::dates_in(s).into_iter().next())
                         .unwrap_or_else(|| date.clone());
                     // strip the presigned query part for a stable de-dup key
                     let stable = url.split('?').next().unwrap_or(&url).to_string();
+
+                    // If item_id matches a transaction, link it directly.
+                    // Otherwise it is an account-level document (e.g. quarterly statement, tax report).
+                    let booking_external_id =
+                        if out.transactions.iter().any(|t| t.external_id == item_id) {
+                            Some(item_id.clone())
+                        } else {
+                            None
+                        };
+
+                    // Without a booking the document belongs to the account: a notice about
+                    // a security to the depot, any other bare "beleg" is a PostBox notice.
+                    let account_level = booking_external_id.is_none();
+                    let doc_type = if account_level && doc_type == "beleg" {
+                        "postbox"
+                    } else {
+                        doc_type
+                    };
+                    let generic = lower == "dokumente" || lower == "dokument";
+                    let acc_ref = document_account_ref(&lower, doc_type, generic)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| default_account_ref.clone());
+
                     out.documents.push(crate::documents::RemoteDocument {
-                        account_ref: "tr:cash".into(),
-                        booking_external_id: Some(item_id.clone()),
+                        account_ref: acc_ref,
+                        booking_external_id,
                         title: format!("{doc_title} – {title}"),
                         doc_type: doc_type.into(),
                         mime_type: "application/pdf".into(),
@@ -1640,13 +2172,26 @@ impl BankConnector for TradeRepublicConnector {
                     });
                 }
             }
-            self.known_doc_items.push(item_id);
+            // a failed download is retried by the next sync
+            docs_incomplete |= download_failed;
+            if download_failed {
+                still_open.push(candidate);
+            }
+            if !download_failed && !known_item {
+                self.known_doc_items.push(item_id);
+            }
+        }
+        if !documents_off {
+            // failed ones first (they are the older passes' leftovers anyway), then what was not reached
+            still_open.extend(beyond_limit);
+            self.doc_pending = still_open;
         }
         out.documents_incomplete = docs_incomplete;
         // --- Wertpapierseite (#314): units, price, fees and taxes of the newest
         // trades from their detail screens (cached from the document pass).
         // A trade whose screen fails is skipped; the cash booking stays.
-        for row in trade_rows.iter().take(100) {
+        let mut failed_trades: Vec<String> = Vec::new();
+        for row in plan.selected {
             let detail = match details.remove(&row.id) {
                 Some(d) => d,
                 None => {
@@ -1660,7 +2205,10 @@ impl BankConnector for TradeRepublicConnector {
                     .await
                     {
                         Ok(d) => d,
-                        Err(_) => continue,
+                        Err(_) => {
+                            failed_trades.push(row.id.clone());
+                            continue;
+                        }
                     }
                 }
             };
@@ -1709,6 +2257,17 @@ impl BankConnector for TradeRepublicConnector {
             });
         }
         let _ = ws.close(None).await;
+        self.trade_history_before = plan.before;
+        self.trade_history_complete = plan.complete;
+        // the history is not complete while a trade is still to be read again
+        // documents still open (downloads, a listing that stopped early) keep "Weiter abrufen" on
+        out.history_incomplete = !plan.complete
+            || !failed_trades.is_empty()
+            || !self.doc_pending.is_empty()
+            || self.doc_listing_open;
+        self.trade_history_retry = failed_trades;
+        out.history_remaining = plan.remaining as u32;
+        out.history_total = trade_rows.len() as u32;
         out.state = Some(self.state());
         Ok(out)
     }
@@ -1724,8 +2283,30 @@ fn is_trade_republic_host(url: &reqwest::Url) -> bool {
         .unwrap_or(false)
 }
 
+/// Where the timeline's documents are read from: the sync window, or earlier back to the day document
+/// retrieval was switched off.
+fn window_start(catchup_since: Option<&str>, since: &str) -> String {
+    catchup_since
+        .filter(|d| *d < since)
+        .unwrap_or(since)
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn documents_reach_back_to_the_catchup_day_only_when_it_is_earlier() {
+        assert_eq!(super::window_start(None, "2026-08-01"), "2026-08-01");
+        assert_eq!(
+            super::window_start(Some("2026-05-01"), "2026-08-01"),
+            "2026-05-01"
+        );
+        assert_eq!(
+            super::window_start(Some("2026-09-01"), "2026-08-01"),
+            "2026-08-01"
+        );
+    }
+
     use super::*;
 
     fn detail(extra_rows: serde_json::Value) -> Value {
@@ -1747,6 +2328,7 @@ mod tests {
             date: "2026-11-05".into(),
             title: "Apple".into(),
             kind_text: kind.into(),
+            subtitle: "Sparplan ausgeführt".into(),
             amount_cents: amount,
             currency: "EUR".into(),
             icon: String::new(),
@@ -2458,5 +3040,272 @@ mod tests {
             .await;
             assert!(holdings.is_none(), "connection lost during {lost}");
         }
+    }
+
+    fn trade(date: &str, id: &str) -> TradeRow {
+        TradeRow {
+            id: id.into(),
+            date: date.into(),
+            title: String::new(),
+            kind_text: String::new(),
+            subtitle: String::new(),
+            amount_cents: 0,
+            currency: "EUR".into(),
+            icon: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_securities_history_state_is_kept_in_the_connection_state() {
+        let mut c = TradeRepublicConnector::new();
+        assert_eq!(c.state()["trade_history_v3_complete"], json!(false));
+        assert!(c.state()["trade_history_v3_before"].is_null());
+        c.trade_history_before = Some("2024-05-01".into());
+        c.trade_history_complete = true;
+        assert_eq!(c.state()["trade_history_v3_before"], json!("2024-05-01"));
+        assert_eq!(c.state()["trade_history_v3_complete"], json!(true));
+    }
+
+    #[test]
+    fn a_failed_trade_is_read_again_wherever_the_cursor_is() {
+        let rows: Vec<TradeRow> = (0..3)
+            .map(|i| trade("2020-01-10", &format!("old{i}")))
+            .chain([trade("2026-11-10", "new")])
+            .collect();
+        // the history is complete: only the recent trade is selected …
+        let mut plan = plan_trades(&rows, "2026-10-01", Some("2020-01-01"), true);
+        assert_eq!(
+            plan.selected
+                .iter()
+                .map(|r| r.id.as_str())
+                .collect::<Vec<_>>(),
+            ["new"]
+        );
+        // … and the two that failed last time come back, once each
+        let retry = vec!["old1".to_string(), "old2".to_string(), "new".to_string()];
+        add_retries(&mut plan.selected, &rows, &retry);
+        let ids: Vec<&str> = plan.selected.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["new", "old1", "old2"]);
+        // the failed ones are part of the state, so a new session knows them
+        let mut c = TradeRepublicConnector::new();
+        c.trade_history_retry = retry;
+        assert_eq!(
+            c.state()["trade_history_v3_retry"],
+            json!(["old1", "old2", "new"])
+        );
+    }
+
+    #[test]
+    fn the_history_is_read_in_batches_newest_first() {
+        // 5 recent trades and 1000 older ones, one per day, newest first
+        let mut rows: Vec<TradeRow> = (0..5)
+            .map(|i| trade("2026-11-10", &format!("r{i}")))
+            .collect();
+        let start = jiff::civil::date(2026, 1, 1);
+        for i in 0..1000 {
+            let d = crate::dates::iso(start - crate::dates::days(i));
+            rows.push(trade(&d, &format!("h{i}")));
+        }
+        let since = "2026-11-01";
+        let p1 = plan_trades(&rows, since, None, false);
+        assert_eq!(p1.selected.len(), 5 + 400);
+        assert!(!p1.complete);
+        assert_eq!(p1.remaining, 600);
+        let border = p1.before.clone().unwrap();
+        assert_eq!(border, rows[5 + 399].date);
+        let p2 = plan_trades(&rows, since, Some(&border), false);
+        // the border day is read again, then the next 400
+        assert!(p2.selected.iter().any(|r| r.id == "h399"));
+        assert!(!p2.complete);
+        let border2 = p2.before.clone().unwrap();
+        let p3 = plan_trades(&rows, since, Some(&border2), false);
+        assert!(p3.complete, "the rest fits into one batch");
+        assert_eq!(p3.remaining, 0);
+        // finished: only the recent trades from then on
+        let p4 = plan_trades(&rows, since, p3.before.as_deref(), true);
+        assert_eq!(p4.selected.len(), 5);
+        assert!(p4.complete);
+    }
+
+    #[test]
+    fn classifies_document_types_accurately() {
+        let classify = |title: &str| document_type(&title.to_lowercase());
+
+        assert_eq!(classify("Kontoauszug Q3 2026"), "kontoauszug");
+        assert_eq!(classify("Depotauszug zum 30.09.2026"), "kontoauszug");
+        assert_eq!(classify("Quartalsabschluss"), "kontoauszug");
+        assert_eq!(classify("Jahressteuerbescheinigung 2025"), "steuer");
+        assert_eq!(classify("Ertragsaufstellung 2025"), "steuer");
+        assert_eq!(classify("Wertpapierabrechnung Kauf"), "abrechnung");
+        assert_eq!(classify("Ausführungsbestätigung Sparplan"), "abrechnung");
+        assert_eq!(classify("Zinsbeleg"), "beleg");
+        assert_eq!(classify("Dividendenbeleg"), "abrechnung");
+        assert_eq!(classify("Dividende Wahlweise"), "postbox");
+        assert_eq!(classify("Kundenvereinbarung"), "postbox");
+        // titles of real exports
+        for (title, kind) in [
+            ("Abrechnung Ausführung", "abrechnung"),
+            ("Abrechnungsausführung", "abrechnung"),
+            ("Ausführungsanzeige", "abrechnung"),
+            ("Steuerbescheinigung", "steuer"),
+            ("Vorabpauschale", "steuer"),
+            ("Depotauszug", "kontoauszug"),
+            ("Cryptoauszug", "kontoauszug"),
+            ("Kosteninformation", "postbox"),
+            ("Individuelle Kosteninformation", "postbox"),
+            (
+                "Kundeninformation Änderung PRIIPs-Basisinformationsblatt",
+                "postbox",
+            ),
+            ("Kundenanschreiben", "postbox"),
+            ("Bedingungsänderung - Ihre Zustimmung", "postbox"),
+            ("Änderung der Vertragsunterlagen", "postbox"),
+            ("Dokumente", "beleg"),
+            ("Steuerreport", "steuer"),
+            ("Ex-Post Kosteninformation", "postbox"),
+            ("Löschbestätigung", "postbox"),
+            ("Auftragsbestätigung", "abrechnung"),
+            ("Prospekt", "postbox"),
+            ("Hauptversammlung", "postbox"),
+            ("Basisinformationsblatt", "postbox"),
+            ("Preis- und Leistungsverzeichnis", "postbox"),
+            ("Geschäftsbedingungen", "postbox"),
+            ("NCP-AGB", "postbox"),
+            ("Customer Agreement", "postbox"),
+            ("Datenschutzhinweis", "postbox"),
+            ("Hinweise zu den Handelsplätzen", "postbox"),
+        ] {
+            assert_eq!(classify(title), kind, "{title}");
+        }
+        // the generic "Dokumente" is what the timeline event says it is
+        assert_eq!(
+            refine_document_type("beleg", "bardividende ssp_corporate_action_cash"),
+            "abrechnung"
+        );
+        assert_eq!(
+            refine_document_type("beleg", "sparplan ausgeführt"),
+            "abrechnung"
+        );
+        assert_eq!(refine_document_type("beleg", "steuerkorrektur"), "steuer");
+        assert_eq!(refine_document_type("beleg", "zinsen"), "beleg");
+        assert_eq!(refine_document_type("postbox", "kauf"), "postbox");
+        assert!(is_securities_notice("dividende wahlweise"));
+        assert!(!is_securities_notice("kundenvereinbarung"));
+    }
+
+    #[test]
+    fn a_documents_account_follows_what_it_is_not_how_it_arrived() {
+        let acc = |head: &str, doc_type: &str, generic: bool| {
+            document_account_ref(head, doc_type, generic)
+        };
+        // confirmations and credits for securities: the depot
+        for head in [
+            "dividendenbeleg",
+            "abrechnungsausf\u{fc}hrung",
+            "abrechnung",
+            "ausf\u{fc}hrungsanzeige",
+            "wertpapierabrechnung sparplan",
+        ] {
+            assert_eq!(acc(head, "abrechnung", false), Some("tr:depot"), "{head}");
+        }
+        // notices without a cash flow about a security: the depot as well
+        assert_eq!(
+            acc("dividende wahlweise", "postbox", false),
+            Some("tr:depot")
+        );
+        assert_eq!(
+            acc("kapitalma\u{df}nahme", "postbox", false),
+            Some("tr:depot")
+        );
+        // statements: the account they are about
+        assert_eq!(acc("kontoauszug", "kontoauszug", false), Some("tr:cash"));
+        assert_eq!(acc("depotauszug", "kontoauszug", false), Some("tr:depot"));
+        // interest and fees of the settlement account, even when typed as a settlement
+        assert_eq!(acc("zinsabrechnung", "abrechnung", false), Some("tr:cash"));
+        assert_eq!(acc("kontogeb\u{fc}hren", "postbox", false), Some("tr:cash"));
+        // nothing says where tax papers and general information belong: they stay
+        assert_eq!(acc("jahressteuerbescheinigung", "steuer", false), None);
+        assert_eq!(acc("kundenvereinbarung", "postbox", false), None);
+        // an older document just called "Dokumente": the type of its event decides
+        assert_eq!(acc("dokumente", "abrechnung", true), Some("tr:depot"));
+        assert_eq!(acc("dokumente", "postbox", true), None);
+    }
+
+    #[test]
+    fn open_document_candidates_are_kept_in_the_state_between_syncs() {
+        let mut c = TradeRepublicConnector::new();
+        c.doc_pending = vec![(
+            "item-1".into(),
+            "2023-05-01".into(),
+            "Kontoauszug".into(),
+            "tr:cash".into(),
+            "kontoauszug".into(),
+        )];
+        c.doc_listing_open = true;
+        c.doc_listing_cursor = Some("after-page-100".into());
+        let state = c.state();
+        assert_eq!(state["doc_listing_open_v1"], json!(true));
+        assert_eq!(state["doc_listing_cursor_v1"], json!("after-page-100"));
+        let back: Vec<DocCandidate> =
+            serde_json::from_value(state["doc_pending_v1"].clone()).unwrap();
+        assert_eq!(back, c.doc_pending);
+        // the state of an older version has none: nothing pending
+        let none: Vec<DocCandidate> =
+            serde_json::from_value(json!({}).get("doc_pending_v1").cloned().unwrap_or_default())
+                .unwrap_or_default();
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn history_finishes_the_boundary_day_and_does_not_cap_recent_trades() {
+        let mut rows: Vec<TradeRow> = (0..150)
+            .map(|i| trade("2026-11-10", &format!("recent{i}")))
+            .chain((0..450).map(|i| trade("2020-01-10", &format!("old{i}"))))
+            .collect();
+        rows.push(trade("2019-12-01", "last"));
+        let first = plan_trades(&rows, "2026-11-01", None, false);
+        assert_eq!(first.selected.len(), 600);
+        assert_eq!(first.remaining, 1);
+        let next = plan_trades(&rows, "2026-11-01", Some("2020-01-10"), false);
+        assert_eq!(next.selected.len(), 601);
+        assert!(next.complete);
+        assert!(next.selected.iter().any(|r| r.id == "last"));
+        let recent = plan_trades(&rows, "2026-11-01", None, true);
+        assert_eq!(recent.selected.len(), 150);
+    }
+
+    #[test]
+    fn a_documents_direction_comes_from_its_first_event_word() {
+        assert_eq!(
+            document_inflow(
+                "Abrechnung Ausführung – Apple",
+                "WERTPAPIERABRECHNUNG KAUF Apple"
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            document_inflow(
+                "Abrechnung Ausführung – Apple",
+                "Wertpapierabrechnung Verkauf Apple"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            document_inflow("Wertpapierabrechnung Sparplan – JPM", ""),
+            Some(false)
+        );
+        assert_eq!(document_inflow("Dividende – Apple", "Ertrag"), Some(true));
+        // a sale whose boilerplate talks about purchases
+        assert_eq!(
+            document_inflow(
+                "Abrechnung – Apple",
+                "Verkauf Apple ... Kauf und Verkauf von Wertpapieren"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            document_inflow("Kosteninformation – Apple", "Hinweise zu den Kosten"),
+            None
+        );
     }
 }

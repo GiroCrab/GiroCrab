@@ -147,6 +147,8 @@ struct ConnectionEditSheet: View {
     @State private var selection = AccountSelectionDraft()
     /// Document retrieval of this connection (only for banks that deliver documents).
     @State private var documentsSupported = false
+    @State private var confirmRebuild = false
+    @State private var confirmResort = false
     @State private var documentsFetch = true
     /// "Dokumente abrufen" is off: nothing that fetches documents runs (PostBox included).
     private var documentsBlocked: Bool { documentsSupported && !documentsFetch }
@@ -496,10 +498,15 @@ struct ConnectionEditSheet: View {
                             if st.hasSession {
                                 Button("Sitzung löschen …", role: .destructive) { confirmClear = .tradeRepublic }
                             }
+                            Button("Historie und Zuordnung neu aufbauen …") { confirmRebuild = true }
                         }
                     }
                     if let t = connection.lastSyncUnix {
                         LabeledContent("Letzter Abruf") { Text(Date(timeIntervalSince1970: TimeInterval(t)), style: .relative) }
+                    }
+                    if connection.connector == .fnz || connection.connector == .quirion || isComdirect {
+                        Button("Dokumente neu einsortieren …") { confirmResort = true }
+                            .help("Ordnet die gespeicherten PDFs anhand ihrer Titel neu ein: Kontoauszüge, Steuerbescheinigungen, Mitteilungen")
                     }
                     if isTR {
                         Button {
@@ -540,6 +547,18 @@ struct ConnectionEditSheet: View {
             Text(connection.connector == .comdirect
                 ? "GiroCrab ruft comdirect danach per FinTS ab. Die Bankleitzahl kommt aus der IBAN Ihrer Konten. Beim ersten Abruf werden PIN und Freigabe in der App erneut abgefragt."
                 : "GiroCrab ruft comdirect danach über die Schnittstelle der Bank ab. Dafür sind Client-ID und Client-Secret nötig.")
+        }
+        .confirmationDialog("Historie neu aufbauen?", isPresented: $confirmRebuild, titleVisibility: .visible) {
+            Button("Neu aufbauen") { model.resetTradeRepublicHistory(connection.id) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Bereits gespeicherte Dokumente werden anhand ihrer Titel neu einsortiert und, wo möglich, über Betrag, Datum und Wertpapier im PDF den Buchungen zugeordnet, ohne sie erneut zu laden. Die folgenden Abrufe holen Buchungen und Wertpapieraktivitäten nach und ordnen weitere Dokumente zu. Das kann einige Abrufe dauern.")
+        }
+        .confirmationDialog("Dokumente neu einsortieren?", isPresented: $confirmResort, titleVisibility: .visible) {
+            Button("Neu einsortieren") { model.resortPortalDocuments(connection.id) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Die gespeicherten Dokumente dieses Zugangs werden anhand ihrer Titel neu eingeordnet und, wo der Zugang es unterstützt, über Betrag, Datum und Wertpapier den Buchungen zugeordnet. Es wird nichts erneut geladen. Bei vielen Dokumenten kann das etwas dauern.")
         }
         .confirmationDialog("Sitzung löschen?", isPresented: Binding(get: { confirmClear != nil }, set: { if !$0 { confirmClear = nil } }),
                             titleVisibility: .visible, presenting: confirmClear) { kind in

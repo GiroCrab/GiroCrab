@@ -9,6 +9,16 @@ use crate::i18n::{tr, trf};
 use crate::models::ConnectorKind;
 use crate::vault::Vault;
 
+/// Result of "Historie und Zuordnung neu aufbauen" (Trade Republic).
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct HistoryReset {
+    /// Stored documents whose type or account changed.
+    pub resorted: u32,
+    /// Documents without a booking that were linked to one by their content.
+    pub linked: u32,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ConnectionStatus {
@@ -436,6 +446,82 @@ impl Vault {
         clear_session_inner(&db, connection_id)
     }
 
+    /// Starts the Trade Republic history again (bookings, securities activity, links) and sorts the
+    /// stored documents anew by their titles: type, and cash account or depot for those without a
+    /// booking. Nothing is downloaded again. Returns how many documents changed.
+    pub fn reset_trade_republic_history(
+        &self,
+        connection_id: i64,
+    ) -> Result<HistoryReset, CoreError> {
+        let db = self.db()?;
+        let state: Option<String> = db
+            .query_row(
+                "SELECT state_json FROM bank_connections WHERE id = ?1 AND deleted_ms IS NULL",
+                [connection_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let mut v: serde_json::Value = state
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({}));
+        if let Some(o) = v.as_object_mut() {
+            o.remove("trade_history_v3_before");
+            o.remove("trade_history_v3_complete");
+            o.remove("doc_listing_cursor_v1");
+            o.insert("doc_listing_open_v1".into(), serde_json::json!(true));
+        }
+        db.execute(
+            "UPDATE bank_connections SET state_json = ?1 WHERE id = ?2",
+            params![v.to_string(), connection_id],
+        )?;
+        // the documents are sorted anew and linked by the same shared flow the import uses
+        let (resorted, linked) = match crate::connectors::document_matching::reprocess_rules_for(
+            ConnectorKind::TradeRepublic,
+        ) {
+            Some(rules) => crate::connectors::document_matching::reprocess_documents(
+                &db,
+                connection_id,
+                &rules,
+            )?,
+            None => (0, 0),
+        };
+        Ok(HistoryReset { resorted, linked })
+    }
+
+    /// Portal connections (FNZ, Quirion) stored every PDF as "postbox" before the type followed the
+    /// title. Sorts the stored documents of a connection anew by their titles (account statements,
+    /// tax papers, …); only documents still typed "postbox" change. Returns how many documents
+    /// changed (type or account) and how many were linked to a booking by their content.
+    pub fn resort_portal_documents(&self, connection_id: i64) -> Result<HistoryReset, CoreError> {
+        let db = self.db()?;
+        let kind: Option<String> = db
+            .query_row(
+                "SELECT connector FROM bank_connections WHERE id = ?1 AND deleted_ms IS NULL",
+                [connection_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let kind = kind.as_deref().and_then(ConnectorKind::from_str);
+        // the shared flow with the rules of the statement portals: only plain PostBox notices change
+        let rules = match kind {
+            Some(kind) => crate::connectors::document_matching::reprocess_rules_for_connection(
+                &db,
+                connection_id,
+                kind,
+            )?,
+            None => None,
+        };
+        let (resorted, linked) = match rules {
+            Some(rules) => crate::connectors::document_matching::reprocess_documents(
+                &db,
+                connection_id,
+                &rules,
+            )?,
+            None => (0, 0),
+        };
+        Ok(HistoryReset { resorted, linked })
+    }
+
     pub fn connection_status(&self, connection_id: i64) -> Result<ConnectionStatus, CoreError> {
         let db = self.db()?;
         let state: String = db
@@ -726,6 +812,312 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::models::BookingFilter;
+
+    /// A stored PDF whose timeline id matches no booking is linked by its content (amount, date,
+    /// security) when the history is rebuilt.
+    #[test]
+    fn trade_republic_reset_links_unlinked_documents_by_their_content() {
+        let dir = crate::test_support::TempDir::new("girocrab-tr-link");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![6u8; 32],
+        )
+        .unwrap();
+        let (c, doc_id, booking_id) = {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO bank_connections(connector, display_name, login_name, state_json)
+                 VALUES ('trade_republic', 'TR', '+49', '{}')",
+                [],
+            )
+            .unwrap();
+            let c = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, 'tr:cash', 'TR')",
+                params![c, g],
+            )
+            .unwrap();
+            let cash = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty)
+                 VALUES (?1, 'x1', '2025-12-04', -2500, 'JPM USD EM Bond USD (Dist)')",
+                [cash],
+            )
+            .unwrap();
+            let booking_id = db.last_insert_rowid();
+            let pdf = crate::documents::simple_pdf(&[
+                "Sparplanausfuehrung am 02.12.2025".to_string(),
+                "JPM USD EM Bond USD (Dist) 25,00 EUR".to_string(),
+                "Wertstellung 2025-12-04 -25,00 EUR".to_string(),
+            ]);
+            let doc_id = crate::documents::insert_doc(
+                &db,
+                None,
+                Some(cash),
+                "Abrechnungsausf\u{fc}hrung \u{2013} JPM USD EM Bond USD (Dist)",
+                "abrechnung",
+                "application/pdf",
+                "x.pdf",
+                &pdf,
+                "u1",
+                "2025-12-02",
+            )
+            .unwrap()
+            .unwrap();
+            (c, doc_id, booking_id)
+        };
+        let r = v.reset_trade_republic_history(c).unwrap();
+        assert_eq!(r.linked, 1);
+        let linked: Option<i64> = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT booking_id FROM booking_documents WHERE id = ?1",
+                [doc_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, Some(booking_id));
+    }
+
+    #[test]
+    fn portal_documents_are_resorted_by_their_titles() {
+        let dir = crate::test_support::TempDir::new("girocrab-resort");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![7u8; 32],
+        )
+        .unwrap();
+        let (c, ids) = {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO bank_connections(connector, display_name, login_name) VALUES ('fnz', 'FNZ', 'x')",
+                [],
+            )
+            .unwrap();
+            let c = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, 'd1', 'Depot')",
+                params![c, g],
+            )
+            .unwrap();
+            let acc = db.last_insert_rowid();
+            let mut ids = Vec::new();
+            for (n, title) in [
+                "Online Auszug 5",
+                "Steuerbescheinigung Steuerliche Information",
+                "Kundeninformation",
+                "VL-Information",
+            ]
+            .iter()
+            .enumerate()
+            {
+                let id = crate::documents::insert_doc(
+                    &db,
+                    None,
+                    Some(acc),
+                    title,
+                    "postbox",
+                    "application/pdf",
+                    "x.pdf",
+                    b"%PDF-1.4 x",
+                    &format!("u{n}"),
+                    "2026-01-01",
+                )
+                .unwrap()
+                .unwrap();
+                ids.push(id);
+            }
+            (c, ids)
+        };
+        assert_eq!(v.resort_portal_documents(c).unwrap().resorted, 2);
+        let db = v.db().unwrap();
+        let kind = |id: i64| -> String {
+            db.query_row(
+                "SELECT doc_type FROM booking_documents WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(kind(ids[0]), "kontoauszug");
+        assert_eq!(kind(ids[1]), "steuer");
+        assert_eq!(kind(ids[2]), "postbox");
+        assert_eq!(kind(ids[3]), "postbox");
+    }
+
+    /// The shared flow serves a second bank: the comdirect PostBox is sorted anew by the same typing as
+    /// FNZ and Quirion; its account and links stay, a type that is known is kept, a second run changes
+    /// nothing, and another connection's documents are not touched.
+    #[test]
+    fn comdirect_postbox_documents_are_resorted_by_the_shared_flow() {
+        let dir = crate::test_support::TempDir::new("girocrab-resort-comdirect");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![7u8; 32],
+        )
+        .unwrap();
+        let (c, other, ids, foreign, acc) = {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            let connection = |connector: &str| {
+                db.execute(
+                    "INSERT INTO bank_connections(connector, display_name, login_name) VALUES (?1, 'x', 'x')",
+                    [connector],
+                )
+                .unwrap();
+                let c = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, ?3, 'Konto')",
+                    params![c, g, format!("ref{c}")],
+                )
+                .unwrap();
+                (c, db.last_insert_rowid())
+            };
+            let (c, acc) = connection("comdirect");
+            let (other, other_acc) = connection("fnz");
+            let store = |account: i64, title: &str, doc_type: &str, n: usize| {
+                crate::documents::insert_doc(
+                    &db,
+                    None,
+                    Some(account),
+                    title,
+                    doc_type,
+                    "application/pdf",
+                    "x.pdf",
+                    b"%PDF-1.4 x",
+                    &format!("u{n}"),
+                    "2026-01-01",
+                )
+                .unwrap()
+                .unwrap()
+            };
+            let ids = vec![
+                store(acc, "Kontoauszug Nr. 4 vom 31.10.2026", "postbox", 0),
+                store(acc, "Finanzreport", "postbox", 1),
+                // a known type stays, whatever the title says
+                store(acc, "Wertpapierabrechnung Kauf", "steuer", 2),
+            ];
+            let foreign = store(other_acc, "Online Auszug 5", "postbox", 3);
+            (c, other, ids, foreign, acc)
+        };
+        let _ = other;
+        // the statement and the Finanzreport (a period statement) change, the typed one stays
+        assert_eq!(v.resort_portal_documents(c).unwrap().resorted, 2);
+        // run twice: nothing more changes
+        assert_eq!(v.resort_portal_documents(c).unwrap().resorted, 0);
+        let db = v.db().unwrap();
+        let row = |id: i64| -> (String, Option<i64>, Option<i64>) {
+            db.query_row(
+                "SELECT doc_type, account_id, booking_id FROM booking_documents WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(row(ids[0]), ("kontoauszug".into(), Some(acc), None));
+        assert_eq!(row(ids[1]).0, "kontoauszug");
+        assert_eq!(row(ids[2]).0, "steuer");
+        // another connection's document is not part of this run
+        assert_eq!(row(foreign).0, "postbox");
+    }
+
+    /// "Neu aufbauen": the history starts again, the stored documents are sorted anew by their
+    /// titles (nothing downloaded), a generic "Dokumente" keeps its type.
+    #[test]
+    fn trade_republic_history_reset_restarts_the_pass_and_resorts_documents() {
+        let dir = crate::test_support::TempDir::new("girocrab-tr-reset");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![5u8; 32],
+        )
+        .unwrap();
+        let (c, cash, depot, prospect, notice, generic, cancel, meeting) = {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            db.execute(
+            "INSERT INTO bank_connections(connector, display_name, login_name, state_json)
+             VALUES ('trade_republic', 'TR', '+49', ?1)",
+            [r#"{"doc_items":["a"],"trade_history_v3_before":"2024-01-01","trade_history_v3_complete":true}"#],
+        )
+        .unwrap();
+            let c = db.last_insert_rowid();
+            let mut ids = Vec::new();
+            for r in ["tr:cash", "tr:depot"] {
+                db.execute(
+                "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, ?3, ?3)",
+                params![c, g, r],
+            )
+            .unwrap();
+                ids.push(db.last_insert_rowid());
+            }
+            let (cash, depot) = (ids[0], ids[1]);
+            let doc = |title: &str, doc_type: &str, url: &str| {
+                crate::documents::insert_doc(
+                    &db,
+                    None,
+                    Some(cash),
+                    title,
+                    doc_type,
+                    "application/pdf",
+                    "x.pdf",
+                    b"%PDF-1.4 x",
+                    url,
+                    "2025-01-01",
+                )
+                .unwrap()
+                .unwrap()
+            };
+            let prospect = doc("Prospekt \u{2013} Anthropic", "beleg", "u1");
+            let notice = doc(
+                "Dividende Wahlweise \u{2013} Realty Income",
+                "postbox",
+                "u2",
+            );
+            let generic = doc("Dokumente \u{2013} Main Street Capital", "abrechnung", "u3");
+            let cancel = doc("L\u{f6}schbest\u{e4}tigung \u{2013} X", "abrechnung", "u4");
+            let meeting = doc("Hauptversammlung \u{2013} Sixt (Vz)", "postbox", "u5");
+            (c, cash, depot, prospect, notice, generic, cancel, meeting)
+        };
+        let changed = v.reset_trade_republic_history(c).unwrap().resorted;
+        let db = v.db().unwrap();
+        assert_eq!(changed, 5);
+        let get = |id: i64| -> (String, i64) {
+            db.query_row(
+                "SELECT doc_type, account_id FROM booking_documents WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(get(prospect), ("postbox".into(), depot));
+        assert_eq!(get(notice), ("postbox".into(), depot));
+        // an older document called just "Dokumente" with the type of a trade event: the depot
+        assert_eq!(get(generic), ("abrechnung".into(), depot));
+        assert_eq!(get(cancel), ("postbox".into(), cash));
+        assert_eq!(get(meeting), ("postbox".into(), depot));
+        let state: String = db
+            .query_row(
+                "SELECT state_json FROM bank_connections WHERE id = ?1",
+                [c],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let state: serde_json::Value = serde_json::from_str(&state).unwrap();
+        assert!(state["trade_history_v3_before"].is_null());
+        assert!(state["trade_history_v3_complete"].is_null());
+        assert_eq!(state["doc_items"], serde_json::json!(["a"]));
+    }
 
     /// Direct debit, standing order and planned data hang on the duplicate
     /// account: merging must neither fail on the foreign keys nor lose them.

@@ -61,7 +61,8 @@ pub struct DocumentInfo {
     /// "METRO · −56,13 EUR · 2026-11-07" (empty if not linked)
     pub booking_label: String,
     pub account_name: String,
-    /// Read: opened in the preview, marked by hand, or old on arrival (see [`UNSEEN_DAYS`]).
+    /// Read: opened in the preview or marked by hand; a hand-added document starts read. Every other
+    /// document arrives unread, however old its date (a history fetch can be marked read in one go).
     pub seen: bool,
 }
 
@@ -120,17 +121,6 @@ pub(crate) fn title_from_file(file_name: &str) -> String {
     stem.replace(['_', '-'], " ").trim().to_string()
 }
 
-/// A document that arrives dated longer ago than this is "read" from the start: a history fetch
-/// or an archive import must not flood the unread count. Newer ones are unread until opened.
-pub(crate) const UNSEEN_DAYS: i64 = 45;
-
-/// `seen_at` of a document arriving with this date: now if it is old, else NULL (unread). A
-/// document without a date counts as new.
-fn seen_on_arrival(date: Option<jiff::civil::Date>) -> Option<i64> {
-    let old = crate::dates::days_between(date?, crate::dates::today()) > UNSEEN_DAYS;
-    old.then(|| jiff::Timestamp::now().as_second())
-}
-
 /// Marks documents read (`seen` true) or unread; returns how many changed.
 pub(crate) fn mark_seen(conn: &Connection, ids: &[i64], seen: bool) -> CoreResult<u32> {
     let mut changed = 0;
@@ -165,9 +155,10 @@ pub(crate) fn insert_doc(
     // document falls back to its booking's date.
     let date = crate::dates::parse_iso(date);
     let n = conn.execute(
-        "INSERT OR IGNORE INTO booking_documents(booking_id, account_id, title, doc_type, mime_type, file_name, pdf_bytes, source_url, doc_date, seen_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![booking_id, account_id, title, doc_type, mime, file_name, bytes, source_url, date.map(crate::dates::iso).unwrap_or_default(), seen_on_arrival(date)],
+        // seen_at stays NULL: a document arrives unread, whatever its date
+        "INSERT OR IGNORE INTO booking_documents(booking_id, account_id, title, doc_type, mime_type, file_name, pdf_bytes, source_url, doc_date)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![booking_id, account_id, title, doc_type, mime, file_name, bytes, source_url, date.map(crate::dates::iso).unwrap_or_default()],
     )?;
     Ok(if n > 0 {
         Some(conn.last_insert_rowid())
@@ -178,7 +169,63 @@ pub(crate) fn insert_doc(
 
 // ------------------------------------------------------------------ PDF text extraction
 
+/// IBM-273 (German EBCDIC) as Unicode. Some banks (comdirect) print their documents from a mainframe: the
+/// PDF text is EBCDIC, a space is `0x40`, the digits are `0xF0..=0xF9`.
+#[rustfmt::skip]
+const EBCDIC_273: [u16; 256] = [
+    0x0000, 0x0001, 0x0002, 0x0003, 0x009C, 0x0009, 0x0086, 0x007F, 0x0097, 0x008D, 0x008E, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F,
+    0x0010, 0x0011, 0x0012, 0x0013, 0x009D, 0x0085, 0x0008, 0x0087, 0x0018, 0x0019, 0x0092, 0x008F, 0x001C, 0x001D, 0x001E, 0x001F,
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x000A, 0x0017, 0x001B, 0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x0005, 0x0006, 0x0007,
+    0x0090, 0x0091, 0x0016, 0x0093, 0x0094, 0x0095, 0x0096, 0x0004, 0x0098, 0x0099, 0x009A, 0x009B, 0x0014, 0x0015, 0x009E, 0x001A,
+    0x0020, 0x00A0, 0x00E2, 0x007B, 0x00E0, 0x00E1, 0x00E3, 0x00E5, 0x00E7, 0x00F1, 0x00C4, 0x002E, 0x003C, 0x0028, 0x002B, 0x0021,
+    0x0026, 0x00E9, 0x00EA, 0x00EB, 0x00E8, 0x00ED, 0x00EE, 0x00EF, 0x00EC, 0x007E, 0x00DC, 0x0024, 0x002A, 0x0029, 0x003B, 0x005E,
+    0x002D, 0x002F, 0x00C2, 0x005B, 0x00C0, 0x00C1, 0x00C3, 0x00C5, 0x00C7, 0x00D1, 0x00F6, 0x002C, 0x0025, 0x005F, 0x003E, 0x003F,
+    0x00F8, 0x00C9, 0x00CA, 0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF, 0x00CC, 0x0060, 0x003A, 0x0023, 0x00A7, 0x0027, 0x003D, 0x0022,
+    0x00D8, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067, 0x0068, 0x0069, 0x00AB, 0x00BB, 0x00F0, 0x00FD, 0x00FE, 0x00B1,
+    0x00B0, 0x006A, 0x006B, 0x006C, 0x006D, 0x006E, 0x006F, 0x0070, 0x0071, 0x0072, 0x00AA, 0x00BA, 0x00E6, 0x00B8, 0x00C6, 0x00A4,
+    0x00B5, 0x00DF, 0x0073, 0x0074, 0x0075, 0x0076, 0x0077, 0x0078, 0x0079, 0x007A, 0x00A1, 0x00BF, 0x00D0, 0x00DD, 0x00DE, 0x00AE,
+    0x00A2, 0x00A3, 0x00A5, 0x00B7, 0x00A9, 0x0040, 0x00B6, 0x00BC, 0x00BD, 0x00BE, 0x00AC, 0x007C, 0x203E, 0x00A8, 0x00B4, 0x00D7,
+    0x00E4, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047, 0x0048, 0x0049, 0x00AD, 0x00F4, 0x00A6, 0x00F2, 0x00F3, 0x00F5,
+    0x00FC, 0x004A, 0x004B, 0x004C, 0x004D, 0x004E, 0x004F, 0x0050, 0x0051, 0x0052, 0x00B9, 0x00FB, 0x007D, 0x00F9, 0x00FA, 0x00FF,
+    0x00D6, 0x00F7, 0x0053, 0x0054, 0x0055, 0x0056, 0x0057, 0x0058, 0x0059, 0x005A, 0x00B2, 0x00D4, 0x005C, 0x00D2, 0x00D3, 0x00D5,
+    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039, 0x00B3, 0x00DB, 0x005D, 0x00D9, 0x00DA, 0x009F,
+];
+
+/// Whether the strings of a content stream are EBCDIC rather than ASCII/Latin-1 text: the letters,
+/// digits and the space of EBCDIC outweigh those of ASCII by far.
+fn looks_ebcdic(strings: &[Vec<u8>]) -> bool {
+    let (mut ebcdic, mut ascii, mut total) = (0usize, 0usize, 0usize);
+    for &b in strings.iter().flatten() {
+        total += 1;
+        if matches!(b, 0x40 | 0x81..=0x89 | 0x91..=0x99 | 0xA2..=0xA9 | 0xC1..=0xC9 | 0xD1..=0xD9 | 0xE2..=0xE9 | 0xF0..=0xF9)
+        {
+            ebcdic += 1;
+        }
+        if matches!(b, 0x20 | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z') {
+            ascii += 1;
+        }
+    }
+    total >= 20 && ebcdic > ascii * 2
+}
+
+/// Whether bytes read as text (letters, digits, spaces, punctuation): hex strings of a CID font hold
+/// glyph numbers (many zero bytes) and are no text.
+fn looks_texty(strings: &[Vec<u8>]) -> bool {
+    let total: usize = strings.iter().map(Vec::len).sum();
+    let texty = strings
+        .iter()
+        .flatten()
+        .filter(|&&b| (0x20..0x7F).contains(&b) || b >= 0xA0)
+        .count();
+    total > 0 && texty * 10 >= total * 8
+}
+
 fn literal_strings(content: &[u8], out: &mut String) {
+    let mut strings: Vec<Vec<u8>> = Vec::new();
+    let mut hex_strings: Vec<Vec<u8>> = Vec::new();
+    // hex strings are text only in a stream that shows text (a CMap or a dictionary holds hex pairs too)
+    let shows_text = find(content, b"BT", 0).is_some()
+        && (find(content, b"Tj", 0).is_some() || find(content, b"TJ", 0).is_some());
     let mut i = 0;
     while i < content.len() {
         if content[i] == b'(' {
@@ -211,12 +258,61 @@ fn literal_strings(content: &[u8], out: &mut String) {
                 }
                 i += 1;
             }
-            // PDFDocEncoding ≈ Latin-1 for the characters we need (€ 0xA0 → handled by "EUR")
-            out.extend(s.iter().map(|&b| if b == 0x80 { '€' } else { b as char }));
-            out.push(' ');
+            strings.push(s);
+        } else if shows_text
+            && content[i] == b'<'
+            && content.get(i + 1) != Some(&b'<')
+            && (i == 0 || content[i - 1] != b'<')
+        {
+            // `<E3 85 93>`: hex digits up to the closing '>'
+            let mut digits: Vec<u8> = Vec::new();
+            let mut j = i + 1;
+            while j < content.len() && content[j] != b'>' {
+                if content[j].is_ascii_hexdigit() {
+                    digits.push(content[j]);
+                } else if !content[j].is_ascii_whitespace() {
+                    digits.clear();
+                    break;
+                }
+                j += 1;
+            }
+            if !digits.is_empty() {
+                if digits.len() % 2 == 1 {
+                    digits.push(b'0');
+                }
+                hex_strings.push(
+                    digits
+                        .chunks(2)
+                        .map(|p| {
+                            u8::from_str_radix(std::str::from_utf8(p).unwrap_or("0"), 16)
+                                .unwrap_or(0)
+                        })
+                        .collect(),
+                );
+            }
+            i = j + 1;
         } else {
             i += 1;
         }
+    }
+    let ebcdic = looks_ebcdic(&[strings.clone(), hex_strings.clone()].concat());
+    // hex strings count only when they read as text (EBCDIC decoded, or plain)
+    let kept_hex: &[Vec<u8>] = if ebcdic || looks_texty(&hex_strings) {
+        &hex_strings
+    } else {
+        &[]
+    };
+    for s in strings.iter().chain(kept_hex) {
+        if ebcdic {
+            out.extend(
+                s.iter()
+                    .map(|&b| char::from_u32(EBCDIC_273[b as usize] as u32).unwrap_or(' ')),
+            );
+        } else {
+            // PDFDocEncoding ≈ Latin-1 for the characters we need (€ 0xA0 → handled by "EUR")
+            out.extend(s.iter().map(|&b| if b == 0x80 { '€' } else { b as char }));
+        }
+        out.push(' ');
     }
 }
 
@@ -236,11 +332,20 @@ pub fn extract_pdf_text(bytes: &[u8]) -> String {
     let mut inflate_budget = MAX_INFLATED_TOTAL;
     let mut i = 0;
     while let Some(pos) = find(bytes, b"stream", i) {
-        let dict_start = bytes[..pos]
-            .iter()
-            .rposition(|&b| b == b'<')
-            .map(|p| p.saturating_sub(400))
-            .unwrap_or(0);
+        // the dictionary of this stream: from its `obj` keyword on (a window before the dictionary
+        // would take in the previous object, "/Image" of a picture included, and skip a text stream)
+        let window = pos.saturating_sub(1500);
+        let dict_start = bytes[window..pos]
+            .windows(3)
+            .rposition(|w| w == b"obj")
+            .map(|p| window + p)
+            .unwrap_or_else(|| {
+                bytes[..pos]
+                    .iter()
+                    .rposition(|&b| b == b'<')
+                    .map(|p| p.saturating_sub(400))
+                    .unwrap_or(0)
+            });
         let dict = &bytes[dict_start..pos];
         let mut start = pos + 6;
         if bytes.get(start) == Some(&b'\r') {
@@ -292,6 +397,51 @@ fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .windows(needle.len())
         .position(|w| w == needle)
         .map(|p| p + from)
+}
+
+/// Document type (`beleg | abrechnung | kontoauszug | postbox | steuer`) from a lower-cased German
+/// bank title: "Abrechnung Ausführung", "Online Auszug", "Quartalsdepotauszug", "Steuerbescheinigung",
+/// "Kosteninformation", "Kundeninformation …", "Dividende Wahlweise", "Eröffnungsantrag" and the like.
+/// Keyword based; what a connector knows better (the event behind a document) it refines itself.
+pub fn type_from_title(lower_title: &str) -> &'static str {
+    let rules = &*DOCUMENT_RULES;
+    rules
+        .dokumenttypen
+        .iter()
+        .find(|rule| {
+            rule.enthaelt
+                .iter()
+                .any(|word| lower_title.contains(word.as_str()))
+        })
+        .map_or(rules.standard.as_str(), |rule| rule.typ.as_str())
+}
+
+/// The bank knowledge behind `type_from_title`, read from `data/document_rules.json` (the same file
+/// `scripts/analyse-dokumente.py` uses, `docs/dokument-zuordnung.md`).
+#[derive(serde::Deserialize)]
+struct DocumentRules {
+    dokumenttypen: Vec<TypeRule>,
+    standard: String,
+}
+
+#[derive(serde::Deserialize)]
+struct TypeRule {
+    typ: String,
+    enthaelt: Vec<String>,
+}
+
+static DOCUMENT_RULES: LazyLock<DocumentRules> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../data/document_rules.json"))
+        .expect("data/document_rules.json is valid")
+});
+
+/// Type of a document that belongs to an account, not to a booking: like `type_from_title`, but a
+/// document that is nothing in particular is a PostBox notice.
+pub fn account_document_type(title: &str) -> &'static str {
+    match type_from_title(&title.to_lowercase()) {
+        "beleg" => "postbox",
+        t => t,
+    }
 }
 
 // ------------------------------------------------------------------ matching
@@ -585,15 +735,15 @@ impl Vault {
         mark_seen(&db, &doc_ids, seen)
     }
 
-    /// Marks every unread document read; with `account_id` only those of that account (its own
-    /// and those of its bookings). Returns how many changed.
+    /// Marks every unread document read; with `account_id` only those of that account: the account of
+    /// the document, else that of its booking (what the list shows). Returns how many changed.
     pub fn mark_all_documents_seen(&self, account_id: Option<i64>) -> Result<u32, CoreError> {
         let db = self.db()?;
         Ok(db.execute(
             "UPDATE booking_documents SET seen_at = strftime('%s','now')
               WHERE seen_at IS NULL
-                AND (?1 IS NULL OR account_id = ?1
-                     OR booking_id IN (SELECT id FROM transactions WHERE account_id = ?1))",
+                AND (?1 IS NULL OR COALESCE(account_id,
+                         (SELECT account_id FROM transactions WHERE id = booking_id)) = ?1)",
             [account_id],
         )? as u32)
     }
@@ -694,17 +844,21 @@ impl Vault {
     /// Re-links (or unlinks) a document.
     pub fn link_document(&self, doc_id: i64, booking_id: Option<i64>) -> Result<(), CoreError> {
         let db = self.db()?;
+        // The document keeps its own account (a securities confirmation belongs to the depot and
+        // documents a booking of the settlement account); only one without an account takes the
+        // booking's. Moving a document is the explicit `set_document_account`.
         db.execute(
             "UPDATE booking_documents SET booking_id = ?1,
-                account_id = COALESCE((SELECT account_id FROM transactions WHERE id = ?1), account_id) WHERE id = ?2",
+                account_id = COALESCE(account_id, (SELECT account_id FROM transactions WHERE id = ?1)) WHERE id = ?2",
             params![booking_id, doc_id],
         )?;
         Ok(())
     }
 
-    /// Moves a document to another account, or to none (`None`). A booking of
-    /// another account it was linked to is unlinked; one of the new account
-    /// stays (#838: PostBox documents GiroCrab put on the wrong account).
+    /// Moves a document to another account, or to none (`None`): the user's choice, remembered
+    /// (`account_manual`), so sorting the documents anew leaves it alone. A booking it is linked to
+    /// stays: the document's account and its booking's account are separate relations (#838:
+    /// PostBox documents GiroCrab put on the wrong account).
     pub fn set_document_account(
         &self,
         doc_id: i64,
@@ -724,11 +878,7 @@ impl Vault {
             }
         }
         let n = db.execute(
-            "UPDATE booking_documents SET account_id = ?1,
-                booking_id = CASE WHEN ?1 IS NOT NULL AND
-                    (SELECT account_id FROM transactions WHERE id = booking_id) = ?1
-                    THEN booking_id ELSE NULL END
-              WHERE id = ?2",
+            "UPDATE booking_documents SET account_id = ?1, account_manual = 1 WHERE id = ?2",
             params![account_id, doc_id],
         )?;
         if n == 0 {
@@ -1095,6 +1245,174 @@ pub fn simple_pdf(lines: &[String]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Characters of a text as IBM-273 bytes, the way comdirect's mainframe prints them.
+    fn ebcdic(text: &str) -> Vec<u8> {
+        text.chars()
+            .map(|c| {
+                EBCDIC_273
+                    .iter()
+                    .position(|&u| u as u32 == c as u32)
+                    .expect("in the table") as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ebcdic_text_of_a_mainframe_pdf_is_read_in_literal_and_hex_strings() {
+        let line = "Zu Ihren Lasten vor Steuern EUR 24,94 Wertpapierkauf IE00B3RBWM25";
+        let bytes = ebcdic(line);
+        let mut literal = b"BT (".to_vec();
+        literal.extend(&bytes);
+        literal.extend(b") Tj ET");
+        let mut out = String::new();
+        literal_strings(&literal, &mut out);
+        assert!(out.contains(line), "{out}");
+        // the same line as a hex string
+        let hex: String = bytes.iter().map(|b| format!("{b:02X}")).collect();
+        let mut out = String::new();
+        literal_strings(format!("BT <{hex}> Tj ET").as_bytes(), &mut out);
+        assert!(out.contains(line), "{out}");
+    }
+
+    #[test]
+    fn ordinary_text_and_non_text_hex_stay_as_they_were() {
+        // an ASCII PDF is not taken for EBCDIC
+        let mut out = String::new();
+        literal_strings(
+            b"BT (Kontoauszug vom 01.02.2024 Saldo 1.234,56 EUR) Tj ET",
+            &mut out,
+        );
+        assert!(
+            out.contains("Kontoauszug vom 01.02.2024 Saldo 1.234,56 EUR"),
+            "{out}"
+        );
+        // hex glyph numbers of a CID font are no text
+        let mut out = String::new();
+        literal_strings(b"BT <0012001300140015> Tj <00240025> Tj ET", &mut out);
+        assert!(out.trim().is_empty(), "{out:?}");
+        // a CMap (no text operators) is not read as text either
+        let mut out = String::new();
+        literal_strings(b"begincmap <0000> <FFFF> <0041> endcmap", &mut out);
+        assert!(out.trim().is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn a_text_stream_after_a_picture_object_is_not_skipped_as_an_image() {
+        // the object before holds "/Subtype /Image"; this stream's own dictionary is plain
+        let content = b"BT (Wertpapierkauf 24,94 EUR) Tj ET";
+        let mut pdf = b"%PDF-1.4\n1 0 obj\n<< /Type /XObject /Subtype /Image >>\nstream\nxx\nendstream\nendobj\n".to_vec();
+        pdf.extend(b"2 0 obj\n<< /Length 40 >>\nstream\n");
+        pdf.extend(content);
+        pdf.extend(b"\nendstream\nendobj\n");
+        assert!(extract_pdf_text(&pdf).contains("Wertpapierkauf 24,94 EUR"));
+    }
+
+    /// The rules as they were hard-coded before `data/document_rules.json`.
+    fn legacy_type_from_title(lower_title: &str) -> &'static str {
+        let has = |k: &str| lower_title.contains(k);
+        if has("steuer") || has("ertragsaufstellung") || has("vorabpauschale") {
+            "steuer"
+        } else if has("auszug") || has("statement") || has("abschluss") {
+            "kontoauszug"
+        } else if [
+            "wahlweise",
+            "kundenvereinbarung",
+            "rechtliche",
+            "mitteilung",
+            "information",
+            "kundenanschreiben",
+            "bedingungsänderung",
+            "vertragsunterlagen",
+            "antrag",
+            "löschbestätigung",
+            "prospekt",
+            "hauptversammlung",
+            "rückkaufangebot",
+            "geschäftsbedingungen",
+            "agb",
+            "agreement",
+            "datenschutz",
+            "leistungsverzeichnis",
+            "eignungsprüfung",
+            "treuhand",
+            "hinweise",
+        ]
+        .iter()
+        .any(|k| has(k))
+        {
+            "postbox"
+        } else if has("abrechnung")
+            || has("bestätigung")
+            || has("dividende")
+            || has("ausführungsanzeige")
+        {
+            "abrechnung"
+        } else {
+            "beleg"
+        }
+    }
+
+    #[test]
+    fn the_rules_file_gives_the_same_types_as_the_old_keyword_chain() {
+        for title in [
+            "abrechnung ausführung",
+            "online auszug",
+            "quartalsdepotauszug",
+            "steuerbescheinigung",
+            "kosteninformation",
+            "kundeninformation zu ihrem depot",
+            "dividende wahlweise",
+            "eröffnungsantrag",
+            "wertpapierabrechnung sparplan",
+            "vorabpauschale 2024",
+            "kundenvereinbarung",
+            "agb",
+            "ausführungsanzeige",
+            "rechnungsabschluss",
+            "jahresdepotauszug",
+            "dokumente",
+            "",
+            "rechnung",
+            "beleg 12/2024",
+            "bestätigung",
+            "hinweise zu den kosten",
+            "statement 03/2025",
+        ] {
+            assert_eq!(
+                type_from_title(title),
+                legacy_type_from_title(title),
+                "{title}"
+            );
+        }
+        assert_eq!(account_document_type("Rechnung"), "postbox");
+        assert_eq!(DOCUMENT_RULES.standard, "beleg");
+    }
+
+    #[test]
+    fn the_shared_examples_of_the_rules_file_give_the_app_types_the_analysis_expects() {
+        // the same titles the analysis script checks against its `art` (scripts/test_analyse_dokumente.py)
+        let rules: serde_json::Value =
+            serde_json::from_str(include_str!("../data/document_rules.json")).unwrap();
+        let valid = ["steuer", "kontoauszug", "abrechnung", "postbox", "beleg"];
+        for art in rules["arten"].as_array().unwrap() {
+            let typ = art["typ"].as_str().unwrap();
+            assert!(valid.contains(&typ), "unknown app type {typ} for {art}");
+        }
+        let examples = rules["pruefbeispiele"].as_array().unwrap();
+        assert!(
+            examples.len() >= 15,
+            "keep the examples of every document family"
+        );
+        for e in examples {
+            let title = e["titel"].as_str().unwrap();
+            assert_eq!(
+                account_document_type(title),
+                e["typ"].as_str().unwrap(),
+                "{title}"
+            );
+        }
+    }
     use crate::test_support::query_plan;
 
     #[test]
@@ -1253,6 +1571,76 @@ mod tests {
         assert!(dates_in("Rechnung_2026-11-08_Metro.pdf").contains(&"2026-11-08".to_string()));
         assert_eq!(dates_in("vom 31.12.99"), vec!["1999-12-31".to_string()]);
         assert_eq!(dates_in("vom 02.01.26"), vec!["2026-01-02".to_string()]);
+    }
+
+    #[test]
+    fn a_fetched_document_is_unread_whatever_its_date_but_one_added_by_hand_is_read() {
+        let dir = crate::test_support::TempDir::new("girocrab-docs-unread");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![9u8; 32],
+        )
+        .unwrap();
+        let unread = |bytes: &[u8], date: &str| {
+            let db = v.db().unwrap();
+            let id = insert_doc(
+                &db,
+                None,
+                None,
+                "t",
+                "beleg",
+                "application/pdf",
+                "x.pdf",
+                bytes,
+                "",
+                date,
+            )
+            .unwrap()
+            .unwrap();
+            db.query_row(
+                "SELECT seen_at IS NULL FROM booking_documents WHERE id = ?1",
+                [id],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap()
+        };
+        assert!(
+            unread(b"%PDF-1.4 a", "2015-03-02"),
+            "old date, still unread"
+        );
+        assert!(unread(b"%PDF-1.4 b", ""), "no date counts as new");
+        let acc = {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            db.execute(
+                "INSERT INTO accounts(group_id, external_ref, name) VALUES ((SELECT id FROM account_groups), 'A', 'Giro')",
+                [],
+            )
+            .unwrap();
+            db.last_insert_rowid()
+        };
+        let id = v
+            .attach_document_to_account(
+                acc,
+                "t".into(),
+                "m.pdf".into(),
+                b"%PDF-1.4 c".to_vec(),
+                "beleg".into(),
+            )
+            .expect("a document added by hand is stored");
+        {
+            let seen: bool = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT seen_at IS NOT NULL FROM booking_documents WHERE id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(seen, "added by hand: read from the start");
+        }
     }
 
     #[test]
@@ -1423,7 +1811,7 @@ mod tests {
     }
 
     #[test]
-    fn documents_are_unread_until_opened_and_old_ones_arrive_read() {
+    fn documents_are_unread_until_opened_whatever_their_date() {
         let dir = crate::test_support::TempDir::new("girocrab-docs-seen");
         let v = Vault::open(
             dir.join("v.db").to_string_lossy().to_string(),
@@ -1473,14 +1861,14 @@ mod tests {
                 .unwrap()
                 .seen
         };
-        // a recent document is unread, an old one arrives read, an unreadable date counts as new
-        assert!(!seen(recent) && seen(old) && !seen(undated));
-        assert_eq!(v.unseen_document_count().unwrap(), 2);
+        // every document arrives unread: a recent one, an old one (a history fetch) and an undated one
+        assert!(!seen(recent) && !seen(old) && !seen(undated));
+        assert_eq!(v.unseen_document_count().unwrap(), 3);
         // read and unread again
         assert_eq!(v.mark_documents_seen(vec![recent], true).unwrap(), 1);
         assert_eq!(v.mark_documents_seen(vec![recent], true).unwrap(), 0);
         assert!(seen(recent));
-        assert_eq!(v.mark_documents_seen(vec![recent, old], false).unwrap(), 2);
+        assert_eq!(v.mark_documents_seen(vec![recent, old], false).unwrap(), 1);
         assert_eq!(v.unseen_document_count().unwrap(), 3);
         // all read, here for another account nothing changes
         assert_eq!(v.mark_all_documents_seen(Some(acc + 99)).unwrap(), 0);

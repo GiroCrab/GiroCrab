@@ -25,6 +25,7 @@ pub mod comdirect;
 pub(crate) mod comdirect_postbox;
 pub(crate) mod consorsbank_archive;
 pub mod demo;
+pub(crate) mod document_matching;
 pub mod dpop;
 pub mod easybank;
 pub mod enable_banking;

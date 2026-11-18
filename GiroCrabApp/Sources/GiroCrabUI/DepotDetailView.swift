@@ -214,6 +214,7 @@ struct DepotDetailView: View {
             failure(message)
         } else if let data {
             VStack(alignment: .leading, spacing: 8) {
+                historyBanner
                 // activities: the button sits in their filter row; positions have none
                 if model.depotTab == .positions, !data.assets.isEmpty { exportButton(data) }
                 switch model.depotTab {
@@ -268,6 +269,30 @@ struct DepotDetailView: View {
               case .loaded(var current) = load, current.accountId == id, current.revision == revision else { return }
         current.plans = plans
         load = .loaded(current)
+    }
+
+    /// The last sync read only part of the history: said in the depot itself, with the way on.
+    @ViewBuilder
+    private var historyBanner: some View {
+        if let id = account.connectionId, let progress = model.historyIncomplete[id],
+           let connection = model.connections.first(where: { $0.id == id }) {
+            HStack(spacing: 10) {
+                Image(systemName: "clock.arrow.circlepath").foregroundStyle(Theme.warning)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Historie noch nicht vollständig: Aktivitäten und Belege werden mit jedem Abruf weiter nachgeladen.")
+                        .appFont(.callout)
+                    if progress.total > 0 {
+                        ProgressView(value: progress.fraction).tint(Theme.warning)
+                        Text(progress.text).appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                Button("Weiter abrufen") { model.requestSync(connection) }
+                    .disabled(model.syncingConnectionID != nil)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.warning.opacity(0.12)))
+        }
     }
 
     private func failure(_ message: String) -> some View {
