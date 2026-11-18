@@ -164,24 +164,45 @@ fn too_large(limit: usize) -> CoreError {
     }
 }
 
+/// Why a body could not be read within its cap.
+pub(crate) enum BodyError {
+    /// It is larger than the cap.
+    TooLarge,
+    /// The connection gave out while reading.
+    Read(reqwest::Error),
+}
+
 /// Reads a response body, but never more than `limit` bytes (no OOM on a
-/// huge or endless body): larger bodies are an error.
+/// huge or endless body), telling apart why it could not: the one place
+/// that streams a body.
 #[allow(clippy::disallowed_methods)]
-pub(crate) async fn read_body_limited(
+pub(crate) async fn read_body_capped(
     mut resp: reqwest::Response,
     limit: usize,
-) -> CoreResult<Vec<u8>> {
+) -> Result<Vec<u8>, BodyError> {
     if resp.content_length().is_some_and(|n| n > limit as u64) {
-        return Err(too_large(limit));
+        return Err(BodyError::TooLarge);
     }
     let mut out = Vec::new();
-    while let Some(chunk) = resp.chunk().await? {
+    while let Some(chunk) = resp.chunk().await.map_err(BodyError::Read)? {
         if out.len() + chunk.len() > limit {
-            return Err(too_large(limit));
+            return Err(BodyError::TooLarge);
         }
         out.extend_from_slice(&chunk);
     }
     Ok(out)
+}
+
+/// Reads a response body, but never more than `limit` bytes: larger bodies
+/// are an error.
+pub(crate) async fn read_body_limited(
+    resp: reqwest::Response,
+    limit: usize,
+) -> CoreResult<Vec<u8>> {
+    read_body_capped(resp, limit).await.map_err(|e| match e {
+        BodyError::TooLarge => too_large(limit),
+        BodyError::Read(e) => e.into(),
+    })
 }
 
 /// [`read_body_limited`] with [`MAX_TEXT_BYTES`], decoded as UTF-8 (lossy).
