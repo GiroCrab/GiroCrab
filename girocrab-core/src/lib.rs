@@ -34,6 +34,7 @@ mod dates;
 pub mod demo;
 pub mod depot_debug;
 pub mod depot_values;
+pub mod document_links;
 pub mod documents;
 pub mod ebon;
 pub mod error;

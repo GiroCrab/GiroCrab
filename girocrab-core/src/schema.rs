@@ -52,6 +52,8 @@
 //!   excluded (stamp 0, so any explicit user choice wins on sync).
 //! - 35: merchant recognition settings (#1373): tables `merchant_switches` (master switch and
 //!   switched-off bundled merchants) and `custom_merchants` (own merchants), both merged.
+//! - 36: linked receipts (#590): table `document_links`, references to documents kept outside
+//!   the vault (URL, title, date); synced by `uuid`, unlike the files in `booking_documents`.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -103,6 +105,7 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::recipients::SCHEMA),                      // 33: hidden recipients (#978)
     Step::Hook(account_total_flag),                            // 34 (#337)
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
+    Step::Sql(crate::document_links::SCHEMA),                  // 36: linked receipts (#590)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -1065,7 +1068,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 35);
+        assert_eq!(SCHEMA_VERSION, 36);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

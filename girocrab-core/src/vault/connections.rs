@@ -205,6 +205,20 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
             "UPDATE booking_documents SET booking_id = ?1 WHERE booking_id = ?2",
             params![k, o],
         )?;
+        // linked receipts (#590) move with the booking, like its documents.
+        // Unlike those they are merged between devices: the move is stamped
+        // as an edit, or another device would bring the old booking back.
+        conn.execute(
+            "UPDATE document_links
+                SET booking_id = ?1, updated_ms = max(updated_ms + 1, ?3), rev = ?4
+              WHERE booking_id = ?2",
+            params![
+                k,
+                o,
+                crate::dates::now_ms(),
+                crate::document_links::new_rev()
+            ],
+        )?;
     }
     // bookings only in `dup` move over unchanged (with splits / links / documents)
     conn.execute(
@@ -224,6 +238,17 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
     conn.execute(
         "UPDATE booking_documents SET account_id = ?1 WHERE account_id = ?2",
         params![keep, dup],
+    )?;
+    conn.execute(
+        "UPDATE document_links
+            SET account_id = ?1, updated_ms = max(updated_ms + 1, ?3), rev = ?4
+          WHERE account_id = ?2",
+        params![
+            keep,
+            dup,
+            crate::dates::now_ms(),
+            crate::document_links::new_rev()
+        ],
     )?;
     conn.execute(
         "UPDATE loan_links SET loan_account_id = ?1 WHERE loan_account_id = ?2",
@@ -2266,5 +2291,75 @@ mod tests {
         assert!(take("camt:REF2"), "a marked booking still is");
         add("mm-switch-pending-e2e-1");
         assert!(take("camt:REF3"), "and a marked transfer of the app");
+    }
+
+    /// A linked receipt (#590) on a booking of the duplicate account moves
+    /// to the kept account's booking. Links are merged between devices, so
+    /// the move must be the newest edit: otherwise another device brings the
+    /// old booking back.
+    #[test]
+    fn dedup_moves_linked_receipts_as_an_edit() {
+        let dir = crate::test_support::TempDir::new("girocrab-dedup-links");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![4u8; 32],
+        )
+        .unwrap();
+        let (keep_acc, keep_booking, dup_booking) = {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            let mut ids = Vec::new();
+            for n in [1, 2] {
+                db.execute(
+                    "INSERT INTO bank_connections(connector, display_name, login_name)
+                     VALUES ('fints:52090000', 'VB', '1234567890')",
+                    [],
+                )
+                .unwrap();
+                let c = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, 'DE1', ?3)",
+                    params![c, g, format!("Giro {n}")],
+                )
+                .unwrap();
+                let acc = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES (?1, 'B1', '2026-11-07', -23800)",
+                    [acc],
+                )
+                .unwrap();
+                ids.push((acc, db.last_insert_rowid()));
+            }
+            (ids[0].0, ids[0].1, ids[1].1)
+        };
+        v.attach_document_link(
+            dup_booking,
+            "https://dms.example/doc/1".into(),
+            "Beleg".into(),
+        )
+        .unwrap();
+        let stamp = |v: &Vault| -> (Option<i64>, i64, String) {
+            v.db()
+                .unwrap()
+                .query_row(
+                    "SELECT booking_id, updated_ms, rev FROM document_links",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap()
+        };
+        let before = stamp(&v);
+        assert_eq!(before.0, Some(dup_booking));
+
+        assert_eq!(v.deduplicate_bank_connections().unwrap(), 1);
+        let after = stamp(&v);
+        assert_eq!(after.0, Some(keep_booking));
+        assert!(after.1 > before.1, "a later edit");
+        assert_ne!(after.2, before.2, "with a mark of its own");
+        assert_eq!(v.list_documents_for_booking(keep_booking).unwrap().len(), 1);
+        let _ = keep_acc;
     }
 }

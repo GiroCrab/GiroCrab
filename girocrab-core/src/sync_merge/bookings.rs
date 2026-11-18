@@ -180,13 +180,15 @@ fn is_hold_id(ext: &str) -> bool {
 /// with their stamps and deletion, existing ones take the newest edit per
 /// field. A won manual clear makes the booking uncategorised and lets the
 /// rules refill it. Afterwards nothing points at a deleted category. Never
-/// stamps anything itself.
+/// stamps anything itself. Returns the local id of every booking of `other`
+/// (`other.transactions.id` -> `main.transactions.id`), for the merge steps
+/// that follow bookings (linked receipts).
 /// The fingerprint a booking is paired by when the two sides know it under
 /// different ids: the stored one (MoneyMoney import, „Abrufweg umstellen“),
 /// else computed the same way from the booking. So a booking fetched over
 /// the bank's API on one device pairs with the same booking another device
 /// fetched via FinTS after switching (#537).
-fn match_fingerprint(
+pub(super) fn match_fingerprint(
     stored: String,
     date: &str,
     cents: i64,
@@ -206,7 +208,7 @@ pub(crate) fn merge_bookings(
     cat_map: &HashMap<i64, i64>,
     rule_map: &HashMap<i64, i64>,
     stats: &mut crate::vault::MergeStats,
-) -> CoreResult<()> {
+) -> CoreResult<HashMap<i64, i64>> {
     // live local categories: id <-> uuid
     let live_cats: Vec<(i64, String)> = conn
         .prepare("SELECT id, uuid FROM categories WHERE deleted_ms IS NULL AND uuid IS NOT NULL")?
@@ -367,6 +369,7 @@ pub(crate) fn merge_bookings(
     let individual = |d: Option<i64>, account: Option<i64>| d.filter(|_| d != account);
 
     let mut cleared: HashSet<i64> = HashSet::new();
+    let mut booking_map: HashMap<i64, i64> = HashMap::new();
     for mut o in others {
         let Some(&acc) = acc_map.get(&o.account_id) else {
             continue;
@@ -400,6 +403,7 @@ pub(crate) fn merge_bookings(
         };
         match existing {
             Some((id, renamed)) => {
+                booking_map.insert(o.id, id);
                 let old = local[&id].clone();
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
@@ -463,6 +467,7 @@ pub(crate) fn merge_bookings(
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
+                booking_map.insert(o.id, id);
                 insert_splits(conn, id, &f.splits, &cat_id)?;
                 if !f.tags.is_empty() {
                     tag_ids.write(conn, id, &f.tags)?;
@@ -491,7 +496,7 @@ pub(crate) fn merge_bookings(
     if !cleared.is_empty() {
         crate::vault::Vault::apply_rules_to(conn, &cleared)?;
     }
-    Ok(())
+    Ok(booking_map)
 }
 
 fn insert_splits(
