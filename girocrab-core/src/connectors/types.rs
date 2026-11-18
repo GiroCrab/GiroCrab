@@ -397,7 +397,7 @@ impl RemoteTransaction {
     pub fn content_id(&self, occurrence: u32) -> String {
         format!(
             "{CONTENT_ID_PREFIX}{:016x}",
-            fnv1a64(&format!("{}\u{1f}{occurrence}", self.content_key()))
+            fnv1a64(format!("{}\u{1f}{occurrence}", self.content_key()))
         )
     }
 }
@@ -407,14 +407,12 @@ impl RemoteTransaction {
 /// [`adopt_legacy_content_id`].
 pub(crate) const CONTENT_ID_PREFIX: char = 'c';
 
-/// FNV-1a 64-bit hash.
-pub(crate) fn fnv1a64(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in s.bytes() {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    h
+/// FNV-1a 64-bit hash. Stored ids (content ids, statement PDF ids) are built
+/// from it, so its output must never change.
+pub(crate) fn fnv1a64(bytes: impl AsRef<[u8]>) -> u64 {
+    bytes.as_ref().iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// Hands out content ids, counting occurrences per identical content (not

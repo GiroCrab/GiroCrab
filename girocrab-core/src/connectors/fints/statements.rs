@@ -4,7 +4,7 @@
 
 use super::syntax::{self, SegmentBuilder};
 use super::{camt, fints_date, kku, mt940, FinTsConnector, SepaAccount, UpdAccount};
-use crate::connectors::{today, ConnectContext, RemoteTransaction};
+use crate::connectors::{fnv1a64, today, ConnectContext, RemoteTransaction};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 
@@ -150,13 +150,6 @@ pub(super) fn hex_decode(s: &str) -> Option<Vec<u8>> {
         .step_by(2)
         .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
         .collect()
-}
-
-/// FNV-1a 64 over raw bytes (stable id for a statement PDF).
-pub(super) fn fnv1a64_bytes(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 
 impl FinTsConnector {
@@ -485,7 +478,7 @@ impl FinTsConnector {
                                 // id; the bank re-sends unacknowledged statements,
                                 // so the content keeps them from being stored twice.
                                 let source_url = if pdf_only {
-                                    format!("fints:hkekp:{label}:{:016x}", fnv1a64_bytes(pdf))
+                                    format!("fints:hkekp:{label}:{:016x}", fnv1a64(pdf))
                                 } else {
                                     format!("fints:hkeka:{label}:{period}")
                                 };
