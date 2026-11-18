@@ -922,6 +922,18 @@ Rectangle {
         SFIcon { symbol: none ? "questionmark.folder" : (booking.category_symbol || "tag.fill"); size: 11; color: parent.tint }
         Text { text: none ? SidebarModel.uncategorizedLabel : booking.category_name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: parent.tint; elide: Text.ElideRight
                Sensitive { labels: true } }   // also a custom „Ohne Kategorie“ label (#597)
+        // BookingListView.swift › BookingSuggestionHint (#664): the history's suggestion behind
+        // „Ohne Kategorie“, in the secondary colour so it never reads as assigned
+        readonly property var suggested: none ? CategorySuggestions.category(CategorySuggestions.forBooking(booking)) : null
+        RowLayout {
+            visible: parent.suggested !== null
+            Layout.leftMargin: 4
+            spacing: 3
+            Accessible.name: parent.suggested ? qsTr("Vorschlag: %1").arg(parent.suggested.name) : ""
+            SFIcon { symbol: "clock.arrow.circlepath"; size: 11; color: Theme.secondary }
+            Text { text: parent.parent.suggested ? parent.parent.suggested.name : ""; font.pixelSize: Theme.callout + 1; color: Theme.secondary; elide: Text.ElideRight
+                   Sensitive { labels: true } }
+        }
     }
 
     // Onboarding.swift › EmptyVaultCard: the personal vault has no accounts yet.
