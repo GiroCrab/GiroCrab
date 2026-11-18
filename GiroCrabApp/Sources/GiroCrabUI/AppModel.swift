@@ -117,6 +117,7 @@ public final class AppModel {
     // UI state
     var sidebarSelection: SidebarItem? = .allAccounts {
         didSet {
+            mainColumn = MainColumn(sidebarSelection)
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
             listLimit = Self.defaultListLimit
@@ -129,6 +130,11 @@ public final class AppModel {
             reloadSelection(periodChanged: false)
         }
     }
+    /// The kind of view the booking column shows; follows `sidebarSelection`. The split view
+    /// and other window-level views read this instead of the selection: assigning an equal
+    /// value does not notify, so a switch between accounts or categories leaves them alone
+    /// (re-running them re-created and re-laid out every column of the window).
+    private(set) var mainColumn: MainColumn = .bookings
     /// Set while a vault is adopted: `reloadAll()` follows at once, so the selection's own
     /// reload (the same queries again, on the main thread) is skipped.
     @ObservationIgnored var resetsSelectionBeforeReloadAll = false

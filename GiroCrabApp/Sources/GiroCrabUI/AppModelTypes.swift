@@ -25,6 +25,23 @@ enum SidebarItem: Hashable {
     case wealth
 }
 
+/// What the main window's booking column shows for a sidebar selection
+/// (`AppModel.mainColumn`). Accounts, groups and categories all show bookings
+/// (or a depot / Sachwerte view, decided by `AccountColumn`).
+enum MainColumn: Equatable {
+    case bookings, documents, planned, directDebits, wealth
+
+    init(_ item: SidebarItem?) {
+        switch item {
+        case .documents?: self = .documents
+        case .planned?: self = .planned
+        case .directDebits?: self = .directDebits
+        case .wealth?: self = .wealth
+        default: self = .bookings
+        }
+    }
+}
+
 /// Document origin is independent of its booking link. Bank connectors and
 /// statement imports store a source key; user uploads leave it empty.
 enum DocumentsScope: String, CaseIterable, Identifiable {

@@ -278,7 +278,7 @@ struct SidebarView: View {
             // restore its own saved collapse state for sidebar sections.
             SectionHeader(
                 name: group.name, sfSymbol: group.sfSymbol, balanceCents: group.balanceCents,
-                selected: model.sidebarSelection == .group(group.id),
+                item: .group(group.id),
                 isLoanGroup: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .loan },
                 open: open, toggle: toggle
             )
@@ -311,7 +311,7 @@ struct SidebarView: View {
                 }
                 SectionHeader(
                     name: group.name, sfSymbol: group.sfSymbol, balanceCents: group.balanceCents,
-                    selected: model.sidebarSelection == .bank(group.id),
+                    item: .bank(group.id),
                     isLoanGroup: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .loan },
                     nameRedaction: [],
                     open: open, toggle: toggle
@@ -624,17 +624,22 @@ struct DisclosureChevron: View {
 }
 
 struct SectionHeader: View {
+    @Environment(AppModel.self) private var model
     /// Selected header: hierarchical styles so macOS can draw them light on the
     /// accent-coloured selection (fixed theme colours stay dark there).
     let name: String
     let sfSymbol: String
     let balanceCents: Int64
-    var selected: Bool = false
+    /// The header's own sidebar item. The header compares it with the selection itself, so a
+    /// selection change re-runs the headers and not `SidebarView.body` (the whole outline).
+    var item: SidebarItem?
     var isLoanGroup: Bool = false
     /// Bug report screenshot (#301): category-like group names hide on request, bank names stay visible.
     var nameRedaction: ReportRedaction = .labels
     var open: Bool = true
     var toggle: () -> Void = {}
+
+    private var selected: Bool { item != nil && model.sidebarSelection == item }
 
     var body: some View {
         HStack(spacing: 5) {

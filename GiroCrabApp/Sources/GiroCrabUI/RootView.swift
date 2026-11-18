@@ -468,16 +468,12 @@ struct MainSplitView: View {
 
     private var bookingColumn: some View {
         Group {
-            if model.sidebarSelection == .documents {
-                DocumentsView()
-            } else if model.sidebarSelection == .planned {
-                PlannedPaymentsView()
-            } else if model.sidebarSelection == .directDebits {
-                DirectDebitsView()
-            } else if model.sidebarSelection == .wealth {
-                WealthView()
-            } else {
-                accountColumn
+            switch model.mainColumn {
+            case .documents: DocumentsView()
+            case .planned: PlannedPaymentsView()
+            case .directDebits: DirectDebitsView()
+            case .wealth: WealthView()
+            case .bookings: AccountColumn()
             }
         }
         #if os(macOS)
@@ -487,23 +483,9 @@ struct MainSplitView: View {
         .modifier(MainToolbar())
         // Window title for both views here too, so the toolbar keeps the same
         // compact style (and height) when switching to Belege.
-        .modifier(WindowTitle(title: model.title))
+        .modifier(WindowTitle())
         #endif
         .frame(minHeight: 0, maxHeight: .infinity)
-    }
-
-    /// A securities depot and a Sachwerte account each have their own view on the shared holdings frame
-    /// (`AssetAccountFrame`); everything else shows bookings. `.id` keeps no state of another account.
-    @ViewBuilder
-    private var accountColumn: some View {
-        switch model.presentation {
-        case .securities:
-            if let depot = model.selectedSecuritiesDepot { DepotDetailView(account: depot).id(depot.id) }
-        case .tangible:
-            if let account = model.selectedTangibleAccount { TangibleAccountDetailView(account: account).id(account.id) }
-        case .bookings:
-            BookingStreamView()
-        }
     }
 
     #if os(macOS)
@@ -519,7 +501,7 @@ struct MainSplitView: View {
                 bookingColumn
                 // Belege & PostBox has its own preview; the booking inspector would show whatever
                 // booking was selected last, whichever document is open.
-                if showInspector, model.sidebarSelection != .documents {
+                if showInspector, model.mainColumn != .documents {
                     inspectorSplitter
                     InspectorView()
                         .frame(width: inspectorWidth * textScale)
@@ -530,8 +512,8 @@ struct MainSplitView: View {
             // min widths: 240 (sidebar) + 560 + 280 (inspector) keep the minimum window size.
             // Must not depend on `inspectorWidth`: the split view re-lays out whenever these
             // change, which made the column jump while the splitter was dragged (#828).
-            .macColumnWidth(min: showInspector && model.sidebarSelection != .documents ? 560 + InspectorWidth.minimum * textScale : 560,
-                            ideal: showInspector && model.sidebarSelection != .documents ? 700 + InspectorWidth.standard * textScale : 700)
+            .macColumnWidth(min: showInspector && model.mainColumn != .documents ? 560 + InspectorWidth.minimum * textScale : 560,
+                            ideal: showInspector && model.mainColumn != .documents ? 700 + InspectorWidth.standard * textScale : 700)
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -591,7 +573,7 @@ struct MainSplitView: View {
         } content: {
             bookingColumn
         } detail: {
-            if model.sidebarSelection == .documents {
+            if model.mainColumn == .documents {
                 // the documents view has its own preview
                 Color.clear
             } else {
@@ -798,6 +780,24 @@ struct MainSplitView: View {
             }
         }
         .animation(Motion.animation(.spring(duration: 0.3)), value: model.toast)
+    }
+}
+
+/// A securities depot and a Sachwerte account each have their own view on the shared holdings frame
+/// (`AssetAccountFrame`); everything else shows bookings. `.id` keeps no state of another account.
+/// A view of its own so that only it follows the selected account, not the whole split view.
+private struct AccountColumn: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        switch model.presentation {
+        case .securities:
+            if let depot = model.selectedSecuritiesDepot { DepotDetailView(account: depot).id(depot.id) }
+        case .tangible:
+            if let account = model.selectedTangibleAccount { TangibleAccountDetailView(account: account).id(account.id) }
+        case .bookings:
+            BookingStreamView()
+        }
     }
 }
 

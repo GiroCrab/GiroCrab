@@ -263,7 +263,7 @@ struct BookingStreamView: View {
         // A real window title (Window menu, Mission Control, VoiceOver); the
         // toolbar keeps its room for the scope picker.
         #if os(iOS)
-        .modifier(WindowTitle(title: model.title))
+        .modifier(WindowTitle())
         #endif
         .bookingOutputSheets()
     }
@@ -1214,15 +1214,17 @@ struct LoadMoreBookingsFooter: View {
 
 /// macOS: the window carries the view's title, the toolbar does not show it
 /// (macOS 15+). iOS keeps the empty navigation title as before.
+/// Window title from `model.title`. Read here, in the modifier's own body, so a title change
+/// re-runs only this modifier and not the view that applies it.
 struct WindowTitle: ViewModifier {
-    let title: String
+    @Environment(AppModel.self) private var model
     /// The title bar is drawn by AppKit, so `.sensitive()` cannot cover it:
     /// any bug report capture shows the app name (the title may be an account).
     @Environment(\.reportRedaction) private var redaction
 
     func body(content: Content) -> some View {
         #if os(macOS)
-        let title = redaction.isDisjoint(with: [.personal, .labels]) ? title : "GiroCrab"
+        let title = redaction.isDisjoint(with: [.personal, .labels]) ? model.title : "GiroCrab"
         if #available(macOS 15.0, *) {
             content.navigationTitle(title).toolbar(removing: .title)
         } else {
@@ -1237,10 +1239,17 @@ struct WindowTitle: ViewModifier {
 /// Toolbar of the booking list. macOS: customizable (View › Symbolleiste
 /// anpassen …) – Überweisen and Abrufen are shown by default, the rest can be
 /// added; every command is also in the menu bar. iOS: unchanged.
+///
+/// macOS: the modifier's body reads no model state and holds no `@AppStorage`; each item's
+/// content is a view of its own that reads what it shows. Rebuilding the toolbar content
+/// re-bridges every item to AppKit (`ToolbarBridge`), so it must not happen on each sidebar
+/// or booking selection: a read here (or an `@AppStorage`, which never compares equal when
+/// the parent re-creates this modifier) did exactly that.
 struct MainToolbar: ViewModifier {
     @Environment(AppModel.self) private var model
-    @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
+    #if os(iOS)
     @AppStorage(PrivacyMode.enabledKey) private var privacyMode = false
+    #endif
 
     func body(content: Content) -> some View {
         #if os(iOS)
@@ -1272,44 +1281,23 @@ struct MainToolbar: ViewModifier {
         #else
         content.toolbar(id: "girocrab.main") {
             ToolbarItem(id: "scope", placement: .principal) {
-                // Keep one customizable toolbar item, with the filter for the current view.
-                if model.sidebarSelection == .wealth {
-                    WealthScopePicker()
-                } else if model.sidebarSelection == .documents {
-                    DocumentsScopePicker()
-                } else {
-                    switch model.presentation {
-                    case .securities: DepotTabPicker()
-                    // Sachwerte have neither booking scopes nor depot tabs; the item stays so the
-                    // customizable toolbar keeps its layout
-                    case .tangible: Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
-                    case .bookings: BookingScopePicker().disabled(model.sidebarSelection == .newBookings)
-                    }
-                }
+                ScopeToolbarControl()
             }
             .defaultCustomization(.visible, options: .alwaysAvailable) // pinned: not draggable/removable, so the others keep their slots (#609)
             ToolbarItem(id: "transfer", placement: .primaryAction) {
-                Button { model.openTransfer() } label: { Label("Überweisen", systemImage: "paperplane") }
-                    .help("Neue Überweisung (⌘N)")
-                    .disabled(!model.canTransfer)
+                TransferToolbarButton()
             }
             ToolbarItem(id: "newBooking", placement: .primaryAction) {
-                Button { model.openManualBooking() } label: { Label("Neue Buchung", systemImage: "plus") }
-                    .help("Neue Buchung (⌥⌘N)")
-                    .disabled(!model.canAddManualBooking)
+                NewBookingToolbarButton()
             }
             ToolbarItem(id: "sync", placement: .primaryAction) {
-                Button { model.requestSyncAll() } label: { Label("Abrufen", systemImage: "arrow.triangle.2.circlepath") }
-                    .help(model.bankingBlocksAll ? (BankingPolicy.shared.gate?.message ?? "") : String(localized: "Alle Konten abrufen (⌘R)"))
-                    .disabled(model.bankingBlocksAll)
+                SyncToolbarButton()
             }
             ToolbarItem(id: "inspector", placement: .primaryAction) {
-                Button { showInspector.toggle() } label: { Label("Informationen", systemImage: "sidebar.trailing") }
-                    .help(showInspector ? String(localized: "Informationen ausblenden (⌥⌘I)") : String(localized: "Informationen einblenden (⌥⌘I)"))
+                InspectorToolbarButton()
             }
             ToolbarItem(id: "privacy", placement: .primaryAction) {
-                Toggle(isOn: $privacyMode) { Label("Privatmodus", systemImage: privacyMode ? "eye.slash" : "eye") }
-                    .help(privacyMode ? String(localized: "Privatmodus beenden (⇧⌘H)") : String(localized: "Privatmodus: Beträge ausblenden (⇧⌘H)"))
+                PrivacyToolbarToggle()
             }
             extraToolbarItems
         }
@@ -1338,9 +1326,7 @@ struct MainToolbar: ViewModifier {
                 .help("Kategorisierungsregeln … (⌥⌘K)")
         }
         ToolbarItem(id: "lock", placement: .primaryAction, showsByDefault: false) {
-            Button { model.lock() } label: { Label("Tresor sperren", systemImage: "lock") }
-                .help("Tresor sperren (⌃⌘L)")
-                .disabled(!model.hasOwnVault)
+            LockToolbarButton()
         }
         ToolbarItem(id: "settings", placement: .primaryAction, showsByDefault: false) {
             SettingsLink { Label("Einstellungen", systemImage: "gearshape") }
@@ -1349,6 +1335,88 @@ struct MainToolbar: ViewModifier {
     }
     #endif
 }
+
+#if os(macOS)
+/// The one pinned toolbar item: the filter of the view in the booking column.
+private struct ScopeToolbarControl: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        // Keep one customizable toolbar item, with the filter for the current view.
+        if model.sidebarSelection == .wealth {
+            WealthScopePicker()
+        } else if model.sidebarSelection == .documents {
+            DocumentsScopePicker()
+        } else {
+            switch model.presentation {
+            case .securities: DepotTabPicker()
+            // Sachwerte have neither booking scopes nor depot tabs; the item stays so the
+            // customizable toolbar keeps its layout
+            case .tangible: Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+            case .bookings: BookingScopePicker().disabled(model.sidebarSelection == .newBookings)
+            }
+        }
+    }
+}
+
+private struct TransferToolbarButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { model.openTransfer() } label: { Label("Überweisen", systemImage: "paperplane") }
+            .help("Neue Überweisung (⌘N)")
+            .disabled(!model.canTransfer)
+    }
+}
+
+private struct NewBookingToolbarButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { model.openManualBooking() } label: { Label("Neue Buchung", systemImage: "plus") }
+            .help("Neue Buchung (⌥⌘N)")
+            .disabled(!model.canAddManualBooking)
+    }
+}
+
+private struct SyncToolbarButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { model.requestSyncAll() } label: { Label("Abrufen", systemImage: "arrow.triangle.2.circlepath") }
+            .help(model.bankingBlocksAll ? (BankingPolicy.shared.gate?.message ?? "") : String(localized: "Alle Konten abrufen (⌘R)"))
+            .disabled(model.bankingBlocksAll)
+    }
+}
+
+private struct InspectorToolbarButton: View {
+    @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
+
+    var body: some View {
+        Button { showInspector.toggle() } label: { Label("Informationen", systemImage: "sidebar.trailing") }
+            .help(showInspector ? String(localized: "Informationen ausblenden (⌥⌘I)") : String(localized: "Informationen einblenden (⌥⌘I)"))
+    }
+}
+
+private struct PrivacyToolbarToggle: View {
+    @AppStorage(PrivacyMode.enabledKey) private var privacyMode = false
+
+    var body: some View {
+        Toggle(isOn: $privacyMode) { Label("Privatmodus", systemImage: privacyMode ? "eye.slash" : "eye") }
+            .help(privacyMode ? String(localized: "Privatmodus beenden (⇧⌘H)") : String(localized: "Privatmodus: Beträge ausblenden (⇧⌘H)"))
+    }
+}
+
+private struct LockToolbarButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { model.lock() } label: { Label("Tresor sperren", systemImage: "lock") }
+            .help("Tresor sperren (⌃⌘L)")
+            .disabled(!model.hasOwnVault)
+    }
+}
+#endif
 
 #if os(macOS)
 /// Modifier keys held at the last mouse-down in the app. SwiftUI runs a tap
