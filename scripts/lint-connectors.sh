@@ -9,8 +9,7 @@ conn_dir = root / "girocrab-core/src/connectors"
 allowlist = {
     "mod", "tests", "persist", "bank_directory", "fints_directory", "fints_presets",
     "types", "error", "http", "amazon_documents", "broker_documents",
-    "comdirect_postbox", "dpop",
-    "finpension", "paypal_nvp",
+    "comdirect_postbox", "dpop", "paypal_nvp",  # Submodule von paypal.rs (payPalSignatureKeys)
 }
 
 modules = sorted(
