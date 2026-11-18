@@ -141,6 +141,18 @@ Card {
                     Sensitive { amounts: true }
                 }
                 Text { visible: !card.compact; Layout.alignment: Qt.AlignRight; text: card.balance ? card.balance.label : ""; font.pixelSize: Theme.caption; color: Theme.secondary }
+                // BalanceHeaderView.swift: „Abgerufen vor …“ of a single account, switchable (#815)
+                Text {
+                    readonly property var fetch: LastFetch.shown && !card.compact && !card.selectedItem ? LastFetch.text(card.account) : null
+                    visible: fetch !== null
+                    Layout.alignment: Qt.AlignRight
+                    text: fetch ? fetch.text : ""
+                    font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight
+                    HoverHandler { id: fetchHover }
+                    ToolTip.visible: fetchHover.hovered && fetch !== null && fetch.help !== ""; ToolTip.delay: 600
+                    ToolTip.text: fetch ? fetch.help : ""
+                    Sensitive {}
+                }
                 // #569: the total adds up the base currency only, further currencies stand apart
                 Text {
                     readonly property var split: card.account === null && !card.selectedItem ? AppModel.headerTotalSplit : null
@@ -233,7 +245,19 @@ Card {
         }
         Component {
         id: filterRow
+        // ViewThatFits { filterContent; ScrollView(.horizontal) { filterContent } }: never let the
+        // fixed-size filter controls widen the header card – too narrow, the row scrolls sideways.
+        Flickable {
+            id: filterFlick
+            implicitHeight: filterContent.implicitHeight
+            contentWidth: filterContent.width; contentHeight: height
+            interactive: contentWidth > width + 1
+            clip: interactive
+            flickableDirection: Flickable.HorizontalFlick
+            boundsBehavior: Flickable.StopAtBounds
         RowLayout {
+            id: filterContent
+            width: Math.max(filterFlick.width, implicitWidth); height: filterFlick.height
             spacing: 12
             MenuLabel {
                 symbol: "calendar"; text: AppModel.periodTitle
@@ -295,9 +319,10 @@ Card {
                 ToolTip.visible: hovered && !TagFilter.shown; ToolTip.delay: 600; ToolTip.text: qsTr("Nach Tags filtern")
                 TagFilterPopover { wanted: TagFilter.shown && tagFilterButton.visible }
             }
-            // Category views: only the bookings of the chosen accounts (GitHub #406).
+            // Only the bookings of the chosen accounts: category views (GitHub #406), „Alle Konten“,
+            // groups and „Neue Umsätze“ (#357).
             MenuLabel {
-                visible: AppModel.showsCategoryAccountFilter && AppModel.allAccounts.length > 1
+                visible: AppModel.showsAccountFilter && AppModel.accountFilterCandidates.length > 1
                 symbol: AppModel.categoryAccountIDs.length ? "building.columns.fill" : "building.columns"
                 text: AppModel.categoryAccountFilterTitle
                 onClicked: accountMenu.popup()
@@ -309,7 +334,7 @@ Card {
                                   onTriggered: { checked = Qt.binding(() => AppModel.categoryAccountIDs.length === 0); AppModel.setCategoryAccountFilter([]) } }
                     AppMenuSeparator {}
                     Repeater {
-                        model: AppModel.allAccounts
+                        model: AppModel.accountFilterCandidates
                         AppMenuItem {
                             required property var modelData
                             text: !modelData.bank_name || modelData.name.toLowerCase().indexOf(modelData.bank_name.toLowerCase()) >= 0
@@ -321,10 +346,41 @@ Card {
                     }
                 }
             }
+            // amountFilterPill (#357): the pill opens the popover and shows the range while one is set;
+            // the cross next to it resets it with one click.
+            RowLayout {
+                spacing: 4
+                MenuLabel {
+                    id: amountPill
+                    symbol: ListFilters.amountActive ? "eurosign.circle.fill" : "eurosign.circle"
+                    text: ListFilters.amountTitle
+                    sensitiveText: ListFilters.amountActive
+                    onClicked: amountPopover.visible ? amountPopover.close() : amountPopover.open()
+                    ToolTip.visible: hovered && !amountPopover.visible; ToolTip.delay: 600; ToolTip.text: qsTr("Nach Betrag filtern")
+                    AmountFilterPopover { id: amountPopover }
+                }
+                IconButton {
+                    visible: ListFilters.amountActive
+                    symbol: "xmark.circle.fill"; symbolSize: 13
+                    implicitWidth: 20; implicitHeight: 20
+                    ToolTip.text: qsTr("Betragsfilter zurücksetzen")
+                    Accessible.name: qsTr("Betragsfilter zurücksetzen")
+                    onClicked: ListFilters.clearAmount()
+                }
+            }
+            // all list filters at once (#840); the period is a view choice and stays
+            MenuLabel {
+                visible: ListFilters.hasActive
+                symbol: "xmark.circle"; text: qsTr("Filter zurücksetzen"); chevron: false
+                onClicked: ListFilters.reset()
+                ToolTip.visible: hovered; ToolTip.delay: 600
+                ToolTip.text: qsTr("Status, Buchungsart, Tags, Konten, Betrag und Suche zurücksetzen")
+            }
             MenuLabel { visible: card.account !== null; symbol: "doc.text"; text: qsTr("Dokumente"); chevron: false
                         onClicked: AppModel.openAccountDocuments(card.account) }
             Item { Layout.fillWidth: true }
             Text { text: qsTr("%1 Buchungen").arg(AppModel.bookingCountLabel); font.pixelSize: Theme.caption; color: Theme.secondary }
+        }
         }
         }
         // depotRow
@@ -357,6 +413,8 @@ Card {
         property string text
         property bool chevron: true
         property color tint: Theme.text
+        /// The label shows amounts (the amount pill's range): covered in privacy mode / bug reports.
+        property bool sensitiveText: false
         readonly property bool hovered: mlArea.containsMouse
         signal clicked()
         implicitWidth: r.implicitWidth; implicitHeight: 22
@@ -378,7 +436,8 @@ Card {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 5
             SFIcon { symbol: ml.symbol; size: 14; color: ml.tint }
-            Text { text: ml.text; font.pixelSize: Theme.body; color: ml.tint }
+            Text { text: ml.text; font.pixelSize: Theme.body; color: ml.tint
+                   Sensitive { amounts: true; when: ml.sensitiveText } }
             SFIcon { visible: ml.chevron; symbol: "chevron.down"; size: 9; color: ml.tint }
         }
         MouseArea { id: mlArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: ml.clicked() }

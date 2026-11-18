@@ -1585,7 +1585,10 @@ vault_methods! {
     seed_demo_account_selection()
     // --- Seitenleiste: Zähler und gefilterte Kategorien (AppModel+Loading/Selection) ---
     count_planned_payments() count_active_mandates()
+    list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
+    // Buchungsliste: Betragsfilter (#357, ListFilters.qml)
+    list_categories_filtered_amount(date_from, date_to, account_ids, checked, direction, amount_min_cents, amount_max_cents)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
     // --- Geplante Zahlungen (AppModel+Planned, PlannedPaymentsView) ---
     list_planned_payments(from, to, account_ids) planned_payment_totals(from, to, account_ids)
@@ -3193,6 +3196,83 @@ mod tests {
             .sum();
         assert_eq!(json!(own), first["booking_count"]);
         assert!(accounts[0]["account_id"].is_i64());
+        drop(v);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Buchungsliste (#357, #577, ListFilters.qml / ListBalances.qml): the amount range narrows the
+    /// list (absolute amounts), the category sums and the „Ohne Kategorie“ count alike;
+    /// `with_balances` brings the running and end-of-day balances; offline account ids (#815).
+    #[test]
+    fn booking_list_filter_calls() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-listfilter-{}.girocrab",
+            std::process::id()
+        ));
+        let v = Vault::open(path.display().to_string(), vec![4; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let filter = |accounts: Value, min: Value, max: Value, balances: bool| {
+            json!({
+            "account_ids": accounts, "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 0, "offset": 0, "scope": "All", "merchant_key": null, "direction": "All",
+            "checked": null, "whole_days": true, "amount_min_cents": min,
+            "amount_max_cents": max, "with_balances": balances })
+        };
+        let page = |f: Value| call("list_transactions", json!({ "filter": f }));
+        let all = page(filter(json!([]), Value::Null, Value::Null, false));
+        let total = all["transactions"].as_array().unwrap().len();
+        let ranged = page(filter(json!([]), json!(1000), json!(5000), false));
+        let rows = ranged["transactions"].as_array().unwrap();
+        assert!(!rows.is_empty() && rows.len() < total);
+        assert!(rows.iter().all(|b| {
+            let c = b["amount_cents"].as_i64().unwrap().abs();
+            (1000..=5000).contains(&c)
+        }));
+        assert_eq!(
+            call(
+                "count_transactions",
+                json!({ "filter": filter(json!([]), json!(1000), json!(5000), false) })
+            ),
+            json!(rows.len())
+        );
+        // category sums follow the amount range
+        let cats = |min: Value, max: Value| {
+            call(
+                "list_categories_filtered_amount",
+                json!({ "date_from": null, "date_to": null, "account_ids": [], "checked": null,
+                        "direction": "All", "amount_min_cents": min, "amount_max_cents": max }),
+            )
+        };
+        let open = cats(Value::Null, Value::Null);
+        assert_eq!(
+            open,
+            call(
+                "list_categories_filtered",
+                json!({ "date_from": null, "date_to": null, "account_ids": [], "checked": null,
+                        "direction": "All" }),
+            )
+        );
+        let narrow = cats(json!(1000), json!(5000));
+        assert_eq!(
+            narrow.as_array().unwrap().len(),
+            open.as_array().unwrap().len()
+        );
+        assert_ne!(narrow, open);
+        // running balances of one account: one per booked row, plus end-of-day balances
+        let acc = all["transactions"][0]["account_id"].clone();
+        let with = page(filter(json!([acc]), Value::Null, Value::Null, true));
+        assert!(!with["running_balances"].as_array().unwrap().is_empty());
+        assert!(with["running_balances"][0]["balance_cents"].is_i64());
+        assert!(with["day_balances"][0]["date"].is_string());
+        let without = page(filter(json!([acc]), Value::Null, Value::Null, false));
+        assert!(without["running_balances"].as_array().unwrap().is_empty());
+        assert!(call("list_offline_account_ids", json!({})).is_array());
         drop(v);
         let _ = std::fs::remove_file(&path);
     }
