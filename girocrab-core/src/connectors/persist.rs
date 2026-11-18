@@ -876,6 +876,8 @@ pub(crate) fn store_fetch(
                           WHERE source_url = ?2 AND account_id IS NULL AND booking_id IS NULL",
                         params![acc_id, d.source_url],
                     )?;
+                    // … and so does its reference, if it moved into the document archive
+                    crate::document_links::give_account(&tx, &d.source_url, acc_id)?;
                 }
                 _ => {}
             }

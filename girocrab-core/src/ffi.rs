@@ -204,3 +204,8 @@ fn classify_asset(
 fn holding_position_key(isin: String, name: String) -> Option<String> {
     crate::depot_values::observations::position_key(&isin, &name)
 }
+
+#[uniffi::export]
+fn archive_kinds() -> Vec<String> {
+    crate::archive::archive_kinds()
+}

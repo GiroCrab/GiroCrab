@@ -182,7 +182,6 @@ impl Vault {
         let docs: Vec<Value> = serde_json::from_str(&documents_json)
             .map_err(|_| invalid("FNZ: Ungültige Dokumentenliste."))?;
         let db = self.db()?;
-        let mut known = db.prepare("SELECT 1 FROM booking_documents WHERE source_url = ?1")?;
         let mut excluded = db.prepare(
             "SELECT archived_unix IS NOT NULL OR deleted_ms IS NOT NULL FROM accounts
               WHERE connection_id = ?1 AND external_ref = ?2",
@@ -202,10 +201,7 @@ impl Vault {
                 continue;
             }
             if seen.insert(id.to_string())
-                && known
-                    .query_row([document_source(connection_id, id)], |_| Ok(()))
-                    .optional()?
-                    .is_none()
+                && !crate::documents::knows_source(&db, &document_source(connection_id, id))?
             {
                 pending.push(
                     serde_json::to_string(&doc)

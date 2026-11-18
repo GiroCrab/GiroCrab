@@ -490,9 +490,11 @@ mod tests {
             size_bytes: size,
             source_url: String::new(),
             link_url: String::new(),
+            archive_doc: None,
             doc_date: date.into(),
             created_at: 0,
             seen: true,
+            from_bank: false,
             booking_label: booking.into(),
             account_name: "Giro".into(),
         }

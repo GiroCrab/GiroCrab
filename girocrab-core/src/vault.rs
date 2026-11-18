@@ -210,6 +210,9 @@ pub struct Vault {
     key: Mutex<Zeroizing<Vec<u8>>>,
     /// Booking history behind category suggestions, kept until the data changes (#664).
     pub(crate) suggestions: crate::suggestions::HistoryCache,
+    /// Counts up whenever work for the document archive must end (lock,
+    /// change of the connection): see `archive::client::Client::watching`.
+    pub(crate) archive_epoch: Arc<std::sync::atomic::AtomicU64>,
     _open: OpenVault,
 }
 
@@ -508,6 +511,7 @@ impl Vault {
             list_cache: bookings::ListCache::default(),
             key: Mutex::new(key),
             suggestions: Default::default(),
+            archive_epoch: Arc::default(),
             _open: OpenVault::new(),
         }))
     }

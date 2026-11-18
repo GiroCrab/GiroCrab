@@ -504,7 +504,6 @@ impl Vault {
         }
         let docs: Vec<Value> = serde_json::from_str(&documents_json).map_err(|_| invalid())?;
         let db = self.db()?;
-        let mut known = db.prepare("SELECT 1 FROM booking_documents WHERE source_url = ?1")?;
         let mut seen = HashSet::new();
         let mut pending = Vec::new();
         for doc in docs {
@@ -512,11 +511,9 @@ impl Vault {
             if document_account(&db, connection_id, &doc)?.is_none() {
                 continue;
             }
+            // (stored, or moved into the document archive: not downloaded again)
             if seen.insert(id.clone())
-                && known
-                    .query_row([document_source(connection_id, &id)], |_| Ok(()))
-                    .optional()?
-                    .is_none()
+                && !crate::documents::knows_source(&db, &document_source(connection_id, &id))?
             {
                 pending.push(doc.to_string());
             }

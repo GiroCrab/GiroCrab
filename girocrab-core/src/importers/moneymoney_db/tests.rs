@@ -2355,14 +2355,23 @@ fn import_reports_progress_and_can_be_cancelled() {
 }
 
 /// The "already imported?" lookup runs once per document: it must use the
-/// index on `source_url`, not scan the table (and with it every stored PDF).
+/// indexes on `source_url`, not scan the tables (and with them every stored
+/// PDF): the stored files, and what this device knows of documents that
+/// moved into the document archive.
 #[test]
 fn document_lookup_uses_the_source_index() {
     let v = vault();
     let db = v.db().unwrap();
-    let plan = crate::test_support::query_plan(&db, DOCUMENT_EXISTS_SQL, ["moneymoney:1:abc"]);
+    let key = ["moneymoney:1:abc"];
+    let plan = crate::test_support::query_plan(&db, crate::documents::STORED_SOURCE_SQL, key);
     assert!(plan.contains("booking_documents_source"), "{plan}");
     assert!(!plan.contains("SCAN booking_documents"), "{plan}");
+    let plan = crate::test_support::query_plan(&db, crate::document_links::LINKED_SOURCE_SQL, key);
+    assert!(plan.contains("USING PRIMARY KEY (source_url=?)"), "{plan}");
+    assert!(
+        !plan.contains("SCAN s") && !plan.contains("SCAN l"),
+        "{plan}"
+    );
 }
 
 /// Issue #94: transfers between own imported accounts (matched by IBAN or a

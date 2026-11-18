@@ -508,6 +508,42 @@ fn the_count_of_a_booking_comes_from_the_partial_index() {
     assert!(!plan.contains("SCAN l"), "{plan}");
 }
 
+#[test]
+fn bookings_without_a_document_can_be_listed_and_counted() {
+    let dir = TempDir::new("links-missing");
+    let v = open(&dir, "v.db");
+    seed(&v, &["T1", "T2", "T3", "T4"]);
+    v.attach_document_link(id_of(&v, "T1"), URL.into(), String::new())
+        .unwrap();
+    v.attach_document_to_booking(
+        id_of(&v, "T2"),
+        "bon.pdf".into(),
+        crate::documents::simple_pdf(&["Kassenbon".into()]),
+    )
+    .unwrap();
+    // a removed reference no longer counts
+    let gone = v
+        .attach_document_link(id_of(&v, "T3"), URL.into(), String::new())
+        .unwrap();
+    v.delete_document(gone).unwrap();
+
+    let missing = BookingFilter {
+        without_document: true,
+        ..Default::default()
+    };
+    let mut ids: Vec<i64> = v
+        .list_transactions(missing.clone())
+        .unwrap()
+        .transactions
+        .iter()
+        .map(|b| b.id)
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, [id_of(&v, "T3"), id_of(&v, "T4")]);
+    assert_eq!(v.count_transactions(missing).unwrap(), 2);
+    assert_eq!(v.count_transactions(BookingFilter::default()).unwrap(), 4);
+}
+
 // ------------------------------------------------------------------ merge
 
 #[test]
@@ -924,38 +960,447 @@ fn a_merge_reports_the_references_it_changed() {
     assert_eq!(merge(&a, &b).documents_updated, 0);
 }
 
+/// The id of the archive `v` is connected to.
+fn aid(v: &Vault) -> String {
+    text(v, "SELECT value FROM settings WHERE key = 'archive.id'")
+}
+
+/// Two devices link the same document to the same booking before they
+/// meet: afterwards it is one reference, the same one on both, in whichever
+/// order they merge. A reference to something else on that booking stays.
 #[test]
-fn bookings_without_a_document_can_be_listed_and_counted() {
-    let dir = TempDir::new("links-missing");
-    let v = open(&dir, "v.db");
-    seed(&v, &["T1", "T2", "T3", "T4"]);
-    v.attach_document_link(id_of(&v, "T1"), URL.into(), String::new())
+fn the_same_archive_document_linked_on_two_devices_is_one() {
+    for first_a in [true, false] {
+        let dir = TempDir::new(if first_a {
+            "links-double-a"
+        } else {
+            "links-double-b"
+        });
+        let a = open(&dir, "a.db");
+        let b = open(&dir, "b.db");
+        seed(&a, &["T1"]);
+        seed(&b, &["T1"]);
+        a.set_archive_connection("https://archiv.example".into(), "token".into(), None)
+            .unwrap();
+        a.attach_archive_document(id_of(&a, "T1"), aid(&a), 42, "Rechnung".into())
+            .unwrap();
+        both_ways(&a, &b);
+        assert_eq!(document_count(&b, "T1"), 1);
+        // offline: each links document 43 and the same web address, b under
+        // its own address of the archive
+        b.set_archive_connection(
+            "http://192.168.1.20:8000".into(),
+            "token".into(),
+            Some(aid(&a)),
+        )
         .unwrap();
-    v.attach_document_to_booking(
-        id_of(&v, "T2"),
-        "bon.pdf".into(),
-        crate::documents::simple_pdf(&["Kassenbon".into()]),
+        for v in [&a, &b] {
+            v.attach_archive_document(id_of(v, "T1"), aid(v), 43, "Lieferschein".into())
+                .unwrap();
+            v.attach_document_link(
+                id_of(v, "T1"),
+                "https://shop.example/bon/7".into(),
+                "Bon".into(),
+            )
+            .unwrap();
+        }
+        if first_a {
+            merge(&a, &b);
+            merge(&b, &a);
+            merge(&a, &b);
+        } else {
+            merge(&b, &a);
+            merge(&a, &b);
+            merge(&b, &a);
+        }
+        let state = |v: &Vault| {
+            text(
+                v,
+                "SELECT group_concat(line, ' | ') FROM (
+                    SELECT uuid || ':' || IFNULL(archive_doc, 0) || ':' || url = '' || ':'
+                           || (deleted_ms IS NOT NULL) || ':' || updated_ms || ':' || rev AS line
+                      FROM document_links ORDER BY uuid)",
+            )
+        };
+        assert_eq!(state(&a), state(&b));
+        for v in [&a, &b] {
+            assert_eq!(
+                document_count(v, "T1"),
+                3,
+                "42, 43 and the web link, each once"
+            );
+            assert_eq!(
+                n(
+                    v,
+                    "SELECT count(*) FROM document_links WHERE deleted_ms IS NOT NULL"
+                ),
+                2
+            );
+            assert_eq!(
+                n(
+                    v,
+                    "SELECT count(*) FROM document_links WHERE deleted_ms IS NOT NULL
+                       AND (booking_id IS NOT NULL OR url != '' OR archive_doc IS NOT NULL)"
+                ),
+                0
+            );
+        }
+        // nothing changes any more
+        both_ways(&a, &b);
+        assert_eq!(document_count(&a, "T1"), 3);
+        assert_eq!(state(&a), state(&b));
+    }
+}
+
+#[test]
+fn the_archive_document_of_a_reference_travels_with_its_archive() {
+    let dir = TempDir::new("links-archive-doc");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    seed(&a, &["T1"]);
+    seed(&b, &["T1"]);
+    b.set_archive_connection("http://192.168.1.20:8000".into(), "token".into(), None)
+        .unwrap();
+    b.attach_archive_document(id_of(&b, "T1"), aid(&b), 42, "Rechnung".into())
+        .unwrap();
+    both_ways(&a, &b);
+    let one = |v: &Vault| {
+        v.list_documents_for_booking(id_of(v, "T1"))
+            .unwrap()
+            .remove(0)
+    };
+
+    // a is not connected: a plain link to b's address, counted as elsewhere
+    assert_eq!(one(&a).archive_doc, None);
+    assert_eq!(
+        one(&a).link_url,
+        "http://192.168.1.20:8000/documents/42/details"
+    );
+    assert_eq!(a.archive_documents_elsewhere().unwrap(), 1);
+
+    // a connects to the same archive under its own address: b's documents are its documents
+    a.set_archive_connection(
+        "https://archiv.example".into(),
+        "token".into(),
+        Some(aid(&b)),
     )
     .unwrap();
-    // a removed reference no longer counts
-    let gone = v
-        .attach_document_link(id_of(&v, "T3"), URL.into(), String::new())
-        .unwrap();
-    v.delete_document(gone).unwrap();
+    assert_eq!(aid(&a), aid(&b));
+    assert_eq!(one(&a).archive_doc, Some(42));
+    assert_eq!(
+        one(&a).link_url,
+        "https://archiv.example/documents/42/details"
+    );
+    assert_eq!(a.archive_documents_elsewhere().unwrap(), 0);
+    // settings are each device's own: the address did not travel
+    assert_eq!(
+        b.archive_config().unwrap().unwrap().url,
+        "http://192.168.1.20:8000"
+    );
 
-    let missing = BookingFilter {
-        without_document: true,
-        ..Default::default()
-    };
-    let mut ids: Vec<i64> = v
-        .list_transactions(missing.clone())
-        .unwrap()
-        .transactions
-        .iter()
-        .map(|b| b.id)
-        .collect();
-    ids.sort_unstable();
-    assert_eq!(ids, [id_of(&v, "T3"), id_of(&v, "T4")]);
-    assert_eq!(v.count_transactions(missing).unwrap(), 2);
-    assert_eq!(v.count_transactions(BookingFilter::default()).unwrap(), 4);
+    // removed on one device: the tombstone names no document either
+    let gone = one(&a).id;
+    a.delete_document(gone).unwrap();
+    both_ways(&a, &b);
+    assert_eq!(
+        n(
+            &b,
+            "SELECT count(*) FROM document_links WHERE archive_doc IS NOT NULL OR archive_id != ''"
+        ),
+        0
+    );
+}
+
+/// One device moves to another archive while the other, offline, still links
+/// documents of the old one. Their ids must never be read as ids of the new
+/// archive: after the merge they are plain links there.
+#[test]
+fn a_document_of_another_archive_is_never_taken_for_one_of_this_archive() {
+    let dir = TempDir::new("links-archive-switch");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    seed(&a, &["T1", "T2"]);
+    seed(&b, &["T1", "T2"]);
+    let old = "http://192.168.1.20:8000";
+    a.set_archive_connection(old.into(), "token".into(), None)
+        .unwrap();
+    a.attach_archive_document(id_of(&a, "T1"), aid(&a), 41, "Alt 1".into())
+        .unwrap();
+    both_ways(&a, &b);
+    b.set_archive_connection(old.into(), "token".into(), Some(aid(&a)))
+        .unwrap();
+    assert_eq!(aid(&a), aid(&b));
+
+    // a moves to a new archive; b, offline, links document 42 of the old one
+    a.set_archive_connection("https://neu.example".into(), "token".into(), None)
+        .unwrap();
+    b.attach_archive_document(id_of(&b, "T2"), aid(&b), 42, "Alt 2".into())
+        .unwrap();
+    both_ways(&a, &b);
+
+    let on_a = a.list_all_documents(DocumentFilter::default()).unwrap();
+    assert_eq!(on_a.len(), 2);
+    assert!(
+        on_a.iter().all(|d| d.archive_doc.is_none()),
+        "ids of the old archive"
+    );
+    assert!(on_a.iter().all(|d| d.link_url.starts_with(old)));
+    assert_eq!(a.archive_documents_elsewhere().unwrap(), 2);
+    // b still sees them as documents of its archive
+    let on_b = b.list_all_documents(DocumentFilter::default()).unwrap();
+    assert!(on_b.iter().all(|d| d.archive_doc.is_some()));
+}
+
+/// A statement of the bank that moved into the archive, as it stands in the
+/// vault of the device that moved it: on the account, unread, and known to
+/// that device's fetch by `source`.
+fn moved_statement(v: &Vault, uuid: &str, account: i64, source: &str) {
+    // (before the vault is taken: its lock is not re-entrant)
+    let archive = aid(v);
+    let db = v.db().unwrap();
+    db.execute(
+        "INSERT INTO document_links(uuid, account_id, url, title, doc_date, updated_ms, rev,
+                archive_id, archive_doc, doc_type, from_bank, unseen)
+         VALUES (?1, ?2, 'https://archiv.example/documents/5/details', 'Kontoauszug',
+                 '2026-11-01', 5, ?1, ?3, 5, 'kontoauszug', 1, 1)",
+        params![uuid, account, archive],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO archived_sources(source_url, link_id, digest) VALUES (?1, ?2, 'ab')",
+        params![source, db.last_insert_rowid()],
+    )
+    .unwrap();
+}
+
+/// Two devices each moved their copy of one statement into the same archive
+/// before they met. The account keeps one reference, the same on both; what
+/// each device alone knows goes to the one that stays: its fetch still knows
+/// the document (by its own origin, which means nothing on the other
+/// device), and it is still unread.
+#[test]
+fn one_document_of_the_archive_on_an_account_is_one_reference() {
+    for first_a in [true, false] {
+        let dir = TempDir::new(if first_a {
+            "links-statement-a"
+        } else {
+            "links-statement-b"
+        });
+        let a = open(&dir, "a.db");
+        let b = open(&dir, "b.db");
+        let (acc_a, acc_b) = (seed(&a, &["T1"]), seed(&b, &["T1"]));
+        a.set_archive_connection("https://archiv.example".into(), "token".into(), None)
+            .unwrap();
+        // b knows the archive from a's references and connects to the same
+        // one, under its own address
+        a.attach_archive_document(id_of(&a, "T1"), aid(&a), 42, "Rechnung".into())
+            .unwrap();
+        both_ways(&a, &b);
+        b.set_archive_connection(
+            "http://192.168.1.20:8000".into(),
+            "token".into(),
+            Some(aid(&a)),
+        )
+        .unwrap();
+        moved_statement(&a, "u-a", acc_a, "bank:3:auszug-1");
+        moved_statement(&b, "u-b", acc_b, "bank:7:auszug-1");
+        if first_a {
+            merge(&a, &b);
+            merge(&b, &a);
+            merge(&a, &b);
+        } else {
+            merge(&b, &a);
+            merge(&a, &b);
+            merge(&b, &a);
+        }
+        let synced = |v: &Vault| {
+            text(
+                v,
+                "SELECT group_concat(line, ' | ') FROM (
+                    SELECT uuid || ':' || IFNULL(archive_doc, 0) || ':' || doc_type || ':'
+                           || (deleted_ms IS NOT NULL) || ':' || updated_ms || ':' || rev AS line
+                      FROM document_links ORDER BY uuid)",
+            )
+        };
+        assert_eq!(synced(&a), synced(&b));
+        for (v, own, other) in [
+            (&a, "bank:3:auszug-1", "bank:7:auszug-1"),
+            (&b, "bank:7:auszug-1", "bank:3:auszug-1"),
+        ] {
+            assert_eq!(
+                text(
+                    v,
+                    "SELECT uuid || ':' || unseen FROM document_links
+                      WHERE deleted_ms IS NULL AND booking_id IS NULL"
+                ),
+                "u-a:1",
+                "the smaller uuid stays, still unread"
+            );
+            assert_eq!(
+                n(
+                    v,
+                    "SELECT count(*) FROM document_links WHERE deleted_ms IS NOT NULL AND unseen = 1"
+                ),
+                0
+            );
+            {
+                let db = v.db().unwrap();
+                assert!(has_source(&db, own).unwrap());
+                assert!(
+                    !has_source(&db, other).unwrap(),
+                    "an origin stays on its device"
+                );
+            }
+            // a document of the bank on both devices, by what travels with it
+            let listed = v
+                .list_all_documents(DocumentFilter {
+                    doc_type: Some("kontoauszug".into()),
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(listed.len(), 1);
+            assert!(listed[0].from_bank && !listed[0].seen);
+        }
+    }
+}
+
+/// A document of the bank that had no account when it was fetched gets the
+/// one found for it later, as a reference too, and as an edit.
+#[test]
+fn a_reference_takes_the_account_found_for_its_document_later() {
+    let dir = TempDir::new("links-give-account");
+    let v = open(&dir, "v.db");
+    let acc = seed(&v, &["T1"]);
+    v.set_archive_connection("https://archiv.example".into(), "token".into(), None)
+        .unwrap();
+    moved_statement(&v, "u-1", acc, "bank:1");
+    exec(&v, "UPDATE document_links SET account_id = NULL");
+    let db = v.db().unwrap();
+    give_account(&db, "bank:unbekannt", acc).unwrap();
+    drop(db);
+    assert_eq!(
+        n(
+            &v,
+            "SELECT count(*) FROM document_links WHERE account_id IS NULL"
+        ),
+        1
+    );
+    let db = v.db().unwrap();
+    give_account(&db, "bank:1", acc).unwrap();
+    drop(db);
+    assert_eq!(n(&v, "SELECT account_id FROM document_links"), acc);
+    assert!(n(&v, "SELECT updated_ms FROM document_links") > 5);
+}
+
+/// The reference this device knows a bank's document by is deleted by a
+/// merge that says nothing about what it was folded into (it was edited on a
+/// third device since, and a deletion stays). What this device alone knows
+/// still goes to the live reference to the same document on that account.
+#[test]
+fn local_knowledge_survives_a_fold_whose_mark_was_overwritten() {
+    let dir = TempDir::new("links-fold-overwritten");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let (acc_a, acc_b) = (seed(&a, &["T1"]), seed(&b, &["T1"]));
+    a.set_archive_connection("https://archiv.example".into(), "token".into(), None)
+        .unwrap();
+    a.attach_archive_document(id_of(&a, "T1"), aid(&a), 42, "Rechnung".into())
+        .unwrap();
+    both_ways(&a, &b);
+    b.set_archive_connection(
+        "http://192.168.1.20:8000".into(),
+        "token".into(),
+        Some(aid(&a)),
+    )
+    .unwrap();
+    moved_statement(&a, "u-a", acc_a, "bank:3:auszug-1");
+    moved_statement(&b, "u-b", acc_b, "bank:7:auszug-1");
+    // as it reaches b: its own reference deleted, with the mark of a later edit
+    exec(
+        &a,
+        "INSERT INTO document_links(uuid, updated_ms, rev, deleted_ms)
+         VALUES ('u-b', 100, 'zz-spaeter', 90)",
+    );
+    merge(&b, &a);
+    assert_eq!(
+        text(
+            &b,
+            "SELECT uuid || ':' || unseen FROM document_links
+              WHERE deleted_ms IS NULL AND booking_id IS NULL"
+        ),
+        "u-a:1"
+    );
+    let db = b.db().unwrap();
+    assert!(has_source(&db, "bank:7:auszug-1").unwrap());
+}
+
+/// A booking carries a document of the archive that the user linked by hand
+/// on one device, while another device moved the bank's file of the same
+/// document onto that booking. The two references are one, and whichever
+/// stays says what the document is: a document of the bank, of its kind. The
+/// same on both devices, in either merge order.
+#[test]
+fn a_folded_document_of_the_bank_stays_one() {
+    for first_a in [true, false] {
+        let dir = TempDir::new(if first_a {
+            "links-fold-bank-a"
+        } else {
+            "links-fold-bank-b"
+        });
+        let a = open(&dir, "a.db");
+        let b = open(&dir, "b.db");
+        seed(&a, &["T1"]);
+        seed(&b, &["T1"]);
+        a.set_archive_connection("https://archiv.example".into(), "token".into(), None)
+            .unwrap();
+        a.attach_archive_document(id_of(&a, "T1"), aid(&a), 5, "Rechnung".into())
+            .unwrap();
+        // by hand, with the smaller uuid: the one that stays
+        exec(&a, "UPDATE document_links SET uuid = 'a-von-hand'");
+        let archive = aid(&a);
+        b.db()
+            .unwrap()
+            .execute(
+                "INSERT INTO document_links(uuid, booking_id, account_id, url, title, doc_date,
+                        updated_ms, rev, archive_id, archive_doc, doc_type, from_bank)
+                 SELECT 'z-verschoben', id, account_id, 'http://192.168.1.20:8000/documents/5/details',
+                        'Abrechnung', booking_date, 7, 'r-z', ?1, 5, 'abrechnung', 1
+                   FROM transactions WHERE external_id = 'T1'",
+                [&archive],
+            )
+            .unwrap();
+        if first_a {
+            merge(&a, &b);
+            merge(&b, &a);
+            merge(&a, &b);
+        } else {
+            merge(&b, &a);
+            merge(&a, &b);
+            merge(&b, &a);
+        }
+        let synced = |v: &Vault| {
+            text(
+                v,
+                "SELECT group_concat(line, ' | ') FROM (
+                    SELECT uuid || ':' || doc_type || ':' || from_bank || ':'
+                           || (deleted_ms IS NOT NULL) || ':' || updated_ms || ':' || rev AS line
+                      FROM document_links ORDER BY uuid)",
+            )
+        };
+        assert_eq!(synced(&a), synced(&b));
+        for v in [&a, &b] {
+            assert_eq!(
+                text(
+                    v,
+                    "SELECT uuid || ':' || doc_type || ':' || from_bank FROM document_links
+                      WHERE deleted_ms IS NULL"
+                ),
+                "a-von-hand:abrechnung:1"
+            );
+        }
+        // nothing changes any more
+        both_ways(&a, &b);
+        assert_eq!(synced(&a), synced(&b));
+        assert_eq!(document_count(&a, "T1"), 1);
+    }
 }

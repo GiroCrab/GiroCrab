@@ -23,6 +23,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod archive;
 pub mod asset_classification;
 pub mod asset_counterbooking;
 pub mod assets;

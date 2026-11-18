@@ -756,7 +756,7 @@ fn synced_state(v: &crate::vault::Vault) -> Vec<String> {
         "document_link",
         rows(
             "SELECT uuid, booking_id, account_id, url, title, doc_date, created_at, updated_ms,
-                    rev, deleted_ms
+                    rev, deleted_ms, archive_doc, archive_id
              FROM document_links",
         )
         .into_iter()
