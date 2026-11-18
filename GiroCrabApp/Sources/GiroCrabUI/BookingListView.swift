@@ -13,21 +13,15 @@ struct BookingStreamView: View {
 
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
-    @AppStorage("showAccountAnalytics") private var showAnalytics: Bool = false
-    /// View › "Auswertungen anzeigen" (GitHub #233): hides the charts and analysis cards.
-    @AppStorage(ViewLayout.statisticsKey) private var showStatistics: Bool = true
-    @AppStorage(ViewLayout.budgetsKey) private var showBudgets: Bool = true
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var hSize
-    @State private var showCashflowIOS = false
     #endif
 
     var body: some View {
         @Bindable var model = model
-        let isOverview: Bool = { if case .allAccounts? = model.sidebarSelection { return true }; return false }()
+        let isOverview = model.selectionIsOverview
         // „Neue Umsätze“: account cards instead of day cards, no charts
-        let isNewBookings = model.sidebarSelection == .newBookings
-        let cards = ViewLayout.cards(statistics: showStatistics, budgets: showBudgets)
+        let isNewBookings = model.selectionIsNewBookings
         let emptyVault = !model.demoActive && model.allAccounts.isEmpty
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
@@ -65,35 +59,7 @@ struct BookingStreamView: View {
                         if !emptyVault && model.scope != .investments {
                             MerchantLogoTipView()
                         }
-                        if model.scope == .investments {
-                            InvestmentDashboardView()
-                        } else if cards.any, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
-                            // Overview: always; single account: only when toggled on.
-                            #if os(iOS)
-                            if cards.cashflow {
-                                DisclosureGroup("Cashflow-Analyse", isExpanded: $showCashflowIOS) {
-                                    VStack(spacing: ViewLayout.cardGap) {
-                                        CashflowCard()
-                                        if cards.budgets { BudgetProgressCard() }
-                                    }
-                                    .padding(.top, 8)
-                                }
-                                .appFont(.subheadline, weight: .medium)
-                                .padding(.horizontal, 14).padding(.vertical, 10)
-                                .frame(maxWidth: .infinity)
-                                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
-                            } else {
-                                BudgetProgressCard()
-                            }
-                            #else
-                            if cards.cashflow {
-                                CashflowCard().transition(Motion.slide(.top))
-                            }
-                            if cards.budgets {
-                                BudgetProgressCard().transition(Motion.slide(.top))
-                            }
-                            #endif
-                        }
+                        StreamAnalysisCards(isOverview: isOverview, isNewBookings: isNewBookings)
                         if model.isLoadingSelection {
                             ProgressView().controlSize(.small)
                                 .frame(maxWidth: .infinity)
@@ -173,8 +139,9 @@ struct BookingStreamView: View {
                 model.dropAnywhere(urls)
             }
             .background(SelectionScroller(proxy: proxy))
-            // another account, group, period or view: back to the newest day
-            .onChange(of: model.sidebarSelection) { _, _ in scrollToTop(proxy) }
+            // another account, group, period or view: back to the newest day; for a sidebar
+            // selection once its data is in (`AppModel.requestStreamTop`)
+            .onChange(of: model.streamTopRequest) { _, _ in proxy.scrollTo(Self.topID, anchor: .top) }
             .onChange(of: model.period) { _, _ in scrollToTop(proxy) }
             .onChange(of: model.scope) { _, _ in scrollToTop(proxy) }
             .onChange(of: model.scrollToDay) { _, jump in
@@ -329,6 +296,55 @@ struct BookingStreamView: View {
     }
 }
 
+
+/// Investment dashboard or the cashflow and budget cards above the booking stream. A view of
+/// its own: its `@AppStorage` settings never compare equal, so in `BookingStreamView` they made
+/// the whole stream re-run whenever its parent was re-created (on every sidebar selection).
+private struct StreamAnalysisCards: View {
+    @Environment(AppModel.self) private var model
+    let isOverview: Bool
+    let isNewBookings: Bool
+    @AppStorage("showAccountAnalytics") private var showAnalytics: Bool = false
+    /// View › "Auswertungen anzeigen" (GitHub #233): hides the charts and analysis cards.
+    @AppStorage(ViewLayout.statisticsKey) private var showStatistics: Bool = true
+    @AppStorage(ViewLayout.budgetsKey) private var showBudgets: Bool = true
+    #if os(iOS)
+    @State private var showCashflowIOS = false
+    #endif
+
+    var body: some View {
+        let cards = ViewLayout.cards(statistics: showStatistics, budgets: showBudgets)
+        if model.scope == .investments {
+            InvestmentDashboardView()
+        } else if cards.any, !isNewBookings, !model.allAccounts.isEmpty, isOverview || showAnalytics {
+            // Overview: always; single account: only when toggled on.
+            #if os(iOS)
+            if cards.cashflow {
+                DisclosureGroup("Cashflow-Analyse", isExpanded: $showCashflowIOS) {
+                    VStack(spacing: ViewLayout.cardGap) {
+                        CashflowCard()
+                        if cards.budgets { BudgetProgressCard() }
+                    }
+                    .padding(.top, 8)
+                }
+                .appFont(.subheadline, weight: .medium)
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
+            } else {
+                BudgetProgressCard()
+            }
+            #else
+            if cards.cashflow {
+                CashflowCard().transition(Motion.slide(.top))
+            }
+            if cards.budgets {
+                BudgetProgressCard().transition(Motion.slide(.top))
+            }
+            #endif
+        }
+    }
+}
 
 /// Print and export sheets plus the file exporters behind the menu commands; shared by the
 /// booking list and the depot view, so a command works in both.

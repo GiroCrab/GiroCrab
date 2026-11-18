@@ -27,14 +27,12 @@ struct InspectorView: View {
             }
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if model.sidebarSelection == .planned {
+                if model.mainColumn == .planned {
                     PlannedInspector()
-                } else if model.sidebarSelection == .directDebits {
+                } else if model.mainColumn == .directDebits {
                     MandateInspector()
                 } else {
-                if case .account(let id) = model.sidebarSelection, let a = model.account(for: id), a.kind == .loan {
-                    LoanProgressCard(account: a)
-                }
+                SelectedLoanCard()
                 if model.isMultiSelection {
                     MultiSelectionCard()
                 } else if let b = model.selectedBooking {
@@ -65,8 +63,20 @@ struct InspectorView: View {
 
     /// The single-booking cards are shown, so their layout can be edited.
     private var showsBookingCards: Bool {
-        model.sidebarSelection != .planned && model.sidebarSelection != .directDebits
+        model.mainColumn != .planned && model.mainColumn != .directDebits
             && !model.isMultiSelection && model.selectedBooking != nil
+    }
+}
+
+/// The loan's progress above the booking cards while a loan account is selected. A view of its
+/// own so that only it follows the sidebar selection, not the whole inspector.
+private struct SelectedLoanCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if case .account(let id) = model.sidebarSelection, let a = model.account(for: id), a.kind == .loan {
+            LoanProgressCard(account: a)
+        }
     }
 }
 

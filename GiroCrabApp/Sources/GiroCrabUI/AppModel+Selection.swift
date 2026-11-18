@@ -109,6 +109,23 @@ extension AppModel {
         selectionPlaceholderTask = nil
         isLoadingSelection = false
         selectionLoadStamp &+= 1
+        // the new data (or a synchronous reload) follows in this update
+        if streamTopPending { requestStreamTop(withData: false) }
+    }
+
+    /// Back to the top of the booking stream for a new sidebar selection. `withData`: the list
+    /// loads in the background, so the scroll waits for it (`endSelectionLoad`). Scrolling the old
+    /// list at the click cost a layout pass of its own, and clearing the chart marker's day then
+    /// re-ran every day header on screen, all for data about to be replaced.
+    func requestStreamTop(withData: Bool) {
+        if withData {
+            streamTopPending = true
+            return
+        }
+        streamTopPending = false
+        // before the publish selects a booking: its day becomes the marker's day (#593)
+        scrollFocusDay = nil
+        streamTopRequest &+= 1
     }
 
     /// The load is slow: empty list and chart, so nothing of the previous
