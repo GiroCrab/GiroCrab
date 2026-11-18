@@ -103,11 +103,13 @@ const BOOKING_FROM_SQL: &str = "FROM transactions t JOIN accounts a ON a.id = t.
      LEFT JOIN rules r ON r.id = t.rule_id AND r.deleted_ms IS NULL";
 
 /// SELECT list read by `booking_from_row`; `share_sql` is the KPI share (column 21).
+/// The document count (column 16) is stored files plus references (#590).
 fn booking_columns(share_sql: &str) -> String {
+    let links = crate::document_links::COUNT_FOR_BOOKING_SQL;
     format!(
         "t.id, t.account_id, a.name, t.booking_date, t.value_date, t.amount_cents, t.currency, t.counterparty,
          t.counterparty_iban, t.purpose, t.booking_text, cat.id, t.category_source, r.id, t.checked, a.kind,
-         (SELECT count(*) FROM booking_documents d WHERE d.booking_id = t.id), t.note,
+         (SELECT count(*) FROM booking_documents d WHERE d.booking_id = t.id) + {links}, t.note,
          t.purpose_code, t.gvc, t.salary_flag, {share_sql},
          ((t.external_id LIKE 'pending-%' OR t.external_id LIKE 'advanzia-hold-%')), t.item_refs, t.end_to_end_id, t.mandate_id, t.creditor_id, t.external_id"
     )

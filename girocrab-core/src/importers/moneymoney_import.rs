@@ -1543,8 +1543,8 @@ fn take_over(
 
 /// Re-sync repair: the bank booking `bank_id` is stored (old duplicate) while its
 /// MoneyMoney twin is still un-adopted. If the bank row is untouched (no manual category,
-/// note, check mark, splits or documents) it is removed and the rich MoneyMoney row takes
-/// over its external id. Returns true when merged.
+/// note, check mark, splits, documents or linked receipts) it is removed and the rich
+/// MoneyMoney row takes over its external id. Returns true when merged.
 pub(crate) fn merge_synced_twin(
     conn: &Connection,
     bank_id: i64,
@@ -1560,7 +1560,9 @@ pub(crate) fn merge_synced_twin(
               WHERE id = ?1
                 AND deleted_ms IS NULL AND category_source != 'manual' AND checked = 0 AND trim(note) = ''
                 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = transactions.id)
-                AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = transactions.id)",
+                AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = transactions.id)
+                AND NOT EXISTS (SELECT 1 FROM document_links l
+                                 WHERE l.booking_id = transactions.id AND l.deleted_ms IS NULL)",
         )?
         .query_row([bank_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
         .optional()?;
@@ -2887,6 +2889,36 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
             "Kartenzahlung"
         );
         assert_eq!(purpose_without_refs("EREF+123 Einkauf"), "EREF+123 Einkauf");
+    }
+
+    /// A bank row that carries a linked receipt (#590) counts as edited:
+    /// removing it would leave the reference on a deleted booking.
+    #[test]
+    fn merge_synced_twin_spares_a_booking_with_a_linked_receipt() {
+        let (_dir, v) = vault();
+        let acc = mm_acct(&v, "10.05.2026;REWE Markt;Einkauf;-12,50;Essen;wichtig\n");
+        let bank_row = {
+            let db = v.db().unwrap();
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose)
+                 VALUES (?1, 'f1', '2026-05-10', -1250, 'REWE', 'EREF+1')",
+                params![acc],
+            )
+            .unwrap();
+            db.last_insert_rowid()
+        };
+        v.attach_document_link(bank_row, "https://archiv.example/1".into(), String::new())
+            .unwrap();
+        let db = v.db().unwrap();
+        assert!(
+            !merge_synced_twin(&db, bank_row, "2026-05-10", -1250, "", "REWE", "EREF+1").unwrap()
+        );
+        // without the reference the repair goes through
+        db.execute("UPDATE document_links SET deleted_ms = 1", [])
+            .unwrap();
+        assert!(
+            merge_synced_twin(&db, bank_row, "2026-05-10", -1250, "", "REWE", "EREF+1").unwrap()
+        );
     }
 
     #[test]
