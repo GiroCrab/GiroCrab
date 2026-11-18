@@ -195,6 +195,20 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 <!-- sync:connectors:start -->
 | Bank | Schnittstelle | Umsätze | Salden | Depot | Überweisung | Dauerauftrag | PDF/Postfach | Status |
 |---|---|---|---|---|---|---|---|---|
+| Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
+| Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | 🧪 Test gesucht |
+| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
+| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
+| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
+| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
+| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
+| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
+| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
+| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
+| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
+| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✅ Verifiziert |
 | FinTS-Bank (BLZ + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verifiziert |
@@ -212,19 +226,6 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
 | Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
 | Weitere Banken per PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen |
-| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
-| Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | 🧪 Test gesucht |
-| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
-| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
-| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
-| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
-| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
-| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
-| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
-| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
-| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
-| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
-| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ⚠️ Mit Einschränkungen |
 
 Weitere deutsche Banken mit FinTS 3.0 (PIN/TAN) lassen sich über BLZ und FinTS-URL anbinden (2.011 Institute im FinTS-Verzeichnis); europäische PSD2-Banken über Enable Banking mit einer eigenen, kostenlosen Anwendung.
 
@@ -425,6 +426,20 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 <!-- sync:connectors:start -->
 | Bank | Interface | Transactions | Balances | Securities | Transfers | Standing orders | PDF/post box | Status |
 |---|---|---|---|---|---|---|---|---|
+| Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
+| Amazon orders | Web-Portal | ✓ | – | – | – | – | – | 🧪 Testing wanted |
+| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
+| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
+| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
+| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
+| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
+| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
+| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
+| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
+| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | ✅ Verified |
+| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ⚠️ Limited |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✅ Verified |
 | FinTS bank (bank code + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✅ Verified |
@@ -442,19 +457,6 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | More banks via PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ⚠️ Limited |
 | PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | ✅ Verified |
 | Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
-| Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
-| Amazon orders | Web-Portal | ✓ | – | – | – | – | – | 🧪 Testing wanted |
-| easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
-| EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
-| FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
-| FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
-| Ford Money | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
-| Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
-| quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
-| Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
-| Trade Republic | Web-Portal | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
-| Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | ✅ Verified |
-| Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ⚠️ Limited |
 
 Further German banks with FinTS 3.0 (PIN/TAN) can be connected via bank code and FinTS URL (2,011 institutions in the FinTS directory); European PSD2 banks via Enable Banking with your own free application.
 
