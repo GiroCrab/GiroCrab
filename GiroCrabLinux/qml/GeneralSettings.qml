@@ -138,6 +138,13 @@ ScrollView {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Eine ausgewählte Buchung gilt nach dieser Zeit als geprüft – wie eine gelesene E-Mail. Bei Mehrfachauswahl nie.") }
+            CheckBox {
+                text: qsTr("Neue Buchungen beim Auswählen eines Kontos automatisch als gelesen markieren")
+                checked: AppModel.markAccountBookingsReadOnSelection
+                onToggled: AppModel.markAccountBookingsReadOnSelection = checked
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Markiert alle ungelesenen Buchungen dieses Kontos – unabhängig von Zeitraum und Filtern.") }
         }
         // SettingsView.swift › TransferSettingsSection: opt-in clipboard check (#663), per device
         SettingsFormSection {

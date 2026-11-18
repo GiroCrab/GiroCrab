@@ -143,6 +143,10 @@ struct GeneralSettings: View {
                 }
                 Text("Eine ausgewählte Buchung gilt nach dieser Zeit als geprüft – wie eine gelesene E-Mail. Bei Mehrfachauswahl nie.")
                     .appFont(.caption).foregroundStyle(.secondary)
+                Toggle("Neue Buchungen beim Auswählen eines Kontos automatisch als gelesen markieren",
+                       isOn: $model.markAccountBookingsReadOnSelection)
+                Text("Markiert alle ungelesenen Buchungen dieses Kontos – unabhängig von Zeitraum und Filtern.")
+                    .appFont(.caption).foregroundStyle(.secondary)
                 Picker("Zeitraum beim ersten Abruf", selection: firstFetchDays) {
                     Text("90 Tage").tag(90)
                     Text("1 Jahr").tag(365)

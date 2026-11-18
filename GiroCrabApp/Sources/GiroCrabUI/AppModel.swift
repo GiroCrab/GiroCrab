@@ -115,6 +115,7 @@ public final class AppModel {
     @ObservationIgnored var logoCache: [String: (image: Image, pixels: Int)] = [:]
 
     // UI state
+    static var markAccountBookingsReadOnSelectionDefaultsKey: String { "bookings.markAccountReadOnSelection" }
     var sidebarSelection: SidebarItem? = .allAccounts {
         didSet {
             // Any other choice in the sidebar ends the merchant list (#495).
@@ -124,6 +125,12 @@ public final class AppModel {
             if case .category(let id)? = sidebarSelection, let saved = categoryPeriod(id), saved != period {
                 period = saved
                 return
+            }
+            if sidebarSelection != oldValue,
+               markAccountBookingsReadOnSelection,
+               case .account(let accountID)? = sidebarSelection,
+               (allAccounts.first(where: { $0.id == accountID })?.newCount ?? 0) > 0 {
+                markAllChecked(accountIDs: [accountID])
             }
             guard !resetsSelectionBeforeReloadAll else { return }
             reloadSelection(periodChanged: false)
@@ -334,6 +341,15 @@ public final class AppModel {
     }
     var autoReviewDelay: AutoReviewDelay = .stored {
         didSet { UserDefaults.standard.set(autoReviewDelay.rawValue, forKey: AutoReviewDelay.defaultsKey) }
+    }
+    /// Mark all unread bookings in a selected account as read (per device).
+    var markAccountBookingsReadOnSelection: Bool = UserDefaults.standard.bool(
+        forKey: AppModel.markAccountBookingsReadOnSelectionDefaultsKey
+    ) {
+        didSet {
+            UserDefaults.standard.set(markAccountBookingsReadOnSelection,
+                                      forKey: AppModel.markAccountBookingsReadOnSelectionDefaultsKey)
+        }
     }
     @ObservationIgnored var autoReviewTask: Task<Void, Never>?
 

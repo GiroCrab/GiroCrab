@@ -17,6 +17,18 @@ final class SelectionLoadTests: XCTestCase {
 
     override func tearDown() async throws { model = nil }
 
+    private func unreadBookingCount(accountID: Int64) throws -> Int {
+        var filter = model.currentFilter
+        filter.accountIds = [accountID]
+        filter.categoryId = nil; filter.uncategorizedOnly = false
+        filter.search = nil; filter.dateFrom = nil; filter.dateTo = nil
+        filter.direction = .all; filter.scope = .all; filter.merchantKey = nil
+        filter.tagIds = []; filter.untaggedOnly = false; filter.checked = false
+        filter.amountMinCents = nil; filter.amountMaxCents = nil
+        filter.limit = 0; filter.offset = 0; filter.wholeDays = false
+        return Int(try XCTUnwrap(model.vault).countTransactions(filter: filter))
+    }
+
     private func expectedIDs() throws -> [Int64] {
         try XCTUnwrap(model.vault).listTransactions(filter: model.currentFilter).transactions.map(\.id)
     }
@@ -78,6 +90,21 @@ final class SelectionLoadTests: XCTestCase {
         XCTAssertTrue(model.bookings.allSatisfy { $0.accountId == account.id })
         XCTAssertNil(model.errorMessage)
         try assertMatchesSynchronousLoad()
+    }
+
+    func testSelectingAccountMarksItsNewBookingsReadWhenEnabled() async throws {
+        model.markAccountBookingsReadOnSelection = false
+        defer { model.markAccountBookingsReadOnSelection = false }
+        let account = try XCTUnwrap(model.allAccounts.first { $0.newCount > 0 })
+        XCTAssertGreaterThan(try unreadBookingCount(accountID: account.id), 0)
+        model.markAccountBookingsReadOnSelection = true
+        model.interactiveSidebarSelection = .account(account.id)
+        for _ in 0..<300 {
+            if try unreadBookingCount(accountID: account.id) == 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(try unreadBookingCount(accountID: account.id), 0)
+        XCTAssertNil(model.errorMessage)
     }
 
     /// Default grace period: a fast load swaps old for new data in one step,

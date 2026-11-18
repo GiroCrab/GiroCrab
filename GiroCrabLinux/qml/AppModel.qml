@@ -192,6 +192,11 @@ QtObject {
     property var cashflow: []
 
     // MARK: UI state
+    property bool markAccountBookingsReadOnSelection: String(
+        defaults.value("bookings/markAccountReadOnSelection", false)
+    ) === "true"
+    onMarkAccountBookingsReadOnSelectionChanged:
+        defaults.setValue("bookings/markAccountReadOnSelection", markAccountBookingsReadOnSelection)
     property string sidebarSelection: "all"
     // any other sidebar choice ends the merchant list (#495) before the list reloads
     onSidebarSelectionChanged: {
@@ -200,6 +205,11 @@ QtObject {
         // to it; that load covers the selection too (#425).
         const saved = sidebarSelection.startsWith("category:") ? categoryPeriod(Number(sidebarSelection.slice(9))) : null
         if (saved !== null && saved !== period) { selectionNeeds.recurring = true; period = saved; return }
+        if (markAccountBookingsReadOnSelection && sidebarSelection.startsWith("account:")) {
+            const id = Number(sidebarSelection.slice(8))
+            const account = allAccounts.find(a => a.id === id)
+            if (account && account.new_count > 0) markAllChecked([id])
+        }
         reloadSelection(false)
     }
     property string scope: "All"               // BookingScope
