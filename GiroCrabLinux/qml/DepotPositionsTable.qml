@@ -37,6 +37,11 @@ Rectangle {
     signal copyAll()
     /// Extra context-menu entries of the host: position => [{ title, action, separator }]
     property var rowActions: null
+    /// valueHistory(available:open:) (#578): positions with a value history get a chart button and
+    /// a menu item that emit `historyRequested`. null: no history column.
+    property var historyAvailable: null
+    signal historyRequested(var position)
+    function hasHistory(p) { return !!historyAvailable && !!p && historyAvailable(p) }
     /// Which depot(s) hold a position, where the table spans several (Vermögen).
     property var depotLabel: null
     /// Rows unfolded in the narrow layout (`--expand-rows`: the first two).
@@ -56,7 +61,7 @@ Rectangle {
     readonly property real valueW: 104 * Theme.textScale
     readonly property real shareW: 64 * Theme.textScale
     readonly property real gainW: 124 * Theme.textScale
-    readonly property real editW: 22 * Theme.textScale
+    readonly property real editW: (historyAvailable ? 44 : 22) * Theme.textScale
     readonly property bool anyCalculatedGain: positions.some(p => p.gain && !p.gain.reported)
 
     implicitHeight: col.implicitHeight
@@ -198,7 +203,7 @@ Rectangle {
                                text: table.shareText(rowBox.p); font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.secondary
                                Sensitive { amounts: true } }
                         GainBlock { p: rowBox.p; Layout.preferredWidth: table.gainW }
-                        EditButton { p: rowBox.p; Layout.preferredWidth: table.editW }
+                        RowButtons { p: rowBox.p; Layout.preferredWidth: table.editW }
                     }
                     // narrow: name with its subline on the left, value with gain and share on the right
                     ColumnLayout {
@@ -228,7 +233,7 @@ Rectangle {
                                        font.pixelSize: Theme.caption; font.features: { "tnum": 1 }
                                        color: rowBox.p.gain ? DepotMetrics.tint(rowBox.p.gain.cents) : Theme.secondary; Sensitive { amounts: true } } }
                             // a narrow window keeps the pencil at hand
-                            EditButton { p: rowBox.p }
+                            RowButtons { p: rowBox.p }
                             Item {
                                 id: detailsButton
                                 implicitWidth: 18; implicitHeight: 18
@@ -336,12 +341,15 @@ Rectangle {
                 if (a.separator) built.push(actionDivider.createObject(null))
                 else built.push(actionEntry.createObject(null, { text: a.title, run: a.action }))
             }
-            built.forEach((o, i) => insertItem(i + 1, o))
+            built.forEach((o, i) => insertItem(i + 2, o))
             entries = built
         }
         AppMenuItem { text: qsTr("Klassifizierung bearbeiten"); icon.name: SF.icon("pencil")
                       visible: !!rowMenu.position && !!rowMenu.position.asset.classification.security_key; height: visible ? implicitHeight : 0
                       onTriggered: table.classify(rowMenu.position) }
+        AppMenuItem { text: qsTr("Wertverlauf anzeigen"); icon.name: SF.icon("chart.xyaxis.line")
+                      visible: table.hasHistory(rowMenu.position); height: visible ? implicitHeight : 0
+                      onTriggered: table.historyRequested(rowMenu.position) }
         AppMenuItem { text: qsTr("Position kopieren"); icon.name: SF.icon("doc.on.doc")
                       onTriggered: AppModel.copyToClipboard(DepotMetrics.clipboardLine(rowMenu.position.holding)) }
         AppMenuItem { text: qsTr("Alle Positionen kopieren"); icon.name: SF.icon("doc.on.doc"); onTriggered: table.copyAll() }
@@ -411,6 +419,24 @@ Rectangle {
         HoverHandler { id: gainHover }
         ToolTip.visible: gainHover.hovered; ToolTip.delay: 600
         ToolTip.text: !gb.p.gain ? qsTr("Kein Einstandskurs geliefert") : gb.p.gain.reported ? qsTr("Unrealisierte GuV laut Bank") : qsTr("Aus dem Einstandskurs berechnet")
+    }
+    /// The chart button (only with a value history) beside the pencil.
+    component RowButtons: RowLayout {
+        id: rb
+        property var p
+        spacing: 0
+        Item {
+            visible: table.hasHistory(rb.p)
+            implicitWidth: 22; implicitHeight: 22
+            IconButton {
+                anchors.centerIn: parent
+                symbol: "chart.xyaxis.line"; symbolSize: 12
+                onClicked: table.historyRequested(rb.p)
+                ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Wertverlauf anzeigen")
+                Accessible.name: qsTr("Wertverlauf anzeigen")
+            }
+        }
+        EditButton { p: rb.p }
     }
     /// Edits asset class and instrument; only where the position has a stable classification key.
     component EditButton: Item {

@@ -70,13 +70,16 @@ AssetAccountFrame {
         currency: tv.currency
         valueCents: tv.item ? tv.item.holding.value_cents : (tv.account ? tv.account.balance_cents : 0)
         valueLabel: tv.item && tv.item.sold ? qsTr("Verkauft") : qsTr("Wert heute")
+        // the same chart as the depots (735f8de): the days before the first holding are no values
         chartContent: {
-            if (tv.item) {
-                const r = AppModel.periodRange()
-                return { kind: "points", points: AppModel.selectedAssetHistory.filter(p => (r[0] === null || p.date >= r[0]) && (r[1] === null || p.date <= r[1])) }
-            }
-            return AppModel.isLoadingSelection ? { kind: "loading" } : { kind: "points", points: AppModel.history }
+            const r = AppModel.periodRange()
+            let history
+            if (tv.item) history = AppModel.selectedAssetHistory.filter(p => (r[0] === null || p.date >= r[0]) && (r[1] === null || p.date <= r[1]))
+            else if (!AppModel.isLoadingSelection) history = AppModel.history
+            else return { kind: "loading" }
+            return { kind: "depot", points: DepotValueHistory.assetPoints(history), from: r[0], to: r[1] }
         }
+        chartFootnote: DepotValueHistory.footnote
         subtitle: [
             Text { readonly property string line: tv.account ? [tv.account.bank_name, tv.account.iban ? Fmt.iban(tv.account.iban) : ""].filter(s => s).join(" · ") : ""
                    visible: line !== ""; text: line; font.pixelSize: Theme.caption; color: Theme.secondary; Sensitive {} },
