@@ -26,7 +26,7 @@ struct SidebarView: View {
 
     var body: some View {
         @Bindable var model = model
-        List(selection: $model.interactiveSidebarSelection) {
+        SidebarSelectionList {
             // Pages across all accounts that are opened daily or as a starting point stay above the
             // account tree: with many accounts they must not end up below the visible part.
             // „Neue Umsätze“ (#352)
@@ -601,6 +601,24 @@ private struct AccountRowHeight: ViewModifier {
     }
 }
 
+/// The sidebar `List` and its selection. Reading the selection binding made the reading view
+/// depend on `sidebarSelection`: in `SidebarView` every click re-ran its whole body and rebuilt
+/// the outline. Here only this wrapper re-runs; its rows are the value `SidebarView` built last,
+/// so they stay as they are and only the selection highlight moves.
+private struct SidebarSelectionList<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        @Bindable var model = model
+        List(selection: $model.interactiveSidebarSelection) { content }
+    }
+}
+
 /// Disclosure arrow of every collapsible sidebar header: `chevron.right` when
 /// closed, `chevron.down` when open. One 12 pt column, so the icons of
 /// all headers and accounts share one vertical axis.
@@ -639,7 +657,7 @@ struct SectionHeader: View {
     var open: Bool = true
     var toggle: () -> Void = {}
 
-    private var selected: Bool { item != nil && model.sidebarSelection == item }
+    private var selected: Bool { item.map { model.sidebarRowSelection(for: $0).isSelected } ?? false }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -679,7 +697,7 @@ struct AccountRow: View {
     /// Selected row: the amount uses the hierarchical `.primary` style, which
     /// macOS turns white on the accent-coloured selection (fixed theme colours
     /// stay dark there). `backgroundProminence` is not set in a macOS sidebar.
-    private var onSelection: Bool { model.sidebarSelection == .account(account.id) }
+    private var onSelection: Bool { model.sidebarRowSelection(for: .account(account.id)).isSelected }
     @Environment(\.reportRedaction) private var redaction
     let account: Account
     var syncing: Bool = false

@@ -42,6 +42,19 @@ enum MainColumn: Equatable {
     }
 }
 
+/// Whether one sidebar row is the selected one (`AppModel.sidebarRowSelection(for:)`). A row
+/// that compared `sidebarSelection` itself re-ran on every click, and every sidebar row has a
+/// hosting view of its own; with one flag per row only the old and the new selection re-run.
+@MainActor
+@Observable
+final class SidebarRowSelection {
+    var isSelected: Bool
+
+    init(isSelected: Bool) {
+        self.isSelected = isSelected
+    }
+}
+
 /// Document origin is independent of its booking link. Bank connectors and
 /// statement imports store a source key; user uploads leave it empty.
 enum DocumentsScope: String, CaseIterable, Identifiable {

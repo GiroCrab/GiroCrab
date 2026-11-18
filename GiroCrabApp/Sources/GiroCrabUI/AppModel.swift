@@ -122,6 +122,11 @@ public final class AppModel {
     var sidebarSelection: SidebarItem? = .allAccounts {
         didSet {
             mainColumn = MainColumn(sidebarSelection)
+            if oldValue != sidebarSelection {
+                oldValue.flatMap { sidebarRowSelections[$0] }?.isSelected = false
+                sidebarSelection.flatMap { sidebarRowSelections[$0] }?.isSelected = true
+                untrackedSidebarSelection = sidebarSelection
+            }
             selectionIsOverview = sidebarSelection == .allAccounts
             selectionIsNewBookings = sidebarSelection == .newBookings
             requestStreamTop(withData: loadsSelectionInBackground)
@@ -142,6 +147,11 @@ public final class AppModel {
     /// value does not notify, so a switch between accounts or categories leaves them alone
     /// (re-running them re-created and re-laid out every column of the window).
     private(set) var mainColumn: MainColumn = .bookings
+    /// Per sidebar row: is it the selected one (`sidebarRowSelection(for:)`), kept in step by
+    /// `sidebarSelection`.
+    @ObservationIgnored var sidebarRowSelections: [SidebarItem: SidebarRowSelection] = [:]
+    /// `sidebarSelection` for code that must not observe it (a row's first lookup of its flag).
+    @ObservationIgnored var untrackedSidebarSelection: SidebarItem? = .allAccounts
     /// „Alle Konten“ / „Neue Umsätze“ is selected: the booking stream changes its layout for
     /// these. Stored like `mainColumn`, so a switch between accounts or categories leaves the
     /// stream view alone until the new list arrives.

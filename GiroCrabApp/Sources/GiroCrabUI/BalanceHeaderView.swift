@@ -246,7 +246,7 @@ struct StreamHeaderCard: View {
             }
             .contextMenu { ChartStyleInlinePicker() }
         } else if case .category = model.sidebarSelection {
-            CategorySumChart(sums: model.categoryHistory)
+            CategorySumChart(sums: model.categoryHistory, style: chartStyle)
         } else {
             BalanceChart(points: model.history) { model.jumpToDay($0) }
         }

@@ -28,6 +28,15 @@ extension AppModel {
 
     var isMultiSelection: Bool { selectedBookingIDs.count > 1 }
 
+    /// The selected-state flag of one sidebar row; a row reads `isSelected` instead of
+    /// `sidebarSelection`, so a click re-runs only the rows whose state changes.
+    func sidebarRowSelection(for item: SidebarItem) -> SidebarRowSelection {
+        if let flag = sidebarRowSelections[item] { return flag }
+        let flag = SidebarRowSelection(isSelected: untrackedSidebarSelection == item)
+        sidebarRowSelections[item] = flag
+        return flag
+    }
+
     /// Sum of the selected bookings over all accounts, one entry per currency (#878).
     /// Currencies are never added together; the entries are sorted by currency code.
     var selectionTotals: [SelectionTotal] {
