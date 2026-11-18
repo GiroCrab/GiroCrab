@@ -23,6 +23,7 @@ pub mod broker_documents;
 pub mod bunq;
 pub mod comdirect;
 pub(crate) mod comdirect_postbox;
+pub(crate) mod consorsbank_archive;
 pub mod demo;
 pub mod dpop;
 pub mod easybank;
@@ -51,12 +52,14 @@ pub mod volkswagen_bank;
 pub(crate) mod account_selection;
 pub use account_selection::ConnectionAccountChoice;
 mod catalog;
+mod paging;
 mod persist;
 mod sync_session;
 mod transfer_session;
 mod types;
 
 pub use catalog::*;
+pub(crate) use paging::{paginate, Paged};
 pub use persist::*;
 pub use sync_session::*;
 pub use transfer_session::*;
@@ -136,17 +139,15 @@ pub(crate) fn ensure_secure_fints_url(url: &str) -> CoreResult<()> {
         if fints_presets::is_valid_fints_url(url.trim()) {
             return Ok(());
         }
-        return Err(CoreError::Protocol {
-            message: "FinTS URL is not a public https address".to_string(),
-        });
+        return Err(CoreError::protocol(
+            "FinTS URL is not a public https address",
+        ));
     }
     #[cfg(test)]
     if lower.starts_with("http://127.0.0.1") || lower.starts_with("http://localhost") {
         return Ok(());
     }
-    Err(CoreError::Protocol {
-        message: "FinTS URL must use https://".to_string(),
-    })
+    Err(CoreError::protocol("FinTS URL must use https://"))
 }
 
 /// Upper bound for JSON / text / FinTS responses.
@@ -198,9 +199,7 @@ pub(crate) async fn read_json_or_null(resp: reqwest::Response) -> serde_json::Va
     }
 }
 
-pub(crate) fn today() -> String {
-    chrono::Local::now().format("%Y-%m-%d").to_string()
-}
+pub(crate) use crate::dates::today_iso as today;
 
 #[cfg(test)]
 mod tests;

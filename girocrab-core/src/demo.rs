@@ -2,7 +2,7 @@
 //! (`--demo-seed` / `GIROCRAB_DEMO_SEED=1`). Deterministic and relative to
 //! today so screenshots are reproducible. Nothing in here is real data.
 
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use jiff::civil::Date;
 use rusqlite::{params, Connection};
 
 use crate::connectors::{descriptor, group_for};
@@ -11,7 +11,7 @@ use crate::models::{AccountKind, ConnectorKind};
 use crate::vault::Vault;
 
 /// Documents across three accounts, with origin and booking link varied independently.
-fn demo_documents(conn: &Connection, today: NaiveDate) -> CoreResult<()> {
+fn demo_documents(conn: &Connection, today: Date) -> CoreResult<()> {
     // account, title, document type, days ago, bank document, linked counterparty
     let docs = [
         (
@@ -121,9 +121,7 @@ fn demo_documents(conn: &Connection, today: NaiveDate) -> CoreResult<()> {
             [account_ref],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
-        let mut date = (today - Duration::days(days_ago))
-            .format("%Y-%m-%d")
-            .to_string();
+        let mut date = crate::dates::iso(today - crate::dates::days(days_ago));
         let mut lines = vec![
             title.replace('–', "-"),
             "GiroCrab Demo - frei erfundene Beispieldaten".into(),
@@ -186,14 +184,14 @@ fn demo_documents(conn: &Connection, today: NaiveDate) -> CoreResult<()> {
 
 /// Order evidence mirrors the existing Amazon card payments. Only the card
 /// settlement enters totals; the separate order account starts excluded.
-fn demo_orders(conn: &Connection, card: i64, today: NaiveDate) -> CoreResult<u32> {
+fn demo_orders(conn: &Connection, card: i64, today: Date) -> CoreResult<u32> {
     conn.execute("INSERT INTO bank_connections(connector,display_name,login_name,sf_symbol) VALUES ('amazon-orders','Amazon','demo-amazon-orders','shippingbox')", [])?;
     let cid = conn.last_insert_rowid();
     let (name, symbol, order) = group_for(AccountKind::Order);
     let group = Vault::ensure_group(conn, name, symbol, order)?;
     conn.execute("INSERT INTO accounts(connection_id,group_id,external_ref,name,bank_name,currency,kind,sf_symbol,include_in_total,total_ms,balance_derived,balance_date)
         VALUES (?1,?2,?3,'Amazon Bestellungen (Demo)','Amazon','EUR','order','shippingbox',0,0,1,?4)",
-        params![cid,group,format!("amazon-orders-{cid}"),today.format("%Y-%m-%d").to_string()])?;
+        params![cid,group,format!("amazon-orders-{cid}"),crate::dates::iso(today)])?;
     let account = conn.last_insert_rowid();
     let (uuid, _) = crate::user_groups::find_or_create(conn, "Bestellungen", "shippingbox")?;
     crate::user_groups::assign(conn, account, Some(&uuid), 0)?;
@@ -202,14 +200,12 @@ fn demo_orders(conn: &Connection, card: i64, today: NaiveDate) -> CoreResult<u32
         (18, "302-2345678-9012345", -2490, "Buch"),
         (37, "302-3456789-0123456", -6149, "Haushaltsartikel"),
     ] {
-        let date = (today - Duration::days(days))
-            .format("%Y-%m-%d")
-            .to_string();
+        let date = crate::dates::iso(today - crate::dates::days(days));
         conn.execute("INSERT INTO transactions(account_id,external_id,booking_date,value_date,amount_cents,currency,counterparty,purpose,booking_text)
             VALUES (?1,?2,?3,?3,?4,'EUR','Amazon',?5,'Amazon-Bestellung')",
             params![account,format!("amazon:{code}"),date,cents,format!("{item} – Bestellung {code}")])?;
     }
-    let date = (today - Duration::days(2)).format("%Y-%m-%d").to_string();
+    let date = crate::dates::iso(today - crate::dates::days(2));
     for (id, key, text) in [
         (
             account,
@@ -1514,19 +1510,19 @@ const BOOKINGS: &[(usize, i64, i64, &str, &str, &str)] = &[
 
 struct Tx {
     account: &'static str,
-    date: NaiveDate,
+    date: Date,
     cents: i64,
     counterparty: String,
     purpose: String,
     booking_text: String,
 }
 
-fn generate(today: NaiveDate) -> Vec<Tx> {
+fn generate(today: Date) -> Vec<Tx> {
     BOOKINGS
         .iter()
         .map(|(acc, ago, cents, cp, purpose, bt)| Tx {
             account: DEMO_ACCOUNTS[*acc].external_ref,
-            date: today - Duration::days(*ago),
+            date: today - crate::dates::days(*ago),
             cents: *cents,
             counterparty: cp.to_string(),
             purpose: purpose.to_string(),
@@ -1669,7 +1665,7 @@ impl Vault {
                 )?;
             }
         }
-        let today = Local::now().date_naive();
+        let today = crate::dates::today();
         let txs = generate(today);
         for g in [
             "Giro & Tagesgeld",
@@ -1713,7 +1709,7 @@ impl Vault {
                     spec.account_number,
                     spec.kind.as_str(),
                     balance,
-                    today.format("%Y-%m-%d").to_string(),
+                    crate::dates::iso(today),
                     spec.kind.sf_symbol(),
                     i as i32,
                     spec.principal_cents,
@@ -1768,7 +1764,7 @@ impl Vault {
                 params![
                     acc_ids["demo-giro"],
                     format!("DEMOPLAN{n}"),
-                    (today + chrono::Duration::days(days)).format("%Y-%m-%d").to_string(),
+                    crate::dates::iso(today + crate::dates::days(days)),
                     name,
                     iban,
                     cents,
@@ -1791,7 +1787,7 @@ impl Vault {
                 params![
                     acc_ids["demo-giro"],
                     format!("DEMODEBIT{n}"),
-                    (today + chrono::Duration::days(9)).format("%Y-%m-%d").to_string(),
+                    crate::dates::iso(today + crate::dates::days(9)),
                     name,
                     iban,
                     purpose
@@ -2107,7 +2103,7 @@ impl Vault {
             let depot = acc_ids["demo-depot"];
             let mut n = 0;
             for months_ago in 0..12_i64 {
-                let day = today - Duration::days(months_ago * 30 + 3);
+                let day = today - crate::dates::days(months_ago * 30 + 3);
                 for (isin, name, price) in [
                     (
                         "IE00B4L5Y983",
@@ -2123,7 +2119,7 @@ impl Vault {
                         depot,
                         &SecurityTransaction {
                             external_id: format!("demo-st-{n}"),
-                            booking_date: day.format("%Y-%m-%d").to_string(),
+                            booking_date: crate::dates::iso(day),
                             isin: isin.into(),
                             name: name.into(),
                             direction: SecurityDirection::Buy,
@@ -2153,9 +2149,9 @@ impl Vault {
                     depot,
                     &SecurityTransaction {
                         external_id: format!("demo-st-{n}"),
-                        booking_date: (today - Duration::days(months_ago * 30 + 10))
-                            .format("%Y-%m-%d")
-                            .to_string(),
+                        booking_date: crate::dates::iso(
+                            today - crate::dates::days(months_ago * 30 + 10),
+                        ),
                         isin: "IE00B4L5Y983".into(),
                         name: "iShares Core MSCI World UCITS ETF".into(),
                         direction,
@@ -2577,7 +2573,7 @@ impl Vault {
             let mut n = 1000;
             for r in rows {
                 n += 1;
-                let day = |d: i64| (today - Duration::days(d)).format("%Y-%m-%d").to_string();
+                let day = |d: i64| crate::dates::iso(today - crate::dates::days(d));
                 crate::security_transactions::upsert(
                     &tx,
                     acc_ids[r.account],
@@ -2620,10 +2616,10 @@ impl Vault {
                 record_as, ObservedValue, KIND_POSITION, KIND_TOTAL, SOURCE_FETCH, SOURCE_IMPORT,
             };
             let noon = |d: &str| {
-                chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                Date::strptime("%Y-%m-%d", d)
                     .ok()
-                    .and_then(|d| d.and_hms_opt(12, 0, 0))
-                    .map_or(0, |t| t.and_utc().timestamp_millis())
+                    .and_then(|d| jiff::tz::TimeZone::UTC.to_timestamp(d.at(12, 0, 0, 0)).ok())
+                    .map_or(0, |t| t.as_millisecond())
             };
             let value =
                 |kind, position: &str, name: &str, date: String, cents: i64| ObservedValue {
@@ -2657,7 +2653,7 @@ impl Vault {
                 let levels = demo_depot_levels(seed, start, vol, weekends, today);
                 let value_at =
                     |ago: i64| -> i64 { (end as f64 * levels[ago as usize]).round() as i64 };
-                let day = |ago: i64| (today - Duration::days(ago)).format("%Y-%m-%d").to_string();
+                let day = |ago: i64| crate::dates::iso(today - crate::dates::days(ago));
                 let (mut fetched, mut imported) = (Vec::new(), Vec::new());
                 for ago in (0..=365_i64).rev() {
                     match key {
@@ -2722,7 +2718,7 @@ impl Vault {
             &crate::loans::LoanSetup {
                 name: "Autokredit".into(),
                 original_cents: Some(15_000_00),
-                anchor_date: (today - Duration::days(60)).format("%Y-%m-%d").to_string(),
+                anchor_date: crate::dates::iso(today - crate::dates::days(60)),
                 anchor_balance_cents: 9_400_00,
                 interest_rate_ppm: Some(49_900),
                 match_expr: "Autobank".into(),
@@ -2773,8 +2769,8 @@ impl Vault {
                  VALUES (?1, ?2, ?3, ?3, ?4, 'EUR', ?5, ?6, ?7, ?8, ?9)",
             )?;
             for (i, t) in txs.iter().enumerate() {
-                let date = t.date.format("%Y-%m-%d").to_string();
-                let checked = (today - t.date).num_days() > 10;
+                let date = crate::dates::iso(t.date);
+                let checked = crate::dates::days_between(t.date, today) > 10;
                 ins.execute(params![
                     acc_ids[t.account],
                     format!("demo-{i}"),
@@ -2797,7 +2793,7 @@ impl Vault {
                          'Rücklastschrift AC04 Mitgliedsbeitrag', 'RÜCKLASTSCHRIFT', 0, 'M-2025-014', 'M-2025-014-20261001')",
                 params![
                     acc_ids["demo-giro"],
-                    (today - Duration::days(5)).format("%Y-%m-%d").to_string()
+                    crate::dates::iso(today - crate::dates::days(5))
                 ],
             )?;
             n += 1;
@@ -2826,8 +2822,8 @@ impl Vault {
             "UPDATE accounts SET balance_derived = 1 WHERE id = ?1",
             [visa],
         )?;
-        let since = (today - Duration::days(90)).with_day(1).unwrap_or(today);
-        crate::opening_balance::store(&tx, visa, Some(0), &since.format("%Y-%m-%d").to_string())?;
+        let since = (today - crate::dates::days(90)).first_of_month();
+        crate::opening_balance::store(&tx, visa, Some(0), &crate::dates::iso(since))?;
         let card = DEMO_ACCOUNTS
             .iter()
             .find(|s| s.external_ref == "demo-visa")
@@ -2855,9 +2851,7 @@ impl Vault {
             (4, -12_40, "Wochenmarkt", "Obst und Gemüse"),
             (2, -3_80, "Bäckerei Sonnenschein", "Brötchen"),
         ] {
-            let day = (today - Duration::days(days_ago))
-                .format("%Y-%m-%d")
-                .to_string();
+            let day = crate::dates::iso(today - crate::dates::days(days_ago));
             let setup = crate::offline::ManualBookingSetup {
                 booking_date: day.clone(),
                 amount_cents: cents,
@@ -2886,14 +2880,8 @@ impl Vault {
 /// the depot's balance). Daily moves are random with a volatility that changes every few weeks,
 /// now and then a sharp drop that recovers a little, a drift towards today's value (`start` is the
 /// share of today's value a year back), and standing values on weekends unless `weekends`.
-fn demo_depot_levels(
-    seed: u64,
-    start: f64,
-    vol: f64,
-    weekends: bool,
-    today: NaiveDate,
-) -> Vec<f64> {
-    use chrono::Weekday;
+fn demo_depot_levels(seed: u64, start: f64, vol: f64, weekends: bool, today: Date) -> Vec<f64> {
+    use jiff::civil::Weekday;
     let mut state = seed;
     let mut next = move || -> f64 {
         // splitmix64: small, deterministic, good enough for demo data
@@ -2908,8 +2896,8 @@ fn demo_depot_levels(
     let trades = |ago: usize| {
         weekends
             || !matches!(
-                (today - Duration::days(ago as i64)).weekday(),
-                Weekday::Sat | Weekday::Sun
+                (today - crate::dates::days(ago as i64)).weekday(),
+                Weekday::Saturday | Weekday::Sunday
             )
     };
     let active = (0..=DAYS).filter(|&a| trades(a)).count().max(1);
@@ -2965,10 +2953,10 @@ mod tests {
                     .any(|d| !d.source_url.is_empty() == bank && d.booking_id.is_some() == linked));
             }
         }
-        let today = Local::now().date_naive();
+        let today = crate::dates::today();
         for d in &docs {
-            let date = NaiveDate::parse_from_str(&d.doc_date, "%Y-%m-%d").unwrap();
-            let age = (today - date).num_days();
+            let date = Date::strptime("%Y-%m-%d", &d.doc_date).unwrap();
+            let age = crate::dates::days_between(date, today);
             // recent ones, and three of last year or before (the year and type filters)
             assert!(
                 (0..=30).contains(&age) || (366..=800).contains(&age),
@@ -3292,7 +3280,7 @@ mod tests {
 
     #[test]
     fn the_demo_value_paths_end_at_today_and_look_like_markets() {
-        let today = NaiveDate::from_ymd_opt(2026, 11, 17).unwrap(); // a Tuesday
+        let today = jiff::civil::date(2026, 11, 17); // a Tuesday
         let calm = demo_depot_levels(7, 0.55, 0.0065, false, today);
         assert_eq!(calm.len(), 366);
         assert_eq!(calm[0], 1.0, "ends exactly at today's value");
