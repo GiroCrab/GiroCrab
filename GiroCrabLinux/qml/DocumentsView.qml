@@ -44,7 +44,10 @@ Rectangle {
     AppMenu { id: docMenu
         AppMenuItem { text: qsTr("Vorschau"); onTriggered: AppModel.quickLook(view.menuDoc) }
         // „Im Finder anzeigen“ (#622)
-        AppMenuItem { text: qsTr("Im Dateimanager anzeigen"); onTriggered: AppModel.showInFileManager(view.menuDoc) }
+        AppMenuItem { text: qsTr("Im Dateimanager anzeigen")
+                      // a linked receipt (#590) has no file
+                      enabled: !AppModel.isDocumentLink(view.menuDoc)
+                      onTriggered: AppModel.showInFileManager(view.menuDoc) }
         AppMenuItem { text: qsTr("Zuordnung aufheben")
                       enabled: !!view.menuDoc && view.menuDoc.booking_id !== null && view.menuDoc.booking_id !== undefined
                       onTriggered: AppModel.linkDocument(view.menuDoc, null) }

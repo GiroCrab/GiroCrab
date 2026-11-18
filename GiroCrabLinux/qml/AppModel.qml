@@ -2319,8 +2319,16 @@ QtObject {
     }
     function accountDocuments(accountID) { return allDocuments("", false, accountID) }
     function documentsChanged() { documentsVersion++; reloadBookings() }
-    /// QuickLook: a private copy opened in the default viewer.
+    /// A receipt that is only a reference (#590): it has no file, the core
+    /// stores its http(s) URL in `link_url`.
+    function isDocumentLink(d) { return !!(d && d.link_url) }
+    /// Opens a linked receipt in the default browser. GiroCrab never fetches it.
+    function openDocumentLink(d) {
+        if (isDocumentLink(d) && /^https?:\/\//i.test(d.link_url)) Qt.openUrlExternally(d.link_url)
+    }
+    /// QuickLook: a private copy opened in the default viewer (a linked receipt: the browser).
     function quickLook(d) {
+        if (isDocumentLink(d)) { openDocumentLink(d); return }
         const path = run(() => core("document_temp_file", { doc_id: d.id, mime_type: d.mime_type }))
         if (path) Qt.openUrlExternally("file://" + path)
     }
@@ -2333,6 +2341,7 @@ QtObject {
         return true
     }
     function documentFileURL(d) {
+        if (isDocumentLink(d)) return ""   // nothing to preview, and no core call that would fail
         const path = run(() => core("document_temp_file", { doc_id: d.id, mime_type: d.mime_type }))
         return path ? "file://" + path : ""
     }
@@ -2429,6 +2438,7 @@ QtObject {
             : qsTr("%1 neue PostBox-Dokumente").arg(s.postbox_documents)
     }
     function docSymbol(d) {
+        if (isDocumentLink(d)) return "arrow.up.right.square"
         switch (d.doc_type) {
         case "abrechnung": return "chart.line.uptrend.xyaxis.circle"
         case "kontoauszug": return "list.bullet.rectangle"

@@ -32,6 +32,7 @@ Sheet {
         onAccepted: AppModel.exportDocument(sheet.preview, AppModel.localPath(selectedFile))
     }
     function saveDocument() {
+        if (AppModel.isDocumentLink(preview)) return   // a linked receipt (#590) has no file
         const name = (preview.file_name || preview.title).replace(".pdf", "")
         saveDialog.selectedFile = saveDialog.currentFolder + "/" + name + (saveDialog.isPdf ? ".pdf" : "")
         saveDialog.open()
@@ -43,7 +44,7 @@ Sheet {
             ColumnLayout { spacing: 2; Layout.fillWidth: true
                 Text { text: sheet.preview ? sheet.preview.title : qsTr("Dokumente / Kontoauszüge"); font.pixelSize: Theme.title3 + 2; font.weight: Font.DemiBold; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
                 Text { text: sheet.account ? sheet.account.name : ""; font.pixelSize: Theme.caption; color: Theme.secondary } }
-            Button { visible: sheet.preview !== null; text: qsTr("Sichern …"); icon.name: SF.icon("square.and.arrow.down"); onClicked: sheet.saveDocument() }
+            Button { visible: sheet.preview !== null && !AppModel.isDocumentLink(sheet.preview); text: qsTr("Sichern …"); icon.name: SF.icon("square.and.arrow.down"); onClicked: sheet.saveDocument() }
             Button { visible: sheet.preview !== null; text: qsTr("Öffnen …"); onClicked: AppModel.quickLook(sheet.preview) }
             Button { visible: sheet.preview !== null; text: qsTr("Schließen"); onClicked: sheet.preview = null }
             Button { visible: sheet.canFetch && sheet.preview === null; text: qsTr("Kontoauszüge abrufen"); icon.name: SF.icon("arrow.down.doc")

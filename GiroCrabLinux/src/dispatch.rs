@@ -1516,6 +1516,7 @@ vault_methods! {
     // --- documents ---
     list_documents_for_booking(booking_id) list_all_documents(filter)
     link_document(doc_id, booking_id) delete_document(doc_id)
+    attach_document_link(booking_id, url, title)
     export_document(doc_id, dest_path) export_all_documents(dest_dir)
     auto_statements_enabled(account_id) set_auto_statements(account_id, enabled)
     // user groups

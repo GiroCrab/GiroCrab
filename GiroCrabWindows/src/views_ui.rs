@@ -826,7 +826,13 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         win.set_busy(true);
         let weak = win.as_weak();
         std::thread::spawn(move || {
-            let result = (|| -> Result<(), String> {
+            let result = (|| -> Result<&'static str, String> {
+                // a linked receipt (#590) has no file: its address (http/https,
+                // checked by the core) opens in the browser
+                if !doc.link_url.is_empty() {
+                    open_external(Path::new(&doc.link_url))?;
+                    return Ok("Verlinkter Beleg im Browser geöffnet.");
+                }
                 let bytes = v.get_document_bytes(doc.id).map_err(|e| e.to_string())?;
                 clear_opened_documents();
                 let dir = docs_dir();
@@ -834,12 +840,13 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
                 let name = lists::safe_file_name(&doc.file_name, "beleg.bin");
                 let path = dir.join(format!("{}-{name}", doc.id));
                 std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-                open_external(&path)
+                open_external(&path)?;
+                Ok("Beleg geöffnet. Die Kopie wird beim Sperren gelöscht.")
             })();
             let _ = weak.upgrade_in_event_loop(move |win| {
                 win.set_busy(false);
                 win.set_view_status(match result {
-                    Ok(()) => "Beleg geöffnet. Die Kopie wird beim Sperren gelöscht.".into(),
+                    Ok(done) => done.into(),
                     Err(e) => e.into(),
                 });
             });

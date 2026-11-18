@@ -180,7 +180,12 @@ pub fn document_rows(docs: &[DocumentInfo], date: &dyn Fn(&str) -> String) -> Ve
                 } else {
                     d.booking_label.clone()
                 },
-                size_text(d.size_bytes),
+                // a linked receipt (#590) has no file in the vault
+                if d.link_url.is_empty() {
+                    size_text(d.size_bytes)
+                } else {
+                    "Link".into()
+                },
                 String::new(),
             ],
             negative: false,
