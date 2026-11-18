@@ -118,6 +118,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSFaceIDUsageDescription</key><string>GiroCrab nutzt Face ID / Touch ID, um Ihren verschlüsselten Tresor zu entsperren.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>GiroCrab verbindet sich mit dem Dokumentenarchiv, das Sie in den Einstellungen eingetragen haben, wenn es in Ihrem lokalen Netz liegt.</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>GiroCrabDistribution</key><string>developer-id</string>
     <key>GiroCrabBuildDate</key><string>${BUILD_DATE}</string>

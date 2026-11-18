@@ -23,6 +23,12 @@ import Foundation
 ///               tags|tags-accounts|tag-filter|rule-tags|position-history
 ///                         (demo) open that sheet pre-filled with fictional data,
 ///                         for README / PR screenshots
+///  --demo-archive <address>
+///                         (demo) connect the demo vault to a document archive at that address
+///                         (a local stand-in, or a test instance with its token in
+///                         GIROCRAB_DEMO_ARCHIVE_TOKEN) and link one of its documents to the selected
+///                         booking, for screenshots of the archive views; with
+///                         `--demo-sheet archive-matches` the sheet that assigns many at once
 ///  --demo-settings general|banks|groups|documents|security|external[:edit|:add|:remove|:select]
 ///                         (demo) open the Settings window on that tab (`groups` opens the
 ///                         group editor sheet instead), optionally with
@@ -112,6 +118,10 @@ public struct LaunchOptions: Sendable {
     public var demoFilter: String?
     /// (demo) Settings tab to open on start, e.g. "banks" or "banks:edit"
     public var demoSettings: String?
+    /// (demo) address of a document archive to connect the demo vault to
+    public var demoArchive: String?
+    /// (demo) its token (`GIROCRAB_DEMO_ARCHIVE_TOKEN`; a stand-in takes any)
+    public var demoArchiveToken = "demo"
     /// (demo) title of the menu-bar menu to show in the screenshot
     public var demoMenu: String?
     /// (developer) pretended system language, see `LanguagePreference.current`
@@ -158,6 +168,12 @@ public struct LaunchOptions: Sendable {
             demoSettings = arguments[i + 1].lowercased()
         } else {
             demoSettings = nil
+        }
+        if let i = arguments.firstIndex(of: "--demo-archive"), i + 1 < arguments.count {
+            demoArchive = arguments[i + 1]
+            demoArchiveToken = environment["GIROCRAB_DEMO_ARCHIVE_TOKEN"] ?? "demo"
+        } else {
+            demoArchive = nil
         }
         if let i = arguments.firstIndex(of: "--demo-menu"), i + 1 < arguments.count {
             demoMenu = arguments[i + 1]

@@ -24,7 +24,14 @@ struct SettingsView: View {
                 .tag(SettingsTab.banks)
             #if os(macOS)
             DocumentFolderSettings()
-                .settingsPane(height: 420)
+                .settingsPane(height: 640)   // "Dokumentenarchiv" + "Dokumentenordner": scrolls
+                .disabled(!model.isUnlocked)
+                .tabItem { Label("Dokumente", systemImage: "doc.on.doc") }
+                .tag(SettingsTab.documents)
+            #else
+            // the document folder is a Mac feature; the archive works everywhere
+            ArchiveSettings()
+                .settingsPane(height: 640)
                 .disabled(!model.isUnlocked)
                 .tabItem { Label("Dokumente", systemImage: "doc.on.doc") }
                 .tag(SettingsTab.documents)
@@ -400,6 +407,16 @@ struct MerchantLogoSettingsSection: View {
     }
 }
 
+#if !os(macOS)
+/// The connection to a document archive, on its own pane.
+struct ArchiveSettings: View {
+    var body: some View {
+        Form { ArchiveSettingsSection() }
+            .formStyle(.grouped)
+    }
+}
+#endif
+
 #if os(macOS)
 /// Automatic copy of all documents (statements, receipts, PostBox) into a
 /// folder, e.g. in iCloud Drive (GitHub #57).
@@ -409,6 +426,7 @@ struct DocumentFolderSettings: View {
 
     var body: some View {
         Form {
+            ArchiveSettingsSection()
             Section {
                 Toggle("Dokumente automatisch in einen Ordner sichern", isOn: Binding(
                     get: { model.documentMirrorPath != nil },

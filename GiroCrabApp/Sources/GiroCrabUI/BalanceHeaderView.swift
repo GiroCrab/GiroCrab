@@ -423,6 +423,13 @@ struct StreamHeaderCard: View {
                         .pickerStyle(.inline)
                         .labelsHidden()
                     }
+                    // which bookings still lack a receipt (#590)
+                    Section("Belege") {
+                        Toggle("Nur ohne Beleg", isOn: $model.missingDocumentOnly)
+                        if model.archiveConnected {
+                            Button("Aus dem Archiv zuordnen …") { model.showArchiveMatches = true }
+                        }
+                    }
                 } label: {
                     #if os(iOS)
                     if sizeClass == .compact {

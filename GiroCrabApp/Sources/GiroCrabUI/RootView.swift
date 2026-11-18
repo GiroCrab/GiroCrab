@@ -608,6 +608,10 @@ struct MainSplitView: View {
             GroupManagerSheet()
                 .environment(model)
         }
+        .capturableSheet(isPresented: $model.showArchiveMatches) {
+            ArchiveMatchSheet()
+                .environment(model)
+        }
         #if os(macOS)
         // the draft is stored once the sheet is really gone, not when another
         // sheet opens on top of it

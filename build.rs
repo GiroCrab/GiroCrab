@@ -181,6 +181,7 @@ fn make_bundle(app_dir: &Path, exe: &Path, scratch: &Path) {
     <key>LSApplicationCategoryType</key><string>public.app-category.finance</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSFaceIDUsageDescription</key><string>GiroCrab nutzt Face ID / Touch ID, um Ihren verschlüsselten Tresor zu entsperren.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>GiroCrab verbindet sich mit dem Dokumentenarchiv, das Sie in den Einstellungen eingetragen haben, wenn es in Ihrem lokalen Netz liegt.</string>
 </dict>
 </plist>
 "#;

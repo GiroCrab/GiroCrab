@@ -189,6 +189,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "GiroCrab nutzt Face ID, um Ihren verschlüsselten Tresor zu entsperren.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "GiroCrab verbindet sich mit dem Dokumentenarchiv, das Sie in den Einstellungen eingetragen haben, wenn es in Ihrem lokalen Netz liegt.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_FILE = LaunchInfo.plist;
@@ -233,6 +234,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "GiroCrab nutzt Face ID, um Ihren verschlüsselten Tresor zu entsperren.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "GiroCrab verbindet sich mit dem Dokumentenarchiv, das Sie in den Einstellungen eingetragen haben, wenn es in Ihrem lokalen Netz liegt.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_FILE = LaunchInfo.plist;

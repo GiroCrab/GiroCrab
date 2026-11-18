@@ -65,7 +65,7 @@ struct AccountDocumentsSheet: View {
                                 Text(d.title).lineLimit(1).sensitive()
                                 if d.isLink {
                                     // the host of a linked receipt is the user's own archive
-                                    Text("\(DateText.medium(d.docDate)) · \(d.linkHost)")
+                                    Text("\(DateText.medium(d.docDate)) · \(d.linkOrigin)")
                                         .appFont(.caption2).foregroundStyle(Theme.secondary).lineLimit(1).sensitive()
                                 } else {
                                     Text("\(DateText.medium(d.docDate)) · \(ByteCountFormatter.string(fromByteCount: Int64(d.sizeBytes), countStyle: .file))")

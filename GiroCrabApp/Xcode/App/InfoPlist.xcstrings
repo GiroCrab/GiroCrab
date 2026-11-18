@@ -42,6 +42,24 @@
           }
         }
       }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Privacy - Local Network Usage Description (document archive in the user's own network). The German value matches the Xcode target's INFOPLIST_KEY_NSLocalNetworkUsageDescription; build.rs and package-macos-app.sh keep their own German Info.plist text.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab verbindet sich mit dem Dokumentenarchiv, das Sie in den Einstellungen eingetragen haben, wenn es in Ihrem lokalen Netz liegt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab connects to the document archive you entered in Settings when it is on your local network."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

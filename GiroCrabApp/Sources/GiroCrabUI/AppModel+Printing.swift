@@ -167,6 +167,7 @@ extension AppModel {
         }
         // and the tag filter (#228)
         if let note = tagFilterNote { report.filterNotes.append(note) }
+        if missingDocumentOnly { report.filterNotes.append(String(localized: "Ohne Beleg")) }
         return report
     }
 

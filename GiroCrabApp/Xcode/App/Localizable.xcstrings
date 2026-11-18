@@ -663,6 +663,17 @@
         }
       }
     },
+    "%lld Belege aus dem Archiv verlinkt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld receipts linked from the archive"
+          }
+        }
+      }
+    },
     "%lld Belege nach „%@“ exportiert" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -670,6 +681,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld receipts exported to “%@”"
+          }
+        }
+      }
+    },
+    "%lld Belege verlinken" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link %lld receipts"
           }
         }
       }
@@ -770,6 +792,17 @@
         }
       }
     },
+    "%lld Buchungen ohne Beleg, %lld Dokumente des Archivs geprüft. Zugeordnet wird nur, wo der Betrag im Dokument steht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld bookings without a receipt, %2$lld documents of the archive checked. A match needs the amount in the document."
+          }
+        }
+      }
+    },
     "%lld Dateien gespeichert" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -851,6 +884,17 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld Dokumente nehmen die Buchungsdaten nicht an: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld documents do not accept the booking data: %2$@"
           }
         }
       }
@@ -1351,6 +1395,28 @@
         }
       }
     },
+    "%lld fehlgeschlagen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld failed"
+          }
+        }
+      }
+    },
+    "%lld im Tresor" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld in the vault"
+          }
+        }
+      }
+    },
     "%lld in Fremdwährung nicht enthalten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1454,6 +1520,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Remove %lld unused tags?"
+          }
+        }
+      }
+    },
+    "%lld unterwegs" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld on their way"
           }
         }
       }
@@ -2961,6 +3038,17 @@
         }
       }
     },
+    "Adresse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Address"
+          }
+        }
+      }
+    },
     "Adresse (https://…)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2968,6 +3056,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Address (https://…)"
+          }
+        }
+      }
+    },
+    "Adresse und Token werden gelöscht. Die verlinkten Belege bleiben als einfache Links erhalten, die Dokumente im Archiv werden nicht verändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Address and token are deleted. The linked receipts stay as plain links; the documents in the archive are not changed."
           }
         }
       }
@@ -3657,6 +3756,17 @@
         }
       }
     },
+    "Alle Dateien aus dem Tresor, die eigenen Belege und die Dokumente der Banken, werden ins Archiv hochgeladen und danach nur noch verlinkt. Jede Datei bleibt im Tresor, bis das Archiv sie übernommen hat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All files in the vault, your own receipts and the banks' documents, are uploaded to the archive and then only linked. Each file stays in the vault until the archive has taken it in."
+          }
+        }
+      }
+    },
     "Alle Dokumente" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3994,6 +4104,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "All in one file"
+          }
+        }
+      }
+    },
+    "Alle selbst hinzugefügten Belege aus dem Tresor werden ins Archiv hochgeladen und danach nur noch verlinkt. Dokumente der Banken bleiben im Tresor, solange sie nicht ins Archiv verschoben werden. Jede Datei bleibt im Tresor, bis das Archiv sie übernommen hat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All receipts you added yourself are uploaded from the vault to the archive and then only linked. The banks' documents stay in the vault as long as they are not moved into the archive. Each file stays in the vault until the archive has taken it in."
           }
         }
       }
@@ -4901,6 +5022,17 @@
         }
       }
     },
+    "Ansehen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View"
+          }
+        }
+      }
+    },
     "Ansicht" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5106,6 +5238,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Application ID"
+          }
+        }
+      }
+    },
+    "Archiv" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archive"
           }
         }
       }
@@ -5414,6 +5557,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Paste from Clipboard"
+          }
+        }
+      }
+    },
+    "Aus dem Archiv zuordnen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assign from the archive …"
           }
         }
       }
@@ -6250,6 +6404,17 @@
         }
       }
     },
+    "Bank, Dokumentart und Konto mitgeben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pass on Bank, Document Kind and Account"
+          }
+        }
+      }
+    },
     "Banken" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6853,6 +7018,17 @@
         }
       }
     },
+    "Beleg im Dokumentenarchiv suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find a Receipt in the Document Archive"
+          }
+        }
+      }
+    },
     "Beleg in Quick Look anzeigen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6871,6 +7047,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Could Not Import Receipt"
+          }
+        }
+      }
+    },
+    "Beleg konnte nicht ins Archiv verschoben werden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The receipt could not be moved to the archive"
           }
         }
       }
@@ -6985,6 +7172,17 @@
         }
       }
     },
+    "Belege aus dem Dokumentenarchiv zuordnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assign receipts from the document archive"
+          }
+        }
+      }
+    },
     "Belege durchsuchen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7014,6 +7212,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Documents arrive when fetching (Trade Republic, comdirect PostBox, FinTS statement) or via drag and drop."
+          }
+        }
+      }
+    },
+    "Belege können in einem eigenen Dokumentenarchiv bleiben und werden in GiroCrab nur verlinkt. Unterstützt: %@ und Archive mit derselben Schnittstelle. GiroCrab verbindet sich ausschließlich mit der hier eingetragenen Adresse und erst, nachdem sie eingerichtet ist: beim Suchen, beim Anzeigen verlinkter Belege und für Vorschläge zu Buchungen ohne Beleg. Adresse und Token bleiben auf diesem Gerät im verschlüsselten Tresor." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Receipts can stay in a document archive of your own and are only linked in GiroCrab. Supported: %@ and archives with the same interface. GiroCrab connects only to the address entered here, and only once it is set up: when searching, when showing linked receipts and for suggestions for bookings without a receipt. Address and token stay on this device in the encrypted vault."
+          }
+        }
+      }
+    },
+    "Belege und Bankdokumente ins Dokumentenarchiv verschieben?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move receipts and bank documents into the document archive?"
           }
         }
       }
@@ -8392,6 +8612,17 @@
         }
       }
     },
+    "Buchungen ohne Beleg · %@ · alle Konten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bookings without a receipt · %@ · all accounts"
+          }
+        }
+      }
+    },
     "Buchungen zu diesem Mandat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8421,6 +8652,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Type"
+          }
+        }
+      }
+    },
+    "Buchungsdaten am Dokument vermerken" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Note booking data on the document"
           }
         }
       }
@@ -9026,6 +9268,28 @@
         }
       }
     },
+    "Das Archiv unter %@ (%lld Belege)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The archive at %1$@ (%2$lld receipts)"
+          }
+        }
+      }
+    },
+    "Das Archiv wird durchgesehen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Looking through the archive …"
+          }
+        }
+      }
+    },
     "Das Bild enthält IBAN, Empfänger und Betrag." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9260,6 +9524,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "That’s not a private key. Please choose the .pem file enablebanking.com downloaded when you registered the application."
+          }
+        }
+      }
+    },
+    "Dasselbe Archiv wie bisher (%lld Belege)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The same archive as before (%lld receipts)"
           }
         }
       }
@@ -9972,6 +10247,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The receipt stays where it is. GiroCrab only stores the address and never fetches it."
+          }
+        }
+      }
+    },
+    "Der Beleg nennt den Händler nicht – bitte prüfen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The receipt does not name the merchant – please check"
           }
         }
       }
@@ -11680,6 +11966,17 @@
         }
       }
     },
+    "Dokumente der Banken ins Archiv verschieben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move Bank Documents into the Archive"
+          }
+        }
+      }
+    },
     "Dokumente eines Bankzugangs anzeigen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11731,6 +12028,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Document retrieval is switched off for: %@. New documents only arrive again once it is switched on."
+          }
+        }
+      }
+    },
+    "Dokumentenarchiv" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Document Archive"
           }
         }
       }
@@ -12077,6 +12385,17 @@
         }
       }
     },
+    "Eigene Belege ins Dokumentenarchiv verschieben?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move your own receipts to the document archive?"
+          }
+        }
+      }
+    },
     "Eigene Belege und Bankdokumente – verschlüsselt im Tresor. Die Auswahl eines Kontos grenzt die Sammlung ein." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12286,6 +12605,17 @@
         }
       }
     },
+    "Ein Dokument der Bank kommt im Archiv vorbelegt an: die Bank als Absender, die Art (zum Beispiel Kontoauszug) als Dokumenttyp und der Kontoname als Tag. Was im Archiv fehlt, legt GiroCrab dort ohne eigene Zuordnungsregel an; ohne das Recht dazu wird die Datei ohne diese Angaben hochgeladen. Eigene Belege bekommen keine: Deren Absender erkennt das Archiv selbst." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A bank document arrives in the archive pre-filled: the bank as correspondent, its kind (a bank statement, for example) as document type and the account name as a tag. GiroCrab creates what the archive lacks, without a matching rule of its own; without the permission to do so the file is uploaded without these details. Your own receipts get none: the archive recognises their sender itself."
+          }
+        }
+      }
+    },
     "Ein Konto gehört zu höchstens einer Gruppe." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12363,6 +12693,17 @@
         }
       }
     },
+    "Ein anderes, neues Archiv" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another, new archive"
+          }
+        }
+      }
+    },
     "Ein geöffneter Hinweis oder Bestätigungsdialog wird nicht aufgenommen; das Bild zeigt, was darunter liegt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12392,6 +12733,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "One file per selected account to Downloads"
+          }
+        }
+      }
+    },
+    "Eine Datei, die Sie in GiroCrab an eine Buchung hängen, wird ins Archiv hochgeladen und danach nur noch verlinkt. Bis das Archiv sie übernommen hat, bleibt sie im Tresor." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A file you attach to a transaction in GiroCrab is uploaded to the archive and only linked afterwards. It stays in the vault until the archive has taken it in."
           }
         }
       }
@@ -12458,6 +12810,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "A missing pending charge may be outside the loaded window. Discard it only after checking it yourself. Posted transactions are retained."
+          }
+        }
+      }
+    },
+    "Einen Beleg aus dem verbundenen Dokumentenarchiv suchen und mit dieser Buchung verlinken" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find a receipt in the connected document archive and link it to this transaction"
           }
         }
       }
@@ -13177,6 +13540,17 @@
         }
       }
     },
+    "Erneut ins Archiv verschieben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Archive Again"
+          }
+        }
+      }
+    },
     "Erneut prüfen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13408,6 +13782,17 @@
         }
       }
     },
+    "Es gab mehr, als ein Durchgang prüft: Ein kürzerer Zeitraum findet den Rest." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There were more than one pass checks: a shorter period finds the rest."
+          }
+        }
+      }
+    },
     "Es gibt derzeit nichts Neues vom GiroCrab-Projekt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13415,6 +13800,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "There is nothing new from the GiroCrab project right now."
+          }
+        }
+      }
+    },
+    "Es ist kein Dokumentenarchiv verbunden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No document archive is connected."
           }
         }
       }
@@ -16669,6 +17065,17 @@
         }
       }
     },
+    "Im Archiv suchen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search the Archive…"
+          }
+        }
+      }
+    },
     "Im Browser anmelden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16741,6 +17148,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hide in Privacy Mode"
+          }
+        }
+      }
+    },
+    "Im Tresor behalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep in Vault"
           }
         }
       }
@@ -17093,6 +17511,17 @@
         }
       }
     },
+    "In diesem Tresor sind schon Belege aus einem Dokumentenarchiv verlinkt, von diesem oder einem anderen Gerät. Ist die Adresse dasselbe Archiv, bleiben sie dessen Dokumente. Bei einem neuen Archiv bleiben sie als einfache Links erhalten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This vault already links receipts from a document archive, made on this or another device. If the address is the same archive, they stay its documents. With a new archive they stay as plain links."
+          }
+        }
+      }
+    },
     "In diesem Zeitraum wurden keine wiederkehrenden Sparplan-Käufe erkannt. Sparplan-Ausführungen erscheinen hier, sobald das Depot sie liefert." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17254,6 +17683,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Content"
+          }
+        }
+      }
+    },
+    "Ins Archiv verschieben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Archive"
           }
         }
       }
@@ -18171,6 +18611,17 @@
         }
       }
     },
+    "Kein passender Beleg gefunden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No fitting receipt found"
+          }
+        }
+      }
+    },
     "Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18409,6 +18860,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No documents"
+          }
+        }
+      }
+    },
+    "Keine Dokumente gefunden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No documents found."
           }
         }
       }
@@ -18706,6 +19168,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Payment Selected"
+          }
+        }
+      }
+    },
+    "Keine auswählen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select none"
           }
         }
       }
@@ -19669,6 +20142,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Statements and documents (%1$u, %2$@)"
+          }
+        }
+      }
+    },
+    "Kontoauszüge und Mitteilungen, die GiroCrab von nun an bei den Banken abruft, werden ins Archiv hochgeladen und danach nur noch verlinkt. Sie werden nicht erneut geladen, solange der Verweis besteht. Was schon im Tresor liegt, nimmt „Vorhandene Belege verschieben …“ mit." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statements and notices GiroCrab fetches from the banks from now on are uploaded to the archive and then only linked. They are not downloaded again as long as the reference exists. “Move Existing Receipts…” takes along what is already in the vault."
           }
         }
       }
@@ -22171,6 +22655,17 @@
         }
       }
     },
+    "Neue Belege ins Archiv verschieben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move new receipts to the archive"
+          }
+        }
+      }
+    },
     "Neue Buchung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22996,6 +23491,17 @@
         }
       }
     },
+    "Nichts mehr im Tresor zu verschieben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing left in the vault to move."
+          }
+        }
+      }
+    },
     "Nichts passt zu „%@“." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23513,6 +24019,17 @@
         }
       }
     },
+    "Nur Dokumente rund um das Buchungsdatum" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only documents around the booking date"
+          }
+        }
+      }
+    },
     "Nur Einnahmen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23739,6 +24256,17 @@
         }
       }
     },
+    "Nur ohne Beleg" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only Without Receipt"
+          }
+        }
+      }
+    },
     "Nur ohne Buchung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23922,6 +24450,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Bank"
+          }
+        }
+      }
+    },
+    "Ohne Beleg" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Receipt"
           }
         }
       }
@@ -24571,6 +25110,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Add matching account"
+          }
+        }
+      }
+    },
+    "Passt auf mehrere Buchungen oder Belege – bitte prüfen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fits several bookings or receipts – please check"
           }
         }
       }
@@ -25545,6 +26095,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reactivate"
+          }
+        }
+      }
+    },
+    "Rechnung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invoice"
           }
         }
       }
@@ -26663,6 +27224,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bank's own interface"
+          }
+        }
+      }
+    },
+    "Schreibt Datum, Betrag, Gegenpartei und Konto der verknüpften Buchung in vier eigene Zusatzfelder des Dokuments im Archiv; ihre Namen enden auf „(GiroCrab)“, andere Felder bleiben unberührt. So finden Sie Belege dort nach Buchungen, zum Beispiel alle eines Monats. Der Token braucht dafür das Recht, Zusatzfelder anzulegen und Dokumente zu ändern. Beim Ausschalten bleiben die Angaben im Archiv stehen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Writes date, amount, counterparty and account of the linked booking into four custom fields of its own on the document in the archive; their names end in “(GiroCrab)”, other fields stay untouched. That way you find receipts there by booking, for example all of one month. The token needs the right to create custom fields and to change documents. When switched off, the data stays in the archive."
           }
         }
       }
@@ -28087,6 +28659,17 @@
         }
       }
     },
+    "Suchbegriff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search term"
+          }
+        }
+      }
+    },
     "Suche in natürlicher Sprache" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28142,6 +28725,17 @@
         }
       }
     },
+    "Suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search"
+          }
+        }
+      }
+    },
     "Suchen Sie Ihre Bank nach Name, Bankleitzahl oder IBAN." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28171,6 +28765,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search…"
+          }
+        }
+      }
+    },
+    "Suchergebnisse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search Results"
           }
         }
       }
@@ -29088,6 +29693,17 @@
         }
       }
     },
+    "Token" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Token"
+          }
+        }
+      }
+    },
     "Trade Republic Perks" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29880,6 +30496,17 @@
         }
       }
     },
+    "Unverschlüsselte Verbindung: Token, Belege und Buchungsdaten sind im Netz mitlesbar. Nur im eigenen Netz oder über ein VPN verwenden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unencrypted connection: token, receipts and transaction data can be read on the network. Use it only in your own network or over a VPN."
+          }
+        }
+      }
+    },
     "Update-Kanal" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30040,6 +30667,17 @@
         }
       }
     },
+    "Verbinden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect"
+          }
+        }
+      }
+    },
     "Verbindlichkeiten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30062,6 +30700,17 @@
         }
       }
     },
+    "Verbindung entfernen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Connection…"
+          }
+        }
+      }
+    },
     "Verbindung für %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30073,6 +30722,17 @@
         }
       }
     },
+    "Verbindung steht: %lld Dokumente sichtbar." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected: %lld documents visible."
+          }
+        }
+      }
+    },
     "Verbindung testen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30080,6 +30740,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Test Connection"
+          }
+        }
+      }
+    },
+    "Verbindung zum Dokumentenarchiv entfernen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove the connection to the document archive?"
           }
         }
       }
@@ -30282,6 +30953,17 @@
         }
       }
     },
+    "Verlinkt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked"
+          }
+        }
+      }
+    },
     "Verlinkter Beleg" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30311,6 +30993,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total assets"
+          }
+        }
+      }
+    },
+    "Verschieben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move"
+          }
+        }
+      }
+    },
+    "Verschieben ins Archiv fehlgeschlagen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moving to the archive failed"
           }
         }
       }
@@ -30777,6 +31481,17 @@
         }
       }
     },
+    "Vorhandene Belege verschieben …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move Existing Receipts…"
+          }
+        }
+      }
+    },
     "Vorhandene Buchungen werden nicht doppelt angelegt, sie erhalten nur Kategorie und Notiz." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30997,6 +31712,17 @@
         }
       }
     },
+    "Vorschlag aus dem Archiv · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suggestion from the archive · %@"
+          }
+        }
+      }
+    },
     "Vorschlag übernehmen: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31015,6 +31741,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Suggestion: %@"
+          }
+        }
+      }
+    },
+    "Vorschläge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suggestions"
           }
         }
       }
@@ -31323,6 +32060,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Which cards should be fetched?"
+          }
+        }
+      }
+    },
+    "Welches Archiv ist das?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Which archive is this?"
           }
         }
       }
@@ -31862,6 +32610,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Will be created under “%@”."
+          }
+        }
+      }
+    },
+    "Wird aus dem Dokumentenarchiv geladen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading from the document archive…"
           }
         }
       }
@@ -33009,6 +33768,17 @@
         }
       }
     },
+    "aus dem Profil im Archiv" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "from your profile in the archive"
+          }
+        }
+      }
+    },
     "bereits vorhanden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33461,6 +34231,17 @@
         }
       }
     },
+    "passt zur Buchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "matches the transaction"
+          }
+        }
+      }
+    },
     "pro Monat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33621,6 +34402,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "taken from the file name"
+          }
+        }
+      }
+    },
+    "wird ins Archiv verschoben …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "moving to the archive…"
           }
         }
       }
@@ -34006,6 +34798,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Open earlier billing periods in the portal. “Import Transactions” imports all recognised transactions and closes the window."
+          }
+        }
+      }
+    },
+    "Öffnet das Dokument im Archiv im Browser" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens the document in the archive in the browser"
           }
         }
       }

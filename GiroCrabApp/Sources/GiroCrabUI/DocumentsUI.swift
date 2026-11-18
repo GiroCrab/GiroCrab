@@ -211,6 +211,10 @@ struct DocumentsCard: View {
     @State private var exporting = false
     @State private var docToDelete: DocumentInfo?
     @State private var addingLink = false
+    @State private var searchingArchive = false
+    /// Documents of the connected archive that fit this booking (only asked
+    /// for while the booking has no document).
+    @State private var suggestions: [ArchiveSuggestion] = []
 
     var body: some View {
         let docs = model.documents(for: booking)
@@ -229,15 +233,21 @@ struct DocumentsCard: View {
                         Text(d.title).appFont(.callout).lineLimit(1).sensitive()
                         if d.isLink {
                             // the host names the user's own archive (#301)
-                            Text("\(DateText.medium(d.docDate)) · \(d.linkHost)")
+                            Text("\(DateText.medium(d.docDate)) · \(d.linkOrigin)")
                                 .appFont(.caption2).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle).sensitive()
                         } else {
                             Text("\(DateText.medium(d.docDate)) · \(ByteCountFormatter.string(fromByteCount: Int64(d.sizeBytes), countStyle: .file))")
                                 .appFont(.caption2).foregroundStyle(Theme.secondary)
                         }
+                        // on its way into the document archive: the file stays here until it has arrived
+                        if let move = model.archiveMoves[d.id] {
+                            Label(move.statusText, systemImage: move.hasFailed ? "exclamationmark.triangle" : "arrow.up.doc")
+                                .appFont(.caption2).foregroundStyle(move.hasFailed ? Theme.warning : Theme.secondary)
+                                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
-                    if d.isLink {
+                    if d.isLink && !model.canPreview(d) {
                         Button { model.openDocumentLink(d) } label: { Image(systemName: "arrow.up.right.square") }
                             .buttonStyle(.borderless).help("Im Browser öffnen")
                             .accessibilityLabel("Im Browser öffnen")
@@ -257,6 +267,7 @@ struct DocumentsCard: View {
                             Button("Pfad kopieren") { model.copyDocumentPath(d) }
                             #endif
                         }
+                        ArchiveMoveMenuItems(doc: d)
                         Button("Zuordnung aufheben") { model.linkDocument(d, to: nil) }
                             .disabled(d.bookingId == nil)
                         Divider()
@@ -268,15 +279,42 @@ struct DocumentsCard: View {
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 7).fill(selected == d.id ? Theme.selection : Color.clear))
                 .contentShape(Rectangle())
-                // a click on a linked receipt (#590) opens it; a stored file is selected for the preview
-                .onTapGesture { if d.isLink { model.openDocumentLink(d) } else { selected = (selected == d.id ? nil : d.id) } }
+                // a click on a plain link (#590) opens it; a stored file or a document of the
+                // connected archive is selected for the preview
+                .onTapGesture { if model.canPreview(d) { selected = (selected == d.id ? nil : d.id) } else { model.openDocumentLink(d) } }
             }
-            // the inline preview shows stored files; a linked receipt has none
-            if let id = selected ?? docs.first(where: { !$0.isLink })?.id, let d = docs.first(where: { $0.id == id }), let data = model.documentData(d) {
-                DocumentPreview(doc: d, data: data)
-                    .frame(height: 300)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+            // the inline preview shows stored files and documents of the connected archive;
+            // a plain link has none
+            if let id = selected ?? docs.first(where: { model.canPreview($0) })?.id, let d = docs.first(where: { $0.id == id }) {
+                if d.isArchiveDocument && model.archiveConnected {
+                    ArchiveDocumentPreview(doc: d)
+                        .frame(height: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+                } else if let data = model.documentData(d) {
+                    DocumentPreview(doc: d, data: data)
+                        .frame(height: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+                }
+            }
+            // unasked: what the archive holds for a booking that has no document yet
+            ForEach(suggestions, id: \.document.id) { s in
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 18)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(s.document.title).appFont(.callout).lineLimit(1).sensitive()
+                        Text("Vorschlag aus dem Archiv · \(DateText.medium(s.document.created))")
+                            .appFont(.caption2).foregroundStyle(Theme.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Button("Verlinken") {
+                        if model.attachArchiveDocument(s.document, to: booking) == nil { suggestions = [] }
+                    }
+                    .controlSize(.small)
+                }
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
             }
             // Drop zone
             VStack(spacing: 4) {
@@ -291,6 +329,14 @@ struct DocumentsCard: View {
             .dropDestination(for: URL.self) { urls, _ in
                 model.attach(urls, to: booking)
             } isTargeted: { targeted = $0 }
+            if model.archiveConnected {
+                Button { searchingArchive = true } label: {
+                    Label("Im Archiv suchen …", systemImage: "doc.text.magnifyingglass")
+                        .frame(maxWidth: .infinity)
+                }
+                .help("Einen Beleg aus dem verbundenen Dokumentenarchiv suchen und mit dieser Buchung verlinken")
+                .capturableSheet(isPresented: $searchingArchive) { ArchiveSearchSheet(booking: booking) }
+            }
             Button { addingLink = true } label: {
                 Label("Link hinzufügen …", systemImage: "link.badge.plus")
                     .frame(maxWidth: .infinity)
@@ -313,6 +359,17 @@ struct DocumentsCard: View {
         .onChange(of: booking.id) { _, _ in
             selected = nil
             addingLink = false
+        }
+        // Only for a booking without any document, and only after the selection
+        // has rested a moment: arrowing through the list sends nothing.
+        .task(id: "\(booking.id)-\(docs.isEmpty)-\(model.archiveConnected)-\(model.archiveGeneration)") {
+            suggestions = []
+            guard model.archiveConnected, docs.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            let found = await model.archiveSuggestions(for: booking)
+            guard !Task.isCancelled else { return }
+            suggestions = found
         }
     }
 }
@@ -447,19 +504,27 @@ struct DocumentsView: View {
                         .tag(d.id)
                         .contentShape(Rectangle())
                         .contextMenu {
+                            if model.canPreview(d) {
+                                Button("Vorschau") { model.quickLook(d) }
+                            }
                             if d.isLink {
                                 Button("Im Browser öffnen") { model.openDocumentLink(d) }
                                 Button("Link kopieren") { model.copyDocumentLink(d) }
-                            } else {
-                                Button("Vorschau") { model.quickLook(d) }
+                            }
+                            // read or unread: a stored file, and a document of the bank
+                            // that moved into the archive
+                            if !d.isLink || d.isBankDocument {
                                 Button(d.seen ? "Als ungelesen markieren" : "Als gelesen markieren") {
                                     model.markDocumentsSeen([d.id], seen: !d.seen)
                                 }
-                                #if os(macOS)
+                            }
+                            #if os(macOS)
+                            if !d.isLink {
                                 Button("Im Finder anzeigen") { model.showInFinder(d) }
                                 Button("Pfad kopieren") { model.copyDocumentPath(d) }
-                                #endif
                             }
+                            #endif
+                            ArchiveMoveMenuItems(doc: d)
                             Button("Zuordnung aufheben") { model.linkDocument(d, to: nil) }
                             .disabled(d.bookingId == nil)
                             Menu("Konto zuordnen") {
@@ -490,8 +555,8 @@ struct DocumentsView: View {
                     // opened = read
                     if !d.seen { model.markDocumentsSeen([id], seen: true) }
                     guard isCompact else { return }
-                    // a tap on a linked receipt (#590) opens it, there is nothing to preview
-                    if d.isLink { model.openDocumentLink(d) } else { previewDoc = d }
+                    // a tap on a plain link (#590) opens it, there is nothing to preview
+                    if model.canPreview(d) { previewDoc = d } else { model.openDocumentLink(d) }
                     selected = nil
                 }
                 .overlay {
@@ -527,7 +592,9 @@ struct DocumentsView: View {
             if !isCompact {
             Divider()
             Group {
-                if let id = selected, let d = docs.first(where: { $0.id == id }), d.isLink {
+                if let id = selected, let d = docs.first(where: { $0.id == id }), d.isArchiveDocument, model.archiveConnected {
+                    ArchiveDocumentPreview(doc: d)
+                } else if let id = selected, let d = docs.first(where: { $0.id == id }), d.isLink {
                     DocumentLinkPlaceholder(doc: d)
                 } else if let id = selected, let d = docs.first(where: { $0.id == id }), let data = model.documentData(d) {
                     DocumentPreview(doc: d, data: data)
@@ -543,7 +610,8 @@ struct DocumentsView: View {
         .capturableSheet(item: $previewDoc) { d in
             NavigationStack {
                 Group {
-                    if d.isLink { DocumentLinkPlaceholder(doc: d) }
+                    if d.isArchiveDocument && model.archiveConnected { ArchiveDocumentPreview(doc: d) }
+                    else if d.isLink { DocumentLinkPlaceholder(doc: d) }
                     else if let data = model.documentData(d) { DocumentPreview(doc: d, data: data) }
                     else { ContentUnavailableView("Beleg nicht verfügbar", systemImage: "doc") }
                 }

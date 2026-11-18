@@ -94,8 +94,11 @@ enum DocumentsScope: String, CaseIterable, Identifiable {
 
 extension DocumentInfo {
     var isBankDocument: Bool {
+        // A document of a bank that moved into the document archive says so on
+        // every device; the bank's key stays on the device that moved it.
+        if isLink { return fromBank }
         // Old demo vaults used synthetic source keys for their uploaded receipts.
-        !sourceUrl.isEmpty && !sourceUrl.hasPrefix("demo-doc-")
+        return !sourceUrl.isEmpty && !sourceUrl.hasPrefix("demo-doc-")
     }
     var originTitle: String {
         if isLink { return String(localized: "Link") }
@@ -116,6 +119,14 @@ extension DocumentInfo {
 
     /// Host of a linked receipt, for the second line of its row.
     var linkHost: String { webURL?.host ?? "" }
+
+    /// Where a linked receipt lives, for its subtitle: the connected archive,
+    /// or the host of its address.
+    var linkOrigin: String { isArchiveDocument ? String(localized: "Archiv") : linkHost }
+
+    /// A linked receipt that names a document of the connected document
+    /// archive: the app can show the document itself.
+    var isArchiveDocument: Bool { archiveDoc != nil }
 }
 
 /// Period of the booking list and its sums. The menu follows MoneyMoney
@@ -313,6 +324,7 @@ struct MerchantFocusReturn {
     let direction: BookingDirection
     let search: String
     let tags: BookingTagFilter
+    var missingDocumentOnly = false
 }
 
 /// Tag filter of the booking list (#228): bookings carrying every tag in `tagIDs`,
@@ -321,6 +333,24 @@ struct BookingTagFilter: Equatable {
     var tagIDs: Set<Int64> = []
     var untagged = false
     var isActive: Bool { untagged || !tagIDs.isEmpty }
+}
+
+extension ArchiveMove {
+    var hasFailed: Bool { state == "failed" }
+    /// "wird ins Archiv verschoben …" / why it did not work.
+    var statusText: String {
+        hasFailed
+            ? (problem.isEmpty ? String(localized: "Verschieben ins Archiv fehlgeschlagen") : problem)
+            : String(localized: "wird ins Archiv verschoben …")
+    }
+}
+
+/// The file of an archive document while the app shows it (memory only).
+enum ArchiveFileState {
+    case loading
+    case loaded(Data, mimeType: String, fileName: String)
+    /// What went wrong, already worded for the user (no address, no token).
+    case failed(String)
 }
 
 struct DayJump: Equatable {
@@ -645,6 +675,7 @@ extension BookingFilter {
         scope == .all && direction == .all && checked == nil && search == nil && categoryId == nil && !uncategorizedOnly
             && tagIds.isEmpty && !untaggedOnly
             && amountMinCents == nil && amountMaxCents == nil
+            && !withoutDocument
     }
 }
 
