@@ -1,6 +1,5 @@
 {
   " und ": " and ",
-  "%1 Belege nach „%2/GiroCrab-Belege“ exportiert": "%1 receipts exported to “%2/GiroCrab-Belege”",
   "%1 Bit · Schlüssel %2, Version %3": "%1 bits · key %2, version %3",
   "%1 Tags löschen …": "Delete %1 Tags …",
   "%1 Tags löschen?": "Delete %1 tags?",
@@ -55,7 +54,6 @@
   "Bitte bestätigen Sie die Abfrage des Schlüsselbunds (KWallet oder GNOME Schlüsselbund). Sie kann hinter diesem Fenster oder auf einem anderen Bildschirm liegen.": "Please confirm the keyring prompt (KWallet or GNOME Keyring). It may be behind this window or on another screen.",
   "Bleibt": "Stays",
   "Browser-Fenster nicht verfügbar": "Browser Window Not Available",
-  "Buchungen als CSV exportieren": "Export Transactions as CSV",
   "CSV- und Textdateien (*.csv *.txt *.tsv)": "CSV and text files (*.csv *.txt *.tsv)",
   "CSV-, Text- und XML-Dateien (*.csv *.txt *.tsv *.xml)": "CSV, text and XML files (*.csv *.txt *.tsv *.xml)",
   "CSV-Datei (*.csv)": "CSV file (*.csv)",
@@ -155,6 +153,7 @@
   "PDF-Dokumente (*.pdf)": "PDF documents (*.pdf)",
   "PDFs und Fotos (*.pdf *.png *.jpg *.jpeg *.heic)": "PDFs and photos (*.pdf *.png *.jpg *.jpeg *.heic)",
   "PNG-Bild (*.png)": "PNG image (*.png)",
+  "PNG-Bilder (*.png)": "PNG images (*.png)",
   "Passwort der Schlüsseldatei": "Key file password",
   "Passwort der Schlüsseldatei (leer = unverändert)": "Key file password (empty = unchanged)",
   "Passwort und Schlüsseldatei geprüft": "Password and key file checked",

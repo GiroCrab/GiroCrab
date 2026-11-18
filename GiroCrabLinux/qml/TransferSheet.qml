@@ -1,17 +1,20 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
+import QtCore
 
 // TransferSheetView.swift: "Neue Überweisung" – SEPA credit transfer via FinTS
-// (HKCCS) or bunq. A grouped form (HIG): „Von Konto“ first, then recipient (or an own
-// account for an „Umbuchung“), payment and „Ausführung“ as one choice. After the
-// read-only review the model starts the session; the bank's TAN request is shown by
-// TwoFactorSheet. Accounts GiroCrab cannot send from end with a GiroCode instead.
-// „Einzeln | Sammelüberweisung“ under the title switches to BatchTransferSheet.
+// (HKCCS) or bunq. A grouped form without section headings (#881): „Von“ first, then
+// recipient (or an own account for an „Umbuchung“), then amount, purpose and
+// „Ausführung“ as a pop-up. After the read-only review the model starts the session;
+// the bank's TAN request is shown by TwoFactorSheet. Accounts GiroCrab cannot send from
+// end with a GiroCode instead. „Überweisung | Umbuchung | Sammelüberweisung“ under the
+// title (TransferKindPicker) switches the kind, the last one to BatchTransferSheet.
 Sheet {
     id: sheet
-    // .formStyle(.grouped) on macOS: bold section headers, hairlines between the rows,
-    // borderless right-aligned fields (FormTextField), footers at the trailing edge.
+    // .formStyle(.grouped) on macOS: hairlines between the rows, bezeled fields (#881,
+    // `transferField()`), footers at the trailing edge.
     component GroupedSection: FormSection {
         separators: true
         headerFont.pixelSize: Theme.body; headerFont.weight: Font.Bold; headerColor: Theme.text
@@ -29,8 +32,21 @@ Sheet {
     property bool readingInvoice: false
     property var templates: []
     readonly property int maxPurpose: 140
-    /// "Umbuchung": the recipient is one of the user's own accounts.
-    property bool ownTransfer: false
+    /// "Umbuchung": the recipient is one of the user's own accounts. Kept in the draft so the
+    /// batch sheet's switch can open the form in this mode.
+    readonly property bool ownTransfer: !!draft.ownTransfer
+    // Switched on from outside (the kind switch); switching off is done by whoever switches
+    // off, so a template or paste keeps its fields.
+    onOwnTransferChanged: if (visible && ownTransfer) applyOwnTransfer(true)
+    /// Row of the recipient list chosen with the arrow keys (-1 = none).
+    property int highlighted: -1
+    /// Name just taken from the list: typing it must not reopen the list.
+    property var pickedName: null
+    /// Highest fitted height of the current step: the sheet grows, never shrinks, so
+    /// Überweisung ⇄ Umbuchung does not resize it and scroll it on the way back (#881).
+    property real heightFloor: 0
+    readonly property string step: !confirming ? "form" : showsGiroCode ? "giroCode" : "review"
+    onStepChanged: heightFloor = 0
     property var ownTargetID: null
     property bool demoReviewShown: false
 
@@ -46,6 +62,8 @@ Sheet {
     readonly property bool isBunq: account !== null && account.connector === "Bunq"
     readonly property bool offersInstant: account !== null && AppModel.offersInstantChoice(account.connector)
     readonly property bool sendsInstant: draft.instant && offersInstant
+    /// Not while the bank's refusal is shown below the form: that box says it all.
+    readonly property bool showsInstantNote: executionMode === "instant" && canSend && offersInstant && AppModel.transferInstantDeclined === null
     /// TransferDraft.executionMode: "regular" | "scheduled" | "instant".
     readonly property string executionMode: draft.instant ? "instant" : (draft.scheduled ? "scheduled" : "regular")
     readonly property bool isMagicDemoAccount: {
@@ -80,21 +98,27 @@ Sheet {
     visible: AppModel.showTransferSheet
     sheetWidth: 560
     padding: 0
-    closePolicy: AppModel.transferBusy ? Popup.NoAutoClose : Popup.CloseOnEscape
+    // Esc closes the recipient list first; in the review it goes back to the form (it closes from there).
+    closePolicy: AppModel.transferBusy || suggestions.length > 0 || showsReview ? Popup.NoAutoClose : Popup.CloseOnEscape
     onAboutToShow: {
         // a new presentation starts like a new SwiftUI view: form, no Umbuchung
-        confirming = AppModel.demoSheet === "transfer-confirm" && !demoReviewShown // screenshots
+        const demoStep = demoReviewShown ? "" : AppModel.demoSheet // screenshots
+        confirming = demoStep === "transfer-confirm" || demoStep === "transfer-girocode"
         demoReviewShown = true
-        giroCodeChosen = false
+        giroCodeChosen = demoStep === "transfer-girocode"
         clipboardOffer = null
-        ownTransfer = false
         ownTargetID = null
         importNote = ""
         suggestions = []
+        highlighted = -1
+        pickedName = null
+        heightFloor = 0
         templates = AppModel.transferTemplates()
         checkClipboard()
         // .onAppear: from a Tagesgeld account only an Umbuchung (#582)
-        if (internalOnly) setOwnTransfer(true)
+        if (internalOnly && !ownTransfer) setOwnTransfer(true)
+        // opened as Umbuchung from the batch sheet's switch
+        else if (ownTransfer) setOwnTransfer(ownTargets.length > 0)
     }
     onClosed: AppModel.showTransferSheet = false
 
@@ -112,14 +136,37 @@ Sheet {
     }
     function report(p) {
         if (PaymentParser.isEmpty(p)) { importNote = qsTr("Nichts Erkennbares gefunden"); return }
-        AppModel.setDraft(PaymentParser.patch(p))
+        AppModel.fillTransferDraft(PaymentParser.patch(p))
         importNote = qsTr("Felder ausgefüllt – bitte prüfen")
     }
-    function refreshSuggestions() { suggestions = nameField.activeFocus ? AppModel.suggestRecipients(draft.name) : [] }
-    /// "Nicht mehr vorschlagen" (#978): the chips are read again in place, whatever has the focus.
+    /// Known recipients for what was typed: only once something is typed, one row per IBAN
+    /// (the most used spelling), at most five.
+    function recipients(query) {
+        if ((query || "").trim() === "") return []
+        const seen = {}
+        return AppModel.suggestRecipients(query).filter(r => { if (seen[r.iban]) return false; seen[r.iban] = true; return true }).slice(0, 5)
+    }
+    function refreshSuggestions() {
+        if (draft.name === pickedName) { suggestions = []; return }
+        suggestions = nameField.activeFocus ? recipients(draft.name) : []
+    }
+    onSuggestionsChanged: highlighted = -1
+    function moveHighlight(by) {
+        if (!suggestions.length) return false
+        highlighted = Math.min(Math.max(highlighted + by, 0), suggestions.length - 1)
+        return true
+    }
+    /// Takes name and IBAN, closes the list and goes on to the amount.
+    function pick(r) {
+        pickedName = r.name
+        AppModel.setDraft({ name: r.name, iban: AppModel.groupedIBAN(r.iban) })
+        suggestions = []
+        amountField.forceActiveFocus()
+    }
+    /// "Nicht mehr vorschlagen" (#978): the list is read again in place, whatever has the focus.
     function hideRecipient(iban) {
         AppModel.setRecipientHidden(iban, true)
-        suggestions = AppModel.suggestRecipients(draft.name)
+        suggestions = recipients(draft.name)
     }
 
     /// Fills name and IBAN from the chosen own account (owner, else account name).
@@ -130,7 +177,10 @@ Sheet {
         suggestions = []
     }
     function setOwnTransfer(on) {
-        ownTransfer = on
+        AppModel.setDraft({ ownTransfer: on })
+        applyOwnTransfer(on)
+    }
+    function applyOwnTransfer(on) {
         if (on) {
             if (!ownTargets.some(a => a.id === ownTargetID)) ownTargetID = ownTargets.length ? ownTargets[0].id : null
             applyOwnTarget(ownTargetID)
@@ -191,10 +241,10 @@ Sheet {
     }
     /// "Übernehmen" fills only empty fields.
     function acceptClipboard() {
-        const patch = PaymentParser.patch(clipboardOffer.payment)
+        const p = clipboardOffer.payment
         clipboardOffer = null
-        for (const k of Object.keys(patch)) if (String(draft[k]).trim() !== "") delete patch[k]
-        AppModel.setDraft(patch)
+        if (PaymentParser.isEmpty(p)) { importNote = qsTr("Nichts Erkennbares gefunden"); return }
+        AppModel.fillTransferDraft(PaymentParser.patch(p), true)
         importNote = qsTr("Felder ausgefüllt – bitte prüfen")
     }
 
@@ -239,15 +289,14 @@ Sheet {
                 ToolTip.visible: hovered; ToolTip.delay: 600
             }
         }
-        // TransferKindPicker(batch: false)
-        Segmented {
+        // TransferKindPicker(batch: false, offersOwn:) – Tagesgeld: only Umbuchung, said in the form; no switch.
+        TransferKindPicker {
             id: kindPicker
-            visible: !sheet.confirming && Payments.canBatchTransfer
+            visible: !sheet.confirming && !sheet.internalOnly && (Payments.canBatchTransfer || sheet.ownTargets.length > 0 || sheet.ownTransfer)
             Layout.alignment: Qt.AlignHCenter
             Layout.bottomMargin: 10
-            options: [{ id: "single", title: qsTr("Einzeln") }, { id: "batch", title: qsTr("Sammelüberweisung") }]
-            current: "single"
-            onActivated: id => { if (id === "batch") Payments.switchToBatchTransfer() }
+            batch: false
+            offersOwn: sheet.ownTargets.length > 0 || sheet.ownTransfer
         }
         // ClipboardPaymentBanner: "Übernehmen" fills only empty fields
         Rectangle {
@@ -285,7 +334,13 @@ Sheet {
             readonly property real chrome: head.implicitHeight + 28 + (kindPicker.visible ? kindPicker.implicitHeight + 10 : 0)
                                            + messages.implicitHeight + buttonRow.implicitHeight + 30
             readonly property real body: sheet.confirming ? (sheet.showsGiroCode ? giroCode.implicitHeight : review.implicitHeight) : form.implicitHeight
-            Layout.preferredHeight: Math.min(body + 40, Math.min(700, sheet.maxBodyHeight) - chrome)
+            // The sheet takes what the form needs (#879), at most what the window offers, and
+            // grows within a step, never shrinks (#881).
+            readonly property real fitted: Math.min(Math.max(body + 40, 420 - chrome), sheet.maxBodyHeight - chrome)
+            // latched once the layout has settled, so a passing first-layout height does not stick
+            onFittedChanged: floorTimer.restart()
+            Timer { id: floorTimer; interval: 150; onTriggered: if (scroll.fitted > sheet.heightFloor) sheet.heightFloor = scroll.fitted }
+            Layout.preferredHeight: Math.min(Math.max(fitted, sheet.heightFloor), sheet.maxBodyHeight - chrome)
             contentWidth: availableWidth
             // several children (form / review): the ScrollView cannot guess the height itself
             contentHeight: body + 40
@@ -303,7 +358,7 @@ Sheet {
                     spacing: 6
                     GroupedSection {
                         FormRow {
-                            label: qsTr("Von Konto")
+                            label: qsTr("Von")
                             AppComboBox {
                                 Layout.preferredWidth: 300
                                 model: AppModel.transferFormAccounts.map(a => a.name + " · " + Fmt.iban(a.iban))
@@ -337,23 +392,12 @@ Sheet {
                                font.pixelSize: Theme.callout; color: Theme.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
                     }
                 }
-                // Picker("Art der Zahlung").pickerStyle(.segmented).labelsHidden()
-                GroupedSection {
-                    visible: !sheet.internalOnly && (sheet.ownTargets.length > 0 || sheet.ownTransfer)
-                    Segmented {
-                        Layout.fillWidth: true
-                        options: [{ id: "transfer", title: qsTr("Überweisung") }, { id: "own", title: qsTr("Umbuchung") }]
-                        current: sheet.ownTransfer ? "own" : "transfer"
-                        onActivated: id => sheet.setOwnTransfer(id === "own")
-                        Accessible.name: qsTr("Art der Zahlung")
-                    }
-                }
 
+                // Recipient: an own account (Umbuchung) or name, IBAN and BIC; no heading (#881)
                 GroupedSection {
-                    visible: sheet.ownTransfer
-                    title: qsTr("Eigenes Zielkonto")
-                    footer: qsTr("Name und IBAN werden aus dem gewählten Konto übernommen.")
+                    footer: sheet.importNote
                     FormRow {
+                        visible: sheet.ownTransfer
                         label: qsTr("Zielkonto")
                         AppComboBox {
                             Layout.preferredWidth: 300
@@ -364,79 +408,36 @@ Sheet {
                         }
                     }
                     FormRow {
-                        label: qsTr("Name")
+                        visible: sheet.ownTransfer
+                        label: qsTr("Empfänger")
                         Text { text: sheet.draft.name; font.pixelSize: Theme.body; color: Theme.text; Sensitive {} }
                     }
                     FormRow {
-                        label: qsTr("IBAN")
-                        Text { text: Fmt.iban(sheet.draft.iban); font.pixelSize: Theme.body; font.family: "monospace"; color: Theme.text; Sensitive {} }
-                    }
-                }
-
-                GroupedSection {
-                    visible: !sheet.ownTransfer
-                    title: qsTr("Empfänger")
-                    footer: sheet.importNote || qsTr("Oder Rechnung hierher ziehen")
-                    FormRow {
-                        label: qsTr("Name")
+                        visible: !sheet.ownTransfer
+                        label: qsTr("Empfänger")
                         fillValue: true
-                        FormTextField {
+                        TransferField {
                             id: nameField
-                            placeholderText: qsTr("Name des Empfängers")
                             text: sheet.draft.name
-                            onTextEdited: { AppModel.setDraft({ name: text }); sheet.refreshSuggestions() }
+                            Accessible.name: qsTr("Empfänger")
+                            onTextEdited: {
+                                if (text !== sheet.pickedName) sheet.pickedName = null
+                                AppModel.setDraft({ name: text })
+                                sheet.refreshSuggestions()
+                            }
                             onActiveFocusChanged: sheet.refreshSuggestions()
+                            // the recipient list: ↑/↓, Return, Esc
+                            Keys.onDownPressed: e => e.accepted = sheet.moveHighlight(1)
+                            Keys.onUpPressed: e => e.accepted = sheet.moveHighlight(-1)
+                            Keys.onEscapePressed: e => { e.accepted = sheet.suggestions.length > 0; sheet.suggestions = [] }
                             Sensitive {}
                         }
                     }
-                    Flickable {
-                        visible: sheet.suggestions.length > 0
-                        Layout.fillWidth: true
-                        implicitHeight: chips.implicitHeight
-                        contentWidth: chips.implicitWidth
-                        clip: true
-                        flickableDirection: Flickable.HorizontalFlick
-                        Row {
-                            id: chips
-                            spacing: 6
-                            // one chip per IBAN with its last use; ✕: "Nicht mehr vorschlagen" (#978). No
-                            // context menu: a menu takes the focus from the name field, which clears the chips.
-                            Repeater {
-                                model: sheet.suggestions
-                                delegate: Rectangle {
-                                    id: chipBox
-                                    required property var modelData
-                                    width: chip.implicitWidth + closeButton.width + 20; height: chip.implicitHeight + 8
-                                    radius: 7; color: Theme.selection
-                                    Column {
-                                        id: chip
-                                        x: 8; y: 4
-                                        Text { text: modelData.name; font.pixelSize: Theme.callout; color: Theme.text; elide: Text.ElideRight; width: Math.min(implicitWidth, 180); Sensitive {} }
-                                        Text { text: Fmt.iban(modelData.iban); font.pixelSize: Theme.caption2; font.family: "monospace"; color: Theme.secondary; Sensitive {} }
-                                        Text { text: qsTr("zuletzt %1").arg(Fmt.medium(modelData.last_used)); font.pixelSize: Theme.caption2; color: Theme.tertiary }
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                        onClicked: { AppModel.setDraft({ name: modelData.name, iban: AppModel.groupedIBAN(modelData.iban) }); sheet.suggestions = [] }
-                                    }
-                                    IconButton {
-                                        id: closeButton
-                                        anchors.right: parent.right; anchors.rightMargin: 2; anchors.top: parent.top; anchors.topMargin: 2
-                                        // a click must leave the focus in the name field (it keeps the chips)
-                                        focusPolicy: Qt.NoFocus
-                                        symbol: "xmark.circle.fill"; symbolSize: 13; implicitWidth: 22; implicitHeight: 22
-                                        ToolTip.text: qsTr("Nicht mehr vorschlagen")
-                                        Accessible.name: qsTr("Nicht mehr vorschlagen")
-                                        onClicked: sheet.hideRecipient(chipBox.modelData.iban)
-                                    }
-                                }
-                            }
-                        }
-                    }
                     FormRow {
+                        visible: !sheet.ownTransfer
                         label: qsTr("IBAN")
                         fillValue: true
-                        FormTextField {
+                        TransferField {
                             placeholderText: "DE00 0000 0000 0000 0000 00"
                             font.family: "monospace"
                             inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhPreferUppercase
@@ -448,50 +449,64 @@ Sheet {
                                     ToolTip.text: sheet.ibanValid ? qsTr("Prüfsumme korrekt") : qsTr("IBAN ungültig (Prüfsumme/Länge)") }
                     }
                     FormRow {
-                        label: qsTr("BIC (optional)")
+                        visible: !sheet.ownTransfer
+                        label: qsTr("BIC")
                         fillValue: true
-                        FormTextField {
-                            placeholderText: qsTr("z. B. GENODEF1KS2")
-                            font.family: "monospace"
-                            inputMethodHints: Qt.ImhNoPredictiveText
-                            text: sheet.draft.bic
-                            onTextEdited: AppModel.setDraft({ bic: text })
-                            Sensitive {}
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            TransferField {
+                                // 8 or 11 characters: as wide as the amount (HIG: size fits the input)
+                                Layout.fillWidth: false; Layout.preferredWidth: 160 * Theme.textScale
+                                placeholderText: qsTr("optional")
+                                font.family: "monospace"
+                                inputMethodHints: Qt.ImhNoPredictiveText
+                                text: sheet.draft.bic
+                                onTextEdited: AppModel.setDraft({ bic: text })
+                                Sensitive {}
+                            }
+                            ValidMark { visible: sheet.bicText !== ""; ok: sheet.bicValid
+                                        ToolTip.text: sheet.bicValid ? qsTr("BIC gültig") : qsTr("BIC ungültig") }
+                            Item { Layout.fillWidth: true }
                         }
-                        ValidMark { visible: sheet.bicText !== ""; ok: sheet.bicValid }
                     }
                 }
 
+                // Payment: amount, purpose, Ausführung as a pop-up; the footer only says what needs attention
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 5
                     GroupedSection {
-                        title: qsTr("Zahlung")
                         FormRow {
                             label: qsTr("Betrag")
                             fillValue: true
-                            FormTextField {
-                                placeholderText: Fmt.plain(0)
-                                font.features: { "tnum": 1 }
-                                text: sheet.draft.amountText
-                                onTextEdited: AppModel.setDraft({ amountText: text })
-                                Sensitive { amounts: true }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                TransferField {
+                                    id: amountField
+                                    Layout.fillWidth: false; Layout.preferredWidth: 160 * Theme.textScale
+                                    horizontalAlignment: TextInput.AlignRight
+                                    placeholderText: Fmt.plain(0)
+                                    font.features: { "tnum": 1 }
+                                    text: sheet.draft.amountText
+                                    onTextEdited: AppModel.setDraft({ amountText: text })
+                                    Accessible.name: qsTr("Betrag")
+                                    Sensitive { amounts: true }
+                                }
+                                Text { text: "€"; color: Theme.secondary; font.pixelSize: Theme.body }
+                                Item { Layout.fillWidth: true }
                             }
-                            Text { text: "€"; color: Theme.secondary; font.pixelSize: Theme.body }
                         }
-                        // TextField("Verwendungszweck", axis: .vertical).lineLimit(1...3): label left,
-                        // the text right-aligned, growing to three lines
+                        // TextField("Verwendungszweck", axis: .vertical).lineLimit(1...3), bezeled
                         FormRow {
                             label: qsTr("Verwendungszweck")
                             fillValue: true
                             TextArea {
                                 Layout.fillWidth: true
                                 Layout.maximumHeight: 3 * contentHeight / Math.max(1, lineCount) + topPadding + bottomPadding
-                                horizontalAlignment: TextEdit.AlignRight
-                                leftPadding: 0; rightPadding: 0; topPadding: 4; bottomPadding: 4
-                                font.pixelSize: Theme.body; color: Theme.text
-                                placeholderText: qsTr("Verwendungszweck"); placeholderTextColor: Theme.tertiary
-                                background: Item {}
+                                font.pixelSize: Theme.body
+                                placeholderText: qsTr("optional")
                                 wrapMode: TextEdit.Wrap
                                 text: sheet.draft.purpose
                                 onTextChanged: if (text !== sheet.draft.purpose) AppModel.setDraft({ purpose: text.slice(0, sheet.maxPurpose) })
@@ -501,51 +516,22 @@ Sheet {
                                 Sensitive {}
                             }
                         }
-                    }
-                    // footer: amount hint left, purpose counter right
-                    RowLayout {
-                        Layout.fillWidth: true; Layout.leftMargin: 10; Layout.rightMargin: 10
-                        Text { visible: sheet.draft.amountText !== "" && sheet.cents === null; text: qsTr("Betrag > 0 eingeben"); font.pixelSize: Theme.body; color: Theme.negative }
-                        Item { Layout.fillWidth: true }
-                        Text {
-                            text: sheet.draft.purpose.length + "/" + sheet.maxPurpose
-                            font.pixelSize: Theme.body; font.features: { "tnum": 1 }
-                            color: sheet.draft.purpose.length >= sheet.maxPurpose ? Theme.negative : Theme.tertiary
-                        }
-                    }
-                }
-
-                ColumnLayout {
-                    visible: sheet.canSend && sheet.offersInstant
-                    Layout.fillWidth: true
-                    spacing: 5
-                    GroupedSection {
-                        title: qsTr("Ausführung")
-                        // Mutually exclusive choices: one radio group (HIG), not
-                        // two checkboxes where one disables the other.
-                        ButtonGroup { id: modeGroup }
-                        Repeater {
-                            model: [{ id: "regular", title: qsTr("Normale Überweisung") },
-                                    { id: "scheduled", title: qsTr("Terminüberweisung") },
-                                    { id: "instant", title: qsTr("Echtzeitüberweisung (SEPA Instant)") }]
-                            // .pickerStyle(.radioGroup).labelsHidden() in a grouped form: the
-                            // choice's title on the left, its radio button at the trailing edge
-                            RowLayout {
-                                required property var modelData
-                                Layout.fillWidth: true
-                                Text { Layout.fillWidth: true; text: modelData.title; font.pixelSize: Theme.body; color: Theme.text
-                                       MouseArea { anchors.fill: parent; onClicked: sheet.setExecutionMode(modelData.id) } }
-                                RadioButton {
-                                    ButtonGroup.group: modeGroup
-                                    padding: 0
-                                    checked: sheet.executionMode === modelData.id
-                                    onToggled: if (checked) sheet.setExecutionMode(modelData.id)
-                                    Accessible.name: modelData.title
-                                }
+                        // Mutually exclusive choices in one pop-up (HIG): one row instead of a radio group of three.
+                        FormRow {
+                            visible: sheet.canSend && sheet.offersInstant
+                            label: qsTr("Ausführung")
+                            AppComboBox {
+                                readonly property var modes: [{ id: "regular", title: qsTr("Normale Überweisung") },
+                                                              { id: "scheduled", title: qsTr("Terminüberweisung") },
+                                                              { id: "instant", title: qsTr("Echtzeitüberweisung (SEPA Instant)") }]
+                                Layout.preferredWidth: 300
+                                model: modes; textRole: "title"
+                                currentIndex: modes.findIndex(m => m.id === sheet.executionMode)
+                                onActivated: i => sheet.setExecutionMode(modes[i].id)
                             }
                         }
                         FormRow {
-                            visible: sheet.executionMode === "scheduled"
+                            visible: sheet.canSend && sheet.offersInstant && sheet.executionMode === "scheduled"
                             label: qsTr("Ausführungsdatum")
                             // DatePicker(in: tomorrow...)
                             DateField {
@@ -555,23 +541,54 @@ Sheet {
                             }
                         }
                     }
-                    // footer (instantNote)
+                    // paymentFooter: an invalid amount, the purpose limit once it is close, the instant note
                     ColumnLayout {
-                        visible: sheet.executionMode === "instant"
-                        Layout.fillWidth: true; Layout.leftMargin: 10
+                        readonly property bool amountInvalid: sheet.draft.amountText !== "" && sheet.cents === null
+                        readonly property bool nearLimit: sheet.draft.purpose.length >= sheet.maxPurpose - 20
+                        visible: amountInvalid || nearLimit || sheet.showsInstantNote
+                        Layout.fillWidth: true; Layout.leftMargin: 10; Layout.rightMargin: 10
                         spacing: 6
+                        RowLayout {
+                            visible: parent.amountInvalid || parent.nearLimit
+                            Layout.fillWidth: true
+                            Text { visible: parent.parent.amountInvalid; text: qsTr("Betrag > 0 eingeben"); font.pixelSize: Theme.body; color: Theme.negative }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                visible: parent.parent.nearLimit
+                                text: sheet.draft.purpose.length + "/" + sheet.maxPurpose
+                                font.pixelSize: Theme.body; font.features: { "tnum": 1 }
+                                color: sheet.draft.purpose.length >= sheet.maxPurpose ? Theme.negative : Theme.tertiary
+                            }
+                        }
+                        // instantNote
                         Text {
+                            visible: sheet.showsInstantNote
                             Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                             text: qsTr("Kommt in Sekunden an und ist nicht rückholbar. Bietet die Bank sie nicht an, wird nichts gesendet; Sie können sie dann als normale Überweisung senden.")
                         }
                         Hint {
-                            visible: sheet.cents !== null && sheet.cents >= 10000000
+                            visible: sheet.showsInstantNote && sheet.cents !== null && sheet.cents >= 10000000
                             indent: false; symbol: "exclamationmark.triangle"; tint: Theme.warning
                             text: qsTr("Viele Banken begrenzen Echtzeitüberweisungen (oft auf 100.000 € oder ein eigenes Limit). Die Bank kann den Auftrag dann ablehnen.")
                         }
                     }
                 }
 
+                GroupedSection {
+                    visible: sheet.canSend && !sheet.pinStored
+                    FormRow {
+                        label: sheet.isBunq ? qsTr("bunq-API-Schlüssel") : qsTr("Banking-PIN")
+                        fillValue: true
+                        TransferField {
+                            echoMode: TextInput.Password
+                            placeholderText: qsTr("wird nicht gespeichert")
+                            text: sheet.draft.pin
+                            onTextEdited: AppModel.setDraft({ pin: text })
+                            Accessible.name: sheet.isBunq ? qsTr("bunq-API-Schlüssel") : qsTr("Banking-PIN")
+                        }
+                    }
+                }
+                // Demo PIN under the form, outside a section: inside one it would be a box in a box (HIG).
                 DemoHintBanner {
                     visible: sheet.canSend && (AppModel.isDemo || sheet.isMagicDemoAccount)
                     Layout.fillWidth: true
@@ -579,25 +596,10 @@ Sheet {
                     buttonTitle: qsTr("PIN 12345 einfügen")
                     onFill: AppModel.setDraft({ pin: "12345" })
                 }
-                GroupedSection {
-                    visible: sheet.canSend && !sheet.pinStored
-                    footer: sheet.isBunq ? qsTr("Der API-Schlüssel wird nicht gespeichert.") : qsTr("Die PIN wird nicht gespeichert.")
-                    FormRow {
-                        label: sheet.isBunq ? qsTr("bunq-API-Schlüssel") : qsTr("Banking-PIN")
-                        TextField {
-                            Layout.preferredWidth: 260
-                            echoMode: TextInput.Password
-                            horizontalAlignment: TextInput.AlignRight
-                            placeholderText: qsTr("wird nicht gespeichert")
-                            text: sheet.draft.pin
-                            onTextEdited: AppModel.setDraft({ pin: text })
-                        }
-                    }
-                }
             }
 
             // MARK: confirmation (send) – read-only review in the same grouped style as the form:
-            // the amount first, then recipient, payment and execution, each as label + value.
+            // the amount first, then sender, recipient, payment and execution, each as label + value.
             ColumnLayout {
                 id: review
                 visible: sheet.showsReview
@@ -606,9 +608,12 @@ Sheet {
                 GroupedSection {
                     BigAmount { Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 6; Layout.bottomMargin: 6 }
                 }
+                // same rows and labels as the form, without headings (#881)
                 GroupedSection {
-                    title: qsTr("Empfänger")
-                    ReviewRow { key: qsTr("Name"); value: sheet.draft.name }
+                    ReviewRow { key: qsTr("Von"); value: sheet.accountLabel }
+                }
+                GroupedSection {
+                    ReviewRow { key: qsTr("Empfänger"); value: sheet.draft.name }
                     ReviewRow { key: qsTr("IBAN"); value: sheet.draft.iban; mono: true }
                     ReviewRow { visible: sheet.bicText !== ""; key: qsTr("BIC"); value: sheet.bicText.toUpperCase(); mono: true }
                 }
@@ -616,9 +621,7 @@ Sheet {
                     Layout.fillWidth: true
                     spacing: 6
                     GroupedSection {
-                        title: qsTr("Zahlung")
                         ReviewRow { key: qsTr("Verwendungszweck"); value: sheet.draft.purpose === "" ? "–" : sheet.draft.purpose }
-                        ReviewRow { key: qsTr("Von Konto"); value: sheet.accountLabel }
                         ReviewRow {
                             key: qsTr("Ausführung"); personal: false
                             value: {
@@ -647,6 +650,7 @@ Sheet {
                         width: parent.width
                         spacing: 16
                         GiroCodeImage {
+                            id: giroCodeImage
                             Layout.preferredWidth: 200; Layout.preferredHeight: 200; Layout.alignment: Qt.AlignTop
                             payload: sheet.showsGiroCode ? sheet.giroCodePayload : ""
                             Sensitive { amounts: true } // the code carries name, IBAN, amount and purpose
@@ -661,6 +665,21 @@ Sheet {
                             SummaryRow { key: qsTr("Zweck"); value: sheet.draft.purpose === "" ? "–" : sheet.draft.purpose }
                             SummaryRow { key: qsTr("Von"); value: sheet.accountLabel }
                         }
+                    }
+                }
+                // giroCodeActions: copy / save the code as a picture (PNG)
+                RowLayout {
+                    visible: sheet.giroCodePayload !== ""
+                    spacing: 8
+                    Button {
+                        text: qsTr("Bild kopieren"); icon.name: SF.icon("doc.on.doc"); font.pixelSize: Theme.callout
+                        onClicked: sheet.copyGiroCode()
+                        ToolTip.text: qsTr("Das Bild enthält IBAN, Empfänger und Betrag."); ToolTip.visible: hovered; ToolTip.delay: 600
+                    }
+                    Button {
+                        text: qsTr("Sichern …"); icon.name: SF.icon("square.and.arrow.down"); font.pixelSize: Theme.callout
+                        onClicked: giroCodeSaveDialog.open()
+                        ToolTip.text: qsTr("Das Bild enthält IBAN, Empfänger und Betrag."); ToolTip.visible: hovered; ToolTip.delay: 600
                     }
                 }
                 Hint {
@@ -720,10 +739,10 @@ Sheet {
             Layout.fillWidth: true
             Layout.margins: 14
             spacing: 8
-            Button { visible: !sheet.showsGiroCode; text: qsTr("Abbrechen"); onClicked: sheet.close_() }
-            Button { visible: sheet.showsGiroCode; text: qsTr("Zurück"); onClicked: sheet.goBack() }
+            Button { visible: !sheet.confirming; text: qsTr("Abbrechen"); onClicked: sheet.close_() }
+            // Back and the approval only (HIG); Esc goes back to the form, it closes from there.
+            Button { visible: sheet.confirming; text: qsTr("Zurück"); onClicked: sheet.goBack() }
             Item { Layout.fillWidth: true }
-            Button { visible: sheet.showsReview; text: qsTr("Zurück"); onClicked: sheet.goBack() }
             Button {
                 visible: sheet.showsGiroCode
                 text: qsTr("Fertig"); highlighted: true
@@ -758,12 +777,101 @@ Sheet {
     // .keyboardShortcut(.defaultAction)
     Shortcut {
         sequences: ["Return", "Enter"]
-        enabled: sheet.visible && !templateName.visible && !deleteConfirm.visible
+        enabled: sheet.visible && !templateName.visible && !deleteConfirm.visible && !giroCodeSaveDialog.visible
         onActivated: {
+            // Return takes the recipient chosen with ↑/↓
+            if (!sheet.confirming && sheet.highlighted >= 0 && sheet.highlighted < sheet.suggestions.length) {
+                sheet.pick(sheet.suggestions[sheet.highlighted])
+                return
+            }
             if (!sheet.confirming) { if (nextButton.enabled) nextButton.clicked() }
             else if (sheet.showsGiroCode) sheet.close_()
             else if (!AppModel.transferBusy) AppModel.startTransfer()
         }
+    }
+
+    // review: Esc goes back to the form (.keyboardShortcut(.cancelAction) on „Zurück“)
+    Shortcut {
+        sequence: "Escape"
+        enabled: sheet.visible && sheet.showsReview && !AppModel.transferBusy && !templateName.visible && !deleteConfirm.visible
+        onActivated: sheet.goBack()
+    }
+
+    // Known recipients as a drop-down under the name (#881): one row each, pick with the
+    // mouse or ↑/↓ and Return; Esc closes it. It floats over the form below the name field,
+    // so the sheet keeps its size while typing.
+    Rectangle {
+        id: suggestionList
+        parent: sheet.contentItem
+        z: 6
+        visible: !sheet.confirming && sheet.suggestions.length > 0 && nameField.visible
+        readonly property point at: {
+            void scroll.contentItem.contentY; void scroll.height; void nameField.y; void sheet.width; void sheet.ownTransfer
+            return nameField.mapToItem(sheet.contentItem, 0, nameField.height + 4)
+        }
+        x: at.x; y: at.y; width: nameField.width
+        height: suggestionColumn.implicitHeight + 8
+        radius: 8; color: Theme.card; border.color: Theme.border
+        Column {
+            id: suggestionColumn
+            x: 4; y: 4; width: parent.width - 8
+            Repeater {
+                model: sheet.suggestions
+                Rectangle {
+                    id: suggestionRow
+                    required property var modelData
+                    required property int index
+                    width: suggestionColumn.width; height: rowText.implicitHeight + 8
+                    radius: 6
+                    color: index === sheet.highlighted ? Theme.selection : "transparent"
+                    // one row per IBAN with its last use; ✕: "Nicht mehr vorschlagen" (#978). No
+                    // context menu: a menu takes the focus from the name field, which clears the list.
+                    Column {
+                        id: rowText
+                        x: 8; y: 4; width: parent.width - 16 - hideButton.width
+                        spacing: 1
+                        Text { width: parent.width; text: suggestionRow.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Sensitive {} }
+                        Text { width: parent.width; text: Fmt.iban(suggestionRow.modelData.iban); font.pixelSize: Theme.caption; font.family: "monospace"
+                               color: Theme.secondary; elide: Text.ElideRight; Sensitive {} }
+                        Text { width: parent.width; text: qsTr("zuletzt %1").arg(Fmt.medium(suggestionRow.modelData.last_used)); font.pixelSize: Theme.caption2; color: Theme.tertiary }
+                    }
+                    HoverHandler { onHoveredChanged: if (hovered) sheet.highlighted = suggestionRow.index }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: sheet.pick(suggestionRow.modelData) }
+                    IconButton {
+                        id: hideButton
+                        anchors.right: parent.right; anchors.rightMargin: 4; anchors.verticalCenter: parent.verticalCenter
+                        // a click must leave the focus in the name field (it keeps the list)
+                        focusPolicy: Qt.NoFocus
+                        symbol: "xmark.circle.fill"; symbolSize: 13; implicitWidth: 22; implicitHeight: 22
+                        ToolTip.text: qsTr("Nicht mehr vorschlagen")
+                        Accessible.name: qsTr("Nicht mehr vorschlagen")
+                        onClicked: sheet.hideRecipient(suggestionRow.modelData.iban)
+                    }
+                }
+            }
+        }
+    }
+
+    // GiroCode as PNG: „Bild kopieren“ puts it on the clipboard, „Sichern …“ writes it (GiroCode.png).
+    function copyGiroCode() {
+        const dir = AppModel.localPath(StandardPaths.writableLocation(StandardPaths.RuntimeLocation))
+        const path = dir + "/girocrab-girocode-" + Date.now() + ".png"
+        giroCodeImage.savePng(path, ok => {
+            if (!ok) return
+            AppModel.run(() => AppModel.core("copy_image", { path: path }))
+            // the picture carries IBAN and amount: no copy stays on disk
+            AppModel.run(() => AppModel.core("save_export_file", { from_path: path, discard: true }))
+        })
+    }
+    FileDialog {
+        id: giroCodeSaveDialog
+        title: qsTr("Sichern …")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "png"
+        nameFilters: [qsTr("PNG-Bilder (*.png)")]
+        currentFolder: StandardPaths.writableLocation(StandardPaths.PicturesLocation)
+        selectedFile: currentFolder + "/GiroCode.png"
+        onAccepted: giroCodeImage.savePng(AppModel.localPath(selectedFile), () => {})
     }
 
     // TransferSheetView.swift › .onDrop: Rechnung (PDF, ZUGFeRD-XML, Bild oder PDF mit GiroCode) hierher ziehen.
@@ -817,8 +925,8 @@ Sheet {
             delegate: AppMenuItem {
                 required property var modelData
                 text: modelData.name + " · " + modelData.recipient_name
-                onTriggered: { sheet.ownTransfer = false; AppModel.applyTransferTemplate(modelData)
-                               if (sheet.internalOnly) sheet.setOwnTransfer(true) }   // Tagesgeld: only an Umbuchung (#582)
+                // leaves Umbuchung; from a Tagesgeld account only amount and purpose (fillTransferDraft, #881)
+                onTriggered: AppModel.applyTransferTemplate(modelData)
             }
             onObjectAdded: (i, o) => templatesMenu.insertItem(i, o)
             onObjectRemoved: (i, o) => templatesMenu.removeItem(o)
@@ -852,6 +960,7 @@ Sheet {
     // .alert("Vorlage speichern") { TextField("Name der Vorlage") }
     Sheet {
         id: templateName
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         sheetWidth: 340
         ColumnLayout {
             width: templateName.availableWidth
@@ -873,6 +982,7 @@ Sheet {
     // .confirmationDialog("Vorlage „…“ löschen?")
     Sheet {
         id: deleteConfirm
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         property var template: null
         sheetWidth: 340
         ColumnLayout {
@@ -893,6 +1003,12 @@ Sheet {
         }
     }
 
+    /// transferField(): a bezeled text field of the transfer form (#881), so an empty field reads as a field.
+    component TransferField: TextField {
+        Layout.fillWidth: true
+        font.pixelSize: Theme.body
+        selectByMouse: true
+    }
     component Hint: RowLayout {
         property alias text: hintText.text
         property alias symbol: hintIcon.symbol

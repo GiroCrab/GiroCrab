@@ -32,7 +32,9 @@ QtObject {
         return { id: b.id, account_id: b.account_id, account_name: b.account_name, date: b.booking_date,
                  amount_cents: b.amount_cents, currency: b.currency, counterparty: name,
                  purpose: b.clean_purpose !== "" ? b.clean_purpose : b.purpose,
-                 category: b.category_path, note: b.note }
+                 category: b.category_path, note: b.note,
+                 // CSV only (#831): counterparty IBAN and tag names
+                 counterparty_iban: b.counterparty_iban || "", tag_names: (b.tags || []).map(t => t.name) }
     }
 
     /// Rows after the direction filter, in print order.
