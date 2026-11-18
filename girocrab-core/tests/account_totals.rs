@@ -111,7 +111,7 @@ fn add_booking(c: &Connection, account: i64, ext: &str, date: &str, cents: i64, 
 }
 
 fn today() -> String {
-    chrono::Local::now().format("%Y-%m-%d").to_string()
+    jiff::ZonedDateTime::now().date().to_string()
 }
 
 fn col(c: &Connection, sql: &str, id: i64) -> i64 {
@@ -164,8 +164,8 @@ fn excluded_group_leaves_dashboard_and_cashflow() {
     v.update_user_group(uuid, "Test-Gruppe".into(), "folder".into(), false)
         .unwrap();
 
-    let d = chrono::Local::now();
-    let month = format!("{}-{}", d.format("%Y"), d.format("%m"));
+    let d = jiff::ZonedDateTime::now().date();
+    let month = format!("{:04}-{:02}", d.year(), d.month());
     let board = v.investment_dashboard(1).unwrap();
     let m = board.monthly.last().unwrap();
     assert_eq!(m.month, month);
