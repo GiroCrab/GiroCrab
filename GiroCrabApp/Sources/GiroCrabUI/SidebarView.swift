@@ -495,6 +495,7 @@ struct SidebarView: View {
         AccountCopyMenu(account: account)
         Button("Belege anzeigen", systemImage: "doc.text.magnifyingglass") {
             model.documentsAccountFilter = account.id
+            model.documentsConnectionFilter = nil
             model.interactiveSidebarSelection = .documents
         }
         Divider()

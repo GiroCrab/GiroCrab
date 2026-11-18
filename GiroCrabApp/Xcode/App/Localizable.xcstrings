@@ -3558,6 +3558,17 @@
         }
       }
     },
+    "Alle Bankzugänge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All Bank Connections"
+          }
+        }
+      }
+    },
     "Alle Belege exportieren …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6365,6 +6376,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bank connections are locked because this version contains a security vulnerability or a serious bug in bank access. Your data stays readable."
+          }
+        }
+      }
+    },
+    "Bankzugang" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank Connection"
           }
         }
       }
@@ -11665,6 +11687,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Automatically save documents to a folder"
+          }
+        }
+      }
+    },
+    "Dokumente eines Bankzugangs anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show documents for a bank connection"
           }
         }
       }
@@ -21962,6 +21995,17 @@
         }
       }
     },
+    "Natürliche Suche" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Natural search"
+          }
+        }
+      }
+    },
     "Negative Beträge" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28010,6 +28054,17 @@
         }
       }
     },
+    "Suche in natürlicher Sprache" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Natural-language search"
+          }
+        }
+      }
+    },
     "Suche löschen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28039,6 +28094,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Searching matching transactions…"
+          }
+        }
+      }
+    },
+    "Suche:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search:"
           }
         }
       }
@@ -30260,6 +30326,17 @@
         }
       }
     },
+    "Versteht Angaben wie „Lebensmittel letzten Monat über 50 €“. Läuft vollständig auf diesem Gerät; an das Modell gehen nur Suchtext, heutiges Datum und Kategorienamen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Understands phrases like “groceries last month over €50”. Runs entirely on this device; only the search text, today’s date and category names are sent to the model."
+          }
+        }
+      }
+    },
     "Vertrag" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31950,6 +32027,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "dictionary"
+          }
+        }
+      }
+    },
+    "Wörtlich nach dem eingegebenen Text suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search for the typed text literally"
+          }
+        }
+      }
+    },
+    "Wörtlich suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search literally"
           }
         }
       }
