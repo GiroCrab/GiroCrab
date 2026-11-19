@@ -680,7 +680,7 @@ Rectangle {
             AppMenuItem { text: qsTr("Kontostand"); onTriggered: AppModel.copyToClipboard(Fmt.clipboard(accountMenu.a.balance_cents)) }
         }
         AppMenuItem { text: qsTr("Belege anzeigen"); icon.name: SF.icon("doc.text.magnifyingglass")
-                   onTriggered: { AppModel.documentsAccountFilter = accountMenu.a.id; AppModel.sidebarSelection = "documents" } }
+                   onTriggered: { AppModel.documentsAccountFilter = accountMenu.a.id; AppModel.documentsConnectionFilter = null; AppModel.sidebarSelection = "documents" } }
         AppMenuSeparator {}
         AppMenuItem { visible: accountMenu.archived; height: visible ? implicitHeight : 0
                    text: qsTr("Reaktivieren"); icon.name: SF.icon("arrow.uturn.backward"); onTriggered: AppModel.setAccountArchived(accountMenu.a, false) }

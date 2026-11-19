@@ -22,11 +22,11 @@ Rectangle {
     property var selectedID: null
     readonly property var selected: selectedID === null ? null : (docs.find(d => d.id === selectedID) || null)
     property var docToDelete: null
-    /// model.allDocuments(search:unlinkedOnly:accountId:scope:)
+    /// model.allDocuments(search:unlinkedOnly:accountId:connectionId:scope:)
     readonly property var found: {
         void DocumentsScope.current
         return AppModel.sidebarSelection !== "documents" ? []
-            : AppModel.allDocuments(search, unlinkedOnly, AppModel.documentsAccountFilter).filter(d => DocumentsScope.includes(d))
+            : AppModel.allDocuments(search, unlinkedOnly, AppModel.documentsAccountFilter, AppModel.documentsConnectionFilter).filter(d => DocumentsScope.includes(d))
     }
     /// DocumentFilters.apply: type, year and „Nur ungelesene“ on the list already in memory; the open
     /// document stays (it must not vanish from the list the moment it is read).
@@ -34,9 +34,10 @@ Rectangle {
         && (yearFilter === null || String(d.doc_date || "").startsWith(yearFilter + "-"))
         && (!unseenOnly || !d.seen || d.id === selectedID))
     /// Nothing filtered: the general empty state instead of „Keine passenden Dokumente“.
-    readonly property bool unfiltered: DocumentsScope.current === "all" && AppModel.documentsAccountFilter === null && !unlinkedOnly
+    readonly property bool unfiltered: DocumentsScope.current === "all" && AppModel.documentsAccountFilter === null
+        && AppModel.documentsConnectionFilter === null && !unlinkedOnly
         && !unseenOnly && search === "" && typeFilter === null && yearFilter === null
-    /// Any filter (account, scope, search, „ohne Umsatz“, unread, type, year): the export takes the list on screen.
+    /// Any filter (bank login, account, scope, search, „ohne Umsatz“, unread, type, year): the export takes the list on screen.
     readonly property bool filtered: !unfiltered
     readonly property var unreadIDs: docs.filter(d => !d.seen).map(d => d.id)
 
@@ -92,6 +93,7 @@ Rectangle {
     function showAll() {
         DocumentsScope.current = "all"
         AppModel.documentsAccountFilter = null
+        AppModel.documentsConnectionFilter = null
         unlinkedOnly = false
         clearReadFilters()
         searchField.text = ""
@@ -100,7 +102,11 @@ Rectangle {
     // the section later starts at "Alle Konten" again (#670, `.onDisappear`).
     Connections {
         target: AppModel
-        function onSidebarSelectionChanged() { if (AppModel.sidebarSelection !== "documents") AppModel.documentsAccountFilter = null }
+        function onSidebarSelectionChanged() {
+            if (AppModel.sidebarSelection === "documents") return
+            AppModel.documentsAccountFilter = null
+            AppModel.documentsConnectionFilter = null
+        }
     }
 
     // One context menu for all documents (built once, not per row).
@@ -163,14 +169,36 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 8
-                // ViewThatFits: account picker and switch in one row, else stacked
+                // ViewThatFits: bank login and account picker and switch in one row, else stacked
                 GridLayout {
+                    id: filterGrid
+                    /// what the row needs: the pickers at their minimum width, the switch, the gaps
+                    readonly property bool fits: width >= (connectionPicker.visible ? 162 : 0) + 162 + unlinkedSwitch.implicitWidth + 24
                     Layout.fillWidth: true
-                    columns: view.width < 980 ? 1 : 3
+                    columns: fits ? 4 : 1
                     columnSpacing: 12; rowSpacing: 8
-                    // same order and groups as the sidebar (#412)
+                    // connectionPicker (#1042): only with more than one bank login (or while one is chosen).
+                    // „Ohne Konto“: documents without an account have no bank login.
                     AppComboBox {
-                        readonly property var options: AppModel.accountMenuOptions(a => AppModel.accountLabel(a), true)
+                        id: connectionPicker
+                        readonly property var options: [{ id: null, title: qsTr("Alle Bankzugänge") },
+                                                        { id: AppModel.documentsWithoutAccount, title: qsTr("Ohne Konto") }]
+                            .concat(AppModel.documentsFilterConnections.map(c => ({ id: c.id, title: c.display_name })))
+                        visible: AppModel.documentsFilterConnections.length > 1 || AppModel.documentsConnectionFilter !== null
+                        Layout.minimumWidth: 150; Layout.maximumWidth: 270; Layout.fillWidth: true
+                        model: options
+                        textRole: "title"
+                        currentIndex: Math.max(0, options.findIndex(o => o.id === AppModel.documentsConnectionFilter))
+                        onActivated: i => AppModel.selectDocumentsConnection(options[i].id)
+                        Accessible.name: qsTr("Bankzugang")
+                        ToolTip.text: qsTr("Dokumente eines Bankzugangs anzeigen"); ToolTip.visible: hovered; ToolTip.delay: 600
+                        Sensitive { when: AppModel.documentsConnectionFilter !== null && AppModel.documentsConnectionFilter !== AppModel.documentsWithoutAccount }   // the login's name
+                    }
+                    // same order and groups as the sidebar (#412), narrowed to the chosen bank login
+                    AppComboBox {
+                        readonly property var options: AppModel.accountMenuOptions(a => AppModel.accountLabel(a), AppModel.documentsConnectionFilter === null,
+                                                                                    AppModel.documentsAccountSections)
+                        enabled: AppModel.documentsConnectionFilter !== AppModel.documentsWithoutAccount
                         Layout.minimumWidth: 150; Layout.maximumWidth: 270; Layout.fillWidth: true
                         model: options
                         textRole: "title"
@@ -179,8 +207,8 @@ Rectangle {
                         ToolTip.text: qsTr("Dokumente eines Kontos anzeigen"); ToolTip.visible: hovered; ToolTip.delay: 600
                         Sensitive { when: AppModel.documentsAccountFilter !== null && AppModel.documentsAccountFilter !== AppModel.documentsWithoutAccount }   // the selected account's name
                     }
-                    Item { visible: view.width >= 980; Layout.fillWidth: true }
-                    Switch { text: qsTr("Nur ohne zugeordneten Umsatz"); checked: view.unlinkedOnly; onToggled: view.unlinkedOnly = checked }
+                    Item { visible: filterGrid.fits; Layout.fillWidth: true }
+                    Switch { id: unlinkedSwitch; text: qsTr("Nur ohne zugeordneten Umsatz"); checked: view.unlinkedOnly; onToggled: view.unlinkedOnly = checked }
                 }
                 // unseenRow: „Nur ungelesene“ and, next to it, mark what the list shows as read
                 RowLayout {
@@ -222,7 +250,7 @@ Rectangle {
                 // nobody knows why nothing new arrives
                 ColumnLayout {
                     id: offHint
-                    readonly property var off: AppModel.connectionsWithDocumentsOff(AppModel.documentsAccountFilter)
+                    readonly property var off: AppModel.connectionsWithDocumentsOff(AppModel.documentsAccountFilter, AppModel.documentsConnectionFilter)
                     visible: off.length > 0
                     Layout.fillWidth: true
                     spacing: 4
@@ -350,6 +378,7 @@ Rectangle {
             // was opened from PostBox or a filtered account.
             DocumentsScope.current = "receipts"
             AppModel.documentsAccountFilter = null
+            AppModel.documentsConnectionFilter = null
             searchField.text = ""
             view.unlinkedOnly = false
             view.clearReadFilters()

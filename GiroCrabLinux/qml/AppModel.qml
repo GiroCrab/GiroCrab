@@ -1449,10 +1449,11 @@ QtObject {
         return d === "" ? a.name : a.name + " · " + d
     }
     /// Combo box entries: "Alle Konten", then each section title and its accounts (`label(a)`).
-    function accountMenuOptions(label, withoutAccount) {
+    /// `sections` defaults to `accountMenuSections` („Belege & PostBox“ passes the ones of a bank login, #1042).
+    function accountMenuOptions(label, withoutAccount, sections) {
         const out = [{ id: null, title: qsTr("Alle Konten") }]
         if (withoutAccount) out.push({ id: documentsWithoutAccount, title: qsTr("Ohne Konto") })
-        for (const s of accountMenuSections) {
+        for (const s of (sections || accountMenuSections)) {
             out.push({ id: undefined, title: s.title, header: true })
             for (const a of s.accounts) out.push({ id: a.id, title: label(a) })
         }
@@ -2572,12 +2573,39 @@ QtObject {
         if (!b || !isUnlocked || b.document_count === 0) return []
         return run(() => core("list_documents_for_booking", { booking_id: b.id })) || []
     }
-    function allDocuments(search, unlinkedOnly, accountId) {
+    function allDocuments(search, unlinkedOnly, accountId, connectionId) {
         void documentsVersion
         if (!isUnlocked) return []
-        const withoutAccount = accountId === documentsWithoutAccount
-        const docs = run(() => core("list_all_documents", { filter: { account_id: withoutAccount ? null : accountId, doc_type: null, search: search || null, unlinked_only: unlinkedOnly } })) || []
+        const noConnection = connectionId === undefined || connectionId === null || connectionId === documentsWithoutAccount
+        const withoutAccount = accountId === documentsWithoutAccount || connectionId === documentsWithoutAccount
+        const docs = run(() => core("list_all_documents", { filter: { account_id: accountId === documentsWithoutAccount ? null : accountId, doc_type: null, search: search || null,
+                                                                      unlinked_only: unlinkedOnly, connection_id: noConnection ? null : connectionId } })) || []
         return withoutAccount ? docs.filter(d => d.account_id === null || d.account_id === undefined) : docs
+    }
+    /// „Belege & PostBox“ filtered to one bank login (#1042); null = all, `documentsWithoutAccount` =
+    /// documents without an account (they have no bank login). Set it with `selectDocumentsConnection`.
+    property var documentsConnectionFilter: null
+    /// Bank logins to offer in that filter: those with at least one account.
+    readonly property var documentsFilterConnections: {
+        const used = {}
+        for (const a of allAccounts) if (a.connection_id !== null) used[a.connection_id] = true
+        return connections.filter(c => used[c.id])
+    }
+    /// The account menu of „Belege & PostBox“, narrowed to the chosen bank login (#1042).
+    readonly property var documentsAccountSections: {
+        const cid = documentsConnectionFilter
+        if (cid === null || cid === documentsWithoutAccount) return accountMenuSections
+        return accountMenuSections.map(s => ({ id: s.id, title: s.title, accounts: s.accounts.filter(a => a.connection_id === cid) }))
+                                  .filter(s => s.accounts.length > 0)
+    }
+    /// Picks the bank login of the document list. An account filter that does not belong to it
+    /// (or „Ohne Konto“) is reset, otherwise the list would be empty.
+    function selectDocumentsConnection(id) {
+        documentsConnectionFilter = id
+        const account = documentsAccountFilter
+        if (id === null || account === null) return
+        if (id === documentsWithoutAccount || !accountsByID[account] || accountsByID[account].connection_id !== id)
+            documentsAccountFilter = null
     }
     function accountDocuments(accountID) { return allDocuments("", false, accountID) }
     function documentsChanged() { documentsVersion++; reloadBookings() }
@@ -2720,15 +2748,18 @@ QtObject {
         documentsOffConnectionIDs = isUnlocked
             ? connections.filter(c => documentsFetchSupported(c.id) && !documentsFetchEnabled(c.id)).map(c => c.id) : []
     }
-    /// AppModel+Documents.swift › connectionsWithDocumentsOff: for the whole list or the one
-    /// account on screen (`accountFilter`).
-    function connectionsWithDocumentsOff(accountFilter) {
+    /// AppModel+Documents.swift › connectionsWithDocumentsOff: for the whole list, the one account
+    /// on screen (`accountFilter`) or the chosen bank login (`connectionFilter`, #1042).
+    function connectionsWithDocumentsOff(accountFilter, connectionFilter) {
         let ids = null
         if (accountFilter !== null && accountFilter !== undefined) {
             if (accountFilter === documentsWithoutAccount) return []
             const a = accountsByID[accountFilter]
             if (!a || a.connection_id === null) return []
             ids = [a.connection_id]
+        } else if (connectionFilter !== null && connectionFilter !== undefined) {
+            if (connectionFilter === documentsWithoutAccount) return []
+            ids = [connectionFilter]
         }
         return connections.filter(c => (ids === null || ids.indexOf(c.id) >= 0) && documentsOffConnectionIDs.indexOf(c.id) >= 0)
     }
