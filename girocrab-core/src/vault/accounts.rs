@@ -163,6 +163,16 @@ impl Vault {
 
     fn purge_connection(db: &Connection, connection_id: i64) -> Result<(), CoreError> {
         crate::sync_merge::soft_delete_connection(db, connection_id)?;
+        Self::purge_connection_secrets(db, connection_id)
+    }
+
+    /// Removes the device-local settings of deleted login `connection_id`: stored
+    /// PIN, RAH-10 keys, portal cookies, its Enable Banking application, document
+    /// settings and the account choice. Runs for local deletes and for deletions a merge brings in.
+    pub(crate) fn purge_connection_secrets(
+        db: &Connection,
+        connection_id: i64,
+    ) -> Result<(), CoreError> {
         db.execute(
             "DELETE FROM settings WHERE key IN (?1, ?2, ?3)",
             params![
