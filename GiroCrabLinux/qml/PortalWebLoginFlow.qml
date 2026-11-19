@@ -82,6 +82,8 @@ WebLoginFlow {
     property var cardQueue: null
     /// The card the portal is switching to right now ("" = none).
     property string loadingCard: ""
+    /// PortalWebSheet.cardsSince: when the card round began waiting, for its time limit (#1010).
+    property real cardsSince: 0
     /// Not every card of the switcher has been opened yet: importing now would take only the
     /// cards loaded so far and close the sheet, so it waits.
     readonly property bool cardsPending: kind === "AmericanExpress" && (cardQueue === null || cardQueue.length > 0 || loadingCard !== "")
@@ -300,7 +302,20 @@ return true;`
             }
         }
         // Amex: open every card of the switcher once before importing (#243).
-        if (!browsingHistory && kind === "AmericanExpress" && n > 0 && !away && Date.now() - lastChange > 4000 && !p.cardsOpened) {
+        // PortalWebSheet.cardRoundTimedOut: a card round still running after 90 s gives up, so
+        // the page is not hidden for good and the cards loaded so far can be imported (#1010).
+        if (cardsPending && n > 0 && !away) {
+            if (cardsSince === 0) cardsSince = Date.now()
+            if (Date.now() - cardsSince > 90000) {
+                console.info("portal cards: gave up, " + (cardQueue ? cardQueue.length : -1) + " left")
+                cardQueue = []
+                loadingCard = ""
+                AppModel.toast = qsTr("Nicht alle Karten ließen sich öffnen – übernommen werden die bisher geladenen Karten.")
+            }
+        }
+        // PortalWebSheet.switchesCard: also while older billing periods are browsed – switching
+        // cards neither imports nor closes the sheet (#1010).
+        if (kind === "AmericanExpress" && n > 0 && !away && Date.now() - lastChange > 4000 && !p.cardsOpened) {
             openNextCard(switching => {
                 if (finished) return
                 if (switching) { lastChange = Date.now(); ticking = false }
