@@ -1565,6 +1565,8 @@ vault_methods! {
     list_rules() save_rule(rule) delete_rule(rule_id) preview_rule(rule, limit)
     apply_rules(only_uncategorized)
     update_category(id, name, parent_id, sf_symbol, color_hex) delete_category(id)
+    // sidebar drag & drop of categories, „Nach oben“ / „Nach unten“ (#977)
+    reorder_categories(parent_id, ids)
     set_category_budget(category_id, budget_cents)
     list_transaction_splits(transaction_id) set_transaction_splits(transaction_id, splits)
     // --- import / export ---
@@ -2108,6 +2110,67 @@ mod tests {
             call_json("parse_amount_to_cents", r#"{"text":"1.234,56"}"#),
             r#"{"ok":123456}"#
         );
+        drop(v);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    /// `reorder_categories` (#977) with the JSON the sidebar sends: new order among the
+    /// siblings, a move under another category, and the refusal to go below itself.
+    #[test]
+    fn reorder_categories_roundtrip() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-reorder-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![7; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let children = |parent: &Value| -> Vec<i64> {
+            call("list_categories", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| &c["parent_id"] == parent)
+                .map(|c| c["id"].as_i64().unwrap())
+                .collect()
+        };
+        let tops = children(&Value::Null);
+        let main = tops
+            .iter()
+            .copied()
+            .find(|&id| children(&json!(id)).len() >= 2)
+            .expect("a main category with sub-categories");
+        // reversed order among the siblings
+        let mut ids = children(&json!(main));
+        ids.reverse();
+        call(
+            "reorder_categories",
+            json!({ "parent_id": main, "ids": ids }),
+        );
+        assert_eq!(children(&json!(main)), ids);
+        // the last sub-category moves to the top level, first place
+        let moved = ids[ids.len() - 1];
+        let mut top_ids = vec![moved];
+        top_ids.extend(tops.iter().copied());
+        call(
+            "reorder_categories",
+            json!({ "parent_id": null, "ids": top_ids }),
+        );
+        assert_eq!(children(&Value::Null), top_ids);
+        assert!(!children(&json!(main)).contains(&moved));
+        // a main category never goes below one of its own sub-categories
+        let sub = children(&json!(main))[0];
+        assert!(dispatch_vault(
+            &v,
+            "reorder_categories",
+            &json!({ "parent_id": sub, "ids": [main] })
+        )
+        .unwrap()
+        .is_err());
         drop(v);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
