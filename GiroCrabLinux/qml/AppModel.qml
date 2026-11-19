@@ -2717,7 +2717,7 @@ QtObject {
         if (!a || !a.connector || (a.kind === "Loan" && a.connector !== "Bhw")) return false
         // switched off per connection (bank connection dialog, #954): the core would refuse it
         if (a.connection_id !== null && documentsOffConnectionIDs.indexOf(a.connection_id) >= 0) return false
-        return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Bhw"].indexOf(a.connector) >= 0
+        return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Ffb", "Bhw"].indexOf(a.connector) >= 0
     }
     function fetchStatements(a) {
         if (syncingConnectionID !== null) return

@@ -1795,11 +1795,12 @@ mod tests {
             json!({ "filter": { "account_id": null, "doc_type": null, "search": null,
                     "unlinked_only": false, "connection_id": id } }),
         );
-        assert!(docs
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|d| of_conn.contains(&d["account_id"])));
+        assert!(
+            docs.as_array()
+                .unwrap()
+                .iter()
+                .all(|d| of_conn.contains(&d["account_id"]))
+        );
     }
 
     /// Belege & PostBox (#934): read status, the sidebar's unread count and the export of
