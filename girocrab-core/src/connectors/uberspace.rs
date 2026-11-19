@@ -307,18 +307,9 @@ fn parse_asteroids(html: &str) -> Vec<String> {
     out
 }
 
-/// "-12,34 €", "1.234,56&nbsp;EUR", "−5,00" → cents.
-fn parse_amount(s: &str) -> Option<i64> {
-    let cleaned: String = s
-        .replace(['\u{2212}', '\u{2013}'], "-")
-        .replace("EUR", "")
-        .chars()
-        .filter(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | ',' | '.'))
-        .collect();
-    if !cleaned.chars().any(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    crate::money::parse_cents(&cleaned).ok()
+/// Amount in an HTML fragment ("<em>- 1,17 €</em>", "50.000,00&nbsp;€") → cents.
+pub(super) fn parse_amount(fragment: &str) -> Option<i64> {
+    crate::money::parse_cents(&text(fragment)).ok()
 }
 
 /// `DD.MM.YYYY` anywhere in the cell → `YYYY-MM-DD`.
@@ -335,8 +326,7 @@ fn parse_accounting(
     since: &str,
 ) -> CoreResult<(RemoteAccount, Vec<RemoteTransaction>)> {
     let balance_cents = element_by_id(html, "total")
-        .map(text)
-        .and_then(|t| parse_amount(&t))
+        .and_then(parse_amount)
         .ok_or_else(invalid)?;
     let account_ref = format!("{REF_PREFIX}{asteroid}");
     let mut ids = ContentIds::default();
@@ -351,7 +341,7 @@ fn parse_accounting(
         let Some(date) = parse_date(&text(row[0])) else {
             continue;
         };
-        let amount_cents = parse_amount(&text(row[2])).ok_or_else(invalid)?;
+        let amount_cents = parse_amount(row[2]).ok_or_else(invalid)?;
         let mut t = RemoteTransaction {
             account_ref: account_ref.clone(),
             booking_date: date.clone(),

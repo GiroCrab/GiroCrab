@@ -9,6 +9,8 @@ use regex::Regex;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+use crate::money;
+
 /// Maximum distance in days between receipt date and booking date.
 pub const MATCH_WINDOW_DAYS: i64 = 2;
 
@@ -105,57 +107,6 @@ pub fn detect_merchant(text: &str) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-/// `1.234,56` / `-0,25` / `0,25-` → cents.
-pub fn parse_german_amount(s: &str) -> Option<i64> {
-    let s = s.trim();
-    let (neg_suffix, s) = match s.strip_suffix('-') {
-        Some(r) => (true, r),
-        None => (false, s),
-    };
-    let (neg_prefix, s) = match s.strip_prefix('-') {
-        Some(r) => (true, r),
-        None => (false, s),
-    };
-    let cleaned: String = s.chars().filter(|c| *c != '.').collect();
-    let (int, frac) = cleaned.split_once(',')?;
-    if frac.len() != 2 || int.is_empty() {
-        return None;
-    }
-    let cents = int.parse::<i64>().ok()?.checked_mul(100)? + frac.parse::<i64>().ok()?;
-    Some(if neg_prefix ^ neg_suffix {
-        -cents
-    } else {
-        cents
-    })
-}
-
-/// `12.34` (XML, dot decimals) → cents.
-fn parse_decimal_cents(s: &str) -> Option<i64> {
-    let s = s.trim();
-    let (neg, s) = match s.strip_prefix('-') {
-        Some(r) => (true, r),
-        None => (false, s),
-    };
-    let (int, frac) = s.split_once('.').unwrap_or((s, ""));
-    if int.is_empty() && frac.is_empty() {
-        return None;
-    }
-    let mut frac = frac.to_string();
-    // Round half up on the third decimal if present.
-    let round_up = frac.len() > 2 && frac.as_bytes()[2] >= b'5';
-    frac.truncate(2);
-    while frac.len() < 2 {
-        frac.push('0');
-    }
-    let int = if int.is_empty() {
-        0
-    } else {
-        int.parse::<i64>().ok()?
-    };
-    let cents = int.checked_mul(100)? + frac.parse::<i64>().ok()? + i64::from(round_up);
-    Some(if neg { -cents } else { cents })
-}
-
 /// `19`, `7,0`, `19.00` → hundredths of a percent.
 fn parse_rate_bp(s: &str) -> Option<u32> {
     let v: f64 = s.trim().replace(',', ".").parse().ok()?;
@@ -200,7 +151,7 @@ pub fn parse_ebon_text(text: &str) -> Result<Ebon, EbonError> {
         .ok_or(EbonError::MissingTotal)?;
     let total_cents = RE_TOTAL
         .captures(lines[total_idx])
-        .and_then(|c| parse_german_amount(&c["amt"]))
+        .and_then(|c| money::parse_cents(&c["amt"]).ok())
         .ok_or(EbonError::MissingTotal)?;
 
     // VAT letters from the footer (`A  7,0 %`).
@@ -225,7 +176,7 @@ pub fn parse_ebon_text(text: &str) -> Result<Ebon, EbonError> {
         let Some(c) = RE_ITEM.captures(line) else {
             continue;
         };
-        let Some(total) = parse_german_amount(&c["amt"]) else {
+        let Some(total) = money::parse_cents(&c["amt"]).ok() else {
             continue;
         };
         let name = c["name"].trim().to_string();
@@ -313,15 +264,15 @@ pub fn parse_zugferd_xml(xml: &str) -> Result<Ebon, EbonError> {
         })
         .ok_or(EbonError::MissingDate)?;
 
+    let cents = |s: String| money::decimal(&s, '.').and_then(money::cents_rounded);
     let total_cents = xml_text(xml, "GrandTotalAmount")
         .or_else(|| xml_text(xml, "DuePayableAmount"))
-        .and_then(|s| parse_decimal_cents(&s))
+        .and_then(cents)
         .ok_or(EbonError::MissingTotal)?;
 
     let mut items = Vec::new();
     for line in xml_blocks(xml, "IncludedSupplyChainTradeLineItem") {
-        let Some(total) = xml_text(line, "LineTotalAmount").and_then(|s| parse_decimal_cents(&s))
-        else {
+        let Some(total) = xml_text(line, "LineTotalAmount").and_then(cents) else {
             continue;
         };
         let name = xml_text(line, "Name").unwrap_or_default();
@@ -584,16 +535,6 @@ mod tests {
         A  19,0%   3,10   0,59    3,69\n\
         B   7,0%   2,87   0,20    3,07\n\
         Datum: 14.03.2025  18:42\n";
-
-    #[test]
-    fn amounts() {
-        assert_eq!(parse_german_amount("1.234,56"), Some(123_456));
-        assert_eq!(parse_german_amount("-0,25"), Some(-25));
-        assert_eq!(parse_german_amount("0,25-"), Some(-25));
-        assert_eq!(parse_german_amount("1,5"), None);
-        assert_eq!(parse_decimal_cents("12.3"), Some(1230));
-        assert_eq!(parse_decimal_cents("-4.567"), Some(-457));
-    }
 
     #[test]
     fn parses_rewe_text() {

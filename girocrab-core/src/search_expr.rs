@@ -327,44 +327,6 @@ fn regex(src: &str) -> Result<Pattern, SearchExprError> {
         .map_err(SearchExprError::InvalidRegex)
 }
 
-fn parse_cents(v: &str) -> Option<i64> {
-    let (neg, digits) = match v.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, v.strip_prefix('+').unwrap_or(v)),
-    };
-    // German thousands dots before a decimal comma: 1.000,50 -> 1000,50.
-    // Only when a comma is present and every group has exactly three digits;
-    // a lone "1.000" is left alone (still rejected).
-    let normalized;
-    let digits = match digits.rsplit_once(',') {
-        Some((int, frac)) if int.contains('.') => {
-            let mut groups = int.split('.');
-            let first = groups.next().unwrap_or("");
-            if first.is_empty() || first.len() > 3 || groups.any(|g| g.len() != 3) {
-                return None;
-            }
-            normalized = format!("{},{frac}", int.replace('.', ""));
-            normalized.as_str()
-        }
-        _ => digits,
-    };
-    let (int, frac) = match digits.split_once([',', '.']) {
-        Some((i, f)) => (i, f),
-        None => (digits, ""),
-    };
-    if int.is_empty() && frac.is_empty()
-        || !int.chars().all(|c| c.is_ascii_digit())
-        || !frac.chars().all(|c| c.is_ascii_digit())
-        || frac.len() > 2
-    {
-        return None;
-    }
-    let int: i64 = if int.is_empty() { 0 } else { int.parse().ok()? };
-    let frac: i64 = format!("{frac:0<2}").parse().ok()?;
-    let cents = int.checked_mul(100)?.checked_add(frac)?;
-    Some(if neg { -cents } else { cents })
-}
-
 fn amount(rest: &str) -> Result<Node, SearchExprError> {
     let (cmp, value) = [
         ("==", Cmp::Eq),
@@ -378,7 +340,8 @@ fn amount(rest: &str) -> Result<Node, SearchExprError> {
     .iter()
     .find_map(|(op, cmp)| rest.strip_prefix(op).map(|v| (*cmp, v)))
     .ok_or_else(|| SearchExprError::InvalidAmount(rest.into()))?;
-    let cents = parse_cents(value).ok_or_else(|| SearchExprError::InvalidAmount(value.into()))?;
+    let cents = crate::money::parse_cents(value)
+        .map_err(|_| SearchExprError::InvalidAmount(value.into()))?;
     Ok(Node::Amount(cmp, cents))
 }
 
@@ -717,17 +680,17 @@ mod tests {
 
     #[test]
     fn german_thousands_separators_in_amounts() {
-        assert_eq!(parse_cents("1.000,00"), Some(100_000));
-        assert_eq!(parse_cents("-12.345.678,9"), Some(-1_234_567_890));
-        // Without a comma "1.000" stays ambiguous and is rejected, as before.
-        assert_eq!(parse_cents("1.000"), None);
-        assert_eq!(parse_cents("1,5"), Some(150));
-        for bad in ["1.00,00", ".000,00", "1.0000,00", "1.000,000", "1..000,00"] {
-            assert_eq!(parse_cents(bad), None, "{bad}");
-        }
         let t = inp("x", "y", 150_000);
         assert!(m("amount>1.000,00", &t));
         assert!(!m("amount>2.000,00", &t));
+        assert!(m("amount=1.500", &t));
+        assert!(m("amount=-12.345.678,9", &inp("", "", -1_234_567_890)));
+        for bad in ["1.00,00", ".000,00", "1.0000,00", "1..000,00"] {
+            assert!(
+                SearchExpr::parse(&format!("amount>{bad}")).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

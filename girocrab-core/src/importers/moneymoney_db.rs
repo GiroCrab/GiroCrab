@@ -599,26 +599,9 @@ fn get(r: &Row, i: usize) -> rusqlite::Result<Value> {
 /// MoneyMoney stores amounts as REAL. Converted via the shortest decimal
 /// representation, rounded half away from zero (0.285 → 29 cents, not 28).
 pub(crate) fn real_to_cents(x: f64) -> Option<i64> {
-    if !x.is_finite() {
-        return None;
-    }
-    let s = format!("{}", x.abs());
-    let (int, frac) = s.split_once('.').unwrap_or((s.as_str(), ""));
-    let d: Vec<i64> = frac
-        .bytes()
-        .chain(std::iter::repeat(b'0'))
-        .take(3)
-        .map(|b| (b - b'0') as i64)
-        .collect();
-    let mut cents = int
-        .parse::<i64>()
-        .ok()?
-        .checked_mul(100)?
-        .checked_add(d[0] * 10 + d[1])?;
-    if d[2] >= 5 {
-        cents += 1;
-    }
-    Some(if x < 0.0 { -cents } else { cents })
+    // f64 `Display` prints the shortest round-trip form and never an exponent;
+    // NaN and infinities are no decimal.
+    crate::money::decimal(&x.to_string(), '.').and_then(crate::money::cents_rounded)
 }
 
 /// MoneyMoney dates are Unix seconds at 12:00 UTC → `YYYY-MM-DD` (UTC).

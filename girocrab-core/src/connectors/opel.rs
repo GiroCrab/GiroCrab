@@ -35,7 +35,7 @@ use async_trait::async_trait;
 use regex::Regex;
 use zeroize::Zeroize;
 
-use super::uberspace::{attr, attrs, parse_date, text, INPUT};
+use super::uberspace::{attr, attrs, parse_amount, parse_date, text, INPUT};
 use super::{
     http_client, BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext,
     ContentIds, Documents, FetchResult, KnownDocuments, Phase, RemoteAccount, RemoteTransaction,
@@ -391,19 +391,6 @@ fn german_iban(blz: &str, number: &str) -> Option<String> {
         .bytes()
         .fold(0u32, |r, b| (r * 10 + u32::from(b - b'0')) % 97);
     Some(format!("DE{:02}{blz}{number}", 98 - rem))
-}
-
-/// "- 1,17 €", "+ 5,55 €", "50.000,00&nbsp;€" → cents.
-fn parse_amount(s: &str) -> Option<i64> {
-    let cleaned: String = text(s)
-        .replace(['\u{2212}', '\u{2013}'], "-")
-        .chars()
-        .filter(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | ',' | '.'))
-        .collect();
-    if !cleaned.chars().any(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    crate::money::parse_cents(&cleaned).ok()
 }
 
 fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {

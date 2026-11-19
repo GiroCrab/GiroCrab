@@ -70,14 +70,8 @@ fn date(v: &Value, key: &str) -> Option<String> {
 /// The portal returns binary-float artefacts; round once at the boundary.
 fn money(v: &Value, key: &str) -> CoreResult<(i64, String)> {
     let m = &v[key];
-    let value = m["Value"]
-        .as_f64()
-        .filter(|n| n.is_finite() && n.abs() < 1e12)
-        .ok_or_else(invalid)?;
-    Ok((
-        (value * 100.0).round() as i64,
-        text(&m["Currency"], "Code").to_uppercase(),
-    ))
+    let cents = crate::money::json_number_to_cents_rounded(&m["Value"]).map_err(|_| invalid())?;
+    Ok((cents, text(&m["Currency"], "Code").to_uppercase()))
 }
 
 fn account(a: &Value) -> CoreResult<RemoteAccount> {
