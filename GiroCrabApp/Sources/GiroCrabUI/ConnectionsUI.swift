@@ -350,11 +350,11 @@ struct ConnectionEditSheet: View {
                 }
                 if connection.connector == .finpension {
                     Section {
-                        Text("Finpension hat keine Schnittstelle: Laden Sie in Ihrem Finpension-Konto den Export (CSV oder JSON) mit Positionen und Cash-Buchungen herunter und lesen Sie ihn hier ein. Säule 3a, Freizügigkeit und 1e werden gleich behandelt. Es gibt keine Anmeldung und keinen Netzwerkzugriff.")
+                        Text("Optional können Sie hier auch eine CSV- oder JSON-Exportdatei (Transaktionsbericht oder Depotaufstellung) aus Ihrem Finpension-Konto manuell importieren.")
                             .appFont(.caption).foregroundStyle(Theme.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Button { importingFinpension = true } label: { Label("Finpension-Export importieren …", systemImage: "doc.badge.plus") }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.bordered)
                             .fileImporter(isPresented: $importingFinpension, allowedContentTypes: [.commaSeparatedText, .json, .plainText, .data]) { result in
                                 if case .success(let url) = result {
                                     save()

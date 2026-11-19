@@ -889,6 +889,7 @@ fn to_info(e: &Entry) -> MerchantInfo {
             "o2" => "O2".to_string(),
             "ing" => "ING".to_string(),
             "trade-republic" => "TR".to_string(),
+            "finpension" => "fp".to_string(),
             "deutsche-bahn" => "DB".to_string(),
             "huk" => "HUK".to_string(),
             _ => monogram(e.name),

@@ -226,13 +226,13 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
         ConnectorKind::Finpension => BankDescriptor {
             kind,
             name: "Finpension".into(),
-            protocol: tr("Datei-Import (CSV/JSON-Export)").into(),
+            protocol: tr("finpension Web-API (SMS-2FA)").into(),
             bank_code: "".into(),
             sf_symbol: "chart.pie".into(),
-            login_label: tr("Bezeichnung").into(),
+            login_label: tr("Handynummer (z. B. +41… oder +49…)").into(),
             secret_label: tr("Passwort").into(),
             required_settings: vec![],
-            note: tr("Finpension (Schweiz): Säule 3a, Freizügigkeit und 1e. Die CSV- oder JSON-Exportdatei (Positionen und Cash-Buchungen) wird über „Datei importieren“ eingelesen; es gibt keine Anmeldung und keinen Netzwerkzugriff.").into(),
+            note: tr("Finpension (Schweiz): Säule 3a, Freizügigkeit und 1e. Synchronisiert Portfolios, Wertschriften und Cash-Bestände via finpension.ch. SMS-Code bei der Erstanmeldung erforderlich; die Sitzung wird verschlüsselt gespeichert.").into(),
         },
         ConnectorKind::Ffb => BankDescriptor {
             kind,
@@ -712,7 +712,7 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
     MatrixEntry {
         name: "Finpension",
         kind: Some(ConnectorKind::Finpension),
-        interface: Interface::FileImport,
+        interface: Interface::WebPortal,
         official: Some(false),
         capabilities: &[
             Capability::Transactions,
@@ -720,7 +720,7 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
             Capability::Securities,
         ],
         status: Status::TestingWanted,
-        issues: &[300],
+        issues: &[300, 1068],
     },
     MatrixEntry {
         name: "BHW Bausparkasse",
@@ -884,7 +884,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::OpelDirektbank => Box::new(opel::OpelDirektbankConnector::new()),
         ConnectorKind::HanseaticBank => Box::new(hanseatic::HanseaticConnector::new()),
         ConnectorKind::Bhw => Box::new(bhw::BhwConnector::new()),
-        ConnectorKind::Finpension => Box::new(finpension::FinpensionConnector),
+        ConnectorKind::Finpension => Box::new(finpension::FinpensionConnector::new()),
         ConnectorKind::Kontist => Box::new(kontist::KontistConnector::new()),
         ConnectorKind::ScalableCapital => Box::new(scalable::ScalableConnector::new()),
         ConnectorKind::EnableBanking => {
