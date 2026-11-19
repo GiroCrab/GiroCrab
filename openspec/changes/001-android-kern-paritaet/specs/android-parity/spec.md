@@ -14,6 +14,9 @@ UniFFI-Kotlin-Bindings aus dem Kern erzeugen, und zwar in einem Schritt, den die
   für `arm64-v8a`, `armeabi-v7a`, `x86_64`.
 - **Architektur:** UniFFI + JNA bleibt; kein handgeschriebener JNI-Code. Die CI baut die native
   Schicht vor `gradle assembleDebug` und schlägt fehl, wenn `jniLibs` danach leer ist.
+- **Zwei Ebenen, kein Widerspruch:** das Build-Gate verhindert, dass eine APK ohne native Schicht
+  entsteht. Eine bereits ausgelieferte APK (ältere Version, falsche ABI, beschädigte Installation)
+  muss trotzdem starten — sie bleibt im Demo-Pfad und sagt es sichtbar, statt abzustürzen.
 
 #### Scenario: CI baut die native Schicht mit
 
@@ -30,10 +33,11 @@ UniFFI-Kotlin-Bindings aus dem Kern erzeugen, und zwar in einem Schritt, den die
 
 #### Scenario: Erkennung der fehlenden Schicht
 
-- **GIVEN** eine APK, in der `libgirocrab_core.so` für die Geräte-ABI fehlt
+- **GIVEN** eine bereits ausgelieferte APK, in der `libgirocrab_core.so` für die Geräte-ABI fehlt
+  (kein Build-Fall — der bricht ab, siehe oben)
 - **WHEN** der Client den Kern laden will
 - **THEN** meldet er die fehlende native Schicht sichtbar und bleibt im Demo-Pfad, statt den Fehler
-  zu verschlucken
+  zu verschlucken oder abzustürzen
 
 ### Requirement: Tresor öffnen und entsperren
 

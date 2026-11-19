@@ -2,6 +2,10 @@
 
 ## Entscheidungen
 
+Alle folgenden Punkte sind **Vorschläge des Beitragenden**, keine Vorgaben: die Wahl liegt bei den
+Maintainern (offene Fragen am Ende). Das Delta beschreibt den angestrebten Zustand, keinen Beschluss —
+wo eine Entscheidung offen ist, steht sie in den offenen Fragen und nicht als Fakt in der Spec.
+
 ### 1. Bindings: UniFFI + JNA, kein handgeschriebenes JNI
 
 Der Kern deklariert 91 `#[uniffi::export]`-Funktionen. Ein handgeschriebener JNI-Rand wäre 91
@@ -74,10 +78,13 @@ Change; die Alpha-Kennzeichnung fällt erst nach Stufe 2.
   hinter `Dispatchers.IO`/`Default` halten. Der heutige `withContext(Dispatchers.Default)`-Aufruf
   (`AppViewModel.kt:69`) ist richtig, aber ein blockierender Erstaufruf gehört nicht auf den
   Main-Thread.
-- **Biometrie-Invalidierung.** Wird die Gerätesperre geändert, verwirft Android den Keystore-Schlüssel
-  (`setInvalidatedByBiometricEnrollment(true)`). Der Nutzer braucht dann einen Weg zurück
-  (Tresorschlüssel-Import wie auf dem Desktop), sonst ist der Tresor für ihn verloren — das gehört in
-  die Fehlermeldung.
+- **Invalidierung des Keystore-Schlüssels.** Zwei getrennte Auslöser, die man nicht verwechseln darf:
+  `setInvalidatedByBiometricEnrollment(true)` verwirft den Schlüssel, sobald eine **neue Biometrie
+  registriert** wird (weiterer Finger, neues Gesicht); `setUserAuthenticationRequired(true)` macht ihn
+  unbrauchbar, sobald die **Gerätesperre zurückgesetzt oder entfernt** wird (auch ein PIN-Wechsel).
+  Beides ist gewollt — wer Gerätezugriff hat, soll den Tresor nicht durch die eigene Biometrie öffnen —
+  kostet den Nutzer aber den Schlüssel: er braucht einen Weg zurück (Tresorschlüssel-Import wie auf dem
+  Desktop), sonst ist der Tresor für ihn verloren. Das gehört in die Fehlermeldung.
 
 ## Offene Fragen an die Maintainer
 

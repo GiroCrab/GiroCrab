@@ -1,7 +1,10 @@
-# Change 001 — Android an den Kern anbinden (Stufe 1 und 2)
+# Change 001 — Android an den Kern anbinden (Stufen 1–2 von 4)
 
 **Status:** Proposed (19.11.2026)
 **Fähigkeit:** `android-parity`
+**Umfang:** Stufe 1 (native Schicht, Tresor, Lesepfad) und Stufe 2 (Schreibpfade). Stufe 3
+(Konten über die Konnektoren) und Stufe 4 (Import/Export, Dokumente, Daueraufträge, Depot) folgen
+als eigene Changes — sie stehen hier nur als Zielbild.
 
 ## Why
 

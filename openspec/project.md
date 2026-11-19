@@ -34,5 +34,19 @@ Referenz ist der macOS-/iOS-Client, weil er den Kern vollständig nutzt: der Ker
   Funktionsnamen im Original.
 - Live-Specs führen den Ist-Stand tool-nativ als `### Requirement: <Name>` mit `#### Scenario:`.
 - Jede Änderung ist ein Change unter `changes/<id>/` mit `proposal.md`, `design.md`, `tasks.md` und
-  einem ADDED-Delta in `changes/<id>/specs/android-parity/spec.md`.
+  einem Delta in `changes/<id>/specs/android-parity/spec.md` — `ADDED` für neue Anforderungen,
+  `MODIFIED` für geänderte (Change 001 nutzt überwiegend `MODIFIED`, weil die Fähigkeit schon als
+  Ist-Spec beschrieben ist).
 - Zitate als `datei:zeile` beziehen sich auf Commit `6c2613e`; nach Umbauten nachziehen.
+
+## Belege nachprüfen
+
+Die Zitate im Ist-Stand lassen sich ohne Werkzeug gegenlesen (`git checkout 6c2613e`):
+
+```sh
+grep -c '#\[uniffi::export\]' -r girocrab-core/src                     # 91 Exporte
+grep -rhoE 'vault\.[a-zA-Z]+\(' --include=*.swift GiroCrabApp/Sources | sort -u | wc -l   # ~150
+grep -rhoE 'core\.[a-zA-Z]+\(' --include=*.kt GiroCrabAndroid/app/src/main/java | sort -u # 2 echte
+ls GiroCrabAndroid/app/src/main/jniLibs scripts/build-rust-android.sh  # beide fehlen
+grep -cE 'cargo|ndk|rust' .github/workflows/android.yml                # 0
+```
