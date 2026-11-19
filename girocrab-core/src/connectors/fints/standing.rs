@@ -62,7 +62,7 @@ struct PainPayment {
 fn pain_payment(xml: &str) -> Option<PainPayment> {
     let tx = tag_start(xml, "CdtTrfTxInf", 0)?;
     let amount = tag_text(xml, "InstdAmt", tx)?;
-    let cents = crate::money::parse_cents(&amount.replace('.', ",")).ok()?;
+    let cents = crate::money::decimal(&amount, '.').and_then(crate::money::cents)?;
     let cdtr = tag_start(xml, "Cdtr", tx).unwrap_or(tx);
     let name = tag_text(xml, "Nm", cdtr).unwrap_or_default();
     let acct = tag_start(xml, "CdtrAcct", tx).unwrap_or(tx);

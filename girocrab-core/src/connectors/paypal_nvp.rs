@@ -20,7 +20,7 @@ use jiff::{SignedDuration, Timestamp};
 use super::{http_client, RemoteAccount, RemoteTransaction};
 use crate::error::{CoreError, CoreResult};
 use crate::models::AccountKind;
-use crate::money::parse_cents;
+use crate::money::{cents, decimal};
 use crate::secret::SecretString;
 
 const VERSION: &str = "204.0";
@@ -272,7 +272,7 @@ pub(crate) fn accounts_from_balance(r: &Nvp, owner: &str) -> Vec<RemoteAccount> 
         };
         let amount = r
             .get(&format!("L_AMT{i}"))
-            .and_then(|a| parse_cents(a).ok())
+            .and_then(|a| decimal(a, '.').and_then(cents))
             .unwrap_or(0);
         out.push(RemoteAccount {
             external_ref: format!("paypal:{cur}"),
@@ -384,10 +384,12 @@ pub(crate) fn transactions_from_search(r: &Nvp) -> (Vec<RemoteTransaction>, Vec<
         {
             continue;
         }
+        let amount = |key| decimal(&get(key), '.').and_then(cents);
         // Net = gross + fee: what actually moves the balance.
-        let net = parse_cents(&get("L_NETAMT")).or_else(|_| parse_cents(&get("L_AMT")));
-        let Ok(amount_cents) = net else { continue };
-        let fee = parse_cents(&get("L_FEEAMT")).unwrap_or(0);
+        let Some(amount_cents) = amount("L_NETAMT").or_else(|| amount("L_AMT")) else {
+            continue;
+        };
+        let fee = amount("L_FEEAMT").unwrap_or(0);
         let date: String = get("L_TIMESTAMP").chars().take(10).collect();
         let currency = {
             let c = get("L_CURRENCYCODE");

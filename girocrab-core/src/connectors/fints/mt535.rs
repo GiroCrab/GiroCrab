@@ -309,27 +309,9 @@ fn signed_amount(s: &str) -> Option<(String, i64)> {
     if s.len() < 4 || !cur.chars().all(|c| c.is_ascii_uppercase()) {
         return None;
     }
-    let cents = decimal_cents(s.get(3..)?)?;
+    // "10718,73", "243,"; more decimals are rounded.
+    let cents = crate::money::decimal(s.get(3..)?, ',').and_then(crate::money::cents_rounded)?;
     Some((cur.to_string(), if neg { -cents } else { cents }))
-}
-
-/// "10718,73" → 1071873, "243," → 24300, "11,672" → 1167 (rounded half up).
-fn decimal_cents(s: &str) -> Option<i64> {
-    let (int, frac) = s.split_once(',').unwrap_or((s, ""));
-    if int.is_empty() && frac.is_empty() {
-        return None;
-    }
-    if !int.chars().all(|c| c.is_ascii_digit()) || !frac.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let int: i64 = if int.is_empty() { 0 } else { int.parse().ok()? };
-    let mut digits: Vec<u8> = frac.bytes().map(|b| b - b'0').collect();
-    digits.resize(digits.len().max(3), 0);
-    let cents = (digits[0] as i64) * 10 + digits[1] as i64;
-    let round_up = digits[2] >= 5;
-    int.checked_mul(100)?
-        .checked_add(cents)?
-        .checked_add(i64::from(round_up))
 }
 
 /// "20261107" or "20261107120000" → "2026-11-07"

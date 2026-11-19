@@ -10,7 +10,7 @@ use crate::connectors::RemoteTransaction;
 /// Persist keeps exactly the ones the latest fetch reports (`hold_prefix`);
 /// `Booking.is_pending` relies on the `pending-` start.
 pub const HOLD_PREFIX: &str = "pending-hold-fints-";
-use crate::money::parse_cents;
+use crate::money::{cents, decimal};
 
 #[derive(Debug, PartialEq)]
 enum Tok {
@@ -274,7 +274,7 @@ fn parse_doc(
                     && matches!(bal_type.as_str(), "CLBD" | "ITBD" | "CLAV" | "ITAV")
                     && report.closing_balance_cents.is_none()
                 {
-                    if let Ok(c) = parse_cents(&bal_amt) {
+                    if let Some(c) = decimal(&bal_amt, '.').and_then(cents) {
                         report.closing_balance_cents = Some(if bal_ind == "DBIT" { -c } else { c });
                         report.closing_date = Some(bal_date.chars().take(10).collect());
                         report.currency = Some(bal_ccy.clone()).filter(|c| !c.is_empty());
@@ -377,7 +377,7 @@ fn parse_doc(
     for e in entries {
         let status = e.status.trim();
         let pending = all_pending || !(status.is_empty() || status.eq_ignore_ascii_case("BOOK"));
-        let Ok(abs) = parse_cents(&e.amount) else {
+        let Some(abs) = decimal(&e.amount, '.').and_then(cents) else {
             continue;
         };
         let debit = e.indicator == "DBIT";

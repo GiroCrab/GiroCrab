@@ -11,7 +11,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 use crate::iban::normalize_iban;
 use crate::models::AccountKind;
-use crate::money::parse_cents;
+use crate::money::{cents, decimal};
 
 pub(super) fn kind_from_code(code: u32) -> AccountKind {
     // FinTS Kontoart: 1-9 Kontokorrent, 10-19 Sparkonto, 20-29 Festgeld,
@@ -213,7 +213,7 @@ impl FinTsConnector {
             .await?;
         Ok(r.first("HISAL").and_then(|s| {
             // element 4: booked balance  C|D : amount : currency : date
-            let c = parse_cents(s.get(4, 1)).ok()?;
+            let c = decimal(s.get(4, 1), ',').and_then(cents)?;
             let sign = if s.get(4, 0) == "D" { -1 } else { 1 };
             let cur = if s.get(4, 2).is_empty() {
                 "EUR".to_string()
