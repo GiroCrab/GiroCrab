@@ -16,12 +16,12 @@ use std::sync::{Arc, LazyLock};
 use regex::Regex;
 use serde::Deserialize;
 
-use super::portal_import::parse_amount;
 use crate::connectors::{store_fetch, FetchResult, RemoteAccount, RemoteTransaction, SyncSummary};
 use crate::dates::{find_de_date, iso, month_from_name};
 use crate::error::CoreError;
 use crate::i18n::tr;
 use crate::models::{AccountKind, ConnectorKind};
+use crate::money::parse_cents;
 use crate::vault::Vault;
 
 /// JSON produced by the in-page scraper.
@@ -111,7 +111,7 @@ pub fn price_cents(s: &str) -> Option<i64> {
         Regex::new(r"-?\s*(?:€\s*)?(?:\d{1,3}(?:[.,]\d{3})+|\d+)[.,]\d{2}\b").unwrap()
     });
     let m = PRICE.find(s)?;
-    parse_amount(m.as_str())
+    parse_cents(m.as_str()).ok()
 }
 
 fn has(label: &str, needles: &[&str]) -> bool {

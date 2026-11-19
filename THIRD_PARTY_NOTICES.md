@@ -31,6 +31,7 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 | **`reqwest`** | `0.13.5` | `MIT OR Apache-2.0` | [https://github.com/seanmonstar/reqwest](https://github.com/seanmonstar/reqwest) |
 | **`rsa`** | `0.10.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/RSA](https://github.com/RustCrypto/RSA) |
 | **`rusqlite`** | `0.42.0` | `MIT` | [https://github.com/rusqlite/rusqlite](https://github.com/rusqlite/rusqlite) |
+| **`rust_decimal`** | `1.43.0` | `MIT` | [https://github.com/paupino/rust-decimal](https://github.com/paupino/rust-decimal) |
 | **`serde`** | `1.0.229` | `MIT OR Apache-2.0` | [https://github.com/serde-rs/serde](https://github.com/serde-rs/serde) |
 | **`serde_json`** | `1.0.154` | `MIT OR Apache-2.0` | [https://github.com/serde-rs/json](https://github.com/serde-rs/json) |
 | **`sha1`** | `0.11.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/hashes](https://github.com/RustCrypto/hashes) |
@@ -114,7 +115,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 ## Complete Transitive Dependency Tree
 
 <details>
-<summary>Click to expand all transitive Rust crates (335 packages)</summary>
+<summary>Click to expand all transitive Rust crates (337 packages)</summary>
 
 | Crate | Version | License | Authors / Repository |
 |---|---|---|---|
@@ -123,6 +124,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | `aho-corasick` | `1.1.5` | `Unlicense OR MIT` | [Repo](https://github.com/BurntSushi/aho-corasick) (Andrew Gallant <jamslam@gmail.com>) |
 | `anstyle` | `1.0.14` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-cli/anstyle.git) |
 | `anyhow` | `1.0.104` | `MIT OR Apache-2.0` | [Repo](https://github.com/dtolnay/anyhow) (David Tolnay <dtolnay@gmail.com>) |
+| `arrayvec` | `0.7.8` | `MIT OR Apache-2.0` | [Repo](https://github.com/bluss/arrayvec) (bluss) |
 | `askama` | `0.16.1` | `MIT OR Apache-2.0` | [Repo](https://github.com/askama-rs/askama) |
 | `askama_derive` | `0.16.1` | `MIT OR Apache-2.0` | [Repo](https://github.com/askama-rs/askama) |
 | `askama_macros` | `0.16.1` | `MIT OR Apache-2.0` | [Repo](https://github.com/askama-rs/askama) |
@@ -314,6 +316,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | `rsa` | `0.10.0` | `MIT OR Apache-2.0` | [Repo](https://github.com/RustCrypto/RSA) (RustCrypto Developers, dignifiedquire <dignifiedquire@gmail.) |
 | `rsqlite-vfs` | `0.2.0` | `MIT` | [Repo](https://github.com/Spxg/sqlite-wasm-rs) |
 | `rusqlite` | `0.42.0` | `MIT` | [Repo](https://github.com/rusqlite/rusqlite) (The rusqlite developers) |
+| `rust_decimal` | `1.43.0` | `MIT` | [Repo](https://github.com/paupino/rust-decimal) (Paul Mason <paul@form1.co.nz>) |
 | `rustc-hash` | `2.1.3` | `Apache-2.0 OR MIT` | [Repo](https://github.com/rust-lang/rustc-hash) (The Rust Project Developers) |
 | `rustc_version` | `0.4.1` | `MIT OR Apache-2.0` | [Repo](https://github.com/djc/rustc-version-rs) |
 | `rustix` | `1.1.6` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | [Repo](https://github.com/bytecodealliance/rustix) (Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jak) |

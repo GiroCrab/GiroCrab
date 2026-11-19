@@ -40,7 +40,7 @@ use crate::asset_classification::{AssetClass, ClassificationValues, InstrumentKi
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::{AccountKind, Holding};
-use crate::money::json_number_to_cents;
+use crate::money::{json_number_to_cents_rounded, parse_cents, parse_cents_rounded};
 use crate::secret::{SecretJson, SecretString};
 
 const API: &str = "https://api.traderepublic.com";
@@ -127,8 +127,7 @@ fn snippet(body: &str) -> String {
 
 /// Amounts arrive as JSON numbers that may carry float noise (-4.040000000000001).
 fn amount_cents(v: &Value) -> i64 {
-    json_number_to_cents(v)
-        .unwrap_or_else(|_| v.as_f64().map(|f| (f * 100.0).round() as i64).unwrap_or(0))
+    json_number_to_cents_rounded(v).unwrap_or(0)
 }
 
 /// A number in a detail text such as "1.234,56 €", "0,5" or "12.5": German
@@ -228,7 +227,6 @@ fn parse_trade_detail(item_icon: &str, detail: &Value) -> TradeDetail {
             });
         }
     }
-    let cents = |t: &str| parse_decimal_text(t).map(|f| (f * 100.0).round() as i64);
     walk_rows(detail, &mut |title, text| {
         match title {
             "Aktien" | "Anteile" | "Shares" | "Aktien hinzugefügt" | "Aktien entfernt"
@@ -237,13 +235,13 @@ fn parse_trade_detail(item_icon: &str, detail: &Value) -> TradeDetail {
                 d.quantity = parse_decimal_text(text).map(f64::abs);
             }
             "Preis" | "Kurs" | "Aktienkurs" | "Quotation" | "Price" if d.price_cents.is_none() => {
-                d.price_cents = cents(text).map(i64::abs);
+                d.price_cents = parse_cents_rounded(text).ok().map(i64::abs);
             }
             "Gebühr" | "Gebühren" | "Fee" if d.fees_cents.is_none() => {
-                d.fees_cents = cents(text).map(i64::abs);
+                d.fees_cents = parse_cents(text).ok().map(i64::abs);
             }
             "Steuer" | "Steuern" | "Tax" if d.taxes_cents.is_none() => {
-                d.taxes_cents = cents(text).map(i64::abs);
+                d.taxes_cents = parse_cents(text).ok().map(i64::abs);
             }
             _ => {}
         };

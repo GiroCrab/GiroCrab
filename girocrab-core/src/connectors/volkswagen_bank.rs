@@ -42,6 +42,7 @@ use crate::{
     error::{CoreError, CoreResult},
     i18n::{tr, trf},
     models::AccountKind,
+    money,
     secret::SecretJson,
 };
 
@@ -360,7 +361,9 @@ fn parse_accounts(v: &Value, today: Date) -> CoreResult<Vec<PortalAccount>> {
         if number.is_empty() {
             return Err(bad_response());
         }
-        let balance_cents = parse_cents(text(a, "Balance")).ok_or_else(bad_response)?;
+        let balance_cents = money::decimal(text(a, "Balance"), '.')
+            .and_then(money::cents)
+            .ok_or_else(bad_response)?;
         let owner = a
             .get("Owners")
             .and_then(Value::as_array)
@@ -454,37 +457,12 @@ fn parse_cashflow(v: &Value, account_ref: &str) -> CoreResult<Vec<RemoteTransact
     Ok(out)
 }
 
-/// `"71.01"` → 7101. Plain decimal with a dot, optional minus sign.
-fn parse_cents(s: &str) -> Option<i64> {
-    let s = s.trim();
-    let (negative, rest) = match s.strip_prefix('-') {
-        Some(r) => (true, r),
-        None => (false, s),
-    };
-    let (int, frac) = rest.split_once('.').unwrap_or((rest, ""));
-    if int.is_empty()
-        || frac.len() > 2
-        || !int.bytes().all(|b| b.is_ascii_digit())
-        || !frac.bytes().all(|b| b.is_ascii_digit())
-    {
-        return None;
-    }
-    let int: i64 = int.parse().ok()?;
-    let frac_cents: i64 = match frac.len() {
-        0 => 0,
-        1 => frac.parse::<i64>().ok()? * 10,
-        _ => frac.parse::<i64>().ok()?,
-    };
-    let cents = int.checked_mul(100)?.checked_add(frac_cents)?;
-    Some(if negative { -cents } else { cents })
-}
-
 /// The booking list leaves the unused side of credit/debit empty.
 fn amount_or_zero(s: &str) -> Option<i64> {
     if s.trim().is_empty() {
         Some(0)
     } else {
-        parse_cents(s)
+        money::decimal(s, '.').and_then(money::cents)
     }
 }
 
@@ -838,18 +816,13 @@ mod tests {
 
     #[test]
     fn decimal_strings_become_cents() {
-        assert_eq!(parse_cents("71.01"), Some(7101));
-        assert_eq!(parse_cents("80000.00"), Some(8_000_000));
-        assert_eq!(parse_cents("5.6"), Some(560));
-        assert_eq!(parse_cents("-0.31"), Some(-31));
-        assert_eq!(parse_cents("7"), Some(700));
-        for bad in ["", "-", "1,00", "1.005", "abc", ".5", "1.0.0"] {
-            assert_eq!(parse_cents(bad), None, "{bad:?}");
-        }
+        assert_eq!(amount_or_zero("71.01"), Some(7101));
+        assert_eq!(amount_or_zero("-0.31"), Some(-31));
         assert_eq!(amount_or_zero(""), Some(0));
         assert_eq!(amount_or_zero(" "), Some(0));
-        assert_eq!(amount_or_zero("5.66"), Some(566));
-        assert_eq!(amount_or_zero("x"), None);
+        for bad in ["x", "1,00", "1.005"] {
+            assert_eq!(amount_or_zero(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

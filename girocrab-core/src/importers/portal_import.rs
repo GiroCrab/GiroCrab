@@ -23,6 +23,7 @@ use crate::dates::{day_month_on_or_before, de_dates, iso, month_from_name};
 use crate::error::CoreError;
 use crate::i18n::{tr, trf};
 use crate::models::{AccountKind, ConnectorKind};
+use crate::money::{json_number_to_cents_rounded, parse_cents};
 use crate::vault::Vault;
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -42,85 +43,6 @@ fn charges_positive(kind: ConnectorKind) -> bool {
 }
 
 // ------------------------------------------------------------------ primitives
-
-/// "1.234,56", "1,234.56", "-12,30", "12,30-", "€ 5", "(5,00)" -> cents.
-pub fn parse_amount(s: &str) -> Option<i64> {
-    let mut t: String = s
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '€' && *c != '\u{a0}')
-        .collect();
-    t = t.replace("EUR", "").replace("eur", "");
-    let mut neg = false;
-    if t.starts_with('(') && t.ends_with(')') {
-        neg = true;
-        t = t[1..t.len() - 1].to_string();
-    }
-    if t.ends_with('-') {
-        neg = true;
-        t.pop();
-    }
-    if t.ends_with('+') {
-        t.pop();
-    }
-    if let Some(r) = t.strip_prefix('-') {
-        neg = !neg;
-        t = r.to_string();
-    }
-    if let Some(r) = t.strip_prefix('+') {
-        t = r.to_string();
-    }
-    if t.is_empty()
-        || !t
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
-        || !t.chars().any(|c| c.is_ascii_digit())
-    {
-        return None;
-    }
-    let last_dot = t.rfind('.');
-    let last_comma = t.rfind(',');
-    let dec_pos = match (last_dot, last_comma) {
-        (Some(d), Some(c)) => Some(d.max(c)),
-        (Some(p), None) | (None, Some(p)) => {
-            let digits_after = t.len() - p - 1;
-            let sep_count = t
-                .matches(if t.as_bytes()[p] == b'.' { '.' } else { ',' })
-                .count();
-            if sep_count == 1 && digits_after != 3 {
-                Some(p)
-            } else if sep_count == 1 && digits_after == 3 && t.as_bytes()[p] == b',' && p <= 1 {
-                Some(p)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
-    let (int_part, frac_part) = match dec_pos {
-        Some(p) => (&t[..p], &t[p + 1..]),
-        None => (&t[..], ""),
-    };
-    let int_digits: String = int_part.chars().filter(|c| c.is_ascii_digit()).collect();
-    let mut frac = frac_part.to_string();
-    if !frac.chars().all(|c| c.is_ascii_digit())
-        || frac.len() > 2 && frac[2..].chars().any(|c| c != '0')
-    {
-        return None;
-    }
-    frac.truncate(2);
-    while frac.len() < 2 {
-        frac.push('0');
-    }
-    let int: i64 = if int_digits.is_empty() {
-        0
-    } else {
-        int_digits.parse().ok()?
-    };
-    let cents = int
-        .checked_mul(100)?
-        .checked_add(frac.parse::<i64>().ok()?)?;
-    Some(if neg { -cents } else { cents })
-}
 
 /// Many date spellings -> "YYYY-MM-DD".
 pub fn parse_date(s: &str) -> Option<String> {
@@ -268,18 +190,16 @@ fn value_text(v: &Value) -> Option<String> {
     }
 }
 
-/// Largest amount accepted from portal JSON: 10 trillion euro in cents.
-const MAX_PORTAL_CENTS: f64 = 1e15;
+/// Largest amount accepted from portal JSON: 10 trillion euro in cents. No real
+/// account holds more, and the sign handling downstream (`abs`, `-`) must not overflow.
+const MAX_PORTAL_CENTS: i64 = 1_000_000_000_000_000;
 
 fn value_cents(v: &Value) -> Option<i64> {
     match v {
-        Value::Number(n) => {
-            let cents = (n.as_f64()? * 100.0).round();
-            // no real account holds more than this; beyond it `as i64` would saturate
-            // and the sign handling (`abs`, `-`) downstream would overflow
-            (cents.is_finite() && cents.abs() <= MAX_PORTAL_CENTS).then_some(cents as i64)
-        }
-        Value::String(s) => parse_amount(s),
+        Value::Number(_) => json_number_to_cents_rounded(v)
+            .ok()
+            .filter(|c| c.abs() <= MAX_PORTAL_CENTS),
+        Value::String(s) => parse_cents(s).ok(),
         // a single-currency list such as Open Bank's `amounts: [{…}]`
         Value::Array(a) => a.first().and_then(value_cents),
         Value::Object(o) => get_ci(
@@ -687,13 +607,13 @@ pub fn parse_dom_rows(rows: &[Vec<String>], kind: ConnectorKind) -> Vec<Parsed> 
             .iter()
             .rev()
             .find(|c| c.contains(',') || c.contains('.'))
-            .and_then(|c| parse_amount(c));
+            .and_then(|c| parse_cents(c).ok());
         let (Some(date), Some(raw)) = (date, amount) else {
             continue;
         };
         let text = cells
             .iter()
-            .filter(|c| parse_date(c).is_none() && parse_amount(c).is_none())
+            .filter(|c| parse_date(c).is_none() && parse_cents(c).is_err())
             .max_by_key(|c| c.len())
             .map(|c| c.to_string())
             .unwrap_or_default();
@@ -822,7 +742,7 @@ pub fn parse_csv(text: &str, kind: ConnectorKind) -> Vec<Parsed> {
     for r in rows.iter().skip(hi + 1) {
         let (Some(d), Some(a)) = (
             r.get(di).and_then(|x| parse_date(x)),
-            r.get(ai).and_then(|x| parse_amount(x)),
+            r.get(ai).and_then(|x| parse_cents(x).ok()),
         ) else {
             continue;
         };
@@ -886,7 +806,7 @@ pub fn parse_statement_text(text: &str, kind: ConnectorKind) -> Vec<Parsed> {
         let Some(date) = date else {
             continue;
         };
-        let Some(raw) = parse_amount(&c[4]) else {
+        let Ok(raw) = parse_cents(&c[4]) else {
             continue;
         };
         let suffix = c.get(5).map(|m| m.as_str()).unwrap_or("");
@@ -2090,17 +2010,6 @@ mod tests {
         assert_eq!(bal, Some(-687930));
     }
     use super::*;
-
-    #[test]
-    fn amounts() {
-        assert_eq!(parse_amount("1.234,56"), Some(123456));
-        assert_eq!(parse_amount("1,234.56"), Some(123456));
-        assert_eq!(parse_amount("-12,30"), Some(-1230));
-        assert_eq!(parse_amount("12,30-"), Some(-1230));
-        assert_eq!(parse_amount("€ 5"), Some(500));
-        assert_eq!(parse_amount("1.234"), Some(123400));
-        assert_eq!(parse_amount("abc"), None);
-    }
 
     #[test]
     fn dates() {

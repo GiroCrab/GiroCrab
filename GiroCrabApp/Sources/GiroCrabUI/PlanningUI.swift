@@ -46,7 +46,7 @@ extension AppModel {
         let d = transferDraft
         let t = TransferTemplate(
             id: 0, name: name, recipientName: d.name, recipientIban: d.iban, recipientBic: d.bic,
-            defaultAmountCents: (try? parseAmountToCents(text: d.amountText)).flatMap { $0 > 0 ? $0 : nil },
+            defaultAmountCents: Money.parseCents(d.amountText).flatMap { $0 > 0 ? $0 : nil },
             defaultPurpose: d.purpose)
         do { _ = try vault.saveTransferTemplate(template: t) } catch { transferError = "\(error)" }
     }
@@ -216,7 +216,7 @@ struct BudgetEditorSheet: View {
 
     private var category: GiroCrabCore.Category? { model.categories.first { $0.id == categoryID } }
     private var cents: Int64? {
-        guard let c = try? parseAmountToCents(text: text), c > 0 else { return nil }
+        guard let c = Money.parseCents(text), c > 0 else { return nil }
         return c
     }
 
@@ -483,7 +483,7 @@ struct SplitSheet: View {
 
     private var total: Int64 { abs(booking.amountCents) }
     private var sign: Int64 { booking.amountCents < 0 ? -1 : 1 }
-    private func cents(_ p: Part) -> Int64 { (try? parseAmountToCents(text: p.amount)) ?? 0 }
+    private func cents(_ p: Part) -> Int64 { Money.parseCents(p.amount) ?? 0 }
     // Amounts are entered in the booking's direction: a negative part counter-books the others
     // (+59 = +200 and -141, #427). Only the sum must match; no part may be 0.
     private var remaining: Int64 { SplitMath.remaining(total: total, parts: parts.map(cents)) }

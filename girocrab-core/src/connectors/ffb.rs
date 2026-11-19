@@ -148,12 +148,7 @@ fn money(s: &str) -> Vec<(i64, String)> {
     MONEY
         .captures_iter(s)
         .filter_map(|c| {
-            let n: String = c[1]
-                .replace('\u{2212}', "-")
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let cents = crate::money::parse_cents_rounded(&n).ok()?;
+            let cents = crate::money::parse_cents_rounded(&c[1]).ok()?;
             let cur = if &c[2] == "€" { "EUR" } else { &c[2] };
             Some((cents, cur.to_string()))
         })

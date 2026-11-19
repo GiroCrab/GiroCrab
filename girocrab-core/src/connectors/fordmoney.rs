@@ -41,7 +41,7 @@ use regex::Regex;
 use tokio::task::JoinHandle;
 use zeroize::Zeroize;
 
-use super::uberspace::{attr, attrs, parse_date, text, INPUT};
+use super::uberspace::{attr, attrs, parse_amount, parse_date, text, INPUT};
 use super::{
     BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, ContentIds,
     Documents, FetchResult, KnownDocuments, Phase, RemoteAccount, RemoteTransaction,
@@ -428,19 +428,6 @@ struct Account {
     balance_cents: i64,
     /// Link parameter of "Umsätze anzeigen".
     bookings_link: Option<String>,
-}
-
-/// "- 1,17 €", "+ 5,55 €", "12.345,67 €" → cents.
-fn parse_amount(s: &str) -> Option<i64> {
-    let cleaned: String = text(s)
-        .replace(['\u{2212}', '\u{2013}'], "-")
-        .chars()
-        .filter(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | ',' | '.'))
-        .collect();
-    if !cleaned.chars().any(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    crate::money::parse_cents(&cleaned).ok()
 }
 
 fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
