@@ -3814,20 +3814,19 @@ QtObject {
     property string fintsProductIDMode: ""
     property bool offerProductIDChoice: false
     onSettingsChanged: reloadProductIDState()
-    /// New users start with GiroCrab's registration; users who already entered their own are asked once.
+    /// AppModel+Connections.swift › reloadProductIDState (v0.8.6, #1092): with GiroCrab's
+    /// registration on board it is always used (no choice any more); the own ID stays stored.
     function reloadProductIDState() {
         if (!isUnlocked) return
         try {
             let mode = core("fints_product_id_mode")
-            const own = settingEntry("fints.product_id")
-            const hasOwn = !!(own && own.has_value)
-            if (fintsBuiltinAvailable && mode === "" && !hasOwn && !isDemo) {
+            if (fintsBuiltinAvailable && mode !== "builtin" && !isDemo) {
                 core("set_fints_product_id_mode", { mode: "builtin" })
                 mode = "builtin"
                 fintsProductIDSource = core("fints_product_id_source")
             }
             fintsProductIDMode = mode
-            offerProductIDChoice = fintsBuiltinAvailable && mode === "" && hasOwn && !isDemo
+            offerProductIDChoice = false
         } catch (e) { console.warn(e.message) }
     }
     /// Stores the choice. The user's own ID always stays in the vault.
