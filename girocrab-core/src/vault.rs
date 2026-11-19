@@ -364,6 +364,9 @@ impl Vault {
 
     /// Best-effort repairs after opening (or restoring) a vault.
     fn repair(conn: &Connection) {
+        // triggers/views the app never creates (e.g. restored by older versions
+        // from a crafted backup) could rewrite device settings on later writes
+        let _ = backup::drop_triggers_and_views(conn, "main");
         // categories/rules without a sync key (rows written outside the app's own
         // paths); used to happen as part of the per-open schema probes
         let _ = crate::sync_merge::fill_missing_uuids(conn);
