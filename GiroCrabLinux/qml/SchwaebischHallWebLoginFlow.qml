@@ -28,6 +28,8 @@ WebLoginFlow {
 
     property bool ready: false
     property bool running: false
+    /// „Dokumente abrufen“ of the connection (bank connection dialog, #954): off = no list, no PDFs.
+    readonly property bool documentsOn: !connection || AppModel.documentsOffConnectionIDs.indexOf(connection.id) < 0
     property bool probing: false
     property string progress: ""
     property string notice: ""
@@ -242,7 +244,7 @@ return btoa(bin);`
             })
             .then(() => {
                 if (gen !== generation) throw cancelled
-                if (!includeDocuments.checked) return null
+                if (!includeDocuments.checked || !flow.documentsOn) return null
                 progress = qsTr("Postfach auflisten …")
                 return run(documents, {}, gen)
                     .then(list => AppModel.corePromise("pending_schwaebisch_hall_documents", { connection_id: id, documents_json: list }))
@@ -309,7 +311,7 @@ return btoa(bin);`
     }
 
     Button { text: qsTr("Schließen"); onClicked: flow.close(false) }
-    CheckBox { id: includeDocuments; text: qsTr("PDF-Dokumente aus dem Postfach"); checked: true; enabled: !flow.running }
+    CheckBox { id: includeDocuments; visible: flow.documentsOn; text: qsTr("PDF-Dokumente aus dem Postfach"); checked: true; enabled: !flow.running }
     Item { Layout.fillWidth: true }
     Button {
         text: qsTr("Verträge abrufen")

@@ -212,6 +212,29 @@ Rectangle {
                 Text { text: view.docs.length === view.found.length ? qsTr("%1 Dokumente").arg(view.docs.length)
                                                                     : qsTr("%1 von %2 Dokumenten").arg(view.docs.length).arg(view.found.length)
                        font.pixelSize: Theme.caption; color: Theme.secondary }
+                // documentsOffHint (#954): retrieval switched off for a login in view, otherwise
+                // nobody knows why nothing new arrives
+                ColumnLayout {
+                    id: offHint
+                    readonly property var off: AppModel.connectionsWithDocumentsOff(AppModel.documentsAccountFilter)
+                    visible: off.length > 0
+                    Layout.fillWidth: true
+                    spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        SFIcon { symbol: "info.circle"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop }
+                        Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                               text: qsTr("Dokumentenabruf ausgeschaltet für: %1. Neue Dokumente kommen erst wieder, wenn er eingeschaltet ist.")
+                                     .arg(offHint.off.map(c => c.display_name).join(", "))
+                               Sensitive {} }
+                    }
+                    Button {
+                        flat: true; text: qsTr("Einstellungen › Banken öffnen"); font.pixelSize: Theme.caption
+                        onClicked: AppModel.openSettings("banks")
+                        ToolTip.text: qsTr("Beim Zugang „Dokumente abrufen“ einschalten"); ToolTip.visible: hovered; ToolTip.delay: 600
+                    }
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 12

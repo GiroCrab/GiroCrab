@@ -24,6 +24,25 @@ Sheet {
     property bool showAdvanced: false
     /// comdirect via FinTS: PostBox through the bank's API as well (#838).
     property bool postbox: false
+    /// Document retrieval of this connection (#954, only for banks that deliver documents).
+    property bool documentsSupported: false
+    property bool documentsFetch: true
+    property bool initialDocumentsFetch: true
+    /// „Dokumente abrufen“ is off: nothing that fetches documents runs (PostBox included).
+    readonly property bool documentsBlocked: documentsSupported && !documentsFetch
+    /// The values as loaded: „Speichern“ is only available once something differs.
+    property string initialValues: "{}"
+    /// Something in the sheet differs from what was loaded (name, login, PIN, settings, account selection).
+    readonly property bool hasChanges: {
+        if (!connection) return false
+        const l = isTR ? AppModel.coreOrNull("normalize_phone_number", { input: login }) || login : login.trim()
+        if (name !== connection.display_name || l !== connection.login_name) return true
+        if (usesPin && (storePin !== (status ? status.has_pin : false) || pin !== "")) return true
+        if (JSON.stringify(values) !== initialValues) return true
+        if (documentsSupported && documentsFetch !== initialDocumentsFetch) return true
+        return selection.hasChanges
+    }
+    readonly property bool isFinTs: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(kind) >= 0
 
     readonly property string kind: connection ? connection.connector : ""
     readonly property var descriptor: connection ? AppModel.descriptor(kind) : null
@@ -96,6 +115,9 @@ Sheet {
         status = AppModel.connectionStatus(connection.id)
         storePin = status ? status.has_pin : false
         postbox = isComdirect && kind === "FinTsGeneric" ? AppModel.comdirectPostbox(connection.id) : false
+        documentsSupported = AppModel.documentsFetchSupported(connection.id)
+        documentsFetch = AppModel.documentsFetchEnabled(connection.id)
+        initialDocumentsFetch = documentsFetch
         revealed = ({})
         showAdvanced = false
         const v = {}
@@ -112,8 +134,13 @@ Sheet {
             v[key] = e && e.is_secret ? AppModel.revealSetting(key) : (e ? e.value : AppModel.revealSetting(key))
         }
         values = v
+        initialValues = JSON.stringify(v)
     }
     function save() {
+        if (documentsSupported && documentsFetch !== initialDocumentsFetch) {
+            AppModel.setDocumentsFetch(connection.id, documentsFetch)
+            initialDocumentsFetch = documentsFetch
+        }
         const l = isTR ? AppModel.core("normalize_phone_number", { input: login }) : login.trim()
         AppModel.updateConnection(connection.id, name, l)
         if (usesPin) {
@@ -128,6 +155,8 @@ Sheet {
                 AppModel.setConnectionEnableBankingApp(connection.id, id, pem)
         }
         pin = ""
+        // the sheet can stay open: what was saved is the new "unchanged"
+        initialValues = JSON.stringify(values)
     }
     function saveSettings(list) {
         for (const key of list) {
@@ -194,13 +223,6 @@ Sheet {
         }
     }
     ConfirmDialog {
-        id: confirmRemove
-        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(sheet.connection.display_name) : ""
-        message: qsTr("Alle Konten dieses Bankzugangs werden samt Buchungen, Belegen und gespeicherten Zugangsdaten aus dem Tresor gelöscht. Das lässt sich nicht widerrufen.")
-        actionTitle: qsTr("Entfernen")
-        onConfirmed: { const id = sheet.connection.id; sheet.close(); AppModel.removeConnection(id) }
-    }
-    ConfirmDialog {
         id: confirmSwitch
         destructive: false
         heading: qsTr("Abrufweg umstellen?")
@@ -247,7 +269,7 @@ Sheet {
             ScrollBar.vertical: ScrollViewBar {}
             id: scroll
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(form.implicitHeight, 520, sheet.maxBodyHeight - 150)
+            Layout.preferredHeight: Math.min(form.implicitHeight, 600, sheet.maxBodyHeight - 150)
             contentWidth: availableWidth
             clip: true
             ColumnLayout {
@@ -264,7 +286,7 @@ Sheet {
                               value: sheet.isTR && sheet.login !== "" ? AppModel.core("normalize_phone_number", { input: sheet.login }) : "" }
                     SettingsFormRow {
                         readonly property string blz: !sheet.connection ? "" : sheet.connection.bank_code !== "" ? sheet.connection.bank_code : (sheet.descriptor ? sheet.descriptor.bank_code : "")
-                        visible: blz !== ""; label: qsTr("BLZ"); value: blz
+                        visible: blz !== "" && sheet.isFinTs; label: qsTr("BLZ"); value: blz
                     }
                     CheckBox {
                         visible: sheet.usesPin
@@ -278,6 +300,15 @@ Sheet {
                         echoMode: TextInput.Password
                         text: sheet.pin; onTextEdited: sheet.pin = text
                         placeholderText: sheet.isRah10 ? qsTr("Passwort der Schlüsseldatei (leer = unverändert)") : sheet.kind === "Bhw" ? (sheet.status && sheet.status.has_pin ? qsTr("Gespeicherte Anmeldedaten (leer = unverändert)") : qsTr("Vorname;TT.MM.JJJJ;PLZ")) : sheet.status && sheet.status.has_pin ? qsTr("Gespeicherte PIN (leer = unverändert)") : (sheet.kind === "Ibkr" ? qsTr("Flex-Query-ID") : sheet.usesPassword ? qsTr("Passwort") : qsTr("PIN"))
+                    }
+                    // #954: only for banks that deliver documents; applied with „Speichern“
+                    CheckBox {
+                        visible: sheet.documentsSupported
+                        text: qsTr("Dokumente abrufen")
+                        checked: sheet.documentsFetch
+                        onToggled: sheet.documentsFetch = checked
+                        ToolTip.visible: hovered; ToolTip.delay: 600
+                        ToolTip.text: qsTr("Belege, Kontoauszüge und PostBox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach.")
                     }
                 }
                 SettingsFormSection {
@@ -335,6 +366,7 @@ Sheet {
                     CheckBox {
                         text: qsTr("PostBox über die Schnittstelle der Bank abrufen")
                         checked: sheet.postbox
+                        enabled: !sheet.documentsBlocked
                         onToggled: {
                             // the switch needs the credentials stored
                             if (checked) sheet.saveSettings(sheet.postboxKeys)
@@ -343,10 +375,18 @@ Sheet {
                             checked = Qt.binding(() => sheet.postbox)
                         }
                     }
+                    RowLayout {
+                        visible: sheet.documentsBlocked
+                        Layout.fillWidth: true
+                        spacing: 4
+                        SFIcon { symbol: "info.circle"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop }
+                        Text { text: qsTr("Wird nicht abgerufen, solange „Dokumente abrufen“ oben ausgeschaltet ist.")
+                               font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
                     Button {
                         visible: sheet.postbox
                         text: qsTr("PostBox jetzt abrufen")
-                        enabled: AppModel.syncingConnectionID === null
+                        enabled: AppModel.syncingConnectionID === null && !sheet.documentsBlocked
                         onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
                     }
                 }
@@ -416,13 +456,19 @@ Sheet {
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
         // HIG: the default button (Return) is the rightmost one.
+        // #954: no „Bankzugang entfernen …“ here (the trash in the list of logins removes it, like on
+        // the Mac); „Speichern & abrufen“ as an icon; „Speichern“ only after a change, else „Schließen“.
         RowLayout {
             Layout.fillWidth: true
-            Button { text: qsTr("Bankzugang entfernen …"); palette.buttonText: Theme.negative; onClicked: confirmRemove.open() }
             Item { Layout.fillWidth: true }
-            Button { text: qsTr("Abbrechen"); onClicked: sheet.close() }
-            Button { text: qsTr("Speichern && abrufen"); onClicked: sheet.saveAll(true) }
-            Button { text: qsTr("Speichern"); highlighted: true; onClicked: sheet.saveAll(false) }
+            Button { text: sheet.hasChanges ? qsTr("Abbrechen") : qsTr("Schließen"); onClicked: sheet.close() }
+            Button {
+                icon.name: SF.icon("arrow.triangle.2.circlepath"); display: AbstractButton.IconOnly
+                onClicked: sheet.saveAll(true)
+                Accessible.name: qsTr("Speichern & abrufen")
+                ToolTip.text: qsTr("Speichern & abrufen"); ToolTip.visible: hovered; ToolTip.delay: 600
+            }
+            Button { text: qsTr("Speichern"); highlighted: true; enabled: sheet.hasChanges; onClicked: sheet.saveAll(false) }
         }
     }
 

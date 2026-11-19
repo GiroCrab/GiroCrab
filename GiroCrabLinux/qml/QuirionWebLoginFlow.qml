@@ -19,6 +19,8 @@ WebLoginFlow {
 
     property bool ready: false
     property bool running: false
+    /// „Dokumente abrufen“ of the connection (bank connection dialog, #954): off = no list, no PDFs.
+    readonly property bool documentsOn: !connection || AppModel.documentsOffConnectionIDs.indexOf(connection.id) < 0
     property string progress: ""
     property string notice: ""
     property int generation: 0
@@ -187,7 +189,7 @@ WebLoginFlow {
             .then(snapshot => AppModel.corePromise("import_quirion_snapshot", { connection_id: id, snapshot_json: snapshot }))
             .then(s => {
                 summary = s
-                if (!includeDocuments.checked) return null
+                if (!includeDocuments.checked || !flow.documentsOn) return null
                 progress = qsTr("Postbox und Archiv auflisten …")
                 return run("return await window.__gcQuirion.documents();", {}, gen)
                     .then(list => AppModel.corePromise("pending_quirion_documents", { connection_id: id, documents_json: list }))
@@ -241,7 +243,7 @@ WebLoginFlow {
     }
 
     Button { text: qsTr("Schließen"); onClicked: flow.close(false) }
-    CheckBox { id: includeDocuments; text: qsTr("PDF-Postbox inkl. Archiv"); checked: true; enabled: !flow.running }
+    CheckBox { id: includeDocuments; visible: flow.documentsOn; text: qsTr("PDF-Postbox inkl. Archiv"); checked: true; enabled: !flow.running }
     Item { Layout.fillWidth: true }
     Button {
         text: qsTr("Depot und Konten abrufen")

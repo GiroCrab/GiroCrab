@@ -1500,6 +1500,9 @@ vault_methods! {
     list_connection_enable_banking_apps()
     set_connection_enable_banking_app(connection_id, application_id, private_key_pem)
     set_comdirect_postbox(connection_id, enabled) comdirect_postbox_enabled(connection_id)
+    // Dokumentenabruf je Bankzugang (ConnectionsUI.swift › „Dokumente abrufen“, #954)
+    documents_fetch_supported(connection_id) documents_fetch_enabled(connection_id)
+    set_documents_fetch(connection_id, enabled)
     set_document_account(doc_id, account_id)
     fints_product_id_mode() set_fints_product_id_mode(mode) fints_product_id_source()
     list_holdings(account_id) balance_history(account_ids, days)
@@ -1733,6 +1736,70 @@ mod tests {
             missing.get("err").is_some(),
             "unknown connection is refused"
         );
+    }
+
+    /// Dokumentenabruf je Bankzugang (#954, ConnectionEditSheet.qml): offered only where the bank
+    /// delivers documents, on by default, switched off and on again; „Belege & PostBox“ filters by
+    /// bank login (#1042, `DocumentFilter.connection_id`).
+    #[test]
+    fn documents_fetch_per_connection_round_trip() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let conns = call_ok("list_bank_connections", json!({}));
+        let conns = conns.as_array().unwrap();
+        let supported: Vec<&Value> = conns
+            .iter()
+            .filter(|c| {
+                call_ok(
+                    "documents_fetch_supported",
+                    json!({ "connection_id": c["id"] }),
+                ) == json!(true)
+            })
+            .collect();
+        let conn = supported
+            .first()
+            .expect("a demo bank that delivers documents");
+        let id = conn["id"].clone();
+        let enabled = || call_ok("documents_fetch_enabled", json!({ "connection_id": id }));
+        assert_eq!(enabled(), json!(true), "on by default");
+        call_ok(
+            "set_documents_fetch",
+            json!({ "connection_id": id, "enabled": false }),
+        );
+        assert_eq!(enabled(), json!(false));
+        call_ok(
+            "set_documents_fetch",
+            json!({ "connection_id": id, "enabled": true }),
+        );
+        assert_eq!(enabled(), json!(true));
+        let unknown: Value = serde_json::from_str(&call_json(
+            "documents_fetch_supported",
+            &json!({ "connection_id": -1 }).to_string(),
+        ))
+        .unwrap();
+        assert!(
+            unknown.get("err").is_some(),
+            "unknown connection is refused"
+        );
+        // #1042: only documents of accounts of that login; the field may be left out
+        let accounts = call_ok("list_accounts", json!({}));
+        let of_conn: Vec<Value> = accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["connection_id"] == id)
+            .map(|a| a["id"].clone())
+            .collect();
+        let docs = call_ok(
+            "list_all_documents",
+            json!({ "filter": { "account_id": null, "doc_type": null, "search": null,
+                    "unlinked_only": false, "connection_id": id } }),
+        );
+        assert!(docs
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|d| of_conn.contains(&d["account_id"])));
     }
 
     /// Belege & PostBox (#934): read status, the sidebar's unread count and the export of
