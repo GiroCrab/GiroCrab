@@ -95,7 +95,7 @@ struct TransferSheetView: View {
     private var bicText: String { model.transferDraft.bic.trimmingCharacters(in: .whitespaces) }
     private var bicValid: Bool { bicText.isEmpty || Self.looksLikeBIC(bicText) }
     private var cents: Int64? {
-        guard let c = try? parseAmountToCents(text: model.transferDraft.amountText), c > 0 else { return nil }
+        guard let c = Money.parseCents(model.transferDraft.amountText), c > 0 else { return nil }
         return c
     }
     private var isBunq: Bool { account?.connector == .bunq }
