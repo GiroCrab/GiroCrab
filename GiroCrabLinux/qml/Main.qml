@@ -27,6 +27,9 @@ ApplicationWindow {
     // LanguagePreference.startupQuestion (RootView on the Mac): decided once at start-up.
     readonly property string languageQuestion: (AppModel.run(() => AppModel.core("language_state")) || { question: "none" }).question
     property bool languagePromptDone: false
+    // Externe Analyse (#136): the singleton starts and stops the local socket with the vault
+    // (AppModel+LocalApi.swift › reconcileLocalApiServer), also while Settings never opened.
+    readonly property QtObject externalAccess: ExternalAccess
     readonly property bool showLanguagePrompt: languageQuestion === "choose" && !languagePromptDone
     Component.onCompleted: {
         if (showLanguagePrompt) return   // the vault opens after the language screen
