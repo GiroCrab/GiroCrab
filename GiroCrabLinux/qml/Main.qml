@@ -629,7 +629,14 @@ ApplicationWindow {
         id: errorDialog
         sheetWidth: 420
         visible: AppModel.errorMessage !== ""
-        onClosed: { AppModel.errorMessage = ""; AppModel.errorTitle = ""; AppModel.errorRetry = null; AppModel.errorAlternatives = [] }
+        // AppModel.swift › errorMessage didSet: closing runs `errorOnClose` ("Überspringen" in
+        // "Alle abrufen", #1041); retry and the alternatives clear it first.
+        onClosed: {
+            const onClose = AppModel.errorOnClose
+            AppModel.errorMessage = ""; AppModel.errorTitle = ""; AppModel.errorRetry = null; AppModel.errorAlternatives = []
+            AppModel.errorCloseTitle = ""; AppModel.errorOnClose = null
+            if (onClose) onClose()
+        }
         ColumnLayout {
             width: errorDialog.availableWidth
             spacing: 12
@@ -639,13 +646,13 @@ ApplicationWindow {
             Repeater {
                 model: AppModel.errorAlternatives
                 Button { required property var modelData; text: modelData.title; Layout.alignment: Qt.AlignRight
-                         onClicked: { const a = modelData.action; errorDialog.close(); a() } }
+                         onClicked: { const a = modelData.action; AppModel.errorOnClose = null; errorDialog.close(); a() } }
             }
             RowLayout {
                 Item { Layout.fillWidth: true }
                 Button { visible: AppModel.errorRetry !== null; text: qsTr("Erneut versuchen")
-                         onClicked: { const r = AppModel.errorRetry; errorDialog.close(); if (r) r() } }
-                Button { text: qsTr("OK"); highlighted: true; onClicked: errorDialog.close() }
+                         onClicked: { const r = AppModel.errorRetry; AppModel.errorOnClose = null; errorDialog.close(); if (r) r() } }
+                Button { text: AppModel.errorCloseTitle || qsTr("OK"); highlighted: true; onClicked: errorDialog.close() }
             }
         }
     }
