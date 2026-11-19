@@ -855,6 +855,28 @@
         }
       }
     },
+    "%lld Dokumente neu einsortiert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld documents sorted again"
+          }
+        }
+      }
+    },
+    "%lld Dokumente neu einsortiert · %lld Umsätzen zugeordnet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld documents sorted again · %lld linked to bookings"
+          }
+        }
+      }
+    },
     "%lld Kategorien: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11669,6 +11691,39 @@
         }
       }
     },
+    "Dokumente neu einsortieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort documents again"
+          }
+        }
+      }
+    },
+    "Dokumente neu einsortieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort documents again …"
+          }
+        }
+      }
+    },
+    "Dokumente neu einsortieren?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort documents again?"
+          }
+        }
+      }
+    },
     "Dokumente werden unter „Belege & PostBox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15355,6 +15410,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GiroCrab connects to your banks directly from this device. There is no GiroCrab server and no tracking. Only if you turn on iCloud sync above is the encrypted vault stored in your iCloud Drive. PINs and TANs are only kept in memory for a single fetch and deleted afterwards."
+          }
+        }
+      }
+    },
+    "GiroCrab wendet die aktuellen Ablageregeln auf vorhandene Belege dieses Bankzugangs an. Dabei können auch Belege verschoben werden, die Sie selbst einem Konto oder Depot zugeordnet haben. Bestehende Buchungsverknüpfungen bleiben erhalten." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab reapplies the current filing rules to existing documents for this bank connection. This may move documents you assigned to an account or portfolio yourself. Existing transaction links are kept."
           }
         }
       }
@@ -21995,6 +22060,17 @@
         }
       }
     },
+    "Neu einsortieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort again"
+          }
+        }
+      }
+    },
     "Neu starten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24131,6 +24207,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose Folder …"
+          }
+        }
+      }
+    },
+    "Ordnet die gespeicherten PDFs anhand ihrer Titel neu ein: Kontoauszüge, Steuerbescheinigungen, Mitteilungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sorts the stored PDFs again by their titles: account statements, tax certificates, notices"
           }
         }
       }

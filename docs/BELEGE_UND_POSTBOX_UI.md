@@ -35,9 +35,10 @@ die die Liste zeigt, muss deshalb im Index stehen (Schema-Schritt 30 hat `seen_a
 Wie „Neue Umsätze“ bei Buchungen: Jedes Dokument ist gelesen oder ungelesen (`booking_documents.seen_at`, NULL =
 ungelesen).
 
-- **Neu angelegt:** Ein Dokument mit Datum der letzten 45 Tage (`UNSEEN_DAYS`) ist ungelesen, ein älteres kommt gelesen
-  an: Nachgeladene Historie und Archive dürfen den Zähler nicht fluten. Von Hand hinzugefügte (Ablegen, „Beleg
-  hinzufügen …“) sind sofort gelesen. Bestehende Dokumente zählen nach dem Update auf Schema 30 als gelesen.
+- **Neu angelegt:** Ein Dokument ist ungelesen, wie alt sein Datum auch ist: Nur so bleibt zu sehen, was ein Abruf der
+  Historie gebracht hat und noch einzuordnen ist. Wer die Historie nicht durchsehen will, markiert sie mit „Alle als
+  gelesen markieren“ in einem Zug. Von Hand hinzugefügte (Ablegen, „Beleg hinzufügen …“) sind sofort gelesen.
+  Bestehende Dokumente zählen nach dem Update auf Schema 31 als gelesen.
 - **Gelesen** wird ein Dokument, sobald es in der Liste gewählt wird. Von Hand: „Als gelesen / ungelesen markieren“
   (Kontextmenü), „Alle als gelesen markieren“ (für die sichtbare Liste, also mit Filtern) und im Kontextmenü von
   „Belege & PostBox“ in der Seitenleiste (für alle).

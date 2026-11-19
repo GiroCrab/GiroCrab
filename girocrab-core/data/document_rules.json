@@ -1,0 +1,101 @@
+{
+  "_hinweis": "Bankwissen für die Dokument-Einsortierung. Eine Quelle für den Core (documents::type_from_title) und für scripts/analyse-dokumente.py. Schlüsselwörter in Kleinbuchstaben; Beschreibung und Beitragsweg: docs/dokument-zuordnung.md.",
+  "version": 1,
+
+  "_dokumenttypen": "Core-Typen in Prüfreihenfolge: der erste Eintrag, dessen Wort im kleingeschriebenen Titel vorkommt, gewinnt. Kein Treffer: `standard`.",
+  "dokumenttypen": [
+    { "typ": "steuer", "enthaelt": ["steuer", "ertragsaufstellung", "vorabpauschale"] },
+    { "typ": "kontoauszug", "enthaelt": ["auszug", "statement", "abschluss", "finanzreport"] },
+    {
+      "typ": "postbox",
+      "enthaelt": [
+        "wahlweise", "kundenvereinbarung", "rechtliche", "mitteilung", "information", "kundenanschreiben",
+        "bedingungsänderung", "vertragsunterlagen", "antrag", "löschbestätigung", "prospekt", "hauptversammlung",
+        "rückkaufangebot", "geschäftsbedingungen", "agb", "agreement", "datenschutz", "leistungsverzeichnis",
+        "eignungsprüfung", "treuhand", "hinweise"
+      ]
+    },
+    { "typ": "abrechnung", "enthaelt": ["abrechnung", "bestätigung", "dividende", "ausführungsanzeige", "ertragsgutschrift", "thesaurierend"] }
+  ],
+  "standard": "beleg",
+
+  "_abbildung": "Analyse-Arten und App-Typen sind verschieden fein. `typ` jeder Art nennt den App-Typ (steuer, kontoauszug, abrechnung, postbox, beleg), den Dokumente dieser Art in der Regel bekommen. Verbindlich ist die Abbildung nur, soweit `pruefbeispiele` sie belegen: Skript und Core prüfen dieselben Titel (Skript: Art, Core: Typ eines Dokuments, das zu einem Konto gehört).",
+  "_arten": "Nur für das Analyse-Skript: feinere Berichtsarten (Reihenfolge = Vorrang). `muster` ist ein regulärer Ausdruck auf Dateiname und Textanfang in Kleinbuchstaben; Unterstriche im Dateinamen zählen als Leerzeichen.",
+  "arten": [
+    { "name": "Steuer", "typ": "steuer", "muster": "steuerbescheinigung|jahressteuer|steuermitteilung|steuerliche|vorabpauschale|ertr[aä]gnisaufstellung|ertragsaufstellung|steuerauszug" },
+    { "name": "Finanzreport", "typ": "kontoauszug", "muster": "finanzreport" },
+    { "name": "Depotübertrag", "typ": "postbox", "muster": "depotübertrag|depotuebertrag" },
+    { "name": "Depotauszug", "typ": "kontoauszug", "muster": "depotauszug|depot-auszug|quartalsdepot|jahresdepot|depotübersicht" },
+    { "name": "Kontoauszug", "typ": "kontoauszug", "muster": "kontoauszug|auszug nr|kontoübersicht|online ?auszug|rechnungsabschluss|kontoabschluss" },
+    { "name": "Kosteninformation", "typ": "postbox", "muster": "kosteninformation|kostenaufstellung" },
+    { "name": "Dividende/Ertrag", "typ": "abrechnung", "muster": "dividende|ausschüttung|ertragsgutschrift|ertragsabrechnung|erträgnisabrechnung|thesaurierend|zinsabrechnung|zinsgutschrift" },
+    { "name": "Verkauf", "typ": "abrechnung", "muster": "\\bverkauf\\b|\\bverkaufs|wertpapierverkauf" },
+    { "name": "Sparplan", "typ": "abrechnung", "muster": "sparplan" },
+    { "name": "Kauf", "typ": "abrechnung", "muster": "\\bkauf\\b|\\bkaufs|\\bkaufabrechnung|\\bkauforder|wertpapierkauf" },
+    { "name": "Abrechnung (sonst)", "typ": "abrechnung", "muster": "abrechnung|ausführungsanzeige|bestätigung" },
+    { "name": "Bericht", "typ": "postbox", "muster": "quartalsbericht|pm reporting|rebalancing|jahresbericht" },
+    { "name": "Mitteilung/Information", "typ": "postbox", "muster": "mitteilung|information|kundeninformation|änderung|hinweis" }
+  ],
+
+  "_pruefbeispiele": "Erfundene Titel nach dem Muster beobachteter Dokumentfamilien (keine echten Daten). Das Analyse-Skript prüft `art`, der Core `typ` (account_document_type). Eine neue Regel bekommt hier ein Beispiel.",
+  "pruefbeispiele": [
+    { "bank": "comdirect", "titel": "Wertpapierabrechnung Kauf 12,5 St. WKN A1JX52 (VANGUARD FTSE ALL-WORLD) vom 01.02.2024", "art": "Kauf", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Wertpapierabrechnung Verkauf 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024", "art": "Verkauf", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Dividendengutschrift 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024", "art": "Dividende/Ertrag", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Ertragsgutschrift 100 St. WKN 847101 (FONDAK P) vom 10.10.2024", "art": "Dividende/Ertrag", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Gutschrift thesaurierend 100 St. WKN ETF001 vom 01.02.2024", "art": "Dividende/Ertrag", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Steuermitteilung WKN A1JX52 vom 31.07.2024", "art": "Steuer", "typ": "steuer" },
+    { "bank": "comdirect", "titel": "Jahressteuerbescheinigung 2023", "art": "Steuer", "typ": "steuer" },
+    { "bank": "comdirect", "titel": "Finanzreport Nr. 12 per 31.12.2024", "art": "Finanzreport", "typ": "kontoauszug" },
+    { "bank": "comdirect", "titel": "Kosteninformation MSCI World WKN A1H2QY vom 01.03.2024", "art": "Kosteninformation", "typ": "postbox" },
+    { "bank": "DKB", "titel": "Kauf - WKN A1JX52 - Wertpapierabrechnung vom 23.07.2021 zu Depot 1 - Ordernr. 2", "art": "Kauf", "typ": "abrechnung" },
+    { "bank": "DKB", "titel": "Ertragsabrechnung Dividenden vom 01.06.2023 zu Depot 1", "art": "Dividende/Ertrag", "typ": "abrechnung" },
+    { "bank": "DKB", "titel": "Depotauszug vom 15.01.2023 zu Depot 1", "art": "Depotauszug", "typ": "kontoauszug" },
+    { "bank": "DKB", "titel": "Kontoauszug 3/2024 vom 31.03.2024 zu Konto 1", "art": "Kontoauszug", "typ": "kontoauszug" },
+    { "bank": "Quirion", "titel": "Rechnungsabschluss 2024 Konto 1 EUR", "art": "Kontoauszug", "typ": "kontoauszug" },
+    { "bank": "Quirion", "titel": "Erträgnisabrechnung IE00B3RBWM25", "art": "Dividende/Ertrag", "typ": "abrechnung" },
+    { "bank": "Quirion", "titel": "Quartalsbericht Q3 2024 Globales Portfolio", "art": "Bericht", "typ": "postbox" },
+    { "bank": "finvesto / FNZ", "titel": "OnlineAuszug-Nr 12 2025", "art": "Kontoauszug", "typ": "kontoauszug" },
+    { "bank": "Trade Republic", "titel": "Wertpapierabrechnung Sparplan – JPM USD EM Bond", "art": "Sparplan", "typ": "abrechnung" },
+    { "bank": "Trade Republic", "titel": "Dividende – Apple", "art": "Dividende/Ertrag", "typ": "abrechnung" },
+    { "bank": "Trade Republic", "titel": "Kosteninformation – Apple", "art": "Kosteninformation", "typ": "postbox" }
+  ],
+
+  "_banken": "Je Bank: `erkennung` (Wörter im Pfad oder Textanfang) und optional bankeigene `arten`, die vor den allgemeinen gelten. Beobachtungen aus echten Dokumenten stehen unter `beobachtung`.",
+  "banken": [
+    {
+      "name": "comdirect",
+      "erkennung": ["comdirect"],
+      "arten": [
+        { "name": "Verkauf", "typ": "abrechnung", "muster": "wertpapierverkauf" },
+        { "name": "Kauf", "typ": "abrechnung", "muster": "wertpapierkauf" },
+        { "name": "Steuer", "typ": "steuer", "muster": "steuerliche behandlung|steuerbescheinigung" }
+      ],
+      "beobachtung": "Abrechnungen: „GESCHÄFTSABRECHNUNG“ mit „Wertpapierkauf/-verkauf“, Depotnummer im Kopf, IBAN weiter unten."
+    },
+    {
+      "name": "DKB",
+      "erkennung": ["dkb", "deutsche kreditbank"],
+      "arten": [
+        { "name": "Verkauf", "typ": "abrechnung", "muster": "wertpapier abrechnung verkauf" },
+        { "name": "Kauf", "typ": "abrechnung", "muster": "wertpapier abrechnung kauf" },
+        { "name": "Depotauszug", "typ": "kontoauszug", "muster": "jahresdepotauszug" }
+      ],
+      "beobachtung": "Wertpapierabrechnung mit Depot-, Kunden- und Auftragsnummer, ISIN mit WKN; Kontoauszüge tragen die IBAN im Kopf."
+    },
+    { "name": "Quirion", "erkennung": ["quirion"], "beobachtung": "Kontoauszug und Rechnungsabschluss mit IBAN im Kopf; Erträgnisabrechnung mit „Depot …“ und ISIN." },
+    { "name": "Trade Republic", "erkennung": ["trade republic"], "beobachtung": "Dateinamen ohne Aussage (pb…); Art und Richtung nur aus dem Text." },
+    { "name": "finvesto / FNZ", "erkennung": ["finvesto", "fnz bank", "fnz "] },
+    { "name": "Scalable Capital", "erkennung": ["scalable"] },
+    { "name": "Smartbroker", "erkennung": ["smartbroker"] },
+    { "name": "Baader Bank", "erkennung": ["baader bank"] },
+    { "name": "Consorsbank", "erkennung": ["consorsbank"] },
+    { "name": "ING", "erkennung": ["ing-diba", "ing deutschland", "ing bank"] },
+    { "name": "Interactive Brokers", "erkennung": ["interactive brokers"] },
+    { "name": "bunq", "erkennung": ["bunq"] },
+    { "name": "American Express", "erkennung": ["american express"] },
+    { "name": "Sparkasse", "erkennung": ["sparkasse"] },
+    { "name": "Volksbank / Raiffeisenbank", "erkennung": ["volksbank", "raiffeisenbank"] },
+    { "name": "PayPal", "erkennung": ["paypal"] }
+  ]
+}

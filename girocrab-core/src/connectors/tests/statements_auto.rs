@@ -46,6 +46,7 @@ fn auto_statements_are_due_weekly_and_only_when_enabled() {
         Documents::On {
             statements: vec!["giro".into()],
             catchup_since: None,
+            postbox_since: None,
         }
     );
     assert_eq!(
