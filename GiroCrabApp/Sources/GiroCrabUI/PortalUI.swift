@@ -13,7 +13,7 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .schwaebischHall, .equatePlus].contains(c.connector) { return true }
+        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .schwaebischHall, .equatePlus, .edenred].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         // the card's own application (#824) or the default one
         let app = connectionEnableBankingApp(c.id)
@@ -181,6 +181,7 @@ extension ConnectorKind {
         case .quirion: return URL(string: "https://banking.quirion.de/login/")
         case .schwaebischHall: return SchwaebischHallScripts.loginURL
         case .fnz: return URL(string: "https://portal.fnz.de/")
+        case .edenred: return URL(string: "https://nutzer.edenred.de/")
         case .amazonOrders: return URL(string: "https://www.amazon.de/gp/css/order-history")
         default: return nil
         }
@@ -202,6 +203,8 @@ extension ConnectorKind {
         case .amazonVisa: return ["openbankpay.com", "openbank.de", "openbank.com", "zinia.de", "zinia.com"]
         case .amazonOrders: return ["amazon.de", "amazon.com"]
         case .fnz: return ["portal.fnz.de"]
+        // the sign-in runs on Edenred's SSO host
+        case .edenred: return ["edenred.de", "edenred.io"]
         case .equatePlus: return ["www.equateplus.com", "www.emea.equateplus.com", "www.na.equateplus.com"]
         case .quirion: return ["banking.quirion.de"]
         case .schwaebischHall: return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
@@ -642,6 +645,32 @@ final class PortalBrowser {
         return (card, number, out, items.count, failed)
     }
 
+    /// Edenred: the transaction history page of the current card, from the card list the
+    /// portal loaded; nil before it was loaded.
+    func edenredHistoryURL() -> URL? {
+        var cards: [[String: Any]] = []
+        for b in bodies.reversed() {
+            guard let v = try? JSONSerialization.jsonObject(with: Data(b.utf8)) as? [String: Any],
+                  let data = v["data"] as? [[String: Any]] else { continue }
+            let found = data.filter { $0["card_ref"] is String && $0["class"] is String }
+            if !found.isEmpty { cards = found; break }
+        }
+        // the current card: not expired or blocked, the latest expiry date (a replacement
+        // card expires after the card it replaces)
+        let ended = ["expir", "block", "cancel", "close", "lost", "stolen", "inactive", "replaced"]
+        let usable = cards.filter { c in
+            let st = (c["status"] as? String ?? "").lowercased()
+            return !ended.contains { st.contains($0) }
+        }
+        let card = (usable.isEmpty ? cards : usable)
+            .max { ($0["expiration_date"] as? String ?? "") < ($1["expiration_date"] as? String ?? "") }
+        guard let ref = card?["card_ref"] as? String, let cls = card?["class"] as? String,
+              var c = URLComponents(string: "https://nutzer.edenred.de/page/beneficiary-wallet-transaction-history")
+        else { return nil }
+        c.queryItems = [URLQueryItem(name: "cardClass", value: cls), URLQueryItem(name: "cardRef", value: ref)]
+        return c.url
+    }
+
     static func maskedPath(_ url: String) -> String {
         let u = URL(string: url)
         let s = u.map { ($0.host ?? "") + $0.path } ?? String(url.prefix(120))
@@ -784,6 +813,9 @@ struct PortalWebSheet: View {
     /// Amex: statements were loaded with the button: the automatic import still stores
     /// recognised bookings but leaves the sheet open, the user closes it.
     @State private var statementsLoadedByHand = false
+    /// Edenred: sign-in started from the start page / transaction history opened (once each).
+    @State private var edenredLoginOpened = false
+    @State private var edenredHistoryOpened = false
 
     /// Amex: not every card of the switcher has been opened yet. Importing now would
     /// take only the cards loaded so far and close the sheet, so it waits (#243).
@@ -928,6 +960,21 @@ struct PortalWebSheet: View {
                     loginFilled = await fillStoredLogin()
                 }
                 let away = browser.onLoginPage || !browser.onPortal
+                // Edenred: start the sign-in from the start page (an open SSO session signs in on
+                // its own), then open the card's transaction history, which loads the bookings.
+                if connection.connector == .edenred, !away, !browser.loading, let here = browser.currentURL {
+                    if !edenredLoginOpened, here.path == "/" || here.path == "/page/home",
+                       let login = URL(string: "https://nutzer.edenred.de/login") {
+                        edenredLoginOpened = true
+                        browser.webView.load(URLRequest(url: login))
+                        continue
+                    }
+                    if !edenredHistoryOpened, here.path.hasPrefix("/page/dashboard"), let history = browser.edenredHistoryURL() {
+                        edenredHistoryOpened = true
+                        browser.webView.load(URLRequest(url: history))
+                        continue
+                    }
+                }
                 let rows = away ? "[]" : await browser.domRowsJSON()
                 let n = away ? 0 : await model.previewPortalCapture(connection, bodies: browser.bodies, domRowsJSON: rows)
                 if n != lastSeenCount || n != recognized { lastSeenCount = n; lastChange = Date() }

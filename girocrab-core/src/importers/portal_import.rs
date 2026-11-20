@@ -547,7 +547,10 @@ fn find_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
 /// Returns the matched key and the balance in cents.
 fn find_balance(v: &Value, kind: ConnectorKind) -> Option<(String, i64)> {
     let owed = |c: i64| {
-        if charges_positive(kind) || c > 0 {
+        // a benefit card holds a credit, not a debt
+        if kind == ConnectorKind::Edenred {
+            c
+        } else if charges_positive(kind) || c > 0 {
             -c.abs()
         } else {
             c
@@ -617,12 +620,98 @@ pub fn parse_json_bodies(bodies: &[String], kind: ConnectorKind) -> (Vec<Parsed>
     (c.posted, c.balance.map(|(_, c)| c))
 }
 
+/// Edenred (`nutzer.edenred.de`): the portal's card list and card operations in
+/// the shape the generic reader understands. Operations become a `transactions`
+/// list (`operation_ref`, `date`, the merchant `outlet.name`, the sum of the
+/// wallet amounts: negative = payment); the card list becomes the card balance,
+/// the sum of the wallets' `total_balance` (a credit, not a debt), written as a
+/// balance summary so that 0 counts too. Edenred gives amounts and balances in
+/// cents. Other bodies stay as they are.
+fn edenred_body(v: &Value) -> Option<Value> {
+    let data = v.get("data")?;
+    let items = data
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| vec![data.clone()]);
+    if items.iter().any(|i| i.get("operation_ref").is_some()) {
+        let tx: Vec<Value> = items
+            .iter()
+            .filter(|i| {
+                let status = format!("{} {}", text_of(i, "status"), text_of(i, "cleared_status"))
+                    .to_lowercase();
+                !["declin", "reject", "cancel", "fail", "refus"]
+                    .iter()
+                    .any(|w| status.contains(w))
+            })
+            .filter_map(|i| {
+                let wallets = i.pointer("/transaction_details/wallets")?.as_array()?;
+                let cents: i64 = wallets
+                    .iter()
+                    .filter_map(|w| edenred_cents(w.get("amount")?))
+                    .sum();
+                let outlet = text_of(i, "/outlet/name");
+                let text = if outlet.is_empty() {
+                    text_of(i, "type")
+                } else {
+                    outlet
+                };
+                Some(serde_json::json!({
+                    "date": text_of(i, "date"),
+                    "amount": cents as f64 / 100.0,
+                    "description": text,
+                    "identifier": text_of(i, "operation_ref"),
+                }))
+            })
+            .collect();
+        return Some(serde_json::json!({ "transactions": tx }));
+    }
+    let wallets: Vec<&Value> = items
+        .iter()
+        .filter_map(|i| i.get("wallets")?.as_array())
+        .flatten()
+        .collect();
+    if wallets.iter().any(|w| w.get("total_balance").is_some()) {
+        let cents: i64 = wallets
+            .iter()
+            .filter_map(|w| edenred_cents(w.get("total_balance")?))
+            .sum();
+        let amount = cents as f64 / 100.0;
+        return Some(serde_json::json!({
+            "current_balance": amount,
+            "card_balance": amount,
+            "wallet_balance": amount,
+        }));
+    }
+    None
+}
+
+/// An Edenred amount: a number of cents (2406 = 24,06 €).
+fn edenred_cents(v: &Value) -> Option<i64> {
+    v.as_f64()
+        .or_else(|| v.as_str()?.trim().parse().ok())
+        .map(|c| c.round() as i64)
+}
+
+/// The text at `key` (a field name or a JSON pointer), "" if missing.
+fn text_of(v: &Value, key: &str) -> String {
+    let x = if key.starts_with('/') {
+        v.pointer(key)
+    } else {
+        v.get(key)
+    };
+    x.and_then(value_text).unwrap_or_default()
+}
+
 pub(crate) fn parse_capture(bodies: &[String], kind: ConnectorKind) -> Capture {
     let mut c = Capture::default();
     let mut cards = HashMap::new();
     for b in bodies {
         let Ok(v) = serde_json::from_str::<Value>(b) else {
             continue;
+        };
+        let v = match kind {
+            ConnectorKind::Edenred => edenred_body(&v).unwrap_or(v),
+            _ => v,
         };
         walk(&v, kind, false, &mut c);
         card_directory(&v, &mut cards);
@@ -970,7 +1059,7 @@ fn to_fetch(
     holds: Vec<Parsed>,
     balance: Option<i64>,
 ) -> FetchResult {
-    let (account, transactions) = card_account(
+    let (mut account, transactions) = card_account(
         &account_ref(kind, connection_id),
         name,
         "",
@@ -978,6 +1067,10 @@ fn to_fetch(
         holds,
         balance,
     );
+    // a benefit card holds a credit: no credit-card rules (open amount, settlement)
+    if kind == ConnectorKind::Edenred {
+        account.kind = AccountKind::PaymentService;
+    }
     FetchResult {
         // a reported balance, even 0, replaces the stored one
         balances_reported: if balance.is_some() {
@@ -1060,6 +1153,37 @@ pub(crate) fn account_ref(kind: ConnectorKind, connection_id: i64) -> String {
         kind.as_str().replace(':', "-"),
         connection_id
     )
+}
+
+/// Connector of a portal the app reads in its embedded browser (Edenred): a
+/// sync always goes through the portal window, never through the core.
+pub struct PortalOnlyConnector;
+
+#[async_trait::async_trait]
+impl crate::connectors::BankConnector for PortalOnlyConnector {
+    async fn begin(
+        &mut self,
+        _: &crate::connectors::ConnectContext,
+    ) -> crate::error::CoreResult<crate::connectors::Phase> {
+        Err(CoreError::BrowserLoginRequired {
+            message: tr("Bitte im Portal-Fenster anmelden und abrufen.").into(),
+        })
+    }
+    async fn respond(
+        &mut self,
+        ctx: &crate::connectors::ConnectContext,
+        _: crate::connectors::ChallengeResponse,
+    ) -> crate::error::CoreResult<crate::connectors::Phase> {
+        self.begin(ctx).await
+    }
+    async fn fetch(
+        &mut self,
+        _: &crate::connectors::ConnectContext,
+    ) -> crate::error::CoreResult<FetchResult> {
+        Err(CoreError::BrowserLoginRequired {
+            message: tr("Bitte im Portal-Fenster anmelden und abrufen.").into(),
+        })
+    }
 }
 
 // ------------------------------------------------------------------ several cards (#243)
@@ -2105,6 +2229,48 @@ mod tests {
         let joined = keys.into_iter().collect::<Vec<_>>().join(", ");
         assert_eq!(joined, "charges_amount, statement_balance_amount");
         assert!(!joined.contains("6266") && !joined.contains("36.88"));
+    }
+
+    #[test]
+    fn edenred_operations_and_card_balance() {
+        let cards = r#"{"data":[{"card_ref":"C1","account_ref":"A1","status":"active","wallets":[{"currency":"EUR","product_ref":"P","product_type":"meal","total_balance":4250}]},{"card_ref":"C0","account_ref":"A0","status":"expired","wallets":[{"currency":"EUR","product_ref":"P","product_type":"meal","total_balance":0}]}],"meta":{"status":"ok"}}"#;
+        let ops = r#"{"data":[
+            {"operation_ref":"OP1","date":"2026-11-12T11:30:00.000Z","currency":"EUR","status":"accepted","cleared_status":"cleared","type":"payment","outlet":{"name":"Kantine Musterhaus","ref":"O1"},"transaction_details":{"wallets":[{"amount":-740,"product_ref":"P","status":"ok"}]}},
+            {"operation_ref":"OP2","date":"2026-11-01T00:00:00.000Z","currency":"EUR","status":"accepted","cleared_status":"cleared","type":"load","outlet":{"name":"","ref":""},"transaction_details":{"wallets":[{"amount":5000,"product_ref":"P","status":"ok"}]}},
+            {"operation_ref":"OP3","date":"2026-11-13T12:00:00.000Z","currency":"EUR","status":"declined","cleared_status":"","type":"payment","outlet":{"name":"Bistro","ref":"O2"},"transaction_details":{"wallets":[{"amount":-990,"product_ref":"P","status":"ko"}]}}
+        ],"meta":{"status":"ok"}}"#;
+        let c = parse_capture(
+            &[cards.to_string(), ops.to_string()],
+            ConnectorKind::Edenred,
+        );
+        // a credit in cents, the sum of the cards' wallets
+        assert_eq!(c.balance.map(|(_, b)| b), Some(4250));
+        let got: Vec<(String, i64, String, Option<String>)> = c
+            .posted
+            .iter()
+            .map(|p| (p.date.clone(), p.cents, p.text.clone(), p.id.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "2026-11-12".to_string(),
+                    -740,
+                    "Kantine Musterhaus".to_string(),
+                    Some("OP1".to_string())
+                ),
+                (
+                    "2026-11-01".to_string(),
+                    5000,
+                    "load".to_string(),
+                    Some("OP2".to_string())
+                ),
+            ]
+        );
+        // a balance of 0 counts (cards used up)
+        let empty = r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":0}]}]}"#;
+        let c = parse_capture(&[empty.to_string()], ConnectorKind::Edenred);
+        assert_eq!(c.balance.map(|(_, b)| b), Some(0));
     }
 
     #[test]
