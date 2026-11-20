@@ -113,11 +113,21 @@ ColumnLayout {
             }
         }
         Step { n: 3; text: qsTr("Hier die heruntergeladene .pem-Datei wählen. GiroCrab übernimmt Schlüssel und Application-ID und prüft die Anwendung.") }
-        Text {
+        // the console and the interactive guide on girocrab.de (#1005)
+        RowLayout {
             Layout.leftMargin: 22
-            text: "<a href=\"https://enablebanking.com/cp/applications\">" + qsTr("enablebanking.com/cp/applications öffnen") + "</a>"
-            font.pixelSize: Theme.caption; color: Theme.accent; linkColor: Theme.accent
-            onLinkActivated: link => Qt.openUrlExternally(link)
+            spacing: 12
+            Text {
+                text: "<a href=\"https://enablebanking.com/cp/applications\">" + qsTr("enablebanking.com/cp/applications öffnen") + "</a>"
+                font.pixelSize: Theme.caption; color: Theme.accent; linkColor: Theme.accent
+                onLinkActivated: link => Qt.openUrlExternally(link)
+            }
+            Text { text: "·"; font.pixelSize: Theme.caption; color: Theme.secondary }
+            Text {
+                text: "<a href=\"https://girocrab.de/girocrab_psd2_anleitung.html\">" + qsTr("Interaktive Anleitung (3 Min.)") + "</a>"
+                font.pixelSize: Theme.caption; color: Theme.accent; linkColor: Theme.accent
+                onLinkActivated: link => Qt.openUrlExternally(link)
+            }
         }
     }
     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }

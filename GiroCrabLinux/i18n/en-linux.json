@@ -122,6 +122,7 @@
   "Informationen ausblenden (Strg+Alt+I)": "Hide Inspector (Ctrl+Alt+I)",
   "Informationen ein-/ausblenden": "Show/Hide Inspector",
   "Informationen einblenden (Strg+Alt+I)": "Show Inspector (Ctrl+Alt+I)",
+  "Interaktive Anleitung (3 Min.)": "Interactive guide (3 min.)",
   "Interner Fehler in %1: %2": "Internal error in %1: %2",
   "Kein Zugriff auf den Schlüsselbund (KWallet / GNOME Schlüsselbund): %1. Ist der Schlüsselbund entsperrt und der Secret-Service-Dienst aktiv?": "No access to the keyring (KWallet / GNOME Keyring): %1. Is the keyring unlocked and the Secret Service running?",
   "Keine Bestellungen im gewählten Zeitraum gefunden.": "No orders found in the chosen period.",
