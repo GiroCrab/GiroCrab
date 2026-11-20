@@ -390,6 +390,8 @@ impl Vault {
         crate::schema::check_not_too_new(conn)?;
         // Connection settings first: neither pragma takes effect inside a transaction.
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
+        // Drop untrusted triggers/views before schema steps or marker writes can fire them.
+        let _ = backup::drop_triggers_and_views(conn, "main");
         // All pending steps in one transaction (SQLite DDL is transactional): an
         // aborted run leaves the old schema and `user_version`, never half of it.
         crate::schema::migrate(conn)
