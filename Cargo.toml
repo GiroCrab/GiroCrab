@@ -1,5 +1,5 @@
 [workspace]
-members = ["girocrab-core", "girocrab-mcp", "uniffi-bindgen", "tools/gen-bic-directory"]
+members = ["girocrab-core", "girocrab-mcp", "uniffi-bindgen", "tools/gen-bic-directory", "tools/gen-fints-directory"]
 resolver = "3"
 
 [workspace.package]
