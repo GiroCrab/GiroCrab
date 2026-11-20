@@ -78,6 +78,8 @@ Sheet {
     /// Optional power-user PSD2 credentials (collapsed "Erweitert" section).
     readonly property var advancedKeys: kind === "AmericanExpress"
         ? ["enablebanking.use.amex", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amex", "enablebanking.country.amex"]
+        // Prototype #156: classic NVP API instead of the REST app.
+        : kind === "PayPal" ? AppModel.payPalSignatureKeys
         : kind === "AmazonVisa"
         ? ["enablebanking.use.amazonvisa", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amazonvisa", "enablebanking.country.amazonvisa"]
         : []
@@ -316,6 +318,19 @@ Sheet {
                     title: sheet.sectionTitle
                     Repeater { model: sheet.keys; KeyField { required property string modelData; key: modelData } }
                 }
+                // Prototype #156: classic NVP API (API signature) instead of the REST app.
+                SettingsFormSection {
+                    visible: sheet.kind === "PayPal"
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SFIcon { symbol: sheet.showAdvanced ? "chevron.down" : "chevron.right"; size: 10; color: Theme.secondary }
+                        Text { text: qsTr("Erweitert: API-Signatur (klassische NVP-API)"); font.pixelSize: Theme.body; color: Theme.text; Layout.fillWidth: true
+                               MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: sheet.showAdvanced = !sheet.showAdvanced } }
+                    }
+                    Text { visible: sheet.showAdvanced; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                           text: qsTr("Ist die API-Signatur gesetzt, ruft GiroCrab per API-Benutzername, API-Passwort und Signatur ab; Client-ID und Secret werden dann nicht gebraucht.") }
+                    Repeater { model: sheet.showAdvanced ? sheet.advancedKeys : []; KeyField { required property string modelData; key: modelData } }
+                }
                 SettingsFormSection {
                     visible: sheet.isPortal
                     title: qsTr("Direkt-Login (Web-Session)")
@@ -478,7 +493,7 @@ Sheet {
         property string key
         readonly property var entry: AppModel.settingEntry(key)
         readonly property string label: AppModel.settingLabel(key)
-        readonly property bool secret: entry ? entry.is_secret : false
+        readonly property bool secret: AppModel.isSecretSetting(key, entry)
         readonly property bool isRevealed: !!sheet.revealed[key]
         readonly property bool isPem: key.indexOf("private_key") >= 0
         Layout.fillWidth: true

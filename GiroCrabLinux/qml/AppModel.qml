@@ -1789,7 +1789,18 @@ QtObject {
         if (isMagicDemoLogin(c.login_name)) return []
         const d = descriptor(c.connector)
         if (!d) return []
+        if (c.connector === "PayPal" && payPalUsesSignature()) return missingPayPalSignatureKeys()
         return userRequiredKeys(d.required_settings).filter(key => { const e = settingEntry(key); return !(e && e.has_value) })
+    }
+    /// PayPal via API signature (classic NVP API, #752): all three are required.
+    readonly property var payPalSignatureKeys: ["paypal.api_username", "paypal.api_password", "paypal.api_signature"]
+    /// One of the API signature fields is filled in: PayPal is set up that way, not via a REST app.
+    function payPalUsesSignature() { return payPalSignatureKeys.some(k => { const e = settingEntry(k); return !!e && e.has_value }) }
+    /// The API signature fields still empty (none: complete).
+    function missingPayPalSignatureKeys() { return payPalSignatureKeys.filter(k => { const e = settingEntry(k); return !(e && e.has_value) }) }
+    /// A setting to enter masked: the core's flag, else guessed from the key (not loaded yet).
+    function isSecretSetting(key, entry) {
+        return entry ? entry.is_secret : (key.indexOf("secret") >= 0 || key.endsWith("password") || key.endsWith("signature"))
     }
     /// Settings the core lists as required that are only an optional override for the user.
     /// A custom FinTS product ID is one: GiroCrab ships its own, and a value entered once is a

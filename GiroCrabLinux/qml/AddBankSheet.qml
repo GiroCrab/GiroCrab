@@ -12,6 +12,9 @@ Sheet {
     property var selected: null           // BankSearchResult
     property var ways: []
     property var setupValues: ({})
+    /// PayPal: set up the classic API signature (personal accounts) instead of a REST app.
+    property bool payPalSignature: true
+    readonly property bool isPayPal: selected !== null && selected.connector === "PayPal"
     /// BankSetupSheet.enableBankingKeys: shown together in EnableBankingSetupSection
     readonly property var ebKeys: ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
     property var popular: []
@@ -65,6 +68,8 @@ Sheet {
         const kind = selected.connector || (selected.mode === "FinTs" ? "FinTsGeneric" : "EnableBanking")
         const d = AppModel.descriptor(kind)
         if (!d) return []
+        // PayPal via API signature (classic NVP API) needs all three fields and no REST app.
+        if (kind === "PayPal" && (payPalSignature || AppModel.payPalUsesSignature())) return AppModel.missingPayPalSignatureKeys()
         // AddBankAssistant.swift › missingSettings: the FinTS product ID is never asked for (#842/#865)
         return AppModel.userRequiredKeys(d.required_settings).filter(k => { const e = AppModel.settingEntry(k); return !(e && e.has_value) })
     }
@@ -89,7 +94,7 @@ Sheet {
     function commit() { const f = formLoader.item; f.commit(); if (!f.commitsAsync) close() }
     function back() { step = step === "setup" ? (isRah10 ? "bank" : "access") : "bank" }
 
-    onAboutToShow: { step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); loadPopular(); searchField.forceActiveFocus() }
+    onAboutToShow: { step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); payPalSignature = true; loadPopular(); searchField.forceActiveFocus() }
 
     ColumnLayout {
         width: sheet.availableWidth
@@ -240,6 +245,28 @@ Sheet {
                 ColumnLayout {
                     width: parent.width
                     spacing: 14
+                    // PayPal (#945): API signature (classic NVP API) or REST app
+                    ColumnLayout {
+                        visible: sheet.step === "setup" && sheet.isPayPal
+                        Layout.fillWidth: true
+                        spacing: 6
+                        RowLayout {
+                            spacing: 10
+                            Text { text: qsTr("Zugang über"); font.pixelSize: Theme.body; color: Theme.text }
+                            Segmented {
+                                Accessible.name: qsTr("Zugang über")
+                                options: [{ id: "signature", title: qsTr("API-Signatur") }, { id: "rest", title: qsTr("REST-App") }]
+                                current: sheet.payPalSignature ? "signature" : "rest"
+                                onActivated: id => sheet.payPalSignature = id === "signature"
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                            text: sheet.payPalSignature
+                                ? qsTr("API-Benutzername, API-Passwort und Signatur finden Sie bei PayPal unter Kontoeinstellungen › API-Zugriff (klassische NVP-API). Geeignet für Privatkonten mit bestehenden API-Zugangsdaten.")
+                                : qsTr("Eine REST-App mit der Berechtigung „Transaction Search“ legen Sie auf developer.paypal.com an. PayPal gibt diese Berechtigung nur für Geschäftskonten frei.")
+                        }
+                    }
                     // the Enable Banking keys: guide, key file (.pem) and check, like BankSetupSheet
                     EnableBankingSetupSection {
                         visible: sheet.step === "setup" && sheet.missingSettings.some(k => sheet.ebKeys.indexOf(k) >= 0)
