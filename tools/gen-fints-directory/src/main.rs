@@ -5,8 +5,9 @@
 //! https://raw.githubusercontent.com/hbci4j/hbci4java/<commit>/src/main/resources/blz.properties
 //!
 //! The output depends only on that file and the two lists below. After moving to a
-//! new commit, list the hosts that no longer answer and map those with a known
-//! successor in `HOSTS`:
+//! new commit, list the hosts that no longer answer and report those with a known
+//! successor to hbci4java (as in hbci4j/hbci4java#160); `HOSTS` bridges the time
+//! until the fix is there:
 //!   grep -v '^#' girocrab-core/data/fints_directory.tsv | cut -f3 | cut -d/ -f3 | sort -u \
 //!     | xargs -P 16 -I{} sh -c 'curl -s -o /dev/null --max-time 20 https://{}/ || echo {}'
 //! (2026-11-20: 15 hosts with 42 rows, mostly codes of merged banks and Sparkassen
@@ -20,18 +21,10 @@ use std::path::Path;
 use std::{env, fs, process};
 
 const ATRUVIA_1: &str = "https://fints1.atruvia.de/cgi-bin/hbciservlet";
-const ATRUVIA_2: &str = "https://fints2.atruvia.de/cgi-bin/hbciservlet";
 const POSTBANK: &str = "https://hbci.postbank.de/banking/hbci.do";
 
 /// Hosts the dataset lists and the endpoint used instead (`None`: the rows are left out).
 const HOSTS: &[(&str, Option<&str>)] = &[
-    // Shut down in the Atruvia merger (2021), which kept both former data centres:
-    // ex-GAD banks on fints1, ex-Fiducia banks on fints2 (the dataset's own RDH
-    // column says the same).
-    ("hbci-pintan.gad.de", Some(ATRUVIA_1)),
-    ("hbci11.fiducia.de", Some(ATRUVIA_2)),
-    // The former Sparda gateway; every other Sparda bank is on fints2.
-    ("fints.bankingonline.de", Some(ATRUVIA_2)),
     // Earlier directory versions sent every HVB code to this endpoint and stored
     // connections keep it; both hosts answer, so switch only after a verified login on hbci-01.
     (
