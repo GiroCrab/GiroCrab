@@ -256,7 +256,7 @@ fn switched_depot_twin(conn: &Connection, mm: &Ident, banks: &[Ident]) -> CoreRe
         return Ok(None);
     }
     let marked: bool = conn.query_row(
-        "SELECT external_ref LIKE ?2 || '%' FROM main.accounts WHERE id = ?1",
+        "SELECT IFNULL(external_ref LIKE ?2 || '%', 0) FROM main.accounts WHERE id = ?1",
         params![mm.id, crate::vault::connections::SWITCH_MARK],
         |r| r.get(0),
     )?;
