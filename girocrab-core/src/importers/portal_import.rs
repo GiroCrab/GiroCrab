@@ -438,6 +438,9 @@ pub(crate) struct Capture {
     pub pending: Vec<Parsed>,
     /// A pending list (possibly empty) was among the captured responses (diagnostics).
     pub pending_listed: bool,
+    /// The portal's own booking list was among the responses (Edenred): even when
+    /// none of its entries counts (all declined), the visible table is not read instead.
+    pub bookings_listed: bool,
     pub balance: Option<(String, i64)>,
 }
 
@@ -710,7 +713,13 @@ pub(crate) fn parse_capture(bodies: &[String], kind: ConnectorKind) -> Capture {
             continue;
         };
         let v = match kind {
-            ConnectorKind::Edenred => edenred_body(&v).unwrap_or(v),
+            ConnectorKind::Edenred => match edenred_body(&v) {
+                Some(t) => {
+                    c.bookings_listed |= t.get("transactions").is_some();
+                    t
+                }
+                None => v,
+            },
             _ => v,
         };
         walk(&v, kind, false, &mut c);
@@ -1898,11 +1907,12 @@ impl Vault {
             posted: mut parsed,
             pending,
             pending_listed,
+            bookings_listed,
             ..
         } = capture;
         let from_json = parsed.len();
         // The visible table only when the JSON held no bookings at all (it may mix in pending rows).
-        if parsed.is_empty() && pending.is_empty() {
+        if parsed.is_empty() && pending.is_empty() && !bookings_listed {
             let rows: Vec<Vec<String>> = serde_json::from_str(&dom_rows_json).unwrap_or_default();
             parsed = parse_dom_rows(&rows, kind);
         }
@@ -1935,7 +1945,7 @@ impl Vault {
             0
         };
         let mut n = c.posted.len() + holds;
-        if c.posted.is_empty() && c.pending.is_empty() {
+        if c.posted.is_empty() && c.pending.is_empty() && !c.bookings_listed {
             let rows: Vec<Vec<String>> = serde_json::from_str(&dom_rows_json).unwrap_or_default();
             n = parse_dom_rows(&rows, kind).len();
         }
@@ -2283,6 +2293,37 @@ mod tests {
         let empty = r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":0}]}]}"#;
         let c = parse_capture(&[empty.to_string()], ConnectorKind::Edenred);
         assert_eq!(c.balance.map(|(_, b)| b), Some(0));
+    }
+
+    #[test]
+    fn declined_edenred_operations_never_come_back_from_the_table() {
+        let dir = crate::test_support::TempDir::new("girocrab-edenred-declined");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![3u8; 32],
+        )
+        .unwrap();
+        let conn = v
+            .add_bank_connection(ConnectorKind::Edenred, String::new(), "Edenred".into())
+            .unwrap();
+        let ops = r#"{"data":[{"operation_ref":"OP3","date":"2026-11-13T12:00:00.000Z","status":"declined","outlet":{"name":"Bistro"},"transaction_details":{"wallets":[{"amount":-990}]}}]}"#.to_string();
+        let cards =
+            r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":2500}]}]}"#.to_string();
+        // the page shows the declined payment in its table
+        let rows = r#"[["13.11.2026","Bistro","-9,90"]]"#.to_string();
+        v.clone()
+            .import_portal_capture(conn, vec![ops, cards], rows)
+            .unwrap();
+        let n: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]
