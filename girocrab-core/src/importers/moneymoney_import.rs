@@ -104,6 +104,12 @@ fn fold(s: &str) -> String {
             'ž' | 'ź' | 'ż' => out.push('z'),
             'ł' => out.push('l'),
             'ß' => out.push_str("ss"),
+            'ř' | 'ŕ' => out.push('r'),
+            'ť' | 'ț' => out.push('t'),
+            'ď' => out.push('d'),
+            'ğ' => out.push('g'),
+            'ş' | 'ș' => out.push('s'),
+            'ľ' | 'ĺ' => out.push('l'),
             _ => out.push(c),
         }
     }
@@ -2465,6 +2471,7 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
         assert_eq!(fold("Hannah Müller"), fold("Hannah Muller"));
         assert_eq!(fold("Weiß-Straße"), "weissstrasse");
         assert_eq!(fold("Café Noël"), "cafenoel");
+        assert_eq!(fold("Dvořák"), fold("Dvorak"));
         assert_ne!(fold("Müller"), fold("Maier"));
         // fingerprints keep the accents: stored import keys stay valid
         assert_ne!(
