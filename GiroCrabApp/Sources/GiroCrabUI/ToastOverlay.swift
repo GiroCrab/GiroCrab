@@ -31,6 +31,8 @@ private struct ToastOverlay: ViewModifier {
     @State private var id = UUID()
     #if os(macOS)
     @Environment(\.controlActiveState) private var activeState
+    #else
+    @Environment(\.scenePhase) private var scenePhase
     #endif
 
     func body(content: Content) -> some View {
@@ -58,6 +60,10 @@ private struct ToastOverlay: ViewModifier {
             #if os(macOS)
             .onChange(of: activeState, initial: true) { _, state in
                 if state == .key { ToastHosts.shared.bringToFront(id) }
+            }
+            #else
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                if phase == .active { ToastHosts.shared.bringToFront(id) }
             }
             #endif
     }
