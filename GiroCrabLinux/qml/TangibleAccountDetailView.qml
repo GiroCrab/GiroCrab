@@ -337,7 +337,7 @@ AssetAccountFrame {
             }
         }
         Accessible.role: Accessible.Button
-        Accessible.name: row.it.setup.name
+        Accessible.name: AppModel.masking(row.it.setup.name)
         AppMenu {
             id: menu
             AppMenuItem { text: qsTr("Klassifizierung bearbeiten"); visible: row.classification !== null; height: visible ? implicitHeight : 0
