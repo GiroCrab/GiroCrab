@@ -2,12 +2,12 @@
 #
 # BLZ -> FinTS 3.0 PIN/TAN endpoint table from hbci4java's blz.properties
 # (LGPL-2.1, github.com/hbci4j/hbci4java, commit 9eddd2cb8554313124a6f7cd46cfdec4c55583a3).
-# Host replacements (HOSTS) and pinned rows (PINNED) are listed in the generator.
+# Excluded hosts (EXCLUDED_HOSTS) and pinned rows (PINNED) are listed in the generator.
 # Names shared by several bank codes carry the city.
 # Columns (tab-separated): blz, bank name, FinTS URL. Sorted by BLZ.
 10010010	Postbank (Berlin)	https://hbci.postbank.de/banking/hbci.do
 10020200	BHF-Bank AG (Berlin)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
-10020890	UniCredit Bank - HypoVereinsbank AG (Berlin)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+10020890	UniCredit Bank - HypoVereinsbank AG (Berlin)	https://hbci-01.hypovereinsbank.de/bank/hbci
 10030400	ABK Allgemeine Beamten Bank AG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 10030500	Bankhaus Löbbecke (M.M.Warburg)	https://www.warburg-bank.de/fints
 10030600	Bankhaus Kruber	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -21,7 +21,7 @@
 10090000	Berliner Volksbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 10090900	PSD Bank Berlin-Brandenburg	https://fints2.atruvia.de/cgi-bin/hbciservlet
 10120100	Weberbank	https://banking-bb6.s-fints-pt-bb.de/fints30
-10120760	UniCredit Bank - HypoVereinsbank Ndl 260 BIn	https://hbci.hypovereinsbank.de/hbci/hbci.do
+10120760	UniCredit Bank - HypoVereinsbank Ndl 260 BIn	https://hbci-01.hypovereinsbank.de/bank/hbci
 10130600	Isbank AG (Berlin)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 10130800	biw Bank für Investments und Wertpapiere	https://konto.biw-bank.de/hbci/
 12030000	DKB (Deutsche Kreditbank)	https://fints.dkb.de/fints
@@ -55,7 +55,7 @@
 15061698	Raiffeisenbank Malchin	https://fints1.atruvia.de/cgi-bin/hbciservlet
 15091674	Volksbank Demmin eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 15091704	Volksbank Uckermark eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-16020086	UniCredit Bank - HypoVereinsbank AG (Potsdam)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+16020086	UniCredit Bank - HypoVereinsbank AG (Potsdam)	https://hbci-01.hypovereinsbank.de/bank/hbci
 16050000	Mittelbrandenburgische Sparkasse in Potsdam	https://banking-bb6.s-fints-pt-bb.de/fints30
 16050101	Sparkasse Prignitz	https://banking-bb6.s-fints-pt-bb.de/fints30
 16050202	Sparkasse Ostprignitz-Ruppin	https://banking-bb6.s-fints-pt-bb.de/fints30
@@ -64,7 +64,7 @@
 16062008	Volksbank Teltow-Fläming eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 16062073	Brandenburger Bank Volksbank-Raiffeisenbank eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 16091994	Volksbank Rathenow eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-17020086	UniCredit Bank - HypoVereinsbank AG (Frankfurt (Oder))	https://hbci.hypovereinsbank.de/hbci/hbci.do
+17020086	UniCredit Bank - HypoVereinsbank AG (Frankfurt (Oder))	https://hbci-01.hypovereinsbank.de/bank/hbci
 17052000	Sparkasse Barnim	https://banking-bb6.s-fints-pt-bb.de/fints30
 17052302	Stadtsparkasse Schwedt	https://banking-bb6.s-fints-pt-bb.de/fints30
 17054040	Sparkasse Märkisch-Oderland	https://banking-bb6.s-fints-pt-bb.de/fints30
@@ -72,7 +72,7 @@
 17056060	Sparkasse Uckermark	https://banking-bb6.s-fints-pt-bb.de/fints30
 17062428	Raiffeisen-Volksbank Oder-Spree eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 17092404	Volks- und Raiffeisenbank Fürstenw. Seelow Wriezen eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-18020086	UniCredit Bank - HypoVereinsbank AG (Cottbus)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+18020086	UniCredit Bank - HypoVereinsbank AG (Cottbus)	https://hbci-01.hypovereinsbank.de/bank/hbci
 18050000	Sparkasse Spree-Neiße	https://banking-bb6.s-fints-pt-bb.de/fints30
 18051000	Sparkasse Elbe-Elster	https://banking-bb6.s-fints-pt-bb.de/fints30
 18055000	Sparkasse Niederlausitz	https://banking-bb6.s-fints-pt-bb.de/fints30
@@ -81,7 +81,7 @@
 18092684	Spreewaldbank eG Volksbank-Raiffeisenbank	https://fints1.atruvia.de/cgi-bin/hbciservlet
 18092744	Volksbank Spremberg-Bad Muskau eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 20010020	Postbank (Giro, Hamburg)	https://hbci.postbank.de/banking/hbci.do
-20030000	UniCredit Bank - HypoVereinsbank AG (Hamburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+20030000	UniCredit Bank - HypoVereinsbank AG (Hamburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 20030300	Donner & Reuschel Aktiengesellschaft	https://fints1.atruvia.de/cgi-bin/hbciservlet
 20030400	Marcard,Stein & Co GmbH	https://fints2.atruvia.de/cgi-bin/hbciservlet
 20030600	Sydbank A/S (Hamburg)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
@@ -122,17 +122,17 @@
 20230600	Isbank AG (Hamburg)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 20310300	Europäisch Iranische Handelsbank Ag	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 20690500	Sparda-Bank Hamburg eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-20730000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hamburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-20730051	UniCredit Bank - HypoVereinsbank (ex VereinWest, Buxtehude)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-20730053	UniCredit Bank - HypoVereinsbank (ex VereinWest, Stade, Niederelbe)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-20730054	UniCredit Bank - HypoVereinsbank (ex VereinWest, Winsen (Luhe))	https://hbci.hypovereinsbank.de/hbci/hbci.do
+20730000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hamburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
+20730051	UniCredit Bank - HypoVereinsbank (ex VereinWest, Buxtehude)	https://hbci-01.hypovereinsbank.de/bank/hbci
+20730053	UniCredit Bank - HypoVereinsbank (ex VereinWest, Stade, Niederelbe)	https://hbci-01.hypovereinsbank.de/bank/hbci
+20730054	UniCredit Bank - HypoVereinsbank (ex VereinWest, Winsen (Luhe))	https://hbci-01.hypovereinsbank.de/bank/hbci
 20750000	Sparkasse Harburg-Buxtehude	https://banking-ni3.s-fints-pt-ni.de/fints30
 21020600	Sydbank A/S (Kiel)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
-21030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Kiel)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21030092	UniCredit Bank - HypoVereinsbank (ex VereinWest, Eckernförde)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21030093	UniCredit Bank - HypoVereinsbank (ex VereinWest, Preetz, Holst)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21030094	UniCredit Bank - HypoVereinsbank (ex VereinWest, Schönkirchen, Holst)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21030095	UniCredit Bank - HypoVereinsbank (ex VereinWest, Eutin)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+21030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Kiel)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21030092	UniCredit Bank - HypoVereinsbank (ex VereinWest, Eckernförde)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21030093	UniCredit Bank - HypoVereinsbank (ex VereinWest, Preetz, Holst)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21030094	UniCredit Bank - HypoVereinsbank (ex VereinWest, Schönkirchen, Holst)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21030095	UniCredit Bank - HypoVereinsbank (ex VereinWest, Eutin)	https://hbci-01.hypovereinsbank.de/bank/hbci
 21050000	HSH Nordbank AG	https://homebanking.hsh-nordbank-banking.de/tristan/hbci
 21050170	Förde Sparkasse	https://banking-sh1.s-fints-pt-sh.de/fints30
 21051275	Bordesholmer Sparkasse AG	https://banking-sh1.s-fints-pt-sh.de/fints30
@@ -142,38 +142,38 @@
 21090007	Kieler Volksbank eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21090900	PSD Bank Kiel	https://fints2.atruvia.de/cgi-bin/hbciservlet
 21092023	Eckernförder Bank eG Volksbank-Raiffeisenbank	https://fints1.atruvia.de/cgi-bin/hbciservlet
-21230085	UniCredit Bank - HypoVereinsbank (ex VereinWest, Neumünster, Holst)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21230086	UniCredit Bank - HypoVereinsbank (ex VereinWest, Bad Bramstedt)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+21230085	UniCredit Bank - HypoVereinsbank (ex VereinWest, Neumünster, Holst)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21230086	UniCredit Bank - HypoVereinsbank (ex VereinWest, Bad Bramstedt)	https://hbci-01.hypovereinsbank.de/bank/hbci
 21270020	Deutsche Bank (Neumünster, Holst)	https://fints.deutsche-bank.de/
 21270024	Deutsche Bank Privat und Geschäftskunden (Neumünster, Holst)	https://fints.deutsche-bank.de/
 21290016	Volksbank Neumünster eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21352240	Sparkasse Holstein	https://banking-sh2.s-fints-pt-sh.de/fints30
 21390008	VR Bank zwischen den Meeren eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21392218	Volksbank-Raiffeisenbank Eutin eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-21430070	UniCredit Bank - HypoVereinsbank (ex VereinWest, Rendsburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+21430070	UniCredit Bank - HypoVereinsbank (ex VereinWest, Rendsburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 21450000	Sparkasse Mittelholstein AG	https://banking-sh1.s-fints-pt-sh.de/fints30
 21452030	Sparkasse Hohenwestedt	https://banking-sh2.s-fints-pt-sh.de/fints30
 21463603	Volksbank-Raiffeisenbank im Kreis Rendsburg	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21464671	Raiffeisenbank Todenbüttel eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21510600	Sydbank A/S (Flensburg)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 21520100	UNION-BANK AG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-21530080	UniCredit Bank - HypoVereinsbank (ex VereinWest, Flensburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+21530080	UniCredit Bank - HypoVereinsbank (ex VereinWest, Flensburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 21565316	Raiffeisenbank (Handewitt)	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21566356	Volks- und Raiffeisenbank (Süderbrarup)	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21570011	Deutsche Bank (Flensburg)	https://fints.deutsche-bank.de/
 21570024	Deutsche Bank Privat und Geschäftskunden (Flensburg)	https://fints.deutsche-bank.de/
-21630060	UniCredit Bank - HypoVereinsbank (ex VereinWest, Schleswig)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21630061	UniCredit Bank - HypoVereinsbank (ex VereinWest, Schleswig)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21630062	UniCredit Bank - HypoVereinsbank (ex VereinWest, Kappeln, Schlei)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21630063	UniCredit Bank - HypoVereinsbank (ex VereinWest, Süderbrarup)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+21630060	UniCredit Bank - HypoVereinsbank (ex VereinWest, Schleswig)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21630061	UniCredit Bank - HypoVereinsbank (ex VereinWest, Schleswig)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21630062	UniCredit Bank - HypoVereinsbank (ex VereinWest, Kappeln, Schlei)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21630063	UniCredit Bank - HypoVereinsbank (ex VereinWest, Süderbrarup)	https://hbci-01.hypovereinsbank.de/bank/hbci
 21661719	VR Bank Flensburg-Schleswig	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21690020	Schleswiger Volksbank, Volksbank Raiffeisenbank	https://fints1.atruvia.de/cgi-bin/hbciservlet
-21730040	UniCredit Bank - HypoVereinsbank (ex VereinWest, Husum, Nordsee)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21730042	UniCredit Bank - HypoVereinsbank (ex VereinWest, Garding)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21730043	UniCredit Bank - HypoVereinsbank (ex VereinWest, Niebüll)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21730044	UniCredit Bank - HypoVereinsbank (ex VereinWest, Tönning)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21730045	UniCredit Bank - HypoVereinsbank (ex VereinWest, Sylt)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21730046	UniCredit Bank - HypoVereinsbank (ex VereinWest, Wyk auf Föhr)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+21730040	UniCredit Bank - HypoVereinsbank (ex VereinWest, Husum, Nordsee)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21730042	UniCredit Bank - HypoVereinsbank (ex VereinWest, Garding)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21730043	UniCredit Bank - HypoVereinsbank (ex VereinWest, Niebüll)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21730044	UniCredit Bank - HypoVereinsbank (ex VereinWest, Tönning)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21730045	UniCredit Bank - HypoVereinsbank (ex VereinWest, Sylt)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21730046	UniCredit Bank - HypoVereinsbank (ex VereinWest, Wyk auf Föhr)	https://hbci-01.hypovereinsbank.de/bank/hbci
 21750000	Nord-Ostsee Sparkasse	https://banking-sh1.s-fints-pt-sh.de/fints30
 21751230	Spar- und Leihkasse zu Bredstedt -alt-	https://banking.s-fints-pt-sh.de/PinTanServlet
 21762550	VR Bank Schleswig-Holstein Mitte eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -182,28 +182,28 @@
 21770024	Deutsche Bank Privat und Geschäftskunden (Husum, Nordsee)	https://fints.deutsche-bank.de/
 21791805	Volks- und Raiffeisenbank Sylt eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21791906	Vereinigte VR Bank eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-21830030	UniCredit Bank - HypoVereinsbank (ex VereinWest, Heide, Holst)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21830032	UniCredit Bank - HypoVereinsbank (ex VereinWest, Brunsbüttel)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21830033	UniCredit Bank - HypoVereinsbank (ex VereinWest, Büsum)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21830034	UniCredit Bank - HypoVereinsbank (ex VereinWest, Marne, Holst)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-21830035	UniCredit Bank - HypoVereinsbank (ex VereinWest, Meldorf)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+21830030	UniCredit Bank - HypoVereinsbank (ex VereinWest, Heide, Holst)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21830032	UniCredit Bank - HypoVereinsbank (ex VereinWest, Brunsbüttel)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21830033	UniCredit Bank - HypoVereinsbank (ex VereinWest, Büsum)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21830034	UniCredit Bank - HypoVereinsbank (ex VereinWest, Marne, Holst)	https://hbci-01.hypovereinsbank.de/bank/hbci
+21830035	UniCredit Bank - HypoVereinsbank (ex VereinWest, Meldorf)	https://hbci-01.hypovereinsbank.de/bank/hbci
 21852310	Sparkasse Hennstedt-Wesselburen	https://banking-sh1.s-fints-pt-sh.de/fints30
 21860418	Raiffeisenbank Heide	https://fints1.atruvia.de/cgi-bin/hbciservlet
 21890022	Dithmarscher Volks- und Raiffeisenbank eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-22130075	UniCredit Bank - HypoVereinsbank (ex VereinWest, Elmshorn)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+22130075	UniCredit Bank - HypoVereinsbank (ex VereinWest, Elmshorn)	https://hbci-01.hypovereinsbank.de/bank/hbci
 22150000	Sparkasse Elmshorn	https://banking-sh1.s-fints-pt-sh.de/fints30
 22151730	Stadtsparkasse Wedel	https://banking-sh2.s-fints-pt-sh.de/fints30
 22163114	Raiffeisenbank Elbmarsch eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 22190030	Volksbank Elmshorn	https://fints1.atruvia.de/cgi-bin/hbciservlet
 22191405	VR Bank Pinneberg eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-22230020	UniCredit Bank - HypoVereinsbank (ex VereinWest, Itzehoe)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-22230022	UniCredit Bank - HypoVereinsbank (ex VereinWest, Glückstadt)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-22230023	UniCredit Bank - HypoVereinsbank (ex VereinWest, Kellinghusen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-22230025	UniCredit Bank - HypoVereinsbank (ex VereinWest, Wilster)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+22230020	UniCredit Bank - HypoVereinsbank (ex VereinWest, Itzehoe)	https://hbci-01.hypovereinsbank.de/bank/hbci
+22230022	UniCredit Bank - HypoVereinsbank (ex VereinWest, Glückstadt)	https://hbci-01.hypovereinsbank.de/bank/hbci
+22230023	UniCredit Bank - HypoVereinsbank (ex VereinWest, Kellinghusen)	https://hbci-01.hypovereinsbank.de/bank/hbci
+22230025	UniCredit Bank - HypoVereinsbank (ex VereinWest, Wilster)	https://hbci-01.hypovereinsbank.de/bank/hbci
 22250020	Sparkasse Westholstein	https://banking-sh2.s-fints-pt-sh.de/fints30
 22251580	Landsparkasse Schenefeld -alt-	https://banking.s-fints-pt-sh.de/PinTanServlet
 22290031	Volksbank Raiffeisenbank Itzehoe	https://fints1.atruvia.de/cgi-bin/hbciservlet
-23030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Lübeck)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+23030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Lübeck)	https://hbci-01.hypovereinsbank.de/bank/hbci
 23050101	Sparkasse zu Lübeck AG	https://banking-sh2.s-fints-pt-sh.de/fints30
 23051030	Sparkasse Südholstein	https://banking-sh2.s-fints-pt-sh.de/fints30
 23052750	Kreissparkasse Herzogtum Lauenburg	https://banking-sh1.s-fints-pt-sh.de/fints30
@@ -215,13 +215,13 @@
 23070700	Deutsche Bank Privat und Geschäftskunden (Lübeck)	https://fints.deutsche-bank.de/
 23070710	Deutsche Bank (Lübeck)	https://fints.deutsche-bank.de/
 23090142	Volksbank Lübeck Landbank von 1902 eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-24030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Lüneburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+24030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Lüneburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 24050110	Sparkasse Lüneburg	https://banking-ni3.s-fints-pt-ni.de/fints30
 24060300	Volksbank Nordheide eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 24070024	Deutsche Bank Privat und Geschäftskunden (Lüneburg)	https://fints.deutsche-bank.de/
 24070075	Deutsche Bank (Lüneburg)	https://fints.deutsche-bank.de/
 24121000	Ritterschaftl. Kreditinst. Stade	https://fints1.atruvia.de/cgi-bin/hbciservlet
-24130000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Cuxhaven)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+24130000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Cuxhaven)	https://hbci-01.hypovereinsbank.de/bank/hbci
 24150001	Stadtsparkasse Cuxhaven	https://banking-ni1.s-fints-pt-ni.de/fints30
 24151005	Sparkasse Stade-Altes Land	https://banking-ni3.s-fints-pt-ni.de/fints30
 24151116	Kreissparkasse Stade	https://banking-ni3.s-fints-pt-ni.de/fints30
@@ -231,7 +231,7 @@
 24191015	Volksbank Stade-Cuxhaven eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 25010030	Postbank (Hannover)	https://hbci.postbank.de/banking/hbci.do
 25010900	Calenberger Kreditverein	https://fints1.atruvia.de/cgi-bin/hbciservlet
-25030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hannover)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+25030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hannover)	https://hbci-01.hypovereinsbank.de/bank/hbci
 25050000	Nord/LB Hannover	https://banking-li1.s-fints-pt-li.de/fints30
 25050180	Sparkasse Hannover	https://banking-ni4.s-fints-pt-ni.de/fints30
 25060180	Bankhaus Hallbaum (M.M.Warburg)	https://www.warburg-bank.de/fints
@@ -257,7 +257,7 @@
 25193331	Volksbank Hildesheim-Lehrte-Pattensen eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 25250001	Kreissparkasse Peine	https://banking-ni2.s-fints-pt-ni.de/fints30
 25260010	Volksbank Peine	https://fints1.atruvia.de/cgi-bin/hbciservlet
-25430000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hameln)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+25430000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hameln)	https://hbci-01.hypovereinsbank.de/bank/hbci
 25450001	Stadtsparkasse Hameln	https://banking-ni2.s-fints-pt-ni.de/fints30
 25450110	Sparkasse Hameln-Weserbergland	https://banking-ni2.s-fints-pt-ni.de/fints30
 25451345	Stadtsparkasse Bad Pyrmont	https://banking-ni2.s-fints-pt-ni.de/fints30
@@ -277,7 +277,7 @@
 25663584	Volksbank Aller-Weser (Hoya, Weser)	https://fints1.atruvia.de/cgi-bin/hbciservlet
 25690009	Volksbank Nienburg	https://fints1.atruvia.de/cgi-bin/hbciservlet
 25691633	Volksbank Niedersachsen-Mitte eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-25730000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Celle)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+25730000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Celle)	https://hbci-01.hypovereinsbank.de/bank/hbci
 25750001	Sparkasse Celle	https://banking-ni2.s-fints-pt-ni.de/fints30
 25761894	Volksbank Wittingen-Klötze	https://fints1.atruvia.de/cgi-bin/hbciservlet
 25770024	Deutsche Bank Privat und Geschäftskunden (Celle)	https://fints.deutsche-bank.de/
@@ -290,7 +290,7 @@
 25862292	Volksbank Uelzen-Bevensen eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 25863489	Volksbank Osterburg-Lüchow-Dannenberg eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 25891636	Volksbank Lüneburger Heide -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-25930000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hildesheim)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+25930000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Hildesheim)	https://hbci-01.hypovereinsbank.de/bank/hbci
 25950001	Stadtsparkasse Hildesheim -alt-	https://banking.s-fints-pt-ni.de/PinTanServlet
 25950130	Sparkasse Hildesheim	https://banking-ni2.s-fints-pt-ni.de/fints30
 25960192	Bankhaus Hallbaum (Hildesheim)	https://ebanking.bankhaus-hallbaum.de/fints
@@ -300,7 +300,7 @@
 25971071	Deutsche Bank (Alfeld (Leine))	https://fints.deutsche-bank.de/
 25990011	Volksbank Hildesheim	https://fints1.atruvia.de/cgi-bin/hbciservlet
 25991528	Volksbank Hildesheimer Börde	https://fints1.atruvia.de/cgi-bin/hbciservlet
-26030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Göttingen, Niedersachs)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+26030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Göttingen, Niedersachs)	https://hbci-01.hypovereinsbank.de/bank/hbci
 26050001	Sparkasse Göttingen	https://banking-ni2.s-fints-pt-ni.de/fints30
 26051260	Sparkasse Duderstadt	https://banking-ni2.s-fints-pt-ni.de/fints30
 26051450	Kreis- und Stadtsparkasse Münden	https://banking-ni2.s-fints-pt-ni.de/fints30
@@ -352,7 +352,7 @@
 26971024	Deutsche Bank Privat und Geschäftskunden (Wolfsburg)	https://fints.deutsche-bank.de/
 26971038	Deutsche Bank (Wolfsburg)	https://fints.deutsche-bank.de/
 26991066	Volksbank eG Wolfsburg	https://fints1.atruvia.de/cgi-bin/hbciservlet
-27030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Braunschweig)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+27030000	UniCredit Bank - HypoVereinsbank (ex VereinWest, Braunschweig)	https://hbci-01.hypovereinsbank.de/bank/hbci
 27032500	Bankhaus C. L. Seeliger	https://banking.seeligerbank.de/eBankingProxy/
 27062290	Volksbank Börßum-Hornburg eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 27070024	Deutsche Bank Privat und Geschäftskunden (Braunschweig)	https://fints.deutsche-bank.de/
@@ -485,11 +485,11 @@
 30060992	PSD Bank Rhein-Ruhr eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 30070010	Deutsche Bank (Düsseldorf)	https://fints.deutsche-bank.de/
 30070024	Deutsche Bank Privat und Geschäftskunden (Düsseldorf)	https://fints.deutsche-bank.de/
-30120764	UniCredit Bank - HypoVereinsbank Ndl 450 Düs	https://hbci.hypovereinsbank.de/hbci/hbci.do
+30120764	UniCredit Bank - HypoVereinsbank Ndl 450 Düs	https://hbci-01.hypovereinsbank.de/bank/hbci
 30130600	Isbank AG (Düsseldorf)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 30150200	Kreissparkasse Düsseldorf	https://banking-rl2.s-fints-pt-rl.de/fints30
 30160213	Düsseldorfer Bank eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-30220190	UniCredit Bank - HypoVereinsbank AG (Düsseldorf)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+30220190	UniCredit Bank - HypoVereinsbank AG (Düsseldorf)	https://hbci-01.hypovereinsbank.de/bank/hbci
 30351220	Stadt-Sparkasse Haan (Rheinland)	https://banking-rl2.s-fints-pt-rl.de/fints30
 30520037	Renault-Bank direkt	https://fints1.atruvia.de/cgi-bin/hbciservlet
 30530000	Bankhaus Werhahn GmbH	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -523,7 +523,7 @@
 32470024	Deutsche Bank Privat und Geschäftskunden (Kleve, Niederrhein)	https://fints.deutsche-bank.de/
 32470077	Deutsche Bank (Kleve, Niederrhein)	https://fints.deutsche-bank.de/
 33020000	akf bank GmbH & Co KG	https://hbci.akf24.de
-33020190	UniCredit Bank - HypoVereinsbank AG (Wuppertal)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+33020190	UniCredit Bank - HypoVereinsbank AG (Wuppertal)	https://hbci-01.hypovereinsbank.de/bank/hbci
 33030000	GEFA BANK GmbH	https://fints2.atruvia.de/cgi-bin/hbciservlet
 33050000	Stadtsparkasse Wuppertal	https://banking-rl3.s-fints-pt-rl.de/fints30
 33060098	Credit- und Volksbank Wuppertal	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -558,7 +558,7 @@
 36010043	Postbank (Essen, Ruhr)	https://hbci.postbank.de/banking/hbci.do
 36010600	GALLINAT-BANK	https://fints2.atruvia.de/cgi-bin/hbciservlet
 36020030	National-Bank	https://fints2.atruvia.de/cgi-bin/hbciservlet
-36020186	UniCredit Bank - HypoVereinsbank AG (Essen, Ruhr)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+36020186	UniCredit Bank - HypoVereinsbank AG (Essen, Ruhr)	https://hbci-01.hypovereinsbank.de/bank/hbci
 36050105	Sparkasse Essen	https://banking-rl4.s-fints-pt-rl.de/fints30
 36060295	Bank im Bistum Essen eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 36060488	Geno-Volks-Bank Essen eG.	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -572,7 +572,7 @@
 36570024	Deutsche Bank Privat und Geschäftskunden (Oberhausen, Rheinl)	https://fints.deutsche-bank.de/
 36570049	Deutsche Bank (Oberhausen, Rheinl)	https://fints.deutsche-bank.de/
 37010050	Postbank (Köln)	https://hbci.postbank.de/banking/hbci.do
-37020090	UniCredit Bank - HypoVereinsbank AG (Köln)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+37020090	UniCredit Bank - HypoVereinsbank AG (Köln)	https://hbci-01.hypovereinsbank.de/bank/hbci
 37030700	abcbank	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 37030800	Isbank AG (Köln)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 37050198	Sparkasse KölnBonn	https://banking-rl7.s-fints-pt-rl.de/fints30
@@ -621,7 +621,7 @@
 37560092	Volksbank Rhein-Wupper	https://fints1.atruvia.de/cgi-bin/hbciservlet
 37570024	Deutsche Bank Privat und Geschäftskunden (Leverkusen)	https://fints.deutsche-bank.de/
 37570064	Deutsche Bank (Leverkusen)	https://fints.deutsche-bank.de/
-38020090	UniCredit Bank - HypoVereinsbank AG (Bonn)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+38020090	UniCredit Bank - HypoVereinsbank AG (Bonn)	https://hbci-01.hypovereinsbank.de/bank/hbci
 38050000	Sparkasse Bonn -alt-	https://hbci-pintan-rl.s-hbci.de/PinTanServlet
 38051290	Stadtsparkasse Bad Honnef	https://banking-rl5.s-fints-pt-rl.de/fints30
 38060186	Volksbank Köln Bonn eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -764,7 +764,7 @@
 43070061	Deutsche Bank (Bochum)	https://fints.deutsche-bank.de/
 43250030	Herner Sparkasse	https://banking-wl5.s-fints-pt-wl.de/fints30
 44010046	Postbank (Dortmund)	https://hbci.postbank.de/banking/hbci.do
-44020090	UniCredit Bank - HypoVereinsbank AG (Dortmund)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+44020090	UniCredit Bank - HypoVereinsbank AG (Dortmund)	https://hbci-01.hypovereinsbank.de/bank/hbci
 44050199	Sparkasse Dortmund	https://banking-wl7.s-fints-pt-wl.de/fints30
 44060122	Volksbank Dortmund-Nordwest	https://fints1.atruvia.de/cgi-bin/hbciservlet
 44070024	Deutsche Bank Privat und Geschäftskunden (Dortmund)	https://fints.deutsche-bank.de/
@@ -862,7 +862,7 @@
 47861806	Volksbank Kaunitz	https://fints1.atruvia.de/cgi-bin/hbciservlet
 47862447	Volksbank Delbrück-Rietberg eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 47863373	Volksbank Versmold eG.	https://fints1.atruvia.de/cgi-bin/hbciservlet
-48020086	UniCredit Bank - HypoVereinsbank AG (Bielefeld)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+48020086	UniCredit Bank - HypoVereinsbank AG (Bielefeld)	https://hbci-01.hypovereinsbank.de/bank/hbci
 48020151	Bankhaus Lampe	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 48021900	Bankverein Werther AG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 48050161	Sparkasse Bielefeld	https://banking-wl1.s-fints-pt-wl.de/fints30
@@ -901,7 +901,7 @@
 50010700	Degussa Bank AG	https://fints.degussa-bank.de
 50015001	J&T BANKA	https://fints2.atruvia.de/cgi-bin/hbciservlet
 50020000	Sberbank Direct	https://fints1.atruvia.de/cgi-bin/hbciservlet
-50020160	UniCredit Bank - HypoVereinsbank Ndl 427 Ffm	https://hbci.hypovereinsbank.de/hbci/hbci.do
+50020160	UniCredit Bank - HypoVereinsbank Ndl 427 Ffm	https://hbci-01.hypovereinsbank.de/bank/hbci
 50020200	BHF-Bank AG (Frankfurt am Main)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 50020500	Landwirtschaftliche Rentenbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 50030010	PSA Bank Deutschland GmbH	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -946,8 +946,8 @@
 50190400	Volksbank Griesheim	https://fints2.atruvia.de/cgi-bin/hbciservlet
 50230600	Isbank AG (Frankfurt am Main)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 50230888	Ikano Bank AB (publ)	https://fints2.atruvia.de/cgi-bin/hbciservlet
-50320191	UniCredit Bank - HypoVereinsbank AG (Frankfurt am Main)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-50520190	UniCredit Bank - HypoVereinsbank AG (Offenbach am Main)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+50320191	UniCredit Bank - HypoVereinsbank AG (Frankfurt am Main)	https://hbci-01.hypovereinsbank.de/bank/hbci
+50520190	UniCredit Bank - HypoVereinsbank AG (Offenbach am Main)	https://hbci-01.hypovereinsbank.de/bank/hbci
 50530000	Cronbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 50530001	CRONBANK Zw CS	https://fints2.atruvia.de/cgi-bin/hbciservlet
 50550020	Sparkasse Offenbach	https://banking-hs3.s-fints-pt-hs.de/fints30
@@ -975,7 +975,7 @@
 50790000	VR Bank Bad Orb-Gelnhausen	https://fints2.atruvia.de/cgi-bin/hbciservlet
 50793300	Birsteiner Volksbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 50794300	VR Bank Wächtersbach/Bad Soden-Salmünster -alt	https://fints2.atruvia.de/cgi-bin/hbciservlet
-50820292	UniCredit Bank - HypoVereinsbank AG (Darmstadt)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+50820292	UniCredit Bank - HypoVereinsbank AG (Darmstadt)	https://hbci-01.hypovereinsbank.de/bank/hbci
 50850150	Sparkasse Darmstadt und Dieburg	https://banking-hs3.s-fints-pt-hs.de/fints30
 50851952	Sparkasse Odenwaldkreis	https://banking-hs4.s-fints-pt-hs.de/fints30
 50852553	Kreissparkasse Groß-Gerau	https://banking-hs2.s-fints-pt-hs.de/fints30
@@ -1007,7 +1007,7 @@
 50970004	Deutsche Bank (Bensheim)	https://fints.deutsche-bank.de/
 50970024	Deutsche Bank Privat und Geschäftskunden (Bensheim)	https://fints.deutsche-bank.de/
 51020000	BHF-Bank AG (Wiesbaden)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
-51020186	UniCredit Bank - HypoVereinsbank AG (Wiesbaden)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+51020186	UniCredit Bank - HypoVereinsbank AG (Wiesbaden)	https://hbci-01.hypovereinsbank.de/bank/hbci
 51050015	Nassauische Sparkasse	https://banking-hs7.s-fints-pt-hs.de/fints30
 51070021	Deutsche Bank (Wiesbaden)	https://fints.deutsche-bank.de/
 51070024	Deutsche Bank Privat und Geschäftskunden (Wiesbaden)	https://fints.deutsche-bank.de/
@@ -1119,8 +1119,8 @@
 53361724	Raiffeisenbank (Ebsdorfergrund)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 53370008	Deutsche Bank (Marburg)	https://fints.deutsche-bank.de/
 53370024	Deutsche Bank Privat und Geschäftskunden (Marburg)	https://fints.deutsche-bank.de/
-54020090	UniCredit Bank - HypoVereinsbank AG (Kaiserslautern)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-54020474	UniCredit Bank - HypoVereinsbank Ndl 697 Kais	https://hbci.hypovereinsbank.de/hbci/hbci.do
+54020090	UniCredit Bank - HypoVereinsbank AG (Kaiserslautern)	https://hbci-01.hypovereinsbank.de/bank/hbci
+54020474	UniCredit Bank - HypoVereinsbank Ndl 697 Kais	https://hbci-01.hypovereinsbank.de/bank/hbci
 54050110	Stadtsparkasse Kaiserslautern	https://banking-rp4.s-fints-pt-rp.de/fints30
 54050220	Sparkasse Kaiserlautern	https://banking-rp3.s-fints-pt-rp.de/fints30
 54051550	Kreissparkasse Kusel	https://banking-rp3.s-fints-pt-rp.de/fints30
@@ -1134,8 +1134,8 @@
 54091700	Volksbank Lauterecken	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54091800	VR Bank Nordwestpfalz -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54092400	Volksbank Glan-Münchweiler	https://fints2.atruvia.de/cgi-bin/hbciservlet
-54220091	UniCredit Bank - HypoVereinsbank AG (Pirmasens)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-54220576	UniCredit Bank - HypoVereinsbank Ndl 358 Pirm	https://hbci.hypovereinsbank.de/hbci/hbci.do
+54220091	UniCredit Bank - HypoVereinsbank AG (Pirmasens)	https://hbci-01.hypovereinsbank.de/bank/hbci
+54220576	UniCredit Bank - HypoVereinsbank Ndl 358 Pirm	https://hbci-01.hypovereinsbank.de/bank/hbci
 54250010	Sparkasse Südwestpfalz	https://banking-rp4.s-fints-pt-rp.de/fints30
 54261700	VR-Bank Südwestpfalz eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54262330	Raiffeisenbank Vinningen -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1144,15 +1144,15 @@
 54290000	VR-Bank Pirmasens	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54291200	Raiffeisen- u Volksbank Dahn	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54510067	Postbank (Ludwigshafen am Rhein)	https://hbci.postbank.de/banking/hbci.do
-54520071	UniCredit Bank - HypoVereinsbank Ndl 650 Lu	https://hbci.hypovereinsbank.de/hbci/hbci.do
-54520194	UniCredit Bank - HypoVereinsbank AG (Ludwigshafen am Rhein)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+54520071	UniCredit Bank - HypoVereinsbank Ndl 650 Lu	https://hbci-01.hypovereinsbank.de/bank/hbci
+54520194	UniCredit Bank - HypoVereinsbank AG (Ludwigshafen am Rhein)	https://hbci-01.hypovereinsbank.de/bank/hbci
 54550010	Stadtsparkasse Vorderpfalz	https://banking-rp4.s-fints-pt-rp.de/fints30
 54550120	Kreissparkasse Rhein-Pfalz	https://hbci-pintan-rp.s-hbci.de/PinTanServlet
 54561310	RV Bank Rhein-Haardt	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54570024	Deutsche Bank Privat und Geschäftskunden (Ludwigshafen am Rhein)	https://fints.deutsche-bank.de/
 54570094	Deutsche Bank (Ludwigshafen am Rhein)	https://fints.deutsche-bank.de/
-54620093	UniCredit Bank - HypoVereinsbank AG (Neustadt an der Weinstraße)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-54620574	UniCredit Bank - HypoVereinsbank Ndl 660 Ne/W	https://hbci.hypovereinsbank.de/hbci/hbci.do
+54620093	UniCredit Bank - HypoVereinsbank AG (Neustadt an der Weinstraße)	https://hbci-01.hypovereinsbank.de/bank/hbci
+54620574	UniCredit Bank - HypoVereinsbank Ndl 660 Ne/W	https://hbci-01.hypovereinsbank.de/bank/hbci
 54651240	Sparkasse Rhein-Haardt	https://banking-rp4.s-fints-pt-rp.de/fints30
 54661800	Raiffeisenbank Freinsheim	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54663270	Raiffeisenbank Friedelsheim-Rödersheim	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1163,7 +1163,7 @@
 54760900	Evangelische Kreditgenossenschaft - Filiale Speyer-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54761411	Raiffeisenbank Schifferstadt -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54790000	Vereinigte VR Bank Kur- und Rheinpfalz eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-54820674	UniCredit Bank - HypoVereinsbank Ndl 659 LanP	https://hbci.hypovereinsbank.de/hbci/hbci.do
+54820674	UniCredit Bank - HypoVereinsbank Ndl 659 LanP	https://hbci-01.hypovereinsbank.de/bank/hbci
 54850010	Sparkasse Südpfalz	https://banking-rp4.s-fints-pt-rp.de/fints30
 54851440	Sparkasse Germersheim-Kandel	https://banking-rp4.s-fints-pt-rp.de/fints30
 54861190	Raiffeisenbank Oberhaardt-Gäu -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1171,7 +1171,7 @@
 54862500	VR Bank Südpfalz	https://fints2.atruvia.de/cgi-bin/hbciservlet
 54891300	VR Bank Südliche Weinstraße eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 55020000	BHF-Bank AG (Mainz a Rhein)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
-55020486	UniCredit Bank - HypoVereinsbank AG (Mainz a Rhein)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+55020486	UniCredit Bank - HypoVereinsbank AG (Mainz a Rhein)	https://hbci-01.hypovereinsbank.de/bank/hbci
 55050000	ZV Landesbank Baden-Württemberg	https://banking-rp4.s-fints-pt-rp.de/fints30
 55050120	Sparkasse Mainz	https://banking-rp3.s-fints-pt-rp.de/fints30
 55060321	Volksbank Mainz-Finthen	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1196,7 +1196,7 @@
 55361202	Raiffeisenbank Alsheim-Gimbsheim	https://fints2.atruvia.de/cgi-bin/hbciservlet
 55362071	Volksbank Bechtheim -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 55390000	Volksbank Worms-Wonnegau -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-56020086	UniCredit Bank - HypoVereinsbank AG (Bad Kreuznach)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+56020086	UniCredit Bank - HypoVereinsbank AG (Bad Kreuznach)	https://hbci-01.hypovereinsbank.de/bank/hbci
 56050180	Sparkasse Rhein-Nahe	https://banking-rp3.s-fints-pt-rp.de/fints30
 56051790	Kreissparkasse Rhein-Hunsrück	https://banking-rp3.s-fints-pt-rp.de/fints30
 56061151	Raiffeisenbank Kastellaun eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -1210,7 +1210,7 @@
 56261735	Raiffeisenbank Nahe eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 56270024	Deutsche Bank Privat und Geschäftskunden (Idar-Oberstein)	https://fints.deutsche-bank.de/
 56270044	Deutsche Bank (Idar-Oberstein)	https://fints.deutsche-bank.de/
-57020086	UniCredit Bank - HypoVereinsbank AG (Koblenz am Rhein)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+57020086	UniCredit Bank - HypoVereinsbank AG (Koblenz am Rhein)	https://hbci-01.hypovereinsbank.de/bank/hbci
 57050120	Sparkasse Koblenz	https://banking-rp1.s-fints-pt-rp.de/fints30
 57051001	Kreissparkasse Westerwald	https://banking-rp1.s-fints-pt-rp.de/fints30
 57062675	Raiffeisenbk. Niederwallmenach	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -1247,7 +1247,7 @@
 57751310	Kreissparkasse Ahrweiler	https://banking-rp1.s-fints-pt-rp.de/fints30
 57761591	VR Bank RheinAhrEifel eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 57762265	Raiffeisenbank Grafschaft-Wachtberg	https://fints1.atruvia.de/cgi-bin/hbciservlet
-58520086	UniCredit Bank - HypoVereinsbank AG (Trier)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+58520086	UniCredit Bank - HypoVereinsbank AG (Trier)	https://hbci-01.hypovereinsbank.de/bank/hbci
 58550130	Sparkasse Trier	https://banking-rp1.s-fints-pt-rp.de/fints30
 58560103	Volksbank Trier	https://fints1.atruvia.de/cgi-bin/hbciservlet
 58561626	Volksbank Saarburg -alt-	https://fints1.atruvia.de/cgi-bin/hbciservlet
@@ -1268,7 +1268,7 @@
 58771224	Deutsche Bank Privat und Geschäftskunden (Bernkastel-Kues)	https://fints.deutsche-bank.de/
 58771242	Deutsche Bank (Bernkastel-Kues)	https://fints.deutsche-bank.de/
 59010066	Postbank (Saarbrücken)	https://hbci.postbank.de/banking/hbci.do
-59020090	UniCredit Bank - HypoVereinsbank AG (Saarbrücken)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+59020090	UniCredit Bank - HypoVereinsbank AG (Saarbrücken)	https://hbci-01.hypovereinsbank.de/bank/hbci
 59020400	mediserv Bank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 59050000	SaarLB	https://banking-li2.s-fints-pt-li.de/fints30
 59050101	Sparkasse Saabrücken eG	https://banking-sl2.s-fints-pt-sl.de/fints30
@@ -1292,7 +1292,7 @@
 59291200	Volksbank Saarpfalz	https://fints2.atruvia.de/cgi-bin/hbciservlet
 59291300	Volksbank Spiesen-Elversberg -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 59292400	Eppelborner Volksbank -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-59320087	UniCredit Bank - HypoVereinsbank AG (Saarlouis)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+59320087	UniCredit Bank - HypoVereinsbank AG (Saarlouis)	https://hbci-01.hypovereinsbank.de/bank/hbci
 59350110	Kreissparkasse Saarlouis	https://banking-sl2.s-fints-pt-sl.de/fints30
 59351040	Sparkasse Merzig-Wadern	https://banking-sl2.s-fints-pt-sl.de/fints30
 59390100	Volksbank Saarlouis	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1306,7 +1306,7 @@
 59491300	VR Bank Saarpfalz (Homburg, Saar)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60010070	Postbank (Stuttgart)	https://hbci.postbank.de/banking/hbci.do
 60020100	Schwäbische Bank AG	https://www.warburg-bank.de/fints
-60020290	UniCredit Bank - HypoVereinsbank AG (Stuttgart)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+60020290	UniCredit Bank - HypoVereinsbank AG (Stuttgart)	https://hbci-01.hypovereinsbank.de/bank/hbci
 60030100	Bankhaus Bauer	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60030200	Bankhaus Ellwanger & Geiger	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60030700	AKTIVBANK	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1411,7 +1411,7 @@
 60090700	Südwestbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60090800	Sparda-Bank Baden-Württemberg eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60090900	PSD Bank RheinNeckarSaar eG (Stuttgart)	https://fints2.atruvia.de/cgi-bin/hbciservlet
-60120050	UniCredit Bank - HypoVereinsbank Ndl 434 Stgt	https://hbci.hypovereinsbank.de/hbci/hbci.do
+60120050	UniCredit Bank - HypoVereinsbank Ndl 434 Stgt	https://hbci-01.hypovereinsbank.de/bank/hbci
 60120200	BHF-Bank AG (Stuttgart)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 60130100	FFS Bank	https://fints1.atruvia.de/cgi-bin/hbciservlet
 60250010	Kreissparkasse Waiblingen	https://banking-bw6.s-fints-pt-bw.de/fints30
@@ -1425,7 +1425,7 @@
 60290110	Volksbank Rems	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60291120	Volksbank Backnang eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60291510	Volksbank Winnenden -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-60320291	UniCredit Bank - HypoVereinsbank AG (Böblingen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+60320291	UniCredit Bank - HypoVereinsbank AG (Böblingen)	https://hbci-01.hypovereinsbank.de/bank/hbci
 60350130	Kreissparkasse Böblingen	https://banking-bw5.s-fints-pt-bw.de/fints30
 60361923	Raiffeisenbank Weissach	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60390000	Vereinigte Volksbanken eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1433,7 +1433,7 @@
 60391310	Volksbank in der Region eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60391420	Volksbank Magstadt	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60420000	Wüstenrot Bank Pfandbriefbank	https://fints.wuestenrot.de
-60420186	UniCredit Bank - HypoVereinsbank AG (Ludwigsburg, Württ)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+60420186	UniCredit Bank - HypoVereinsbank AG (Ludwigsburg, Württ)	https://hbci-01.hypovereinsbank.de/bank/hbci
 60422000	RSB Retail + Service Bank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 60450050	Kreissparkasse Ludwigsburg	https://banking-bw4.s-fints-pt-bw.de/fints30
 60460142	Volksbank Freiberg und Umgebung (Ludwigsburg, Württ)	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1456,7 +1456,7 @@
 61070024	Deutsche Bank Privat und Geschäftskunden (Göppingen)	https://fints.deutsche-bank.de/
 61070078	Deutsche Bank (Göppingen)	https://fints.deutsche-bank.de/
 61091200	Volksbank-Raiffeisenbank Deggingen	https://fints2.atruvia.de/cgi-bin/hbciservlet
-61120286	UniCredit Bank - HypoVereinsbank AG (Esslingen am Neckar)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+61120286	UniCredit Bank - HypoVereinsbank AG (Esslingen am Neckar)	https://hbci-01.hypovereinsbank.de/bank/hbci
 61150020	Kreissparkasse Esslingen-Nürtingen	https://banking-bw1.s-fints-pt-bw.de/fints30
 61161696	Volksbank Filder	https://fints2.atruvia.de/cgi-bin/hbciservlet
 61170024	Deutsche Bank Privat und Geschäftskunden (Esslingen am Neckar)	https://fints.deutsche-bank.de/
@@ -1474,7 +1474,7 @@
 61370086	Deutsche Bank (Schwäbisch Gmünd)	https://fints.deutsche-bank.de/
 61390140	Volksbank Schwäbisch Gmünd	https://fints2.atruvia.de/cgi-bin/hbciservlet
 61391410	VR Bank Schwäbischer Wald eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-61420086	UniCredit Bank - HypoVereinsbank AG (Aalen, Württ)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+61420086	UniCredit Bank - HypoVereinsbank AG (Aalen, Württ)	https://hbci-01.hypovereinsbank.de/bank/hbci
 61450050	Kreissparkasse Ostalb (Aalen)	https://banking-bw5.s-fints-pt-bw.de/fints30
 61490150	VR-Bank Aalen eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 61491010	VR-Bank Ellwangen	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1497,8 +1497,8 @@
 62361274	Creglinger Bank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 62391010	Volksbank Bad Mergentheim -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 62391420	Volksbank Vorbach-Tauber	https://fints2.atruvia.de/cgi-bin/hbciservlet
-63020086	UniCredit Bank - HypoVereinsbank AG (Ulm, Donau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-63020450	UniCredit Bank - HypoVereinsbank Ndl 274 Ulm	https://hbci.hypovereinsbank.de/hbci/hbci.do
+63020086	UniCredit Bank - HypoVereinsbank AG (Ulm, Donau)	https://hbci-01.hypovereinsbank.de/bank/hbci
+63020450	UniCredit Bank - HypoVereinsbank Ndl 274 Ulm	https://hbci-01.hypovereinsbank.de/bank/hbci
 63050000	Sparkasse Ulm	https://banking-bw6.s-fints-pt-bw.de/fints30
 63061486	VR-Bank Langenau-Ulmer Alb	https://fints2.atruvia.de/cgi-bin/hbciservlet
 63070024	Deutsche Bank Privat und Geschäftskunden (Ulm, Donau)	https://fints.deutsche-bank.de/
@@ -1507,11 +1507,11 @@
 63091010	Ehinger Volksbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 63091200	Volksbank Blaubeuren	https://fints2.atruvia.de/cgi-bin/hbciservlet
 63091300	Volksbank Alb eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-63220090	UniCredit Bank - HypoVereinsbank AG (Heidenheim an der Brenz)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+63220090	UniCredit Bank - HypoVereinsbank AG (Heidenheim an der Brenz)	https://hbci-01.hypovereinsbank.de/bank/hbci
 63250030	Kreissparkasse Heidenheim	https://banking-bw3.s-fints-pt-bw.de/fints30
 63290110	Heidenheimer Volksbank eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 63291210	Giengener Volksbank -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-64020186	UniCredit Bank - HypoVereinsbank AG (Reutlingen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+64020186	UniCredit Bank - HypoVereinsbank AG (Reutlingen)	https://hbci-01.hypovereinsbank.de/bank/hbci
 64050000	Kreissparkasse Reutlingen	https://banking-bw3.s-fints-pt-bw.de/fints30
 64061854	VR Bank Steinlach-Wiesaz-Härten	https://fints2.atruvia.de/cgi-bin/hbciservlet
 64070024	Deutsche Bank Privat und Geschäftskunden (Reutlingen)	https://fints.deutsche-bank.de/
@@ -1543,7 +1543,7 @@
 64350070	Kreissparkasse Tuttlingen	https://banking-bw1.s-fints-pt-bw.de/fints30
 64361359	Raiffeisenbank Donau-Heuberg	https://fints2.atruvia.de/cgi-bin/hbciservlet
 64390130	Volksbank Donau-Neckar eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-65020186	UniCredit Bank - HypoVereinsbank AG (Ravensburg, Württ)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+65020186	UniCredit Bank - HypoVereinsbank AG (Ravensburg, Württ)	https://hbci-01.hypovereinsbank.de/bank/hbci
 65050110	Kreissparkasse Ravensburg	https://banking-bw6.s-fints-pt-bw.de/fints30
 65061219	Raiffeisenbank Aulendorf	https://fints2.atruvia.de/cgi-bin/hbciservlet
 65062577	Raiffeisenbank Ravensburg	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1560,7 +1560,7 @@
 65092200	Volksbank Altshausen	https://fints2.atruvia.de/cgi-bin/hbciservlet
 65093020	VR Bank Donau-Oberschwaben eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 65110200	Internationales Bankhaus Bodensee	https://fints2.atruvia.de/cgi-bin/hbciservlet
-65120091	UniCredit Bank - HypoVereinsbank (Friedrichshafen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+65120091	UniCredit Bank - HypoVereinsbank (Friedrichshafen)	https://hbci-01.hypovereinsbank.de/bank/hbci
 65161497	Genossenschaftsbank Meckenbeuren	https://fints2.atruvia.de/cgi-bin/hbciservlet
 65162832	Raiffeisenbank Oberteuringen eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 65190110	Volksbank Friedrichshafen	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1583,8 +1583,8 @@
 65491320	Volksbank Laupheim	https://fints2.atruvia.de/cgi-bin/hbciservlet
 65491510	Volksbank-Raiffeisenbank Riedlingen	https://fints2.atruvia.de/cgi-bin/hbciservlet
 66010075	Postbank (Karlsruhe, Baden)	https://hbci.postbank.de/banking/hbci.do
-66020150	UniCredit Bank - HypoVereinsbank Ndl 145 Kruh	https://hbci.hypovereinsbank.de/hbci/hbci.do
-66020286	UniCredit Bank - HypoVereinsbank AG (Karlsruhe, Baden)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+66020150	UniCredit Bank - HypoVereinsbank Ndl 145 Kruh	https://hbci-01.hypovereinsbank.de/bank/hbci
+66020286	UniCredit Bank - HypoVereinsbank AG (Karlsruhe, Baden)	https://hbci-01.hypovereinsbank.de/bank/hbci
 66030600	Isbank AG (Karlsruhe, Baden)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 66050101	Sparkasse Karlsruhe Ettlingen	https://banking-bw4.s-fints-pt-bw.de/fints30
 66051220	Sparkasse Ettlingen -alt-	https://hbci-pintan-bw.s-hbci.de/PinTanServlet
@@ -1652,8 +1652,8 @@
 66692300	Volksbank Wilferdingen-Keltern	https://fints2.atruvia.de/cgi-bin/hbciservlet
 66762332	Raiffeisenbank Kraichgau	https://fints2.atruvia.de/cgi-bin/hbciservlet
 66762433	Raiffeisenbank Neudenau-Stein-Herbolzheim	https://fints2.atruvia.de/cgi-bin/hbciservlet
-67020190	UniCredit Bank - HypoVereinsbank AG (Mannheim)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-67020259	UniCredit Bank - HypoVereinsbank Ndl 681 Mnh	https://hbci.hypovereinsbank.de/hbci/hbci.do
+67020190	UniCredit Bank - HypoVereinsbank AG (Mannheim)	https://hbci-01.hypovereinsbank.de/bank/hbci
+67020259	UniCredit Bank - HypoVereinsbank Ndl 681 Mnh	https://hbci-01.hypovereinsbank.de/bank/hbci
 67050505	Sparkasse Rhein-Neckar-Nord (Mannheim/Weinheim)	https://banking-bw4.s-fints-pt-bw.de/fints30
 67051203	Sparkasse Hockenheim	https://hbci-pintan-bw.s-hbci.de/PinTanServlet
 67060031	Volksbank Sandhofen	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1662,8 +1662,8 @@
 67090000	VR Bank Rhein-Neckar	https://fints2.atruvia.de/cgi-bin/hbciservlet
 67091500	Volksbank Kurpfalz H+G Bank (Schriesheim)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 67092300	Volksbank Kurpfalz eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-67220286	UniCredit Bank - HypoVereinsbank AG (Heidelberg, Neckar)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-67220464	UniCredit Bank - HypoVereinsbank Ndl 488 Hd	https://hbci.hypovereinsbank.de/hbci/hbci.do
+67220286	UniCredit Bank - HypoVereinsbank AG (Heidelberg, Neckar)	https://hbci-01.hypovereinsbank.de/bank/hbci
+67220464	UniCredit Bank - HypoVereinsbank Ndl 488 Hd	https://hbci-01.hypovereinsbank.de/bank/hbci
 67230000	MLP Finanzdienstleistungen	https://fints2.atruvia.de/cgi-bin/hbciservlet
 67230001	MLP Finanzdienstleistungen Zw CS	https://fints2.atruvia.de/cgi-bin/hbciservlet
 67250020	Sparkasse Heidelberg	https://banking-bw4.s-fints-pt-bw.de/fints30
@@ -1686,8 +1686,8 @@
 67461733	Volksbank Kirnau-Krautheim eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 67462368	Volksbank Limbach	https://fints2.atruvia.de/cgi-bin/hbciservlet
 67462480	Raiffeisenbank Schefflenz-Seckach -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-68020186	UniCredit Bank - HypoVereinsbank AG (Freiburg im Breisgau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-68020460	UniCredit Bank - HypoVereinsbank Ndl 405 Frb	https://hbci.hypovereinsbank.de/hbci/hbci.do
+68020186	UniCredit Bank - HypoVereinsbank AG (Freiburg im Breisgau)	https://hbci-01.hypovereinsbank.de/bank/hbci
+68020460	UniCredit Bank - HypoVereinsbank Ndl 405 Frb	https://hbci-01.hypovereinsbank.de/bank/hbci
 68030000	Bankhaus E. Mayer AG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 68050101	Sparkasse Freiburg - Nördlicher Breisgau	https://banking-bw2.s-fints-pt-bw.de/fints30
 68051004	Sparkasse Hochschwarzwald	https://banking-bw2.s-fints-pt-bw.de/fints30
@@ -1724,7 +1724,7 @@
 68490000	Volksbank Rhein-Wehra	https://fints2.atruvia.de/cgi-bin/hbciservlet
 68491500	Volksbank Jestetten	https://fints2.atruvia.de/cgi-bin/hbciservlet
 68492200	Volksbank Hochrhein	https://fints2.atruvia.de/cgi-bin/hbciservlet
-69020190	UniCredit Bank - HypoVereinsbank AG (Konstanz)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+69020190	UniCredit Bank - HypoVereinsbank AG (Konstanz)	https://hbci-01.hypovereinsbank.de/bank/hbci
 69050001	Sparkasse Bodensee	https://banking-bw6.s-fints-pt-bw.de/fints30
 69051410	Bezirkssparkasse Reichenau	https://banking-bw6.s-fints-pt-bw.de/fints30
 69051620	Sparkasse Pfullendorf-Meßkirch	https://banking-bw2.s-fints-pt-bw.de/fints30
@@ -1734,7 +1734,7 @@
 69070032	Deutsche Bank (Konstanz)	https://fints.deutsche-bank.de/
 69091200	Hagnauer Volksbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 69091600	Volksbank Pfullendorf	https://fints2.atruvia.de/cgi-bin/hbciservlet
-69220186	UniCredit Bank - HypoVereinsbank AG (Singen (Hohentwiel))	https://hbci.hypovereinsbank.de/hbci/hbci.do
+69220186	UniCredit Bank - HypoVereinsbank AG (Singen (Hohentwiel))	https://hbci-01.hypovereinsbank.de/bank/hbci
 69250035	Sparkasse Hegau Bodensee	https://banking-bw2.s-fints-pt-bw.de/fints30
 69251445	Sparkasse Engen-Gottmadingen	https://banking-bw2.s-fints-pt-bw.de/fints30
 69251755	Sparkasse Stockach	https://banking-bw2.s-fints-pt-bw.de/fints30
@@ -1759,10 +1759,10 @@
 70013199	net-m privatbank 1891 AG (München)	https://fints1.atruvia.de/cgi-bin/hbciservlet
 70013500	Bankhaus Herzogpark AG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 70017000	PayCenter GmbH	https://fints.paycenter.de
-70020001	UniCredit Bank - HypoVereinsbank Ndl 645 M	https://hbci.hypovereinsbank.de/hbci/hbci.do
-70020270	UniCredit Bank - HypoVereinsbank AG (München)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-70021180	UniCredit Bank - HypoVereinsbank AG (Freising, Oberbay)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-70025175	UniCredit Bank - HypoVereinsbank AG (Bad Tölz)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+70020001	UniCredit Bank - HypoVereinsbank Ndl 645 M	https://hbci-01.hypovereinsbank.de/bank/hbci
+70020270	UniCredit Bank - HypoVereinsbank AG (München)	https://hbci-01.hypovereinsbank.de/bank/hbci
+70021180	UniCredit Bank - HypoVereinsbank AG (Freising, Oberbay)	https://hbci-01.hypovereinsbank.de/bank/hbci
+70025175	UniCredit Bank - HypoVereinsbank AG (Bad Tölz)	https://hbci-01.hypovereinsbank.de/bank/hbci
 70030014	Fürst Fugger Privatbank (München)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 70030300	Bankhaus Reuschel & Co	https://fints1.atruvia.de/cgi-bin/hbciservlet
 70030400	Merck Finck & Co. (München)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
@@ -1789,7 +1789,7 @@
 70120400	BNP Paribas S.A. Niederlassung Deutschland-Consorsbank	https://brokerage-hbci.consorsbank.de/hbci
 70120600	Airbus Bank GmbH	https://fints1.atruvia.de/cgi-bin/hbciservlet
 70120700	Oberbank AG	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
-70120900	UniCredit Bank - HypoVereinsbank Ndl BACA	https://hbci.hypovereinsbank.de/hbci/hbci.do
+70120900	UniCredit Bank - HypoVereinsbank Ndl BACA	https://hbci-01.hypovereinsbank.de/bank/hbci
 70130800	MERKUR PRIVATBANK KGaA	https://fints2.atruvia.de/cgi-bin/hbciservlet
 70150000	Stadtsparkasse München	https://banking-by6.s-fints-pt-by.de/fints30
 70160300	Raiffeisenbank München -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -1856,29 +1856,29 @@
 70220200	BHF-Bank AG (München)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 70230600	Isbank AG (München)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 70250150	Kreissparkasse München Starnberg Ebersberg (München)	https://banking-by3.s-fints-pt-by.de/fints30
-70320090	UniCredit Bank - HypoVereinsbank AG (Garmisch-Partenkirchen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-70320305	UniCredit Bank - HypoVereinsbank Ndl 635 Gar	https://hbci.hypovereinsbank.de/hbci/hbci.do
-70321194	UniCredit Bank - HypoVereinsbank AG (Weilheim i. OB)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-70322192	UniCredit Bank - HypoVereinsbank AG (Murnau a. Staffelsee)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+70320090	UniCredit Bank - HypoVereinsbank AG (Garmisch-Partenkirchen)	https://hbci-01.hypovereinsbank.de/bank/hbci
+70320305	UniCredit Bank - HypoVereinsbank Ndl 635 Gar	https://hbci-01.hypovereinsbank.de/bank/hbci
+70321194	UniCredit Bank - HypoVereinsbank AG (Weilheim i. OB)	https://hbci-01.hypovereinsbank.de/bank/hbci
+70322192	UniCredit Bank - HypoVereinsbank AG (Murnau a. Staffelsee)	https://hbci-01.hypovereinsbank.de/bank/hbci
 70350000	Kreissparkasse Garmisch-Partenkirchen	https://banking-by2.s-fints-pt-by.de/fints30
 70351030	Sparkasse Oberland	https://banking-by2.s-fints-pt-by.de/fints30
 70362595	Raiffeisenbank Wallgau-Krün	https://fints2.atruvia.de/cgi-bin/hbciservlet
 70390000	VR-Bank Werdenfels	https://fints2.atruvia.de/cgi-bin/hbciservlet
 70391800	Volksbank-Raiffeisenbank Penzberg -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-71020072	UniCredit Bank - HypoVereinsbank AG (Bad Reichenhall)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-71021270	UniCredit Bank - HypoVereinsbank AG (Neuötting)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-71022182	UniCredit Bank - HypoVereinsbank AG (Traunstein, Oberbay)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-71023173	UniCredit Bank - HypoVereinsbank AG (Burghausen, Salzach)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+71020072	UniCredit Bank - HypoVereinsbank AG (Bad Reichenhall)	https://hbci-01.hypovereinsbank.de/bank/hbci
+71021270	UniCredit Bank - HypoVereinsbank AG (Neuötting)	https://hbci-01.hypovereinsbank.de/bank/hbci
+71022182	UniCredit Bank - HypoVereinsbank AG (Traunstein, Oberbay)	https://hbci-01.hypovereinsbank.de/bank/hbci
+71023173	UniCredit Bank - HypoVereinsbank AG (Burghausen, Salzach)	https://hbci-01.hypovereinsbank.de/bank/hbci
 71050000	Sparkasse Berchtesgadener Land	https://banking-by2.s-fints-pt-by.de/fints30
 71051010	Kreissparkasse Altötting-Burghausen -alt-	https://hbci-pintan-by.s-hbci.de/PinTanServlet
 71052050	Kreissparkasse Traunstein-Trostberg	https://banking-by2.s-fints-pt-by.de/fints30
 71061009	VR meine Raiffeisenbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 71062802	Raiffeisenbank (Anger b Bad Reichenhall)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 71090000	Volksbank Raiffeisenbank Oberbayern Südost	https://fints2.atruvia.de/cgi-bin/hbciservlet
-71120077	UniCredit Bank - HypoVereinsbank AG (Rosenheim, Oberbay)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-71120078	UniCredit Bank - HypoVereinsbank AG (Rottach-Egern)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-71121176	UniCredit Bank - HypoVereinsbank AG (Mühldorf a. Inn)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-71122183	UniCredit Bank - HypoVereinsbank AG (Waldkraiburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+71120077	UniCredit Bank - HypoVereinsbank AG (Rosenheim, Oberbay)	https://hbci-01.hypovereinsbank.de/bank/hbci
+71120078	UniCredit Bank - HypoVereinsbank AG (Rottach-Egern)	https://hbci-01.hypovereinsbank.de/bank/hbci
+71121176	UniCredit Bank - HypoVereinsbank AG (Mühldorf a. Inn)	https://hbci-01.hypovereinsbank.de/bank/hbci
+71122183	UniCredit Bank - HypoVereinsbank AG (Waldkraiburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 71150000	Sparkasse Rosenheim-Bad/Aibling	https://banking-by2.s-fints-pt-by.de/fints30
 71151020	Sparkasse Altötting-Mühldorf a.Inn	https://banking-by2.s-fints-pt-by.de/fints30
 71152570	Kreissparkasse Miesbach-Tegernsee	https://banking-by2.s-fints-pt-by.de/fints30
@@ -1892,11 +1892,11 @@
 71190000	Volksbank Rosenheim -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 71191000	VR-Bank Burghausen-Mühldorf	https://fints2.atruvia.de/cgi-bin/hbciservlet
 72012300	BTV Bank für Tirol und Vorarlberg AG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-72020070	UniCredit Bank - HypoVereinsbank AG (Augsburg, Bay)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-72020240	UniCredit Bank - HypoVereinsbank Ndl 677 Agsb	https://hbci.hypovereinsbank.de/hbci/hbci.do
+72020070	UniCredit Bank - HypoVereinsbank AG (Augsburg, Bay)	https://hbci-01.hypovereinsbank.de/bank/hbci
+72020240	UniCredit Bank - HypoVereinsbank Ndl 677 Agsb	https://hbci-01.hypovereinsbank.de/bank/hbci
 72020700	Augsburger Aktienbank AG	https://banking.aab.de/hbci
-72021271	UniCredit Bank - HypoVereinsbank AG (Aichach a d Paar)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-72021876	UniCredit Bank - HypoVereinsbank AG (Günzburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+72021271	UniCredit Bank - HypoVereinsbank AG (Aichach a d Paar)	https://hbci-01.hypovereinsbank.de/bank/hbci
+72021876	UniCredit Bank - HypoVereinsbank AG (Günzburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 72030014	Fürst Fugger Privatbank (Augsburg, Bay)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 72030227	Bankhaus Anton Hafner KG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 72050000	Stadtsparkasse Augsburg	https://banking-by5.s-fints-pt-by.de/fints30
@@ -1939,10 +1939,10 @@
 72090500	Sparda-Bank Augsburg eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 72090900	PSD Bank München eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 72091800	Volksbank Günzburg	https://fints2.atruvia.de/cgi-bin/hbciservlet
-72120078	UniCredit Bank - HypoVereinsbank AG (Ingolstadt, Donau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-72120079	UniCredit Bank - HypoVereinsbank (Ingolstadt, Donau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-72120207	UniCredit Bank - HypoVereinsbank Ndl 648 Ing	https://hbci.hypovereinsbank.de/hbci/hbci.do
-72122181	UniCredit Bank - HypoVereinsbank AG (Neuburg a.d.Donau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+72120078	UniCredit Bank - HypoVereinsbank AG (Ingolstadt, Donau)	https://hbci-01.hypovereinsbank.de/bank/hbci
+72120079	UniCredit Bank - HypoVereinsbank (Ingolstadt, Donau)	https://hbci-01.hypovereinsbank.de/bank/hbci
+72120207	UniCredit Bank - HypoVereinsbank Ndl 648 Ing	https://hbci-01.hypovereinsbank.de/bank/hbci
+72122181	UniCredit Bank - HypoVereinsbank AG (Neuburg a.d.Donau)	https://hbci-01.hypovereinsbank.de/bank/hbci
 72150000	Sparkasse Ingolstadt Eichstätt	https://banking-by2.s-fints-pt-by.de/fints30
 72151340	Sparkasse Eichstätt	https://banking-by2.s-fints-pt-by.de/fints30
 72151650	Vereinigte Sparkasse d. Ldkr. Pfaffenhofen	https://banking-by2.s-fints-pt-by.de/fints30
@@ -1967,8 +1967,8 @@
 72191300	Volksbank Raiffeisenbank Eichstätt	https://fints2.atruvia.de/cgi-bin/hbciservlet
 72191600	Hallertauer Volksbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 72191800	Volksbank Schrobenhausen -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-72220074	UniCredit Bank - HypoVereinsbank AG (Donauwörth)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-72223182	UniCredit Bank - HypoVereinsbank AG (Nördlingen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+72220074	UniCredit Bank - HypoVereinsbank AG (Donauwörth)	https://hbci-01.hypovereinsbank.de/bank/hbci
+72223182	UniCredit Bank - HypoVereinsbank AG (Nördlingen)	https://hbci-01.hypovereinsbank.de/bank/hbci
 72250000	Sparkasse Nördlingen	https://banking-by5.s-fints-pt-by.de/fints30
 72250160	Sparkasse Donauwörth	https://banking-by5.s-fints-pt-by.de/fints30
 72251520	Sparkasse Nordschwaben	https://banking-by5.s-fints-pt-by.de/fints30
@@ -1979,15 +1979,15 @@
 73050000	Sparkasse Neu-Ulm-Illertissen	https://banking-by5.s-fints-pt-by.de/fints30
 73061191	VR-Bank Neu-Ulm eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 73090000	Volksbank Neu-Ulm	https://fints2.atruvia.de/cgi-bin/hbciservlet
-73120075	UniCredit Bank - HypoVereinsbank AG (Memmingen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+73120075	UniCredit Bank - HypoVereinsbank AG (Memmingen)	https://hbci-01.hypovereinsbank.de/bank/hbci
 73150000	Sparkasse Schwaben-Bodensee	https://banking-by5.s-fints-pt-by.de/fints30
 73160000	Genossenschaftsbank Unterallgäu	https://fints2.atruvia.de/cgi-bin/hbciservlet
 73190000	VR-Bank Memmingen	https://fints2.atruvia.de/cgi-bin/hbciservlet
 73191500	Volksbank Ulm-Biberach (Illertissen)	https://fints2.atruvia.de/cgi-bin/hbciservlet
-73320073	UniCredit Bank - HypoVereinsbank AG (Kempten (Allgäu))	https://hbci.hypovereinsbank.de/hbci/hbci.do
-73320442	UniCredit Bank - HypoVereinsbank Ndl 669 Kpt	https://hbci.hypovereinsbank.de/hbci/hbci.do
-73321177	UniCredit Bank - HypoVereinsbank AG (Oberstdorf)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-73322380	UniCredit Bank - HypoVereinsbank AG (Sonthofen, Oberallgäu)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+73320073	UniCredit Bank - HypoVereinsbank AG (Kempten (Allgäu))	https://hbci-01.hypovereinsbank.de/bank/hbci
+73320442	UniCredit Bank - HypoVereinsbank Ndl 669 Kpt	https://hbci-01.hypovereinsbank.de/bank/hbci
+73321177	UniCredit Bank - HypoVereinsbank AG (Oberstdorf)	https://hbci-01.hypovereinsbank.de/bank/hbci
+73322380	UniCredit Bank - HypoVereinsbank AG (Sonthofen, Oberallgäu)	https://hbci-01.hypovereinsbank.de/bank/hbci
 73331700	Gabler-Saliter Bankgeschäft AG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 73350000	Sparkasse Allgäu	https://banking-by5.s-fints-pt-by.de/fints30
 73351635	Sparkasse Riezlern, Kleinwalsertal	https://banking-by5.s-fints-pt-by.de/fints30
@@ -2017,16 +2017,16 @@
 73390000	Allgäuer Volksbank Kempten-Sonthofen	https://fints2.atruvia.de/cgi-bin/hbciservlet
 73391600	Volksbank im Kleinwalsertal	https://fints2.atruvia.de/cgi-bin/hbciservlet
 73392000	Volksbank Immenstadt	https://fints2.atruvia.de/cgi-bin/hbciservlet
-73420071	UniCredit Bank - HypoVereinsbank AG (Kaufbeuren)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-73420546	UniCredit Bank - HypoVereinsbank Ndl 693 Kaufb	https://hbci.hypovereinsbank.de/hbci/hbci.do
-73421478	UniCredit Bank - HypoVereinsbank AG (Schongau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+73420071	UniCredit Bank - HypoVereinsbank AG (Kaufbeuren)	https://hbci-01.hypovereinsbank.de/bank/hbci
+73420546	UniCredit Bank - HypoVereinsbank Ndl 693 Kaufb	https://hbci-01.hypovereinsbank.de/bank/hbci
+73421478	UniCredit Bank - HypoVereinsbank AG (Schongau)	https://hbci-01.hypovereinsbank.de/bank/hbci
 73450000	Kreis- und Stadtsparkasse Kaufbeuren	https://banking-by5.s-fints-pt-by.de/fints30
 73451450	Kreissparkasse Schongau	https://banking-by2.s-fints-pt-by.de/fints30
 73460046	VR Bank Kaufbeuren-Ostallgäu	https://fints2.atruvia.de/cgi-bin/hbciservlet
 73491300	Volksbank Ostallgäu -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-74020074	UniCredit Bank - HypoVereinsbank AG (Passau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+74020074	UniCredit Bank - HypoVereinsbank AG (Passau)	https://hbci-01.hypovereinsbank.de/bank/hbci
 74020100	Raiffeisenlandesbank Oberösterreich	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
-74020414	UniCredit Bank - HypoVereinsbank Ndl 672 Pass	https://hbci.hypovereinsbank.de/hbci/hbci.do
+74020414	UniCredit Bank - HypoVereinsbank Ndl 672 Pass	https://hbci-01.hypovereinsbank.de/bank/hbci
 74050000	Sparkasse Passau	https://banking-by3.s-fints-pt-by.de/fints30
 74051230	Sparkasse Freyung-Grafenau	https://banking-by3.s-fints-pt-by.de/fints30
 74061101	Raiffeisenbank Goldener Steig - Dreisessel eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -2047,8 +2047,8 @@
 74069768	Raiffeisenbank am Dreisessel	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74090000	VR-Bank Passau	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74092400	Volksbank Vilshofen	https://fints2.atruvia.de/cgi-bin/hbciservlet
-74120071	UniCredit Bank - HypoVereinsbank AG (Deggendorf)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-74120514	UniCredit Bank - HypoVereinsbank 674 Dgdf	https://hbci.hypovereinsbank.de/hbci/hbci.do
+74120071	UniCredit Bank - HypoVereinsbank AG (Deggendorf)	https://hbci-01.hypovereinsbank.de/bank/hbci
+74120514	UniCredit Bank - HypoVereinsbank 674 Dgdf	https://hbci-01.hypovereinsbank.de/bank/hbci
 74150000	Sparkasse Deggendorf	https://banking-by3.s-fints-pt-by.de/fints30
 74151450	Sparkasse Regen-Viechtach	https://banking-by3.s-fints-pt-by.de/fints30
 74160025	Raiffeisenbank Deggendorf-Plattling eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -2058,15 +2058,15 @@
 74167099	Raiffeisenbank Metten	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74190000	GenoBank DonauWald eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74191000	VR-Bank Landau eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-74220075	UniCredit Bank - HypoVereinsbank AG (Straubing)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-74221170	UniCredit Bank - HypoVereinsbank AG (Cham, Oberpf)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+74220075	UniCredit Bank - HypoVereinsbank AG (Straubing)	https://hbci-01.hypovereinsbank.de/bank/hbci
+74221170	UniCredit Bank - HypoVereinsbank AG (Cham, Oberpf)	https://hbci-01.hypovereinsbank.de/bank/hbci
 74250000	Sparkasse Niederbayern Mitte	https://banking-by3.s-fints-pt-by.de/fints30
 74251020	Sparkasse im Landkreis Cham	https://banking-by4.s-fints-pt-by.de/fints30
 74260110	Raiffeisenbank (Straubing)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74261024	Raiffeisenbank Cham-Roding-Furth im Wald	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74290000	VR-Bank Ostbayern-Mitte eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-74320073	UniCredit Bank - HypoVereinsbank AG (Landshut, Isar)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-74320307	UniCredit Bank - HypoVereinsbank Ndl 601 Ldsht	https://hbci.hypovereinsbank.de/hbci/hbci.do
+74320073	UniCredit Bank - HypoVereinsbank AG (Landshut, Isar)	https://hbci-01.hypovereinsbank.de/bank/hbci
+74320307	UniCredit Bank - HypoVereinsbank Ndl 601 Ldsht	https://hbci-01.hypovereinsbank.de/bank/hbci
 74350000	Sparkasse Landshut	https://banking-by3.s-fints-pt-by.de/fints30
 74351310	Sparkasse Dingolfing-Landau -alt-	https://hbci-pintan-by.s-hbci.de/PinTanServlet
 74351430	Sparkasse Rottal-Inn	https://banking-by3.s-fints-pt-by.de/fints30
@@ -2087,9 +2087,9 @@
 74391300	Volksbank-Raiffeisenbank Dingolfing	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74391400	Rottaler Volksbank-Raiffeisenbank Eggenfelden	https://fints2.atruvia.de/cgi-bin/hbciservlet
 74392300	VR-Bank Landshut-Isar-Vils eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-75020073	UniCredit Bank - HypoVereinsbank AG (Regensburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-75020314	UniCredit Bank - HypoVereinsbank Ndl 670 Rgsb	https://hbci.hypovereinsbank.de/hbci/hbci.do
-75021174	UniCredit Bank - HypoVereinsbank AG (Schwandorf, Bay)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+75020073	UniCredit Bank - HypoVereinsbank AG (Regensburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
+75020314	UniCredit Bank - HypoVereinsbank Ndl 670 Rgsb	https://hbci-01.hypovereinsbank.de/bank/hbci
+75021174	UniCredit Bank - HypoVereinsbank AG (Schwandorf, Bay)	https://hbci-01.hypovereinsbank.de/bank/hbci
 75050000	Sparkasse Regensburg	https://banking-by4.s-fints-pt-by.de/fints30
 75051040	Sparkasse im Landkreis Schwandorf	https://banking-by4.s-fints-pt-by.de/fints30
 75051565	Kreissparkasse Kelheim	https://banking-by3.s-fints-pt-by.de/fints30
@@ -2119,11 +2119,11 @@
 75090500	Sparda-Bank Ostbayern eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 75090900	VR Bank Niederbayern-Oberpfalz	https://fints2.atruvia.de/cgi-bin/hbciservlet
 75091400	VR Bank Burglengenfeld	https://fints2.atruvia.de/cgi-bin/hbciservlet
-75220070	UniCredit Bank - HypoVereinsbank AG (Amberg, Oberpf)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+75220070	UniCredit Bank - HypoVereinsbank AG (Amberg, Oberpf)	https://hbci-01.hypovereinsbank.de/bank/hbci
 75250000	Sparkasse Amberg-Sulzbach	https://banking-by4.s-fints-pt-by.de/fints30
 75261700	Raiffeisenbank Sulzbach-Rosenberg	https://fints2.atruvia.de/cgi-bin/hbciservlet
 75290000	VR Bank Amberg-Sulzbach eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-75320075	UniCredit Bank - HypoVereinsbank AG (Weiden i.d.OPf.)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+75320075	UniCredit Bank - HypoVereinsbank AG (Weiden i.d.OPf.)	https://hbci-01.hypovereinsbank.de/bank/hbci
 75350000	Sparkasse Nördliche Oberpfalz	https://banking-by4.s-fints-pt-by.de/fints30
 75351960	Vereinigte Sparkasse Eschenbach, Neustadt, Vohenstrauß	https://banking-by4.s-fints-pt-by.de/fints30
 75360011	Raiffeisenbank Weiden	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -2131,9 +2131,9 @@
 75363189	Raiffeisenbank Neustadt-Vohenstrauß	https://fints2.atruvia.de/cgi-bin/hbciservlet
 75390000	Volksbank Nordoberpfalz eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 76010085	Postbank (Nürnberg, Mittelfr)	https://hbci.postbank.de/banking/hbci.do
-76020070	UniCredit Bank - HypoVereinsbank AG (Nürnberg, Mittelfr)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-76020099	UniCredit Bank - HypoVereinsbank AG (Nürnberg, Mittelfr)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-76020214	UniCredit Bank - HypoVereinsbank Ndl 156 Nbg	https://hbci.hypovereinsbank.de/hbci/hbci.do
+76020070	UniCredit Bank - HypoVereinsbank AG (Nürnberg, Mittelfr)	https://hbci-01.hypovereinsbank.de/bank/hbci
+76020099	UniCredit Bank - HypoVereinsbank AG (Nürnberg, Mittelfr)	https://hbci-01.hypovereinsbank.de/bank/hbci
+76020214	UniCredit Bank - HypoVereinsbank Ndl 156 Nbg	https://hbci-01.hypovereinsbank.de/bank/hbci
 76026000	norisbank GmbH (Berlin)	https://fints.norisbank.de/
 76030080	Consorsbank	https://brokerage-hbci.consorsbank.de/hbci
 76030600	Isbank AG (Nürnberg, Mittelfr)	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
@@ -2180,21 +2180,21 @@
 76090500	Sparda-Bank Nürnberg eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 76090900	PSD Bank Nürnberg eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 76211900	CVW - Privatbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
-76220073	UniCredit Bank - HypoVereinsbank AG (Fürth, Bay)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+76220073	UniCredit Bank - HypoVereinsbank AG (Fürth, Bay)	https://hbci-01.hypovereinsbank.de/bank/hbci
 76250000	Sparkasse Fürth	https://banking-by1.s-fints-pt-by.de/fints30
 76251020	Sparkasse im Landkreis Neustadt a.d.Aisch-Bad Winsheim	https://banking-by1.s-fints-pt-by.de/fints30
 76260451	Raiffeisen-Volksbank Fürth	https://fints2.atruvia.de/cgi-bin/hbciservlet
-76320072	UniCredit Bank - HypoVereinsbank AG (Erlangen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+76320072	UniCredit Bank - HypoVereinsbank AG (Erlangen)	https://hbci-01.hypovereinsbank.de/bank/hbci
 76350000	Stadt- und Kreissparkasse Erlangen Höchstadt Herzogenaurach	https://banking-by1.s-fints-pt-by.de/fints30
 76351040	Sparkasse Forchheim	https://banking-by4.s-fints-pt-by.de/fints30
 76351560	Kreissparkasse Höchstadt	https://banking-by1.s-fints-pt-by.de/fints30
 76360033	VR-Bank Erlangen-Höchstadt-Herzogenaurach	https://fints2.atruvia.de/cgi-bin/hbciservlet
 76391000	VR Bank Bamberg-Forchheim eG Volks- Raiffeisenbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
-76420080	UniCredit Bank - HypoVereinsbank AG (Schwabach)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+76420080	UniCredit Bank - HypoVereinsbank AG (Schwabach)	https://hbci-01.hypovereinsbank.de/bank/hbci
 76450000	Sparkasse Mittelfranken-Süd	https://banking-by1.s-fints-pt-by.de/fints30
 76460015	Raiffeisenbank Roth-Schwabach	https://fints2.atruvia.de/cgi-bin/hbciservlet
 76461485	Raiffeisenbank am Rothsee	https://fints2.atruvia.de/cgi-bin/hbciservlet
-76520071	UniCredit Bank - HypoVereinsbank AG (Ansbach, Mittelfr)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+76520071	UniCredit Bank - HypoVereinsbank AG (Ansbach, Mittelfr)	https://hbci-01.hypovereinsbank.de/bank/hbci
 76550000	Sparkasse Ansbach	https://banking-by1.s-fints-pt-by.de/fints30
 76551020	Kreis- und Stadtsparkasse Dinkelsbühl	https://banking-by1.s-fints-pt-by.de/fints30
 76551540	Vereinigte Sparkasse Gunzenhausen	https://banking-by1.s-fints-pt-by.de/fints30
@@ -2202,7 +2202,7 @@
 76560060	VR-Bank Mittelfranken Mitte eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 76561979	Raiffeisenbank -alt- (Uffenheim)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 76591000	VR Bank im südlichen Franken eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-77020070	UniCredit Bank - HypoVereinsbank AG (Bamberg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+77020070	UniCredit Bank - HypoVereinsbank AG (Bamberg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 77050000	Sparkasse Bamberg	https://banking-by4.s-fints-pt-by.de/fints30
 77060100	VR Bank Bamberg Raiffeisen-Volksbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 77061004	Raiffeisenbank Obermain Nord	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -2232,17 +2232,17 @@
 77069906	Raiffeisenbank Wüstenselbitz	https://fints2.atruvia.de/cgi-bin/hbciservlet
 77069908	Raiffeisenbank Sparneck-Stammbach-Zell -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 77091800	Raiffeisen-Volksbank Lichtenfels-Itzgrund eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-77120073	UniCredit Bank - HypoVereinsbank AG (Kulmbach)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+77120073	UniCredit Bank - HypoVereinsbank AG (Kulmbach)	https://hbci-01.hypovereinsbank.de/bank/hbci
 77150000	Sparkasse Kulmbach-Kronach	https://banking-by4.s-fints-pt-by.de/fints30
 77190000	Kulmbacher Bank eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-77320072	UniCredit Bank - HypoVereinsbank AG (Bayreuth)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+77320072	UniCredit Bank - HypoVereinsbank AG (Bayreuth)	https://hbci-01.hypovereinsbank.de/bank/hbci
 77350110	Sparkasse Bayreuth	https://banking-by4.s-fints-pt-by.de/fints30
 77361600	Raiffeisen-Volksbank Kronach-Ludwigsstadt	https://fints2.atruvia.de/cgi-bin/hbciservlet
 77363749	Raiffeisenbank (Gefrees)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 77365792	Raiffeisenbank Hollfeld-Waischenfeld-Aufseß	https://fints2.atruvia.de/cgi-bin/hbciservlet
 77390000	Volksbank-Raiffeisenbank Bayreuth	https://fints2.atruvia.de/cgi-bin/hbciservlet
-78020070	UniCredit Bank - HypoVereinsbank AG (Hof, Saale)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-78020429	UniCredit Bank - HypoVereinsbank Ndl 128 Hof	https://hbci.hypovereinsbank.de/hbci/hbci.do
+78020070	UniCredit Bank - HypoVereinsbank AG (Hof, Saale)	https://hbci-01.hypovereinsbank.de/bank/hbci
+78020429	UniCredit Bank - HypoVereinsbank Ndl 128 Hof	https://hbci-01.hypovereinsbank.de/bank/hbci
 78030080	Archon Capital Bank Deutschland	https://fints2.atruvia.de/cgi-bin/hbciservlet
 78030081	Archon Capital Bank Deutschland Servicing	https://fints2.atruvia.de/cgi-bin/hbciservlet
 78050000	Sparkasse Hochfranken	https://banking-by4.s-fints-pt-by.de/fints30
@@ -2251,11 +2251,11 @@
 78062488	Raiffeisenbank -alt- (Stammbach)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 78160069	VR-Bank Fichtelgebirge eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
 78161575	Raiffeisenbank im Stiftland	https://fints2.atruvia.de/cgi-bin/hbciservlet
-78320076	UniCredit Bank - HypoVereinsbank AG (Coburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+78320076	UniCredit Bank - HypoVereinsbank AG (Coburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
 78350000	Vereinigte Coburger Sparkassen	https://banking-by4.s-fints-pt-by.de/fints30
 78360000	VR-Bank Coburg	https://fints2.atruvia.de/cgi-bin/hbciservlet
-79020076	UniCredit Bank - HypoVereinsbank AG (Würzburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-79020325	UniCredit Bank - HypoVereinsbank Ndl 149 Wzb	https://hbci.hypovereinsbank.de/hbci/hbci.do
+79020076	UniCredit Bank - HypoVereinsbank AG (Würzburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
+79020325	UniCredit Bank - HypoVereinsbank Ndl 149 Wzb	https://hbci-01.hypovereinsbank.de/bank/hbci
 79030001	Fürstlich Castell'sche Bank	https://fints1.atruvia.de/cgi-bin/hbciservlet
 79032038	Bank Schilling & Co	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79050000	Sparkasse Mainfranken-Würzburg	https://banking-by7.s-fints-pt-by.de/fints30
@@ -2285,8 +2285,8 @@
 79161058	Raiffeisenbank Fränkisches Weinland	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79161499	Raiffeisenbank Kitzinger Land	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79190000	VR Bank Kitzingen	https://fints2.atruvia.de/cgi-bin/hbciservlet
-79320075	UniCredit Bank - HypoVereinsbank AG (Schweinfurt)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-79320432	UniCredit Bank - HypoVereinsbank Ndl 137 Schft	https://hbci.hypovereinsbank.de/hbci/hbci.do
+79320075	UniCredit Bank - HypoVereinsbank AG (Schweinfurt)	https://hbci-01.hypovereinsbank.de/bank/hbci
+79320432	UniCredit Bank - HypoVereinsbank Ndl 137 Schft	https://hbci-01.hypovereinsbank.de/bank/hbci
 79330111	Bankhaus Max Flessa KG (Flessabank)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79350000	Städtische Sparkasse Schweinfurt -alt-	https://hbci-pintan-by.s-hbci.de/PinTanServlet
 79350101	Sparkasse Schweinfurt-Haßberge	https://banking-by7.s-fints-pt-by.de/fints30
@@ -2298,8 +2298,8 @@
 79363151	Raiffeisen-Volksbank Haßberge	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79364069	Raiffeisenbank Frankenwinheim und Umgebung	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79364406	VR-Bank Schweinfurt Land -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-79520070	UniCredit Bank - HypoVereinsbank AG (Aschaffenburg)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-79520533	UniCredit Bank - HypoVereinsbank Ndl 125 Aschb	https://hbci.hypovereinsbank.de/hbci/hbci.do
+79520070	UniCredit Bank - HypoVereinsbank AG (Aschaffenburg)	https://hbci-01.hypovereinsbank.de/bank/hbci
+79520533	UniCredit Bank - HypoVereinsbank Ndl 125 Aschb	https://hbci-01.hypovereinsbank.de/bank/hbci
 79550000	Sparkasse Aschaffenburg Miltenberg	https://banking-by7.s-fints-pt-by.de/fints30
 79561348	Raiffeisenbank Bachgau -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79562514	Raiffeisenbank Aschaffenburg	https://fints2.atruvia.de/cgi-bin/hbciservlet
@@ -2316,9 +2316,8 @@
 79666548	Raiffeisenbank Großostheim-Obernburg	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79668509	Raiffeisenbank Eichenbühl und Umgebung	https://fints2.atruvia.de/cgi-bin/hbciservlet
 79690000	Raiffeisen-Volksbank Miltenberg	https://fints2.atruvia.de/cgi-bin/hbciservlet
-80010090	Postbank (BLZ 80010090)	https://hbci.postbank.de/banking/hbci.do
-80020086	UniCredit Bank - HypoVereinsbank AG (Halle (Saale))	https://hbci.hypovereinsbank.de/hbci/hbci.do
-80020087	UniCredit Bank - HypoVereinsbank AG (Dessau-Roßlau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+80020086	UniCredit Bank - HypoVereinsbank AG (Halle (Saale))	https://hbci-01.hypovereinsbank.de/bank/hbci
+80020087	UniCredit Bank - HypoVereinsbank AG (Dessau-Roßlau)	https://hbci-01.hypovereinsbank.de/bank/hbci
 80053000	Sparkasse Burgenlandkreis	https://banking-st5.s-fints-pt-st.de/fints30
 80053572	Stadtsparkasse Dessau	https://banking-st5.s-fints-pt-st.de/fints30
 80053722	Kreissparkasse Anhalt-Bitterfeld	https://banking-st5.s-fints-pt-st.de/fints30
@@ -2350,9 +2349,9 @@
 81093034	Volksbank Gardelegen eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 81093054	Volksbank Stendal eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 81093274	Volksbank Magdeburg eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-82020086	UniCredit Bank - HypoVereinsbank AG (Erfurt)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-82020087	UniCredit Bank - HypoVereinsbank AG (Weimar, Thür)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-82020088	UniCredit Bank - HypoVereinsbank AG (Eisenach, Thür)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+82020086	UniCredit Bank - HypoVereinsbank AG (Erfurt)	https://hbci-01.hypovereinsbank.de/bank/hbci
+82020087	UniCredit Bank - HypoVereinsbank AG (Weimar, Thür)	https://hbci-01.hypovereinsbank.de/bank/hbci
+82020088	UniCredit Bank - HypoVereinsbank AG (Eisenach, Thür)	https://hbci-01.hypovereinsbank.de/bank/hbci
 82051000	Sparkasse Mittelthüringen	https://banking-th5.s-fints-pt-th.de/fints30
 82052020	Kreissparkasse Gotha	https://banking-th5.s-fints-pt-th.de/fints30
 82054052	Kreissparkasse Nordhausen	https://banking-th5.s-fints-pt-th.de/fints30
@@ -2370,9 +2369,9 @@
 82094004	Volksbank Heiligenstadt	https://fints2.atruvia.de/cgi-bin/hbciservlet
 82094054	Nordthüringer Volksbank	https://fints2.atruvia.de/cgi-bin/hbciservlet
 82094224	Volksbank Erfurt -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
-83020086	UniCredit Bank - HypoVereinsbank AG (Gera)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-83020087	UniCredit Bank - HypoVereinsbank AG (Jena)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-83020088	UniCredit Bank - HypoVereinsbank AG (Saalfeld /Saale)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+83020086	UniCredit Bank - HypoVereinsbank AG (Gera)	https://hbci-01.hypovereinsbank.de/bank/hbci
+83020087	UniCredit Bank - HypoVereinsbank AG (Jena)	https://hbci-01.hypovereinsbank.de/bank/hbci
+83020088	UniCredit Bank - HypoVereinsbank AG (Saalfeld /Saale)	https://hbci-01.hypovereinsbank.de/bank/hbci
 83050000	Sparkasse Gera-Greiz	https://banking-th5.s-fints-pt-th.de/fints30
 83050200	Sparkasse Altenburger Land	https://banking-th5.s-fints-pt-th.de/fints30
 83050303	Kreissparkasse Saalfeld-Rudolstadt	https://banking-th5.s-fints-pt-th.de/fints30
@@ -2386,8 +2385,8 @@
 83094454	Volksbank Saaletal	https://fints2.atruvia.de/cgi-bin/hbciservlet
 83094494	Volksbank Eisenberg eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
 83094495	EthikBank eG	https://fints1.atruvia.de/cgi-bin/hbciservlet
-84020086	UniCredit Bank - HypoVereinsbank (Meiningen)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-84020087	UniCredit Bank - HypoVereinsbank AG (Suhl)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+84020086	UniCredit Bank - HypoVereinsbank (Meiningen)	https://hbci-01.hypovereinsbank.de/bank/hbci
+84020087	UniCredit Bank - HypoVereinsbank AG (Suhl)	https://hbci-01.hypovereinsbank.de/bank/hbci
 84050000	Rhön-Rennsteig-Sparkasse	https://banking-th5.s-fints-pt-th.de/fints30
 84051010	Sparkasse Arnstadt-Ilmenau	https://banking-th5.s-fints-pt-th.de/fints30
 84054040	Kreissparkasse Hildburghausen	https://banking-th5.s-fints-pt-th.de/fints30
@@ -2397,8 +2396,8 @@
 84069065	Raiffeisenbank Schleusingen	https://fints2.atruvia.de/cgi-bin/hbciservlet
 84094754	VR-Bank Bad Salzungen Schmalkalden	https://fints2.atruvia.de/cgi-bin/hbciservlet
 84094814	VR Bank Südthüringen eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-85020086	UniCredit Bank - HypoVereinsbank AG (Dresden)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-85020890	UniCredit Bank - HypoVereinsbank Ndl 536 Dre	https://hbci.hypovereinsbank.de/hbci/hbci.do
+85020086	UniCredit Bank - HypoVereinsbank AG (Dresden)	https://hbci-01.hypovereinsbank.de/bank/hbci
+85020890	UniCredit Bank - HypoVereinsbank Ndl 536 Dre	https://hbci-01.hypovereinsbank.de/bank/hbci
 85050100	Sparkasse Oberlausitz-Niederschlesien	https://banking-sn5.s-fints-pt-sn.de/fints30
 85050300	Ostsächsische Sparkasse Dresden	https://banking-sn5.s-fints-pt-sn.de/fints30
 85055000	Sparkasse Meißen	https://banking-sn5.s-fints-pt-sn.de/fints30
@@ -2414,8 +2413,8 @@
 85591000	Volksbank Raiffeisenbank Niederschlesien	https://fints2.atruvia.de/cgi-bin/hbciservlet
 85595500	Volksbank Westlausitz -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 86010090	Postbank (Leipzig)	https://hbci.postbank.de/banking/hbci.do
-86020086	UniCredit Bank - HypoVereinsbank AG (Leipzig)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-86020880	UniCredit Bank - HypoVereinsbank Ndl 508 Lei	https://hbci.hypovereinsbank.de/hbci/hbci.do
+86020086	UniCredit Bank - HypoVereinsbank AG (Leipzig)	https://hbci-01.hypovereinsbank.de/bank/hbci
+86020880	UniCredit Bank - HypoVereinsbank Ndl 508 Lei	https://hbci-01.hypovereinsbank.de/bank/hbci
 86050200	Sparkasse Muldental	https://banking-sn5.s-fints-pt-sn.de/fints30
 86055462	Kreissparkasse Döbeln	https://banking-sn4.s-fints-pt-sn.de/fints30
 86055592	Stadt- und Kreissparkasse Leipzig	https://banking-sn5.s-fints-pt-sn.de/fints30
@@ -2429,9 +2428,9 @@
 86095484	Volks- und Raiffeisenbank Muldental	https://fints2.atruvia.de/cgi-bin/hbciservlet
 86095554	Volksbank Delitzsch	https://fints2.atruvia.de/cgi-bin/hbciservlet
 86095604	Leipziger Volksbank eG	https://fints2.atruvia.de/cgi-bin/hbciservlet
-87020086	UniCredit Bank - HypoVereinsbank AG (Chemnitz, Sachs)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-87020087	UniCredit Bank - HypoVereinsbank AG (Plauen, Vogtl)	https://hbci.hypovereinsbank.de/hbci/hbci.do
-87020088	UniCredit Bank - HypoVereinsbank AG (Zwickau)	https://hbci.hypovereinsbank.de/hbci/hbci.do
+87020086	UniCredit Bank - HypoVereinsbank AG (Chemnitz, Sachs)	https://hbci-01.hypovereinsbank.de/bank/hbci
+87020087	UniCredit Bank - HypoVereinsbank AG (Plauen, Vogtl)	https://hbci-01.hypovereinsbank.de/bank/hbci
+87020088	UniCredit Bank - HypoVereinsbank AG (Zwickau)	https://hbci-01.hypovereinsbank.de/bank/hbci
 87050000	Sparkasse Chemnitz	https://banking-sn4.s-fints-pt-sn.de/fints30
 87051000	Sparkasse Mittelsachsen (Mittweida)	https://banking.s-fints-pt-sn.de/PinTanServlet
 87052000	Sparkasse Mittelsachsen (Freiberg, Sachs)	https://banking-sn4.s-fints-pt-sn.de/fints30
@@ -2453,4 +2452,3 @@
 87096074	Freiberger Bank -alt-	https://fints2.atruvia.de/cgi-bin/hbciservlet
 87096124	Volksbank (Mittweida)	https://fints2.atruvia.de/cgi-bin/hbciservlet
 87096214	Volksbank Chemnitz	https://fints2.atruvia.de/cgi-bin/hbciservlet
-90010085	Postbank (BLZ 90010085)	https://hbci.postbank.de/banking/hbci.do
