@@ -317,7 +317,7 @@ Sheet {
                     title: qsTr("Advanzia-Anmeldung")
                     footer: qsTr("Melden Sie sich im Browser-Fenster bei Advanzia an und bestätigen Sie die Freigabe per SMS-Code oder in der Advanzia-App. GiroCrab speichert kein Passwort und trägt nichts ein; danach werden die Umsätze automatisch übernommen.")
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.webLoginConnection = c } }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
                     Button { text: qsTr("Web-Sitzung löschen …"); palette.buttonText: Theme.negative
                              onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
                 }
