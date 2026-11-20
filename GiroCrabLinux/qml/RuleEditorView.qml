@@ -192,7 +192,7 @@ Sheet {
                             required property int index
                             readonly property bool selected: editor.selection === modelData.id
                             readonly property int rank: AppModel.rules.findIndex(r => r.id === modelData.id) + 1
-                            width: ListView.view.width; height: rr.modelData.tag_ids && rr.modelData.tag_ids.length ? 58 : 44
+                            width: ListView.view.width; height: Math.max(rr.modelData.tag_ids && rr.modelData.tag_ids.length ? 58 : 44, ruleText.implicitHeight + 12)
                             opacity: list.dragID === modelData.id ? 0.5 : 1
                             Rectangle {
                                 anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6
@@ -239,12 +239,13 @@ Sheet {
                                 SFIcon { symbol: rr.modelData.enabled ? "wand.and.stars" : "pause.circle"; size: 16
                                          color: rr.modelData.enabled ? Theme.readable(editor.color(rr.modelData)) : Theme.secondary
                                          Accessible.name: rr.modelData.enabled ? "" : qsTr("Pausiert") }
-                                ColumnLayout {
+                                ColumnLayout { id: ruleText
                                     spacing: 1; Layout.fillWidth: true
                                     // rule names are mostly payees ("Miete Müller")
-                                    Text { text: rr.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                                    Text { text: rr.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true
+                                           wrapMode: Text.Wrap; maximumLineCount: 2; Sensitive {} }   // lineLimit(2) (#650)
                                     Text { text: "→ " + editor.categoryName(rr.modelData.category_id); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true
-                                           Sensitive { labels: true } }
+                                           wrapMode: Text.Wrap; maximumLineCount: 2; Sensitive { labels: true } }
                                     // tag names are always covered in a report (#228)
                                     Text { visible: (rr.modelData.tag_ids || []).length > 0; text: editor.tagNames(rr.modelData.tag_ids || [])
                                            font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }

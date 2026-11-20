@@ -929,7 +929,7 @@ Rectangle {
             visible: parent.suggested !== null
             Layout.leftMargin: 4
             spacing: 3
-            Accessible.name: parent.suggested ? qsTr("Vorschlag: %1").arg(parent.suggested.name) : ""
+            Accessible.name: parent.suggested ? qsTr("Vorschlag: %1").arg(AppModel.masking(parent.suggested.name, AppModel.redactLabels)) : ""
             SFIcon { symbol: "clock.arrow.circlepath"; size: 11; color: Theme.secondary }
             Text { text: parent.parent.suggested ? parent.parent.suggested.name : ""; font.pixelSize: Theme.callout + 1; color: Theme.secondary; elide: Text.ElideRight
                    Sensitive { labels: true } }
