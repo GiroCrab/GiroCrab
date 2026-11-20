@@ -3948,6 +3948,51 @@ fn switched_depot_is_folded_into_the_fints_depot() {
     );
 }
 
+/// The two ways may name the depot differently: with most bookings shared
+/// it is still folded.
+#[test]
+fn switched_depot_with_another_name_and_shared_bookings_is_folded() {
+    let dir = temp_dir("twin-switched-depot-name");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211000");
+    exec(
+        &v,
+        "UPDATE accounts SET name = 'Depot 102211000' WHERE external_ref = '102211000-Depot'",
+    );
+    exec(
+        &v,
+        "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose)
+         SELECT id, 'div-1', '2026-11-01', 1200, 'X', 'Dividende' FROM accounts",
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        text(
+            &v,
+            "SELECT group_concat(external_ref) FROM accounts WHERE deleted_ms IS NULL"
+        ),
+        "102211000-Depot"
+    );
+}
+
+/// Without bookings only the name tells: another name stays apart.
+#[test]
+fn empty_switched_depot_with_another_name_stays() {
+    let dir = temp_dir("twin-switched-depot-empty-name");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211000");
+    exec(
+        &v,
+        "UPDATE accounts SET name = 'Depot 102211000' WHERE external_ref = '102211000-Depot'",
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        n(&v, "SELECT count(*) FROM accounts WHERE deleted_ms IS NULL"),
+        2
+    );
+}
+
 #[test]
 fn switched_depot_with_another_number_stays() {
     let dir = temp_dir("twin-switched-depot-other");
