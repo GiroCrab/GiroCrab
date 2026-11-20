@@ -3471,15 +3471,32 @@ QtObject {
     /// ConnectorKind.offersInstantChoice: FinTS banks; bunq decides on its own.
     function offersInstantChoice(connector) { return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(connector) >= 0 }
     /// Checking accounts that are connected via FinTS (HKCCS-capable banks) or bunq.
-    readonly property var transferAccounts: allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null
-        && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Bunq"].indexOf(a.connector) >= 0)
+    readonly property var transferAccounts: sendableAccounts("Checking")
+    /// Savings accounts (Tagesgeld) the bank lets us book from, but only as an internal transfer
+    /// (Umbuchung) to an own account (#582). Kept apart from `transferAccounts` so standing orders,
+    /// batches and direct debits do not offer them.
+    readonly property var savingsTransferSources: sendableAccounts("Savings")
+    /// AppModel+Transfer.swift › sendableAccounts(of:): accounts of `kind` with an IBAN that a
+    /// connected, write-capable bank can send from.
+    function sendableAccounts(kind) {
+        return allAccounts.filter(a => a.kind === kind && a.iban !== "" && a.archived_unix === null
+            && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Bunq"].indexOf(a.connector) >= 0)
+    }
+    /// AppModel+Transfer.swift › internalTransferTargets(from:): own accounts a savings account may
+    /// transfer to – checking accounts only, the bank's own reference account (same login) first.
+    function internalTransferTargets(source) {
+        const all = allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null && a.id !== source.id)
+        const same = a => a.connection_id !== null && a.connection_id === source.connection_id
+        return all.filter(same).concat(all.filter(a => !same(a)))
+    }
     /// Checking accounts GiroCrab cannot send from (e.g. C24 via Enable Banking):
     /// the form ends with a GiroCode to scan in the bank's app instead of a TAN.
     readonly property var giroCodeAccounts: allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null
         && !transferAccounts.some(t => t.id === a.id))
     /// Accounts offered in the transfer form: sending ones first.
-    readonly property var transferFormAccounts: transferAccounts.concat(giroCodeAccounts)
-    function canSendTransfer(accountID) { void bankingPolicy; return transferAccounts.some(a => a.id === accountID) && bankingGateForAccount(accountID) === null }
+    readonly property var transferFormAccounts: transferAccounts.concat(savingsTransferSources, giroCodeAccounts)
+    function canSendTransfer(accountID) { void bankingPolicy
+        return transferAccounts.concat(savingsTransferSources).some(a => a.id === accountID) && bankingGateForAccount(accountID) === null }
     readonly property bool canTransfer: isUnlocked && transferFormAccounts.length > 0 && syncingConnectionID === null && activeTransfer === null
 
     /// TransferSheetView.groupedIBAN: upper-case, only A–Z/0–9, groups of four.

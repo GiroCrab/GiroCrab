@@ -67,7 +67,15 @@ Sheet {
                                       && draft.purpose.length <= maxPurpose
     readonly property string accountLabel: account ? account.name + " · " + Fmt.iban(account.iban) : "–"
     /// Own accounts that can receive a transfer: any kind, but with an IBAN, not archived, not the sender.
-    readonly property var ownTargets: AppModel.allAccounts.filter(a => a.iban !== "" && a.archived_unix === null && a.id !== draft.account_id)
+    /// Tagesgeld books only to own checking accounts (#582).
+    readonly property var ownTargets: internalOnly ? AppModel.internalTransferTargets(account)
+        : AppModel.allAccounts.filter(a => a.iban !== "" && a.archived_unix === null && a.id !== draft.account_id)
+    /// Savings account as sender: the bank allows only an internal transfer (#582).
+    readonly property bool internalOnly: account !== null && account.kind === "Savings"
+    /// The sender as a plain value: .onChange(of: transferDraft.accountID) for every way it changes.
+    readonly property int senderID: draft.account_id === null || draft.account_id === undefined ? -1 : draft.account_id
+    // later: `account` / `internalOnly` follow the new sender only after this handler
+    onSenderIDChanged: if (visible) Qt.callLater(senderChanged)
 
     visible: AppModel.showTransferSheet
     sheetWidth: 560
@@ -85,6 +93,8 @@ Sheet {
         suggestions = []
         templates = AppModel.transferTemplates()
         checkClipboard()
+        // .onAppear: from a Tagesgeld account only an Umbuchung (#582)
+        if (internalOnly) setOwnTransfer(true)
     }
     onClosed: AppModel.showTransferSheet = false
 
@@ -130,6 +140,8 @@ Sheet {
     }
     /// .onChange(of: transferDraft.accountID): the own target can no longer be the sender.
     function senderChanged() {
+        if (internalOnly && !ownTransfer) { setOwnTransfer(true); return }
+        if (!internalOnly && ownTransfer && ownTargets.length === 0) { setOwnTransfer(false); return }
         if (!ownTransfer) return
         if (!ownTargets.some(a => a.id === ownTargetID)) ownTargetID = ownTargets.length ? ownTargets[0].id : null
         applyOwnTarget(ownTargetID)
@@ -296,7 +308,7 @@ Sheet {
                                 Layout.preferredWidth: 300
                                 model: AppModel.transferFormAccounts.map(a => a.name + " · " + Fmt.iban(a.iban))
                                 currentIndex: AppModel.transferFormAccounts.findIndex(a => a.id === sheet.draft.account_id)
-                                onActivated: i => { AppModel.setDraft({ account_id: AppModel.transferFormAccounts[i].id }); sheet.senderChanged() }
+                                onActivated: i => AppModel.setDraft({ account_id: AppModel.transferFormAccounts[i].id })   // → onSenderIDChanged
                                 Sensitive {}
                             }
                         }
@@ -315,9 +327,19 @@ Sheet {
                     }
                 }
 
+                // Savings account as sender: no choice, only the note (#582)
+                GroupedSection {
+                    visible: sheet.internalOnly
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        SFIcon { symbol: "arrow.left.arrow.right"; size: 13; color: Theme.secondary; Layout.alignment: Qt.AlignTop; Layout.topMargin: 2 }
+                        Text { text: qsTr("Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich.")
+                               font.pixelSize: Theme.callout; color: Theme.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    }
+                }
                 // Picker("Art der Zahlung").pickerStyle(.segmented).labelsHidden()
                 GroupedSection {
-                    visible: sheet.ownTargets.length > 0 || sheet.ownTransfer
+                    visible: !sheet.internalOnly && (sheet.ownTargets.length > 0 || sheet.ownTransfer)
                     Segmented {
                         Layout.fillWidth: true
                         options: [{ id: "transfer", title: qsTr("Überweisung") }, { id: "own", title: qsTr("Umbuchung") }]
@@ -795,7 +817,8 @@ Sheet {
             delegate: AppMenuItem {
                 required property var modelData
                 text: modelData.name + " · " + modelData.recipient_name
-                onTriggered: { sheet.ownTransfer = false; AppModel.applyTransferTemplate(modelData) }
+                onTriggered: { sheet.ownTransfer = false; AppModel.applyTransferTemplate(modelData)
+                               if (sheet.internalOnly) sheet.setOwnTransfer(true) }   // Tagesgeld: only an Umbuchung (#582)
             }
             onObjectAdded: (i, o) => templatesMenu.insertItem(i, o)
             onObjectRemoved: (i, o) => templatesMenu.removeItem(o)
