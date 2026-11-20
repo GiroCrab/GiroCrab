@@ -2154,11 +2154,19 @@ QtObject {
         if (e.kind === "BrowserLoginRequired") { toast = e.message; webLoginConnection = connection; return }
         if (missingID) {
             // Never a setup form for the optional FinTS registration: it would be an empty,
-            // seemingly mandatory field. Offer the own ID instead.
-            resetSyncBatch()
+            // seemingly mandatory field. Offer the own ID instead; in "Alle abrufen" (#1041) the
+            // batch stays: "Überspringen" goes on, "Eigene Registrierung eintragen …" ends it.
             errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
             errorRetry = null
-            errorAlternatives = [{ title: qsTr("Eigene Registrierung eintragen …"), action: enterOwnProductID }]
+            const own = { title: qsTr("Eigene Registrierung eintragen …"), action: enterOwnProductID }
+            if (syncBatchTotal > 1 && syncQueue.length) {
+                errorAlternatives = [own, { title: qsTr("Alle abbrechen"), action: cancelAllSync }]
+                errorCloseTitle = qsTr("Überspringen")
+                errorOnClose = syncNextInQueue
+            } else {
+                resetSyncBatch()
+                errorAlternatives = [own]
+            }
             errorMessage = qsTr("Diese Version enthält keine FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein.")
             return
         }

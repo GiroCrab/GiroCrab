@@ -631,10 +631,32 @@ ApplicationWindow {
         visible: AppModel.errorMessage !== ""
         // AppModel.swift › errorMessage didSet: closing runs `errorOnClose` ("Überspringen" in
         // "Alle abrufen", #1041); retry and the alternatives clear it first.
-        onClosed: {
-            const onClose = AppModel.errorOnClose
+        // The state of this alert is cleared when it is answered, not when the closing animation
+        // ends: a retry that fails at once installs a new alert, which must neither be cleared
+        // nor have its continuation run by this one's late `closed`.
+        function clearError() {
             AppModel.errorMessage = ""; AppModel.errorTitle = ""; AppModel.errorRetry = null; AppModel.errorAlternatives = []
             AppModel.errorCloseTitle = ""; AppModel.errorOnClose = null
+        }
+        property bool answered: false
+        /// A button: clears this alert, closes it, then runs `action` (none: its `errorOnClose`).
+        function answer(action) {
+            const next = action || AppModel.errorOnClose
+            answered = true
+            clearError()
+            close()
+            if (next) next()
+        }
+        onClosed: {
+            if (answered) {
+                answered = false
+                // a newer alert arrived while this one was closing: show it
+                if (AppModel.errorMessage !== "") open()
+                return
+            }
+            // closed with Esc: like the close button
+            const onClose = AppModel.errorOnClose
+            clearError()
             if (onClose) onClose()
         }
         ColumnLayout {
@@ -646,13 +668,13 @@ ApplicationWindow {
             Repeater {
                 model: AppModel.errorAlternatives
                 Button { required property var modelData; text: modelData.title; Layout.alignment: Qt.AlignRight
-                         onClicked: { const a = modelData.action; AppModel.errorOnClose = null; errorDialog.close(); a() } }
+                         onClicked: errorDialog.answer(modelData.action) }
             }
             RowLayout {
                 Item { Layout.fillWidth: true }
                 Button { visible: AppModel.errorRetry !== null; text: qsTr("Erneut versuchen")
-                         onClicked: { const r = AppModel.errorRetry; AppModel.errorOnClose = null; errorDialog.close(); if (r) r() } }
-                Button { text: AppModel.errorCloseTitle || qsTr("OK"); highlighted: true; onClicked: errorDialog.close() }
+                         onClicked: errorDialog.answer(AppModel.errorRetry || (() => {})) }
+                Button { text: AppModel.errorCloseTitle || qsTr("OK"); highlighted: true; onClicked: errorDialog.answer(null) }
             }
         }
     }
