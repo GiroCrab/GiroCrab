@@ -263,7 +263,7 @@ Sheet {
         title: qsTr("Finpension-Export importieren …")
         nameFilters: [qsTr("Finpension-Export (*.csv *.json *.txt)"), qsTr("Alle Dateien (*)")]
         currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
-        onAccepted: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.importFinpension(c, selectedFile) }
+        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importFinpension(c, file)) }
     }
 
     ColumnLayout {
@@ -451,7 +451,7 @@ Sheet {
                         text: qsTr("Online-Archiv jetzt abrufen")
                         icon.name: SF.icon("tray.and.arrow.down")
                         enabled: AppModel.syncingConnectionID === null && !sheet.documentsBlocked
-                        onClicked: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.fetchComdirectPostbox(c) }
+                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
                     }
                 }
                 SettingsFormSection {
