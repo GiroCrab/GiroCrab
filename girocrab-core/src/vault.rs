@@ -367,6 +367,9 @@ impl Vault {
         // triggers/views the app never creates (e.g. restored by older versions
         // from a crafted backup) could rewrite device settings on later writes
         let _ = backup::drop_triggers_and_views(conn, "main");
+        // stored secrets of logins whose deletion an older version merged in
+        // from another device
+        let _ = Self::purge_deleted_connection_secrets(conn);
         // categories/rules without a sync key (rows written outside the app's own
         // paths); used to happen as part of the per-open schema probes
         let _ = crate::sync_merge::fill_missing_uuids(conn);
@@ -375,10 +378,23 @@ impl Vault {
         // fold MoneyMoney accounts a merge added next to the bank account
         // that took them over (keeps bookings)
         let _ = crate::sync_merge::twins::fold_twins(conn);
+        // card holds an older „Abrufweg umstellen“ turned into bookings (#1134)
+        let _ = connections::drop_switched_holds(conn);
         // repair "MÃ¼ller" -> "Müller" stored by older versions
         let _ = crate::text::repair_stored_text(conn);
         // one-time purge of favicons that don't belong to a known brand
         let _ = crate::insights::purge_untrusted_logos(conn);
+    }
+
+    fn purge_deleted_connection_secrets(conn: &Connection) -> CoreResult<()> {
+        let ids: Vec<i64> = conn
+            .prepare("SELECT id FROM bank_connections WHERE deleted_ms IS NOT NULL")?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        for id in ids {
+            Self::purge_connection_secrets(conn, id)?;
+        }
+        Ok(())
     }
 
     fn migrate(conn: &mut Connection) -> CoreResult<()> {
