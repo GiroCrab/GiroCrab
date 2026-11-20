@@ -51,6 +51,8 @@ Sheet {
     /// comdirect logins can switch between FinTS and comdirect's own API.
     readonly property bool isComdirect: kind === "Comdirect"
         || (kind === "FinTsGeneric" && ["20041111", "20041133", "20041144", "20041155"].indexOf(connection.bank_code) >= 0)
+    /// Consorsbank via FinTS: documents from the Online-Archiv as well (#1024).
+    readonly property bool isConsorsbankFinTS: kind === "FinTsGeneric" && connection.bank_code === "76030080"
     readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
     /// ConnectionsUI.swift › ConnectionEditSheet: these portals take a password, not a PIN
     readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
@@ -116,7 +118,7 @@ Sheet {
         pin = ""
         status = AppModel.connectionStatus(connection.id)
         storePin = status ? status.has_pin : false
-        postbox = isComdirect && kind === "FinTsGeneric" ? AppModel.comdirectPostbox(connection.id) : false
+        postbox = (isComdirect || isConsorsbankFinTS) && kind === "FinTsGeneric" ? AppModel.comdirectPostbox(connection.id) : false
         documentsSupported = AppModel.documentsFetchSupported(connection.id)
         documentsFetch = AppModel.documentsFetchEnabled(connection.id)
         initialDocumentsFetch = documentsFetch
@@ -409,6 +411,37 @@ Sheet {
                     title: qsTr("Kontenauswahl")
                     // saved by the sheet's own Speichern, so there is a single place to confirm (#720)
                     AccountSelectionList { id: selection; connection: sheet.visible ? sheet.connection : null; showsSaveButton: false }
+                }
+                // Consorsbank via FinTS: documents from the Online-Archiv as well (#1024)
+                SettingsFormSection {
+                    visible: sheet.isConsorsbankFinTS
+                    title: qsTr("Online-Archiv")
+                    footer: qsTr("Kontoauszüge, Abrechnungen, Depotauszüge und Steuerdokumente aus dem Online-Archiv der Consorsbank, höchstens einmal pro Woche beim Abruf. GiroCrab meldet sich dafür mit Kontonummer und PIN dieses Zugangs im Online-Banking an, die Anmeldung geben Sie in der Consorsbank App frei. Die Schnittstelle ist inoffiziell. Gespeicherte Dokumente werden nicht erneut geladen, denn jeder Abruf markiert ein Dokument bei der Bank als gelesen.")
+                    CheckBox {
+                        text: qsTr("Online-Archiv abrufen")
+                        checked: sheet.postbox
+                        enabled: !sheet.documentsBlocked
+                        onToggled: {
+                            AppModel.setComdirectPostbox(sheet.connection.id, checked)
+                            sheet.postbox = AppModel.comdirectPostbox(sheet.connection.id)
+                            checked = Qt.binding(() => sheet.postbox)
+                        }
+                    }
+                    RowLayout {
+                        visible: sheet.documentsBlocked
+                        Layout.fillWidth: true
+                        spacing: 4
+                        SFIcon { symbol: "info.circle"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop }
+                        Text { text: qsTr("Wird nicht abgerufen, solange „Dokumente abrufen“ oben ausgeschaltet ist.")
+                               font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
+                    Button {
+                        visible: sheet.postbox
+                        text: qsTr("Online-Archiv jetzt abrufen")
+                        icon.name: SF.icon("tray.and.arrow.down")
+                        enabled: AppModel.syncingConnectionID === null && !sheet.documentsBlocked
+                        onClicked: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.fetchComdirectPostbox(c) }
+                    }
                 }
                 SettingsFormSection {
                     title: qsTr("Status")

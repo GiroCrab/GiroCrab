@@ -2082,12 +2082,12 @@ QtObject {
             } else if (postboxConnectionID === connection.id) {
                 postboxConnectionID = null
                 documentsVersion++
-                toast = syncNotice(connection, s) + " · " + postboxNote(s)
+                toast = syncNotice(connection, s) + " · " + postboxNote(s, connection)
             } else {
                 // scheduled syncs only speak up when something changed
                 if (quietSyncConnectionID !== connection.id || s.transactions_imported > 0 || s.new_accounts.length || s.revoked_accounts.length) {
                     toast = syncNotice(connection, s)
-                    if (s.postbox_documents > 0) toast += " · " + postboxNote(s)
+                    if (s.postbox_documents > 0) toast += " · " + postboxNote(s, connection)
                 }
                 if (s.postbox_documents > 0) documentsVersion++
             }
@@ -2131,6 +2131,12 @@ QtObject {
         if (id === null) return
         coreAsync("session_poll", { session: id }, step => { if (activeSession === id) handleStep(step, connection) },
                   err => { if (activeSession === id) finishSync(err, connection) })
+    }
+    /// Consorsbank Online-Archiv (#1024): the approval dialog's link switches between the
+    /// app approval and a typed TAN ("TAN" / "APP", handled in `consorsbank_archive.rs`).
+    function switchApproval(word) {
+        pollTimer.stop()
+        submitCode(word)
     }
     function submitCode(code) {
         if (activeTransfer !== null && activeChallenge) { submitTransferCode(code); return }
@@ -2780,8 +2786,15 @@ QtObject {
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect PostBox.
-    function postboxNote(s) {
+    /// Toast suffix of a sync with the comdirect PostBox (#838) or the Consorsbank Online-Archiv (#1024).
+    function postboxNote(s, c) {
+        const n = s.postbox_documents
+        if (c && c.connector === "FinTsGeneric" && c.bank_code === "76030080") {
+            if (n === null || n === undefined)
+                return qsTr("Online-Archiv nicht abgerufen. Bitte PIN und Freigabe in der Consorsbank App prüfen.")
+            return n === 0 ? qsTr("keine neuen Dokumente aus dem Online-Archiv")
+                : qsTr("%1 neue Dokumente aus dem Online-Archiv").arg(n)
+        }
         if (s.postbox_documents === null || s.postbox_documents === undefined)
             return qsTr("PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
         return s.postbox_documents === 0 ? qsTr("keine neuen PostBox-Dokumente")
