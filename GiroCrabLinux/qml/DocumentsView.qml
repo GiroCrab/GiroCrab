@@ -69,6 +69,12 @@ Rectangle {
         const a = id === null || id === AppModel.documentsWithoutAccount ? null : AppModel.account(id)
         return a ? a.name : ""
     }
+    /// The account of a document; with its owner when another account has the same name (#954).
+    function accountText(d) {
+        const a = d.account_id === null || d.account_id === undefined ? null : AppModel.account(d.account_id)
+        if (a) return AppModel.accountLabel(a)
+        return d.account_name || qsTr("Ohne Konto")
+    }
     /// The documents the export was started for (null: all).
     property var exportIDs: null
     /// A dropped or added receipt is stored as read, with today's type and year: no filter may hide it.
@@ -164,7 +170,7 @@ Rectangle {
                     columnSpacing: 12; rowSpacing: 8
                     // same order and groups as the sidebar (#412)
                     AppComboBox {
-                        readonly property var options: AppModel.accountMenuOptions(a => a.name, true)
+                        readonly property var options: AppModel.accountMenuOptions(a => AppModel.accountLabel(a), true)
                         Layout.minimumWidth: 150; Layout.maximumWidth: 270; Layout.fillWidth: true
                         model: options
                         textRole: "title"
@@ -283,7 +289,7 @@ Rectangle {
                             Text { text: modelData.title; font.pixelSize: Theme.body + 1; font.weight: modelData.seen ? Font.Medium : Font.Bold; color: Theme.text
                                    wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true
                                    Sensitive { amounts: true } }   // DocumentsUI.swift: [.personal, .amounts]
-                            Text { text: DocumentsScope.originTitle(modelData) + " · " + (modelData.account_name || qsTr("Ohne Konto"))
+                            Text { text: DocumentsScope.originTitle(modelData) + " · " + view.accountText(modelData)
                                    font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                             Text { text: modelData.booking_label || qsTr("Ohne zugeordneten Umsatz"); font.pixelSize: Theme.caption
                                    color: !modelData.booking_label && !docRow.bank ? Theme.warning : Theme.secondary

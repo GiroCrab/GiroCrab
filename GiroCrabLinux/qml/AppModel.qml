@@ -1429,6 +1429,25 @@ QtObject {
         }
         return sections.filter(s => s.accounts.length > 0)
     }
+    /// AccountGroupsModel.swift (#954): the other accounts carrying the same name (two "Konto flex"
+    /// of different holders).
+    function namesakes(a) { return Object.values(accountsByID).filter(o => o.id !== a.id && o.name === a.name) }
+    function hasNamesake(a) { return namesakes(a).length > 0 }
+    /// What tells the account apart from its namesakes: its owner, or – when it has none or a
+    /// namesake has the same – the end of its IBAN / account number. Empty without a namesake.
+    function accountDistinction(a) {
+        const others = namesakes(a)
+        if (!others.length) return ""
+        const owner = a.owner || ""
+        if (owner !== "" && !others.some(o => (o.owner || "") === owner)) return owner
+        const number = (a.iban ? a.iban : (a.account_number || "")).replace(/\s/g, "")
+        return number === "" ? owner : "…" + number.slice(-4)
+    }
+    /// The account's name, with what tells it apart when another account has the same name.
+    function accountLabel(a) {
+        const d = accountDistinction(a)
+        return d === "" ? a.name : a.name + " · " + d
+    }
     /// Combo box entries: "Alle Konten", then each section title and its accounts (`label(a)`).
     function accountMenuOptions(label, withoutAccount) {
         const out = [{ id: null, title: qsTr("Alle Konten") }]
