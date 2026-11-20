@@ -184,7 +184,9 @@ extension AppModel {
     /// `keepingShown`: the data changed under the same selection (sync, merge), so the old
     /// list stays until the new one arrives instead of showing the placeholder.
     func startSelectionLoad(keepingShown: Bool = false) {
-        orderCurrencySummaries = []
+        // `keepingShown` keeps the shown order summaries too: a failed
+        // background refresh must not blank the tiles (review #1471); the
+        // placeholder path above clears them
         selectionPlaceholderTask?.cancel()
         selectionPlaceholderTask = nil
         selectionLoadTask?.cancel()
@@ -269,8 +271,10 @@ extension AppModel {
                 self.showSelection()
                 if self.streamTopPending { self.scrollStreamTop() }
                 let publish = Perf.signposter.beginInterval("publishSelection")
-                self.publish(loaded.page)
+                // the summaries first: running and day balances read their
+                // currency while the page publishes (review #1471)
                 self.orderCurrencySummaries = loaded.orders
+                self.publish(loaded.page)
                 if orderIDs == nil {
                     self.selectionFlow = (loaded.flow.consumptionCents, loaded.flow.investedCents, loaded.flow.incomeCents)
                 } else {

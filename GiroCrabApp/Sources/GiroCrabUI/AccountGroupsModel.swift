@@ -578,8 +578,13 @@ extension AppModel {
         } catch {
             errorMessage = describe(error)
         }
-        reloadAccounts()
-        if kindChanged { dashboardStale = true }
+        // a kind change moves the account and can change the effective total
+        // set (#337 order default): the same full refresh as the context menu
+        if kindChanged {
+            afterGroupChange()
+        } else {
+            reloadAccounts()
+        }
     }
 
     func renameAccount(_ accountId: Int64, to name: String) {

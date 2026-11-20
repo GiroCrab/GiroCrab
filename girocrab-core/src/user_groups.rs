@@ -989,7 +989,11 @@ impl Vault {
         // Verfügbar / wealth / dashboard filter exactly as before (#337).
         let sum = |v: &[Account]| {
             v.iter()
-                .filter(|a| a.currency == "EUR" && (a.in_total || a.kind == AccountKind::Order))
+                .filter(|a| {
+                    a.currency == "EUR"
+                        && (a.in_total
+                            || (a.kind == AccountKind::Order && a.archived_unix.is_none()))
+                })
                 .map(|a| a.balance_cents)
                 .sum()
         };

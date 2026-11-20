@@ -1162,6 +1162,18 @@ fn amended_amazon_credit_syncs_in_both_directions() {
             .credit_value_cents,
         2000
     );
+    // the receiving side's derived balance follows the corrected amount
+    // (order 45,98 + credit 20,00 = -25,98), never the stale pre-merge figure
+    assert_eq!(
+        b.list_accounts()
+            .unwrap()
+            .iter()
+            .find(|x| x.id == bb.id)
+            .unwrap()
+            .balance_cents,
+        -2598,
+        "derived balance recomputed with the merged amount"
+    );
     a.merge_other_vault(b.file_path(), KEY.to_vec()).unwrap();
     assert_eq!(
         a.order_account_summary(aa, None, None)
@@ -1243,6 +1255,15 @@ fn switching_to_order_kind_starts_excluded_but_keeps_later_opt_in() {
     assert!(
         v.list_accounts().unwrap()[0].include_in_total,
         "same-kind update must keep explicit opt-in"
+    );
+    // round trip through another kind: the explicit opt-in survives the way
+    // back into the order kind (only never-touched accounts default excluded)
+    v.set_account_kind(id, AccountKind::Checking).unwrap();
+    assert!(v.list_accounts().unwrap()[0].include_in_total);
+    v.set_account_kind(id, AccountKind::Order).unwrap();
+    assert!(
+        v.list_accounts().unwrap()[0].include_in_total,
+        "an explicit opt-in survives the round trip through another kind"
     );
 }
 

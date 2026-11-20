@@ -233,6 +233,9 @@ pub(crate) fn merge_bookings(
     let mut fp_rows: Vec<((i64, String, bool), (String, i64))> = Vec::new();
     let mut local: HashMap<i64, BookingFields> = HashMap::new();
     let mut local_amounts: HashMap<i64, (i64, i64)> = HashMap::new();
+    // refund ids carry the amount as their last segment (#337): the same
+    // captured row under a rising cumulative value — match by the prefix
+    let mut refund_keys: HashMap<(i64, String), i64> = HashMap::new();
     {
         let mut st = conn.prepare(
             // includes soft-deleted rows
@@ -248,6 +251,11 @@ pub(crate) fn merge_bookings(
             let acc: i64 = r.get(1)?;
             let ext: String = r.get(2)?;
             by_key.insert((acc, ext.clone()), id);
+            if ext.starts_with("amazon-refund:")
+                && let Some((prefix, _)) = ext.rsplit_once(':')
+            {
+                refund_keys.insert((acc, format!("{prefix}:")), id);
+            }
             let fp = match_fingerprint(
                 r.get(3)?,
                 &r.get::<_, String>(16)?,
@@ -384,24 +392,35 @@ pub(crate) fn merge_bookings(
         );
         o.fields.splits = other_splits.remove(&o.id).unwrap_or_default();
         o.fields.tags = other_tags.remove(&o.id).unwrap_or_default();
+        let refund_prefix = || {
+            o.external_id
+                .starts_with("amazon-refund:")
+                .then(|| o.external_id.rsplit_once(':').map(|(p, _)| format!("{p}:")))
+                .flatten()
+        };
         let existing = match by_key.get(&(acc, o.external_id.clone())) {
             Some(&id) => Some((id, false)),
-            None => match by_fp.get_mut(&(acc, o.match_fp.clone(), is_hold_id(&o.external_id))) {
-                Some(bucket) if !bucket.is_empty() => {
-                    let (ext, id) = bucket.remove(0);
-                    let key = canonical_external_id(&ext, &o.external_id).to_string();
-                    let renamed = key != ext;
-                    if renamed {
-                        conn.execute(
-                            "UPDATE transactions SET external_id = ?2 WHERE id = ?1",
-                            params![id, key],
-                        )?;
-                        by_key.remove(&(acc, ext));
-                        by_key.insert((acc, key), id);
+            None => match refund_prefix().and_then(|p| refund_keys.get(&(acc, p))) {
+                // the amount-free identity of the same cumulative refund
+                Some(&id) => Some((id, true)),
+                None => match by_fp.get_mut(&(acc, o.match_fp.clone(), is_hold_id(&o.external_id)))
+                {
+                    Some(bucket) if !bucket.is_empty() => {
+                        let (ext, id) = bucket.remove(0);
+                        let key = canonical_external_id(&ext, &o.external_id).to_string();
+                        let renamed = key != ext;
+                        if renamed {
+                            conn.execute(
+                                "UPDATE transactions SET external_id = ?2 WHERE id = ?1",
+                                params![id, key],
+                            )?;
+                            by_key.remove(&(acc, ext));
+                            by_key.insert((acc, key), id);
+                        }
+                        Some((id, renamed))
                     }
-                    Some((id, renamed))
-                }
-                _ => None,
+                    _ => None,
+                },
             },
         };
         match existing {
@@ -416,6 +435,15 @@ pub(crate) fn merge_bookings(
                     conn.execute(
                         "UPDATE transactions SET amount_cents=?2, amount_ms=?3 WHERE id=?1",
                         params![id, o.amount.0, o.amount.1],
+                    )?;
+                    // the merged booking's account carries a derived balance
+                    // (#337): it follows the corrected amount, so the received
+                    // side does not keep the stale figure a re-import cannot
+                    // repair (the amount already matches then)
+                    conn.execute(
+                        "UPDATE accounts SET balance_cents = balance_cents + ?2
+                          WHERE id = ?1 AND balance_derived = 1",
+                        params![acc, o.amount.0 - previous.0],
                     )?;
                     local_amounts.insert(id, o.amount);
                 }

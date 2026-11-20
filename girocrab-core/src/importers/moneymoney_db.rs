@@ -3002,8 +3002,8 @@ impl ImportCtx<'_> {
         let gid = Vault::ensure_group(conn, group, sym, order)?;
         conn.execute(
             "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3, balance_cents = ?4, balance_date = ?5,
-                include_in_total = CASE WHEN ?1 = 'order' AND kind <> 'order' THEN 0 ELSE include_in_total END,
-                total_ms = CASE WHEN ?1 = 'order' AND kind <> 'order' AND include_in_total <> 0 THEN MAX(?7, total_ms + 1) ELSE total_ms END
+                include_in_total = CASE WHEN ?1 = 'order' AND kind <> 'order' AND total_ms = 0 THEN 0 ELSE include_in_total END,
+                total_ms = CASE WHEN ?1 = 'order' AND kind <> 'order' AND total_ms = 0 AND include_in_total <> 0 THEN MAX(?7, total_ms + 1) ELSE total_ms END
              WHERE id = ?6",
             params![kind.as_str(), kind.sf_symbol(), gid, r.balance_cents, r.balance_date, account_id, now_ms()],
         )?;

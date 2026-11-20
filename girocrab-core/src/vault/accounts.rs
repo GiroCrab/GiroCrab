@@ -601,7 +601,11 @@ impl Vault {
                 // even while the overall money totals keep them out (#337).
                 let balance = accs
                     .iter()
-                    .filter(|a| a.currency == "EUR" && (a.in_total || a.kind == AccountKind::Order))
+                    .filter(|a| {
+                        a.currency == "EUR"
+                            && (a.in_total
+                                || (a.kind == AccountKind::Order && a.archived_unix.is_none()))
+                    })
                     .map(|a| a.balance_cents)
                     .sum();
                 AccountGroup {
@@ -789,7 +793,8 @@ impl Vault {
         Ok(())
     }
 
-    /// Order counts and gross order/credit values for the inclusive period.
+    /// Order counts and gross order/credit values for the inclusive period, in
+    /// the account's own booking currency (never a mix across currencies).
     /// Uses SQL over the full evidence, regardless of list pagination or inclusion in totals.
     pub fn order_account_summary(
         &self,
@@ -804,6 +809,7 @@ impl Vault {
                     COALESCE(SUM(CASE WHEN amount_cents<0 THEN -amount_cents ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN amount_cents>0 THEN amount_cents ELSE 0 END),0)
              FROM transactions WHERE account_id=?1 AND deleted_ms IS NULL
+               AND currency = (SELECT currency FROM accounts WHERE id = ?1)
                AND (?2 IS NULL OR booking_date>=?2) AND (?3 IS NULL OR booking_date<=?3)",
             params![account_id, date_from, date_to],
             |r| {
@@ -904,8 +910,8 @@ impl Vault {
         let gid = Self::ensure_group(&tx, group, sym, order)?;
         let n = tx.execute(
             "UPDATE accounts SET kind = ?1, group_id = ?2,
-                include_in_total=CASE WHEN ?1='order' AND kind<>'order' THEN 0 ELSE include_in_total END,
-                total_ms=CASE WHEN ?1='order' AND kind<>'order' AND include_in_total<>0 THEN MAX(?4,total_ms+1) ELSE total_ms END
+                include_in_total=CASE WHEN ?1='order' AND kind<>'order' AND total_ms=0 THEN 0 ELSE include_in_total END,
+                total_ms=CASE WHEN ?1='order' AND kind<>'order' AND total_ms=0 AND include_in_total<>0 THEN MAX(?4,total_ms+1) ELSE total_ms END
              WHERE id = ?3",
             params![kind.as_str(), gid, account_id, crate::dates::now_ms()],        )?;
         if n == 0 {

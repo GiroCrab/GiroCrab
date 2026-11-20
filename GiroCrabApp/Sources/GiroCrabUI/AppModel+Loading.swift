@@ -555,9 +555,6 @@ extension AppModel {
     /// Currency of the running balances, KPIs and chart: that of the accounts the list shows
     /// (one account, also a group or filter that narrows to one, its own; else the EUR sum).
     var balanceCurrency: String {
-        // a pure order selection is an evidence context (#337): primary
-        // booking currency, never a converted sum
-        if isOrderSelection { return orderSelectionCurrency ?? "EUR" }
         switch sidebarSelection {
         case .documents, .planned, .directDebits, .wealth, .none: return "EUR"
         default: return sumCurrency(forAccounts: currentFilter.accountIds)
@@ -885,9 +882,14 @@ extension AppModel {
     /// view is an evidence context (#337): order tiles instead of money KPIs
     /// and no balance chart — although the overall money totals keep these
     /// accounts out. Mixed selections stay money contexts.
-    var orderSelectionAccountIDs: [Int64]? {
+    var orderSelectionAccountIDs: [Int64]? { orderSelectionAccountIDs(of: sidebarSelection) }
+
+    /// The same test for an explicit selection: the loading path passes the
+    /// requested selection, the display flag the shown one (an interactive
+    /// switch changes the request before the data publishes, #1471).
+    func orderSelectionAccountIDs(of selection: SidebarItem?) -> [Int64]? {
         let accounts: [Account]?
-        switch sidebarSelection {
+        switch selection {
         case .account(let id):
             accounts = account(for: id).map { [$0] }
         case .group(let gid):
@@ -903,8 +905,9 @@ extension AppModel {
         return accs.map(\.id)
     }
 
-    /// The selection shows order evidence instead of money KPIs.
-    var isOrderSelection: Bool { orderSelectionAccountIDs != nil }
+    /// The shown selection displays order evidence instead of money KPIs —
+    /// the displayed data, not the requested one, decides (review #1471).
+    var isOrderSelection: Bool { orderSelectionAccountIDs(of: shownSelection) != nil }
 
     /// Primary-currency evidence of the selection (EUR first, else the entry
     /// with the largest order value) — what the tiles and the header show.

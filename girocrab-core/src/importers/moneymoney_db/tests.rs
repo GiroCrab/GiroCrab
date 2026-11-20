@@ -3695,9 +3695,25 @@ fn order_import_defaults_off_and_keeps_explicit_opt_in_on_reimport() {
         assert_eq!(account.kind, AccountKind::Order);
         assert!(!account.include_in_total);
         v.set_account_include_in_total(account.id, true).unwrap();
-        v.import_moneymoney_database(path, PW.into(), options)
+        v.import_moneymoney_database(path.clone(), PW.into(), options.clone())
             .unwrap();
         assert!(account_by_name(&v, "Visa-Karte").include_in_total);
+        // round trip through another kind: the explicit opt-in survives the
+        // way back into the order kind (only never-touched accounts default
+        // excluded, review point on #1471)
+        let mut switched = options.clone();
+        for c in &mut switched.accounts {
+            c.kind = AccountKind::Checking;
+        }
+        v.import_moneymoney_database(path.clone(), PW.into(), switched)
+            .unwrap();
+        assert!(account_by_name(&v, "Visa-Karte").include_in_total);
+        v.import_moneymoney_database(path, PW.into(), options)
+            .unwrap();
+        assert!(
+            account_by_name(&v, "Visa-Karte").include_in_total,
+            "the explicit opt-in survives the way back into the order kind"
+        );
     }
 }
 

@@ -161,7 +161,7 @@ struct StreamHeaderCard: View {
                                 .foregroundStyle(Theme.secondary)
                                 .lineLimit(1)
                                 .help("Weitere Währungen werden nicht umgerechnet und nicht in die Summe einbezogen.")
-                        } else if account == nil, model.isOrderSelection, !model.orderSelectionExtraCurrencies.isEmpty {
+                        } else if model.isOrderSelection, !model.orderSelectionExtraCurrencies.isEmpty {
                             // order evidence in further currencies: a note, never summed (#337)
                             Text("Zusätzlich: \(model.orderSelectionExtraCurrencies.map { Money.format($0.cents, currency: $0.currency) }.joined(separator: " · "))")
                                 .sensitive()
@@ -620,7 +620,7 @@ struct KPI: View {
             Spacer(minLength: 2)
             Text(subtitle).appFont(.caption2).foregroundStyle(Theme.tertiary)
                 .lineLimit(2)
-                .sensitive(subtitleIsSensitive ? .personal : [])
+                .sensitive(subtitleIsSensitive ? [.personal, .amounts] : [])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, 10)

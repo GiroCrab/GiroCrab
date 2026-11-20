@@ -56,7 +56,7 @@ struct BookingStreamView: View {
                         if emptyVault {
                             EmptyVaultCard()
                         }
-                        if !emptyVault && model.scope != .investments {
+                        if !emptyVault && !(model.scope == .investments && model.isOrderSelection) {
                             MerchantLogoTipView()
                         }
                         StreamAnalysisCards(isOverview: isOverview, isNewBookings: isNewBookings, hasAccounts: !model.allAccounts.isEmpty && !model.isOrderSelection)

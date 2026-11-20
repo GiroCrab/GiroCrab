@@ -368,7 +368,10 @@ impl Vault {
     ) -> Result<(), CoreError> {
         let account_ref = format!("amazon-orders-{connection_id}");
         let db = self.db()?;
-        let Ok(acc_id) = db.query_row(
+        // one transaction for every correction: amount and balance commit
+        // together, so a retry after a failure applies both again
+        let tx = db.unchecked_transaction()?;
+        let Ok(acc_id) = tx.query_row(
             "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref = ?2 AND archived_unix IS NULL AND deleted_ms IS NULL",
             rusqlite::params![connection_id, account_ref],
             |r| r.get::<_, i64>(0),
@@ -385,7 +388,7 @@ impl Vault {
                 |r: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, String, i64, i64, Option<i64>)> {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
                 };
-            let mut old = db
+            let mut old = tx
                 .query_row(
                     "SELECT id, external_id, amount_cents, amount_ms, deleted_ms FROM transactions
                  WHERE account_id=?1 AND external_id=?2",
@@ -398,7 +401,7 @@ impl Vault {
             {
                 // Indexed range lookup, not one full account scan per order.
                 let upper = format!("{prefix}\u{10ffff}");
-                old = db.query_row(
+                old = tx.query_row(
                     "SELECT id, external_id, amount_cents, amount_ms, deleted_ms FROM transactions
                      WHERE account_id=?1 AND external_id>=?2 AND external_id<?3
                      ORDER BY id DESC LIMIT 1",
@@ -412,11 +415,11 @@ impl Vault {
                 }
                 if old != b.cents {
                     let stamp = crate::dates::now_ms().max(amount_ms + 1);
-                    db.execute(
+                    tx.execute(
                         "UPDATE transactions SET amount_cents=?1, amount_ms=?3 WHERE id=?2",
                         rusqlite::params![b.cents, id, stamp],
                     )?;
-                    db.execute(
+                    tx.execute(
                         "UPDATE accounts SET balance_cents=balance_cents+?1 WHERE id=?2",
                         rusqlite::params![b.cents - old, acc_id],
                     )?;
@@ -426,6 +429,7 @@ impl Vault {
                 b.id = external_id;
             }
         }
+        tx.commit()?;
         Ok(())
     }
 }
