@@ -636,7 +636,9 @@ fn edenred_body(v: &Value) -> Option<Value> {
         .as_array()
         .cloned()
         .unwrap_or_else(|| vec![data.clone()]);
-    if items.iter().any(|i| i.get("operation_ref").is_some()) {
+    // An empty list is the booking list of a card without (or with only declined)
+    // operations: it must count as present, or the visible table would be read instead.
+    if items.is_empty() || items.iter().any(|i| i.get("operation_ref").is_some()) {
         let tx: Vec<Value> = items
             .iter()
             .filter(|i| {
@@ -2297,33 +2299,37 @@ mod tests {
 
     #[test]
     fn declined_edenred_operations_never_come_back_from_the_table() {
-        let dir = crate::test_support::TempDir::new("girocrab-edenred-declined");
-        let v = Vault::open(
-            dir.join("v.db").to_string_lossy().to_string(),
-            vec![3u8; 32],
-        )
-        .unwrap();
-        let conn = v
-            .add_bank_connection(ConnectorKind::Edenred, String::new(), "Edenred".into())
-            .unwrap();
-        let ops = r#"{"data":[{"operation_ref":"OP3","date":"2026-11-13T12:00:00.000Z","status":"declined","outlet":{"name":"Bistro"},"transaction_details":{"wallets":[{"amount":-990}]}}]}"#.to_string();
-        let cards =
-            r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":2500}]}]}"#.to_string();
-        // the page shows the declined payment in its table
-        let rows = r#"[["13.11.2026","Bistro","-9,90"]]"#.to_string();
-        v.clone()
-            .import_portal_capture(conn, vec![ops, cards], rows)
-            .unwrap();
-        let n: i64 = v
-            .db()
-            .unwrap()
-            .query_row(
-                "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL",
-                [],
-                |r| r.get(0),
+        let declined = r#"{"data":[{"operation_ref":"OP3","date":"2026-11-13T12:00:00.000Z","status":"declined","outlet":{"name":"Bistro"},"transaction_details":{"wallets":[{"amount":-990}]}}]}"#;
+        let empty = r#"{"data":[],"meta":{"status":"ok"}}"#;
+        for (i, ops) in [declined, empty].into_iter().enumerate() {
+            let dir = crate::test_support::TempDir::new(&format!("girocrab-edenred-declined-{i}"));
+            let v = Vault::open(
+                dir.join("v.db").to_string_lossy().to_string(),
+                vec![3u8; 32],
             )
             .unwrap();
-        assert_eq!(n, 0);
+            let conn = v
+                .add_bank_connection(ConnectorKind::Edenred, String::new(), "Edenred".into())
+                .unwrap();
+            let cards =
+                r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":2500}]}]}"#.to_string();
+            // the page (still) shows the declined payment in its table
+            let rows = r#"[["13.11.2026","Bistro","-9,90"]]"#.to_string();
+            let bodies = vec![ops.to_string(), cards];
+            let c = parse_capture(&bodies, ConnectorKind::Edenred);
+            assert!(c.bookings_listed, "case {i}");
+            v.clone().import_portal_capture(conn, bodies, rows).unwrap();
+            let n: i64 = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 0, "case {i}");
+        }
     }
 
     #[test]
