@@ -715,7 +715,13 @@ pub(crate) fn parse_capture(bodies: &[String], kind: ConnectorKind) -> Capture {
         };
         walk(&v, kind, false, &mut c);
         card_directory(&v, &mut cards);
-        if c.balance.is_none() {
+        // Edenred reloads its card list while the portal is open: the latest
+        // reported balance counts; a body without one keeps the earlier one.
+        if kind == ConnectorKind::Edenred {
+            if let Some(b) = find_balance(&v, kind) {
+                c.balance = Some(b);
+            }
+        } else if c.balance.is_none() {
             c.balance = find_balance(&v, kind);
         }
     }
@@ -1769,7 +1775,9 @@ impl Vault {
         balance: Option<i64>,
     ) -> Result<SyncSummary, CoreError> {
         let (kind, name) = self.portal_connection(connection_id)?;
-        if parsed.is_empty() && (holds.is_empty() || balance.is_none()) {
+        // Edenred: the balance alone is worth storing (a card without bookings)
+        let balance_only = kind == ConnectorKind::Edenred && balance.is_some();
+        if parsed.is_empty() && !balance_only && (holds.is_empty() || balance.is_none()) {
             return Err(CoreError::InvalidInput {
                 message: tr("Keine Umsätze erkannt.").into(),
             });
@@ -1930,6 +1938,10 @@ impl Vault {
         if c.posted.is_empty() && c.pending.is_empty() {
             let rows: Vec<Vec<String>> = serde_json::from_str(&dom_rows_json).unwrap_or_default();
             n = parse_dom_rows(&rows, kind).len();
+        }
+        // Edenred: a card without bookings (new or used up) still brings its balance
+        if n == 0 && kind == ConnectorKind::Edenred && c.balance.is_some() {
+            n = 1;
         }
         Ok(n as u32)
     }
@@ -2271,6 +2283,53 @@ mod tests {
         let empty = r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":0}]}]}"#;
         let c = parse_capture(&[empty.to_string()], ConnectorKind::Edenred);
         assert_eq!(c.balance.map(|(_, b)| b), Some(0));
+    }
+
+    #[test]
+    fn edenred_takes_the_latest_balance() {
+        let cards = |cents: i64| {
+            format!(r#"{{"data":[{{"card_ref":"C1","wallets":[{{"total_balance":{cents}}}]}}]}}"#)
+        };
+        let other = r#"{"data":{"cardOrigin":"x"}}"#.to_string();
+        let c = parse_capture(
+            &[cards(4250), other.clone(), cards(3510), other],
+            ConnectorKind::Edenred,
+        );
+        assert_eq!(c.balance.map(|(_, b)| b), Some(3510));
+    }
+
+    #[test]
+    fn an_edenred_card_without_bookings_brings_its_balance() {
+        let dir = crate::test_support::TempDir::new("girocrab-edenred-balance-only");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![3u8; 32],
+        )
+        .unwrap();
+        let conn = v
+            .add_bank_connection(ConnectorKind::Edenred, String::new(), "Edenred".into())
+            .unwrap();
+        let cards =
+            r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":2500}]}]}"#.to_string();
+        assert_eq!(
+            v.clone()
+                .preview_portal_capture(conn, vec![cards.clone()], "[]".into())
+                .unwrap(),
+            1
+        );
+        v.clone()
+            .import_portal_capture(conn, vec![cards], "[]".into())
+            .unwrap();
+        let (balance, kind): (i64, String) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT balance_cents, kind FROM accounts WHERE deleted_ms IS NULL",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((balance, kind.as_str()), (2500, "payment_service"));
     }
 
     #[test]
