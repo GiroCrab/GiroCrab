@@ -2724,7 +2724,7 @@ QtObject {
     }
     /// AccountKind.importChoices with their labels.
     readonly property var accountKindChoices: [
-        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") },
+        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") }, { id: "TimeDeposit", text: qsTr("Festgeld") },
         { id: "CreditCard", text: qsTr("Kreditkarte") }, { id: "PaymentService", text: qsTr("Zahlungsdienst") },
         { id: "Brokerage", text: qsTr("Depot") }, { id: "Cash", text: qsTr("Bargeld") }, { id: "Loan", text: qsTr("Darlehen") }
     ]

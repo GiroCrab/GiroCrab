@@ -668,12 +668,13 @@ extension Result where Failure == Error {
 
 /// Account kinds the user can pick (import, Konto-Einstellungen), on Mac and iPhone.
 extension AccountKind {
-    static let importChoices: [AccountKind] = [.checking, .savings, .creditCard, .paymentService, .brokerage, .cash, .loan]
+    static let importChoices: [AccountKind] = [.checking, .savings, .timeDeposit, .creditCard, .paymentService, .brokerage, .cash, .loan]
 
     var label: String {
         switch self {
         case .checking: return String(localized: "Girokonto")
         case .savings: return String(localized: "Tagesgeld / Sparen")
+        case .timeDeposit: return String(localized: "Festgeld")
         case .creditCard: return String(localized: "Kreditkarte")
         case .paymentService: return String(localized: "Zahlungsdienst")
         case .brokerage: return String(localized: "Depot")

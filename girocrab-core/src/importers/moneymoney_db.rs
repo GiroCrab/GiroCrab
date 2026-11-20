@@ -768,13 +768,14 @@ fn suggest_kind(a: &SrcAccount, bank_name: &str) -> AccountKind {
         AccountKind::CreditCard
     } else if has_any(&both, &["paypal"]) {
         AccountKind::PaymentService
+    } else if has_any(&name, &["festgeld", "termingeld", "time deposit"]) {
+        AccountKind::TimeDeposit
     } else if has_any(
         &name,
         &[
             "tagesgeld",
             "sparkonto",
             "sparbuch",
-            "festgeld",
             "geldmarkt",
             "savings",
             "extra-konto",

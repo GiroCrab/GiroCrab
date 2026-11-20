@@ -13870,6 +13870,17 @@
         }
       }
     },
+    "Festgeld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fixed-term deposit"
+          }
+        }
+      }
+    },
     "Festlegen" : {
       "extractionState" : "manual",
       "localizations" : {

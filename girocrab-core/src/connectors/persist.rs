@@ -417,6 +417,7 @@ pub(crate) fn store_fetch(
                     // (same contract id), which must not stay a savings account.
                     if acc.kind == AccountKind::Brokerage
                         || acc.kind == AccountKind::Savings
+                        || acc.kind == AccountKind::TimeDeposit
                         || (acc.kind == AccountKind::Loan && kind == ConnectorKind::SchwaebischHall)
                     {
                         let (group, sym, order) = group_for(acc.kind);
@@ -1045,6 +1046,7 @@ pub(crate) fn group_for(kind: AccountKind) -> (&'static str, &'static str, i32) 
     match kind {
         AccountKind::Checking
         | AccountKind::Savings
+        | AccountKind::TimeDeposit
         | AccountKind::Cash
         | AccountKind::PaymentService => ("Giro & Tagesgeld", "building.columns", 1),
         AccountKind::CreditCard => ("Kreditkarten", "creditcard", 2),
