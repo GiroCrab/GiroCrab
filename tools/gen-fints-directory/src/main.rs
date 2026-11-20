@@ -6,8 +6,7 @@
 //!
 //! The output depends only on that file and the two lists below. After moving to a
 //! new commit, list the hosts that no longer answer and report those with a known
-//! successor to hbci4java (as in hbci4j/hbci4java#160); `HOSTS` bridges the time
-//! until the fix is there:
+//! successor to hbci4java (as in hbci4j/hbci4java#160):
 //!   grep -v '^#' girocrab-core/data/fints_directory.tsv | cut -f3 | cut -d/ -f3 | sort -u \
 //!     | xargs -P 16 -I{} sh -c 'curl -s -o /dev/null --max-time 20 https://{}/ || echo {}'
 //! (2026-11-20: 15 hosts with 42 rows, mostly codes of merged banks and Sparkassen
@@ -21,22 +20,14 @@ use std::path::Path;
 use std::{env, fs, process};
 
 const ATRUVIA_1: &str = "https://fints1.atruvia.de/cgi-bin/hbciservlet";
-const POSTBANK: &str = "https://hbci.postbank.de/banking/hbci.do";
 
-/// Hosts the dataset lists and the endpoint used instead (`None`: the rows are left out).
-const HOSTS: &[(&str, Option<&str>)] = &[
-    // Earlier directory versions sent every HVB code to this endpoint and stored
-    // connections keep it; both hosts answer, so switch only after a verified login on hbci-01.
-    (
-        "hbci-01.hypovereinsbank.de",
-        Some("https://hbci.hypovereinsbank.de/hbci/hbci.do"),
-    ),
-    // comdirect is listed by the core itself (`fints_directory::COMDIRECT`, once instead
-    // of once per bank code); Commerzbank (with the former Dresdner Bank codes) is
-    // offered through PSD2.
-    ("fints.comdirect.de", None),
-    ("fints.commerzbank.de", None),
-    ("hbci.dresdner-bank.de", None),
+/// Hosts whose rows stay out of the table: comdirect is listed by the core itself
+/// (`fints_directory::COMDIRECT`, once instead of once per bank code), and Commerzbank
+/// (with the former Dresdner Bank codes) is offered through PSD2.
+const EXCLUDED_HOSTS: &[&str] = &[
+    "fints.comdirect.de",
+    "fints.commerzbank.de",
+    "hbci.dresdner-bank.de",
 ];
 
 /// Rows written as listed, over the dataset: (blz, name, url); `None` keeps the
@@ -63,9 +54,6 @@ const PINNED: &[(&str, &str, Option<&str>)] = &[
         "Miles & More Kreditkarte (Deutsche Bank)",
         Some("https://fints.deutsche-bank.de/"),
     ),
-    // Retired Postbank codes, still in fints_presets::POSTBANK_BLZ for older IBANs.
-    ("80010090", "Postbank (BLZ 80010090)", Some(POSTBANK)),
-    ("90010085", "Postbank (BLZ 90010085)", Some(POSTBANK)),
 ];
 
 fn host(url: &str) -> Option<&str> {
@@ -109,11 +97,9 @@ fn main() {
             not_https += 1;
             continue;
         };
-        let url = match HOSTS.iter().find(|r| r.0 == h) {
-            Some(&(_, Some(to))) => to,
-            Some(&(_, None)) => continue,
-            None => url,
-        };
+        if EXCLUDED_HOSTS.contains(&h) {
+            continue;
+        }
         banks.insert(blz, (name, city, url));
     }
     if banks.len() < 2000 {
@@ -144,7 +130,7 @@ fn main() {
          #\n\
          # BLZ -> FinTS 3.0 PIN/TAN endpoint table from hbci4java's blz.properties\n\
          # (LGPL-2.1, github.com/hbci4j/hbci4java, commit {commit}).\n\
-         # Host replacements (HOSTS) and pinned rows (PINNED) are listed in the generator.\n\
+         # Excluded hosts (EXCLUDED_HOSTS) and pinned rows (PINNED) are listed in the generator.\n\
          # Names shared by several bank codes carry the city.\n\
          # Columns (tab-separated): blz, bank name, FinTS URL. Sorted by BLZ.\n"
     );

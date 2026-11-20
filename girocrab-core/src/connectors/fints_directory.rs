@@ -351,7 +351,7 @@ mod tests {
             ("30060601", "https://fints.apobank.de/FinTs30PinTanHttpGate"),
             ("83094495", ATRUVIA),
             ("10070000", "https://fints.deutsche-bank.de/"),
-            ("70020270", "https://hbci.hypovereinsbank.de/hbci/hbci.do"),
+            ("70020270", "https://hbci-01.hypovereinsbank.de/bank/hbci"),
             ("12096597", ATRUVIA_2),
             ("52090000", ATRUVIA),
             ("10010010", POSTBANK),
@@ -492,7 +492,7 @@ mod tests {
         );
         let postbank = search("postbank", 50);
         assert!(postbank.len() >= 10);
-        // one row per bank code, named after its city (the two retired codes after their code)
+        // one row per bank code, named after its city
         assert!(
             postbank
                 .iter()
