@@ -1099,6 +1099,7 @@ impl TradeRepublicConnector {
             .default_headers(h)
             .timeout(std::time::Duration::from_secs(30))
             .redirect(redirect)
+            .referer(false)
             .build()?;
         Ok(c)
     }
