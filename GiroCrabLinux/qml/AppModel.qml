@@ -209,9 +209,10 @@ QtObject {
     property string customPeriodFrom: ""
     property string customPeriodTo: ""
     property string statusFilter: "all"        // all | new | checked
-    onStatusFilterChanged: { listLimit = defaultListLimit; reloadBookings() }
+    // the sidebar's category sums follow status and direction (#621)
+    onStatusFilterChanged: { listLimit = defaultListLimit; reloadBookings(); reloadCategories() }
     property string directionFilter: "All"     // BookingDirection
-    onDirectionFilterChanged: { listLimit = defaultListLimit; reloadBookings() }
+    onDirectionFilterChanged: { listLimit = defaultListLimit; reloadBookings(); reloadCategories() }
     property string searchText: ""
     property Timer searchTimer: Timer { interval: 250; onTriggered: model.reloadBookings() }
     onSearchTextChanged: searchTimer.restart()
@@ -626,8 +627,15 @@ QtObject {
         if (!isUnlocked || selectionLoadTakes("categories")) return
         loadOffMain("categories", () => {
             const r = periodRange()
-            return [["list_categories", { date_from: r[0], date_to: r[1] }]]
+            return [categoriesCall(r)]
         }, r => applyCategories(r[0]))
+    }
+    /// AppModel+Loading.swift › listCategoriesFiltered: the sidebar sums for the period `r`, narrowed
+    /// like the booking list (categorySumFilter, #621); built when the load starts (current filters).
+    function categoriesCall(r) {
+        const f = categorySumFilter()
+        return ["list_categories_filtered", { date_from: r[0], date_to: r[1], account_ids: f.accounts, checked: f.checked,
+                                              direction: f.direction }]
     }
     function applyCategories(list) {
         categories = list
@@ -1033,7 +1041,7 @@ QtObject {
             const flowInPage = listHasFlow(f)
             if (!flowInPage) calls.push(selectionFlowCall(f))
             if (parts.recurring) calls.push(recurringCall())
-            if (parts.categories) calls.push(["list_categories", { date_from: r[0], date_to: r[1] }])
+            if (parts.categories) calls.push(categoriesCall(r))
             calls.push(["balance_history", { account_ids: h.ids, days: h.days }])
             const categoryChart = categoryHistoryCall()
             if (categoryChart) calls.push(categoryChart)
@@ -1129,7 +1137,7 @@ QtObject {
         categoryAccountFilter = next
         if (!showsCategoryAccountFilter) return
         listLimit = defaultListLimit
-        requestSelectionLoad({})
+        requestSelectionLoad({ categories: true })   // also the sidebar sums (#621)
     }
     /// Adds or removes one account; choosing every account is the same as no filter.
     function toggleCategoryAccount(id) {

@@ -72,6 +72,8 @@ Rectangle {
         }
         // caption style like „Konten“, „Zahlungen“ and „Dokumente“ (#676); „+“ lives in the bottom bar
         out.push({ type: "caption", key: "categories", title: qsTr("Kategorien"), open: !m.categoriesCollapsed })
+        // SidebarView.swift › categorySumNote: the sums follow the active filters (#621)
+        if (!m.categoriesCollapsed && m.categorySumNote !== "") out.push({ type: "sumNote", text: m.categorySumNote })
         if (!m.categoriesCollapsed) {
             out.push({ type: "nav", key: "uncategorized", symbol: "questionmark.folder", title: sm.uncategorizedLabel,
                        badge: m.uncategorizedCount, tint: Theme.warning, regular: true, labels: true })
@@ -354,6 +356,20 @@ Rectangle {
                                          accessibleName: open ? qsTr("%1 einklappen").arg(captionRow.modelData.title) : qsTr("%1 ausklappen").arg(captionRow.modelData.title) }
                         Text { text: captionRow.modelData.title; font.pixelSize: Theme.caption; font.weight: Font.DemiBold; color: Theme.secondary
                                elide: Text.ElideRight; Layout.fillWidth: true; Accessible.role: Accessible.Heading }
+                    }
+                } }
+                // SidebarView.swift › categorySumNote (#621): caption, secondary, at most two lines,
+                // on the heading's text axis; not selectable
+                DelegateChoice { roleValue: "sumNote"; delegate: Item {
+                    id: sumNoteRow
+                    required property var modelData
+                    width: ListView.view.width; height: sumNoteText.implicitHeight + 4
+                    Text {
+                        id: sumNoteText
+                        x: 8 + SidebarModel.rowLeading + SidebarModel.iconInset; y: 2; width: parent.width - x - 14
+                        text: sumNoteRow.modelData.text
+                        font.pixelSize: Theme.caption; color: Theme.secondary
+                        wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
                     }
                 } }
                 // SidebarView.swift › categoryRows: one icon axis per level – a leaf reserves the chevron column
