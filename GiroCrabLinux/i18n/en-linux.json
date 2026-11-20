@@ -61,6 +61,7 @@
   "CSV-, Text- und XML-Dateien (*.csv *.txt *.tsv *.xml)": "CSV, text and XML files (*.csv *.txt *.tsv *.xml)",
   "CSV-Datei (*.csv)": "CSV file (*.csv)",
   "CSV-Dateien (*.csv)": "CSV files (*.csv)",
+  "Das Konto wurde aufgelöst": "The account has been closed",
   "Das Passwort wird nur für diesen Abruf verwendet.": "The password is only used for this sync.",
   "Das Passwort wird verschlüsselt im Tresor gespeichert.": "The password is stored encrypted in the vault.",
   "Datei prüfen": "Check File",

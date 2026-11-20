@@ -2164,13 +2164,15 @@ mod tests {
         assert!(!children(&json!(main)).contains(&moved));
         // a main category never goes below one of its own sub-categories
         let sub = children(&json!(main))[0];
-        assert!(dispatch_vault(
-            &v,
-            "reorder_categories",
-            &json!({ "parent_id": sub, "ids": [main] })
-        )
-        .unwrap()
-        .is_err());
+        assert!(
+            dispatch_vault(
+                &v,
+                "reorder_categories",
+                &json!({ "parent_id": sub, "ids": [main] })
+            )
+            .unwrap()
+            .is_err()
+        );
         drop(v);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

@@ -15,8 +15,9 @@ SidebarRow {
     signal contextMenuRequested()
     readonly property var repaid: account.kind === "Loan" && account.initial_balance_cents > 0
         ? Math.max(0, Math.min(1, 1 - (-account.balance_cents) / account.initial_balance_cents)) : null
-    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
-    readonly property string baseSubtitle: [account.bank_name, (account.note || "").replace(/\n/g, " ")]
+    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note;
+    /// between them what tells accounts of the same name apart (owner or end of the IBAN, #954).
+    readonly property string baseSubtitle: [account.bank_name, AppModel.accountDistinction(account), (account.note || "").replace(/\n/g, " ")]
         .filter(t => t !== "").join(" · ")
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
     readonly property string searchAwareSubtitle: {
