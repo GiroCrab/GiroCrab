@@ -147,6 +147,7 @@ struct ConnectionEditSheet: View {
     @State private var selection = AccountSelectionDraft()
     /// Document retrieval of this connection (only for banks that deliver documents).
     @State private var documentsSupported = false
+    @State private var confirmResort = false
     @State private var documentsFetch = true
     /// "Dokumente abrufen" is off: nothing that fetches documents runs (PostBox included).
     private var documentsBlocked: Bool { documentsSupported && !documentsFetch }
@@ -501,6 +502,10 @@ struct ConnectionEditSheet: View {
                     if let t = connection.lastSyncUnix {
                         LabeledContent("Letzter Abruf") { Text(Date(timeIntervalSince1970: TimeInterval(t)), style: .relative) }
                     }
+                    if connection.connector == .fnz || connection.connector == .quirion || isComdirect || isTR {
+                        Button("Dokumente neu einsortieren …") { confirmResort = true }
+                            .help("Ordnet die gespeicherten PDFs anhand ihrer Titel neu ein: Kontoauszüge, Steuerbescheinigungen, Mitteilungen")
+                    }
                     if isTR {
                         Button {
                             save()
@@ -540,6 +545,12 @@ struct ConnectionEditSheet: View {
             Text(connection.connector == .comdirect
                 ? "GiroCrab ruft comdirect danach per FinTS ab. Die Bankleitzahl kommt aus der IBAN Ihrer Konten. Beim ersten Abruf werden PIN und Freigabe in der App erneut abgefragt."
                 : "GiroCrab ruft comdirect danach über die Schnittstelle der Bank ab. Dafür sind Client-ID und Client-Secret nötig.")
+        }
+        .confirmationDialog("Dokumente neu einsortieren?", isPresented: $confirmResort, titleVisibility: .visible) {
+            Button("Neu einsortieren") { Task { await model.resortPortalDocuments(connection.id) } }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("GiroCrab wendet die aktuellen Ablageregeln auf vorhandene Belege dieses Bankzugangs an. Dabei können auch Belege verschoben werden, die Sie selbst einem Konto oder Depot zugeordnet haben. Bestehende Buchungsverknüpfungen bleiben erhalten.")
         }
         .confirmationDialog("Sitzung löschen?", isPresented: Binding(get: { confirmClear != nil }, set: { if !$0 { confirmClear = nil } }),
                             titleVisibility: .visible, presenting: confirmClear) { kind in

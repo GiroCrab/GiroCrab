@@ -36,6 +36,20 @@ final class SyncLogTests: XCTestCase {
         XCTAssertFalse(newest.message.contains(conn.loginName))
     }
 
+    func testResortingDocumentsReportsTheResultInTheSyncLog() async throws {
+        let id = try XCTUnwrap(model.connections.first { $0.connector == .tradeRepublic }).id
+        let before = model.syncLogVersion
+
+        await model.resortPortalDocuments(id)
+
+        XCTAssertEqual(model.syncLogVersion, before + 1)
+        let filter = SyncLogFilter(connectionId: id, onlyErrors: false, search: nil, limit: 1)
+        let entry = try XCTUnwrap(rows(filter).first)
+        XCTAssertEqual(entry.outcome, .ok)
+        XCTAssertEqual(entry.source, .manual)
+        XCTAssertEqual(model.toast, entry.message)
+    }
+
     func testOnlyErrorsFilter() throws {
         let errors = try rows(SyncLogFilter(connectionId: nil, onlyErrors: true, search: nil, limit: 0))
         XCTAssertFalse(errors.isEmpty)

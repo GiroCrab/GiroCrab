@@ -366,6 +366,19 @@ extension AppModel {
         }.map(\.id))
     }
 
+    /// Reapplies the bank connection's filing rules to stored documents.
+    func resortPortalDocuments(_ id: Int64) async {
+        do {
+            guard let r = try await vaultOffMain({ try $0.resortPortalDocuments(connectionId: id) }) else { return }
+            let message = String(localized: "\(Int(r.resorted)) Dokumente neu einsortiert · \(Int(r.linked)) Umsätzen zugeordnet")
+            toast = message
+            logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
+            reloadAll()
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
     func revealSetting(_ key: String) -> String {
         ((try? vault?.getSetting(key: key)) ?? nil) ?? ""
     }

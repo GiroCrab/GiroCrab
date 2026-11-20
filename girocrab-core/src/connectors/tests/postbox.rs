@@ -143,6 +143,81 @@ fn postbox_and_statements_are_refused_while_document_retrieval_is_off() {
         .is_ok());
 }
 
+/// The direct comdirect PostBox has its own window in the typed document request (not the bookings'
+/// one); other connectors and a switched-off retrieval keep the request as it is.
+#[test]
+fn comdirect_postbox_window_rides_on_the_document_request() {
+    let (_dir, v) = vault("girocrab-postbox-window");
+    let c = connection(&v, "comdirect");
+    let on = || Documents::On {
+        statements: Vec::new(),
+        catchup_since: None,
+        postbox_since: None,
+    };
+    let window = |kind, docs| v.with_comdirect_postbox_window(c, kind, docs).unwrap();
+    // never listed: the whole PostBox
+    assert_eq!(
+        window(ConnectorKind::Comdirect, on()).postbox_since(),
+        Some("")
+    );
+    // listed a while ago: from a week before, whatever the bookings' window is
+    let last = crate::dates::iso(crate::dates::today() - crate::dates::days(30));
+    v.set_setting(postbox_last_key(c), last).unwrap();
+    let week_before = crate::dates::iso(crate::dates::today() - crate::dates::days(37));
+    assert_eq!(
+        window(ConnectorKind::Comdirect, on()).postbox_since(),
+        Some(week_before.as_str())
+    );
+    assert_eq!(
+        window(ConnectorKind::Comdirect, Documents::Off),
+        Documents::Off
+    );
+    assert_eq!(
+        window(
+            ConnectorKind::Comdirect,
+            Documents::StatementsOnly("x".into())
+        )
+        .postbox_since(),
+        None
+    );
+    assert_eq!(
+        window(ConnectorKind::FinTsGeneric, on()).postbox_since(),
+        None
+    );
+}
+
+#[test]
+fn a_partial_comdirect_postbox_keeps_the_previous_fetch_window() {
+    let (_dir, v) = vault("girocrab-partial-postbox");
+    let c = connection(&v, "comdirect");
+    let summary = store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        c,
+        FetchResult {
+            documents: vec![doc("", "first")],
+            documents_incomplete: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(summary.postbox_documents, Some(1));
+    assert_eq!(v.get_setting(postbox_last_key(c)).unwrap(), None);
+
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        c,
+        FetchResult {
+            documents: vec![doc("", "first"), doc("", "retried")],
+            postbox_fetched: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(v.get_setting(postbox_last_key(c)).unwrap(), Some(today()));
+}
+
 #[test]
 fn postbox_is_fetched_weekly_with_a_week_of_overlap() {
     let today = day("2026-11-17");

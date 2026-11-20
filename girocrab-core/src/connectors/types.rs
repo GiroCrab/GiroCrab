@@ -290,6 +290,9 @@ pub enum Documents {
         /// since then are not all fetched yet. Connectors that read documents
         /// from a window (timeline, receipts) reach back to it.
         catchup_since: Option<String>,
+        /// `YYYY-MM-DD` the direct comdirect PostBox is listed from: its own
+        /// window, independent of the bookings' (`None` = the sync window).
+        postbox_since: Option<String>,
     },
     /// "Kontoauszüge abrufen" for one account (external ref): its statements,
     /// no bookings.
@@ -301,6 +304,7 @@ impl Default for Documents {
         Documents::On {
             statements: Vec::new(),
             catchup_since: None,
+            postbox_since: None,
         }
     }
 }
@@ -315,6 +319,13 @@ impl Documents {
         match self {
             Documents::On { statements, .. } => statements,
             _ => &[],
+        }
+    }
+
+    pub fn postbox_since(&self) -> Option<&str> {
+        match self {
+            Documents::On { postbox_since, .. } => postbox_since.as_deref(),
+            _ => None,
         }
     }
 

@@ -262,6 +262,149 @@ struct TradeRow {
     icon: String,
 }
 
+/// Document type of a Trade Republic PDF from its (lower-cased) title (shared keyword rules).
+fn document_type(lower_title: &str) -> &'static str {
+    crate::documents::type_from_title(lower_title)
+}
+
+/// How Trade Republic documents are matched to bookings by content (`document_matching`): they
+/// belong to the cash account, the security is the part after the dash of the stored title
+/// (`"<Dokument> – <Eintrag>"`), statements and tax papers are left out.
+pub(crate) const DOCUMENT_MATCH: crate::connectors::document_matching::DocumentMatchRules =
+    crate::connectors::document_matching::DocumentMatchRules {
+        booking_account: |external_ref, _| external_ref == "tr:cash",
+        subjects: |title, _| {
+            title
+                .split(" \u{2013} ")
+                .nth(1)
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default()
+        },
+        subjects_from_text: false,
+        link_types: &["abrechnung", "beleg"],
+        direction_required: false,
+        account_from_text: false,
+        amount_labels: &[],
+        account_for: None,
+        orphan_source_prefix: "",
+        slack_days: 5,
+        inflow: document_inflow,
+        retype: |title, current, account_level| reclassify_document(title, current, account_level),
+    };
+
+/// The direction of a Trade Republic document, from the first event word in its head (title and the
+/// start of the text): a sale, a dividend or interest is a credit, a purchase or a savings plan a
+/// debit. Boilerplate further down ("Kauf und Verkauf …") is not read. `None`: no event word.
+fn document_inflow(title: &str, text: &str) -> Option<bool> {
+    crate::connectors::document_matching::inflow_in(title, text, 400)
+}
+
+/// The account a Trade Republic document belongs to (`tr:depot` or `tr:cash`), decided by what the
+/// document is, never by the way it arrived (a booking's detail screen or the activity list): a
+/// confirmation or credit for a security (trade, savings plan, dividend, corporate action, the
+/// depot statement) belongs to the depot and documents a booking of the settlement account; account
+/// statements, interest and fees belong to the settlement account. `None`: nothing says so, the
+/// document stays where it is (tax papers, general information, an older document just called
+/// "Dokumente" whose event is not known).
+///
+/// `head`: the lower-cased document name before the dash; `doc_type`: its type; `generic`: the name
+/// says nothing ("Dokumente").
+fn document_account_ref(head: &str, doc_type: &str, generic: bool) -> Option<&'static str> {
+    if generic {
+        // the type came from the timeline event: a trade, a savings plan or a dividend
+        return (doc_type == "abrechnung").then_some("tr:depot");
+    }
+    if doc_type == "kontoauszug" {
+        return Some(if head.contains("depot") {
+            "tr:depot"
+        } else {
+            "tr:cash"
+        });
+    }
+    // interest and fees of the settlement account (a dividend is no interest)
+    if !head.contains("dividende")
+        && ["zins", "gebühr", "kontoführung"]
+            .iter()
+            .any(|k| head.contains(k))
+    {
+        return Some("tr:cash");
+    }
+    if is_securities_notice(head) || doc_type == "abrechnung" {
+        return Some("tr:depot");
+    }
+    None
+}
+
+/// New type and account (`tr:depot`/`tr:cash`, `None` = keep) of a stored document, from its title
+/// `"<Dokument> – <Eintrag>"`. A generic "Dokumente" keeps its type (it came from the timeline
+/// event when it was stored, which is not known any more). `account_level`: no booking behind it.
+pub(crate) fn reclassify_document(
+    title: &str,
+    current: &str,
+    account_level: bool,
+) -> (&'static str, Option<&'static str>) {
+    let head = title
+        .split(" \u{2013} ")
+        .next()
+        .unwrap_or(title)
+        .to_lowercase();
+    let generic = head == "dokumente" || head == "dokument";
+    let kept: &'static str = match current {
+        "abrechnung" => "abrechnung",
+        "kontoauszug" => "kontoauszug",
+        "steuer" => "steuer",
+        "postbox" => "postbox",
+        _ => "beleg",
+    };
+    let mut doc_type = if generic { kept } else { document_type(&head) };
+    if account_level && doc_type == "beleg" {
+        doc_type = "postbox";
+    }
+    (doc_type, document_account_ref(&head, doc_type, generic))
+}
+
+/// Trade Republic names older documents just "Dokumente": what they are follows from the event of
+/// the timeline entry they belong to (a dividend, a savings plan execution, a tax booking).
+fn refine_document_type(doc_type: &'static str, event_text: &str) -> &'static str {
+    if doc_type != "beleg" || event_text.is_empty() {
+        return doc_type;
+    }
+    let has = |k: &str| event_text.contains(k);
+    if has("steuer") || has("tax") {
+        "steuer"
+    } else if has("dividend")
+        || has("ausschüttung")
+        || has("sparplan")
+        || has("savings_plan")
+        || has("kauf")
+        || has("trade")
+        || has("order")
+    {
+        "abrechnung"
+    } else {
+        doc_type
+    }
+}
+
+/// An account-level notice about a security (dividend election, corporate action):
+/// it belongs to the depot, not to the settlement account.
+fn is_securities_notice(lower_title: &str) -> bool {
+    [
+        "dividende",
+        "wahlweise",
+        "kapitalmaßnahme",
+        "split",
+        "umtausch",
+        "spin-off",
+        "fusion",
+        "hauptversammlung",
+        "rückkaufangebot",
+        "prospekt",
+    ]
+    .iter()
+    .any(|k| lower_title.contains(k))
+}
+
 fn is_trade_kind(kind_text: &str) -> bool {
     [
         "kauf",
@@ -1619,13 +1762,14 @@ impl BankConnector for TradeRepublicConnector {
                     }
                     let doc_title = d["title"].as_str().unwrap_or("Dokument").to_string();
                     let lower = doc_title.to_lowercase();
-                    let doc_type = if lower.contains("steuer") {
-                        "steuer"
-                    } else if lower.contains("abrechnung") || lower.contains("bestätigung") {
-                        "abrechnung"
-                    } else {
-                        "beleg"
-                    };
+                    let doc_type =
+                        refine_document_type(document_type(&lower), &title.to_lowercase());
+                    let account_ref = document_account_ref(
+                        &lower,
+                        doc_type,
+                        lower == "dokumente" || lower == "dokument",
+                    )
+                    .unwrap_or("tr:cash");
                     let doc_date = d["detail"]
                         .as_str()
                         .and_then(|s| crate::documents::dates_in(s).into_iter().next())
@@ -1633,7 +1777,7 @@ impl BankConnector for TradeRepublicConnector {
                     // strip the presigned query part for a stable de-dup key
                     let stable = url.split('?').next().unwrap_or(&url).to_string();
                     out.documents.push(crate::documents::RemoteDocument {
-                        account_ref: "tr:cash".into(),
+                        account_ref: account_ref.into(),
                         booking_external_id: Some(item_id.clone()),
                         title: format!("{doc_title} – {title}"),
                         doc_type: doc_type.into(),
