@@ -197,14 +197,25 @@ impl Vault {
         crate::connectors::clear_documents_settings(db, connection_id)?;
         // its own Enable Banking application (#824)
         super::enable_banking_apps::forget(db, connection_id)?;
-        // the account choice of this login (#346): a re-added login starts fresh
-        db.execute(
-            "DELETE FROM settings WHERE key = ?1",
-            [crate::connectors::account_selection::key(
-                db,
-                connection_id,
-            )?],
-        )?;
+        // the account choice of this login (#346): a re-added login starts fresh,
+        // while a live twin with the same login keeps its choice
+        let sel = crate::connectors::account_selection::key(db, connection_id)?;
+        let others: Vec<i64> = {
+            let mut stmt = db
+                .prepare("SELECT id FROM bank_connections WHERE deleted_ms IS NULL AND id <> ?1")?;
+            let rows = stmt.query_map([connection_id], |r| r.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut shared = false;
+        for other in others {
+            if crate::connectors::account_selection::key(db, other)? == sel {
+                shared = true;
+                break;
+            }
+        }
+        if !shared {
+            db.execute("DELETE FROM settings WHERE key = ?1", [sel])?;
+        }
         Ok(())
     }
 }
