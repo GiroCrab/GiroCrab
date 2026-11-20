@@ -1932,6 +1932,12 @@ QtObject {
         })
     }
     function requestSyncChecked(connection) {
+        // Finpension: no sync, the export file is imported from the connection's sheet.
+        if (usesFileImport(connection)) {
+            resetSyncBatch()
+            toast = qsTr("%1: Bitte den Export in den Einstellungen der Verbindung importieren.").arg(connection.display_name)
+            return
+        }
         if (usesPortal(connection)) { webLoginConnection = connection; return }
         const magicDemo = isMagicDemoLogin(connection.login_name)
         if (!isDemo && !magicDemo && connection.connector === "TradeRepublic") {
@@ -1952,7 +1958,7 @@ QtObject {
         else pendingLogin = connection
     }
     function requestSyncAll() {
-        requestSyncBatch(connections.filter(c => !usesPortal(c) && !c.all_accounts_archived))
+        requestSyncBatch(connections.filter(c => !usesPortal(c) && !usesFileImport(c) && !c.all_accounts_archived))
     }
     function requestSyncBatch(batch) {
         if (syncingConnectionID !== null || !batch.length) return
@@ -3010,7 +3016,7 @@ QtObject {
         const ids = {}
         for (const x of userGroupSubtree(g.uuid))
             for (const a of x.accounts) if (a.archived_unix === null && a.connection_id !== null) ids[a.connection_id] = true
-        return connections.filter(c => ids[c.id] && !usesPortal(c))
+        return connections.filter(c => ids[c.id] && !usesPortal(c) && !usesFileImport(c))
     }
     function requestSyncGroup(g) { requestSyncBatch(groupSyncConnections(g)) }
     /// "Ohne Gruppe" for the group manager: always there, also when every account is in a group.
@@ -4610,6 +4616,30 @@ QtObject {
                 errorMessage = e.message
             }
         }
+    }
+    /// PortalUI.swift › usesFileImport (#975): connections fed by an export file the user picks (no login, no sync).
+    function usesFileImport(c) { return c.connector === "Finpension" && !isDemo && !isMagicDemoLogin(c.login_name) }
+    /// PortalUI.swift › importFinpension (#975): the Finpension export (CSV or JSON) of this connection.
+    function importFinpension(c, fileUrl) {
+        const path = localPath(fileUrl)
+        const name = path.split("/").pop()
+        const gen = vaultGeneration
+        coreAsync("import_finpension_file", { connection_id: c.id, path: path }, s => {
+            if (gen !== vaultGeneration) return
+            toast = qsTr("%1: %2 neue Buchungen aus %3").arg(c.display_name).arg(s.transactions_imported).arg(name)
+            reloadAll()
+        }, e => {
+            // locked or switched vault meanwhile: no error over another vault
+            if (gen !== vaultGeneration) return
+            const err = parseCoreError(e)
+            if (err.kind === "InvalidInput") {
+                errorTitle = qsTr("Nichts erkannt")
+                errorMessage = qsTr("In %1 wurden keine Finpension-Positionen oder -Buchungen erkannt. Erwartet: CSV oder JSON-Export mit ISIN, Anzahl, Kurs, Marktwert bzw. Datum, Beschreibung, Betrag.").arg(name)
+            } else {
+                errorTitle = qsTr("Finpension-Import fehlgeschlagen")
+                errorMessage = err.message
+            }
+        })
     }
     /// AmazonUI.swift › importAmazonOrders. Returns true when orders were recognised.
     function importAmazonOrders(c, json) {

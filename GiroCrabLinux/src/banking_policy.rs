@@ -401,6 +401,7 @@ pub fn display_name(id: &str) -> String {
         "opeldirektbank" => "Opel Direktbank",
         "bhw" => "BHW Bausparkasse",
         "kontist" => "Kontist",
+        "finpension" => "Finpension",
         other => other,
     };
     match tail {

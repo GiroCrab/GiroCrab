@@ -256,6 +256,33 @@ fn set_connection_account_choices(v: &Arc<Vault>, a: &Value) -> R {
     ok(())
 }
 
+/// Largest Finpension export read (a CSV/JSON of holdings and cash bookings is far smaller).
+const MAX_FINPENSION_FILE: u64 = 32 * 1024 * 1024;
+
+/// PortalUI.swift › importFinpension (#975): the export file the user picked, read here so
+/// its bytes never travel through QML. Takes `self: Arc<Vault>`, so not part of `vault_methods!`.
+/// An `InvalidInput` (nothing recognised) comes back as `{kind, message}` for
+/// `AppModel.parseCoreError`, the sheet then shows its own hint (`catch CoreError.InvalidInput`).
+fn import_finpension_file(v: &Arc<Vault>, a: &Value) -> R {
+    let path: String = arg(a, "path")?;
+    let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+    if size > MAX_FINPENSION_FILE {
+        return Err(crate::i18n::tr("Die Datei ist zu groß."));
+    }
+    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+    ok(v.clone()
+        .import_finpension_export(arg(a, "connection_id")?, data)
+        .map_err(|e| {
+            let v = match e {
+                girocrab_core::CoreError::InvalidInput { message } => {
+                    json!({ "kind": "InvalidInput", "message": message })
+                }
+                other => json!({ "kind": "Other", "message": other.to_string() }),
+            };
+            format!("\u{1}{v}")
+        })?)
+}
+
 /// Sammelüberweisung / Dauerauftrag / Lastschrift: `self: Arc<Self>`, each returns
 /// an `Arc<TransferSession>` that goes into the session registry like "begin_transfer".
 fn begin_payment_session(v: &Arc<Vault>, method: &str, a: &Value) -> R {
@@ -615,6 +642,8 @@ fn call(method: &str, a: &Value) -> R {
         "batch" => batch(a),
         "reset_app" => reset_app(),
         "set_connection_account_choices" => set_connection_account_choices(&vault()?, a),
+        // Finpension export (#975), a local file: no login, no network
+        "import_finpension_file" => import_finpension_file(&vault()?, a),
         // catalog / directory (free functions of the core)
         "bank_catalog" => ok(girocrab_core::bank_catalog()),
         "fints_presets" => ok(girocrab_core::connectors::fints_presets::fints_presets()),
@@ -1736,6 +1765,45 @@ mod tests {
             missing.get("err").is_some(),
             "unknown connection is refused"
         );
+    }
+
+    /// Finpension (#975, ConnectionEditSheet.qml › „Finpension-Export importieren …“): the export
+    /// file is read here and imported once; an unrecognised file is an `InvalidInput` the sheet
+    /// tells apart from other errors (synthetic CSV as in girocrab-core's finpension tests).
+    #[test]
+    fn finpension_export_file_round_trip() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let id = call_ok(
+            "add_bank_connection",
+            json!({ "connector": "Finpension", "display_name": "Finpension", "login_name": "3a" }),
+        );
+        let dir = std::env::temp_dir().join(format!("girocrab-finpension-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("export.csv");
+        std::fs::write(
+            &file,
+            "Datum,Beschreibung,Betrag,Währung,Referenz\n\
+             15.03.2026,Einzahlung,100.00,CHF,R-1\n\
+             2026-03-31,Verwaltungsgebühr,-12.34,CHF,R-2\n",
+        )
+        .unwrap();
+        let args = json!({ "connection_id": id, "path": file.display().to_string() });
+        let s = call_ok("import_finpension_file", args.clone());
+        assert_eq!(s["transactions_imported"], json!(2));
+        let again = call_ok("import_finpension_file", args);
+        assert_eq!(again["transactions_imported"], json!(0), "no duplicates");
+        let junk = dir.join("junk.txt");
+        std::fs::write(&junk, "x").unwrap();
+        let r: Value = serde_json::from_str(&call_json(
+            "import_finpension_file",
+            &json!({ "connection_id": id, "path": junk.display().to_string() }).to_string(),
+        ))
+        .unwrap();
+        let e = r["err"].as_str().expect("refused");
+        let e: Value = serde_json::from_str(e.strip_prefix('\u{1}').unwrap()).unwrap();
+        assert_eq!(e["kind"], json!("InvalidInput"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Dokumentenabruf je Bankzugang (#954, ConnectionEditSheet.qml): offered only where the bank
