@@ -423,6 +423,13 @@ impl Vault {
                         "UPDATE accounts SET balance_cents=balance_cents+?1 WHERE id=?2",
                         rusqlite::params![b.cents - old, acc_id],
                     )?;
+                    // splits summed to the old amount (#1471): the correction
+                    // invalidates the allocation — same transaction, so the
+                    // invariant (splits = booking amount) holds again
+                    tx.execute(
+                        "DELETE FROM transaction_splits WHERE transaction_id = ?1",
+                        rusqlite::params![id],
+                    )?;
                 }
                 // Keep the original stable booking key (also used by sync and
                 // attachments); store_fetch must recognise this as the same row.

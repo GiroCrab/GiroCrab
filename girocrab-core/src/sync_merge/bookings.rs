@@ -436,14 +436,13 @@ pub(crate) fn merge_bookings(
                         "UPDATE transactions SET amount_cents=?2, amount_ms=?3 WHERE id=?1",
                         params![id, o.amount.0, o.amount.1],
                     )?;
-                    // the merged booking's account carries a derived balance
-                    // (#337): it follows the corrected amount, so the received
-                    // side does not keep the stale figure a re-import cannot
-                    // repair (the amount already matches then)
+                    // splits summed to the old amount (#1471): a correction
+                    // invalidates the allocation, the invariant requires the
+                    // splits to equal the booking amount again — drop them
+                    // (the other side's splits, when it has any, arrive below)
                     conn.execute(
-                        "UPDATE accounts SET balance_cents = balance_cents + ?2
-                          WHERE id = ?1 AND balance_derived = 1",
-                        params![acc, o.amount.0 - previous.0],
+                        "DELETE FROM transaction_splits WHERE transaction_id = ?1",
+                        params![id],
                     )?;
                     local_amounts.insert(id, o.amount);
                 }
@@ -452,6 +451,29 @@ pub(crate) fn merge_bookings(
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
+                // derived balances count live bookings only (#1471): apply
+                // the booking's live contribution after the merge minus its
+                // live contribution before — a deleted booking contributes
+                // nothing, whatever its amount says
+                if amount_changed {
+                    let before = if old.deleted_ms.is_none() {
+                        previous.0
+                    } else {
+                        0
+                    };
+                    let after = if m.deleted_ms.is_none() {
+                        o.amount.0
+                    } else {
+                        0
+                    };
+                    if after != before {
+                        conn.execute(
+                            "UPDATE accounts SET balance_cents = balance_cents + ?2
+                              WHERE id = ?1 AND balance_derived = 1",
+                            params![acc, after - before],
+                        )?;
+                    }
+                }
                 if m == old {
                     if renamed || amount_changed {
                         stats.bookings_updated += 1;

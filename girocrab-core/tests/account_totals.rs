@@ -1492,3 +1492,105 @@ fn order_selection_summary_groups_by_currency() {
         ("EUR", 0, 0)
     );
 }
+
+/// A corrected amount invalidates the booking's split allocation (#1471):
+/// the heal drops the splits in the same transaction, so the invariant
+/// (splits sum to the booking amount) holds again.
+#[test]
+fn heal_drops_splits_of_a_corrected_amount() {
+    use girocrab_core::models::{ConnectorKind, TransactionSplitInput};
+    let (v, tmp) = vault("order-heal-splits");
+    let _ = tmp;
+    let cid = v
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    let refund = v
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .iter()
+        .find(|t| t.amount_cents > 0)
+        .unwrap()
+        .id;
+    v.set_transaction_splits(
+        refund,
+        vec![
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 600,
+                note: String::new(),
+            },
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 400,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    let c = tmp.conn("v.girocrab");
+    let splits: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM transaction_splits WHERE transaction_id = ?1",
+            [refund],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(splits, 0, "the stale allocation went with the old amount");
+}
+
+/// A deleted booking contributes nothing to a derived balance (#1471):
+/// correcting its amount in a merge must not shift the balance by a share
+/// the balance never had.
+#[test]
+fn amount_merge_on_a_deleted_booking_keeps_the_derived_balance() {
+    use girocrab_core::models::ConnectorKind;
+    let (a, _ta) = vault("refund-sync-deleted-a");
+    let (b, tb) = vault("refund-sync-deleted-b");
+    let cid = a
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    let order = b
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|x| x.kind.as_str() == "order")
+        .unwrap();
+    let cb = tb.conn("v.girocrab");
+    let before: i64 = cb
+        .query_row(
+            "SELECT balance_cents FROM accounts WHERE id = ?1",
+            [order.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    cb.execute(
+        "UPDATE transactions SET deleted_ms = 1 WHERE account_id = ?1 AND amount_cents > 0",
+        [order.id],
+    )
+    .unwrap();
+    drop(cb);
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    let cb = tb.conn("v.girocrab");
+    let after: i64 = cb
+        .query_row(
+            "SELECT balance_cents FROM accounts WHERE id = ?1",
+            [order.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(before, after, "a deleted booking never shifts the balance");
+}
