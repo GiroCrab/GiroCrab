@@ -357,7 +357,7 @@ ColumnLayout {
     function progressStatus(p) {
         if (!p || p.account_index === 0) return qsTr("Datenbank wird gelesen …")
         if (p.account_index > p.account_count) return qsTr("Bankzugänge und Gruppen werden angelegt …")
-        return qsTr("Konto %1 von %2 · %3").arg(p.account_index).arg(p.account_count).arg(p.account_name)
+        return qsTr("Konto %1 von %2 · %3").arg(p.account_index).arg(p.account_count).arg(AppModel.masking(p.account_name))
     }
     function progressCounts(p) {
         let s = qsTr("%1 von %2 Buchungen").arg(Fmt.count(p.bookings_done)).arg(Fmt.count(p.bookings_total))
@@ -494,8 +494,8 @@ ColumnLayout {
                             ColumnLayout {
                                 spacing: 1; Layout.fillWidth: true
                                 opacity: rowItem.c.selected ? 1 : 0.5
-                                Text { text: rowItem.modelData.name; elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.text; font.pixelSize: Theme.body }
-                                Text { text: v.accountSubtitle(rowItem.modelData); elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.secondary; font.pixelSize: Theme.caption }
+                                Text { text: rowItem.modelData.name; elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.text; font.pixelSize: Theme.body; Sensitive {} }
+                                Text { text: v.accountSubtitle(rowItem.modelData); elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.secondary; font.pixelSize: Theme.caption; Sensitive {} }
                             }
                             Text {
                                 Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight
@@ -676,6 +676,7 @@ ColumnLayout {
                             label: modelData.bank_name
                             detail: modelData.accounts.map(a => [a.name, a.iban === "" ? (a.account_number === "" ? null : qsTr("Konto %1").arg(a.account_number)) : Fmt.iban(a.iban)]
                                                          .filter(x => !!x).join(" · ")).join("\n")
+                            personalDetail: true
                             Button { text: qsTr("Freigeben …"); onClicked: v.startConsent(modelData.connection_id) }
                         }
                     }
@@ -827,7 +828,7 @@ ColumnLayout {
                                  Accessible.name: modelData.ok ? qsTr("Stimmt") : qsTr("Weicht ab") }
                         ColumnLayout {
                             spacing: 1; Layout.fillWidth: true
-                            Text { text: modelData.name; elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.text; font.pixelSize: Theme.body }
+                            Text { text: modelData.name; elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.text; font.pixelSize: Theme.body; Sensitive {} }
                             Text { readonly property string note: cs.view.checkNote(modelData)
                                    visible: note !== ""; text: note; color: Theme.secondary; font.pixelSize: Theme.caption; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }

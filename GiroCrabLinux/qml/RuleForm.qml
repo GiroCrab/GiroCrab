@@ -195,7 +195,7 @@ Item {
                             Layout.fillWidth: true
                             spacing: 8
                             Text { text: Fmt.medium(pr.modelData.booking_date); color: Theme.secondary; font.pixelSize: Theme.callout + 1; font.features: { "tnum": 1 } }
-                            Text { text: pr.modelData.counterparty; color: Theme.text; font.pixelSize: Theme.callout + 1; elide: Text.ElideRight; Layout.fillWidth: true }
+                            Text { text: pr.modelData.counterparty; color: Theme.text; font.pixelSize: Theme.callout + 1; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                             SFIcon {
                                 visible: pr.modelData.category_source === "Manual"; symbol: "hand.raised.fill"; size: 12
                                 HoverHandler { id: mh }

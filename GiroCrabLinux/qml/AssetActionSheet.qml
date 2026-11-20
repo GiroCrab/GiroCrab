@@ -122,7 +122,7 @@ Sheet {
             spacing: 18
 
             FormSection {
-                FormRow { label: qsTr("Sachwert"); value: sheet.item ? sheet.item.setup.name : "" }
+                FormRow { label: qsTr("Sachwert"); value: sheet.item ? sheet.item.setup.name : ""; personal: true }
                 FormRow {
                     visible: sheet.kind === "sell"
                     label: qsTr("Verkauft am")
@@ -212,7 +212,7 @@ Sheet {
                         spacing: 8
                         Text { text: Fmt.medium(modelData.date); font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.text; Layout.fillWidth: true }
                         Text { font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.text
-                               text: parent.purchase ? qsTr("Kauf: %1").arg(NumberText.format(modelData.quantity)) : qsTr("ab hier: %1").arg(NumberText.format(modelData.quantity)) }
+                               text: parent.purchase ? qsTr("Kauf: %1").arg(NumberText.format(modelData.quantity)) : qsTr("ab hier: %1").arg(NumberText.format(modelData.quantity)); Sensitive { amounts: true } }
                         RemoveButton { visible: !parent.purchase
                                        onClicked: sheet.change("delete_asset_quantity", { item_id: sheet.item.id, date: modelData.date }) }
                     }
@@ -241,7 +241,7 @@ Sheet {
                 Layout.fillWidth: true; Layout.leftMargin: 10
                 wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                 text: sheet.entryHeld > 0
-                    ? qsTr("Bestand an diesem Tag: %1. Verkaufte Sachwerte stehen danach unter „Ehemalige Positionen“; ihr Wert bis zum Verkauf bleibt im Verlauf.").arg(NumberText.format(sheet.entryHeld))
+                    ? qsTr("Bestand an diesem Tag: %1. Verkaufte Sachwerte stehen danach unter „Ehemalige Positionen“; ihr Wert bis zum Verkauf bleibt im Verlauf.").arg(AppModel.masking(NumberText.format(sheet.entryHeld), AppModel.redactAmounts))
                     : qsTr("An diesem Tag ist kein Bestand vorhanden.")
             }
         }

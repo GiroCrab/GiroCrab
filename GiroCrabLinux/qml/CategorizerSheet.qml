@@ -112,7 +112,7 @@ Sheet {
                             visible: grp.modelData.root !== null
                             spacing: 5
                             SFIcon { symbol: grp.modelData.root ? grp.modelData.root.sf_symbol : ""; size: 12 }
-                            Text { text: grp.modelData.root ? grp.modelData.root.name : ""; font.pixelSize: Theme.caption; font.weight: Font.DemiBold; color: Theme.secondary }
+                            Text { text: grp.modelData.root ? grp.modelData.root.name : ""; font.pixelSize: Theme.caption; font.weight: Font.DemiBold; color: Theme.secondary; Sensitive { labels: true } }
                         }
                         // LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)])
                         Flow {
@@ -160,7 +160,7 @@ Sheet {
             anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 5
             SFIcon { symbol: chip.category.sf_symbol; size: 13; color: Theme.text }
             Text { text: chip.label; font.pixelSize: Theme.caption + 1; font.weight: chip.selected ? Font.DemiBold : Font.Normal
-                   color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                   color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive { labels: true } }
         }
         HoverHandler { id: chipHover }
         ToolTip.visible: chipHover.hovered
