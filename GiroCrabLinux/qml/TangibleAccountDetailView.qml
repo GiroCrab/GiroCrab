@@ -80,7 +80,7 @@ AssetAccountFrame {
         subtitle: [
             Text { readonly property string line: tv.account ? [tv.account.bank_name, tv.account.iban ? Fmt.iban(tv.account.iban) : ""].filter(s => s).join(" · ") : ""
                    visible: line !== ""; text: line; font.pixelSize: Theme.caption; color: Theme.secondary; Sensitive {} },
-            Text { readonly property string note: tv.account ? SidebarModel.accountNote(tv.account.id) : ""
+            Text { readonly property string note: tv.account ? (tv.account.note || "") : ""
                    visible: note !== ""; text: note; font.pixelSize: Theme.caption; color: Theme.secondary
                    wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true
                    Sensitive {} },
