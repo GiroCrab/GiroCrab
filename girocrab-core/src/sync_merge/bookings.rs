@@ -1,4 +1,5 @@
-//! Booking merge: per-field newest edit wins, splits and tags included.
+//! Booking merge: per-field newest edit wins, tags included; splits are
+//! resolved against the winning amount (#1471).
 
 use std::collections::{HashMap, HashSet};
 
@@ -44,7 +45,10 @@ fn take_ranked<T: Clone, K: Ord>(
 }
 
 impl BookingFields {
-    /// Joins `o` into `self`; the same result in either order.
+    /// Joins `o` into `self`; the same result in either order. Splits are
+    /// left alone: whether an allocation fits the winning amount decides
+    /// its candidacy, so the caller resolves them against that amount
+    /// (#1471) instead of ranking the two stamps only.
     fn merge(&mut self, o: &BookingFields) {
         // manual beats none; two manual categories: the lower uuid
         take_ranked(
@@ -74,13 +78,6 @@ impl BookingFields {
                 t.clone(),
             )
         });
-        take_ranked(
-            &mut self.splits,
-            &mut self.splits_ms,
-            &o.splits,
-            o.splits_ms,
-            Clone::clone,
-        );
         // the tag set as a whole; equal stamps: the larger set by value
         take_ranked(
             &mut self.tags,
@@ -431,32 +428,11 @@ pub(crate) fn merge_bookings(
                 let previous = local_amounts[&id];
                 let amount_changed =
                     o.amount.1 > 0 && (o.amount.1, o.amount.0) > (previous.1, previous.0);
-                // only a changed VALUE invalidates the allocation (#1471): a
-                // newer stamp with identical cents must not delete splits
-                // that still sum to the booking's amount
-                let amount_value_changed = amount_changed && o.amount.0 != previous.0;
                 if amount_changed {
                     conn.execute(
                         "UPDATE transactions SET amount_cents=?2, amount_ms=?3 WHERE id=?1",
                         params![id, o.amount.0, o.amount.1],
                     )?;
-                    if amount_value_changed {
-                        // splits summed to the old amount (#1471): a value
-                        // correction invalidates the allocation — drop it and
-                        // stamp the clear newer, so a peer's stale allocation
-                        // loses the next field merge (the other side's splits
-                        // that fit the corrected amount survive the guard below)
-                        conn.execute(
-                            "UPDATE transactions SET splits_ms = MAX(?2, splits_ms + 1)
-                              WHERE id = ?1
-                                AND EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
-                            params![id, o.amount.1],
-                        )?;
-                        conn.execute(
-                            "DELETE FROM transaction_splits WHERE transaction_id = ?1",
-                            params![id],
-                        )?;
-                    }
                     local_amounts.insert(id, o.amount);
                 }
                 let old = local[&id].clone();
@@ -464,18 +440,51 @@ pub(crate) fn merge_bookings(
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
-                // an allocation must sum to the winning amount (#1471): splits
-                // edited against a superseded amount are obsolete, fitting
-                // ones survive — whatever side they came from
-                if !m.splits.is_empty() {
-                    let amount: i64 = conn.query_row(
-                        "SELECT amount_cents FROM transactions WHERE id = ?1",
-                        params![id],
-                        |r| r.get(0),
-                    )?;
-                    let sum: i64 = m.splits.iter().map(|sp| sp.1).sum();
-                    if sum != amount {
+                // An allocation must sum to the WINNING amount (#1471): one
+                // that does not is no candidate — it neither outranks a
+                // fitting allocation of the other side nor acts as an
+                // explicit clear (a newer stamp with identical cents keeps
+                // fitting splits alive just the same). Fitting allocations
+                // and explicit clears rank by stamp as before. The figure
+                // both merge directions agree on is the amount the field
+                // merge itself would take — (amount_ms, amount) — even
+                // where an unstamped row keeps its own stored amount.
+                let (amount, amount_ms) = if (o.amount.1, o.amount.0) > (previous.1, previous.0) {
+                    o.amount
+                } else {
+                    previous
+                };
+                let fits = |s: &[SplitLine]| {
+                    s.is_empty() || s.iter().map(|sp| sp.1).sum::<i64>() == amount
+                };
+                match (fits(&m.splits), fits(&o.fields.splits)) {
+                    (true, true) => take_ranked(
+                        &mut m.splits,
+                        &mut m.splits_ms,
+                        &o.fields.splits,
+                        o.fields.splits_ms,
+                        Clone::clone,
+                    ),
+                    // the other side's allocation is obsolete: the local state stays
+                    (true, false) => {}
+                    // the local allocation is obsolete: the other side's state
+                    // wins, whatever the stamps; a clear it owes to the same
+                    // correction is stamped newer than the dropped allocation,
+                    // so that cannot return by equal stamp
+                    (false, true) => {
+                        if o.fields.splits.is_empty() {
+                            m.splits.clear();
+                            m.splits_ms = m.splits_ms.max(o.fields.splits_ms).max(amount_ms) + 1;
+                        } else {
+                            m.splits = o.fields.splits.clone();
+                            m.splits_ms = o.fields.splits_ms;
+                        }
+                    }
+                    // nothing fits the winning amount: clear, stamped newer
+                    // than both rejected allocations and the correction
+                    (false, false) => {
                         m.splits.clear();
+                        m.splits_ms = m.splits_ms.max(o.fields.splits_ms).max(amount_ms) + 1;
                     }
                 }
                 // derived balances count live bookings only (#1471): apply

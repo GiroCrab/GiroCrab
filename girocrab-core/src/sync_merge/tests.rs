@@ -2739,6 +2739,30 @@ fn newer_split_set_replaces_older() {
 }
 
 #[test]
+fn unstamped_amounts_agree_on_one_allocation() {
+    // Unstamped amounts may differ on both sides (each import keeps its
+    // own contract); the allocation must still converge: both directions
+    // validate against the same winning amount (#1471)
+    each_order(
+        "bk-splits-amt",
+        |a, b| {
+            exec(b, "UPDATE transactions SET amount_cents = -400 WHERE id = 1");
+            b.set_transaction_splits(1, vec![split(None, -300), split(None, -100)])
+                .unwrap();
+            exec(b, "UPDATE transactions SET splits_ms = 100 WHERE id = 1");
+            a.set_transaction_splits(1, vec![split(None, -350), split(None, -150)])
+                .unwrap();
+            exec(a, "UPDATE transactions SET splits_ms = 200 WHERE id = 1");
+        },
+        |v| {
+            // -400 wins the (amount_ms, amount) tie: the -500 allocation of
+            // the other side is no candidate, whatever the split stamps
+            assert_eq!(splits_of(v, 1), ["-:-100", "-:-300"]);
+        },
+    );
+}
+
+#[test]
 fn deleted_booking_stays_deleted() {
     each_order(
         "bk-deleted",

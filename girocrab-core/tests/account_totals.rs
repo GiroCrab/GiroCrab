@@ -1637,9 +1637,34 @@ fn corrected_amount_clears_splits_in_both_merge_directions() {
         )
         .unwrap();
     }
+    // healing stamps its split clear (#1471): the refund's splits_ms must
+    // rise together with the delete, before either merge sees the state
+    let refund_a = a
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .iter()
+        .find(|t| t.amount_cents > 0)
+        .unwrap()
+        .id;
+    let refund_splits_ms = |tmp: &Tmp| -> i64 {
+        tmp.conn("v.girocrab")
+            .query_row(
+                "SELECT splits_ms FROM transactions WHERE id = ?1",
+                [refund_a],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let splits_ms_before = refund_splits_ms(&ta);
     a.clone()
         .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
         .unwrap();
+    let splits_ms_healed = refund_splits_ms(&ta);
+    assert!(
+        splits_ms_healed > splits_ms_before,
+        "healing advances the split-clear stamp ({splits_ms_healed} > {splits_ms_before})"
+    );
     a.merge_other_vault(b.file_path(), KEY.to_vec()).unwrap();
     b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
     for (v, t) in [(&a, &ta), (&b, &tb)] {
@@ -1669,7 +1694,7 @@ fn corrected_amount_clears_splits_in_both_merge_directions() {
 #[test]
 fn stamp_only_amount_change_keeps_fitting_splits() {
     use girocrab_core::models::{ConnectorKind, TransactionSplitInput};
-    let (a, _ta) = vault("splits-stamp-a");
+    let (a, ta) = vault("splits-stamp-a");
     let (b, tb) = vault("splits-stamp-b");
     let cid = a
         .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
@@ -1710,20 +1735,42 @@ fn stamp_only_amount_change_keeps_fitting_splits() {
         ],
     )
     .unwrap();
+    // A's amount stamp is newer though the cents match B's (#337): the
+    // merge must store A's stamp too, not silently keep B's older one
+    let amount_ms_of = |tmp: &Tmp| -> i64 {
+        tmp.conn("v.girocrab")
+            .query_row(
+                "SELECT amount_ms FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let a_amount_ms = amount_ms_of(&ta);
+    let b_amount_ms = amount_ms_of(&tb);
+    assert!(
+        a_amount_ms > b_amount_ms,
+        "A's amount stamp is newer before the merge ({a_amount_ms} > {b_amount_ms})"
+    );
     b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
     let c = tb.conn("v.girocrab");
-    let (amount, splits): (i64, i64) = c
+    let (amount, splits, amount_ms): (i64, i64, i64) = c
         .query_row(
             "SELECT (SELECT amount_cents FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL),
                     (SELECT COUNT(*) FROM transaction_splits sp JOIN transactions t ON t.id = sp.transaction_id
-                      WHERE t.amount_cents > 0 AND t.deleted_ms IS NULL)",
+                      WHERE t.amount_cents > 0 AND t.deleted_ms IS NULL),
+                    (SELECT amount_ms FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL)",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
     assert_eq!(amount, 1000);
     assert_eq!(
         splits, 2,
         "the fitting allocation survives the stamp-only change"
+    );
+    assert_eq!(
+        amount_ms, a_amount_ms,
+        "B stores A's newer amount stamp though the cents are unchanged"
     );
 }
