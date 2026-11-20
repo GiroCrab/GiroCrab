@@ -51,12 +51,13 @@ final class AccountGroupsTests: XCTestCase {
         let listed = model.userGroups.flatMap(\.accounts).map(\.id)
         XCTAssertEqual(listed.sorted(), model.allAccounts.map(\.id).sorted(), "each account exactly once", file: file, line: line)
         for g in model.userGroups {
-            // like the core's sum (#337): effectively included accounts, plus
-            // order accounts — their balance is the evidence value, so a group
-            // of order accounts sums it even outside the money totals
-            let sum = g.accounts
-                .filter { $0.currency == "EUR" && ($0.inTotal || $0.kind == .order) }
-                .reduce(Int64(0)) { $0 + $1.balanceCents }
+            // like the core's sum (#337): effectively included accounts — but an
+            // excluded group's header keeps its own sum (review point 1 on
+            // #1100); order accounts are evidence and sum either way
+            let summands = g.inTotal
+                ? g.accounts.filter { $0.currency == "EUR" && ($0.inTotal || $0.kind == .order) }
+                : g.accounts.filter { $0.currency == "EUR" && ($0.includeInTotal || $0.kind == .order) && !$0.isArchived }
+            let sum = summands.reduce(Int64(0)) { $0 + $1.balanceCents }
             XCTAssertEqual(g.balanceCents, sum, "sum of \(g.name)", file: file, line: line)
             for a in g.accounts {
                 XCTAssertEqual(a.userGroupUuid ?? "", g.uuid, "\(a.name) belongs to \(g.name)", file: file, line: line)
@@ -377,15 +378,17 @@ final class AccountGroupsTests: XCTestCase {
             .filter { [.checking, .savings, .paymentService, .creditCard, .cash].contains($0.kind) }
             .reduce(Int64(0)) { $0 + $1.balanceCents }
         XCTAssertNotEqual(excludedLiquid, 0)
+        let ownSumBefore = g.balanceCents
 
         model.updateUserGroup(g, includeInTotal: false)
         XCTAssertFalse(try group(g.uuid).includeInTotal)
         XCTAssertTrue(try group(g.uuid).accounts.allSatisfy { !$0.inTotal })
         XCTAssertEqual(model.liquidBalance, liquidBefore - excludedLiquid, "'Verfügbar' drops by the group's liquid accounts")
-        XCTAssertEqual(try group(g.uuid).balanceCents, 0, "an excluded selection shows 0 as its money figure (#337)")
+        XCTAssertEqual(try group(g.uuid).balanceCents, ownSumBefore, "an excluded group keeps showing its own sum (review point 1 on #1100)")
 
         model.updateUserGroup(try group(g.uuid), includeInTotal: true)
         XCTAssertEqual(model.liquidBalance, liquidBefore)
+        XCTAssertEqual(try group(g.uuid).balanceCents, ownSumBefore)
     }
 
     /// GiroCrab/GiroCrab#208: an "everything" group with an "old" subgroup. Archived
@@ -407,9 +410,10 @@ final class AccountGroupsTests: XCTestCase {
         model.updateUserGroup(try group(alt), includeInTotal: false)
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(try group(alle).balanceCents, kept.balanceCents, "archived account and excluded subgroup don't count")
-        XCTAssertEqual(try group(alt).balanceCents, 0, "the excluded subgroup shows 0 as its money figure (#337)")
+        XCTAssertEqual(try group(alt).balanceCents, old.balanceCents, "an excluded subgroup keeps showing its own sum (review point 1 on #1100)")
         XCTAssertEqual(Set(try group(alle).accounts.map(\.id)), [kept.id, archived.id], "archived account stays listed")
         XCTAssertEqual(model.userGroupBalanceAccountIDs(alle), [kept.id], "chart follows the sum")
+        XCTAssertEqual(model.userGroupBalanceAccountIDs(alt), [old.id], "the excluded group's chart follows its own sum (review point 1 on #1100)")
         XCTAssertEqual(Set(model.userGroupAccountIDs(alle)), [kept.id, archived.id, old.id], "bookings still cover everything")
 
         model.updateUserGroup(try group(alt), includeInTotal: true)
@@ -634,7 +638,7 @@ final class AccountGroupsTests: XCTestCase {
         XCTAssertTrue(orphan.accounts.contains(where: { $0.name == "Autokredit" }), "manual loan has no bank name")
 
         let giro = try account(.checking)
-        model.interactiveSidebarSelection = .bank(muster.id)
+        model.sidebarSelection = .bank(muster.id) // synchronous: the title follows the loaded data (#1396)
         XCTAssertEqual(model.sidebarSelection, .bank("Musterbank"))
         XCTAssertEqual(Set(model.selectionAccountIDs), Set(muster.accounts.map(\.id)))
         XCTAssertEqual(model.title, "Musterbank")

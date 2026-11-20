@@ -31,17 +31,18 @@
 //! content id.
 use async_trait::async_trait;
 use jiff::civil::{Date, DateTime, Weekday};
-use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, REFERER};
-use serde_json::{json, Value};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, ORIGIN, REFERER};
+use serde_json::{Value, json};
 
 use super::{
-    http_client_same_host, BankConnector, Challenge, ChallengeKind, ChallengeResponse,
-    ConnectContext, FetchResult, Phase, RemoteAccount, RemoteTransaction,
+    BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, FetchResult, Phase,
+    RemoteAccount, RemoteTransaction, http_client_same_host,
 };
 use crate::{
     error::{CoreError, CoreResult},
     i18n::{tr, trf},
     models::AccountKind,
+    secret::SecretJson,
 };
 
 const BASE: &str = "https://banking.volkswagenbank.de";
@@ -73,7 +74,7 @@ pub(crate) trait Portal: Send {
         &mut self,
         user: &str,
         password: &str,
-        state: &serde_json::Value,
+        state: &SecretJson,
     ) -> CoreResult<LoginStep>;
     /// Ask whether the pushTAN was approved.
     async fn poll_push(&mut self) -> CoreResult<LoginStep>;
@@ -212,7 +213,7 @@ impl Portal for HttpPortal {
         &mut self,
         user: &str,
         password: &str,
-        _state: &serde_json::Value,
+        _state: &SecretJson,
     ) -> CoreResult<LoginStep> {
         self.token = None;
         self.request_key = None;
@@ -637,7 +638,7 @@ impl BankConnector for VolkswagenBankConnector {
             _ => {
                 return Err(CoreError::InvalidInput {
                     message: tr("Volkswagen Bank: Unerwartete Antwort auf die TAN-Abfrage.").into(),
-                })
+                });
             }
         };
         Ok(self.advance(step))
@@ -689,7 +690,7 @@ mod tests {
             &mut self,
             _user: &str,
             _password: &str,
-            _state: &serde_json::Value,
+            _state: &SecretJson,
         ) -> CoreResult<LoginStep> {
             self.next()
         }

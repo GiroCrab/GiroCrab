@@ -31,6 +31,33 @@ CREATE TABLE IF NOT EXISTS transfer_templates (
     default_purpose      TEXT    NOT NULL DEFAULT ''
 );";
 
+/// Whether a booking in `currency` enters the sums (category totals, history, KPI tiles) of a
+/// selection of `account_count` accounts (#1049, as in `balances::chosen` and #569): one account
+/// counts in its own currency, several (or all) only EUR; amounts in other currencies are never
+/// added to them. An empty currency is EUR.
+pub(crate) fn counts_in_sums(account_count: usize, currency: &str) -> bool {
+    account_count == 1 || currency.is_empty() || currency.eq_ignore_ascii_case("EUR")
+}
+
+/// SQL condition on `t` that is `counts_in_sums` for the whole selection.
+pub(crate) fn sums_condition(account_count: usize) -> &'static str {
+    if account_count == 1 {
+        ""
+    } else {
+        " AND t.currency COLLATE NOCASE IN ('', 'EUR')"
+    }
+}
+
+/// Whether any live booking is in a currency other than EUR: the cheap check that lets the
+/// "Zusätzlich" queries return at once for the many vaults that have none.
+pub(crate) fn has_other_currencies(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM transactions WHERE deleted_ms IS NULL AND upper(currency) NOT IN ('', 'EUR'))",
+        [],
+        |r| r.get(0),
+    )
+}
+
 /// Bookings as (category_id, amount_cents, booking_date) rows where a split
 /// booking contributes its split amounts instead of the parent category.
 /// `extra`: more columns of `t` (e.g. ", t.currency AS currency"); `condition`:
@@ -102,7 +129,8 @@ impl Vault {
             let mut stmt = db.prepare(&format!(
                 "SELECT category_id, SUM(amount_cents) FROM {}
                  WHERE booking_date >= ?1 AND booking_date <= ?2 GROUP BY category_id",
-                effective_sql("", "")
+                // budgets are amounts in EUR: other currencies are never added to them (#1049)
+                effective_sql("", sums_condition(0))
             ))?;
             for row in stmt.query_map(params![from, to], |r| {
                 Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, i64>(1)?))
@@ -268,12 +296,16 @@ impl Vault {
     /// current period last; empty periods are included with zeros).
     /// `account_ids` limits the sums to these accounts, so the cashflow card can
     /// follow the sidebar selection (#731); `None` or empty = all accounts.
-    #[uniffi::method(default(account_ids = None))]
+    /// `respect_in_total`: the card as an overall money figure (#337) — only
+    /// accounts of the effective total set contribute. Default `false` keeps
+    /// the proof semantics of a directly requested selection (single account).
+    #[uniffi::method(default(account_ids = None, respect_in_total = false))]
     pub fn cashflow_by_period(
         &self,
         granularity: PeriodGranularity,
         count: u32,
         account_ids: Option<Vec<i64>>,
+        respect_in_total: bool,
     ) -> Result<Vec<PeriodCashflow>, CoreError> {
         let today = crate::dates::today();
         crate::planning::cashflow_for(
@@ -283,6 +315,7 @@ impl Vault {
             account_ids.as_deref().unwrap_or_default(),
             today.year().into(),
             today.month() as u32,
+            respect_in_total,
         )
     }
 
@@ -364,6 +397,7 @@ pub(crate) fn cashflow_for(
     account_ids: &[i64],
     year: i32,
     month: u32,
+    respect_in_total: bool,
 ) -> Result<Vec<PeriodCashflow>, CoreError> {
     let count = count.clamp(1, 60) as i32;
     let per_year = match granularity {
@@ -409,12 +443,18 @@ pub(crate) fn cashflow_for(
         PeriodGranularity::Year => format!("{first}-01-01"),
     };
     // Same bookings, transfer detection and flow classification as the booking
-    // list and its KPI tiles (`list_transactions` / `SelectionFlow`). The card
-    // is an overall money figure (#337): only accounts of the effective total
-    // set (own switch, group, archiving) contribute.
-    let allowed: std::collections::HashSet<i64> = {
-        let db = v.db()?;
-        crate::user_groups::total_account_ids(&db)?
+    // list and its KPI tiles (`list_transactions` / `SelectionFlow`). In a
+    // totals context (#337) the card is an overall money figure: only accounts
+    // of the effective total set (own switch, group, archiving) contribute —
+    // a directly requested selection (single account) is a proof view and
+    // keeps its sums.
+    // one guard for both reads, so a merge committing in between can never
+    // combine old eligibility with new booking amounts
+    let db = v.db()?;
+    let allowed: Option<std::collections::HashSet<i64>> = if respect_in_total {
+        Some(crate::user_groups::total_account_ids(&db)?)
+    } else {
+        None
     };
     let filter = BookingFilter {
         account_ids: account_ids.to_vec(),
@@ -422,8 +462,15 @@ pub(crate) fn cashflow_for(
         ..Default::default()
     };
     let mut acc: HashMap<String, (i64, i64)> = HashMap::new();
-    v.visit_bookings(&*v.db()?, &filter, |_, b| {
-        if !allowed.contains(&b.account_id) {
+    v.visit_bookings(&db, &filter, |_, b| {
+        // other currencies are never added to the sums, unless one account is
+        // selected (#1049); in a totals context only the effective total set
+        // contributes (#337) — a directly requested account is a proof view
+        if !allowed
+            .as_ref()
+            .is_none_or(|set| set.contains(&b.account_id))
+            || !counts_in_sums(account_ids.len(), &b.currency)
+        {
             return;
         }
         let (date, amt) = (&b.booking_date, b.amount_cents);
@@ -575,10 +622,11 @@ mod tests {
             .category_history(ins, vec![], Some("2025-02-01".into()), None)
             .unwrap();
         assert_eq!(h.len(), 1);
-        assert!(v
-            .category_history(ins, vec![-1], None, None)
-            .unwrap()
-            .is_empty());
+        assert!(
+            v.category_history(ins, vec![-1], None, None)
+                .unwrap()
+                .is_empty()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -595,9 +643,10 @@ mod tests {
             note: String::new(),
         };
         // wrong sum / single part rejected
-        assert!(v
-            .set_transaction_splits(id, vec![inp(a, -1_000), inp(b, -1_000)])
-            .is_err());
+        assert!(
+            v.set_transaction_splits(id, vec![inp(a, -1_000), inp(b, -1_000)])
+                .is_err()
+        );
         assert!(v.set_transaction_splits(id, vec![inp(a, -3_000)]).is_err());
         v.set_transaction_splits(id, vec![inp(a, -1_000), inp(b, -2_000)])
             .unwrap();
@@ -636,12 +685,14 @@ mod tests {
         assert_eq!(parts.iter().map(|p| p.amount_cents).sum::<i64>(), 5_900);
         assert!(parts.iter().any(|p| p.amount_cents == -14_100));
         // signed sum off, or a zero part: still rejected
-        assert!(v
-            .set_transaction_splits(id, vec![inp(a, 20_000), inp(b, -14_000)])
-            .is_err());
-        assert!(v
-            .set_transaction_splits(id, vec![inp(a, 5_900), inp(b, 0)])
-            .is_err());
+        assert!(
+            v.set_transaction_splits(id, vec![inp(a, 20_000), inp(b, -14_000)])
+                .is_err()
+        );
+        assert!(
+            v.set_transaction_splits(id, vec![inp(a, 5_900), inp(b, 0)])
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -682,19 +733,19 @@ mod tests {
         tx(&v, "2", "2025-02-10", -30_000, None);
         tx(&v, "3", "2025-05-10", -10_000, None);
         tx(&v, "4", "2024-12-31", -5_000, None);
-        let m = cashflow_for(&v, PeriodGranularity::Month, 3, &[], 2025, 2).unwrap();
+        let m = cashflow_for(&v, PeriodGranularity::Month, 3, &[], 2025, 2, false).unwrap();
         assert_eq!(
             m.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(),
             ["2024-12", "2025-01", "2025-02"]
         );
         assert_eq!((m[1].income_cents, m[2].expense_cents), (100_000, 30_000));
-        let q = cashflow_for(&v, PeriodGranularity::Quarter, 2, &[], 2025, 5).unwrap();
+        let q = cashflow_for(&v, PeriodGranularity::Quarter, 2, &[], 2025, 5, false).unwrap();
         assert_eq!(q[0].key, "2025-Q1");
         assert_eq!(
             (q[0].income_cents, q[0].expense_cents, q[1].expense_cents),
             (100_000, 30_000, 10_000)
         );
-        let y = cashflow_for(&v, PeriodGranularity::Year, 2, &[], 2025, 5).unwrap();
+        let y = cashflow_for(&v, PeriodGranularity::Year, 2, &[], 2025, 5, false).unwrap();
         assert_eq!(
             (y[0].key.as_str(), y[0].expense_cents, y[1].expense_cents),
             ("2024", 5_000, 40_000)
@@ -750,8 +801,8 @@ mod tests {
             .unwrap();
         assert!(unc.transactions.iter().all(|t| t.id != id));
         // overflowing parts are rejected instead of wrapping to the booking amount
-        assert!(v
-            .set_transaction_splits(
+        assert!(
+            v.set_transaction_splits(
                 id,
                 vec![
                     TransactionSplitInput {
@@ -766,7 +817,8 @@ mod tests {
                     },
                 ],
             )
-            .is_err());
+            .is_err()
+        );
         let csv = v.export_bookings_csv(f).unwrap();
         assert!(csv.starts_with(
             "\u{FEFF}Datum;Konto;Name;IBAN;Verwendungszweck;Kategorie;Betrag;Währung;Tags\r\n"
@@ -802,6 +854,7 @@ mod tests {
             &[],
             today.year().into(),
             today.month() as u32,
+            false,
         )
         .unwrap();
         assert_eq!(cf.last().unwrap().expense_cents, 1_000);
@@ -838,7 +891,8 @@ mod tests {
             )
             .unwrap();
         let expense = |ids: &[i64]| {
-            cashflow_for(&v, PeriodGranularity::Month, 1, ids, 2025, 2).unwrap()[0].expense_cents
+            cashflow_for(&v, PeriodGranularity::Month, 1, ids, 2025, 2, false).unwrap()[0]
+                .expense_cents
         };
         assert_eq!(expense(&[]), 10_000);
         assert_eq!(expense(&[first]), 3_000);

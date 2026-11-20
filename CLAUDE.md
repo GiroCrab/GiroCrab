@@ -9,19 +9,22 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `girocrab-core/src/vault/` – `impl Vault` per feature: `accounts.rs`, `bookings.rs` (list_transactions/paging), `categories.rs`, `connections.rs` (bank logins, stored PIN), `rules.rs`, `settings.rs`, `merge.rs`
 - `girocrab-core/src/schema.rs` – versioned schema migrations (see `docs/ARCHITECTURE.md`)
 - `girocrab-core/src/connectors/` – `mod.rs` (submodule decls + shared HTTP helpers), `types.rs` (`BankConnector`
-  trait + DTOs), `catalog.rs` (`descriptor`, `make_connector*`), `sync_session.rs` / `transfer_session.rs` (FFI state
-  machines), `persist.rs` (`impl Vault`: `store_fetch`, `begin_sync`/`begin_transfer`), tests in `connectors/tests/`;
-  connector impls alongside: `fints/`, `comdirect.rs`, `trade_republic.rs`, `enable_banking.rs`, `paypal.rs`
+  trait + DTOs), `catalog.rs` (`descriptor`, `make_connector*`), `bank_directory.rs` (search routing + curated PSD2 catalog),
+  `sync_session.rs` / `transfer_session.rs` (FFI state machines), `persist.rs` (`impl Vault`: `store_fetch`,
+  `begin_sync`/`begin_transfer`), `html.rs` (helpers for connectors that read web pages), tests in `connectors/tests/`; connector impls alongside: `fints/`, `comdirect.rs`,
+  `trade_republic.rs`, `enable_banking.rs` (`needs_lean_request` 90d cap for Revolut/Spuerkeess/N26), `paypal.rs`
 - `girocrab-core/src/importers/` – one-off file/web-capture importers: `moneymoney_db.rs` (encrypted SQLCipher database import),
   `moneymoney_import.rs` (CSV/XML/CAMT/MT940 exports), `portal_import.rs` (Amex/Amazon Visa web + CSV/PDF import),
   `amazon_orders.rs`
 - `girocrab-core/src/tags.rs` – booking tags (#228): schema step, `impl Vault` API, booking tag loading; `tags/merge.rs` (iCloud merge of tags and tag sets), `tags/tests.rs`
 - `girocrab-core/src/merchants.rs` – merchant matching
+- `girocrab-core/src/recipients.rs` – known recipients of the transfer form (one per IBAN, cached), hidden IBANs + merge (#978)
 - `girocrab-core/src/documents.rs` – booking documents / PDF text extraction
 - `girocrab-core/src/text.rs` – text helpers (mojibake repair etc.)
 - `girocrab-core/src/local_api.rs` + `local_api/server.rs` – read-only local interface for external analysis (#136): queries, scope/token, Unix socket server (`docs/local-api.md`)
 - `girocrab-mcp/` – MCP stdio adapter for that socket (own crate, no core dependency outside tests; architecture, bundling, local testing: `docs/local-api-entwicklung.md`)
 - `girocrab-core/src/report_sanitizer.rs` – scrubs log/diagnostics text for public bug reports (`sanitize_report_text`)
+- `girocrab-core/src/sys.rs` – the only `unsafe` code (libc wrappers); exceptions to `scripts/lint-no-obfuscation.sh` (CI, #948) go in that script.
 - `GiroCrabApp/Sources/GiroCrabUI/PrivacyRedaction.swift` – `.sensitive()` modifier; `BugReport.swift` / `BugReportUI.swift` – Hilfe › Problem melden
 - `GiroCrabApp/Sources/GiroCrabUI/AppModel.swift` – app state (all stored instance properties; static members stay in their feature file), init, vault lifecycle,
   `vaultOffMain`/`pinVault`; features live in `AppModel+<Feature>.swift` extensions: `Loading` (reloads, booking
@@ -90,6 +93,11 @@ Internal code identifiers (module, function, test and file names) are exempt; `s
   `scripts/lint-vault-access.sh` enforces this in CI.
 - `vault.list_transactions` enriches every row in the filter (merchant, flow, sums); `limit`/`offset`
   only trim the result. Never call it for a count or a sum – add a SQL aggregate.
+- **Multi-currency invariant (#569):** Never sum amounts across different currencies into one total. `EUR` is the primary
+  aggregate currency; non-EUR currencies are grouped and displayed separately per currency (*„Zusätzlich: …“*).
+- **PR size & schema splitting:** Keep each PR to one focused concern (~15–20 files max). Oversized multi-feature PRs are
+  automatically put on `hold` by the review gate. If a feature needs a schema migration, land the schema step + core model
+  in a small standalone PR first so parallel PRs do not collide on `STEPS` numbers.
 - An edit must either reload synchronously or declare what it invalidates (`rulesStale`,
   `dashboardStale`, `categoryRefreshTask`). A cancelled background load must never be the only
   thing that would have refreshed a view.

@@ -25,18 +25,19 @@
 //! browser consent is only needed every ~90-180 days.
 
 use async_trait::async_trait;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
-    http_client, paginate, BankConnector, Challenge, ChallengeKind, ChallengeResponse,
-    ConnectContext, FetchResult, Paged, Phase, RemoteAccount, RemoteTransaction,
+    BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, FetchResult, Paged,
+    Phase, RemoteAccount, RemoteTransaction, http_client_same_host, paginate,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::AccountKind;
 use crate::money::json_number_to_cents;
+use crate::secret::{SecretJson, SecretString};
 use crate::vault::Vault;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -141,7 +142,7 @@ struct PsdState {
     // Optional: "Neu verbinden" / "Sitzung löschen" remove both from the
     // stored state; the account list must still be read (reconnect compare).
     #[serde(default)]
-    session_id: String,
+    session_id: SecretString,
     #[serde(default)]
     valid_until: String,
     #[serde(default, deserialize_with = "de_accounts")]
@@ -472,9 +473,15 @@ fn is_spuerkeess(name: &str) -> bool {
     n.contains("spuerkeess") || n.contains("bcee")
 }
 
+/// N26 lists 180 days in `/aspsps` but rejects `/auth` with `invalid_request`
+/// on restricted applications unless capped at 90 days without `language`.
+fn is_n26(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case("n26") || name.to_lowercase().starts_with("n26 ")
+}
+
 /// Banks that want the leanest request: 90 days at most, no `language`.
 fn needs_lean_request(name: &str) -> bool {
-    is_revolut(name) || is_spuerkeess(name)
+    is_revolut(name) || is_spuerkeess(name) || is_n26(name)
 }
 
 fn effective_max_secs(name: &str, max: Option<i64>) -> Option<i64> {
@@ -507,10 +514,10 @@ fn auth_diagnostics(list: &Value, name: &str, body: &Value) -> String {
         })
         .unwrap_or(Value::Null);
     let mut req = body.clone();
-    if let Some(o) = req.as_object_mut() {
-        if o.contains_key("state") {
-            o.insert("state".into(), json!("<redacted>"));
-        }
+    if let Some(o) = req.as_object_mut()
+        && o.contains_key("state")
+    {
+        o.insert("state".into(), json!("<redacted>"));
     }
     format!("aspsp={entry} auth_request={req}")
 }
@@ -776,7 +783,7 @@ impl EnableBankingConnector {
             if a.name.is_empty() {
                 a.name = self.aspsp_default.clone();
             }
-            if a.currency.is_empty() {
+            if a.currency.is_empty() || a.currency.eq_ignore_ascii_case("XXX") {
                 a.currency = "EUR".into();
             }
         }
@@ -803,7 +810,7 @@ impl EnableBankingConnector {
                     .to_string(),
             ),
             (&mut acc.iban, s(&a["account_id"]["iban"]).replace(' ', "")),
-            (&mut acc.currency, s(&a["currency"])),
+            (&mut acc.currency, s(&a["currency"]).to_uppercase()),
             (&mut acc.cash_account_type, s(&a["cash_account_type"])),
             (&mut acc.identification_hash, s(&a["identification_hash"])),
             (&mut acc.account_number, other_account_id(a)),
@@ -866,8 +873,10 @@ impl EnableBankingConnector {
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .map(|s| Some(s.to_string()));
-            let items = match page["transactions"].take() {
-                Value::Array(items) => items,
+            // `get_mut`, not `page["transactions"]`: `IndexMut` panics on a
+            // non-object body (array, string)
+            let items = match page.get_mut("transactions").map(Value::take) {
+                Some(Value::Array(items)) => items,
                 _ => Vec::new(),
             };
             Ok((items, next))
@@ -1115,7 +1124,10 @@ fn consent_error(code: &str, description: &str) -> CoreError {
         format!("{code}: {}", description.trim())
     };
     let message = match code {
-        "access_denied" => trf("Die Freigabe wurde bei der Bank abgelehnt ({0}).", &[&detail]),
+        "access_denied" => trf(
+            "Die Freigabe wurde bei der Bank abgelehnt ({0}).",
+            &[&detail],
+        ),
         "server_error" | "temporarily_unavailable" => trf(
             "Die Bank hat die Freigabe mit einem Fehler auf ihrer Seite beendet ({0}). Das liegt nicht an Ihren Angaben – bitte später erneut versuchen, gegebenenfalls mit weniger ausgewählten Konten.",
             &[&detail],
@@ -1169,8 +1181,8 @@ impl BankConnector for EnableBankingConnector {
     async fn begin(&mut self, ctx: &ConnectContext) -> CoreResult<Phase> {
         crate::depot_debug::log("enable_banking begin: entered");
         self.jwt = Self::make_jwt(ctx)?;
-        self.client = Some(http_client()?);
-        if let Ok(st) = serde_json::from_value::<PsdState>(ctx.state.clone()) {
+        self.client = Some(http_client_same_host()?);
+        if let Ok(st) = ctx.state.decode::<PsdState>() {
             self.st = st;
         }
         let now = jiff::Timestamp::now().to_string();
@@ -1180,10 +1192,10 @@ impl BankConnector for EnableBankingConnector {
             }
             // Generic mode: make sure the consent was not revoked or closed
             // early (Enable Banking call, does not count against the bank's limit).
-            let path = format!("/sessions/{}", self.st.session_id);
+            let path = format!("/sessions/{}", self.st.session_id.expose());
             match self.call(reqwest::Method::GET, &path, None).await {
                 Ok(s) if s["status"].as_str().is_none_or(|st| st == "AUTHORIZED") => {
-                    return Ok(Phase::Ready)
+                    return Ok(Phase::Ready);
                 }
                 Ok(s) => crate::depot_debug::log(&format!(
                     "enable_banking begin: session status {} -> new consent",
@@ -1208,22 +1220,21 @@ impl BankConnector for EnableBankingConnector {
         let mut aspsp_list = Value::Null;
         // Generic banks come from our built-in catalog, whose names are
         // best-effort: ask the live ASPSP list for the exact spelling first.
-        if !self.card_mode() {
-            if let Ok(list) = self
+        if !self.card_mode()
+            && let Ok(list) = self
                 .call(
                     reqwest::Method::GET,
                     &format!("/aspsps?country={country}"),
                     None,
                 )
                 .await
+        {
+            if let Some(exact) = resolve_generic_aspsp(&list, &configured, &country)?
+                && exact != configured
             {
-                if let Some(exact) = resolve_generic_aspsp(&list, &configured, &country)? {
-                    if exact != configured {
-                        names.insert(0, exact);
-                    }
-                }
-                aspsp_list = list;
+                names.insert(0, exact);
             }
+            aspsp_list = list;
         }
         for alt in ["Open Bank", "Zinia"] {
             if self.aspsp_setting.ends_with("amazonvisa")
@@ -1333,7 +1344,7 @@ impl BankConnector for EnableBankingConnector {
                 Some(json!({"code": code})),
             )
             .await?;
-        self.st.session_id = v["session_id"].as_str().unwrap_or_default().to_string();
+        self.st.session_id = v["session_id"].as_str().unwrap_or_default().into();
         self.st.valid_until = v["access"]["valid_until"]
             .as_str()
             .unwrap_or_default()
@@ -1370,7 +1381,7 @@ impl BankConnector for EnableBankingConnector {
         if self.st.accounts.is_empty() && !self.st.session_id.is_empty() {
             // State lost its accounts (e.g. saved by an older build): re-read them
             // from the session instead of silently syncing nothing.
-            let path = format!("/sessions/{}", self.st.session_id);
+            let path = format!("/sessions/{}", self.st.session_id.expose());
             let sess = self.call(reqwest::Method::GET, &path, None).await?;
             self.st.accounts = self.parse_accounts(&sess);
             crate::depot_debug::log(&format!(
@@ -1380,11 +1391,17 @@ impl BankConnector for EnableBankingConnector {
         }
         self.upgrade_legacy_accounts().await;
         let mut out = FetchResult::default();
+        // One account (#1124): its requests only, for the PSD2 daily limit
+        // and the per-account history flags.
+        let refs: Vec<String> = self.st.accounts.iter().map(|a| a.ext_ref.clone()).collect();
+        let only = ctx.only_among(&refs);
+        let mut wanted = self.st.accounts.clone();
+        wanted.retain(|a| only.is_none_or(|o| a.ext_ref == o));
         if self.card_mode() {
-            for a in self.st.accounts.clone() {
+            for a in wanted {
                 self.fetch_card(ctx, &mut out, &a).await?;
             }
-            out.state = Some(serde_json::to_value(&self.st)?);
+            out.state = Some(SecretJson::encode(&self.st)?);
             return Ok(out);
         }
         out.hold_prefix = Some(HOLD_PREFIX.into());
@@ -1407,7 +1424,7 @@ impl BankConnector for EnableBankingConnector {
         // uid → every page of the account's bookings was read
         let mut listed: HashMap<String, bool> = HashMap::new();
         let mut stopped_early = false;
-        for a in self.st.accounts.clone() {
+        for a in wanted {
             let res = if kind_of(&a) == AccountKind::CreditCard {
                 let named = EbAccount {
                     name: display_name(&a),
@@ -1441,11 +1458,10 @@ impl BankConnector for EnableBankingConnector {
         // The vault uses the fetched name when inserting a new account.
         if let Some(label) =
             paypal_account_label(&self.aspsp_default, self.st.accounts.len(), &ctx.login_name)
+            && let [account] = out.accounts.as_mut_slice()
         {
-            if let [account] = out.accounts.as_mut_slice() {
-                account.name = label.to_owned();
-                out.name_updates.clear();
-            }
+            account.name = label.to_owned();
+            out.name_updates.clear();
         }
         // Every account of the consent was looked at: the vault may mark the
         // connection's other accounts as no longer accessible.
@@ -1459,7 +1475,7 @@ impl BankConnector for EnableBankingConnector {
         // Renames travel with this result; the vault applies them.
         self.st.renames.clear();
         self.st.revoked.clear();
-        out.state = Some(serde_json::to_value(&self.st)?);
+        out.state = Some(SecretJson::encode(&self.st)?);
         Ok(out)
     }
 }
@@ -1476,7 +1492,12 @@ impl EnableBankingConnector {
         let uid = acc.uid.clone();
         let name = acc.name.clone();
         let iban = acc.iban.clone();
-        let currency = acc.currency.clone();
+        let currency = if acc.currency.trim().is_empty() || acc.currency.eq_ignore_ascii_case("XXX")
+        {
+            "EUR".to_string()
+        } else {
+            acc.currency.clone()
+        };
         let external_ref = acc.ext_ref.clone();
         {
             crate::depot_debug::log(&format!(
@@ -1821,7 +1842,7 @@ impl Vault {
         redirect_url: String,
     ) -> Result<EnableBankingAppCheck, CoreError> {
         let jwt = EnableBankingConnector::make_jwt_for(application_id.trim(), &private_key_pem)?;
-        let resp = http_client()?
+        let resp = http_client_same_host()?
             .get(format!("{API}/application"))
             .bearer_auth(jwt)
             .header("Accept", "application/json")
@@ -1864,14 +1885,16 @@ mod tests {
         );
         assert_eq!(bad.problems.len(), 3);
         assert!(bad.problems.iter().any(|p| p.contains("Sandbox")));
-        assert!(bad
-            .problems
-            .iter()
-            .any(|p| p.contains("Activate by linking accounts")));
-        assert!(bad
-            .problems
-            .iter()
-            .any(|p| p.contains("localhost/girocrab/callback")));
+        assert!(
+            bad.problems
+                .iter()
+                .any(|p| p.contains("Activate by linking accounts"))
+        );
+        assert!(
+            bad.problems
+                .iter()
+                .any(|p| p.contains("localhost/girocrab/callback"))
+        );
         // empty answer: not active, not production
         assert_eq!(
             evaluate_application(&Value::Null, redirect).problems.len(),
@@ -2441,20 +2464,26 @@ mod tests {
                 "{v}"
             );
         }
+        // N26 is capped at 90 days despite advertising 180 days
+        assert_eq!(
+            effective_max_secs("N26", Some(15_552_000)),
+            Some(90 * 86_400)
+        );
+        assert!(needs_lean_request("N26"));
         // Revolut never exceeds 90 days, with or without a list entry
         assert_eq!(effective_max_secs("Revolut", None), Some(90 * 86_400));
         assert_eq!(
             effective_max_secs("Revolut", Some(180 * 86_400)),
             Some(90 * 86_400)
         );
-        assert_eq!(effective_max_secs("N26", None), None);
+        assert_eq!(effective_max_secs("N26", None), Some(90 * 86_400));
         // Spuerkeess lists 180 days but only accepts 90 (and no language)
         assert_eq!(
             effective_max_secs("Spuerkeess", Some(15_552_000)),
             Some(90 * 86_400)
         );
         assert!(needs_lean_request("Spuerkeess") && needs_lean_request("BCEE"));
-        assert!(!needs_lean_request("N26"));
+        assert!(!needs_lean_request("C24"));
     }
 
     #[test]

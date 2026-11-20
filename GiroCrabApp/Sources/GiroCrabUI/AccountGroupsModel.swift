@@ -12,8 +12,10 @@ extension Account {
     var archivedDate: Date? { archivedUnix.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
 
     /// Whether the sidebar row marks the account as outside the overall money
-    /// totals (eye.slash + dimming, #337). Not for order accounts: being
-    /// outside is their normal state — the context-menu switch shows it.
+    /// totals (eye.slash + dimming, #337) — its own switch is off, an above
+    /// group is excluded or it is archived; `inTotal` is the effective flag.
+    /// Not for order accounts: being outside is their normal state — the
+    /// context-menu switch shows it.
     var showsTotalExclusionIndicator: Bool { !inTotal && kind != .order }
 
     /// What the sidebar row shows as the account's figure. An order account
@@ -366,13 +368,19 @@ extension AppModel {
     func userGroupBalanceAccountIDs(_ uuid: String) -> [Int64] {
         var skipBelow: UInt32?
         var ids: [Int64] = []
+        // an excluded selection sums its own accounts (review point 1 on
+        // #1100): the chart follows the header's own-sum rule, not the
+        // effective flag that the group's exclusion has switched off
+        let ownSum = userGroups.first(where: { $0.uuid == uuid })?.inTotal == false
         for (n, g) in userGroupSubtree(uuid).enumerated() {
             if let d = skipBelow {
                 if g.depth > d { continue }
                 skipBelow = nil
             }
             if n > 0 && !g.includeInTotal { skipBelow = g.depth; continue }
-            ids += g.accounts.filter(\.inTotal).map(\.id)
+            ids += ownSum
+                ? g.accounts.filter { $0.includeInTotal && !$0.isArchived }.map(\.id)
+                : g.accounts.filter(\.inTotal).map(\.id)
         }
         return ids
     }
@@ -554,6 +562,24 @@ extension AppModel {
         } catch {
             errorMessage = describe(error)
         }
+    }
+
+    /// „Sichern“ in Kontoeinstellungen: writes the fields that differ from `original`, the account
+    /// when the sheet opened, so a value a sync brought in meanwhile is no edit (#980). One reload.
+    func saveAccountEdits(_ original: Account, name: String, owner: String, kind: AccountKind, note: String) {
+        guard let vault else { return }
+        let id = original.id
+        let kindChanged = kind != original.kind && !isOffline(id)
+        do {
+            if name != original.name.trimmingCharacters(in: .whitespaces) { try vault.renameAccount(accountId: id, name: name) }
+            if owner != original.owner.trimmingCharacters(in: .whitespaces) { try vault.setAccountOwner(accountId: id, owner: owner) }
+            if kindChanged { try vault.setAccountKind(accountId: id, kind: kind) }
+            if note != original.note.trimmingCharacters(in: .whitespacesAndNewlines) { try vault.setAccountNote(accountId: id, note: note) }
+        } catch {
+            errorMessage = describe(error)
+        }
+        reloadAccounts()
+        if kindChanged { dashboardStale = true }
     }
 
     func renameAccount(_ accountId: Int64, to name: String) {

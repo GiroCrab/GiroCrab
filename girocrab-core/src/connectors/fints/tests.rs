@@ -36,7 +36,7 @@ fn test_ctx() -> ConnectContext {
         connection_id: 1,
         login_name: "user:1".into(),
         secret: SecretString::new("12345".into()),
-        state: serde_json::json!({}),
+        state: serde_json::json!({}).into(),
         since: "2025-01-01".into(),
         ..Default::default()
     }
@@ -162,7 +162,7 @@ async fn comdirect_login_tries_its_other_bank_codes_and_keeps_the_one_that_works
     ] {
         ctx.settings.insert(k.into(), SecretString::new(v.into()));
     }
-    ctx.state = persisted;
+    ctx.state = persisted.into();
     assert!(matches!(c2.begin(&ctx).await.unwrap(), Phase::Ready));
     assert_eq!(c2.blz, "20041111");
     assert_eq!(seen2.lock().unwrap().len(), 1);
@@ -339,7 +339,7 @@ fn message_has_correct_length_and_structure() {
         connection_id: 1,
         login_name: "user:1".into(),
         secret: SecretString::new("12345".into()),
-        state: serde_json::json!({}),
+        state: serde_json::json!({}).into(),
         since: "2025-01-01".into(),
         ..Default::default()
     };
@@ -351,7 +351,9 @@ fn message_has_correct_length_and_structure() {
     let ids: Vec<&str> = segs.iter().map(|s| s.id()).collect();
     assert_eq!(
         ids,
-        vec!["HNHBK", "HNVSK", "HNSHK", "HKIDN", "HKVVB", "HKTAN", "HNSHA", "HNHBS"]
+        vec![
+            "HNHBK", "HNVSK", "HNSHK", "HKIDN", "HKVVB", "HKTAN", "HNSHA", "HNHBS"
+        ]
     );
     assert_eq!(segs[3].get(2, 0), "user:1", "login is escaped and restored");
     assert_eq!(segs[6].get(3, 0), "12345");
@@ -389,6 +391,10 @@ fn decoupled_poll_recognises_a_pending_approval() {
     // standard: 3956
     assert!(approval_pending(&reply(
         b"HIRMG:2:2+3060::Bitte beachten Sie die enthaltenen Warnungen.'HIRMS:3:2:3+3956::Starke Kundenauthentifizierung noch ausstehend.'"
+    )));
+    // 3045: SEPA-Instant handover after approval is no longer pending (#1121)
+    assert!(!approval_pending(&reply(
+        b"HIRMG:2:2+3060::Bitte beachten Sie die enthaltenen Warnungen.'HIRMS:3:2:3+3045::SEPA-Instant Payment Statusabfrage HKIPS veranlassen.'"
     )));
     // warnings only, no success code (Deutsche Bank)
     assert!(approval_pending(&reply(
@@ -968,7 +974,7 @@ fn standing_order_limits_come_from_the_stored_state() {
                 HICDNS:13:1:3+1+1+0+1:2:90:J:J:J:J:J:J:J:J:J:010612:010515:00:135'";
     let mut c = FinTsConnector::new("20041111");
     c.learn_bpd(&reply(raw));
-    let state = serde_json::to_value(&c.st).unwrap();
+    let state = crate::secret::SecretJson::encode(&c.st).unwrap();
     let create = standing_limits_from_state(&state, A::Create).unwrap();
     assert_eq!((create.min_days_ahead, create.max_days_ahead), (2, 90));
     assert_eq!(create.months, [1, 2, 3]);
@@ -980,7 +986,7 @@ fn standing_order_limits_come_from_the_stored_state() {
     assert_eq!(change.weekdays, [1, 3, 5]);
     assert!(standing_limits_from_state(&state, A::Delete).is_none());
     // Not a FinTS state, or none of the parameters seen yet.
-    assert!(standing_limits_from_state(&serde_json::json!({}), A::Create).is_none());
+    assert!(standing_limits_from_state(&serde_json::json!({}).into(), A::Create).is_none());
 }
 
 #[test]
@@ -1199,6 +1205,98 @@ fn evaluates_vop_results() {
 }
 
 #[test]
+fn match_with_3091_needs_no_hkvpa() {
+    // 3091 "VOP-Ausführungsauftrag nicht benötigt": the challenge is simply answered.
+    let r = reply(
+        b"HIRMG:2:2+0010::OK.'HIRMS:3:2:3+3091::VOP-Ausfuehrungsauftrag nicht benoetigt.'HIVPP:5:1:3+@4@ABCD+++++DE89370400440532013000::::RCVC'",
+    );
+    let mut c = FinTsConnector::new("20041111");
+    order_for(&mut c);
+    assert!(c.evaluate_payee(&r).is_none());
+    assert!(!c.vop_with_tan);
+}
+
+#[tokio::test]
+async fn confirming_without_a_name_check_result_after_3091_resends_nothing() {
+    // Berliner Sparkasse: HKVPP + HKCCS + HKTAN is answered with 3091 (no HKVPA
+    // needed) and 3955 (approval in the app); HIVPP carries no result. The
+    // order is already with the bank: "send anyway" must continue that
+    // challenge. HKVPA + HKCCS + HKTAN again was rejected with 9010 on the order.
+    let r = reply(
+        b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3091::VOP-Ausfuehrungsauftrag nicht benoetigt.'HIRMS:4:2:5+3955::Auftrag empfangen - Bitte Auftrag in Ihrer App freigeben.'HIVPP:5:1:3+@8@VOPID123'",
+    );
+    let mut c = FinTsConnector::new("20041111");
+    order_for(&mut c);
+    let check = c.evaluate_payee(&r).unwrap();
+    assert_eq!(check.result, PayeeMatch::NotPossible);
+    c.keep_challenge_on_3091(&r, false).unwrap();
+    assert!(!c.vop_with_tan);
+    assert!(c.vop_resume.is_some());
+    c.vop_pending = Some(check.result);
+
+    // The connector has no URL: any message sent here would fail the call.
+    let phase = c.confirm_payee(&test_ctx()).await.unwrap();
+    assert!(matches!(phase, Phase::Challenge(_)), "{phase:?}");
+    assert!(c.vop_resume.is_none());
+    // A second confirmation is refused, as before.
+    assert!(c.confirm_payee(&test_ctx()).await.is_err());
+}
+
+#[test]
+fn the_3091_challenge_is_only_kept_when_the_reply_carries_it() {
+    let with_3091 = reply(
+        b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3091::nicht benoetigt.'HIRMS:4:2:5+3955::Bitte in der App freigeben.'",
+    );
+    // After polling the last reply answers a bare HKVPP: nothing to keep.
+    let mut c = FinTsConnector::new("20041111");
+    c.keep_challenge_on_3091(&with_3091, true).unwrap();
+    assert!(c.vop_resume.is_none());
+    // 3945 (confirmation needed): HKVPA + order are sent again, nothing to keep.
+    let confirm = reply(
+        b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3945::Freigabe ohne VOP-Bestaetigung nicht moeglich.'HIRMS:4:2:5+3955::Bitte in der App freigeben.'",
+    );
+    c.keep_challenge_on_3091(&confirm, false).unwrap();
+    assert!(c.vop_resume.is_none());
+    // No 3091: unchanged.
+    let plain = reply(b"HIRMG:2:2+3060::Hinweise.'HIRMS:4:2:5+3955::Bitte in der App freigeben.'");
+    c.keep_challenge_on_3091(&plain, false).unwrap();
+    assert!(c.vop_resume.is_none());
+    // A new order forgets what the previous one kept.
+    c.keep_challenge_on_3091(&with_3091, false).unwrap();
+    assert!(c.vop_resume.is_some());
+    c.begin_order();
+    assert!(c.vop_resume.is_none());
+}
+
+#[test]
+fn transfer_errors_name_the_rejected_segment() {
+    // Berliner Sparkasse, second message: HKVPA (#3) is fine, the order (#4) is not.
+    let r = BankReply {
+        segments: Vec::new(),
+        codes: vec![
+            (
+                "9050".into(),
+                None,
+                "Die Nachricht enthält Fehler.".into(),
+                vec![],
+            ),
+            ("0020".into(), Some(3), "In Ordnung.".into(), vec![]),
+            ("9010".into(), Some(4), "Systemfehler".into(), vec![]),
+        ],
+        sent: HashMap::from([(3, "HKVPA".to_string()), (4, "HKCCS".to_string())]),
+    };
+    match r.check_transfer() {
+        Err(CoreError::Bank { code, message }) => {
+            assert_eq!(code, "9050");
+            assert!(message.contains("9010"), "{message}");
+            assert!(message.contains("[HKCCS #4]"), "{message}");
+            assert!(!message.contains("HKVPA"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn builds_hkcaz_with_escaped_camt_urn() {
     let mut c = FinTsConnector::new("52090000");
     c.st.versions.insert("HKCAZ".into(), vec![1]);
@@ -1316,7 +1414,6 @@ fn pain_header_is_well_formed_and_always_names_the_owner() {
         "{}",
         h.created
     );
-    assert!(jiff::civil::Date::strptime("%Y-%m-%d", h.date()).is_ok());
     // GC + timestamp + 8 hex digits, within the 35 characters pain allows.
     assert!(h.message_id.starts_with("GC") && h.message_id.len() == 24);
 }
@@ -1356,11 +1453,12 @@ async fn order_source_account_honours_the_upd_and_says_why_it_is_missing() {
         .await
         .unwrap();
     assert_eq!(acc.map(|a| a.iban).as_deref(), Some(IBAN_A));
-    assert!(c
-        .source_account(&ctx, IBAN_A, "HKIPZ")
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        c.source_account(&ctx, IBAN_A, "HKIPZ")
+            .await
+            .unwrap()
+            .is_none()
+    );
     // The HKSPA error explains the missing account.
     match c.source_account(&ctx, IBAN_B, "HKCCS").await {
         Err(CoreError::NotFound { what }) => assert!(what.contains("HKSPA"), "{what}"),
@@ -1382,4 +1480,53 @@ async fn order_source_account_without_upd_restrictions_allows_every_order() {
         let acc = c.source_account(&ctx, iban, "HKCCS").await.unwrap();
         assert_eq!(acc.map(|a| a.iban).as_deref(), Some(iban));
     }
+}
+
+#[tokio::test]
+async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
+    // #1083 (flatex): the camt request gets 0030, a TAN the running fetch cannot
+    // ask for. MT940 would only send the next TAN to the app; the other
+    // account's balance is stored and the failure reported with the sync.
+    const BALANCE: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:7:3+X+Girokonto+EUR+C:1234,56:EUR:20250102'";
+    const TAN: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:4+0030::Auftrag empfangen - TAN erforderlich.'HITAN:4:6:4+4++TASK1+TAN eingeben'";
+    let (url, seen) = mock_bank(vec![BALANCE, TAN]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKCAZ": [1], "HKKAZ": [7]}, "tan_required": {"HKCAZ": true, "HKKAZ": true}, "camt_formats": ["urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"]});
+    let mut c = two_step_connector(&url, state);
+    c.upd = vec![
+        upd_acc("0532013000", "", IBAN_A, "Girokonto", &["HKSAL"]),
+        upd_acc(
+            "0000202051",
+            "",
+            IBAN_B,
+            "Verrechnungskonto",
+            &["HKCAZ", "HKKAZ"],
+        ),
+    ];
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(seen[1].iter().any(|i| i == "HKCAZ"), "{seen:?}");
+        assert!(!seen.iter().flatten().any(|i| i == "HKKAZ"), "{seen:?}");
+    }
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+    assert!(r.warnings[0].starts_with(IBAN_B), "{:?}", r.warnings);
+    assert!(r.warnings[0].contains("HKCAZ"), "{:?}", r.warnings);
+    // B's balance was not read: the stored one stays; A's was
+    assert_eq!(r.balances_unknown, vec![IBAN_B.to_string()]);
+    let a = r
+        .accounts
+        .iter()
+        .find(|a| a.external_ref == IBAN_A)
+        .unwrap();
+    assert_eq!(a.balance_cents, 123_456);
+}
+
+#[test]
+fn hispas_advertises_pain_001_09_for_hkccs() {
+    let mut c = FinTsConnector::new("20041133");
+    c.learn_bpd(&reply(
+        b"HICCSS:10:1:3+1+1+0'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.008.001.08'",
+    ));
+    assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V09));
 }

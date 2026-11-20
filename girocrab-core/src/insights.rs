@@ -4,20 +4,24 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use jiff::civil::Date;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use crate::connectors::read_body_limited;
 use crate::error::CoreError;
 use crate::merchants::{FlowKind, MerchantResolver};
 use crate::models::*;
-use crate::vault::{sql_int_list, Vault, LIVE_BOOKINGS_SQL};
+use crate::vault::{LIVE_BOOKINGS_SQL, Vault, sql_int_list};
 
-fn all_bookings(v: &Vault, scope: BookingScope) -> Result<Vec<Booking>, CoreError> {
+fn all_bookings(
+    v: &Vault,
+    db: &rusqlite::Connection,
+    scope: BookingScope,
+) -> Result<Vec<Booking>, CoreError> {
     let filter = BookingFilter {
         scope,
         ..Default::default()
     };
-    v.collect_bookings(&*v.db()?, &filter)
+    v.collect_bookings(db, &filter)
 }
 
 fn month_key(date: &str) -> String {
@@ -111,14 +115,19 @@ impl Vault {
         date_from: Option<String>,
         date_to: Option<String>,
     ) -> Result<SelectionFlow, CoreError> {
+        // rows-free path like `selection_flow`: only the flow is used, so no
+        // booking is enriched or kept
         Ok(self
-            .list_transactions(BookingFilter {
-                account_ids,
-                date_from,
-                date_to,
-                respect_in_total: true,
-                ..Default::default()
-            })?
+            .list_page(
+                BookingFilter {
+                    account_ids,
+                    date_from,
+                    date_to,
+                    respect_in_total: true,
+                    ..Default::default()
+                },
+                false,
+            )?
             .flow)
     }
 
@@ -128,18 +137,19 @@ impl Vault {
         let months_list = last_months(months);
         let first_month = months_list.first().cloned().unwrap_or_default();
         let this_month = months_list.last().cloned().unwrap_or_default();
-        let all = all_bookings(self, BookingScope::All)?;
         // Overall money figure (#337): only accounts of the effective total set
         // contribute — own switch, group and archiving, like the KPI tiles and
         // the cashflow card. The booking list itself is never narrowed by this.
-        let allowed: std::collections::HashSet<i64> = {
+        // One guard for both reads, so a merge committing in between cannot mix
+        // old amounts with new eligibility.
+        let all: Vec<Booking> = {
             let db = self.db()?;
-            crate::user_groups::total_account_ids(&db)?
+            let allowed = crate::user_groups::total_account_ids(&db)?;
+            all_bookings(self, &db, BookingScope::All)?
+                .into_iter()
+                .filter(|b| allowed.contains(&b.account_id))
+                .collect()
         };
-        let all: Vec<Booking> = all
-            .into_iter()
-            .filter(|b| allowed.contains(&b.account_id))
-            .collect();
 
         // Monthly flows
         let mut monthly: BTreeMap<String, MonthFlow> = months_list
@@ -587,10 +597,9 @@ pub(crate) fn purge_untrusted_logos(conn: &rusqlite::Connection) -> rusqlite::Re
     keep.extend(load_overrides(conn)?.into_values());
     let domains: Vec<String> = {
         let mut st = conn.prepare("SELECT domain FROM merchant_logo_cache")?;
-        let r = st
-            .query_map([], |r| r.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        r
+
+        st.query_map([], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?
     };
     let mut n = 0;
     for d in domains {
@@ -606,10 +615,9 @@ pub(crate) fn load_overrides(
     conn: &rusqlite::Connection,
 ) -> rusqlite::Result<HashMap<String, String>> {
     let mut st = conn.prepare("SELECT merchant_key, domain FROM merchant_domain_overrides")?;
-    let r = st
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<Result<HashMap<_, _>, _>>();
-    r
+
+    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<HashMap<_, _>, _>>()
 }
 
 #[cfg(test)]
@@ -841,13 +849,14 @@ mod logo_tests {
                 ..Default::default()
             })
             .unwrap();
-        assert!(page
-            .transactions
-            .iter()
-            .all(
-                |t| t.merchant_domain.as_deref() == Some("baeckerei-koenig.de")
-                    && t.merchant.domain_source == "override"
-            ));
+        assert!(
+            page.transactions
+                .iter()
+                .all(
+                    |t| t.merchant_domain.as_deref() == Some("baeckerei-koenig.de")
+                        && t.merchant.domain_source == "override"
+                )
+        );
         let enbw = v
             .list_transactions(BookingFilter {
                 search: Some("EnBW".into()),
@@ -934,15 +943,13 @@ impl Vault {
         const MAX_LOGO_BYTES: usize = 1024 * 1024;
         let mut found: Option<(Vec<u8>, &str)> = None;
         for (name, url) in sources.iter() {
-            if let Ok(resp) = client.get(url).send().await {
-                if resp.status().is_success() {
-                    if let Ok(bytes) = read_body_limited(resp, MAX_LOGO_BYTES).await {
-                        if good_logo(&bytes) {
-                            found = Some((bytes, name));
-                            break;
-                        }
-                    }
-                }
+            if let Ok(resp) = client.get(url).send().await
+                && resp.status().is_success()
+                && let Ok(bytes) = read_body_limited(resp, MAX_LOGO_BYTES).await
+                && good_logo(&bytes)
+            {
+                found = Some((bytes, name));
+                break;
             }
         }
         let db = self.db()?;
@@ -995,12 +1002,11 @@ fn monthly_rate(executions: &[&SecurityTransaction], today: Date) -> (i64, Vec<u
     let Some((latest_month, (latest_sum, latest_days))) = newest.next() else {
         return (0, Vec::new());
     };
-    if let Some((_, (previous_sum, previous_days))) = newest.next() {
-        if *latest_month == today.strftime("%Y-%m").to_string()
-            && latest_days.len() < previous_days.len()
-        {
-            return (*previous_sum, previous_days.clone());
-        }
+    if let Some((_, (previous_sum, previous_days))) = newest.next()
+        && *latest_month == today.strftime("%Y-%m").to_string()
+        && latest_days.len() < previous_days.len()
+    {
+        return (*previous_sum, previous_days.clone());
     }
     (*latest_sum, latest_days.clone())
 }

@@ -33,7 +33,9 @@ and `migrate` runs the missing ones in a single transaction.
 | 29 | `depot_values`: value history of securities depots |
 | 30 | `tx_date_id` also covers `deleted_ms`, `account_id` and `category_id` (counts and period sums from the index) |
 | 31 | `booking_documents.seen_at`: read status of documents; the document list index carries the column, a partial index finds the unread ones |
-| 32+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 32 | `accounts.note` / `note_ms`: the account note syncs like the name (#980); moves the setting `account.note.<id>` onto the account |
+| 33 | `hidden_recipients`: IBANs left out of the transfer suggestions (#978); index `tx_recipients` over the outgoing bookings with an IBAN |
+| 34+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 
@@ -91,6 +93,13 @@ module adds its own methods to it and reaches the database through `self.db()`.
 - Free functions for Swift are exported only from `ffi.rs`, as wrappers that forward to the
   feature module (`scripts/lint-ffi-exports.sh`, CI). Elsewhere `#[uniffi::export]` marks only
   `impl` blocks of exported objects and callback traits.
+- `unsafe` code lives only in `sys.rs` (safe wrappers around the libc calls std lacks): the
+  core's `Cargo.toml` denies `unsafe_code` (every other workspace member forbids it) and
+  `scripts/lint-no-obfuscation.sh` (CI) lets only that file lift it. The script also keeps
+  processes, embedded files other than `data/` and dynamic loading out of the core and
+  Base64/hex decoding out of the payment path. Two checks back its text patterns: `clippy.toml`
+  bans process and loader calls by resolved path, and `--compiled` (CI) lists the files and
+  environment variables the compiler read for the library.
 - Modules under `vault/` are children of `vault`, so they see its private fields and helpers
   (`kept_key`, `migrate`). Other modules use `Vault::db()` only.
 - Tests sit in the module whose code they exercise.

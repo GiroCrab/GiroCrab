@@ -37,6 +37,9 @@ extension AppModel {
     /// background and replaces the shown data in one go.
     func reloadAllInBackground() {
         guard isUnlocked else { return }
+        // a sync can change the effective total set: supersede edit snapshots
+        // that still carry the pre-sync totals (#337), like `reloadAll` does
+        invalidateTotals()
         assetClassificationVersion += 1
         reloadAccounts()
         refreshSidebarCounts()
@@ -314,8 +317,10 @@ extension AppModel {
 
     /// The list offers the account filter (#357): the category views, „Alle Konten“, account
     /// groups and „Neue Umsätze“. A single account has nothing to choose from.
-    var showsAccountFilter: Bool {
-        switch sidebarSelection {
+    var showsAccountFilter: Bool { Self.offersAccountFilter(shownSelection) }
+
+    static func offersAccountFilter(_ selection: SidebarItem?) -> Bool {
+        switch selection {
         case .category, .uncategorized, .allAccounts, .group, .bank, .userGroup, .newBookings: true
         case .account, .documents, .planned, .directDebits, .wealth, .none: false
         }
@@ -362,6 +367,12 @@ extension AppModel {
     /// amount range as the booking list, and its accounts only in the category views (#406).
     var categorySumFilter: (accounts: [Int64], checked: Bool?, direction: BookingDirection, amount: AmountFilter) {
         (showsCategoryAccountFilter ? categoryAccountIDs : [], statusFilter == .all ? nil : statusFilter == .checked, directionFilter, amountFilter)
+    }
+
+    /// Period and `categorySumFilter` the sidebar sums load for now.
+    var categorySumsRequest: CategorySumsRequest {
+        let (from, to) = periodRange, sums = categorySumFilter
+        return CategorySumsRequest(from: from, to: to, accounts: sums.accounts, checked: sums.checked, direction: sums.direction, amount: sums.amount)
     }
 
     /// Hint under the sidebar's „Kategorien“ header while a filter narrows the sums; nil = none.
@@ -531,10 +542,26 @@ extension AppModel {
         AppDefaults.store.bool(forKey: ViewLayout.runningBalanceKey) && selectionHasBalances
     }
 
-    /// Currency of the running balances: one account's own, else the EUR sum (as the core sums).
-    var balanceCurrency: String {
-        if case .account(let id) = sidebarSelection, let a = account(for: id) { return a.currency }
+    /// Currency the core sums a selection of accounts in (#1049, as `counts_in_sums`): exactly one
+    /// account its own, otherwise (none, several, all) EUR only.
+    func sumCurrency(forAccounts ids: [Int64]) -> String {
+        if ids.count == 1, let a = account(for: ids[0]), !a.currency.isEmpty { return a.currency.uppercased() }
         return "EUR"
+    }
+
+    /// Currency of the sidebar's category sums: they follow the account filter of the category views.
+    var categorySumCurrency: String { sumCurrency(forAccounts: categorySumFilter.accounts) }
+
+    /// Currency of the running balances, KPIs and chart: that of the accounts the list shows
+    /// (one account, also a group or filter that narrows to one, its own; else the EUR sum).
+    var balanceCurrency: String {
+        // a pure order selection is an evidence context (#337): primary
+        // booking currency, never a converted sum
+        if isOrderSelection { return orderSelectionCurrency ?? "EUR" }
+        switch sidebarSelection {
+        case .documents, .planned, .directDebits, .wealth, .none: return "EUR"
+        default: return sumCurrency(forAccounts: currentFilter.accountIds)
+        }
     }
 
     /// Ansicht › Saldo anzeigen changed (also from the settings window): switching it on
@@ -611,6 +638,49 @@ extension AppModel {
         }
     }
 
+    /// Reads what the EUR-only sums leave out (#1049) for the current selection: the KPI tiles per
+    /// further currency and the sidebar totals per category. Runs after every reload of the sums; a newer
+    /// call cancels an older one, and both queries return at once while no booking has another currency.
+    func refreshOtherCurrencies() {
+        otherCurrenciesTask?.cancel()
+        guard vault != nil else {
+            if !otherCurrencyFlows.isEmpty { otherCurrencyFlows = [] }
+            if !categoryOtherTotals.isEmpty { categoryOtherTotals = [:] }
+            return
+        }
+        let (from, to) = periodRange
+        let filter = currentFilter
+        let followsList = filter.listHasFlow || kpiFollowsList
+        let sums = categorySumFilter
+        otherCurrenciesTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let loaded = try await self.vaultOffMain { vault -> ([CurrencyFlow], [CategoryCurrencyAmount]) in
+                    let flows = followsList && !filter.listHasFlow
+                        ? try vault.flowOtherCurrencies(filter: filter)
+                        : try vault.selectionFlowOtherCurrencies(accountIds: filter.accountIds, dateFrom: from, dateTo: to, respectInTotal: filter.respectInTotal)
+                    let totals = try vault.categoryOtherCurrencyTotals(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents)
+                    return (flows, totals)
+                }
+                guard !Task.isCancelled, let loaded else { return }
+                if self.otherCurrencyFlows != loaded.0 { self.otherCurrencyFlows = loaded.0 }
+                let grouped = Dictionary(grouping: loaded.1, by: \.categoryId).mapValues { $0.map { CurrencyAmount(currency: $0.currency, cents: $0.cents) } }
+                if self.categoryOtherTotals != grouped { self.categoryOtherTotals = grouped }
+            } catch {
+                // a missing "Zusätzlich" line is not worth an error alert
+            }
+        }
+    }
+
+    /// "Zusätzlich: −30,00 $ · …" for one KPI tile (nil: nothing in other currencies); `pick` reads the tile's value.
+    func otherCurrencyText(_ pick: (CurrencyFlow) -> Int64) -> String? {
+        let parts = otherCurrencyFlows.compactMap { f -> String? in
+            let cents = pick(f)
+            return cents == 0 ? nil : Money.format(cents, currency: f.currency)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     /// KPI tiles: same flow rules as the dashboard, but for the selected
     /// period and account/group (no account selected = all accounts). A pure
     /// order selection shows order evidence instead (#337): no money KPIs.
@@ -661,9 +731,13 @@ extension AppModel {
     func reloadCategoryHistory() {
         guard let vault, let r = categoryHistoryRequest else {
             if !categoryHistory.isEmpty { categoryHistory = [] }
+            if !categoryOtherCurrencies.isEmpty { categoryOtherCurrencies = [] }
             return
         }
-        runCore { categoryHistory = try vault.categoryHistoryByUnit(categoryId: r.id, accountIds: r.accounts, dateFrom: r.from, dateTo: r.to, keyLength: r.keyLength) }
+        runCore {
+            categoryHistory = try vault.categoryHistoryByUnit(categoryId: r.id, accountIds: r.accounts, dateFrom: r.from, dateTo: r.to, keyLength: r.keyLength)
+            categoryOtherCurrencies = try vault.categoryOtherCurrencies(categoryId: r.id, accountIds: r.accounts, dateFrom: r.from, dateTo: r.to)
+        }
     }
 
     func reloadHistory() {
@@ -677,8 +751,19 @@ extension AppModel {
 
     /// Accounts and day count of the balance chart for the current selection and period.
     var historyRequest: (ids: [Int64], days: UInt32) {
-        var ids: [Int64]
-        switch sidebarSelection {
+        let ids = chartAccountIDs(sidebarSelection)
+        // The chart follows the selected period. "Gesamter Zeitraum": up to ~15 years back,
+        // then the flat lead-in before the first booking is cut off.
+        let today = Calendar.current.startOfDay(for: Date())
+        let start = periodRange.0.flatMap(DateText.date) ?? Calendar.current.date(byAdding: .year, value: -15, to: today)!
+        let days = max(2, (Calendar.current.dateComponents([.day], from: start, to: today).day ?? 120) + 1)
+        return (ids, UInt32(days))
+    }
+
+    /// Accounts behind the header chart (balance history, expense pie #634) of a selection.
+    private func chartAccountIDs(_ selection: SidebarItem?) -> [Int64] {
+        let ids: [Int64]
+        switch selection {
         case .account(let id): ids = [id]
         // same accounts as the group's sum in the header (#208), and like that
         // sum only the effectively included ones (#337; `inTotal` also covers
@@ -688,17 +773,11 @@ extension AppModel {
         case .userGroup(let uuid): ids = userGroupBalanceAccountIDs(uuid)
         default: ids = liquidAccounts.map(\.id)
         }
-        if ids.isEmpty { ids = [-1] }
-        // The chart follows the selected period. "Gesamter Zeitraum": up to ~15 years back,
-        // then the flat lead-in before the first booking is cut off.
-        let today = Calendar.current.startOfDay(for: Date())
-        let start = periodRange.0.flatMap(DateText.date) ?? Calendar.current.date(byAdding: .year, value: -15, to: today)!
-        let days = max(2, (Calendar.current.dateComponents([.day], from: start, to: today).day ?? 120) + 1)
-        return (ids, UInt32(days))
+        return ids.isEmpty ? [-1] : ids
     }
 
-    /// Accounts behind the header chart (balance history, expense pie #634).
-    var headerChartAccountIDs: [Int64] { historyRequest.ids }
+    /// Accounts behind the header's expense pie: those of the selection shown (#1413).
+    var headerChartAccountIDs: [Int64] { chartAccountIDs(shownSelection) }
 
     static func trimmedHistory(_ all: [DailyBalance], from: String?, to: String?) -> [DailyBalance] {
         var points = all
@@ -734,7 +813,7 @@ extension AppModel {
     /// The loaded bookings; every filter of the list is applied by the core.
     /// „Neue Umsätze“ shows the bookings per account: ↑/↓ and ranges follow the cards.
     var visibleBookings: [Booking] {
-        sidebarSelection == .newBookings ? newBookingSections.flatMap(\.bookings) : bookings
+        shownSelection == .newBookings ? newBookingSections.flatMap(\.bookings) : bookings
     }
 
     /// „Neue Umsätze“: the loaded bookings as one card per account.
@@ -767,7 +846,7 @@ extension AppModel {
         rebuildDayGroups()
     }
 
-    private func rebuildDayGroups() {
+    func rebuildDayGroups() {
         var out: [DayGroup] = []
         var current: [Booking] = []
         var day = ""
@@ -864,6 +943,9 @@ extension AppModel {
     }
 
     /// Everyday spending this month (never includes ETF plans / perks).
+    /// The tiles have no figures for the shown selection: it is loading, or its load failed
+    /// (`selectionFlow` may still hold the previous selection's).
+    var selectionFiguresMissing: Bool { isLoadingSelection || page == nil }
     /// Selected account/group and period; falls back to the dashboard month.
     var consumptionThisMonth: Int64 { selectionFlow?.consumption ?? dashboard?.monthly.last?.consumptionCents ?? 0 }
     var investedThisMonth: Int64 { selectionFlow?.invested ?? dashboard?.monthly.last?.investmentCents ?? 0 }
@@ -875,7 +957,7 @@ extension AppModel {
     }
 
     var title: String {
-        switch sidebarSelection {
+        switch shownSelection {
         case .allAccounts, .none: return String(localized: "Alle Konten")
         case .group(let id): return groups.first { $0.id == id }?.name ?? String(localized: "Gruppe")
         case .bank(let key): return bankGroup(for: key)?.name ?? String(localized: "Bank")
@@ -894,7 +976,7 @@ extension AppModel {
     /// Accounts behind the header total of the current selection (nil: single account / not a total).
     /// Like the sum it shows: only effectively included accounts (#337).
     private var headerTotalAccounts: [Account]? {
-        switch sidebarSelection {
+        switch shownSelection {
         case .allAccounts, .none: return liquidAccounts
         case .group(let id): return groups.first { $0.id == id }?.accounts.filter(\.inTotal)
         case .bank(let key): return bankGroup(for: key)?.accounts.filter(\.inTotal)
@@ -919,11 +1001,11 @@ extension AppModel {
 
     private var headerBalanceUnsplit: (label: String, cents: Int64)? {
         // A group's or all accounts' total covers every account: no figure while accounts are filtered (#357).
-        switch sidebarSelection {
+        switch shownSelection {
         case .group, .bank, .userGroup, .allAccounts: if !categoryAccountIDs.isEmpty { return nil }
         default: break
         }
-        switch sidebarSelection {
+        switch shownSelection {
         case .account(let id): return allAccounts.first { $0.id == id }.map { (isTangible(id) ? String(localized: "Wert heute") : depotKind(of: id) == .securities ? String(localized: "Depotwert") : String(localized: "Kontostand"), $0.balanceCents) }
         case .group(let id): return groups.first { $0.id == id }.map { (String(localized: "Summe"), $0.balanceCents) }
         case .bank(let key): return bankGroup(for: key).map { (String(localized: "Summe"), $0.balanceCents) }
@@ -988,7 +1070,7 @@ extension AppModel {
     }
 
     private var listShowsSeveralAccounts: Bool {
-        switch sidebarSelection {
+        switch shownSelection {
         case .account: false
         case .group(let id): (groups.first { $0.id == id }?.accounts.count ?? 0) > 1
         case .bank(let key): (bankGroup(for: key)?.accounts.count ?? 0) > 1
@@ -1026,11 +1108,6 @@ extension AppModel {
         if let vault {
             uncategorizedName = (((try? vault.getSetting(key: "ui.uncategorized_name")) ?? nil) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            accountNotes = Dictionary(accounts.compactMap { a in
-                let n = ((try? vault.getSetting(key: "account.note.\(a.id)")) ?? nil)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return n.isEmpty ? nil : (a.id, n)
-            }, uniquingKeysWith: { a, _ in a })
         }
         // " (MoneyMoney)": suffix that earlier versions appended to accounts created by a file import.
         func base(_ a: Account) -> String {

@@ -1,12 +1,6 @@
-GiroCrab v0.8.5 (iOS Build under Version 0.7.5, Schema v27)
+GiroCrab iOS 0.7.5 (Build 24) – includes the complete GiroCrab v0.8.7 feature set:
 
-Note on the TestFlight version number:
-Because our development moves faster than Apple's version review for new release trains, the complete v0.8.5 release ships immediately as a new build under 0.7.5.
-
-What to test:
-- Built-in FinTS product registration & automatic encrypted vault backup before upgrade.
-- Tag filtering & analytics (#228, #777): Filter bookings by tags and analyze them in charts.
-- EquatePlus & per-holding currencies (#750, #625): New EquatePlus connector and native currency per holding.
-- Revolut OAuth popup (#289), ING Business (#721), Sparda Hannover (#619) & C24 categories (#763).
-- iOS Fix (#768): Paste Key sheet in Settings -> Security stays open reliably.
-- Performance & UI polish: ListCache (#760), split booking categories (#654), inline Analytics toggle (#757) and sidebar counts (#592).
+• FinTS on iPhone & iPad (#1449): GiroCrab's built-in FinTS product registration is now verified inside the iOS/iPadOS archive.
+• Three new banks: Hanseatic Bank (incl. Postbox PDFs), BHW Bausparkasse (incl. mailbox PDFs), and Kontist business accounts, plus updated 1822direkt FinTS endpoint.
+• Accounts & totals (#1100, #1445, #1446): Per-account "Include in totals" switch, account deletion directly in Account Settings, and accurate €0.00 Amex balance after paid statements.
+• Transfers & list: Manage/hide saved recipients, booking note indicator, aligned period headers (#1444), and FinTS transfer fixes.

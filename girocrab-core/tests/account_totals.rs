@@ -13,7 +13,7 @@
 
 use girocrab_core::models::{BookingFilter, PeriodGranularity};
 use girocrab_core::vault::Vault;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 const KEY: [u8; 32] = [0x47; 32];
 
@@ -175,8 +175,9 @@ fn excluded_group_leaves_dashboard_and_cashflow() {
         "only the included account's shopping"
     );
 
+    // the overview card is an overall money figure: totals context
     let cash = v
-        .cashflow_by_period(PeriodGranularity::Month, 1, None)
+        .cashflow_by_period(PeriodGranularity::Month, 1, None, true)
         .unwrap();
     let cp = cash.last().unwrap();
     assert_eq!(cp.income_cents, 100_000);
@@ -202,7 +203,7 @@ fn archived_accounts_leave_the_overall_flow() {
     assert_eq!(m.income_cents, 100_000);
     assert_eq!(m.consumption_cents, 4_000);
     let cash = v
-        .cashflow_by_period(PeriodGranularity::Month, 1, None)
+        .cashflow_by_period(PeriodGranularity::Month, 1, None, true)
         .unwrap();
     assert_eq!(cash.last().unwrap().expense_cents, 4_000);
 
@@ -216,6 +217,79 @@ fn archived_accounts_leave_the_overall_flow() {
     assert_eq!(own.total_count, 2);
     assert_eq!(own.flow.income_cents, 100_000);
     assert_eq!(own.flow.consumption_cents, 4_000);
+}
+
+/// The cashflow card follows its calculation context (#337): the overview card
+/// (`respect_in_total`) sums the effective total set; a directly requested
+/// account is a proof view and keeps its own flows — also when it is switched
+/// out of the totals or archived, the card never goes blank.
+#[test]
+fn cashflow_card_single_account_is_proof_overview_is_totals() {
+    let (v, tmp) = vault("totals-cash-context");
+    let c = tmp.conn("v.girocrab");
+    let (a, b) = seeded_pair(&c);
+    assert_eq!(
+        v.cashflow_by_period(PeriodGranularity::Month, 1, None, true)
+            .unwrap()
+            .last()
+            .unwrap()
+            .income_cents,
+        200_000,
+        "both accounts count while both are included"
+    );
+
+    // b out of the totals: the overview card drops it …
+    v.set_account_include_in_total(b, false).unwrap();
+    assert_eq!(
+        v.cashflow_by_period(PeriodGranularity::Month, 1, None, true)
+            .unwrap()
+            .last()
+            .unwrap()
+            .income_cents,
+        100_000,
+        "overview = effective total set (a only)"
+    );
+    // … the single-account card keeps b's own flows (proof view, default) …
+    assert_eq!(
+        v.cashflow_by_period(PeriodGranularity::Month, 1, Some(vec![b]), false)
+            .unwrap()
+            .last()
+            .unwrap()
+            .income_cents,
+        100_000,
+        "directly requested account keeps its sums"
+    );
+    // … and only an explicit totals context narrows that selection to zero.
+    assert_eq!(
+        v.cashflow_by_period(PeriodGranularity::Month, 1, Some(vec![b]), true)
+            .unwrap()
+            .last()
+            .unwrap()
+            .income_cents,
+        0,
+        "totals context drops the switched-out account"
+    );
+    assert_eq!(
+        v.cashflow_by_period(PeriodGranularity::Month, 1, Some(vec![a]), true)
+            .unwrap()
+            .last()
+            .unwrap()
+            .income_cents,
+        100_000,
+        "included account unaffected"
+    );
+
+    // archived is the same proof rule: the account's own card keeps working
+    v.set_account_archived(b, true).unwrap();
+    assert_eq!(
+        v.cashflow_by_period(PeriodGranularity::Month, 1, Some(vec![b]), false)
+            .unwrap()
+            .last()
+            .unwrap()
+            .income_cents,
+        100_000,
+        "archived account's card keeps its sums"
+    );
 }
 
 // ------------------------------------------------- explicit totals context (new APIs)
@@ -351,7 +425,8 @@ fn same_id_single_account_vs_one_account_group() {
 }
 
 /// Effective flag: an excluded group wins over the account's own switch; the
-/// group itself sums to 0 money but keeps its members and bookings (E2).
+/// group's header keeps showing its own sum (review point 1 on #1100) while
+/// the overview figures leave it out.
 #[test]
 fn excluded_group_beats_the_account_switch() {
     let (v, tmp) = vault("totals-precedence");
@@ -373,7 +448,10 @@ fn excluded_group_beats_the_account_switch() {
 
     let groups = v.list_user_groups().unwrap();
     let g = groups.iter().find(|g| g.uuid == uuid).unwrap();
-    assert_eq!(g.balance_cents, 0, "excluded group sums to 0");
+    assert_eq!(
+        g.balance_cents, 70_000,
+        "an excluded group keeps showing its own sum (review point 1 on #1100)"
+    );
     assert_eq!(g.accounts.len(), 1, "members stay listed");
 
     let totals = v.list_transactions(totals_filter()).unwrap();
@@ -463,7 +541,7 @@ fn group_and_kind_sums_follow_the_effective_exclusion() {
 // ------------------------------------------------------------------ migration
 
 /// Rewinds a vault to schema 24 (drops the new columns) so reopening runs the
-/// migration of step 25 — what a vault written by today's build looks like.
+/// migration of step 34 — what a vault written by an older build looks like.
 fn rewind_to_v24(path: &str) {
     let c = Connection::open(path).unwrap();
     c.execute_batch(&format!("PRAGMA key = \"x'{}'\";", hex::encode(KEY)))
@@ -476,7 +554,7 @@ fn rewind_to_v24(path: &str) {
     .unwrap();
 }
 
-/// Step 25: amazon-orders accounts start excluded; everything else stays; a
+/// Step 34: amazon-orders accounts start excluded; everything else stays; a
 /// user decision made after the migration survives reopening.
 #[test]
 fn migration_excludes_amazon_connector_accounts_only() {
@@ -699,9 +777,10 @@ fn merge_inserts_account_with_flag_and_stamp() {
 #[test]
 fn old_vault_merge_keeps_newer_user_decision() {
     let (a, ta, b, _tb, x_a, x_b) = sync_pair("totals-old");
-    // A: explicit user decision, newer stamp
-    a.set_account_include_in_total(x_a, true).unwrap();
+    // A: explicit user decision against the default, with a newer stamp
+    a.set_account_include_in_total(x_a, false).unwrap();
     let (_, stamp_a) = flag_of(&ta.conn("v.girocrab"), x_a);
+    assert!(stamp_a > 0, "the explicit decision carries a stamp");
     // B: old build without the columns (default on, stamp 0 after migration)
     let path_b = b.file_path();
     drop(b);
@@ -716,8 +795,8 @@ fn old_vault_merge_keeps_newer_user_decision() {
     a.merge_other_vault(path_b, KEY.to_vec()).unwrap();
     assert_eq!(
         flag_of(&ta.conn("v.girocrab"), x_a),
-        (true, stamp_a),
-        "stamp-0 default does not beat the user's newer decision"
+        (false, stamp_a),
+        "the migrated stamp-0 default (true) does not beat the user's newer decision (false)"
     );
     let name: String = ta
         .conn("v.girocrab")
@@ -726,6 +805,61 @@ fn old_vault_merge_keeps_newer_user_decision() {
         })
         .unwrap();
     assert_eq!(name, "Konto X", "other fields still merge");
+}
+
+fn amazon_capture_with_credit(credit: &str) -> String {
+    format!(
+        r#"{{"orders":[{{"code":"028-0000337-0000009","date":"17. November 2026","rows":[{{"label":"Gesamtsumme","value":"45,98 €","bold":true}},{{"label":"Erstattung gesamt","value":"{credit} €"}}]}}]}}"#
+    )
+}
+
+/// Review point 2 on #1100: an older partner snapshot (schema 24 — the step-34
+/// columns are missing) is migrated by step 34 inside merge_other_vault BEFORE
+/// the merge SQL touches include_in_total/total_ms. The merge succeeds and the
+/// migrated defaults arrive with the inserted accounts.
+#[test]
+fn merge_migrates_older_snapshot_before_the_column_merge() {
+    let (a, _ta, b, _tb, _x_a, _x_b) = sync_pair("totals-migrate-older");
+    // rewind B's snapshot file to schema 24: a snapshot written by an older
+    // build, without the step-34 columns and with user_version still 24.
+    // closing B's vault releases its connection; the rewind then edits the
+    // snapshot file itself (Tmp stays alive for the path).
+    let other_path = b.file_path();
+    drop(b);
+    rewind_to_v24(&other_path);
+
+    a.merge_other_vault(other_path.clone(), KEY.to_vec())
+        .unwrap();
+
+    // B's accounts arrived with the step-34 defaults (checking accounts start
+    // included, stamp 0) — the merge SQL found the migrated columns.
+    let arrived = a
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .filter(|x| x.name == "Nur B")
+        .collect::<Vec<_>>();
+    assert_eq!(arrived.len(), 1, "B's extra account arrived");
+    assert!(arrived[0].include_in_total, "step-34 default on migration");
+
+    // the other snapshot file itself sits on the current schema afterwards
+    let c_other = Connection::open(&other_path).unwrap();
+    c_other
+        .execute_batch(&format!("PRAGMA key = \"x'{}'\";", hex::encode(KEY)))
+        .unwrap();
+    let has_cols: i64 = c_other
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('accounts')
+              WHERE name IN ('include_in_total', 'total_ms')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(has_cols, 2, "both step-34 columns exist on the snapshot");
+    let version: i64 = c_other
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert!(version >= 34, "snapshot migrated to at least schema 34");
 }
 
 #[test]
@@ -986,12 +1120,6 @@ fn regular_demo_contains_an_excluded_order_account_with_credits() {
         0,
         "seeding again must not duplicate demo orders"
     );
-}
-
-fn amazon_capture_with_credit(credit: &str) -> String {
-    format!(
-        r#"{{"orders":[{{"code":"028-0000337-0000009","date":"17. November 2026","rows":[{{"label":"Gesamtsumme","value":"45,98 €","bold":true}},{{"label":"Erstattung gesamt","value":"{credit} €"}}]}}]}}"#
-    )
 }
 
 #[test]
@@ -1323,10 +1451,11 @@ fn order_selection_summary_groups_by_currency() {
     );
 
     // a selection without order accounts returns nothing, not "all"
-    assert!(v
-        .order_selection_summary(Vec::new(), None, None)
-        .unwrap()
-        .is_empty());
+    assert!(
+        v.order_selection_summary(Vec::new(), None, None)
+            .unwrap()
+            .is_empty()
+    );
     // an empty range shows zeros in the selection's own currency (like the
     // single-account summary), never a missing header value
     let empty = v

@@ -122,12 +122,14 @@ fn create_rename_delete() {
 
     v.update_user_group(firma.clone(), "Geschäft".into(), "building.2".into(), true)
         .unwrap();
-    assert!(v
-        .update_user_group(firma.clone(), "PRIVAT".into(), "x".into(), true)
-        .is_err());
-    assert!(v
-        .update_user_group("nope".into(), "X".into(), "x".into(), true)
-        .is_err());
+    assert!(
+        v.update_user_group(firma.clone(), "PRIVAT".into(), "x".into(), true)
+            .is_err()
+    );
+    assert!(
+        v.update_user_group("nope".into(), "X".into(), "x".into(), true)
+            .is_err()
+    );
 
     v.reorder_user_groups(vec![firma.clone(), privat.clone()])
         .unwrap();
@@ -243,26 +245,48 @@ fn group_sums_skip_archived_accounts_and_excluded_subgroups() {
     assert_eq!(alt_group.accounts.len(), 1, "archived account still listed");
     v.set_account_archived(ids[2], false).unwrap();
 
-    // "Alt" out of the total: its money sum is 0 like every overall figure of
-    // an excluded selection (#337, E2) – its accounts and bookings stay; "Alle"
-    // no longer adds it
+    // "Alt" out of the total: its own header keeps showing its money sum
+    // (review point 1 on #1100) – it only falls out of the overview figures
+    // ("Alle" no longer adds it); accounts and bookings stay
     v.update_user_group(alt.clone(), "Alt".into(), "archivebox".into(), false)
         .unwrap();
     let s = sums(&v);
-    assert_eq!(s["Alt"], 0);
+    assert_eq!(s["Alt"], -50_00, "own sum keeps showing");
     assert_eq!(s["Alle"], 5_100_00);
 
-    // the parent out of the total too: its money sum is 0 as well (E2), and a
-    // subgroup switched back on stays out while an above group is excluded
+    // the parent out of the total too: both excluded groups keep showing
+    // their own sums (review point 1 on #1100) — they only fall out of the
+    // overview figures, never to zero in their own header
     v.update_user_group(alle.clone(), "Alle".into(), "folder".into(), false)
         .unwrap();
     let s = sums(&v);
-    assert_eq!(s["Alle"], 0);
-    assert_eq!(s["Alt"], 0, "subgroup only inherits the exclusion");
+    assert_eq!(s["Alle"], 5_100_00, "own sum keeps showing (Giro + Depot)");
+    assert_eq!(s["Alt"], -50_00, "own sum keeps showing (Visa is back)");
     v.update_user_group(alt.clone(), "Alt".into(), "archivebox".into(), true)
         .unwrap();
-    assert_eq!(sums(&v)["Alt"], 0, "the parent above still wins");
-    assert_eq!(sums(&v)["Alle"], 0);
+    assert_eq!(
+        sums(&v)["Alt"],
+        -50_00,
+        "own sum wins over the inherited exclusion"
+    );
+    // the re-included subgroup rolls up into the excluded parent's own sum
+    assert_eq!(sums(&v)["Alle"], 5_050_00);
+
+    // the account's own switch still applies inside an excluded group's own
+    // sum (review point 1 on #1100): the group exclusion keeps the header,
+    // the account switch keeps dropping the account from money sums
+    v.update_user_group(alt.clone(), "Alt".into(), "archivebox".into(), false)
+        .unwrap();
+    v.set_account_include_in_total(ids[2], false).unwrap();
+    assert_eq!(
+        sums(&v)["Alt"],
+        0,
+        "the switched-out account leaves even the excluded group's own sum"
+    );
+    v.set_account_include_in_total(ids[2], true).unwrap();
+    assert_eq!(sums(&v)["Alt"], -50_00);
+    v.update_user_group(alt.clone(), "Alt".into(), "archivebox".into(), true)
+        .unwrap();
 
     // both back in: the full sums return
     v.update_user_group(alle.clone(), "Alle".into(), "folder".into(), true)
@@ -366,11 +390,12 @@ fn merge_newest_edit_wins_and_deletions_stick() {
     b.merge_other_vault(a.file_path(), key.clone()).unwrap();
     a.merge_other_vault(b.file_path(), key.clone()).unwrap();
     for v in [&a, &b] {
-        assert!(v
-            .list_accounts()
-            .unwrap()
-            .iter()
-            .any(|x| x.name == "Depot A"));
+        assert!(
+            v.list_accounts()
+                .unwrap()
+                .iter()
+                .any(|x| x.name == "Depot A")
+        );
     }
 
     // A deletes the group; B (which still has it) must not bring it back
@@ -457,9 +482,10 @@ fn account_colors_default_stable_and_sync() {
             .all(|(_, c)| super::ACCOUNT_COLOR_PALETTE[..super::DISTINCT].contains(&c.as_str())),
         "a few accounts only get the clearly distinct hues"
     );
-    assert!(ca
-        .iter()
-        .all(|(_, c)| super::ACCOUNT_COLOR_PALETTE.contains(&c.as_str())));
+    assert!(
+        ca.iter()
+            .all(|(_, c)| super::ACCOUNT_COLOR_PALETTE.contains(&c.as_str()))
+    );
     let stored: i64 = a
         .db()
         .unwrap()
@@ -525,12 +551,14 @@ fn group_color_syncs_newer_wins_and_resets() {
             .color_hex
     };
     assert_eq!(color(&a), "", "no colour until one is chosen");
-    assert!(a
-        .set_user_group_color(g.clone(), Some("blue".into()))
-        .is_err());
-    assert!(a
-        .set_user_group_color("nope".into(), Some("#123456".into()))
-        .is_err());
+    assert!(
+        a.set_user_group_color(g.clone(), Some("blue".into()))
+            .is_err()
+    );
+    assert!(
+        a.set_user_group_color("nope".into(), Some("#123456".into()))
+            .is_err()
+    );
     a.set_user_group_color(g.clone(), Some("#abcdef".into()))
         .unwrap();
     assert_eq!(color(&a), "#ABCDEF");
@@ -1195,15 +1223,18 @@ fn subgroups_nest_sum_up_and_inherit_the_total_switch() {
     assert_eq!(group(&v, "ETW Heilbronn").parent_uuid, Some(immo.clone()));
 
     // not into itself or its own subgroups; unknown groups are rejected
-    assert!(v
-        .set_user_group_parent(immo.clone(), Some(immo.clone()))
-        .is_err());
-    assert!(v
-        .set_user_group_parent(immo.clone(), Some(nsu.clone()))
-        .is_err());
-    assert!(v
-        .set_user_group_parent(immo.clone(), Some("nope".into()))
-        .is_err());
+    assert!(
+        v.set_user_group_parent(immo.clone(), Some(immo.clone()))
+            .is_err()
+    );
+    assert!(
+        v.set_user_group_parent(immo.clone(), Some(nsu.clone()))
+            .is_err()
+    );
+    assert!(
+        v.set_user_group_parent(immo.clone(), Some("nope".into()))
+            .is_err()
+    );
     // deeper nesting, and back to the top level
     v.set_user_group_parent(immo.clone(), Some(privat.clone()))
         .unwrap();
@@ -1320,13 +1351,16 @@ fn nesting_syncs_and_survives_conflicts() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-fn archived(v: &Vault, name: &str) -> Option<i64> {
+fn account(v: &Vault, name: &str) -> crate::models::Account {
     v.list_accounts()
         .unwrap()
         .into_iter()
         .find(|a| a.name == name)
         .unwrap()
-        .archived_unix
+}
+
+fn archived(v: &Vault, name: &str) -> Option<i64> {
+    account(v, name).archived_unix
 }
 
 #[test]
@@ -1412,12 +1446,11 @@ fn archived_account_keeps_group_and_history_but_leaves_total_and_rules() {
         let mut st = db
             .prepare("SELECT external_id, category_id FROM transactions ORDER BY external_id")
             .unwrap();
-        let rows = st
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
             .collect::<Result<_, _>>()
-            .unwrap();
-        rows
+            .unwrap()
     };
     assert_eq!(
         cats(&v),
@@ -1477,4 +1510,402 @@ fn account_color_hash_never_changes() {
         crate::user_groups::account_color_hash("fints", "12345678", "user", "ACC-1"),
         0x0f11_c659_fa84_e823
     );
+}
+
+fn note(v: &Vault, name: &str) -> String {
+    account(v, name).note
+}
+
+/// #980: the account note syncs like the name (it used to be a vault setting
+/// keyed by the local account id, which no merge read).
+#[test]
+fn account_notes_sync_both_ways() {
+    let dir = temp_dir("notes");
+    let key = vec![7u8; 32];
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    // the same accounts under different local ids
+    let ia = seed(&a);
+    {
+        let db = b.db().unwrap();
+        db.execute("INSERT INTO account_groups(name) VALUES ('H')", [])
+            .unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name) \
+             VALUES ((SELECT id FROM account_groups WHERE name = 'H'), 'bar', 'Bar')",
+            [],
+        )
+        .unwrap();
+    }
+    let ib = seed(&b);
+    assert_ne!(ia, ib);
+
+    assert!(a.set_account_note(999, "x".into()).is_err());
+    a.set_account_note(ia[0], "  Reisekasse \n".into()).unwrap();
+    assert_eq!(note(&a, "Giro"), "Reisekasse");
+    tick();
+    let st = b.merge_other_vault(a.file_path(), key.clone()).unwrap();
+    assert!(
+        st.groups_updated > 0,
+        "a merge that only brings a note reloads the app"
+    );
+    assert_eq!(note(&b, "Giro"), "Reisekasse");
+    assert_eq!(note(&b, "Depot"), "");
+
+    // the newer edit wins; saving an unchanged note is no edit (nothing to sync)
+    b.set_account_note(ib[0], "Urlaub".into()).unwrap();
+    tick();
+    let before = a.change_count();
+    a.set_account_note(ia[0], "Reisekasse".into()).unwrap();
+    assert_eq!(a.change_count(), before);
+    a.set_account_note(ia[1], "Sparplan".into()).unwrap();
+    tick();
+    sync_both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(note(v, "Giro"), "Urlaub");
+        assert_eq!(note(v, "Depot"), "Sparplan");
+    }
+
+    // a cleared note syncs too
+    b.set_account_note(ib[1], String::new()).unwrap();
+    tick();
+    sync_both_ways(&a, &b);
+    assert_eq!(note(&a, "Depot"), "");
+
+    // an account new to the other device arrives with its note
+    let c = open(&dir, "c.db");
+    c.merge_other_vault(a.file_path(), key).unwrap();
+    assert_eq!(note(&c, "Giro"), "Urlaub");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// #980: notes moved out of the settings on two devices have no edit time:
+/// neither text is lost, every device ends up with the same one, further
+/// merges change nothing, and the first edit after that wins as usual.
+#[test]
+fn moved_notes_that_differ_are_combined_on_every_device() {
+    let dir = temp_dir("notes-moved");
+    let key = vec![7u8; 32];
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let ia = seed(&a);
+    seed(&b);
+    for (v, name, text) in [
+        (&a, "Visa", "Gemeinschaftskonto"),
+        (&b, "Visa", "Anna\nGemeinschaftskonto"),
+        (&a, "Giro", "Urlaub"),
+        (&b, "Giro", "Reisekasse"),
+    ] {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET note = ?1, note_ms = ?2 WHERE name = ?3",
+                params![text, super::MOVED_NOTE_MS, name],
+            )
+            .unwrap();
+    }
+    sync_both_ways(&a, &b);
+    sync_both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(note(v, "Visa"), "Anna\nGemeinschaftskonto");
+        assert_eq!(note(v, "Giro"), "Reisekasse\nUrlaub");
+    }
+    let st = a.merge_other_vault(b.file_path(), key).unwrap();
+    assert_eq!(st.groups_updated, 0, "nothing left to merge");
+    a.set_account_note(ia[0], "Urlaub".into()).unwrap();
+    sync_both_ways(&a, &b);
+    assert_eq!(note(&b, "Giro"), "Urlaub");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// #980: a peer still on schema 31 keeps editing its notes in the settings,
+/// without a stamp. Its snapshot is migrated before every merge: its notes fill
+/// empty ones here, but never replace or pile up on a note this device has.
+#[test]
+fn notes_of_an_older_peer_arrive_without_replacing_edits() {
+    let dir = temp_dir("notes-old");
+    let key = vec![7u8; 32];
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let ia = seed(&a);
+    let ib = seed(&b);
+    a.set_account_note(ia[0], "Neu".into()).unwrap();
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET note = 'Verschoben', note_ms = ?2 WHERE id = ?1",
+            params![ia[2], super::MOVED_NOTE_MS],
+        )
+        .unwrap();
+    {
+        let db = b.db().unwrap();
+        db.execute_batch(
+            "ALTER TABLE accounts DROP COLUMN note;
+             ALTER TABLE accounts DROP COLUMN note_ms;
+             PRAGMA user_version = 31;",
+        )
+        .unwrap();
+        for (id, text) in [(ib[0], "Alt"), (ib[1], "Depotnotiz"), (ib[2], "Alt")] {
+            db.execute(
+                "INSERT INTO settings(key, value) VALUES (?1, ?2)",
+                params![format!("account.note.{id}"), text],
+            )
+            .unwrap();
+        }
+    }
+    // each merge migrates a fresh copy, as the sync folder does
+    let merge_peer = |a: &Vault| {
+        b.checkpoint().unwrap();
+        let peer = dir.join("peer.db");
+        std::fs::copy(b.file_path(), &peer).unwrap();
+        a.merge_other_vault(peer.to_string_lossy().into(), key.clone())
+            .unwrap();
+    };
+    merge_peer(&a);
+    assert_eq!(note(&a, "Giro"), "Neu");
+    assert_eq!(note(&a, "Depot"), "Depotnotiz");
+    assert_eq!(note(&a, "Visa"), "Verschoben");
+    // the old build edits again: nothing piles up on the moved note
+    b.db()
+        .unwrap()
+        .execute(
+            "UPDATE settings SET value = 'Neuer' WHERE key = ?1",
+            [format!("account.note.{}", ib[2])],
+        )
+        .unwrap();
+    merge_peer(&a);
+    assert_eq!(note(&a, "Visa"), "Verschoben");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// #980 review: a note from a device whose clock runs ahead must not undo a
+/// later edit here.
+#[test]
+fn an_edit_wins_over_a_note_stamped_by_a_clock_ahead() {
+    let dir = temp_dir("notes-clock");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let ia = seed(&a);
+    let ib = seed(&b);
+    let ahead = crate::dates::now_ms() + 5 * 60_000;
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET note = 'A', note_ms = ?2 WHERE id = ?1",
+            params![ia[0], ahead],
+        )
+        .unwrap();
+    sync_both_ways(&a, &b);
+    assert_eq!(note(&b, "Giro"), "A");
+    b.set_account_note(ib[0], "B".into()).unwrap();
+    sync_both_ways(&a, &b);
+    assert_eq!(
+        (note(&a, "Giro"), note(&b, "Giro")),
+        ("B".into(), "B".into())
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A merge that only renames an account counts, so the app reloads.
+#[test]
+fn a_rename_alone_counts_as_a_merged_change() {
+    let dir = temp_dir("rename-count");
+    let key = vec![7u8; 32];
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let ia = seed(&a);
+    seed(&b);
+    sync_both_ways(&a, &b);
+    tick();
+    a.rename_account(ia[0], "Haushalt".into()).unwrap();
+    let st = b.merge_other_vault(a.file_path(), key).unwrap();
+    assert!(st.groups_updated > 0);
+    account(&b, "Haushalt");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// #980 review: two moved notes are combined whole (blank lines kept) and
+/// trimmed like a saved note, so an unchanged form does not differ from it.
+#[test]
+fn moved_notes_combine_whole_and_trimmed() {
+    use super::combine_moved_notes as combine;
+    assert_eq!(combine("A", "B\n\nA"), "B\n\nA");
+    assert_eq!(combine("Urlaub ", "Reise"), "Reise\nUrlaub");
+    assert_eq!(combine("Urlaub", "Reise"), combine("Reise", "Urlaub"));
+    let both = combine("A\n", "B");
+    assert_eq!(both, "A\nB");
+    assert_eq!(combine(&both, "A"), both);
+    assert_eq!(combine("", "X"), "X");
+}
+
+#[test]
+fn stamp_zero_notes_fill_only_missing_notes() {
+    let dir = temp_dir("notes-stamp0-fill");
+    let key = vec![7u8; 32];
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let ia = seed(&a);
+    let ib = seed(&b);
+    // Existing stamp-0 note "A" must not be replaced by lexicographically larger stamp-0 note "Z".
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET note = 'A', note_ms = 0 WHERE id = ?1",
+            [ia[0]],
+        )
+        .unwrap();
+    // Timestamped clear on Depot must not be refilled by a stamp-0 note.
+    a.set_account_note(ia[1], "Temp".into()).unwrap();
+    a.set_account_note(ia[1], String::new()).unwrap();
+    {
+        let db = b.db().unwrap();
+        db.execute_batch(
+            "ALTER TABLE accounts DROP COLUMN note;
+             ALTER TABLE accounts DROP COLUMN note_ms;
+             PRAGMA user_version = 31;",
+        )
+        .unwrap();
+        for (id, text) in [(ib[0], "Z"), (ib[1], "Alt"), (ib[2], "Gefuellt")] {
+            db.execute(
+                "INSERT INTO settings(key, value) VALUES (?1, ?2)",
+                params![format!("account.note.{id}"), text],
+            )
+            .unwrap();
+        }
+    }
+    b.checkpoint().unwrap();
+    let peer = dir.join("peer.db");
+    std::fs::copy(b.file_path(), &peer).unwrap();
+    a.merge_other_vault(peer.to_string_lossy().into(), key)
+        .unwrap();
+    assert_eq!(note(&a, "Giro"), "A");
+    assert_eq!(note(&a, "Depot"), "");
+    assert_eq!(note(&a, "Visa"), "Gefuellt");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn moved_notes_across_three_devices_are_order_independent_without_duplicates() {
+    let dir = temp_dir("notes-three-devices");
+    let key = vec![7u8; 32];
+    // Order 1: A merges C, then B
+    let a1 = open(&dir, "a1.db");
+    let b1 = open(&dir, "b1.db");
+    let c1 = open(&dir, "c1.db");
+    seed(&a1);
+    seed(&b1);
+    seed(&c1);
+    // Order 2: A merges B, then C
+    let a2 = open(&dir, "a2.db");
+    let b2 = open(&dir, "b2.db");
+    let c2 = open(&dir, "c2.db");
+    seed(&a2);
+    seed(&b2);
+    seed(&c2);
+    for (v, giro_note, visa_note) in [
+        (&a1, "A", "Zeile 2\n\nZeile 1"),
+        (&b1, "B", "Notiz B"),
+        (&c1, "C", "Zeile 1"),
+        (&a2, "A", "Zeile 2\n\nZeile 1"),
+        (&b2, "B", "Notiz B"),
+        (&c2, "C", "Zeile 1"),
+    ] {
+        let db = v.db().unwrap();
+        db.execute(
+            "UPDATE accounts SET note = ?1, note_ms = ?2 WHERE name = 'Giro'",
+            params![giro_note, super::MOVED_NOTE_MS],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE accounts SET note = ?1, note_ms = ?2 WHERE name = 'Visa'",
+            params![visa_note, super::MOVED_NOTE_MS],
+        )
+        .unwrap();
+    }
+    a1.merge_other_vault(c1.file_path(), key.clone()).unwrap();
+    a1.merge_other_vault(b1.file_path(), key.clone()).unwrap();
+
+    a2.merge_other_vault(b2.file_path(), key.clone()).unwrap();
+    a2.merge_other_vault(c2.file_path(), key.clone()).unwrap();
+
+    assert_eq!(note(&a1, "Giro"), "A\nB\nC");
+    assert_eq!(note(&a2, "Giro"), "A\nB\nC");
+    assert_eq!(note(&a1, "Visa"), "Notiz B\nZeile 2\n\nZeile 1");
+    assert_eq!(note(&a2, "Visa"), "Notiz B\nZeile 2\n\nZeile 1");
+
+    // Merging the two results changes nothing and repeats no text.
+    let st = a1.merge_other_vault(a2.file_path(), key).unwrap();
+    assert_eq!(st.groups_updated, 0);
+    assert_eq!(note(&a1, "Giro"), "A\nB\nC");
+    assert_eq!(note(&a1, "Visa"), "Notiz B\nZeile 2\n\nZeile 1");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn moved_note_over_stamp_zero_preserves_constituents_in_three_way_merge() {
+    let dir = temp_dir("notes-stamp0-moved-constituents");
+    let key = vec![7u8; 32];
+
+    // Order 1: A (stamp-0 empty) merges B (moved with 2 constituents), then C (moved with 1 constituent)
+    let a1 = open(&dir, "a1.db");
+    let b1 = open(&dir, "b1.db");
+    let c1 = open(&dir, "c1.db");
+    seed(&a1);
+    seed(&b1);
+    seed(&c1);
+
+    // Order 2: A (stamp-0 empty) merges C first, then B
+    let a2 = open(&dir, "a2.db");
+    let b2 = open(&dir, "b2.db");
+    let c2 = open(&dir, "c2.db");
+    seed(&a2);
+    seed(&b2);
+    seed(&c2);
+
+    for a in [&a1, &a2] {
+        let db = a.db().unwrap();
+        db.execute(
+            "UPDATE accounts SET note = '', note_ms = 0 WHERE name = 'Giro'",
+            [],
+        )
+        .unwrap();
+    }
+    for b in [&b1, &b2] {
+        let db = b.db().unwrap();
+        let id: i64 = db
+            .query_row("SELECT id FROM accounts WHERE name = 'Giro'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        db.execute(
+            "UPDATE accounts SET note = ?1, note_ms = ?2 WHERE id = ?3",
+            params!["Alpha\nBeta — Details", super::MOVED_NOTE_MS, id],
+        )
+        .unwrap();
+        super::write_moved_parts(
+            &db,
+            id,
+            &["Alpha".to_string(), "Beta — Details".to_string()],
+        )
+        .unwrap();
+    }
+    for c in [&c1, &c2] {
+        let db = c.db().unwrap();
+        db.execute(
+            "UPDATE accounts SET note = ?1, note_ms = ?2 WHERE name = 'Giro'",
+            params!["Beta", super::MOVED_NOTE_MS],
+        )
+        .unwrap();
+    }
+
+    a1.merge_other_vault(b1.file_path(), key.clone()).unwrap();
+    a1.merge_other_vault(c1.file_path(), key.clone()).unwrap();
+
+    a2.merge_other_vault(c2.file_path(), key.clone()).unwrap();
+    a2.merge_other_vault(b2.file_path(), key).unwrap();
+
+    // Because "Beta" is contained in constituent "Beta — Details", both orders must yield the exact same combined note.
+    assert_eq!(note(&a1, "Giro"), "Alpha\nBeta — Details");
+    assert_eq!(note(&a2, "Giro"), "Alpha\nBeta — Details");
+    let _ = std::fs::remove_dir_all(dir);
 }

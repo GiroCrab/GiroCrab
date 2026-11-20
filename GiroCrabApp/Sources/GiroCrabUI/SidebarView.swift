@@ -136,7 +136,7 @@ struct SidebarView: View {
                                 .foregroundStyle(model.missingSettings(for: c).isEmpty ? Theme.secondary : Theme.warning)
                         }
                         Spacer()
-                        Button(model.missingSettings(for: c).isEmpty ? "Abrufen" : "Einrichten") { model.requestSync(c) }
+                        Button(model.missingSettings(for: c).isEmpty ? "Abrufen" : "Einrichten") { model.requestFullSync(c) }
                             .controlSize(.small)
                             .disabled(model.bankingGate(for: c) != nil)
                             .help(model.bankingGate(for: c)?.message ?? "")
@@ -235,7 +235,7 @@ struct SidebarView: View {
         ) { d in
             switch d {
             case .archiveAccount(let a): Button("Archivieren") { model.setAccountArchived(a, true) }
-            case .deleteAccount(let a): Button("Löschen", role: .destructive) { model.deleteAccount(a.id) }
+            case .deleteAccount(let a): AccountDeletionPrompt.confirmButton { model.deleteAccount(a.id) }
             case .removeConnection(let id): Button("Entfernen", role: .destructive) { model.removeConnection(id) }
             case .deleteCategory(let c): Button("Löschen", role: .destructive) { model.deleteCategory(c.id) }
             }
@@ -244,8 +244,7 @@ struct SidebarView: View {
             switch d {
             case .archiveAccount:
                 Text("Das Konto wird nicht mehr abgerufen, von Regeln nicht mehr verändert und zählt nicht mehr zur Gesamtsumme. Buchungen, Kategorien, Belege und die Gruppe bleiben erhalten. Es lässt sich jederzeit reaktivieren.")
-            case .deleteAccount(let a):
-                Text("Das Konto wird samt \(a.transactionCount) Buchungen, Belegen und Depotpositionen unwiderruflich gelöscht – auch aus Auswertungen und Kategoriesummen. Ist es das letzte Konto seines Bankzugangs, wird auch der Bankzugang mit den gespeicherten Zugangsdaten entfernt.")
+            case .deleteAccount(let a): AccountDeletionPrompt.message(a)
             case .deleteCategory:
                 Text("Die Kategorie wird samt ihren Unterkategorien und Regeln unwiderruflich gelöscht. Zugeordnete Buchungen bleiben erhalten und stehen danach ohne Kategorie da.")
             case .removeConnection:
@@ -352,7 +351,7 @@ struct SidebarView: View {
                     return model.canDropGroup(dragged, on: group, into: into) ? (into ? .into : .above) : nil
                 }, perform: { items, edge in
                     handleDrop(items, into: group, row: nil, edge: edge)
-                }, freeLeading: 12))  // the expand/collapse arrow
+                }, freeLeading: DisclosureChevron.width))  // the expand/collapse arrow
                 .padding(.top, group.depth == 0 ? 10 : 4)
                 .padding(.leading, indent)
                 .listRowInsets(Self.rowInsets)
@@ -489,8 +488,8 @@ struct SidebarView: View {
         ManualLoanAccountMenu(model: model, account: account)
         OfflineAccountMenuItems(model: model, account: account)
         if !account.isArchived, let cid = account.connectionId, let conn = model.connections.first(where: { $0.id == cid }) {
-            Button("\(account.name) abrufen", systemImage: "arrow.triangle.2.circlepath") { model.requestSync(conn) }
-                .disabled(model.bankingGate(for: conn) != nil)
+            Button("\(account.name) abrufen", systemImage: "arrow.triangle.2.circlepath") { model.requestSyncAccount(account) }
+                .disabled(model.bankingGate(for: conn) != nil || model.syncingConnectionID != nil)
         }
         AccountCopyMenu(account: account)
         Button("Belege anzeigen", systemImage: "doc.text.magnifyingglass") {
@@ -533,7 +532,7 @@ struct SidebarView: View {
                 .listRowInsets(Self.rowInsets)
                 #if os(macOS)
                 // a category dragged here goes above this row, or into it (lower half)
-                .modifier(categoryDropSlot(node, indent: indent, takesBookings: false, freeLeading: 12))
+                .modifier(categoryDropSlot(node, indent: indent, takesBookings: false, chevron: true))
                 #endif
                 .tag(SidebarItem.category(node.id))
                 .contextMenu { categoryMenu(node.category) }
@@ -570,8 +569,10 @@ struct SidebarView: View {
     /// Drop zones of a category row (#977): a category goes above the row (upper
     /// half), below it or – on a row with sub-categories or a main category – into
     /// it as its last sub-category (lower half). Bookings (`takesBookings`, leaves
-    /// only) are assigned to the row's category.
-    private func categoryDropSlot(_ node: CategoryNode, indent: CGFloat, takesBookings: Bool, freeLeading: CGFloat = 0) -> DropSlot {
+    /// only) are assigned to the row's category. The slot sits outside the row's
+    /// `indent` padding, so on a row with a `chevron` the zones leave the indent
+    /// and the arrow free, else it takes no clicks below the first level (#1137).
+    private func categoryDropSlot(_ node: CategoryNode, indent: CGFloat, takesBookings: Bool, chevron: Bool = false) -> DropSlot {
         DropSlot(key: "c:\(node.id)", inset: indent, line: $dropLine, edge: { half in
             guard let dragged = GroupDrag.draggedCategory else { return .into }
             guard model.canDropCategory(dragged, on: node.id) else { return nil }
@@ -581,7 +582,7 @@ struct SidebarView: View {
                 return model.dropCategory(items, onto: node.id, place: edge == .into ? .into : edge == .below ? .after : .before)
             }
             return takesBookings && model.dropBookings(items, onCategory: node.id)
-        }, freeLeading: freeLeading, takesBookings: takesBookings, takesCategories: true)
+        }, freeLeading: chevron ? indent + DisclosureChevron.width : 0, takesBookings: takesBookings, takesCategories: true)
     }
     #endif
 
@@ -799,7 +800,8 @@ struct AccountRow: View {
                     if account.showsTotalExclusionIndicator {
                         AccountTotalExclusionIndicator(
                             help: model.totalExclusionIconHelp(account, redaction: redaction))
-                    }                }
+                    }
+                }
                 // row 2: bank / loan progress left, balance right
                 HStack(spacing: 6) {
                     if let repaid {
@@ -842,6 +844,8 @@ struct AccountRow: View {
         // reachable explanation (#337): why the account stays out of the totals
         // although its own switch is on — the group that wins, or archiving
         .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
+        // one element per account: unread count, name, bank / loan progress, balance
+        .accessibilityElement(children: .combine)
     }
 
     /// A negative balance is a warning only where money can run short. Loans
@@ -887,21 +891,36 @@ struct AccountRow: View {
 }
 
 struct CategoryRow: View {
+    @Environment(AppModel.self) private var model
     let category: GiroCrabCore.Category
 
     var body: some View {
+        // "Zusätzlich" (#1049): what the category holds in currencies other than EUR, under its total.
+        let other = (model.categoryOtherTotals[category.id] ?? []).map { Money.format($0.cents, currency: $0.currency) }.joined(separator: " · ")
         HStack(spacing: 8) {
             Image(systemName: category.sfSymbol)
                 .foregroundStyle(Color.readable(hex: category.colorHex).opacity(0.85))
                 .frame(width: 20)
             Text(category.name).lineLimit(1).appDefaultFont().sensitive(.labels)
             Spacer(minLength: 4)
-            if category.totalCents != 0 {
-                Text(Money.format(category.totalCents))
-                    .sensitive(.amounts)
-                    .appFont(.caption, monospacedDigit: true)
-                    .fixedSize()
-                    .foregroundStyle(.secondary) // follows selection, Dark Mode, Increase Contrast
+            if category.totalCents != 0 || !other.isEmpty {
+                VStack(alignment: .trailing, spacing: 1) {
+                    if category.totalCents != 0 {
+                        Text(Money.format(category.totalCents, currency: model.categorySumCurrency))
+                            .sensitive(.amounts)
+                            .appFont(.caption, monospacedDigit: true)
+                            .fixedSize()
+                            .foregroundStyle(.secondary) // follows selection, Dark Mode, Increase Contrast
+                    }
+                    if !other.isEmpty {
+                        Text("Zusätzlich: \(other)")
+                            .sensitive(.amounts)
+                            .appFont(.caption2, monospacedDigit: true)
+                            .fixedSize()
+                            .foregroundStyle(.secondary)
+                            .help("Weitere Währungen werden nicht umgerechnet und nicht in die Summe einbezogen.")
+                    }
+                }
             }
         }
     }
@@ -1051,7 +1070,7 @@ private enum SidebarDialog {
     var title: Text {
         switch self {
         case .archiveAccount(let a): Text("Konto „\(a.name)“ archivieren?")
-        case .deleteAccount(let a): Text("Konto „\(a.name)“ löschen?")
+        case .deleteAccount(let a): AccountDeletionPrompt.title(a)
         case .removeConnection: Text("Bankzugang entfernen?")
         case .deleteCategory(let c): Text("Kategorie „\(c.name)“ löschen?")
         }

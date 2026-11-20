@@ -324,6 +324,13 @@ const SECURITIES_WORDS: &[&str] = &[
     "kosteninformation",
     "kostenausweis",
     "verlust",
+    "optionsschein",
+    "fälligkeit",
+    "faelligkeit",
+    "zertifikat",
+    "anleihe",
+    "einlösung",
+    "einloesung",
 ];
 
 /// The account a PostBox document belongs to: the one whose IBAN or account

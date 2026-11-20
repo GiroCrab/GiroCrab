@@ -43,13 +43,17 @@
 //! - 30: `tx_date_id` covers `deleted_ms`, `account_id` and `category_id` ([`TX_DATE_ID_COVERING`]).
 //! - 31: `booking_documents.seen_at`: read status of documents (NULL = unread); documents that exist
 //!   count as read; the list index carries the column, a partial index finds the unread ones.
-//! - 32: per-account total switch (#337): `accounts.include_in_total` and its
+//! - 32: account notes sync (#980): `accounts.note` / `note_ms` replace the vault setting
+//!   `account.note.<id>` ([`account_notes`]).
+//! - 33: `hidden_recipients` (#978): IBANs left out of the transfer suggestions; index
+//!   `tx_recipients` over the outgoing bookings with an IBAN.
+//! - 34: per-account total switch (#337): `accounts.include_in_total` and its
 //!   sync stamp `accounts.total_ms`; existing amazon-orders accounts start
 //!   excluded (stamp 0, so any explicit user choice wins on sync).
-//! - 33: eigene Kontoart „Bestellkonto" (#337): existing amazon-orders accounts
+//! - 35: eigene Kontoart „Bestellkonto" (#337): existing amazon-orders accounts
 //!   become `kind = 'order'` (their own sidebar section), keeping symbol and
 //!   total switch choices.
-//! - 34: field stamp for corrected imported order/refund amounts (#337):
+//! - 36: field stamp for corrected imported order/refund amounts (#337):
 //!   `transactions.amount_ms`.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
@@ -98,10 +102,38 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::depot_values::SCHEMA),                    // 29: depot value history
     Step::Sql(TX_DATE_ID_COVERING),                            // 30
     Step::Hook(document_seen),                                 // 31: read status of documents
-    Step::Hook(account_total_flag),                            // 32 (#337)
-    Step::Hook(order_accounts),                                // 33 (#337)
-    Step::Hook(booking_amount_stamp),                          // 34 (#337)
+    Step::Hook(account_notes),                                 // 32: account notes sync (#980)
+    Step::Sql(crate::recipients::SCHEMA),                      // 33: hidden recipients (#978)
+    Step::Hook(account_total_flag),                            // 34 (#337)
+    Step::Hook(order_accounts),                                // 35 (#337)
+    Step::Hook(booking_amount_stamp),                          // 36 (#337)
 ];
+
+/// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
+/// this device's account id and never merged) to `accounts.note` with its edit stamp `note_ms`,
+/// so it syncs like the account name. Moved notes get [`MOVED_NOTE_MS`]; a peer's snapshot from
+/// an older build is migrated the same way before every merge. Idempotent.
+///
+/// [`MOVED_NOTE_MS`]: crate::user_groups::MOVED_NOTE_MS
+fn account_notes(conn: &Connection) -> CoreResult<()> {
+    for (col, def) in [
+        ("note", "TEXT NOT NULL DEFAULT ''"),
+        ("note_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ] {
+        if !has_column(conn, "main", "accounts", col)? {
+            conn.execute_batch(&format!("ALTER TABLE accounts ADD COLUMN {col} {def};"))?;
+        }
+    }
+    conn.execute(
+        "UPDATE accounts SET note = (SELECT value FROM settings WHERE key = 'account.note.' || accounts.id),
+                note_ms = ?1
+          WHERE note = ''
+            AND EXISTS (SELECT 1 FROM settings WHERE key = 'account.note.' || accounts.id AND value != '')",
+        [crate::user_groups::MOVED_NOTE_MS],
+    )?;
+    conn.execute("DELETE FROM settings WHERE key GLOB 'account.note.*'", [])?;
+    Ok(())
+}
 
 /// Step 31: `booking_documents.seen_at` (NULL = unread). The documents a vault has already count
 /// as read: an update must not turn a whole archive into "new". The index the document list is
@@ -848,7 +880,7 @@ CREATE TABLE loan_links (
 CREATE INDEX loan_links_loan ON loan_links(loan_account_id);
 "#;
 
-/// Step 34: field stamp for corrected imported order/refund amounts.
+/// Step 36: field stamp for corrected imported order/refund amounts.
 fn booking_amount_stamp(conn: &Connection) -> CoreResult<()> {
     if !has_column(conn, "main", "transactions", "amount_ms")? {
         conn.execute_batch(
@@ -858,7 +890,7 @@ fn booking_amount_stamp(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
-/// Step 33: classify existing Amazon evidence accounts without touching user total choices.
+/// Step 35: classify existing Amazon evidence accounts without touching user total choices.
 fn order_accounts(conn: &Connection) -> CoreResult<()> {
     let has_orders: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM accounts a JOIN bank_connections c ON c.id=a.connection_id WHERE c.connector='amazon-orders')", [], |r| r.get(0))?;
     if !has_orders {
@@ -871,7 +903,6 @@ fn order_accounts(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
-/// Step 32 (#337): per-account switch for the overall money totals, with its
 /// sync stamp. The one-time refill puts the order connector's existing
 /// accounts out of the totals (a Bestellkonto is a proof account, not a money
 /// account); it runs only when this step introduces the column, so a vault a
@@ -895,17 +926,60 @@ fn account_total_flag(conn: &Connection) -> CoreResult<()> {
 mod tests {
     use super::*;
 
-    fn schema25() -> Connection {
+    fn schema_at(version: usize) -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
-        for step in &STEPS[..25] {
+        for step in &STEPS[..version] {
             match step {
                 Step::Sql(sql) => conn.execute_batch(sql).unwrap(),
                 Step::Hook(f) => f(&conn).unwrap(),
             }
         }
-        conn.pragma_update(None, "user_version", 25).unwrap();
+        conn.pragma_update(None, "user_version", version as i64)
+            .unwrap();
         conn
+    }
+
+    /// Step 32 (#980): notes move from the settings onto their accounts; notes of accounts
+    /// that no longer exist go, other settings stay.
+    #[test]
+    fn account_notes_move_from_settings_to_the_account() {
+        let mut conn = schema_at(31);
+        conn.execute_batch(
+            "INSERT INTO account_groups(name) VALUES ('G');
+             INSERT INTO accounts(id, group_id, external_ref, name)
+                 SELECT 1, id, 'a', 'Giro' FROM account_groups WHERE name = 'G'
+                 UNION ALL SELECT 2, id, 'b', 'Bar' FROM account_groups WHERE name = 'G';
+             INSERT INTO settings(key, value) VALUES
+                 ('account.note.1', 'Reisekasse'), ('account.note.99', 'weg'),
+                 ('ui.uncategorized_name', 'Sonstiges');",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let notes = |conn: &Connection| -> Vec<(String, String, i64)> {
+            conn.prepare("SELECT name, note, note_ms FROM accounts ORDER BY id")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let expected = vec![
+            ("Giro".to_string(), "Reisekasse".to_string(), 1),
+            ("Bar".to_string(), String::new(), 0),
+        ];
+        assert_eq!(notes(&conn), expected);
+        let keys: Vec<String> = conn
+            .prepare("SELECT key FROM settings ORDER BY key")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(keys, ["ui.uncategorized_name"]);
+        // idempotent: a second run changes nothing
+        account_notes(&conn).unwrap();
+        assert_eq!(notes(&conn), expected);
     }
 
     #[test]
@@ -926,7 +1000,7 @@ mod tests {
 
     #[test]
     fn failed_role_migration_rolls_back_and_restores_foreign_keys() {
-        let mut conn = schema25();
+        let mut conn = schema_at(25);
         conn.execute_batch(
             "PRAGMA foreign_keys=OFF;
             INSERT INTO accounts(group_id,external_ref,name) VALUES (999,'test','Test');
@@ -941,14 +1015,15 @@ mod tests {
                 .unwrap(),
             25
         );
-        assert!(conn
-            .query_row("PRAGMA foreign_keys", [], |r| r.get::<_, bool>(0))
-            .unwrap());
+        assert!(
+            conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, bool>(0))
+                .unwrap()
+        );
     }
 
     #[test]
     fn partial_development_migration_preserves_custom_provenance() {
-        let mut conn = schema25();
+        let mut conn = schema_at(25);
         conn.execute_batch("ALTER TABLE categories ADD COLUMN builtin_role TEXT;
             INSERT INTO categories(name,sf_symbol,color_hex) VALUES ('Freizeit','sparkles','#2F8F9D');").unwrap();
         migrate(&mut conn).unwrap();
@@ -963,7 +1038,7 @@ mod tests {
 
     #[test]
     fn roles_migrate_catalog_entries_but_not_custom_names() {
-        let mut conn = schema25();
+        let mut conn = schema_at(25);
         let (name, symbol, color, _) = crate::demo::STARTER_TREE
             .iter()
             .find(|r| r.0 == "Freizeit")
@@ -994,9 +1069,10 @@ mod tests {
         };
         assert_eq!(role(&conn, builtin).as_deref(), Some("Freizeit"));
         assert_eq!(role(&conn, custom), None);
-        assert!(conn
-            .query_row("PRAGMA foreign_keys", [], |r| r.get::<_, bool>(0))
-            .unwrap());
+        assert!(
+            conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, bool>(0))
+                .unwrap()
+        );
         assert_eq!(
             conn.query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
@@ -1015,7 +1091,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 34);
+        assert_eq!(SCHEMA_VERSION, 36);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
