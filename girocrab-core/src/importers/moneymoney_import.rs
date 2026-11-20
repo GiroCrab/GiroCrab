@@ -812,7 +812,7 @@ pub(crate) fn match_existing(rows: &[MmRow], existing: &[Existing]) -> Vec<Optio
 /// without, or both the same). Pass 3 compares names exactly and only for
 /// rows without IBAN, so an accent or an IBAN on one side only kept them
 /// apart. In order, like the other passes.
-fn match_folded_name(
+pub(crate) fn match_folded_name(
     rows: &[MmRow],
     existing: &[Existing],
     out: &mut [Option<usize>],
