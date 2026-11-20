@@ -246,9 +246,11 @@ fn bank_twin(conn: &Connection, mm: &Ident, connection_id: Option<i64>) -> CoreR
 }
 
 /// A depot „Abrufweg umstellen“ marked that the other way did not take over
-/// (another reference, no IBAN): the only bank depot without IBAN, same name,
-/// whose number is the marked one's or that plus the sub-account `00`
-/// (comdirect: REST `1234567`, FinTS `123456700`).
+/// (another reference, no IBAN): the only bank depot without IBAN whose
+/// number is the marked one's or that plus the sub-account `00` (comdirect:
+/// REST `1234567`, FinTS `123456700`) and that `twin_score` accepts: most
+/// bookings shared or, for an empty depot, the same name. The name is not
+/// required otherwise; the two ways may name the depot differently.
 fn switched_depot_twin(conn: &Connection, mm: &Ident, banks: &[Ident]) -> CoreResult<Option<i64>> {
     if mm.kind != "brokerage" || !mm.iban.is_empty() || mm.number.is_empty() {
         return Ok(None);
