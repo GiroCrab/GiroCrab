@@ -431,19 +431,32 @@ pub(crate) fn merge_bookings(
                 let previous = local_amounts[&id];
                 let amount_changed =
                     o.amount.1 > 0 && (o.amount.1, o.amount.0) > (previous.1, previous.0);
+                // only a changed VALUE invalidates the allocation (#1471): a
+                // newer stamp with identical cents must not delete splits
+                // that still sum to the booking's amount
+                let amount_value_changed = amount_changed && o.amount.0 != previous.0;
                 if amount_changed {
                     conn.execute(
                         "UPDATE transactions SET amount_cents=?2, amount_ms=?3 WHERE id=?1",
                         params![id, o.amount.0, o.amount.1],
                     )?;
-                    // splits summed to the old amount (#1471): a correction
-                    // invalidates the allocation, the invariant requires the
-                    // splits to equal the booking amount again — drop them
-                    // (the other side's splits, when it has any, arrive below)
-                    conn.execute(
-                        "DELETE FROM transaction_splits WHERE transaction_id = ?1",
-                        params![id],
-                    )?;
+                    if amount_value_changed {
+                        // splits summed to the old amount (#1471): a value
+                        // correction invalidates the allocation — drop it and
+                        // stamp the clear newer, so a peer's stale allocation
+                        // loses the next field merge (the other side's splits
+                        // that fit the corrected amount survive the guard below)
+                        conn.execute(
+                            "UPDATE transactions SET splits_ms = MAX(?2, splits_ms + 1)
+                              WHERE id = ?1
+                                AND EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
+                            params![id, o.amount.1],
+                        )?;
+                        conn.execute(
+                            "DELETE FROM transaction_splits WHERE transaction_id = ?1",
+                            params![id],
+                        )?;
+                    }
                     local_amounts.insert(id, o.amount);
                 }
                 let old = local[&id].clone();
@@ -451,6 +464,20 @@ pub(crate) fn merge_bookings(
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
+                // an allocation must sum to the winning amount (#1471): splits
+                // edited against a superseded amount are obsolete, fitting
+                // ones survive — whatever side they came from
+                if !m.splits.is_empty() {
+                    let amount: i64 = conn.query_row(
+                        "SELECT amount_cents FROM transactions WHERE id = ?1",
+                        params![id],
+                        |r| r.get(0),
+                    )?;
+                    let sum: i64 = m.splits.iter().map(|sp| sp.1).sum();
+                    if sum != amount {
+                        m.splits.clear();
+                    }
+                }
                 // derived balances count live bookings only (#1471): apply
                 // the booking's live contribution after the merge minus its
                 // live contribution before — a deleted booking contributes

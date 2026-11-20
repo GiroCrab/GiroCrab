@@ -1594,3 +1594,136 @@ fn amount_merge_on_a_deleted_booking_keeps_the_derived_balance() {
         .unwrap();
     assert_eq!(before, after, "a deleted booking never shifts the balance");
 }
+
+/// A bidirectional split correction (#1471): both sides hold the split
+/// 1000-refund; A's heal corrects to 2000, stamps the clear newer and drops
+/// the allocation. Merging in both directions leaves 2000 with NO stale
+/// allocation restored — the empty state wins the field merge.
+#[test]
+fn corrected_amount_clears_splits_in_both_merge_directions() {
+    use girocrab_core::models::{ConnectorKind, TransactionSplitInput};
+    let (a, ta) = vault("splits-bidir-a");
+    let (b, tb) = vault("splits-bidir-b");
+    let cid = a
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    for v in [&a, &b] {
+        let refund = v
+            .list_transactions(BookingFilter::default())
+            .unwrap()
+            .transactions
+            .iter()
+            .find(|t| t.amount_cents > 0)
+            .unwrap()
+            .id;
+        v.set_transaction_splits(
+            refund,
+            vec![
+                TransactionSplitInput {
+                    category_id: None,
+                    amount_cents: 600,
+                    note: String::new(),
+                },
+                TransactionSplitInput {
+                    category_id: None,
+                    amount_cents: 400,
+                    note: String::new(),
+                },
+            ],
+        )
+        .unwrap();
+    }
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    a.merge_other_vault(b.file_path(), KEY.to_vec()).unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    for (v, t) in [(&a, &ta), (&b, &tb)] {
+        let c = t.conn("v.girocrab");
+        let (amount, splits): (i64, i64) = c
+            .query_row(
+                "SELECT (SELECT amount_cents FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL),
+                        (SELECT COUNT(*) FROM transaction_splits sp JOIN transactions t ON t.id = sp.transaction_id
+                          WHERE t.amount_cents > 0 AND t.deleted_ms IS NULL)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(amount, 2000, "the correction won");
+        assert_eq!(
+            splits,
+            0,
+            "no stale allocation restored ({:?})",
+            v.account_count()
+        );
+    }
+}
+
+/// A newer amount stamp with IDENTICAL cents must not delete valid splits
+/// (#1471): A corrects 1000 -> 2000 -> back to 1000, B splits its unchanged
+/// 1000; the merge takes A's stamp, keeps B's allocation.
+#[test]
+fn stamp_only_amount_change_keeps_fitting_splits() {
+    use girocrab_core::models::{ConnectorKind, TransactionSplitInput};
+    let (a, _ta) = vault("splits-stamp-a");
+    let (b, tb) = vault("splits-stamp-b");
+    let cid = a
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    // A: 1000 -> 2000 -> back to 1000 (stamp rises, value returns)
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    // B splits its unchanged 1000-cent refund
+    let refund = b
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .iter()
+        .find(|t| t.amount_cents > 0)
+        .unwrap()
+        .id;
+    b.set_transaction_splits(
+        refund,
+        vec![
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 600,
+                note: String::new(),
+            },
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 400,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    let c = tb.conn("v.girocrab");
+    let (amount, splits): (i64, i64) = c
+        .query_row(
+            "SELECT (SELECT amount_cents FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL),
+                    (SELECT COUNT(*) FROM transaction_splits sp JOIN transactions t ON t.id = sp.transaction_id
+                      WHERE t.amount_cents > 0 AND t.deleted_ms IS NULL)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(amount, 1000);
+    assert_eq!(
+        splits, 2,
+        "the fitting allocation survives the stamp-only change"
+    );
+}

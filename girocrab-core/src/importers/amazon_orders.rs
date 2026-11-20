@@ -424,8 +424,15 @@ impl Vault {
                         rusqlite::params![b.cents - old, acc_id],
                     )?;
                     // splits summed to the old amount (#1471): the correction
-                    // invalidates the allocation — same transaction, so the
-                    // invariant (splits = booking amount) holds again
+                    // invalidates the allocation — dropped and STAMPED newer in
+                    // the same transaction, so the empty state survives the
+                    // next field merge against a peer's stale allocation
+                    tx.execute(
+                        "UPDATE transactions SET splits_ms = MAX(?2, splits_ms + 1)
+                          WHERE id = ?1
+                            AND EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
+                        rusqlite::params![id, stamp],
+                    )?;
                     tx.execute(
                         "DELETE FROM transaction_splits WHERE transaction_id = ?1",
                         rusqlite::params![id],
