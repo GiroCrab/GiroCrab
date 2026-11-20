@@ -14,6 +14,8 @@ final class TimeDepositTests: XCTestCase {
 
     override func tearDown() async throws { model = nil }
 
+    private enum TestError: Error { case accountMissing }
+
     /// A Festgeld account next to the demo accounts; goes through the vault like `OfflineAccountsTests`.
     private func addTimeDeposit() async throws -> Account {
         let vault = try XCTUnwrap(model.vault)
@@ -24,7 +26,8 @@ final class TimeDepositTests: XCTestCase {
             if let a = model.account(for: id), a.balanceCents == 5_000_00 { return a }
             try await Task.sleep(for: .milliseconds(10))
         }
-        throw XCTSkip("The sidebar did not show the new account")
+        XCTFail("The sidebar did not show the new account")
+        throw TestError.accountMissing
     }
 
     func testKindIsOfferedInPickersWithOwnLabel() {
@@ -42,9 +45,16 @@ final class TimeDepositTests: XCTestCase {
         XCTAssertTrue(WealthSummary(accounts: model.allAccounts).cash.contains { $0.id == deposit.id })
     }
 
+    /// A connected account with an IBAN that can send today (the demo Tagesgeld) stops being a source once it is a Festgeld.
     func testNoTransferGoesOutOfTimeDeposit() async throws {
-        let deposit = try await addTimeDeposit()
-        XCTAssertFalse(model.transferFormAccounts.contains { $0.id == deposit.id })
-        XCTAssertFalse(model.canSendTransfer(from: deposit.id))
+        let source = try XCTUnwrap(model.savingsTransferSources.first)
+        XCTAssertTrue(model.transferFormAccounts.contains { $0.id == source.id })
+        XCTAssertTrue(model.canSendTransfer(from: source.id))
+
+        model.setAccountKind(source.id, to: .timeDeposit)
+        XCTAssertEqual(model.account(for: source.id)?.kind, .timeDeposit)
+        XCTAssertFalse(model.savingsTransferSources.contains { $0.id == source.id })
+        XCTAssertFalse(model.transferFormAccounts.contains { $0.id == source.id })
+        XCTAssertFalse(model.canSendTransfer(from: source.id))
     }
 }

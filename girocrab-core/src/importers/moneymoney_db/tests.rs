@@ -3730,5 +3730,12 @@ fn suggests_time_deposit_for_festgeld_names() {
     assert_eq!(kind("Festgeld 12 Monate"), AccountKind::TimeDeposit);
     assert_eq!(kind("Termingeldkonto"), AccountKind::TimeDeposit);
     assert_eq!(kind("Tagesgeld"), AccountKind::Savings);
+    // the bank name must not turn a Festgeld into a card
+    let mut a = src_acc(1, "123", "50050201", "", "EUR");
+    a.name = "Festgeld 12 Monate".into();
+    assert_eq!(
+        suggest_kind(&a, "American Express"),
+        AccountKind::TimeDeposit
+    );
     assert_eq!(kind("Girokonto"), AccountKind::Checking);
 }

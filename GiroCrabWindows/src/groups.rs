@@ -238,8 +238,8 @@ mod tests {
             assert_eq!(kind_at(i as i32), Some(*k));
         }
         assert_eq!(kind_at(-1), None);
-        assert_eq!(kind_at(7), None);
-        assert_eq!(kind_labels().len(), 7);
+        assert_eq!(kind_at(KINDS.len() as i32), None);
+        assert_eq!(kind_labels().len(), KINDS.len());
     }
 
     #[test]

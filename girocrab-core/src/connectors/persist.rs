@@ -415,6 +415,7 @@ pub(crate) fn store_fetch(
                     // first stored as checking (e.g. C24 PocketZINS, typed by product).
                     // Loan: a Schwäbisch Hall Bausparvertrag moving on to its loan phase
                     // (same contract id), which must not stay a savings account.
+                    // A stored Festgeld stays one when the bank reports Savings (#1002).
                     if acc.kind == AccountKind::Brokerage
                         || acc.kind == AccountKind::Savings
                         || acc.kind == AccountKind::TimeDeposit
@@ -424,7 +425,7 @@ pub(crate) fn store_fetch(
                         let gid = Vault::ensure_group(&tx, group, sym, order)?;
                         let changed = tx.execute(
                             // a symbol the user picked (symbol_ms > 0) stays
-                            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3 WHERE id = ?4 AND kind <> ?1",
+                            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3 WHERE id = ?4 AND kind <> ?1 AND NOT (?1 = 'savings' AND kind = 'time_deposit')",
                             params![acc.kind.as_str(), acc.kind.sf_symbol(), gid, id],
                         )?;
                         if changed > 0 {
