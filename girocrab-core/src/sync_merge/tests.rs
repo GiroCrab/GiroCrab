@@ -3912,6 +3912,55 @@ fn empty_depot_twin_is_folded() {
     );
 }
 
+/// A depot „Abrufweg umstellen“ marked (REST, number without sub-account)
+/// next to the one the first FinTS fetch added (number + `00`).
+fn switched_depot_pair(v: &Vault, bank_number: &str) {
+    let c = comdirect(v);
+    exec(v, "INSERT INTO account_groups(id, name) VALUES (1, 'G')");
+    for (ext, number) in [
+        ("moneymoney-db:switch:E5AA", "1022110"),
+        ("102211000-Depot", bank_number),
+    ] {
+        v.db()
+            .unwrap()
+            .execute(
+                "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, kind)
+                 VALUES (?1, 1, ?2, 'Depot', ?3, 'EUR', 'brokerage')",
+                params![c, ext, number],
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn switched_depot_is_folded_into_the_fints_depot() {
+    let dir = temp_dir("twin-switched-depot");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211000");
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        text(
+            &v,
+            "SELECT group_concat(external_ref) FROM accounts WHERE deleted_ms IS NULL"
+        ),
+        "102211000-Depot"
+    );
+}
+
+#[test]
+fn switched_depot_with_another_number_stays() {
+    let dir = temp_dir("twin-switched-depot-other");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211100");
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        n(&v, "SELECT count(*) FROM accounts WHERE deleted_ms IS NULL"),
+        2
+    );
+}
+
 fn ffb_login(v: &Vault, login: &str) -> i64 {
     v.add_bank_connection(ConnectorKind::Ffb, String::new(), login.into())
         .unwrap()
