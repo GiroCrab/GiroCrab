@@ -732,7 +732,11 @@ Rectangle {
                             Layout.minimumWidth: br.isSingleLine ? Math.min(Math.ceil(implicitWidth), Math.max(0, br.nameLineWidth - 30)) : 0
                             Sensitive {}
                         }
-                        SFIcon { id: docIcon; visible: br.booking && br.booking.document_count > 0; symbol: "doc.text.fill"; size: 11; color: Theme.withAlpha(Theme.accent, 0.8) }
+                        SFIcon { id: docIcon; visible: br.booking && br.booking.document_count > 0; symbol: "doc.text.fill"; size: 11; color: Theme.withAlpha(Theme.accent, 0.8)
+                                 // BookingListView.swift › BookingRow: .help (#675)
+                                 HoverHandler { id: docHover }
+                                 ToolTip.visible: docHover.hovered && docIcon.visible; ToolTip.delay: 500
+                                 ToolTip.text: br.booking ? qsTr("%1 Beleg(e) – Leertaste für Vorschau").arg(br.booking.document_count) : "" }
                         SFIcon { id: repeatIcon; visible: br.booking !== null && AppModel.recurringSeries(br.booking) !== null; symbol: "repeat"; size: 11 }
                         // Keep the name and amount first. Show the category only when its
                         // complete label fits (ViewThatFits); the purpose yields first.

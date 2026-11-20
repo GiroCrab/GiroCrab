@@ -306,6 +306,23 @@ Rectangle {
                 Text { text: Fmt.longDate(rc.booking.booking_date); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true }
                 FlowBadge { flow: rc.booking.flow }
             }
+            // BookingDetailView.swift › ReceiptCard (#574): why this booking counts as an internal transfer
+            RowLayout {
+                visible: rc.booking.flow === "Transfer"
+                Layout.fillWidth: true; spacing: 6
+                SFIcon { symbol: "arrow.left.arrow.right"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop; Layout.topMargin: 2 }
+                Text {
+                    readonly property string iban: rc.booking.counterparty_iban.replace(/ /g, "").toUpperCase()
+                    readonly property bool ownIban: iban !== "" && Object.values(AppModel.accountsByID)
+                        .some(a => a.iban.replace(/ /g, "").toUpperCase() === iban)
+                    text: !visible ? ""
+                        : ownIban ? qsTr("Umbuchung erkannt: Die Gegenkonto-IBAN gehört zu einem eigenen Konto.")
+                        : rc.booking.category_name === "Umbuchungen" || rc.booking.category_path.startsWith("Umbuchungen")
+                          ? qsTr("Umbuchung erkannt: Die Buchung hat die Kategorie „Umbuchungen“.")
+                        : qsTr("Umbuchung erkannt: Der Buchungstext deutet auf eine Übertragung zwischen eigenen Konten oder eine Abrechnung hin.")
+                    font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.Wrap; Layout.fillWidth: true
+                }
+            }
             // Amazon order: one item per line instead of the ";" purpose run;
             // an item with a stored ASIN opens its product page (#354)
             ColumnLayout {
