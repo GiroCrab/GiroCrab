@@ -624,6 +624,11 @@ pub struct BookingFilter {
     #[uniffi(default = None)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub amount_max_cents: Option<i64>,
+    /// Only bookings without a document: neither a stored file nor a linked
+    /// receipt (#590).
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub without_document: bool,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]

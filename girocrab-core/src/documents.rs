@@ -5,6 +5,10 @@
 //! connectors (Trade Republic timelineDetailV2, comdirect PostBox, FinTS
 //! HKEKA) or by drag & drop; dropped files are matched to a booking by
 //! amount, date and merchant name.
+//!
+//! A receipt can also be a reference to a document kept elsewhere (#590,
+//! `document_links.rs`): the lists here return both kinds as [`DocumentInfo`],
+//! a reference with `link_url` set and a negative `id`.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -56,6 +60,19 @@ pub struct DocumentInfo {
     pub file_name: String,
     pub size_bytes: u64,
     pub source_url: String,
+    /// Set for a receipt that is only a reference (#590): the `http(s)` URL
+    /// the app opens in the browser. Such a document has no file
+    /// (`size_bytes` 0, empty `mime_type`) and a negative `id`. Empty for a
+    /// file stored in the vault.
+    #[uniffi(default = "")]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub link_url: String,
+    /// Set when the reference names a document of the connected document
+    /// archive (`archive.rs`): its id there. The app can then show the
+    /// document itself. `None` for a stored file and for a plain link.
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub archive_doc: Option<i64>,
     pub doc_date: String,
     pub created_at: i64,
     /// "METRO · −56,13 EUR · 2026-11-07" (empty if not linked)
@@ -63,6 +80,13 @@ pub struct DocumentInfo {
     pub account_name: String,
     /// Read: opened in the preview, marked by hand, or old on arrival (see [`UNSEEN_DAYS`]).
     pub seen: bool,
+    /// A document a bank delivered: a stored file with a `source_url`, or a
+    /// reference to one that moved into the document archive. The reference
+    /// says so on every device, while the bank's key (`source_url`) is only
+    /// known to the device that moved the file.
+    #[uniffi(default = false)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub from_bank: bool,
 }
 
 #[derive(Debug, Clone, Default, uniffi::Record)]
@@ -135,6 +159,10 @@ fn seen_on_arrival(date: Option<jiff::civil::Date>) -> Option<i64> {
 pub(crate) fn mark_seen(conn: &Connection, ids: &[i64], seen: bool) -> CoreResult<u32> {
     let mut changed = 0;
     for id in ids {
+        if let Some(row) = crate::document_links::row_id_of(*id) {
+            changed += crate::document_links::mark_seen(conn, row, seen)?;
+            continue;
+        }
         changed += conn.execute(
             "UPDATE booking_documents SET seen_at = CASE WHEN ?2 THEN strftime('%s','now') ELSE NULL END
               WHERE id = ?1 AND (seen_at IS NOT NULL) != ?2",
@@ -143,6 +171,32 @@ pub(crate) fn mark_seen(conn: &Connection, ids: &[i64], seen: bool) -> CoreResul
     }
     Ok(changed)
 }
+
+/// What `match_document` did with a dropped file.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MatchedDocument {
+    /// The stored file (none when the vault already had this very file).
+    pub doc_id: Option<i64>,
+    /// The booking it was put on, as a short summary; none: kept unlinked.
+    pub booking: Option<String>,
+}
+
+/// Whether the vault knows the bank's document `source_url`: as a stored
+/// file, or as a reference to where it moved (the document archive). Asked
+/// before a document is downloaded. `source_url != ''` repeats the condition
+/// of the partial indexes that answer it; without it SQLite scans the table,
+/// reading through every stored file.
+pub(crate) fn knows_source(conn: &Connection, source_url: &str) -> CoreResult<bool> {
+    Ok(
+        conn.query_row(STORED_SOURCE_SQL, [source_url], |r| r.get(0))?
+            || crate::document_links::has_source(conn, source_url)?,
+    )
+}
+
+/// "Is the bank's document ?1 stored in the vault?"
+pub(crate) const STORED_SOURCE_SQL: &str =
+    "SELECT EXISTS (SELECT 1 FROM booking_documents WHERE source_url = ?1 AND source_url != '')";
 
 pub(crate) fn insert_doc(
     conn: &Connection,
@@ -160,6 +214,11 @@ pub(crate) fn insert_doc(
         return Err(CoreError::InvalidInput {
             message: tr("Leere Datei").into(),
         });
+    }
+    // a document of the bank that this device moved into the document archive
+    // is known: not stored a second time
+    if crate::document_links::has_source(conn, source_url)? {
+        return Ok(None);
     }
     // The date comes from bank or PDF text: anything but a real day is stored empty, so the
     // document falls back to its booking's date.
@@ -301,6 +360,11 @@ pub fn amounts_in(text: &str) -> Vec<i64> {
     static AMOUNT: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:^|[^\d,.])(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2})").unwrap()
     });
+    // "07.11.2026" is a date, not 7,11
+    static DATES: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\b\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})\b").unwrap());
+    let text = DATES.replace_all(text, " ");
+    let text: &str = &text;
     let mut out: Vec<i64> = Vec::new();
     for c in AMOUNT.captures_iter(text) {
         // The trailing separator is not part of the match (so "12,50 13,00"
@@ -365,30 +429,93 @@ fn days_between(a: &str, b: &str) -> Option<i64> {
 /// booking without an amount hit needs them (name 3 + date 3 >= 6).
 const CLOSE_DAYS: i64 = 3;
 
-/// Picks the booking a dropped receipt belongs to. Returns (booking, score).
-pub fn best_match<'a>(bookings: &'a [Booking], text: &str) -> Option<(&'a Booking, i32)> {
-    let amounts = amounts_in(text);
-    let dates = dates_in(text);
-    let lower = text.to_lowercase();
-    let mut best: Option<(&Booking, i32)> = None;
-    for b in bookings {
+/// What a receipt's text says, read once and held against many bookings.
+pub(crate) struct ReceiptFacts {
+    amounts: Vec<i64>,
+    dates: Vec<String>,
+    lower: String,
+}
+
+impl ReceiptFacts {
+    pub(crate) fn of(text: &str) -> Self {
+        Self {
+            amounts: amounts_in(text),
+            dates: dates_in(text),
+            lower: text.to_lowercase(),
+        }
+    }
+
+    /// Whether the text names the merchant: the first word of its name (three
+    /// letters or more) or its key.
+    pub(crate) fn names(&self, merchant_name: &str, merchant_key: &str) -> bool {
+        let n = merchant_name.to_lowercase();
+        let first = n.split_whitespace().next().unwrap_or("").to_string();
+        (!first.is_empty() && first.len() >= 3 && self.lower.contains(&first))
+            || self.lower.contains(&merchant_key.replace('-', " "))
+    }
+
+    /// Whether the text names the merchant beyond doubt, for ticking a match
+    /// without asking. Its name is taken word by word, without the words an
+    /// invoice is full of anyway. A name of one such word must stand there
+    /// as a word of its own (four letters or more); of a longer name two
+    /// words must. So "Nettobetrag" names no Netto, and "Elektro Weber" no
+    /// Elektro Meier. Stricter than [`names`](Self::names).
+    pub(crate) fn names_exactly(&self, merchant_name: &str) -> bool {
+        const EVERYWHERE: [&str; 22] = [
+            "netto", "brutto", "rechnung", "beleg", "betrag", "summe", "gesamt", "datum", "kunde",
+            "konto", "bank", "firma", "gmbh", "herr", "frau", "stadt", "markt", "shop", "online",
+            "service", "zahlung", "steuer",
+        ];
+        let name = merchant_name.to_lowercase();
+        let mut telling: Vec<&str> = Vec::new();
+        for w in name.split_whitespace() {
+            if w.chars().count() >= 3 && !EVERYWHERE.contains(&w) && !telling.contains(&w) {
+                telling.push(w);
+            }
+        }
+        let stands = |needle: &str| {
+            self.lower.match_indices(needle).any(|(at, _)| {
+                let before = self.lower[..at].chars().next_back();
+                let after = self.lower[at + needle.len()..].chars().next();
+                !before.is_some_and(char::is_alphanumeric)
+                    && !after.is_some_and(char::is_alphanumeric)
+            })
+        };
+        match telling.as_slice() {
+            [] => false,
+            [only] => only.chars().count() >= 4 && stands(only),
+            several => several.iter().filter(|w| stands(w)).count() >= 2,
+        }
+    }
+
+    /// The amounts the text names, in cents.
+    pub(crate) fn amounts(&self) -> &[i64] {
+        &self.amounts
+    }
+
+    /// How well the receipt fits a booking: amount 5, merchant name 3, date
+    /// up to 3 (far off: −4). `None`: no amount and no convincing name, so
+    /// not a candidate at all. A match needs 5 points.
+    pub(crate) fn score(
+        &self,
+        amount_cents: i64,
+        merchant_name: &str,
+        merchant_key: &str,
+        booking_date: &str,
+    ) -> Option<i32> {
         let mut score = 0;
-        let amount_hit = amounts.contains(&b.amount_cents.abs());
+        let amount_hit = self.amounts.contains(&amount_cents.abs());
         if amount_hit {
             score += 5;
         }
-        let name_hit = {
-            let n = b.merchant.name.to_lowercase();
-            let first = n.split_whitespace().next().unwrap_or("").to_string();
-            (!first.is_empty() && first.len() >= 3 && lower.contains(&first))
-                || lower.contains(&b.merchant.key.replace('-', " "))
-        };
+        let name_hit = self.names(merchant_name, merchant_key);
         if name_hit {
             score += 3;
         }
-        if let Some(min_days) = dates
+        if let Some(min_days) = self
+            .dates
             .iter()
-            .filter_map(|d| days_between(d, &b.booking_date))
+            .filter_map(|d| days_between(d, booking_date))
             .min()
         {
             score += match min_days {
@@ -398,14 +525,31 @@ pub fn best_match<'a>(bookings: &'a [Booking], text: &str) -> Option<(&'a Bookin
                 _ => -4,
             };
         }
-        if !(amount_hit || (name_hit && score >= 6)) {
+        (amount_hit || (name_hit && score >= 6)).then_some(score)
+    }
+}
+
+/// Lowest score at which a receipt counts as belonging to a booking.
+pub(crate) const MATCH_SCORE: i32 = 5;
+
+/// Picks the booking a dropped receipt belongs to. Returns (booking, score).
+pub fn best_match<'a>(bookings: &'a [Booking], text: &str) -> Option<(&'a Booking, i32)> {
+    let facts = ReceiptFacts::of(text);
+    let mut best: Option<(&Booking, i32)> = None;
+    for b in bookings {
+        let Some(score) = facts.score(
+            b.amount_cents,
+            &b.merchant.name,
+            &b.merchant.key,
+            &b.booking_date,
+        ) else {
             continue;
-        }
+        };
         if best.map(|(_, s)| score > s).unwrap_or(true) {
             best = Some((b, score));
         }
     }
-    best.filter(|(_, s)| *s >= 5)
+    best.filter(|(_, s)| *s >= MATCH_SCORE)
 }
 
 fn label(b: &Booking) -> String {
@@ -417,17 +561,24 @@ fn label(b: &Booking) -> String {
     )
 }
 
-fn row_to_info(r: &rusqlite::Row) -> rusqlite::Result<DocumentInfo> {
-    let cp: Option<String> = r.get(12)?;
-    let amount: Option<i64> = r.get(13)?;
-    let date: Option<String> = r.get(14)?;
-    let booking_label = match (cp, amount, date) {
+/// "METRO · −56,13 EUR · 2026-11-07" from the columns of the linked booking
+/// (empty without one).
+pub(crate) fn booking_label_of(
+    counterparty: Option<String>,
+    amount_cents: Option<i64>,
+    booking_date: Option<String>,
+) -> String {
+    match (counterparty, amount_cents, booking_date) {
         (Some(cp), Some(a), Some(d)) => {
             let m = crate::merchants::MerchantResolver::resolve(&cp, "");
             format!("{} · {} · {}", m.name, format_cents(a, "EUR".into()), d)
         }
         _ => String::new(),
-    };
+    }
+}
+
+fn row_to_info(r: &rusqlite::Row) -> rusqlite::Result<DocumentInfo> {
+    let booking_label = booking_label_of(r.get(12)?, r.get(13)?, r.get(14)?);
     Ok(DocumentInfo {
         id: r.get(0)?,
         booking_id: r.get(1)?,
@@ -438,11 +589,14 @@ fn row_to_info(r: &rusqlite::Row) -> rusqlite::Result<DocumentInfo> {
         file_name: r.get(6)?,
         size_bytes: r.get::<_, i64>(7)? as u64,
         source_url: r.get(8)?,
+        link_url: String::new(),
+        archive_doc: None,
         doc_date: r.get(9)?,
         created_at: r.get(10)?,
         account_name: r.get::<_, Option<String>>(11)?.unwrap_or_default(),
         booking_label,
         seen: r.get(15)?,
+        from_bank: !r.get::<_, String>(8)?.is_empty(),
     })
 }
 
@@ -538,8 +692,21 @@ fn list_all_documents_sql() -> String {
     )
 }
 
+/// Adds the references (#590) to the stored files of a list, newest first
+/// like the files alone; on one day the files come first.
+fn with_links(mut docs: Vec<DocumentInfo>, links: Vec<DocumentInfo>) -> Vec<DocumentInfo> {
+    if links.is_empty() {
+        return docs;
+    }
+    docs.extend(links);
+    // stable: files keep the order of their query
+    docs.sort_by(|a, b| b.doc_date.cmp(&a.doc_date));
+    docs
+}
+
 #[uniffi::export]
 impl Vault {
+    /// Stored files and references (#590) of a booking, newest first.
     pub fn list_documents_for_booking(
         &self,
         booking_id: i64,
@@ -551,7 +718,8 @@ impl Vault {
         let rows = st
             .query_map([booking_id], row_to_info)?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let links = crate::document_links::list_for_booking(&db, booking_id)?;
+        Ok(with_links(rows, links))
     }
 
     pub fn list_all_documents(
@@ -562,6 +730,7 @@ impl Vault {
         let mut st = db.prepare(&list_all_documents_sql())?;
         let search = filter
             .search
+            .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| format!("%{}%", s.trim()));
         let rows = st
@@ -576,7 +745,8 @@ impl Vault {
                 row_to_info,
             )?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let links = crate::document_links::list_all(&db, &filter, search.as_deref())?;
+        Ok(with_links(rows, links))
     }
 
     /// Marks documents read (`seen` true) or unread. Returns how many changed.
@@ -595,7 +765,8 @@ impl Vault {
                 AND (?1 IS NULL OR account_id = ?1
                      OR booking_id IN (SELECT id FROM transactions WHERE account_id = ?1))",
             [account_id],
-        )? as u32)
+        )? as u32
+            + crate::document_links::mark_all_seen(&db, account_id)?)
     }
 
     /// Number of unread documents (for the badge in the sidebar).
@@ -605,10 +776,15 @@ impl Vault {
             "SELECT count(*) FROM booking_documents WHERE seen_at IS NULL",
             [],
             |r| r.get::<_, i64>(0),
-        )? as u32)
+        )? as u32
+            + crate::document_links::unseen_count(&db)?)
     }
 
+    /// The file of a stored document. A reference (#590) has none.
     pub fn get_document_bytes(&self, doc_id: i64) -> Result<Vec<u8>, CoreError> {
+        if crate::document_links::row_id_of(doc_id).is_some() {
+            return Err(crate::document_links::no_file());
+        }
         let db = self.db()?;
         db.query_row(
             "SELECT pdf_bytes FROM booking_documents WHERE id = ?1",
@@ -691,9 +867,12 @@ impl Vault {
         Ok(id)
     }
 
-    /// Re-links (or unlinks) a document.
+    /// Re-links (or unlinks) a document, stored file or reference (#590).
     pub fn link_document(&self, doc_id: i64, booking_id: Option<i64>) -> Result<(), CoreError> {
         let db = self.db()?;
+        if let Some(row) = crate::document_links::row_id_of(doc_id) {
+            return crate::document_links::relink(&db, row, booking_id);
+        }
         db.execute(
             "UPDATE booking_documents SET booking_id = ?1,
                 account_id = COALESCE((SELECT account_id FROM transactions WHERE id = ?1), account_id) WHERE id = ?2",
@@ -723,6 +902,9 @@ impl Vault {
                 });
             }
         }
+        if let Some(row) = crate::document_links::row_id_of(doc_id) {
+            return crate::document_links::set_account(&db, row, account_id);
+        }
         let n = db.execute(
             "UPDATE booking_documents SET account_id = ?1,
                 booking_id = CASE WHEN ?1 IS NOT NULL AND
@@ -739,9 +921,14 @@ impl Vault {
         Ok(())
     }
 
+    /// Deletes a stored file, or a reference (#590): then only the
+    /// reference goes, the document it points at is not touched.
     pub fn delete_document(&self, doc_id: i64) -> Result<(), CoreError> {
-        self.db()?
-            .execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
+        let db = self.db()?;
+        if let Some(row) = crate::document_links::row_id_of(doc_id) {
+            return crate::document_links::delete(&db, row);
+        }
+        db.execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
         Ok(())
     }
 
@@ -765,6 +952,18 @@ impl Vault {
         bytes: Vec<u8>,
         text_hint: Option<String>,
     ) -> Result<Option<String>, CoreError> {
+        Ok(self.match_document(file_name, bytes, text_hint)?.booking)
+    }
+
+    /// `auto_match_document`, also naming the stored file: what is done with
+    /// it next (moving it into the archive) must mean this file, and ids of
+    /// deleted files are handed out again.
+    pub fn match_document(
+        &self,
+        file_name: String,
+        bytes: Vec<u8>,
+        text_hint: Option<String>,
+    ) -> Result<MatchedDocument, CoreError> {
         let mut text = format!(
             "{} {}",
             file_name.replace(['_', '-'], " "),
@@ -781,7 +980,7 @@ impl Vault {
         let db = self.db()?;
         match found {
             Some((id, acc, date, lbl)) => {
-                let added = insert_doc(
+                let doc_id = insert_doc(
                     &db,
                     Some(id),
                     Some(acc),
@@ -794,14 +993,17 @@ impl Vault {
                     &date,
                 )?;
                 // dropped by hand: the user knows it
-                if let Some(added) = added {
+                if let Some(added) = doc_id {
                     mark_seen(&db, &[added], true)?;
                 }
-                Ok(Some(lbl))
+                Ok(MatchedDocument {
+                    doc_id,
+                    booking: Some(lbl),
+                })
             }
             None => {
                 let date = dates_in(&text).into_iter().next().unwrap_or_default();
-                let added = insert_doc(
+                let doc_id = insert_doc(
                     &db,
                     None,
                     None,
@@ -813,16 +1015,24 @@ impl Vault {
                     "",
                     &date,
                 )?;
-                if let Some(added) = added {
+                // dropped by hand: the user knows it
+                if let Some(added) = doc_id {
                     mark_seen(&db, &[added], true)?;
                 }
-                Ok(None)
+                Ok(MatchedDocument {
+                    doc_id,
+                    booking: None,
+                })
             }
         }
     }
 
     /// Writes one document. `dest_path` may be a folder or a full file path.
+    /// A reference (#590) has no file to write.
     pub fn export_document(&self, doc_id: i64, dest_path: String) -> Result<String, CoreError> {
+        if crate::document_links::row_id_of(doc_id).is_some() {
+            return Err(crate::document_links::no_file());
+        }
         let db = self.db()?;
         let (name, bytes): (String, Vec<u8>) = db
             .query_row(
@@ -851,7 +1061,8 @@ impl Vault {
     }
 
     /// Exports every document into `dest_dir/<Jahr>/<Datum>_<Händler>_<Titel>.pdf`
-    /// (für die Steuererklärung). Returns the number of files written.
+    /// (für die Steuererklärung). References (#590) are skipped: their
+    /// documents are not in the vault. Returns the number of files written.
     pub fn export_all_documents(&self, dest_dir: String) -> Result<u32, CoreError> {
         self.export_documents(dest_dir, Vec::new(), tr("GiroCrab-Belege").to_string())
     }
@@ -889,7 +1100,7 @@ impl Vault {
         };
         let mut used = HashSet::new();
         let mut n = 0u32;
-        for d in docs {
+        for d in docs.into_iter().filter(|d| d.link_url.is_empty()) {
             let year = year_folder(&d.doc_date);
             let dir = base.join(&year);
             std::fs::create_dir_all(&dir).map_err(|e| CoreError::InvalidInput {
@@ -963,7 +1174,8 @@ impl Vault {
     /// Copies every document not mirrored yet into
     /// `dest_dir/<Konto>/<Jahr>/<Datum>_<Händler>_<Titel>.pdf` (GitHub #57,
     /// e.g. a folder in iCloud Drive). Existing files are never overwritten.
-    /// Returns the number of files written.
+    /// References (#590) have no file and are skipped. Returns the number of
+    /// files written.
     pub fn mirror_new_documents(&self, dest_dir: String) -> Result<u32, CoreError> {
         let base = std::path::Path::new(&dest_dir);
         if dest_dir.trim().is_empty() || !base.is_dir() {
@@ -988,7 +1200,7 @@ impl Vault {
         for d in self
             .list_all_documents(DocumentFilter::default())?
             .into_iter()
-            .filter(|d| pending.contains(&d.id))
+            .filter(|d| d.link_url.is_empty() && pending.contains(&d.id))
         {
             let account = if d.account_name.trim().is_empty() {
                 tr("Ohne Konto").to_string()
@@ -1249,6 +1461,40 @@ mod tests {
     fn reads_amounts_and_dates() {
         assert_eq!(amounts_in("Summe EUR 56,13 bar 60,00"), vec![56_13, 60_00]);
         assert_eq!(amounts_in("Total 1.234,56 €"), vec![1_234_56]);
+        // a date is no amount, whatever stands around it
+        assert_eq!(
+            amounts_in("Rechnungsdatum 07.11.2026 Summe 238,00 zahlbar bis 20.11.26"),
+            vec![238_00]
+        );
+        assert_eq!(amounts_in("am 7.11.2026 gezahlt: 7,11"), vec![7_11]);
+        assert_eq!(
+            amounts_in("12.345.678,90 und 12.50"),
+            vec![12_345_678_90, 12_50]
+        );
+
+        // a merchant named beyond doubt: words of its own, and enough of them
+        let invoice = ReceiptFacts::of(
+            "Elektro Weber GmbH Nettobetrag 100,00 Netto Brutto Rechnung OBI-Markt Online Shop",
+        );
+        assert!(invoice.names_exactly("Elektro Weber"));
+        assert!(invoice.names_exactly("ELEKTRO  Weber GmbH"));
+        assert!(
+            !invoice.names_exactly("Elektro Meier"),
+            "one shared word is not the name"
+        );
+        assert!(invoice.names("Netto", "netto") && !invoice.names_exactly("Netto"));
+        assert!(!invoice.names_exactly("Netto Marken-Discount"));
+        assert!(!invoice.names_exactly("Nett"));
+        assert!(
+            !invoice.names_exactly("Online Shop"),
+            "words every invoice has"
+        );
+        assert!(!invoice.names_exactly("Rechnung Online"));
+        assert!(!invoice.names_exactly("OBI"), "too short to be sure");
+        assert!(!invoice.names_exactly(""));
+        assert!(ReceiptFacts::of("dm-drogerie markt Filiale 12").names_exactly("dm-drogerie markt"));
+        assert!(ReceiptFacts::of("Ihr OBI Markt Köln").names_exactly("OBI Markt Köln"));
+        assert!(ReceiptFacts::of("Shell Station 4711").names_exactly("Shell"));
         assert!(dates_in("Datum 07.11.2026 / 2026-11-08").contains(&"2026-11-07".to_string()));
         assert!(dates_in("Rechnung_2026-11-08_Metro.pdf").contains(&"2026-11-08".to_string()));
         assert_eq!(dates_in("vom 31.12.99"), vec!["1999-12-31".to_string()]);

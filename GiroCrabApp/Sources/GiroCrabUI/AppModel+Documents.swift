@@ -48,6 +48,19 @@ extension AppModel {
         }
     }
 
+    /// Before files leave the vault for the document archive: with the folder
+    /// backup on, every document is in the folder first. False when that did
+    /// not work (the folder is not there): the files then stay in the vault.
+    func mirrorBeforeMoving() async -> Bool {
+        guard let dir = documentMirrorPath, !isDemo else { return true }
+        do {
+            return try await vaultOffMain { try $0.mirrorNewDocuments(destDir: dir) } != nil
+        } catch {
+            documentMirrorStatus = describe(error)
+            return false
+        }
+    }
+
     /// Copies documents that are not in the folder yet (after syncs, imports, drops).
     func mirrorDocumentsIfEnabled() {
         guard let vault, let dir = documentMirrorPath, !isDemo, !mirrorRunning else { return }
@@ -221,7 +234,55 @@ extension AppModel {
     }
 
     func documentData(_ doc: DocumentInfo) -> Data? {
-        try? vault?.getDocumentBytes(docId: doc.id)
+        // a linked receipt (#590) has no file: no core call that could only fail
+        guard !doc.isLink else { return nil }
+        return try? vault?.getDocumentBytes(docId: doc.id)
+    }
+
+    // MARK: - Linked receipts (#590)
+
+    /// `http`/`https`: the only addresses stored as a linked receipt. Anything
+    /// else that is not a file (ftp:, data:, …) is never read nor stored.
+    nonisolated static func isWebLink(_ url: URL) -> Bool {
+        ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+    }
+
+    /// Links a document kept elsewhere to a booking: only the address and a
+    /// title go into the vault, GiroCrab never fetches it. Returns the core's
+    /// message when the link is refused (shown next to the field), else nil.
+    func attachLink(_ link: String, title: String, to booking: Booking) -> String? {
+        guard let vault else { return nil }
+        do {
+            _ = try vault.attachDocumentLink(bookingId: booking.id, url: link, title: title)
+        } catch CoreError.InvalidInput(let message) {
+            // the core's own sentence ("Der Link ist ungültig."), without the alert's prefix
+            return message
+        } catch {
+            return describe(error)
+        }
+        documentsChanged()
+        return nil
+    }
+
+    /// Opens a linked receipt in the default browser.
+    func openDocumentLink(_ doc: DocumentInfo) {
+        guard let url = doc.webURL else { return }
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        #else
+        UIApplication.shared.open(url)
+        #endif
+    }
+
+    /// Puts the address of a linked receipt on the clipboard.
+    func copyDocumentLink(_ doc: DocumentInfo) {
+        guard doc.isLink else { return }
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(doc.linkUrl, forType: .string)
+        #else
+        UIPasteboard.general.string = doc.linkUrl
+        #endif
     }
 
     /// Marks documents read or unread (opened in the list, or by hand).
@@ -247,46 +308,84 @@ extension AppModel {
     private func documentsChanged() {
         documentsVersion += 1
         reloadBookings()
+        // the settings count the receipts still in the vault (three SQL counts)
+        if archiveConnected { reloadArchiveMoves() }
     }
 
-    /// Dropped onto a booking row / the inspector drop zone. Takes files only:
-    /// a dragged booking (`BookingDrag`) and a web link also arrive as URLs.
-    /// False when there is no file to attach.
+    /// Dropped onto a booking row / the inspector drop zone: a file is stored
+    /// in the vault, a web address becomes a linked receipt (#590). Only file
+    /// URLs are ever read: `Data(contentsOf:)` on a web address would fetch it.
+    /// A dragged booking (`BookingDrag`) also arrives as a URL and is neither.
+    /// False when there is nothing to attach.
     @discardableResult
     func attach(_ urls: [URL], to booking: Booking) -> Bool {
-        let urls = urls.filter(\.isFileURL)
+        let urls = urls.filter { $0.isFileURL || Self.isWebLink($0) }
         guard let vault, !urls.isEmpty else { return false }
         var n = 0
+        var stored: [Int64] = []
         for url in urls {
+            guard url.isFileURL else {
+                if Self.isWebLink(url) {
+                    runCore { _ = try vault.attachDocumentLink(bookingId: booking.id, url: url.absoluteString, title: ""); n += 1 }
+                }
+                continue
+            }
             let ok = url.startAccessingSecurityScopedResource()
             defer { if ok { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { continue }
-            runCore { _ = try vault.attachDocumentToBooking(bookingId: booking.id, fileName: url.lastPathComponent, bytes: data); n += 1 }
+            runCore {
+                stored.append(try vault.attachDocumentToBooking(bookingId: booking.id, fileName: url.lastPathComponent, bytes: data))
+                n += 1
+            }
         }
         if n > 0 { toast = String(localized: "\(n) Belege an „\(booking.merchantName)“ angehängt") }
         documentsChanged()
+        moveNewReceiptsToArchive(stored)
         return true
     }
 
+    /// With "Neue Belege ins Archiv verschieben": the files just stored are
+    /// queued for the archive, by the ids the core gave them (an id of a
+    /// deleted file is handed out again, so "everything newer than" would not
+    /// do). They stay in the vault until the archive has them.
+    private func moveNewReceiptsToArchive(_ stored: [Int64]) {
+        guard archiveUploadEnabled, archiveConnected else { return }
+        queueNewReceipts(stored)
+    }
+
     /// Dropped anywhere: Rust matches amount/date/merchant (with PDFKit/Vision text as hint).
-    /// Files only, as in `attach`; false when there is none.
+    /// Only files take part, as in `attach`; false when there is none. A web
+    /// address has no content to match and is never fetched: it belongs on a
+    /// booking (#590).
     @discardableResult
     func dropAnywhere(_ urls: [URL]) -> Bool {
-        let urls = urls.filter(\.isFileURL)
-        guard !urls.isEmpty, let pin = pinVault() else { return false }
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else {
+            guard urls.contains(where: Self.isWebLink) else { return false }
+            toast = String(localized: "Einen Link bitte auf den passenden Umsatz ziehen")
+            return true
+        }
+        guard let pin = pinVault() else { return false }
+        let generation = archiveGeneration
         Task {
             var linked: [String] = []
             var unmatched = 0
             var failure: Error?
-            for url in urls {
+            var stored: [Int64] = []
+            for url in files {
                 let ok = url.startAccessingSecurityScopedResource()
                 defer { if ok { url.stopAccessingSecurityScopedResource() } }
                 guard let data = try? Data(contentsOf: url) else { continue }
                 let fileName = url.lastPathComponent
                 let text = await ReceiptText.extract(data: data, fileName: fileName)
+                // reading the text takes a while: the files were dropped on
+                // this vault, and nothing of them goes into or shows in another
+                guard isCurrent(pin) else { return }
                 do {
                     // Parses the PDF and scores every booking: too slow for the main thread.
-                    if let hit = try await pin.run({ try $0.autoMatchDocument(fileName: fileName, bytes: data, textHint: text) }) {
+                    let match = try await pin.run({ try $0.matchDocument(fileName: fileName, bytes: data, textHint: text) })
+                    if let id = match.docId { stored.append(id) }
+                    if let hit = match.booking {
                         linked.append(hit)
                     } else {
                         unmatched += 1
@@ -305,6 +404,8 @@ extension AppModel {
                 toast = String(localized: "Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
             }
             documentsChanged()
+            // and only into the archive that was connected when they were dropped
+            if generation == archiveGeneration { moveNewReceiptsToArchive(stored) }
         }
         return true
     }
@@ -312,6 +413,8 @@ extension AppModel {
     func deleteDocument(_ doc: DocumentInfo) {
         guard let vault else { return }
         runCore { try vault.deleteDocument(docId: doc.id) }
+        // a file that was waiting for the archive drops off the queue with it
+        if archiveMoves[doc.id] != nil { reloadArchiveMoves() }
         documentsChanged()
     }
 
@@ -331,7 +434,17 @@ extension AppModel {
     }
 
     /// Writes the document to a temp file and shows it in QuickLook.
+    /// A linked document of the connected archive is fetched first (once per
+    /// session); a plain link (#590) has no file: nothing to show.
     func quickLook(_ doc: DocumentInfo) {
+        if doc.isArchiveDocument {
+            loadArchiveFile(doc) { [weak self] in
+                guard let self, case .loaded(let data, let mimeType, _)? = self.archiveFiles[doc.id],
+                      let url = self.writeTemporaryFile(data, mimeType: mimeType, id: doc.id) else { return }
+                self.quickLookURL = url
+            }
+            return
+        }
         guard let url = writeTemporaryFile(for: doc) else { return }
         quickLookURL = url
     }
@@ -356,10 +469,16 @@ extension AppModel {
     /// Decrypts the document into an owner-only temp file; nil when it cannot be read or written.
     private func writeTemporaryFile(for doc: DocumentInfo) -> URL? {
         guard let data = documentData(doc) else { return nil }
-        let ext = ["image/png": "png", "image/jpeg": "jpg", "image/heic": "heic"][doc.mimeType] ?? "pdf"
+        return writeTemporaryFile(data, mimeType: doc.mimeType, id: doc.id)
+    }
+
+    /// The private, owner-only copy QuickLook reads (removed on lock and quit);
+    /// nil when it cannot be written.
+    private func writeTemporaryFile(_ data: Data, mimeType: String, id: Int64) -> URL? {
+        let ext = ["image/png": "png", "image/jpeg": "jpg", "image/heic": "heic", "image/webp": "webp"][mimeType] ?? "pdf"
         _ = Self.quickLookCleanupObserver
-        guard let dir = Self.preparedQuickLookDirectory() else { return nil }
-        let url = dir.appendingPathComponent("GiroCrab-Beleg-\(doc.id).\(ext)")
+        guard isUnlocked, let dir = Self.preparedQuickLookDirectory() else { return nil }
+        let url = dir.appendingPathComponent("GiroCrab-Beleg-\(id).\(ext)")
         // Owner-only from the first byte: O_EXCL + O_NOFOLLOW, mode 0600.
         try? FileManager.default.removeItem(at: url)
         let fd = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)

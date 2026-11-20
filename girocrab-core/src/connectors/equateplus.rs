@@ -451,15 +451,18 @@ impl Vault {
         }
         let mut pending = Vec::new();
         for (group, list) in groups {
+            let pattern = group_slots_pattern(connection_id, &group);
             let stored: i64 = db.query_row(
                 "SELECT count(*) FROM booking_documents WHERE source_url LIKE ?1",
-                [group_slots_pattern(connection_id, &group)],
+                [&pattern],
                 |r| r.get(0),
             )?;
+            // PDFs of the group that moved into the document archive keep their slot
+            let archived = crate::document_links::sources_like(&db, &pattern)?.len();
             // A group is complete when as many PDFs are stored as the portal lists. Otherwise all
             // of its entries are downloaded again (few, and small); the ones already stored match
             // their slot by content, so the order of the portal's list does not matter.
-            if usize::try_from(stored).unwrap_or(0) < list.len() {
+            if usize::try_from(stored).unwrap_or(0) + archived < list.len() {
                 pending.extend(list.iter().map(LibraryDocument::json));
             }
         }
@@ -521,6 +524,20 @@ impl Vault {
                     .and_then(|n| n.parse::<usize>().ok())
                 {
                     slots.push((slot, Sha256::digest(&stored).to_vec()));
+                }
+            }
+            // A PDF that moved into the document archive keeps its slot, known by the checksum
+            // it was stored with: downloaded again it is recognised, and a new PDF of the group
+            // gets a free slot instead of one the vault would refuse as known.
+            for (source, digest) in crate::document_links::sources_like(
+                &db,
+                &group_slots_pattern(connection_id, &group),
+            )? {
+                if let Some(slot) = source
+                    .strip_prefix(&prefix)
+                    .and_then(|n| n.parse::<usize>().ok())
+                {
+                    slots.push((slot, hex::decode(&digest).unwrap_or_default()));
                 }
             }
         }
@@ -979,6 +996,78 @@ mod tests {
         );
         assert!(pending_docs(&vault, connection, &swapped).is_empty());
         assert_eq!(stored_contents(&vault), ["A", "B"]);
+    }
+
+    /// What the move into the document archive leaves of a stored PDF: a reference by which
+    /// this device knows the document, with the checksum the file was stored with.
+    fn move_to_archive(vault: &Vault, content: &str) {
+        use sha2::{Digest, Sha256};
+        let db = vault.db().unwrap();
+        let (id, source, bytes): (i64, String, Vec<u8>) = db
+            .query_row(
+                "SELECT id, source_url, pdf_bytes FROM booking_documents WHERE pdf_bytes = ?1",
+                [format!("%PDF-1.4 {content}").into_bytes()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        crate::document_links::insert_moved(
+            &db,
+            None,
+            None,
+            &format!("https://archiv.example/documents/{id}/details"),
+            "Test Bestätigung",
+            "2011-05-26",
+            ("archiv", id),
+            crate::document_links::Origin {
+                doc_type: "postbox",
+                source_url: &source,
+                digest: &hex::encode(Sha256::digest(&bytes)),
+                unread: false,
+            },
+        )
+        .unwrap();
+        db.execute("DELETE FROM booking_documents WHERE id = ?1", [id])
+            .unwrap();
+    }
+
+    /// A PDF that moved into the document archive keeps its place in its group: the group
+    /// stays complete, the PDF is recognised when it is downloaded again, and a new PDF of the
+    /// group gets a slot of its own instead of the moved one's (which the vault would refuse).
+    #[test]
+    fn a_pdf_that_moved_into_the_archive_keeps_its_slot() {
+        let (_dir, vault, connection) = open_vault("equateplus-doc-archived");
+        let two = json!([
+            library_doc("a", None, "statements"),
+            library_doc("b", None, "statements")
+        ]);
+        let pending = pending_docs(&vault, connection, &two);
+        assert!(import_doc(&vault, connection, &pending[0], "x"));
+        assert!(import_doc(&vault, connection, &pending[1], "y"));
+        move_to_archive(&vault, "x");
+        assert_eq!(stored_contents(&vault), ["y"]);
+        assert!(
+            pending_docs(&vault, connection, &two).is_empty(),
+            "one stored, one in the archive: complete"
+        );
+        // a third PDF appears: all are listed, only the new one is stored
+        let three = json!([
+            library_doc("a2", None, "statements"),
+            library_doc("b2", None, "statements"),
+            library_doc("c2", None, "statements")
+        ]);
+        let pending = pending_docs(&vault, connection, &three);
+        assert_eq!(pending.len(), 3);
+        assert!(
+            import_doc(&vault, connection, &pending[2], "z"),
+            "the new one is stored, in a free slot"
+        );
+        assert!(
+            !import_doc(&vault, connection, &pending[0], "x"),
+            "the moved one is known by its content"
+        );
+        assert!(!import_doc(&vault, connection, &pending[1], "y"));
+        assert_eq!(stored_contents(&vault), ["y", "z"]);
+        assert!(pending_docs(&vault, connection, &three).is_empty());
     }
 
     #[test]

@@ -64,6 +64,7 @@ extension AppModel {
             directionFilter = .all
             statusFilter = .all
             tagFilter = BookingTagFilter()
+            missingDocumentOnly = false
             searchText = ""
         }
         // After a closing sheet / list reload, so the list can scroll to the row.

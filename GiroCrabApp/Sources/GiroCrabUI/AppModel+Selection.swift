@@ -275,12 +275,14 @@ extension AppModel {
         // A second merchant from within a merchant list still returns to the original view.
         let back = merchantFocusReturn ?? MerchantFocusReturn(
             selection: sidebarSelection, scope: scope, status: statusFilter,
-            direction: directionFilter, search: searchText, tags: tagFilter)
+            direction: directionFilter, search: searchText, tags: tagFilter,
+            missingDocumentOnly: missingDocumentOnly)
         // Filters first: their reloads still run on the old, cheaper selection.
         scope = .all
         statusFilter = .all
         directionFilter = .all
         tagFilter = BookingTagFilter()
+        missingDocumentOnly = false
         if !searchText.isEmpty { searchText = "" }
         searchTask?.cancel()
         merchantFocus = MerchantFocus(key: key, name: booking.merchantName)
@@ -303,6 +305,7 @@ extension AppModel {
         statusFilter = back.status
         directionFilter = back.direction
         tagFilter = back.tags
+        missingDocumentOnly = back.missingDocumentOnly
         if searchText != back.search { searchText = back.search }
     }
 

@@ -280,6 +280,7 @@ public final class AppModel {
     /// Any list filter of the header row (status, type, tags, accounts, amount, search) narrows the list.
     var hasActiveListFilters: Bool {
         statusFilter != .all || directionFilter != .all || tagFilter.isActive || amountFilter.isActive
+            || missingDocumentOnly
             || !searchText.isEmpty || !categoryAccountIDs.isEmpty
     }
 
@@ -292,6 +293,7 @@ public final class AppModel {
             directionFilter = .all
             clearTagFilter()
             amountFilter = AmountFilter()
+            missingDocumentOnly = false
             categoryAccountFilter = []
             searchText = ""
             searchTask?.cancel()
@@ -302,16 +304,70 @@ public final class AppModel {
     /// Set while `resetListFilters` changes several filters: their own reloads are skipped.
     @ObservationIgnored var suspendsFilterReloads = false
 
+    /// Only bookings without a document, neither a stored file nor a linked
+    /// receipt (#590); filtered in the core like status and direction.
+    var missingDocumentOnly = false {
+        didSet {
+            guard missingDocumentOnly != oldValue, !suspendsFilterReloads else { return }
+            listLimit = Self.defaultListLimit
+            reloadAfterFilterChange()
+        }
+    }
+
+    /// The connected document archive (address and whether a token is stored);
+    /// nil without one. A setting of this device inside the vault.
+    var archiveConfig: ArchiveConfig?
+    /// Files of archive documents shown in this session, by `DocumentInfo.id`:
+    /// held in memory only and dropped on lock and when the archive changes.
+    var archiveFiles: [Int64: ArchiveFileState] = [:]
+    /// Thumbnails of search results, by archive document id (memory only).
+    @ObservationIgnored var archiveThumbnails: [Int64: Data] = [:]
+    /// Stored files on their way into the archive (or failed), by `DocumentInfo.id`.
+    var archiveMoves: [Int64: ArchiveMove] = [:]
+    /// Files the user adds are moved into the connected archive right away.
+    var archiveUploadEnabled = false
+    /// Documents the banks deliver are moved into the archive as they arrive.
+    var archiveBankEnabled = false
+    /// A document of the bank goes up with bank, kind and account.
+    var archiveLabelsEnabled = true
+    /// The user's own receipts by where they are (vault, on their way, failed).
+    var archiveSummary = ArchiveMoveSummary(inVault: 0, waiting: 0, failed: 0)
+    /// One run over the queue at a time.
+    @ObservationIgnored var archiveMoveRunning = false
+    /// Booking data is written onto linked documents of the archive.
+    var archiveFactsEnabled = false
+    /// Where that stands: documents still to write, and those the archive refuses.
+    var archiveFacts = ArchiveFactsReport(written: 0, refused: 0, waiting: 0, failed: 0, problem: "")
+    /// Why the last run could not work with the archive at all (nil: it could).
+    var archiveFactsProblem: String?
+    @ObservationIgnored var archiveFactsRunning = false
+    /// Something changed while a run was under way: it goes round once more.
+    @ObservationIgnored var archiveFactsAgain = false
+    /// Counts up whenever the archive connection may have changed (stored,
+    /// removed, vault locked or switched): an answer that was asked for
+    /// under an older number is dropped.
+    var archiveGeneration = 0
+    /// Cancels the archive requests that are under way (lock, change).
+    @ObservationIgnored var archiveCancels: [UUID: @Sendable () -> Void] = [:]
+    /// What waits for a file that is being fetched (Quick Look), by `DocumentInfo.id`.
+    @ObservationIgnored var archiveWaiters: [Int64: [@MainActor () -> Void]] = [:]
+
     /// Label of the header filter menu: "Status: Alle" or the active filters.
     var filterTitle: String {
-        guard directionFilter != .all else { return String(localized: "Status: \(statusFilter.title)") }
-        let kind = directionFilter == .income ? String(localized: "Einnahmen") : String(localized: "Ausgaben")
-        return statusFilter == .all ? kind : "\(statusFilter.title) · \(kind)"
+        var parts: [String] = []
+        if statusFilter != .all { parts.append(statusFilter.title) }
+        if directionFilter != .all {
+            parts.append(directionFilter == .income ? String(localized: "Einnahmen") : String(localized: "Ausgaben"))
+        }
+        if missingDocumentOnly { parts.append(String(localized: "Ohne Beleg")) }
+        guard !parts.isEmpty else { return String(localized: "Status: \(statusFilter.title)") }
+        if parts.count == 1, statusFilter != .all { return String(localized: "Status: \(statusFilter.title)") }
+        return parts.joined(separator: " · ")
     }
 
     /// Filled icon while any filter is active.
     var filterSymbol: String {
-        statusFilter == .all && directionFilter == .all
+        statusFilter == .all && directionFilter == .all && !missingDocumentOnly
             ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
     }
     /// Income / expenses only (GitHub #53); filtered in the core, so totals and CSV follow.
@@ -454,6 +510,8 @@ public final class AppModel {
     var showTagManager = false
     /// The tag sheet's unsaved names, colours and order.
     var tagDraft = TagDraft()
+    /// The sheet that assigns documents of the archive to many bookings at once.
+    var showArchiveMatches = false
     /// (demo, `--demo-settings banks:edit|banks:add`) sheet the bank settings open on appear.
     var demoSettingsSheet: String?
     /// The one group dialog on screen (new / rename / delete / move account).
@@ -780,7 +838,14 @@ public final class AppModel {
     /// Result of the latest mirror run, for the settings.
     var documentMirrorStatus: String?
     var mirrorRunning = false
-    var documentsVersion = 0 { didSet { refreshSidebarCounts() } }
+    var documentsVersion = 0 {
+        didSet {
+            refreshSidebarCounts()
+            // whatever changed about documents may change what the archive's
+            // documents should say about their bookings
+            syncArchiveFacts()
+        }
+    }
     /// Account whose statements (HKEKA) are being fetched by the running session.
     var statementsAccountID: Int64?
     var statementsCountBefore = 0
@@ -860,6 +925,14 @@ public final class AppModel {
         }
         if options.demoSeed {
             openDemoVault()
+            if let address = options.demoArchive, saveArchiveConnection(url: address, token: options.demoArchiveToken, archiveId: nil) == nil {
+                // screenshots of the archive views: one linked document, on a
+                // booking that has no other, selected
+                if let booking = bookings.first(where: { $0.documentCount == 0 && $0.flow == .consumption }) {
+                    _ = attachLink(address + "/documents/1/details", title: String(localized: "Rechnung"), to: booking)
+                    selectedBookingID = booking.id
+                }
+            }
             if options.demoSheetName == "account-selection" || options.demoSettings == "banks:select" {
                 // a second login reaching accounts the first one delivers (#346)
                 _ = try? vault?.seedDemoAccountSelection()
@@ -927,6 +1000,8 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "archive-matches":
+            showArchiveMatches = true
         case "mandate", "collection", "collection-files", "mandate-select":
             // Lastschriften (#143): the mandate form / the collection sheet
             Task { @MainActor [weak self] in
@@ -1178,6 +1253,8 @@ public final class AppModel {
         do {
             let v = try Vault.open(path: prepared ?? url.path, key: key)
             if prepared == nil { _ = try v.seedDemoData() }
+            // nothing of the vault open so far goes on or stays in memory
+            dropArchiveCaches()
             vault = v
             lockPreview = false
             demoActive = true
@@ -1458,6 +1535,8 @@ public final class AppModel {
     /// `useVault(v, demo: false)` for the unlock: the lock screen stays (crab animated)
     /// while the first lists load off the main thread; the main view appears with them.
     func useOwnVaultAfterUnlock(_ v: Vault, hop: Task<Void, Never>) async {
+        // archive work and files in memory of the vault shown so far (demo) end here
+        dropArchiveCaches()
         // Without a vault the selection reset loads nothing: its `didSet` would
         // otherwise scan the bookings synchronously, before the load below.
         vault = nil
@@ -1475,6 +1554,9 @@ public final class AppModel {
         reloadRules()
         reloadTags()
         reloadSettings()
+        dropArchiveCaches()
+        reloadArchiveConfig()
+        resumeArchiveMoves()
         mirrorDocumentsIfEnabled()
         startSelectionLoad()
         loadDashboard()
@@ -1491,6 +1573,11 @@ public final class AppModel {
     }
 
     func useVault(_ v: Vault, demo: Bool) {
+        // nothing fetched or shown for the vault before may stay: requests,
+        // files in memory and the decrypted Quick Look copy
+        dropArchiveCaches()
+        quickLookURL = nil
+        Self.removeQuickLookFiles()
         vault = v
         demoActive = demo
         if !demo { AppDefaults.store.set(true, forKey: Self.realDataKey) }
@@ -1499,6 +1586,7 @@ public final class AppModel {
         selectAllAccountsForReloadAll()
         logoCache = [:]
         reloadAll()
+        resumeArchiveMoves()
         selectedBookingID = bookings.first?.id
         if demo { stopAutoSync() } else { startAutoSync() }
         if !demo { reconcileEnableBankingKey() }
@@ -1594,6 +1682,12 @@ public final class AppModel {
         endBankDialogsForLock()
         quickLookURL = nil
         Self.removeQuickLookFiles()
+        archiveConfig = nil
+        dropArchiveCaches()
+        // A call that is already on its way into the core cannot be taken
+        // back: the vaults that are locked now answer it without sending.
+        vault?.archiveClose()
+        ownVault?.archiveClose()
         CloudSyncManager.shared.stopAutoSync(flushing: true)
         ownVault = nil
         demoActive = false

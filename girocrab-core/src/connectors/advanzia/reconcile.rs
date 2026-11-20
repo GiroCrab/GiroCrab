@@ -41,6 +41,7 @@ pub(crate) fn settle_holds(
     for id in accounts.values() {
         let mut q=db.prepare("SELECT t.id,t.external_id,t.booking_date,t.amount_cents,t.counterparty,
             EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=t.id) OR EXISTS(SELECT 1 FROM booking_documents WHERE booking_id=t.id)
+            OR EXISTS(SELECT 1 FROM document_links WHERE booking_id=t.id AND deleted_ms IS NULL)
             FROM transactions t WHERE t.account_id=?1 AND t.deleted_ms IS NULL AND t.currency='EUR'
             AND (t.external_id LIKE 'pending-hold-portal-advanzia-%' OR t.external_id LIKE 'advanzia-hold-%' OR t.external_id LIKE 'advanzia-post-%') ORDER BY t.id")?;
         let rows = q

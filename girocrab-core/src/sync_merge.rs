@@ -753,6 +753,25 @@ fn synced_state(v: &crate::vault::Vault) -> Vec<String> {
         .collect(),
     );
     section(
+        "document_link",
+        rows(
+            "SELECT uuid, booking_id, account_id, url, title, doc_date, created_at, updated_ms,
+                    rev, deleted_ms, archive_doc, archive_id
+             FROM document_links",
+        )
+        .into_iter()
+        .map(|mut r| {
+            if let Value::Integer(id) = r[1] {
+                r[1] = Value::Text(booking_key(&db, id).unwrap());
+            }
+            if let Value::Integer(id) = r[2] {
+                r[2] = Value::Text(account_key(&db, id).unwrap());
+            }
+            (show(&r[..1]), show(&r))
+        })
+        .collect(),
+    );
+    section(
         "account",
         keyed("SELECT id, created_ms, deleted_ms FROM accounts", &|id| {
             account_key(&db, id).unwrap()

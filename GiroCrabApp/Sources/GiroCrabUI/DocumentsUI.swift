@@ -88,6 +88,7 @@ struct DocumentPreview: View {
 }
 
 func docSymbol(_ doc: DocumentInfo) -> String {
+    if doc.isLink { return "link" }
     switch doc.docType {
     case "abrechnung": return "chart.line.uptrend.xyaxis.circle"
     case "kontoauszug": return "list.bullet.rectangle"
@@ -97,10 +98,111 @@ func docSymbol(_ doc: DocumentInfo) -> String {
     }
 }
 
+// MARK: - Linked receipts (#590)
+
+/// Stands where the preview of a stored file would be: a linked receipt stays
+/// in the user's own archive, GiroCrab only opens it in the browser.
+struct DocumentLinkPlaceholder: View {
+    @Environment(AppModel.self) private var model
+    let doc: DocumentInfo
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Verlinkter Beleg", systemImage: "link")
+        } description: {
+            VStack(spacing: 6) {
+                Text("Dieser Beleg liegt nicht im Tresor. GiroCrab ruft ihn nicht ab, sondern öffnet ihn im Browser.")
+                // the address names the user's own archive (#301)
+                Text(doc.linkUrl).appFont(.caption).lineLimit(2).truncationMode(.middle).sensitive()
+            }
+        } actions: {
+            Button { model.openDocumentLink(doc) } label: { Label("Im Browser öffnen", systemImage: "arrow.up.right.square") }
+                .disabled(doc.webURL == nil)
+        }
+    }
+}
+
+/// "Link hinzufügen …": address and optional title of a receipt kept elsewhere.
+/// Shown as a popover (never part of a bug report screenshot).
+struct DocumentLinkForm: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.textScale) private var textScale
+    let booking: Booking
+    @State private var link = ""
+    @State private var title = ""
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Beleg verlinken").appFont(.headline)
+            Text("Der Beleg bleibt, wo er ist. GiroCrab speichert nur die Adresse und ruft sie nicht ab.")
+                .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            TextField("Adresse (https://…)", text: $link)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                #endif
+                .onSubmit(add)
+            TextField("Titel (optional)", text: $title)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(add)
+            if let problem {
+                Text(problem).appFont(.caption).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Verlinken", action: add)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(16)
+        #if os(macOS)
+        .frame(width: 340 * textScale)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .presentationDetents([.medium])
+        #endif
+    }
+
+    private func add() {
+        guard !link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        problem = model.attachLink(link, title: title, to: booking)
+        if problem == nil { dismiss() }
+    }
+}
+
+extension View {
+    /// "Beleg löschen?" for a stored file, "Link entfernen?" for a linked
+    /// receipt (#590): there only the reference goes.
+    @MainActor
+    func documentDeleteDialog(_ doc: Binding<DocumentInfo?>, model: AppModel) -> some View {
+        let isLink = doc.wrappedValue?.isLink == true
+        return confirmationDialog(
+            isLink ? Text("Link entfernen?") : Text("Beleg löschen?"),
+            isPresented: Binding(get: { doc.wrappedValue != nil }, set: { if !$0 { doc.wrappedValue = nil } }),
+            presenting: doc.wrappedValue
+        ) { d in
+            Button(d.isLink ? "Entfernen" : "Löschen", role: .destructive) { model.deleteDocument(d) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: { d in
+            if d.isLink {
+                Text("Nur der Link „\(d.title)“ wird entfernt. Das verlinkte Dokument bleibt unverändert.")
+            } else {
+                Text("„\(d.title)“ wird unwiderruflich gelöscht.")
+            }
+        }
+    }
+}
+
 // MARK: - Inspector card
 
 /// "Belege & Abrechnungen": attached PDFs with inline preview, drop zone,
-/// QuickLook and export for the tax return.
+/// QuickLook and export for the tax return; receipts kept elsewhere as links (#590).
 struct DocumentsCard: View {
     @Environment(AppModel.self) private var model
     let booking: Booking
@@ -108,6 +210,11 @@ struct DocumentsCard: View {
     @State private var targeted = false
     @State private var exporting = false
     @State private var docToDelete: DocumentInfo?
+    @State private var addingLink = false
+    @State private var searchingArchive = false
+    /// Documents of the connected archive that fit this booking (only asked
+    /// for while the booking has no document).
+    @State private var suggestions: [ArchiveSuggestion] = []
 
     var body: some View {
         let docs = model.documents(for: booking)
@@ -124,22 +231,47 @@ struct DocumentsCard: View {
                     Image(systemName: docSymbol(d)).foregroundStyle(Theme.accent).frame(width: 18)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(d.title).appFont(.callout).lineLimit(1).sensitive()
-                        Text("\(DateText.medium(d.docDate)) · \(ByteCountFormatter.string(fromByteCount: Int64(d.sizeBytes), countStyle: .file))")
-                            .appFont(.caption2).foregroundStyle(Theme.secondary)
+                        if d.isLink {
+                            // the host names the user's own archive (#301)
+                            Text("\(DateText.medium(d.docDate)) · \(d.linkOrigin)")
+                                .appFont(.caption2).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle).sensitive()
+                        } else {
+                            Text("\(DateText.medium(d.docDate)) · \(ByteCountFormatter.string(fromByteCount: Int64(d.sizeBytes), countStyle: .file))")
+                                .appFont(.caption2).foregroundStyle(Theme.secondary)
+                        }
+                        // on its way into the document archive: the file stays here until it has arrived
+                        if let move = model.archiveMoves[d.id] {
+                            Label(move.statusText, systemImage: move.hasFailed ? "exclamationmark.triangle" : "arrow.up.doc")
+                                .appFont(.caption2).foregroundStyle(move.hasFailed ? Theme.warning : Theme.secondary)
+                                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
-                    Button { model.quickLook(d) } label: { Image(systemName: "eye") }
-                        .buttonStyle(.borderless).help("Vorschau (Leertaste)")
-                        .accessibilityLabel("Vorschau")
+                    if d.isLink && !model.canPreview(d) {
+                        Button { model.openDocumentLink(d) } label: { Image(systemName: "arrow.up.right.square") }
+                            .buttonStyle(.borderless).help("Im Browser öffnen")
+                            .accessibilityLabel("Im Browser öffnen")
+                    } else {
+                        Button { model.quickLook(d) } label: { Image(systemName: "eye") }
+                            .buttonStyle(.borderless).help("Vorschau (Leertaste)")
+                            .accessibilityLabel("Vorschau")
+                    }
                     Menu {
-                        #if os(macOS)
-                        Button("Im Finder anzeigen") { model.showInFinder(d) }
-                        Button("Pfad kopieren") { model.copyDocumentPath(d) }
-                        #endif
+                        if d.isLink {
+                            Button("Im Browser öffnen") { model.openDocumentLink(d) }
+                            Button("Link kopieren") { model.copyDocumentLink(d) }
+                            Divider()
+                        } else {
+                            #if os(macOS)
+                            Button("Im Finder anzeigen") { model.showInFinder(d) }
+                            Button("Pfad kopieren") { model.copyDocumentPath(d) }
+                            #endif
+                        }
+                        ArchiveMoveMenuItems(doc: d)
                         Button("Zuordnung aufheben") { model.linkDocument(d, to: nil) }
                             .disabled(d.bookingId == nil)
                         Divider()
-                        Button("Beleg löschen …", role: .destructive) { docToDelete = d }
+                        Button(d.isLink ? "Link entfernen …" : "Beleg löschen …", role: .destructive) { docToDelete = d }
                     } label: { Label("Aktionen", systemImage: "ellipsis.circle").labelStyle(.iconOnly) }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                         .help("Aktionen")
@@ -147,13 +279,42 @@ struct DocumentsCard: View {
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 7).fill(selected == d.id ? Theme.selection : Color.clear))
                 .contentShape(Rectangle())
-                .onTapGesture { selected = (selected == d.id ? nil : d.id) }
+                // a click on a plain link (#590) opens it; a stored file or a document of the
+                // connected archive is selected for the preview
+                .onTapGesture { if model.canPreview(d) { selected = (selected == d.id ? nil : d.id) } else { model.openDocumentLink(d) } }
             }
-            if let id = selected ?? docs.first?.id, let d = docs.first(where: { $0.id == id }), let data = model.documentData(d) {
-                DocumentPreview(doc: d, data: data)
-                    .frame(height: 300)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+            // the inline preview shows stored files and documents of the connected archive;
+            // a plain link has none
+            if let id = selected ?? docs.first(where: { model.canPreview($0) })?.id, let d = docs.first(where: { $0.id == id }) {
+                if d.isArchiveDocument && model.archiveConnected {
+                    ArchiveDocumentPreview(doc: d)
+                        .frame(height: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+                } else if let data = model.documentData(d) {
+                    DocumentPreview(doc: d, data: data)
+                        .frame(height: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+                }
+            }
+            // unasked: what the archive holds for a booking that has no document yet
+            ForEach(suggestions, id: \.document.id) { s in
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 18)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(s.document.title).appFont(.callout).lineLimit(1).sensitive()
+                        Text("Vorschlag aus dem Archiv · \(DateText.medium(s.document.created))")
+                            .appFont(.caption2).foregroundStyle(Theme.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Button("Verlinken") {
+                        if model.attachArchiveDocument(s.document, to: booking) == nil { suggestions = [] }
+                    }
+                    .controlSize(.small)
+                }
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
             }
             // Drop zone
             VStack(spacing: 4) {
@@ -168,6 +329,20 @@ struct DocumentsCard: View {
             .dropDestination(for: URL.self) { urls, _ in
                 model.attach(urls, to: booking)
             } isTargeted: { targeted = $0 }
+            if model.archiveConnected {
+                Button { searchingArchive = true } label: {
+                    Label("Im Archiv suchen …", systemImage: "doc.text.magnifyingglass")
+                        .frame(maxWidth: .infinity)
+                }
+                .help("Einen Beleg aus dem verbundenen Dokumentenarchiv suchen und mit dieser Buchung verlinken")
+                .capturableSheet(isPresented: $searchingArchive) { ArchiveSearchSheet(booking: booking) }
+            }
+            Button { addingLink = true } label: {
+                Label("Link hinzufügen …", systemImage: "link.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .help("Einen Beleg verlinken, der in einem eigenen Dokumentenarchiv liegt, statt ihn im Tresor zu speichern")
+            .capturablePopover(isPresented: $addingLink) { DocumentLinkForm(booking: booking) }
             Button {
                 chooseExportFolder(model: model, fallback: $exporting)
             } label: {
@@ -180,13 +355,22 @@ struct DocumentsCard: View {
         .fileImporter(isPresented: $exporting, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportAllDocuments(to: url) }
         }
-        .confirmationDialog("Beleg löschen?", isPresented: Binding(get: { docToDelete != nil }, set: { if !$0 { docToDelete = nil } }), presenting: docToDelete) { d in
-            Button("Löschen", role: .destructive) { model.deleteDocument(d) }
-            Button("Abbrechen", role: .cancel) {}
-        } message: { d in
-            Text("„\(d.title)“ wird unwiderruflich gelöscht.")
+        .documentDeleteDialog($docToDelete, model: model)
+        .onChange(of: booking.id) { _, _ in
+            selected = nil
+            addingLink = false
         }
-        .onChange(of: booking.id) { _, _ in selected = nil }
+        // Only for a booking without any document, and only after the selection
+        // has rested a moment: arrowing through the list sends nothing.
+        .task(id: "\(booking.id)-\(docs.isEmpty)-\(model.archiveConnected)-\(model.archiveGeneration)") {
+            suggestions = []
+            guard model.archiveConnected, docs.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            let found = await model.archiveSuggestions(for: booking)
+            guard !Task.isCancelled else { return }
+            suggestions = found
+        }
     }
 }
 
@@ -320,14 +504,27 @@ struct DocumentsView: View {
                         .tag(d.id)
                         .contentShape(Rectangle())
                         .contextMenu {
-                            Button("Vorschau") { model.quickLook(d) }
-                            Button(d.seen ? "Als ungelesen markieren" : "Als gelesen markieren") {
-                                model.markDocumentsSeen([d.id], seen: !d.seen)
+                            if model.canPreview(d) {
+                                Button("Vorschau") { model.quickLook(d) }
+                            }
+                            if d.isLink {
+                                Button("Im Browser öffnen") { model.openDocumentLink(d) }
+                                Button("Link kopieren") { model.copyDocumentLink(d) }
+                            }
+                            // read or unread: a stored file, and a document of the bank
+                            // that moved into the archive
+                            if !d.isLink || d.isBankDocument {
+                                Button(d.seen ? "Als ungelesen markieren" : "Als gelesen markieren") {
+                                    model.markDocumentsSeen([d.id], seen: !d.seen)
+                                }
                             }
                             #if os(macOS)
-                            Button("Im Finder anzeigen") { model.showInFinder(d) }
-                            Button("Pfad kopieren") { model.copyDocumentPath(d) }
+                            if !d.isLink {
+                                Button("Im Finder anzeigen") { model.showInFinder(d) }
+                                Button("Pfad kopieren") { model.copyDocumentPath(d) }
+                            }
                             #endif
+                            ArchiveMoveMenuItems(doc: d)
                             Button("Zuordnung aufheben") { model.linkDocument(d, to: nil) }
                             .disabled(d.bookingId == nil)
                             Menu("Konto zuordnen") {
@@ -343,7 +540,7 @@ struct DocumentsView: View {
                                 }
                             }
                             Divider()
-                            Button("Beleg löschen …", role: .destructive) { docToDelete = d }
+                            Button(d.isLink ? "Link entfernen …" : "Beleg löschen …", role: .destructive) { docToDelete = d }
                         }
                     }
                 }
@@ -358,7 +555,8 @@ struct DocumentsView: View {
                     // opened = read
                     if !d.seen { model.markDocumentsSeen([id], seen: true) }
                     guard isCompact else { return }
-                    previewDoc = d
+                    // a tap on a plain link (#590) opens it, there is nothing to preview
+                    if model.canPreview(d) { previewDoc = d } else { model.openDocumentLink(d) }
                     selected = nil
                 }
                 .overlay {
@@ -394,7 +592,11 @@ struct DocumentsView: View {
             if !isCompact {
             Divider()
             Group {
-                if let id = selected, let d = docs.first(where: { $0.id == id }), let data = model.documentData(d) {
+                if let id = selected, let d = docs.first(where: { $0.id == id }), d.isArchiveDocument, model.archiveConnected {
+                    ArchiveDocumentPreview(doc: d)
+                } else if let id = selected, let d = docs.first(where: { $0.id == id }), d.isLink {
+                    DocumentLinkPlaceholder(doc: d)
+                } else if let id = selected, let d = docs.first(where: { $0.id == id }), let data = model.documentData(d) {
                     DocumentPreview(doc: d, data: data)
                 } else {
                     ContentUnavailableView("Dokument auswählen", systemImage: "doc.richtext", description: Text("Ein Dokument aus der Liste auswählen, um die Vorschau zu öffnen."))
@@ -408,7 +610,9 @@ struct DocumentsView: View {
         .capturableSheet(item: $previewDoc) { d in
             NavigationStack {
                 Group {
-                    if let data = model.documentData(d) { DocumentPreview(doc: d, data: data) }
+                    if d.isArchiveDocument && model.archiveConnected { ArchiveDocumentPreview(doc: d) }
+                    else if d.isLink { DocumentLinkPlaceholder(doc: d) }
+                    else if let data = model.documentData(d) { DocumentPreview(doc: d, data: data) }
                     else { ContentUnavailableView("Beleg nicht verfügbar", systemImage: "doc") }
                 }
                 .navigationTitle(redaction.masking(d.title))
@@ -433,12 +637,7 @@ struct DocumentsView: View {
         .fileImporter(isPresented: $exporting, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportAllDocuments(to: url, ids: exportIDs, subfolder: exportSubfolder) }
         }
-        .confirmationDialog("Beleg löschen?", isPresented: Binding(get: { docToDelete != nil }, set: { if !$0 { docToDelete = nil } }), presenting: docToDelete) { d in
-            Button("Löschen", role: .destructive) { model.deleteDocument(d) }
-            Button("Abbrechen", role: .cancel) {}
-        } message: { d in
-            Text("„\(d.title)“ wird unwiderruflich gelöscht.")
-        }
+        .documentDeleteDialog($docToDelete, model: model)
         #if os(iOS)
         .navigationTitle("")
         #endif
@@ -492,6 +691,8 @@ struct DocumentsView: View {
     private func exportButton(_ docs: [DocumentInfo]) -> some View {
         let filtered = model.documentsAccountFilter != nil || model.documentsConnectionFilter != nil || model.documentsScope != .all || !search.isEmpty
             || unlinkedOnly || unseenOnly || typeFilter != nil || yearFilter != nil
+        // a linked receipt (#590) has no file to export
+        let docs = docs.filter { !$0.isLink }
         return Button {
             exportIDs = filtered ? docs.map(\.id) : nil
             chooseExportFolder(model: model, fallback: $exporting, ids: exportIDs, subfolder: exportSubfolder)

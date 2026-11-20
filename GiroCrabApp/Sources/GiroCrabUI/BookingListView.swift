@@ -207,7 +207,8 @@ struct BookingStreamView: View {
         .onKeyPress(.space) {
             guard model.options.screenshotPath == nil, let b = model.selectedBooking else { return .ignored }
             // Space is Quick Look only (as in the Finder); "Geprüft" is ⇧⌘U.
-            guard let d = model.documents(for: b).first else { return .ignored }
+            // a stored file or a document of the connected archive: a plain link (#590) has nothing to preview
+            guard let d = model.previewableDocument(for: b) else { return .ignored }
             if model.quickLookURL != nil { model.quickLookURL = nil } else { model.quickLook(d) }
             return .handled
         }

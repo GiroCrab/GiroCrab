@@ -23,6 +23,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod archive;
 pub mod asset_classification;
 pub mod asset_counterbooking;
 pub mod assets;
@@ -34,6 +35,7 @@ mod dates;
 pub mod demo;
 pub mod depot_debug;
 pub mod depot_values;
+pub mod document_links;
 pub mod documents;
 pub mod ebon;
 pub mod error;

@@ -283,11 +283,7 @@ impl Vault {
             id(&doc, "businessPartnerId")?;
             date(&doc, "createdAt")?;
             if seen.insert(key.to_string())
-                && !db.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM booking_documents WHERE source_url=?1)",
-                    [document_source(connection_id, key)],
-                    |r| r.get::<_, bool>(0),
-                )?
+                && !crate::documents::knows_source(&db, &document_source(connection_id, key))?
             {
                 pending.push(doc.to_string());
             }

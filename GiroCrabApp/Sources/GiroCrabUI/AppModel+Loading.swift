@@ -14,12 +14,17 @@ extension AppModel {
         refreshSalaryCycle()
         refreshRecurring()
         mirrorDocumentsIfEnabled()
+        queueBankDocuments()
         reloadHistory()
         reloadCategories()
         reloadBookings()
         reloadRules()
         reloadTags()
         reloadSettings()
+        reloadArchiveConfig()
+        // after a merge from another device the references may be different
+        // ones: document views reload, and the archive's documents follow
+        documentsVersion += 1
         reloadDashboard()
     }
 
@@ -32,6 +37,7 @@ extension AppModel {
         reloadAccounts()
         refreshSidebarCounts()
         mirrorDocumentsIfEnabled()
+        queueBankDocuments()
         reloadRules()
         reloadTags()
         reloadSettings()
@@ -50,6 +56,8 @@ extension AppModel {
                 (try? vault.connectionKey(connectionId: c.id)).map { (c.id, $0) }
             })
         }
+        // an account renamed or removed: linked documents in the archive name it
+        syncArchiveFacts()
     }
 
     /// Badge counts of „Geplant“, „Lastschriften“ and the unread documents: `COUNT(*)`s off the main thread.
@@ -419,7 +427,8 @@ extension AppModel {
             tagIds: tagFilter.untagged ? [] : tagFilter.tagIDs.sorted(),
             untaggedOnly: tagFilter.untagged,
             amountMinCents: amountFilter.minCents,
-            amountMaxCents: amountFilter.maxCents
+            amountMaxCents: amountFilter.maxCents,
+            withoutDocument: missingDocumentOnly
         )
     }
 

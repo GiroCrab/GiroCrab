@@ -276,6 +276,8 @@ extension AppModel {
         runCore { try vault.updateTransactionText(transactionId: booking.id, counterparty: counterparty, purpose: purpose) }
         patchLoadedRows([booking.id]) { $0.counterparty = counterparty; $0.purpose = purpose }
         refreshAfterEdit(); reloadMerchantStats()
+        // a linked document in the archive names the counterparty
+        syncArchiveFacts()
     }
 
     /// Select the booking and put the cursor into its note field in the inspector.

@@ -57,16 +57,23 @@ struct AccountDocumentsSheet: View {
                 )
             } else {
                 List(docs) { d in
-                    Button { preview = d } label: {
+                    // a linked receipt (#590) has no file to preview: it opens in the browser
+                    Button { if d.isLink { model.openDocumentLink(d) } else { preview = d } } label: {
                         HStack(spacing: 10) {
                             Image(systemName: docSymbol(d)).foregroundStyle(Theme.accent).frame(width: 20)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(d.title).lineLimit(1).sensitive()
-                                Text("\(DateText.medium(d.docDate)) · \(ByteCountFormatter.string(fromByteCount: Int64(d.sizeBytes), countStyle: .file))")
-                                    .appFont(.caption2).foregroundStyle(Theme.secondary)
+                                if d.isLink {
+                                    // the host of a linked receipt is the user's own archive
+                                    Text("\(DateText.medium(d.docDate)) · \(d.linkOrigin)")
+                                        .appFont(.caption2).foregroundStyle(Theme.secondary).lineLimit(1).sensitive()
+                                } else {
+                                    Text("\(DateText.medium(d.docDate)) · \(ByteCountFormatter.string(fromByteCount: Int64(d.sizeBytes), countStyle: .file))")
+                                        .appFont(.caption2).foregroundStyle(Theme.secondary)
+                                }
                             }
                             Spacer()
-                            Image(systemName: "chevron.right").appFont(.caption).foregroundStyle(Theme.secondary)
+                            Image(systemName: d.isLink ? "arrow.up.right.square" : "chevron.right").appFont(.caption).foregroundStyle(Theme.secondary)
                         }
                         .contentShape(Rectangle())
                     }

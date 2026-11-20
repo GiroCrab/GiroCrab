@@ -24,7 +24,12 @@ QtObject {
 
     /// DocumentInfo.isBankDocument: connectors and statement imports store a source key,
     /// user uploads leave it empty (old demo vaults used synthetic "demo-doc-" keys).
-    function isBankDocument(d) { return !!d.source_url && !d.source_url.startsWith("demo-doc-") }
+    function isBankDocument(d) {
+        // a document of a bank that moved into the document archive says so on
+        // every device; the bank's key stays on the device that moved it
+        if (d.link_url) return !!d.from_bank
+        return !!d.source_url && !d.source_url.startsWith("demo-doc-")
+    }
     /// DocumentInfo.originTitle
     function originTitle(d) { return isBankDocument(d) ? qsTr("PostBox") : qsTr("Beleg") }
     /// DocumentsScope.includes

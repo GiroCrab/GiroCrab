@@ -43,6 +43,17 @@
 //! - 30: `tx_date_id` covers `deleted_ms`, `account_id` and `category_id` ([`TX_DATE_ID_COVERING`]).
 //! - 31: `booking_documents.seen_at`: read status of documents (NULL = unread); documents that exist
 //!   count as read; the list index carries the column, a partial index finds the unread ones.
+//! - 32: linked receipts (#590): table `document_links`, references to documents kept outside
+//!   the vault (URL, title, date); synced by `uuid`, unlike the files in `booking_documents`.
+//! - 33: document archive (`archive.rs`): `document_links.archive_doc` and `archive_id`, the id of
+//!   a linked receipt in the connected archive; `doc_type` and `from_bank`, so a document a bank
+//!   delivered that moved into the archive stays what it was (statement, PostBox …); `unseen` and
+//!   the table `archived_sources` (the origins the bank fetch knows moved documents by), both
+//!   local to the device.
+//! - 34: table `archive_moves`: stored files waiting to be moved into the document archive
+//!   (`archive/moves.rs`); local to the device like the files themselves.
+//! - 35: table `archive_facts`: the booking data this device wrote onto documents of the
+//!   archive (`archive/facts.rs`); local to the device.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -90,6 +101,10 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::depot_values::SCHEMA),                    // 29: depot value history
     Step::Sql(TX_DATE_ID_COVERING),                            // 30
     Step::Hook(document_seen),                                 // 31: read status of documents
+    Step::Sql(crate::document_links::SCHEMA),                  // 32: linked receipts (#590)
+    Step::Hook(crate::archive::archive_columns), // 33: document archive: what a reference names there
+    Step::Sql(crate::archive::moves::SCHEMA),    // 34: files on their way into the archive
+    Step::Sql(crate::archive::facts::SCHEMA),    // 35: booking data written onto archive documents
 ];
 
 /// Step 31: `booking_documents.seen_at` (NULL = unread). The documents a vault has already count
@@ -961,7 +976,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 31);
+        assert_eq!(SCHEMA_VERSION, 35);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

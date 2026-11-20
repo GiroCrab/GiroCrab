@@ -180,7 +180,12 @@ pub fn document_rows(docs: &[DocumentInfo], date: &dyn Fn(&str) -> String) -> Ve
                 } else {
                     d.booking_label.clone()
                 },
-                size_text(d.size_bytes),
+                // a linked receipt (#590) has no file in the vault
+                if d.link_url.is_empty() {
+                    size_text(d.size_bytes)
+                } else {
+                    "Link".into()
+                },
                 String::new(),
             ],
             negative: false,
@@ -484,9 +489,12 @@ mod tests {
             file_name: format!("{id}.pdf"),
             size_bytes: size,
             source_url: String::new(),
+            link_url: String::new(),
+            archive_doc: None,
             doc_date: date.into(),
             created_at: 0,
             seen: true,
+            from_bank: false,
             booking_label: booking.into(),
             account_name: "Giro".into(),
         }

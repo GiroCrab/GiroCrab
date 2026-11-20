@@ -56,7 +56,10 @@ impl Vault {
         // tags (by uuid, newest edit wins), before the bookings that carry them
         crate::tags::merge::merge_attached(&tx)?;
         // bookings, splits and tag sets (newest edit per field wins, deletions stay)
-        crate::sync_merge::merge_bookings(&tx, &acc_map, &cat_map, &rule_map, &mut st)?;
+        let booking_map =
+            crate::sync_merge::merge_bookings(&tx, &acc_map, &cat_map, &rule_map, &mut st)?;
+        // linked receipts (by uuid, newest edit wins), after the bookings they hang on
+        st.documents_updated = crate::document_links::merge_attached(&tx, &acc_map, &booking_map)?;
         crate::loans::merge_attached(&tx, &acc_map)?;
         crate::opening_balance::merge_attached(&tx, &acc_map)?;
         crate::assets::merge_attached(&tx, &acc_map)?;
@@ -82,6 +85,10 @@ pub struct MergeStats {
     pub bookings_updated: u32,
     /// User groups and account placements taken over from the other vault.
     pub groups_updated: u32,
+    /// Linked receipts (#590) added or changed: the document views reload.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub documents_updated: u32,
     /// Rows this merge changed in the vault (part of [`Vault::change_count`]),
     /// so the app can tell its own changes from merged ones.
     pub changes: u64,
@@ -102,6 +109,8 @@ impl Vault {
     /// and bookings are added; existing bookings (matched by account +
     /// external id, else import fingerprint) take the newest edit per field
     /// (category, note, checked, text, splits, tags) and stay deleted once deleted.
+    /// Linked receipts (#590) come over with their bookings; files stored in
+    /// the vault do not.
     pub fn merge_other_vault(
         &self,
         other_path: String,
