@@ -250,6 +250,42 @@ extension AppModel {
         try? vault?.getDocumentBytes(docId: doc.id)
     }
 
+    /// The documents of bookings dragged into another app (`BookingDragItem`), read off the main
+    /// thread when that app asks for them. Stops before `BookingDragExport.documentByteLimit`;
+    /// empty when the vault was locked or swapped meanwhile.
+    func dragDocuments(for bookingIDs: [Int64]) async -> [Int64: [BookingDragExport.Document]] {
+        guard !bookingIDs.isEmpty else { return [:] }
+        let limit = BookingDragExport.documentByteLimit
+        let read = try? await vaultOffMain { vault -> [Int64: [BookingDragExport.Document]] in
+            var out: [Int64: [BookingDragExport.Document]] = [:]
+            var total = 0
+            for id in bookingIDs {
+                for doc in try vault.listDocumentsForBooking(bookingId: id) {
+                    guard total + Int(doc.sizeBytes) <= limit else { return out }
+                    let bytes = try vault.getDocumentBytes(docId: doc.id)
+                    total += bytes.count
+                    out[id, default: []].append(BookingDragExport.Document(
+                        fileName: doc.fileName, mimeType: doc.mimeType,
+                        title: doc.title.isEmpty ? nil : doc.title, data: bytes))
+                }
+            }
+            return out
+        }
+        return read ?? [:]
+    }
+
+    #if os(macOS)
+    /// What a booking row drags: the row, or the multiple selection it belongs to, with the
+    /// documents of those that have any.
+    func dragItem(for booking: Booking) -> BookingDragItem {
+        let bookings = categorizeTargets(for: booking)
+        let withDocuments = bookings.filter { $0.documentCount > 0 }.map(\.id)
+        return BookingDragItem(bookings: bookings, accounts: accountsByID) { [weak self] in
+            await self?.dragDocuments(for: withDocuments) ?? [:]
+        }
+    }
+    #endif
+
     /// Marks documents read or unread (opened in the list, or by hand).
     func markDocumentsSeen(_ ids: [Int64], seen: Bool) {
         guard let vault, !ids.isEmpty else { return }

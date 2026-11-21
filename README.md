@@ -268,7 +268,7 @@ Eine neue Bank anzubinden dauert meist unter 100 Zeilen: siehe
 
 ### 🔗 Zusammenspiel mit anderen Apps
 
-- **Buchungen in andere Apps ziehen (macOS):** Eine oder mehrere Buchungen lassen sich aus der Liste in andere Programme ziehen; sie tragen alle Angaben der Buchung als JSON mit (Format: [docs/booking-drag.md](docs/booking-drag.md)). Die Belegverwaltung [Receipts Space](https://receipts-app.com/) legt daraus Einträge an, denen nur noch der Beleg fehlt.
+- **Buchungen in andere Apps ziehen (macOS):** Eine oder mehrere Buchungen lassen sich aus der Liste in andere Programme ziehen; sie tragen alle Angaben der Buchung als JSON mit, dazu die Belege, die an ihr hängen (Format: [docs/booking-drag.md](docs/booking-drag.md)). Die Belegverwaltung [Receipts Space](https://receipts-app.com/) legt daraus Einträge an, mit Beleg oder als Platzhalter, dem nur noch der Beleg fehlt.
 - **Lesende lokale Schnittstelle (macOS):** Ausgewählte Konten, Buchungen, Kategorien und Summen für Programme auf demselben Mac, standardmäßig aus und nur mit Zugangsschlüssel, auch für KI-Assistenten per MCP ([docs/local-api.md](docs/local-api.md)).
 - **Rechnungen bezahlen:** ZUGFeRD / Factur-X, GiroCode / EPC-QR und PDF-Text aus der Zwischenablage füllen die Überweisung vor.
 
@@ -523,7 +523,7 @@ Adding a bank usually takes under 100 lines – start from
 
 ### 🔗 Working with other apps
 
-- **Drag bookings into other apps (macOS):** One or more bookings can be dragged from the list into other programs; they carry all of the booking's details as JSON (format: [docs/booking-drag.md](docs/booking-drag.md)). The receipt manager [Receipts Space](https://receipts-app.com/) turns them into entries that only lack the receipt.
+- **Drag bookings into other apps (macOS):** One or more bookings can be dragged from the list into other programs; they carry all of the booking's details as JSON, together with the receipts attached to it (format: [docs/booking-drag.md](docs/booking-drag.md)). The receipt manager [Receipts Space](https://receipts-app.com/) turns them into entries, with the receipt or as a placeholder that only lacks it.
 - **Read-only local interface (macOS):** Selected accounts, bookings, categories and totals for programs on the same Mac, off by default and only with an access key, also for AI assistants via MCP ([docs/local-api.md](docs/local-api.md)).
 - **Paying invoices:** ZUGFeRD / Factur-X, GiroCode / EPC QR and PDF text from the clipboard pre-fill the transfer.
 

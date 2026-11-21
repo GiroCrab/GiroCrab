@@ -45,13 +45,39 @@ final class BookingDragExportTests: XCTestCase {
         XCTAssertFalse(json.contains("\"note\""))
     }
 
+    func testDocumentsGoToTheirBookingAsBase64() throws {
+        let bookings = Array(model.bookings.prefix(2))
+        var export = BookingDragExport(bookings: bookings, accounts: [:])
+        let pdf = Data("%PDF-1.4 test".utf8)
+        export.attach([bookings[1].id: [.init(fileName: "beleg.pdf", mimeType: "application/pdf", title: nil, data: pdf)]])
+        XCTAssertNil(export.transactions[0].documents)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: export.json()) as? [String: Any])
+        let second = try XCTUnwrap((object["transactions"] as? [[String: Any]])?[1])
+        let doc = try XCTUnwrap((second["documents"] as? [[String: Any]])?.first)
+        XCTAssertEqual(doc["file_name"] as? String, "beleg.pdf")
+        XCTAssertEqual(doc["mime_type"] as? String, "application/pdf")
+        XCTAssertEqual(doc["data"] as? String, pdf.base64EncodedString())
+    }
+
+    func testDragDocumentsReadsTheVaultsDocuments() async throws {
+        let booking = try XCTUnwrap(model.bookings.first)
+        let pdf = Data("%PDF-1.4 drag".utf8)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("drag-\(UUID().uuidString).pdf")
+        try pdf.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertTrue(model.attach([file], to: booking))
+        let docs = await model.dragDocuments(for: [booking.id])
+        XCTAssertEqual(docs[booking.id]?.first?.data, pdf)
+        XCTAssertEqual(docs[booking.id]?.first?.fileName, file.lastPathComponent)
+    }
+
     #if os(macOS)
     func testDragItemKeepsTheSidebarPayload() throws {
         let bookings = Array(model.bookings.prefix(3))
         let item = BookingDragItem(bookings: bookings, accounts: model.accountsByID)
         XCTAssertEqual(BookingDrag.ids(BookingDrag.payload(item.ids)), bookings.map(\.id))
-        let json = try XCTUnwrap(item.json)
-        XCTAssertEqual(try BookingDragExport.decode(json).transactions.map(\.id), bookings.map(\.id))
+        XCTAssertEqual(item.export.transactions.map(\.id), bookings.map(\.id))
+        XCTAssertNil(item.documents, "no reader given")
     }
     #endif
 }

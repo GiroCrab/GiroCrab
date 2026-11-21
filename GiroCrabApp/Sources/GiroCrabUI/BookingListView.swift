@@ -604,8 +604,7 @@ struct DayCardRow: View {
                     #if os(macOS)
                     // onto a sidebar category (#366) or into another app (BookingDragItem);
                     // the payload is read when the drag starts
-                    .draggable(BookingDragItem(bookings: model.categorizeTargets(for: b),
-                                               accounts: model.accountsByID))
+                    .draggable(model.dragItem(for: b))
                     #endif
             if !isLast || density == .compact {
                 Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1)

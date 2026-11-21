@@ -15,6 +15,16 @@ extension UTType {
 /// stays the same for the booking's lifetime on this Mac, another device has its own ids.
 struct BookingDragExport: Codable, Equatable {
     static let currentVersion = 1
+    /// Most document bytes one drag carries (before base64); documents past it stay behind.
+    static let documentByteLimit = 100 * 1024 * 1024
+
+    /// A receipt or statement attached to the booking; `data` is base64 in the JSON.
+    struct Document: Codable, Equatable, Sendable {
+        var fileName: String
+        var mimeType: String
+        var title: String?
+        var data: Data
+    }
 
     struct Transaction: Codable, Equatable {
         var id: Int64
@@ -37,6 +47,8 @@ struct BookingDragExport: Codable, Equatable {
         var endToEndId: String?
         var mandateId: String?
         var creditorId: String?
+        /// Missing when the booking has none (or the drag's limit was reached).
+        var documents: [Document]?
     }
 
     var version: Int
@@ -61,6 +73,13 @@ struct BookingDragExport: Codable, Equatable {
         }
     }
 
+    /// Adds the documents read for the bookings (by booking id).
+    mutating func attach(_ documents: [Int64: [Document]]) {
+        for i in transactions.indices {
+            if let docs = documents[transactions[i].id], !docs.isEmpty { transactions[i].documents = docs }
+        }
+    }
+
     func json() throws -> Data {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -77,20 +96,26 @@ struct BookingDragExport: Codable, Equatable {
 
 #if os(macOS)
 /// What a dragged booking row carries (macOS): the bookings as JSON for other apps and the
-/// `BookingDrag` string for the sidebar's categories (#366). Built when the drag starts.
-struct BookingDragItem: Transferable, Sendable {
+/// `BookingDrag` string for the sidebar's categories (#366). Built when the drag starts; the
+/// documents are read only when another app asks for the JSON, never for the sidebar.
+struct BookingDragItem: Transferable, @unchecked Sendable {
     let ids: [Int64]
-    let json: Data?
+    let export: BookingDragExport
+    /// Reads the bookings' documents (`AppModel.dragDocuments`); nil = without documents.
+    let documents: (@MainActor () async -> [Int64: [BookingDragExport.Document]])?
 
-    init(bookings: [Booking], accounts: [Int64: Account]) {
+    init(bookings: [Booking], accounts: [Int64: Account],
+         documents: (@MainActor () async -> [Int64: [BookingDragExport.Document]])? = nil) {
         ids = bookings.map(\.id)
-        json = try? BookingDragExport(bookings: bookings, accounts: accounts).json()
+        export = BookingDragExport(bookings: bookings, accounts: accounts)
+        self.documents = bookings.contains { $0.documentCount > 0 } ? documents : nil
     }
 
     static var transferRepresentation: some TransferRepresentation {
         DataRepresentation(exportedContentType: .girocrabTransactions) { item in
-            guard let json = item.json else { throw CocoaError(.fileWriteUnknown) }
-            return json
+            var export = item.export
+            if let load = item.documents { export.attach(await load()) }
+            return try export.json()
         }
         ProxyRepresentation(exporting: { (item: BookingDragItem) in BookingDrag.payload(item.ids) })
     }
