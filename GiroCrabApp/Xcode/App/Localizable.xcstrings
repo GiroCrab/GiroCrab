@@ -1351,6 +1351,17 @@
         }
       }
     },
+    "%lld bereits übernommen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld already imported"
+          }
+        }
+      }
+    },
     "%lld exportieren …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6930,6 +6941,17 @@
         }
       }
     },
+    "Bekannte Bestellungen neu lesen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Re-read known orders"
+          }
+        }
+      }
+    },
     "Belastung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10334,6 +10356,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The vault with all accounts and transactions, the vault key (including in iCloud Keychain and thus on your other devices, e.g. your Mac: vaults and iCloud Drive backups made there become unreadable), your Enable Banking access and all settings will be deleted. Without your own backup the data is lost. Access granted at your banks and documents in your documents folder remain. To confirm, you will be asked for %@ or your device passcode."
+          }
+        }
+      }
+    },
+    "Der Tresor wurde während des Abrufs gewechselt – es wurde nichts übernommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The vault was switched during the fetch – nothing was imported."
           }
         }
       }
@@ -17247,6 +17280,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "There are no stored activities for the selected period and filter. This is no proof that none took place."
+          }
+        }
+      }
+    },
+    "Immer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always"
           }
         }
       }
@@ -34688,6 +34732,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Older bookings (included in the opening balance)"
+          }
+        }
+      }
+    },
+    "Ältere, schon übernommene Bestellungen werden übersprungen; jüngere werden wegen späterer Erstattungen erneut gelesen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Older orders that were already imported are skipped; newer ones are read again because refunds show up later."
           }
         }
       }

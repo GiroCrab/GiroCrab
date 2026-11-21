@@ -5,12 +5,18 @@ import GiroCrabCore
 // MARK: - Model glue (Amazon customer account: order history)
 
 extension AppModel {
-    /// Hands the scraped order JSON to the core. Returns true when orders were recognised.
+    /// Hands the scraped order JSON to the core, into the vault the fetch started
+    /// on (`pin`): its skip list filtered the orders. Returns true when orders were recognised.
     @discardableResult
-    func importAmazonOrders(_ c: BankConnection, json: String) -> Bool {
-        guard let vault else { return false }
+    func importAmazonOrders(_ c: BankConnection, json: String, into pin: VaultPin) async -> Bool {
+        guard isCurrent(pin) else {
+            showError(String(localized: "Amazon-Bestellungen konnten nicht übernommen werden"),
+                      String(localized: "Der Tresor wurde während des Abrufs gewechselt – es wurde nichts übernommen."))
+            return false
+        }
+        let id = c.id
         do {
-            let s = try vault.importAmazonOrders(connectionId: c.id, ordersJson: json)
+            let s = try await pin.run { try $0.importAmazonOrders(connectionId: id, ordersJson: json) }
             toast = String(localized: "\(c.displayName): \(s.transactionsImported) neue Buchungen, \(s.transactionsCategorized) kategorisiert")
             reloadAll()
             return true
@@ -160,6 +166,38 @@ extension View {
     }
 }
 
+// MARK: - Known orders (#1035)
+
+/// How long known orders are read again: their refunds and cancellations show up
+/// on the detail page later. Older known orders are skipped; "Immer" reads all.
+enum AmazonReread: Int, CaseIterable, Identifiable {
+    case days30 = 30, days90 = 90, days180 = 180, days365 = 365, always = 0
+
+    static let standard = AmazonReread.days90
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .always: String(localized: "Immer")
+        default: String(localized: "\(rawValue) Tage")
+        }
+    }
+
+    /// Per Amazon login.
+    static func key(_ connectionID: Int64) -> String { "amazon.reread.\(connectionID)" }
+
+    static func stored(for connectionID: Int64, in defaults: UserDefaults = .standard) -> AmazonReread {
+        defaults.object(forKey: key(connectionID)) == nil
+            ? standard : AmazonReread(rawValue: defaults.integer(forKey: key(connectionID))) ?? standard
+    }
+
+    /// `codes` without the ones to `skip`, and how many were skipped.
+    static func split(_ codes: [String], skip: Set<String>) -> (read: [String], skipped: Int) {
+        let read = codes.filter { !skip.contains($0) }
+        return (read, codes.count - read.count)
+    }
+}
+
 // MARK: - Progress (#1008)
 
 /// Where the order fetch stands. Shown as a panel over the page, which itself
@@ -167,21 +205,22 @@ extension View {
 enum AmazonFetchProgress: Equatable {
     /// Reading the order list of `year`, the `index`-th (from 0) of `count` years.
     case orderLists(year: Int, index: Int, count: Int, found: Int)
-    /// Reading the details of order `index` (from 0) of `total`, placed in `year`.
-    case orderDetails(index: Int, total: Int, year: Int?)
+    /// Reading the details of order `index` (from 0) of `total`, placed in `year`;
+    /// `skipped` known older orders are not read again (#1035).
+    case orderDetails(index: Int, total: Int, year: Int?, skipped: Int)
 
     /// Short text for the header line (and VoiceOver).
     var caption: String {
         switch self {
         case let .orderLists(year, _, _, _): String(localized: "Bestellliste \(String(year)) …")
-        case let .orderDetails(index, total, _): String(localized: "Bestellung \(index + 1) von \(total) …")
+        case let .orderDetails(index, total, _, _): String(localized: "Bestellung \(index + 1) von \(total) …")
         }
     }
 
     var title: String {
         switch self {
         case let .orderLists(year, _, _, _): String(localized: "Jahr \(String(year))")
-        case let .orderDetails(index, total, _): String(localized: "Bestellung \(index + 1) von \(total)")
+        case let .orderDetails(index, total, _, _): String(localized: "Bestellung \(index + 1) von \(total)")
         }
     }
 
@@ -192,8 +231,10 @@ enum AmazonFetchProgress: Equatable {
             if found == 0 { return step }
             let orders = found == 1 ? String(localized: "1 Bestellung gefunden") : String(localized: "\(found) Bestellungen gefunden")
             return "\(step) · \(orders)"
-        case let .orderDetails(_, _, year):
-            return year.map { String(localized: "Bestelldetails aus \(String($0))") } ?? String(localized: "Bestelldetails")
+        case let .orderDetails(_, _, year, skipped):
+            let step = year.map { String(localized: "Bestelldetails aus \(String($0))") } ?? String(localized: "Bestelldetails")
+            if skipped == 0 { return step }
+            return "\(step) · " + String(localized: "\(skipped) bereits übernommen")
         }
     }
 
@@ -201,7 +242,7 @@ enum AmazonFetchProgress: Equatable {
     var fraction: Double {
         let (done, all) = switch self {
         case let .orderLists(_, index, count, _): (index, count)
-        case let .orderDetails(index, total, _): (index, total)
+        case let .orderDetails(index, total, _, _): (index, total)
         }
         guard all > 0 else { return 0 }
         return min(max(Double(done) / Double(all), 0), 1)
@@ -246,6 +287,7 @@ struct AmazonWebSheet: View {
     /// Real Amazon hosts only (`amazon.de`, `www.amazon.de`, …), never `amazon.evil.com`.
     static let domains = PortalDomains(["amazon.de", "amazon.com"])
     @State private var years = 2
+    @State private var reread = AmazonReread.standard
     @State private var running = false
     /// Set while `running`: shown as the panel over the page (#1008).
     @State private var progress: AmazonFetchProgress?
@@ -310,6 +352,15 @@ struct AmazonWebSheet: View {
                 }
                 .fixedSize()
                 .disabled(running)
+                Picker("Bekannte Bestellungen neu lesen", selection: $reread) {
+                    ForEach(AmazonReread.allCases) { Text($0.label).tag($0) }
+                }
+                .fixedSize()
+                .disabled(running)
+                .help("Ältere, schon übernommene Bestellungen werden übersprungen; jüngere werden wegen späterer Erstattungen erneut gelesen.")
+                .onChange(of: reread) { _, new in
+                    UserDefaults.standard.set(new.rawValue, forKey: AmazonReread.key(connection.id))
+                }
                 Spacer()
                 Button("Bestellungen abrufen") { start() }
                     .keyboardShortcut(.defaultAction)
@@ -320,6 +371,7 @@ struct AmazonWebSheet: View {
         }
         .webPageDialogs(uiDelegate)
         .task {
+            reread = AmazonReread.stored(for: connection.id)
             browser.webView.uiDelegate = uiDelegate
             while !Task.isCancelled {
                 let ok = browser.onPortal
@@ -341,11 +393,13 @@ struct AmazonWebSheet: View {
         running = true
         notice = nil
         progress = nil
+        // one vault for the whole job: the skip list and the import (#1035)
+        guard let pin = model.pinVault() else { running = false; return }
         task = Task {
             defer { running = false; progress = nil }
             do {
-                let json = try await scrape()
-                if model.importAmazonOrders(connection, json: json) { close() }
+                let json = try await scrape(pin)
+                if await model.importAmazonOrders(connection, json: json, into: pin) { close() }
             } catch is CancellationError {
                 notice = String(localized: "Abruf gestoppt – es wurde nichts übernommen.")
             } catch AmazonError.loggedOut {
@@ -373,7 +427,7 @@ struct AmazonWebSheet: View {
     }
 
     /// Order list (per year, newest first) -> order codes -> one detail page each.
-    private func scrape() async throws -> String {
+    private func scrape(_ pin: VaultPin) async throws -> String {
         let thisYear = Calendar.current.component(.year, from: Date())
         var codes: [String] = []
         /// Year of each order's list, for the panel.
@@ -390,10 +444,14 @@ struct AmazonWebSheet: View {
             if years > 5 && emptyYears >= 2 { break }
         }
         if codes.isEmpty { throw AmazonError.noOrders }
+        let connectionID = connection.id
+        let days = UInt32(reread.rawValue)
+        let known = try await pin.run { try $0.amazonOrdersToSkip(connectionId: connectionID, rereadDays: days) }
+        let (toRead, skipped) = AmazonReread.split(codes, skip: Set(known))
         var orders: [[String: Any]] = []
-        for (i, code) in codes.enumerated() {
+        for (i, code) in toRead.enumerated() {
             try Task.checkCancellation()
-            progress = .orderDetails(index: i, total: codes.count, year: yearOf[code])
+            progress = .orderDetails(index: i, total: toRead.count, year: yearOf[code], skipped: skipped)
             orders.append(try await run(AmazonScripts.orderDetails, ["code": code]))
         }
         let data = try JSONSerialization.data(withJSONObject: ["orders": orders])
