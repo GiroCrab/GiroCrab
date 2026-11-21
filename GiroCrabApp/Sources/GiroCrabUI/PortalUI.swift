@@ -517,14 +517,14 @@ final class PortalBrowser {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
         var before = texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; });
         var u = named || before[before.length - 1];
-        if (!u) return false;
         var set = function(el, v) {
           if (el.value) return;
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
           el.dispatchEvent(new Event('input', {bubbles: true}));
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
-        set(u, user); set(pw, password);
+        if (u) set(u, user);
+        set(pw, password);
         return true;
         """
         return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password],
