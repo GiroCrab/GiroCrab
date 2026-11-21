@@ -159,6 +159,7 @@ impl Vault {
             None,
             Vec::new(),
             false,
+            "",
         )
     }
 
@@ -189,6 +190,31 @@ impl Vault {
             amount_max_cents,
             tag_ids,
             untagged_only,
+            "",
+        )
+    }
+
+    /// The expenses per category, for a chart of the expenses (#714): the outgoing bookings
+    /// like `list_categories_filtered` with `BookingDirection::Expense`, less what linked
+    /// refunds pay back. That part counts in the category of the paid-back booking, on the
+    /// account and at the date of the refund; the rest of a refund is income and not in here.
+    pub fn list_category_expenses(
+        &self,
+        date_from: Option<String>,
+        date_to: Option<String>,
+        account_ids: Vec<i64>,
+    ) -> Result<Vec<Category>, CoreError> {
+        self.categories_with_filters(
+            date_from,
+            date_to,
+            account_ids,
+            None,
+            BookingDirection::All,
+            None,
+            None,
+            Vec::new(),
+            false,
+            " AND +t.amount_cents < 0",
         )
     }
 
@@ -627,6 +653,8 @@ impl Vault {
         ids
     }
 
+    /// `own`: a condition for the bookings themselves, not for what refunds pay back
+    /// (`planning::effective_sql_own`).
     #[allow(clippy::too_many_arguments)]
     fn categories_with_filters(
         &self,
@@ -639,6 +667,7 @@ impl Vault {
         amount_max_cents: Option<i64>,
         tag_ids: Vec<i64>,
         untagged_only: bool,
+        own: &str,
     ) -> Result<Vec<Category>, CoreError> {
         let db = self.db()?;
         let rows = Self::category_rows(&db)?;
@@ -659,7 +688,7 @@ impl Vault {
                 "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
                  WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
                  GROUP BY category_id",
-                crate::planning::effective_sql(&db, "", &condition)?
+                crate::planning::effective_sql_own(&db, "", &condition, own)?
             ))?;
             let checked = checked.map(i64::from);
             let it = stmt.query_map(params![date_from, date_to, checked], |r| {

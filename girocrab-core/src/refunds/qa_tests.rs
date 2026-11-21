@@ -479,3 +479,126 @@ fn assigned_refunds_count_in_the_categories_of_their_parts() {
     let all = page(&v, None);
     assert_eq!((all.expense_cents, all.income_cents), (-5000, 0));
 }
+
+fn expenses(v: &Vault, accounts: Vec<i64>, from: Option<&str>, to: Option<&str>, cat: i64) -> i64 {
+    v.list_category_expenses(from.map(Into::into), to.map(Into::into), accounts)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == cat)
+        .unwrap()
+        .own_total_cents
+}
+
+/// The chart of the expenses: what a refund pays back lowers the expenses of the paid-back
+/// booking's category; the rest of the refund is income and no expense anywhere.
+#[test]
+fn category_expenses_are_less_what_refunds_pay_back() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let o = booking(&v, a, -3000);
+    let r = booking(&v, a, 1000);
+    let unlinked = booking(&v, a, 700);
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    v.set_transaction_category(r, Some(cb)).unwrap();
+    // an incoming booking without a link lowers no expenses, like before
+    v.set_transaction_category(unlinked, Some(ca)).unwrap();
+    assert_eq!(expenses(&v, vec![], None, None, ca), -3000);
+
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!(expenses(&v, vec![], None, None, ca), -2000);
+    assert_eq!(expenses(&v, vec![], None, None, cb), 0);
+
+    v.unlink_refund(r, o, 0).unwrap();
+    assert_eq!(expenses(&v, vec![], None, None, ca), -3000);
+}
+
+/// A refund in the category of the booking it pays back (the usual case): the sum of all
+/// bookings in the category stays, its expenses go down.
+#[test]
+fn category_expenses_go_down_when_refund_and_booking_share_a_category() {
+    let (_d, v, a) = fixture();
+    let (ca, _) = categories(&v);
+    let o = booking(&v, a, -3000);
+    let r = booking(&v, a, 5000);
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    v.set_transaction_category(r, Some(ca)).unwrap();
+    let all = totals(&v, ca).0;
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!(totals(&v, ca).0, all);
+    // only what the refund pays back counts: its rest of 20,00 is income
+    assert_eq!(expenses(&v, vec![], None, None, ca), 0);
+}
+
+/// A refund on one part of a split booking lowers the expenses of that part's category only.
+#[test]
+fn category_expenses_of_a_split_booking_go_down_in_the_paid_back_part() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let o = booking(&v, a, -10000);
+    let r = booking(&v, a, 1000);
+    split(&v, o, ca, cb, -1);
+    v.link_refund(r, o, 1).unwrap();
+    assert_eq!(expenses(&v, vec![], None, None, ca), -5000);
+    assert_eq!(expenses(&v, vec![], None, None, cb), -4000);
+}
+
+/// What a refund pays back counts where the refund is: on its account and at its date.
+#[test]
+fn category_expenses_count_a_refund_on_its_account_and_date() {
+    let (_d, v, a) = fixture();
+    let other = v
+        .create_offline_account("QA 2".into(), AccountKind::Checking, "EUR".into(), 0)
+        .unwrap();
+    let (ca, _) = categories(&v);
+    let o = add(&v, a, -3000, "2026-03-10", "QA vendor", "");
+    let r = add(&v, other, 1000, "2026-04-02", "QA vendor", "");
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!(expenses(&v, vec![], None, None, ca), -2000);
+    assert_eq!(expenses(&v, vec![a], None, None, ca), -3000);
+    assert_eq!(expenses(&v, vec![a, other], None, None, ca), -2000);
+    let march = (Some("2026-03-01"), Some("2026-03-31"));
+    assert_eq!(expenses(&v, vec![], march.0, march.1, ca), -3000);
+    assert_eq!(
+        expenses(&v, vec![], Some("2026-04-01"), Some("2026-04-30"), ca),
+        1000
+    );
+}
+
+/// The sidebar's sums under the list's "Ausgaben" / "Einnahmen" filter keep following the list
+/// (#621): a category's sum is what the rows the list shows for it add up to.
+#[test]
+fn category_sums_under_a_direction_follow_the_list() {
+    let (_d, v, a) = fixture();
+    let (ca, _) = categories(&v);
+    let o = booking(&v, a, -3000);
+    let r = booking(&v, a, 1000);
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    v.set_transaction_category(r, Some(ca)).unwrap();
+    v.link_refund(r, o, 0).unwrap();
+    for (direction, sum) in [
+        (BookingDirection::All, -2000),
+        (BookingDirection::Expense, -3000),
+        (BookingDirection::Income, 1000),
+    ] {
+        let listed = v
+            .list_transactions(BookingFilter {
+                category_id: Some(ca),
+                direction,
+                ..Default::default()
+            })
+            .unwrap();
+        let sidebar = v
+            .list_categories_filtered(None, None, Vec::new(), None, direction)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == ca)
+            .unwrap()
+            .own_total_cents;
+        assert_eq!(
+            (sidebar, listed.expense_cents + listed.income_cents),
+            (sum, sum),
+            "{direction:?}"
+        );
+    }
+}

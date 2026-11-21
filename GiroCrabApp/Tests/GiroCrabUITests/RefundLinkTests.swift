@@ -208,6 +208,31 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(try flow().incomeCents, before.incomeCents)
     }
 
+    /// The pie of the expenses reads its slices again after a link, also when refund and booking
+    /// share a category and every category sum stays, and its category gets smaller.
+    func testLinkingReloadsTheExpensePieAndLowersTheCategory() throws {
+        let (refund, originals) = try pair()
+        let original = originals[0]
+        let vault = try XCTUnwrap(model.vault)
+        let category = try XCTUnwrap(model.categories.first { $0.depth == 0 }).id
+        try vault.setTransactionCategory(transactionId: refund.id, categoryId: category)
+        try vault.setTransactionCategory(transactionId: original.id, categoryId: category)
+        model.reloadCategories()
+        let expenses = { try XCTUnwrap(vault.listCategoryExpenses(dateFrom: nil, dateTo: nil, accountIds: []).first { $0.id == category }).totalCents }
+        let (sums, key, before) = (model.categories.map(\.totalCents), AccountExpensePie.key(model), try expenses())
+
+        model.linkRefund(refundID: refund.id, originalID: original.id)
+
+        XCTAssertNil(model.errorMessage)
+        model.reloadCategories()
+        XCTAssertEqual(model.categories.map(\.totalCents), sums)
+        XCTAssertNotEqual(AccountExpensePie.key(model), key)
+        XCTAssertEqual(try expenses(), before + min(refund.amountCents, -original.amountCents))
+
+        model.unlinkRefundOriginals(refundID: refund.id)
+        XCTAssertEqual(try expenses(), before)
+    }
+
     /// The suggestions are candidates too, at most three, and never an already linked booking.
     func testSuggestionsAreAtMostThreeCandidates() throws {
         let vault = try XCTUnwrap(model.vault)

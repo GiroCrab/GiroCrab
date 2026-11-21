@@ -216,29 +216,38 @@ struct HeaderPieChart: View {
     }
 }
 
-/// Pie of an account (group, all accounts): expenses by category in the selected period.
-/// One SQL aggregate, loaded off the main thread.
+/// Pie of an account (group, all accounts): expenses by category in the selected period, less
+/// what linked refunds pay back (#714). One SQL aggregate, loaded off the main thread.
 struct AccountExpensePie: View {
     @Environment(AppModel.self) private var model
     /// The slices and the key they were loaded for.
     @State private var loaded: (key: Key, parts: [HeaderPieSlices.Part])?
 
-    private struct Key: Hashable {
+    struct Key: Hashable {
         let ids: [Int64]
         let from: String?
         let to: String?
         /// Changes whenever the category sums are reloaded (edits, sync, import).
         let version: [Int64]
+        /// A refund link can leave every category sum as it is (refund and booking in one
+        /// category) and still lower the expenses (#714).
+        let links: Int
 
         /// Same accounts and period: slices of an older `version` may stand in until the new ones
         /// arrive, those of another period or selection never (#1413).
         func covers(_ other: Key) -> Bool { ids == other.ids && from == other.from && to == other.to }
     }
 
-    var body: some View {
+    /// What the pie shows for the header's selection now.
+    static func key(_ model: AppModel) -> Key {
         // the period the header names (#1413), not one still loading
         let (from, to) = model.shownPeriod.range(salaryCycle: model.shownSalaryCycle)
-        let key = Key(ids: model.headerChartAccountIDs, from: from, to: to, version: model.categories.map(\.totalCents))
+        return Key(ids: model.headerChartAccountIDs, from: from, to: to, version: model.categories.map(\.totalCents),
+                   links: model.refundLinksRevision)
+    }
+
+    var body: some View {
+        let key = Self.key(model)
         Group {
             if let loaded, loaded.key.covers(key) {
                 HeaderPieChart(slices: HeaderPieSlices.fold(loaded.parts, limit: HeaderPieSlices.limit),
@@ -249,8 +258,7 @@ struct AccountExpensePie: View {
         }
         .task(id: key) {
             let parts = try? await model.vaultOffMain { vault in
-                HeaderPieSlices.expenses(try vault.listCategoriesFiltered(
-                    dateFrom: key.from, dateTo: key.to, accountIds: key.ids, checked: nil, direction: .expense))
+                HeaderPieSlices.expenses(try vault.listCategoryExpenses(dateFrom: key.from, dateTo: key.to, accountIds: key.ids))
             }
             guard !Task.isCancelled, let parts else { return }
             loaded = (key, parts)

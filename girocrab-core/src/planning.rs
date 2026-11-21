@@ -70,17 +70,30 @@ pub(crate) fn effective_sql(
     extra: &str,
     condition: &str,
 ) -> Result<String, CoreError> {
+    effective_sql_own(db, extra, condition, "")
+}
+
+/// `effective_sql` with `own`: more conditions on `t` that hold for the bookings themselves
+/// but not for what refunds pay back. That part hangs on the refund, an incoming booking, so
+/// `" AND +t.amount_cents < 0"` as `condition` would drop it; as `own` it gives the expenses
+/// less what was paid back.
+pub(crate) fn effective_sql_own(
+    db: &rusqlite::Connection,
+    extra: &str,
+    condition: &str,
+    own: &str,
+) -> Result<String, CoreError> {
     let Some(moves) = crate::refunds::moves_sql(db)? else {
         return Ok(format!(
             "(
     SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}
       FROM transactions t
-     WHERE t.deleted_ms IS NULL{condition}
+     WHERE t.deleted_ms IS NULL{condition}{own}
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
     SELECT s.category_id, s.amount_cents, t.booking_date{extra}
       FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
-     WHERE t.deleted_ms IS NULL{condition}
+     WHERE t.deleted_ms IS NULL{condition}{own}
 )"
         ));
     };
@@ -91,7 +104,7 @@ pub(crate) fn effective_sql(
         "(
     SELECT t.category_id AS category_id, t.amount_cents - COALESCE(paid.cents, 0) AS amount_cents, t.booking_date AS booking_date{extra}
       FROM transactions t {paid}
-     WHERE t.deleted_ms IS NULL{condition}
+     WHERE t.deleted_ms IS NULL{condition}{own}
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
     SELECT s.category_id,
@@ -99,7 +112,7 @@ pub(crate) fn effective_sql(
                 ELSE s.amount_cents * MAX(t.amount_cents - paid.cents, 0) / t.amount_cents END,
            t.booking_date{extra}
       FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id {paid}
-     WHERE t.deleted_ms IS NULL{condition}
+     WHERE t.deleted_ms IS NULL{condition}{own}
     UNION ALL
     SELECT m.category_id, m.amount_cents, t.booking_date{extra}
       FROM {moves} m JOIN transactions t ON t.id = m.refund_id

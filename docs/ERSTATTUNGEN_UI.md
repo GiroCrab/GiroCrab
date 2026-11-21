@@ -109,6 +109,11 @@ Core am Buchungstext erkennt, mindert dieser Teil die Ausgaben: in den Kennzahle
 den Auswertungen, die auf derselben Einordnung beruhen. Der noch nicht zugeordnete Rest bleibt Einnahme
 (`Booking.refund_income_cents`, `models::flow_parts`), bis auch er zugeordnet ist.
 
+Das Kreisdiagramm der Ausgaben im Kopf (`AccountExpensePie`, `Vault::list_category_expenses`) zeigt die Ausgaben je
+Kategorie abzüglich des zugeordneten Teils; er zählt am Datum und auf dem Konto der Erstattung. Die Summen der
+Seitenleiste folgen dagegen wie die Buchungsliste dem Filter „Ausgaben“ / „Einnahmen“ (#621): dort trägt die Zeile der
+Erstattung die Minderung, unter „Ausgaben“ stehen also die Buchungen ohne Abzug.
+
 In der Buchungszeile steht neben dem Erstattungssymbol nur dann ein Betrag (`Booking.refund_part_cents`), wenn die
 Buchung erst zum Teil erstattet bzw. zugeordnet ist; ganz erstattete oder zugeordnete Buchungen zeigen nur das Symbol. Nach dem Aufheben der Verknüpfung gilt wieder die Einordnung des Core. Beträge, Kategorien und
 Kontostände ändern sich dadurch nicht.
