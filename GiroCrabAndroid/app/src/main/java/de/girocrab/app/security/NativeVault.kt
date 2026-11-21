@@ -97,14 +97,22 @@ class NativeVaultOpener {
                 }
             }
 
-        /** UniFFI objects implement AutoCloseable; older bindings used `destroy`. */
+        /**
+         * UniFFI objects implement `AutoCloseable`; older bindings only had `destroy`.
+         *
+         * Only the *lookup* is guarded: a core failure while closing has to reach the caller,
+         * otherwise a leaked handle looks exactly like a clean one.
+         */
         override fun close() {
-            val closed = runCatching { invoke(vault.javaClass.getMethod("close"), vault) }.isSuccess
-            if (!closed) runCatching { invoke(vault.javaClass.getMethod("destroy"), vault) }
+            val close = runCatching { vault.javaClass.getMethod("close") }.getOrNull()
+            invoke(close ?: vault.javaClass.getMethod("destroy"), vault)
         }
 
         private fun call(name: String): Any? {
-            val method = methods.firstOrNull { it.name == name || it.name.startsWith("$name-") }
+            // `Class.getMethods` has no defined order, so the exact name is tried explicitly first
+            // and the mangled `name-<hash>` form is only a fallback.
+            val method = methods.firstOrNull { it.name == name }
+                ?: methods.firstOrNull { it.name.startsWith("$name-") }
                 ?: throw IllegalStateException(
                     "generated binding has no '$name' (found ${methods.joinToString { it.name }}); " +
                         "a value-class return can mangle the JVM name",
@@ -121,7 +129,6 @@ class NativeVaultOpener {
         /** Matches `Vault::open`: the raw master key is 32 bytes and wiped by the core. */
         const val MASTER_KEY_BYTES = 32
         private const val VAULT_CLASS = "uniffi.girocrab_core.Vault"
-
 
         private fun invoke(method: Method, receiver: Any?, vararg args: Any?): Any? =
             try {
