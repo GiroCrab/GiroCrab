@@ -13,7 +13,7 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .schwaebischHall, .equatePlus].contains(c.connector) { return true }
+        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .unionInvestment, .schwaebischHall, .equatePlus].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         // the card's own application (#824) or the default one
         let app = connectionEnableBankingApp(c.id)
@@ -179,6 +179,7 @@ extension ConnectorKind {
         case .amazonVisa: return URL(string: "https://kunden.openbankpay.com/amazon/login")
         case .equatePlus: return URL(string: "https://www.equateplus.com/EquatePlusParticipant2/?login")
         case .quirion: return URL(string: "https://banking.quirion.de/login/")
+        case .unionInvestment: return URL(string: "https://anlegen.meindepot.union-investment.de/dashboard/super")
         case .schwaebischHall: return SchwaebischHallScripts.loginURL
         case .fnz: return URL(string: "https://portal.fnz.de/")
         case .amazonOrders: return URL(string: "https://www.amazon.de/gp/css/order-history")
@@ -204,6 +205,8 @@ extension ConnectorKind {
         case .fnz: return ["portal.fnz.de"]
         case .equatePlus: return ["www.equateplus.com", "www.emea.equateplus.com", "www.na.equateplus.com"]
         case .quirion: return ["banking.quirion.de"]
+        // sign-in (Keycloak) and API run on service.*; the captcha on frcapi.com is a sub-resource
+        case .unionInvestment: return ["anlegen.meindepot.union-investment.de", "service.meindepot.union-investment.de"]
         case .schwaebischHall: return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         default: return []
         }

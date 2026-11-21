@@ -40,6 +40,8 @@ pub enum ConnectorKind {
     Ibkr,
     /// quirion portal API, authenticated inside the embedded browser.
     Quirion,
+    /// Union Investment customer portal (UnionDepot), authenticated inside the embedded browser.
+    UnionInvestment,
     /// easybank (formerly Barclays Deutschland) credit cards and statements, see #209.
     Easybank,
     /// Alte Leipziger (Bauspar) via the fin4u customer portal API
@@ -93,6 +95,7 @@ impl ConnectorKind {
             ConnectorKind::Fnz => "fnz",
             ConnectorKind::Ibkr => "ibkr",
             ConnectorKind::Quirion => "quirion",
+            ConnectorKind::UnionInvestment => "unioninvestment",
             ConnectorKind::Easybank => "easybank",
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
@@ -156,6 +159,7 @@ impl ConnectorKind {
             ConnectorKind::Fnz,
             ConnectorKind::Ibkr,
             ConnectorKind::Quirion,
+            ConnectorKind::UnionInvestment,
             ConnectorKind::Easybank,
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,

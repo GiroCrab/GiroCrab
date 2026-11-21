@@ -109,6 +109,7 @@ CONNECTOR_DOCS = {
     "scalable-capital": ("Scalable Capital", "Scalable Capital"),
     "trade-republic": ("Trade Republic", "Trade Republic"),
     "volkswagen-bank": ("Volkswagen Bank", "Volkswagen Bank"),
+    "unioninvestment": ("Union Investment", "Union Investment"),
     "uberspace": ("Uberspace", "Uberspace"),
     "kontist": ("Kontist", "Kontist"),
     "schwaebisch-hall": ("Schwäbisch Hall (Bausparen)", "Schwäbisch Hall"),
