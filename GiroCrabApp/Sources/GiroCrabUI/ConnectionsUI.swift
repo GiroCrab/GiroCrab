@@ -776,14 +776,9 @@ struct ConnectionEditSheet: View {
         }
     }
 
-    /// Detects `runCore` failures while preserving any earlier alert on success.
+    /// Stores or clears the portal password without disturbing an existing alert.
     private func savePortalPin(_ value: String?) -> Bool {
-        let previousError = model.errorMessage
-        model.errorMessage = nil
         model.setConnectionPin(connection.id, value)
-        let succeeded = model.errorMessage == nil
-        if succeeded, let previousError { model.errorMessage = previousError }
-        return succeeded
     }
 
     private func save() {
