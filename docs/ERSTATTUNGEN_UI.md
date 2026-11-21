@@ -32,7 +32,7 @@ Buchung nicht mehr aufnimmt, bleibt für die nächste. `RefundLinks.refunded_cen
 - Wechselt eine verknüpfte Buchung die Seite (eine von Hand geführte Ausgabe wird zur Einnahme oder umgekehrt), ist
   sie keine ursprüngliche Buchung bzw. Erstattung mehr: Ihre Verknüpfungen werden aufgehoben.
   Ändert die Bank den Betrag einer abgerufenen Buchung so, dass sie die Seite wechselt, bleibt die Verknüpfung
-  gespeichert, zählt aber nichts mehr und zeigt kein Symbol; sie lässt sich weiterhin aufheben.
+  gespeichert, zählt aber nichts mehr; sie lässt sich weiterhin aufheben.
 - Wird eine der beiden Buchungen gelöscht, verschwindet die Verknüpfung aus der Anzeige.
 - Verknüpfen und Aufheben erreichen über iCloud die anderen Geräte (neueste Änderung gewinnt) und lassen sich mit
   Bearbeiten › Widerrufen zurücknehmen.
