@@ -508,6 +508,12 @@ final class PortalBrowser {
     func fillLogin(user: String, password: String) async -> Bool {
         guard onPortal else { return false }
         let js = """
+        var host = location.hostname.toLowerCase().replace(/\\.$/, '');
+        var allowed = domains.some(function(d) {
+          d = String(d).toLowerCase().replace(/\\.$/, '');
+          return host === d || host.endsWith('.' + d);
+        });
+        if (location.protocol !== 'https:' || !allowed) return false;
         var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
         var pw = Array.prototype.find.call(document.querySelectorAll('input[type=password]'), vis);
         if (!pw) return false;
@@ -527,7 +533,8 @@ final class PortalBrowser {
         set(pw, password);
         return true;
         """
-        return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password],
+        return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password,
+                                                                               "domains": domains.domains],
                                                         contentWorld: .defaultClient) as? Bool) ?? false
     }
 
