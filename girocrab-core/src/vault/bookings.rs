@@ -979,7 +979,9 @@ impl Vault {
                     .is_none_or(|set| set.contains(&t.account_id))
             {
                 let sums = per.entry(t.currency.to_uppercase()).or_default();
-                for (flow, share) in flow_parts(t.flow, share, t.refund_income_cents) {
+                for (flow, share) in
+                    split_flow_parts(t.flow, share, t.amount_cents, t.refund_income_cents)
+                {
                     sums.add(flow, share);
                 }
             }
@@ -1236,7 +1238,7 @@ impl Vault {
             ""
         };
         let sql = format!(
-            "{cte}SELECT t.id, t.booking_date, t.account_id, {share_sql}, t.currency {BOOKING_FROM_SQL} WHERE {where_sql}{order}"
+            "{cte}SELECT t.id, t.booking_date, t.account_id, {share_sql}, t.currency, t.amount_cents {BOOKING_FROM_SQL} WHERE {where_sql}{order}"
         );
         let mut stmt = db.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(args.iter().map(|b| b.as_ref())), |r| {
@@ -1248,6 +1250,7 @@ impl Vault {
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
             ))
         })?;
         let (mut income, mut expense, mut consumption, mut investment, mut perk) =
@@ -1257,7 +1260,7 @@ impl Vault {
         let mut total = 0u32;
         let totals = totals_set(db, filter)?;
         for row in rows {
-            let (id, date, account_id, share, currency) = row?;
+            let (id, date, account_id, share, currency, amount) = row?;
             let Some(class) = classes.get(&id) else {
                 return Ok(None);
             };
@@ -1271,7 +1274,9 @@ impl Vault {
             if counts_for_totals
                 && crate::planning::counts_in_sums(filter.account_ids.len(), &currency)
             {
-                for (kind, share) in flow_parts(class.flow, share, class.refund_income_cents) {
+                for (kind, share) in
+                    split_flow_parts(class.flow, share, amount, class.refund_income_cents)
+                {
                     match kpi_side(kind, share) {
                         KpiSide::Income => income += share,
                         KpiSide::Expense => expense += share,
@@ -1376,7 +1381,9 @@ impl Vault {
             if counts_for_totals
                 && crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
             {
-                for (kind, share) in flow_parts(t.flow, share, t.refund_income_cents) {
+                for (kind, share) in
+                    split_flow_parts(t.flow, share, t.amount_cents, t.refund_income_cents)
+                {
                     match kpi_side(kind, share) {
                         KpiSide::Income => income += share,
                         KpiSide::Expense => expense += share,

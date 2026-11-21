@@ -440,10 +440,8 @@ fn suggestions_fill_amount_then_merchant_then_reference() {
     assert_eq!(got(reference), vec![(refund, RefundMatch::SameReference)]);
     v.link_refund(refund, reference).unwrap();
     assert!(got(reference).is_empty());
-    assert_eq!(
-        got(refund),
-        vec![(vendor_recent, RefundMatch::SameMerchant)]
-    );
+    // the refund is used up by that link: it takes no further booking, so none is suggested
+    assert!(got(refund).is_empty());
     assert!(v.refund_suggestions(999).is_err());
 }
 

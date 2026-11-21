@@ -945,13 +945,29 @@ pub(crate) fn flow_parts(
     amount_cents: i64,
     refund_income_cents: i64,
 ) -> [(crate::merchants::FlowKind, i64); 2] {
+    split_flow_parts(flow, amount_cents, amount_cents, refund_income_cents)
+}
+
+/// [`flow_parts`] for `share_cents` of a booking of `amount_cents` (the split parts of one
+/// category): the share carries the income in proportion, so the parts add up to the booking.
+pub(crate) fn split_flow_parts(
+    flow: crate::merchants::FlowKind,
+    share_cents: i64,
+    amount_cents: i64,
+    refund_income_cents: i64,
+) -> [(crate::merchants::FlowKind, i64); 2] {
     use crate::merchants::FlowKind;
-    let income = if flow == FlowKind::Consumption {
-        refund_income_cents.clamp(0, amount_cents.max(0))
+    let income = if flow == FlowKind::Consumption && amount_cents > 0 {
+        let whole = refund_income_cents.clamp(0, amount_cents);
+        if share_cents == amount_cents {
+            whole
+        } else {
+            (i128::from(whole) * i128::from(share_cents) / i128::from(amount_cents)) as i64
+        }
     } else {
         0
     };
-    [(flow, amount_cents - income), (FlowKind::Income, income)]
+    [(flow, share_cents - income), (FlowKind::Income, income)]
 }
 
 /// Side of a booking in the income / expense KPIs. The one definition used by

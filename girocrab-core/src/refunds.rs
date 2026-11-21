@@ -606,6 +606,13 @@ impl Vault {
         const MAX: usize = 3;
         let db = self.db()?;
         let pool = pool(self, &db, transaction_id, Some(WINDOW_DAYS))?;
+        // a booking that is used up itself takes no further link: nothing to suggest
+        if taken(&db)?
+            .get(&transaction_id)
+            .is_some_and(|t| *t >= pool.amount.saturating_abs())
+        {
+            return Ok(Vec::new());
+        }
         let linked: std::collections::HashSet<i64> = db
             .prepare(
                 "SELECT original_id FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL
@@ -668,5 +675,7 @@ impl Vault {
     }
 }
 
+#[cfg(test)]
+mod qa_tests;
 #[cfg(test)]
 mod tests;
