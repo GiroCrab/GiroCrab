@@ -33522,24 +33522,24 @@
         }
       }
     },
-    "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere." : {
+    "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche alle, auch spätere." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose the transactions this refund paid back, several if needed. You can pick from expenses of all accounts in the twelve months before it; a search also finds older ones."
+            "value" : "Choose the transactions this refund paid back, several if needed. You can pick from expenses of all accounts in the twelve months before it; a search finds all of them, later ones too."
           }
         }
       }
     },
-    "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Zur Auswahl stehen Eingänge aller Konten aus den zwölf Monaten danach, mit der Suche auch spätere." : {
+    "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Zur Auswahl stehen Eingänge aller Konten aus den zwölf Monaten danach, mit der Suche alle, auch frühere." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose the refunds of this transaction, several partial refunds too. Incoming transactions of all accounts from the twelve months after it are offered, later ones via the search."
+            "value" : "Choose the refunds of this transaction, several partial refunds too. Incoming transactions of all accounts from the twelve months after it are offered; a search finds all of them, earlier ones too."
           }
         }
       }

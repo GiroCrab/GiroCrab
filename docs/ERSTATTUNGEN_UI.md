@@ -68,8 +68,9 @@ oder gleicher Händler innerhalb von zwei Monaten, gleiche Referenz (Bestell- od
 End-to-End-Referenz).
 
 Darunter die **weiteren Buchungen** der Gegenrichtung aus allen Konten, nächstes Datum zuerst: für eine Erstattung
-aus den 365 Tagen davor, für eine ursprüngliche Buchung aus den 365 Tagen danach. Mit einem Suchbegriff entfällt die Grenze von 365 Tagen, die Liste zeigt dann alle
-Treffer.
+aus den 365 Tagen davor, für eine ursprüngliche Buchung aus den 365 Tagen danach. Mit einem Suchbegriff entfallen die Grenze von 365 Tagen und die
+Richtung: Die Liste zeigt dann alle Treffer, auch Buchungen nach der Erstattung bzw. Eingänge vor der Buchung (eine
+Erstattung kann vor dem Kauf gebucht sein). Die Vorschläge bleiben bei der Richtung.
 
 Jede Zeile ist als Ganzes eine Schaltfläche, der Kreis davor eingeschlossen: Ein Klick verknüpft sofort, ein Klick
 auf eine verknüpfte Zeile (✓) hebt genau diese Verknüpfung auf. Das Blatt bleibt offen: So lassen sich mehrere

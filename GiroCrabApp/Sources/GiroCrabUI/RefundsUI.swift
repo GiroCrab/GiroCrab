@@ -232,8 +232,8 @@ struct RefundPickerSheet: View {
                     AmountLabel(cents: booking.amountCents, currency: booking.currency).fixedSize()
                 }
                 Text(fromRefund
-                     ? "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere."
-                     : "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Zur Auswahl stehen Eingänge aller Konten aus den zwölf Monaten danach, mit der Suche auch spätere.")
+                     ? "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche alle, auch spätere."
+                     : "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Zur Auswahl stehen Eingänge aller Konten aus den zwölf Monaten danach, mit der Suche alle, auch frühere.")
                     .appFont(.callout)
                     .foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)

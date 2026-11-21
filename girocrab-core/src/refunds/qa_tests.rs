@@ -1381,3 +1381,46 @@ fn views_agree_for_generated_links_and_splits() {
         }
     }
 }
+
+/// Without a search term a refund is offered the bookings before it and a booking the
+/// incomes after it; a search finds them on either side of the date (a refund booked before
+/// the purchase it pays back).
+#[test]
+fn search_finds_bookings_before_and_after() {
+    let (_d, v, a) = fixture();
+    let early = add(&v, a, 2000, "2025-03-01", "Hotel Nord", "");
+    let purchase = add(&v, a, -5000, "2025-03-10", "Hotel Nord", "");
+    let late = add(&v, a, 1000, "2025-03-20", "Hotel Nord", "");
+    let old = add(&v, a, -700, "2023-01-05", "Hotel Nord", "");
+    let ids = |rows: Vec<RefundBooking>| -> Vec<i64> { rows.into_iter().map(|b| b.id).collect() };
+    // from the purchase: only the income after it, with a search also the one before
+    assert_eq!(
+        ids(v.refund_candidates(purchase, String::new(), 20).unwrap()),
+        vec![late]
+    );
+    assert_eq!(
+        ids(v.refund_candidates(purchase, "hotel".into(), 20).unwrap()),
+        vec![early, late]
+    );
+    // from the refund booked first: nothing before it, with a search the purchase after it
+    // and the booking of years ago, nearest date first
+    assert!(
+        v.refund_candidates(early, String::new(), 20)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        ids(v.refund_candidates(early, "hotel".into(), 20).unwrap()),
+        vec![purchase, old]
+    );
+    assert_eq!(
+        ids(v
+            .refund_part_candidates(early, true, "hotel".into(), 20)
+            .unwrap()),
+        vec![purchase, old]
+    );
+    // the suggestions keep to the dates
+    assert!(v.refund_suggestions(early).unwrap().is_empty());
+    v.link_refund(early, purchase, 0).unwrap();
+    assert_eq!(allocations(&v, early), vec![(purchase, Some(2000))]);
+}

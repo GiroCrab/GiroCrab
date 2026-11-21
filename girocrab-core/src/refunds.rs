@@ -974,7 +974,7 @@ struct Pool {
 }
 
 /// `role`: what the booking `id` is in the links looked for. `days`: how far back (it pays
-/// back) or ahead (it is paid back) the pool reaches; `None` = no bound. Empty when the
+/// back) or ahead (it is paid back) the pool reaches; `None` = every date, before and after. Empty when the
 /// booking has no amount of that role.
 fn pool(
     vault: &Vault,
@@ -1016,20 +1016,26 @@ fn pool(
     if total == 0 {
         return Ok(out);
     }
-    let days = days.map_or(f64::MAX, f64::from);
     // the amounts of the other role: bookings on that side and split bookings with a part on it
-    let direction = match role {
+    let side = match role {
         Role::Refund => {
-            "(t.amount_cents<0 OR EXISTS(SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.amount_cents<0)) AND julianday(?1)-julianday(t.booking_date) BETWEEN 0 AND ?3"
+            "(t.amount_cents<0 OR EXISTS(SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.amount_cents<0))"
         }
         Role::Original => {
-            "(t.amount_cents>0 OR EXISTS(SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.amount_cents>0)) AND julianday(t.booking_date)-julianday(?1) BETWEEN 0 AND ?3"
+            "(t.amount_cents>0 OR EXISTS(SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.amount_cents>0))"
         }
+    };
+    // within the days: what a refund pays back lies before it, what pays a booking back after
+    // it. Without a bound (a search) the date does not matter: a refund can be booked first.
+    let window = match (days, role) {
+        (None, _) => "?3 IS NULL",
+        (Some(_), Role::Refund) => "julianday(?1)-julianday(t.booking_date) BETWEEN 0 AND ?3",
+        (Some(_), Role::Original) => "julianday(t.booking_date)-julianday(?1) BETWEEN 0 AND ?3",
     };
     out.rows = rows(
         db,
         &format!(
-            "{} WHERE t.deleted_ms IS NULL AND t.id<>?2 AND {direction} ORDER BY abs(julianday(t.booking_date)-julianday(?1)),t.id",
+            "{} WHERE t.deleted_ms IS NULL AND t.id<>?2 AND {side} AND {window} ORDER BY abs(julianday(t.booking_date)-julianday(?1)),t.id",
             plain_rows()
         ),
         params![out.date, id, days],
@@ -1382,7 +1388,8 @@ impl Vault {
     /// The bookings `transaction_id` could be linked to, nearest date first: for a refund the
     /// outgoing bookings before it, for an outgoing booking the incoming ones after it; all
     /// accounts and currencies. Without `query` the last / next 365
-    /// days, with one (name or purpose) every such booking. Resolves the merchant of every
+    /// days, with one (name or purpose) every such booking of any date, before or after.
+    /// Resolves the merchant of every
     /// booking it reads, so call it off the main thread. For a front end without a choice of
     /// the part that pays back: every row can be linked with `link_refund`.
     pub fn refund_candidates(
