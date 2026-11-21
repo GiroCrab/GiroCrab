@@ -23,6 +23,18 @@ enum SidebarItem: Hashable {
     case directDebits
     /// "Vermögen": cash and assets (depots) minus liabilities
     case wealth
+
+    /// Whether this selection is an overall money context (#337): its KPI sums
+    /// follow the effective total set (account switch, group, archiving). The
+    /// booking list never narrows — a total context is not a proof context. A
+    /// single account, a category and every proof view keep their sums.
+    var usesTotalsContext: Bool {
+        switch self {
+        case .allAccounts, .group, .bank, .userGroup: true
+        case .account, .category, .uncategorized, .documents, .newBookings, .planned, .directDebits, .wealth:
+            false
+        }
+    }
 }
 
 /// What the main window's booking column shows for a sidebar selection
@@ -176,19 +188,56 @@ enum Period: Hashable, Identifiable {
             return (DateText.iso(start), DateText.iso(end))
         }
         switch self {
-        // `.custom` dates live in `AppModel.periodRange`.
+        // `.custom` dates live in `PeriodSetting.range`.
         case .all, .custom: return (nil, nil)
         case .days(let n): return (DateText.iso(cal.date(byAdding: .day, value: -(n - 1), to: today)!), nil)
         case .months12:
             let start = cal.date(byAdding: DateComponents(year: -1, day: 1), to: today)!
             return (DateText.iso(start), nil)
-        // The salary start date lives in `AppModel.periodRange`; calendar month as fallback.
+        // The salary start date lives in `PeriodSetting.range`; calendar month as fallback.
         case .sinceSalary:
             return (DateText.iso(cal.date(from: cal.dateComponents([.year, .month], from: now))!), nil)
         case .month(let y, let m): return span(y, m, 1)
         case .quarter(let y, let q): return span(y, (q - 1) * 3 + 1, 3)
         case .year(let y): return span(y, 1, 12)
         }
+    }
+}
+
+/// What the sidebar category sums were loaded for (#1413): period range and `categorySumFilter`.
+struct CategorySumsRequest: Equatable {
+    let from: String?
+    let to: String?
+    let accounts: [Int64]
+    let checked: Bool?
+    let direction: BookingDirection
+    let amount: AmountFilter
+}
+
+/// A period with the dates of `.custom` (#1413): what `AppModel.shownPeriod` holds.
+struct PeriodSetting: Equatable {
+    let period: Period
+    /// Start/end of `.custom` (ISO, inclusive); `nil` for every other period.
+    let customFrom: String?
+    let customTo: String?
+
+    init(_ period: Period, customFrom: String? = nil, customTo: String? = nil) {
+        self.period = period
+        self.customFrom = period == .custom ? customFrom : nil
+        self.customTo = period == .custom ? customTo : nil
+    }
+
+    /// ISO start/end (inclusive, `nil` = open); `.sinceSalary` starts at the cycle's salary.
+    func range(salaryCycle: SalaryCycle?) -> (String?, String?) {
+        if period == .sinceSalary, let c = salaryCycle { return (c.lastDate, nil) }
+        if period == .custom { return (customFrom, customTo) }
+        return period.range
+    }
+
+    /// The preset name or "15.03.2025 – 30.06.2025".
+    var title: String {
+        guard let customFrom, let customTo else { return period.title }
+        return "\(DateText.medium(customFrom)) – \(DateText.medium(customTo))"
     }
 }
 
@@ -583,6 +632,8 @@ let settingLabels: [String: String] = [
     "comdirect.client_secret": String(localized: "comdirect Client-Secret"),
     "paypal.client_id": String(localized: "PayPal Client-ID"),
     "paypal.client_secret": String(localized: "PayPal Secret"),
+    "kontist.client_id": String(localized: "Kontist Client-ID"),
+    "kontist.client_secret": String(localized: "Kontist Client-Secret"),
     "enablebanking.application_id": String(localized: "Enable Banking Application-ID"),
     "enablebanking.private_key_pem": String(localized: "Enable Banking Private Key"),
     "enablebanking.redirect_url": String(localized: "Enable Banking Redirect-URL"),
@@ -624,7 +675,10 @@ enum StartupClock {
 
 extension BookingFilter {
     /// The list query sums exactly the selection's bookings (all of them, not a
-    /// narrowed subset), so its `flow` can stand in for `selectionFlow`.
+    /// narrowed subset) with the same calculation context, so its `flow` can
+    /// stand in for `selectionFlow` / `selectionFlowForTotals` (#337: reuse
+    /// only when the page was loaded with this very filter — `respectInTotal`
+    /// included — and nothing narrows it).
     var listHasFlow: Bool {
         scope == .all && direction == .all && checked == nil && search == nil && categoryId == nil && !uncategorizedOnly
             && tagIds.isEmpty && !untaggedOnly

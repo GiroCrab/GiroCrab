@@ -235,7 +235,7 @@ struct SidebarView: View {
         ) { d in
             switch d {
             case .archiveAccount(let a): Button("Archivieren") { model.setAccountArchived(a, true) }
-            case .deleteAccount(let a): Button("Löschen", role: .destructive) { model.deleteAccount(a.id) }
+            case .deleteAccount(let a): AccountDeletionPrompt.confirmButton { model.deleteAccount(a.id) }
             case .removeConnection(let id): Button("Entfernen", role: .destructive) { model.removeConnection(id) }
             case .deleteCategory(let c): Button("Löschen", role: .destructive) { model.deleteCategory(c.id) }
             }
@@ -244,8 +244,7 @@ struct SidebarView: View {
             switch d {
             case .archiveAccount:
                 Text("Das Konto wird nicht mehr abgerufen, von Regeln nicht mehr verändert und zählt nicht mehr zur Gesamtsumme. Buchungen, Kategorien, Belege und die Gruppe bleiben erhalten. Es lässt sich jederzeit reaktivieren.")
-            case .deleteAccount(let a):
-                Text("Das Konto wird samt \(a.transactionCount) Buchungen, Belegen und Depotpositionen unwiderruflich gelöscht – auch aus Auswertungen und Kategoriesummen. Ist es das letzte Konto seines Bankzugangs, wird auch der Bankzugang mit den gespeicherten Zugangsdaten entfernt.")
+            case .deleteAccount(let a): AccountDeletionPrompt.message(a)
             case .deleteCategory:
                 Text("Die Kategorie wird samt ihren Unterkategorien und Regeln unwiderruflich gelöscht. Zugeordnete Buchungen bleiben erhalten und stehen danach ohne Kategorie da.")
             case .removeConnection:
@@ -473,6 +472,15 @@ struct SidebarView: View {
         Button("Einstellungen …", systemImage: "gearshape") { editedAccount = IDBox(id: account.id) }
         CategoryChipToggle(accountID: account.id)
         AccountGroupMenu(account: account)
+        // the account's own switch for the overall money totals (#337); the
+        // group (or a group that group is in) and archiving can still keep it
+        // out — the row's tooltip explains that precedence
+        Toggle(isOn: Binding(
+            get: { account.includeInTotal },
+            set: { model.setAccountIncludeInTotal(account, $0) }
+        )) {
+            Label("In Gesamtsummen zählen", systemImage: "plus.forwardslash.minus")
+        }
         Divider()
         Button("Alle Buchungen als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: [account.id]) }
         ManualLoanAccountMenu(model: model, account: account)
@@ -771,6 +779,12 @@ struct AccountRow: View {
                         ProgressView().controlSize(.mini)
                             .accessibilityLabel(Text("Wird synchronisiert"))
                     }
+                    // outside the overall money totals (#337): like a group's
+                    // eye.slash — the effective flag (own switch, group, archiving)
+                    if account.showsTotalExclusionIndicator {
+                        AccountTotalExclusionIndicator(
+                            help: model.totalExclusionIconHelp(account, redaction: redaction))
+                    }
                 }
                 // row 2: bank / loan progress left, balance right
                 HStack(spacing: 6) {
@@ -810,7 +824,10 @@ struct AccountRow: View {
             }
         }
         .padding(.vertical, 1)
-        .opacity(account.isArchived ? 0.55 : 1)
+        .opacity(account.isArchived ? 0.55 : (account.showsTotalExclusionIndicator ? 0.6 : 1))
+        // reachable explanation (#337): why the account stays out of the totals
+        // although its own switch is on — the group that wins, or archiving
+        .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
         // one element per account: unread count, name, bank / loan progress, balance
         .accessibilityElement(children: .combine)
     }
@@ -1026,7 +1043,7 @@ private enum SidebarDialog {
     var title: Text {
         switch self {
         case .archiveAccount(let a): Text("Konto „\(a.name)“ archivieren?")
-        case .deleteAccount(let a): Text("Konto „\(a.name)“ löschen?")
+        case .deleteAccount(let a): AccountDeletionPrompt.title(a)
         case .removeConnection: Text("Bankzugang entfernen?")
         case .deleteCategory(let c): Text("Kategorie „\(c.name)“ löschen?")
         }

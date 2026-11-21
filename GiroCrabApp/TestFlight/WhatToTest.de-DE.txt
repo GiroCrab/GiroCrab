@@ -1,11 +1,6 @@
-GiroCrab v0.8.6 (iOS Build 23 unter Version 0.7.5, Schema v31)
+GiroCrab iOS 0.7.5 (Build 24) – enthält den kompletten Funktionsumfang von GiroCrab v0.8.7:
 
-Hinweis zur Versionsnummer in TestFlight:
-Weil unsere Entwicklung schneller voranschreitet als Apples Versions-Review fuer neue Release-Zweige, liefern wir das komplette v0.8.6-Release auf iOS ohne Wartezeit direkt als Build 23 unter 0.7.5 aus.
-
-Was ist neu und was kann getestet werden:
-- Natuerliche Buchungssuche, neue Beleg-Filter & Postfach-Filter nach Bankzugang (#1056).
-- Neue Konto-Einstellungen auf iOS & macOS; offizielle FinTS-Produktregistrierung direkt aktiv (#1092).
-- Echtzeitueberweisung-Statuspruefung bei Code 3045 (#1121), FFB-Postfach-PDFs (#1105) & FFB-Depot-Zusammenfuehrung (#1103).
-- Trade-Republic-Verrechnungskonto beim Import (#1114), PayPal-Fremdwaehrungen (#1110), offene Reservierungen (#1111) & ING Business (#974).
-- Advanzia-Wiederanlegen (#1115), Ford-Money-/Opel-Steuerabgleich (#1102) & N26-90-Tage-Consent (#1082).
+• FinTS auf iPhone & iPad (#1449): Die offizielle FinTS-Produktregistrierung von GiroCrab ist jetzt auch im iOS/iPadOS-Build fest eingebettet und vor dem Upload verifiziert.
+• Drei neue Banken: Hanseatic Bank (inkl. Postbox-PDFs), BHW Bausparkasse (inkl. Postfach-PDFs) und Kontist-Geschäftskonto sowie aktualisierte FinTS-Adresse für 1822direkt.
+• Konten & Summen (#1100, #1445, #1446): Neuer Schalter „In Gesamtsummen zählen“ je Konto, direktes Konto-Löschen in den Kontoeinstellungen und korrekter 0,00-€-Saldo nach bezahlter Amex-Abrechnung.
+• Zahlungen & Liste: Bekannte Empfänger verwalten/ausblenden, direktes Notiz-Symbol an Buchungen, synchroner Kopfbereich beim Zeitraumwechsel (#1444) und FinTS-Überweisungskorrekturen.

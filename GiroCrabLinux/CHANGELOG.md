@@ -8,7 +8,7 @@ Verhalten und Texte kommen dabei 1:1 aus der Mac-App, auf Deutsch und Englisch. 
 Einstellungen › Sicherheit steht deshalb „Kern-Version“: Die Nummer gehört zum Kern, nicht zum
 Funktionsumfang der Oberfläche.
 
-## Funktionsstand 0.8.6 (in Arbeit)
+## Funktionsstand 0.8.7
 
 ### EquatePlus (#720)
 
@@ -37,6 +37,8 @@ Funktionsumfang der Oberfläche.
   Anmeldedialog: Verlangt die Bank eine TAN oder neue Freigabe, wird der Abruf übersprungen und
   im Abruf-Protokoll als „Automatisch“ vermerkt. Fehler erscheinen nur als Hinweis, ein Hinweis
   zu neuen Buchungen nur, wenn sich etwas geändert hat. Die comdirect-PostBox bleibt außen vor.
+- Wird ein automatischer Abruf übersprungen, geht „Alle abrufen“ erst weiter, wenn der Bankdialog
+  beendet ist; bei derselben Bank lehnt diese sonst den nächsten Dialog ab.
 - Nicht in der Demo. Die Menüleiste mit Kontoständen der Mac-App gibt es unter Linux nicht.
 
 ### FinTS-Produkt-ID nur noch optional (#842, #865, #789)
@@ -44,7 +46,7 @@ Funktionsumfang der Oberfläche.
 - Die eigene FinTS-Produktregistrierung wird beim Hinzufügen einer Bank, im Dialog „… einrichten“
   und in der Seitenleiste nie mehr als fehlend gemeldet und blockiert „Speichern & abrufen“ nicht.
 - Fehlt beim Abruf trotzdem eine Registrierung, wechselt GiroCrab auf die eingebaute und ruft
-  einmal neu ab. Ohne eingebaute Registrierung erscheint „Diese Version enthält keine
+  einmal neu ab. Lässt sich die Umstellung nicht speichern, erscheint deren Fehler, ohne neuen Abruf. Ohne eingebaute Registrierung erscheint „Diese Version enthält keine
   FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein.“ mit
   **Eigene Registrierung eintragen …**.
 - **Eigene Registrierung eintragen …** stellt erst auf die eigene Registrierung um, wenn eine
@@ -74,7 +76,7 @@ Funktionsumfang der Oberfläche.
   Privatmodus verdeckt.
 - Startoption `--privacy[=all]` für Screenshots.
 
-## Korrekturen (Kern 0.8.6)
+## Korrekturen (Kern 0.8.7)
 
 - **„PostBox jetzt abrufen“** (comdirect, #838) ruft die PostBox jetzt wirklich ab; die Anforderung
   ging bisher vor jedem Abruf verloren.

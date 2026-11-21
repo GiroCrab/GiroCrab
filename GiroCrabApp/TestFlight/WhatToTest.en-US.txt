@@ -1,11 +1,6 @@
-GiroCrab v0.8.6 (iOS Build 23 under Version 0.7.5, Schema v31)
+GiroCrab iOS 0.7.5 (Build 24) – includes the complete GiroCrab v0.8.7 feature set:
 
-Note on the TestFlight version number:
-Because our development moves faster than Apple's version review for new release trains, the complete v0.8.6 release ships immediately as Build 23 under 0.7.5.
-
-What to test:
-- Natural-language booking search, document filters, and postbox filtering by connection (#1056).
-- Redesigned account settings on iOS & macOS; built-in FinTS product registration active out of the box (#1092).
-- Instant transfer `3045` handover handling (#1121), FFB mailbox PDFs (#1105), and FFB depot twin folding (#1103).
-- Trade Republic clearing account adoption (#1114), PayPal foreign-currency bookings (#1110), pending reservation retention (#1111), and ING Business (#974).
-- Advanzia re-add fix (#1115), Ford Money / Opel tax-line matching (#1102), and N26 90-day consent (#1082).
+• FinTS on iPhone & iPad (#1449): GiroCrab's built-in FinTS product registration is now verified inside the iOS/iPadOS archive.
+• Three new banks: Hanseatic Bank (incl. Postbox PDFs), BHW Bausparkasse (incl. mailbox PDFs), and Kontist business accounts, plus updated 1822direkt FinTS endpoint.
+• Accounts & totals (#1100, #1445, #1446): Per-account "Include in totals" switch, account deletion directly in Account Settings, and accurate €0.00 Amex balance after paid statements.
+• Transfers & list: Manage/hide saved recipients, booking note indicator, aligned period headers (#1444), and FinTS transfer fixes.

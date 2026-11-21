@@ -399,7 +399,9 @@ pub fn display_name(id: &str) -> String {
         "ffb" => "FFB",
         "fordmoney" => "Ford Money",
         "opeldirektbank" => "Opel Direktbank",
+        "hanseatic" => "Hanseatic Bank",
         "bhw" => "BHW Bausparkasse",
+        "kontist" => "Kontist",
         other => other,
     };
     match tail {

@@ -11,12 +11,12 @@
 <p align="center">FinTS 3.0 · PSD2 · SEPA · Datenimport — 100&nbsp;% lokal verschlüsselt, kostenlos, Daten bleiben auf deinem Gerät.</p>
 
 <p align="center">
-  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.8.6 · Apple Silicon (.dmg)" width="260" height="56"></a>
+  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.8.7 · Apple Silicon (.dmg)" width="260" height="56"></a>
   &nbsp;
   <a href="https://testflight.apple.com/join/KBmvKVpT"><img src="docs/assets/download-ios.svg" alt="iOS &amp; iPadOS App – kostenlos via Apple TestFlight" width="260" height="56"></a>
 </p>
 
-<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.8.6</sub></p>
+<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.8.7</sub></p>
 <p align="center">
   <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe"><img src="docs/assets/download-windows-alpha.svg" alt="Für Windows laden (Alpha – Frühe Vorschau)" width="260" height="56"></a>
   &nbsp;
@@ -57,6 +57,14 @@ zu Ihren Banken per **FinTS 3.0 / HBCI** und **PSD2 (Enable Banking)** – ohne 
 ### Für wen ist GiroCrab?
 
 GiroCrab ist eine freie, quelloffene Banking-App (GPLv3) für macOS, Linux (Qt 6 / QML) und – derzeit als Beta über TestFlight – für iPhone und iPad. Alle Daten liegen verschlüsselt auf deinem Gerät. GiroCrab ist ein junges Community-Projekt: Die Bankenabdeckung wächst noch (siehe Bank-Tabelle), und PSD2-Zugänge laufen über einen eigenen, kostenlosen Enable-Banking-Zugang.
+
+### ✨ Neu in v0.8.7
+
+- 🏦 **Neue Banken & Amex-Kontoauszüge (#1168, #1435, #1440, #1451, #1456, #1416):** Native Konnektoren für **Hanseatic Bank** (Kreditkarten, Tages-/Festgeld, SparBrief & Postbox-PDFs), **BHW Bausparkasse** (Bausparverträge, Baudarlehen & Postfach-PDFs) und **Kontist**-Geschäftskonten, automatischer & manueller **PDF-Kontoauszugsabruf für American Express** im Portal-Fenster, **C24, N26 und Bank Norwegian** verifiziert in der Banken-Matrix sowie aktualisierte FinTS-Adresse für **1822direkt**.
+- 🧮 **Kontoschalter für Gesamtsummen & Kontoeinstellungen (#1100, #1445, #1455):** Einzelne Konten lassen sich gezielt aus Gesamtsummen, Cashflow und Vermögen ausschließen (mit iCloud-Sync-Stempel; Amazon-Bestellkonten starten ausgeschlossen), aufgelöste Konten direkt in den Kontoeinstellungen löschen und Konten mit negativem Startsaldo ohne gesperrten „Sichern“-Button bearbeiten.
+- 💸 **Empfängerliste, Buchungsnotizen & FinTS-Überweisungen (#1129, #1130, #1441, #1088, #1419):** Bekannte Empfänger verwalten/ausblenden, direktes Notiz-Symbol an Buchungen mit Hover-Vorschau, sofortige FinTS-Überweisungen ohne unerlaubtes Ausführungsdatum sowie `HISPAS`-SEPA-Formaterkennung (`pain.001.001.09`).
+- 🐧 **Linux-Release-Pakete & Android Native-Build (#1150, #1151, #1458, #1384, #1423, #1443):** EquatePlus-Anmeldung & Beleg-Download, Hintergrund-Sync inkl. sauberem Dialog-Abbruch bei „Alle abrufen“, Privatmodus, Breeze-Icons, direkte `.deb`- & `.flatpak`-Pakete am GitHub-Release sowie CI-geprüfter nativer Rust-/UniFFI-Build unter Android.
+- 🛠️ **iPadOS FinTS-Registrierung, Amex-Saldo & Zeitraumwechsel (#1449, #1446, #1444, #1379):** Eingebaute FinTS-Produktregistrierung jetzt fest verifiziert im iOS/iPadOS-TestFlight-Build (Build 24 unter Version `0.7.5`), korrekter `0,00 €`-Saldo bei bezahlter Amex-Abrechnung, synchroner Kopfbereich beim Zeitraumwechsel und erweiterter Code-Integritäts-Linter (`forbid(unsafe_code)`).
 
 ### ✨ Neu in v0.8.6
 
@@ -216,6 +224,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Test gesucht |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
@@ -231,11 +240,15 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verifiziert |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
+| Kontist | REST-API | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | PayPal | REST-API | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
 | Scalable Capital | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
 | Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| Bank Norwegian | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| C24 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
+| N26 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
 | Weitere Banken per PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
@@ -274,7 +287,7 @@ Die Demo enthält fiktive Konten und erfundene Buchungen – keine echten Daten.
 ### 📦 Download (macOS)
 
 Das fertige Disk-Image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) gibt es unter [GitHub Releases](../../releases) – ohne Rust oder Xcode.
-Aktuelle Version: **v0.8.6**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
+Aktuelle Version: **v0.8.7**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
 **iPhone / iPad:** [TestFlight-Beta beitreten](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel-Macs:** Die offiziellen Binaries sind nur für Apple Silicon (`arm64`). Auf Intel-Macs lässt sich GiroCrab mit Swift/Xcode selbst aus dem Quellcode bauen (siehe [Schnellstart](#schnellstart)).
@@ -309,6 +322,14 @@ recognition, savings-plan view, loan repayment progress and direct connections t
 ### Who is GiroCrab for?
 
 GiroCrab is a free, open-source banking app (GPLv3) for macOS, Linux (Qt 6 / QML) and – currently in beta via TestFlight – for iPhone and iPad. All data stays encrypted on your device. GiroCrab is a young community project: bank coverage is still growing (see the bank table), and PSD2 access works through your own free Enable Banking account.
+
+### ✨ What's new in v0.8.7
+
+- 🏦 **New Banks & Amex PDF Statements (#1168, #1435, #1440, #1451, #1456, #1416):** Native connectors for **Hanseatic Bank** (credit cards, savings & Postbox PDFs), **BHW Bausparkasse** (home savings, loans & mailbox PDFs), and **Kontist** business accounts, automatic & on-demand **American Express PDF statement downloads** in the portal sheet, verified **C24, N26, and Bank Norwegian** matrix entries, plus updated FinTS endpoint for **1822direkt**.
+- 🧮 **Per-Account Totals Switch & Account Settings (#1100, #1445, #1455):** Exclude individual accounts from overall totals, cashflow, and net worth (synced across devices; Amazon Orders accounts start excluded by default), delete archived accounts directly from Account Settings, and save accounts with negative opening balances cleanly.
+- 💸 **Recipient Management, Booking Notes & FinTS Transfers (#1129, #1130, #1441, #1088, #1419):** Manage/hide saved transfer recipients, jump straight to booking notes via the new list indicator, send immediate FinTS transfers without rejected execution dates, and detect `pain.001.001.09` from `HISPAS`.
+- 🐧 **Linux Release Packages & Android Native Layer (#1150, #1151, #1458, #1384, #1423, #1443):** EquatePlus sign-in & PDFs, auto-sync with clean dialog cancellation during "Retrieve All", full privacy redaction, Breeze fallback icons, prebuilt `.deb` & `.flatpak` release assets, and CI-verified multi-ABI Rust/UniFFI builds on Android.
+- 🛠️ **iPadOS FinTS Registration, Amex €0 Balance & Period Sync (#1449, #1446, #1444, #1379):** Verified built-in FinTS product registration inside the iOS/iPadOS TestFlight archive (Build 24 under version `0.7.5`), accurate `€0.00` Amex balance after paid statements, aligned headers during period switches, and workspace-wide `forbid(unsafe_code)` obfuscation checks.
 
 ### ✨ What's new in v0.8.6
 
@@ -456,6 +477,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Testing wanted |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
@@ -471,12 +493,16 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verified |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
+| Kontist | REST-API | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | PayPal | REST-API | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
 | Scalable Capital | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
 | Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| Bank Norwegian | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| C24 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
 | More banks via PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
+| N26 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
 | Finpension | Datei-Import | ✓ | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#300](https://github.com/GiroCrab/GiroCrab/issues/300) |
@@ -492,7 +518,7 @@ Adding a bank usually takes under 100 lines – start from
 ### Download (macOS)
 
 The pre-built disk image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) is available under
-[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.6**.
+[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.7**.
 
 > 🧪 **Windows & Android (Early Alpha):** Experimental preview installers for [Windows (`x86_64-setup.exe`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe) and [Android (`.apk`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-Android-alpha.apk) are available for early testing (best tried in demo mode). Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
 **iPhone / iPad:** [join the TestFlight beta](https://testflight.apple.com/join/KBmvKVpT).

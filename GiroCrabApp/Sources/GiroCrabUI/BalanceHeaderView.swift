@@ -426,7 +426,7 @@ struct StreamHeaderCard: View {
         let account = self.account
         HStack(spacing: 12) {
                 periodMenu
-                // One filter menu (status + income/expenses) keeps the row narrow.
+                // One filter menu keeps the row narrow.
                 Menu {
                     // Inline pickers show no title in a menu: name each group with a section header.
                     Section("Status") {
@@ -442,6 +442,11 @@ struct StreamHeaderCard: View {
                         }
                         .pickerStyle(.inline)
                         .labelsHidden()
+                    }
+                    if model.showsSubcategoryFilter {
+                        Section {
+                            Toggle("Unterkategorien einbeziehen", isOn: $model.interactiveIncludeSubcategories)
+                        }
                     }
                 } label: {
                     #if os(iOS)
@@ -460,7 +465,7 @@ struct StreamHeaderCard: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Nach Status oder nach Einnahmen und Ausgaben filtern")
+                .help("Buchungen filtern")
                 #if os(macOS)
                 // tag filter (#228); the iOS layout follows later
                 if model.showsTagFilter {
@@ -482,7 +487,7 @@ struct StreamHeaderCard: View {
                             #endif
                     }
                     .buttonStyle(.borderless)
-                    .help("Status, Buchungsart, Tags, Konten, Betrag und Suche zurücksetzen")
+                    .help("Alle Buchungsfilter zurücksetzen")
                 }
                 if let a = account {
                     Button { showDocuments = true } label: {
@@ -561,7 +566,7 @@ struct PeriodMenuButton: View {
         } label: {
             // Single period control (GitHub #102): the menu is the only selector,
             // so it always shows the active range.
-            Label(forDepot ? model.depotPeriodTitle : model.periodTitle, systemImage: "calendar")
+            Label(forDepot ? model.depotPeriodTitle : model.shownPeriod.title, systemImage: "calendar")
                 .lineLimit(1)
         }
         .menuStyle(.borderlessButton)

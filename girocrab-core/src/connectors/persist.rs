@@ -205,6 +205,9 @@ pub(crate) fn store_fetch(
         if kind == ConnectorKind::Advanzia {
             super::advanzia::prepare_import(&tx, connection_id, &mut data)?;
         }
+        if kind == ConnectorKind::EquatePlus {
+            super::equateplus::prepare_import(&tx, connection_id, &mut data)?;
+        }
         let generic_bank_name = descriptor(kind).name;
         // No name from the bank: the connection's display name (the bank picked
         // when adding it, or renamed later) beats the generic "FinTS-Bank".
@@ -285,6 +288,12 @@ pub(crate) fn store_fetch(
             |r| r.get(0),
         )?;
         let mut new_accounts: Vec<String> = Vec::new();
+        let fetched_cards: Vec<&str> = data
+            .accounts
+            .iter()
+            .filter(|a| a.kind == AccountKind::CreditCard && !a.account_number.is_empty())
+            .map(|a| a.account_number.as_str())
+            .collect();
         for acc in &data.accounts {
             if blocked_refs.contains(&acc.external_ref) {
                 continue;
@@ -307,8 +316,10 @@ pub(crate) fn store_fetch(
                     connection_id,
                     &acc.external_ref,
                     &acc.iban,
+                    &acc.account_number,
                     &acc.currency,
                     acc.kind,
+                    &fetched_cards,
                 )?,
             };
             // Sub-accounts known from an earlier import/sync without a connection
@@ -438,13 +449,19 @@ pub(crate) fn store_fetch(
                 None => {
                     let (group, sym, order) = group_for(acc.kind);
                     let gid = Vault::ensure_group(&tx, group, sym, order)?;
+                    // Amazon's order account is a proof account: it starts
+                    // outside the overall money totals (#337); the user can
+                    // switch it back on. Stamp 0, so any explicit choice wins
+                    // on sync. Only on creation — a re-fetch never resets a
+                    // stored decision.
+                    let include_in_total = kind != ConnectorKind::AmazonOrders;
                     tx.execute(
                         "INSERT INTO accounts(connection_id, group_id, external_ref, name, bank_name, owner, iban, account_number, currency, kind,
-                                              balance_cents, balance_date, sf_symbol, sort_order, created_ms)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, (SELECT IFNULL(MAX(sort_order),0)+1 FROM accounts), ?14)",
+                                              balance_cents, balance_date, sf_symbol, sort_order, created_ms, include_in_total, total_ms)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, (SELECT IFNULL(MAX(sort_order),0)+1 FROM accounts), ?14, ?15, 0)",
                         params![connection_id, gid, acc.external_ref, acc.name, bank_name, acc.owner, acc.iban, acc.account_number,
                                 acc.currency, acc.kind.as_str(), acc.balance_cents, acc.balance_date, acc.kind.sf_symbol(),
-                                crate::dates::now_ms()],
+                                crate::dates::now_ms(), include_in_total],
                     )?;
                     let id = tx.last_insert_rowid();
                     crate::user_groups::place_new_account(&tx, id)?;
@@ -1016,6 +1033,13 @@ pub(crate) fn store_fetch(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(connection_id, (kind, data));
+        } else if kind == ConnectorKind::EquatePlus {
+            // A fresh snapshot supersedes any previously deferred program selection.
+            vault
+                .pending_account_fetches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&connection_id);
         }
         // The catch-up after switching retrieval on again is done once a sync brings no new document
         // and left none out (a failed request, a limit).
@@ -1379,6 +1403,7 @@ impl Vault {
                     | ConnectorKind::FordMoney
                     | ConnectorKind::OpelDirektbank
                     | ConnectorKind::Bhw
+                    | ConnectorKind::HanseaticBank
                     | ConnectorKind::Ffb
             )
         });
@@ -2597,7 +2622,8 @@ pub(crate) fn card_open_balance(
 /// Open card balance (negative = owed) from `(date, amount_cents, text)` rows
 /// sorted ascending: sum of everything after the latest settlement booking
 /// (a positive KARTENABRECHNUNG / LASTSCHRIFT / AUSGLEICH / ZAHLUNG ERHALTEN
-/// entry). Without a settlement, the sum of all bookings.
+/// entry, also Amex's „Zahlung/Überweisung erhalten“). Without a settlement,
+/// the sum of all bookings.
 pub(crate) fn open_card_balance(rows: &[(String, i64, String)]) -> Option<i64> {
     if rows.is_empty() {
         return None;
@@ -2605,14 +2631,11 @@ pub(crate) fn open_card_balance(rows: &[(String, i64, String)]) -> Option<i64> {
     let is_settlement = |(_, amt, text): &(String, i64, String)| {
         let t = text.to_uppercase();
         *amt > 0
-            && [
-                "KARTENABRECHNUNG",
-                "LASTSCHRIFT",
-                "AUSGLEICH",
-                "ZAHLUNG ERHALTEN",
-            ]
-            .iter()
-            .any(|k| t.contains(k))
+            && (["KARTENABRECHNUNG", "LASTSCHRIFT", "AUSGLEICH"]
+                .iter()
+                .any(|k| t.contains(k))
+                // „ZAHLUNG ERHALTEN“, „ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK“
+                || t.contains("ZAHLUNG/ÜBERWEISUNG ERHALTEN") || t.contains("ZAHLUNG/UEBERWEISUNG ERHALTEN"))
     };
     let start = match rows.iter().rposition(is_settlement) {
         Some(i) => i + 1,

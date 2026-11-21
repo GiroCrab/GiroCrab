@@ -24,7 +24,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::fnv::fnv1a64;
 use crate::i18n::{tr, trf};
 use crate::iban::{normalize_iban, validate_iban};
-use crate::merchants::{FlowKind, MerchantResolver};
+use crate::merchants::{FlowKind, MerchantResolver, MerchantRules};
 use crate::models::*;
 use crate::money::parse_cents;
 use crate::text::parse_bool_loose;
@@ -1100,6 +1100,19 @@ pub(crate) fn suggest_account(
     Ok((named.len() == 1).then(|| named[0].0))
 }
 
+/// The bank name older versions gave the offline account of an import: a
+/// software name, shown in the sidebar (#1467).
+const OLD_IMPORT_BANK_NAME: &str = "MoneyMoney-Import";
+
+/// Clears that bank name on offline accounts; run on every open.
+pub(crate) fn clear_old_import_bank_name(conn: &Connection) -> CoreResult<()> {
+    conn.execute(
+        "UPDATE accounts SET bank_name = '' WHERE connection_id IS NULL AND bank_name = ?1",
+        [OLD_IMPORT_BANK_NAME],
+    )?;
+    Ok(())
+}
+
 fn account_name_from_file(file_name: &str) -> String {
     let stem = file_name
         .rsplit('/')
@@ -1152,7 +1165,7 @@ fn run(
             conn.execute(
                 "INSERT INTO accounts(connection_id, group_id, external_ref, name, bank_name, currency, kind,
                                       balance_cents, balance_date, sf_symbol, sort_order, created_ms)
-                 VALUES (NULL, ?1, ?2, ?3, 'MoneyMoney-Import', ?4, 'checking', 0, '', 'archivebox',
+                 VALUES (NULL, ?1, ?2, ?3, '', ?4, 'checking', 0, '', 'archivebox',
                          (SELECT IFNULL(MAX(sort_order),0)+1 FROM accounts), ?5)",
                 params![
                     gid,
@@ -1630,7 +1643,7 @@ pub(crate) fn merge_synced_tax_twins(conn: &Connection, account_id: i64) -> Core
     Ok(())
 }
 
-fn sample(r: &MmRow, i: i64, account_id: i64) -> Booking {
+fn sample(r: &MmRow, i: i64, account_id: i64, merchants: &MerchantRules) -> Booking {
     let mut b = Booking {
         id: -(i + 1),
         account_id,
@@ -1682,7 +1695,7 @@ fn sample(r: &MmRow, i: i64, account_id: i64) -> Booking {
     // preview of an import: no connection yet, a payment service reads as before
     let paypal = b.account_kind == AccountKind::PaymentService;
     // Preview names are imported user text, never built-in category roles.
-    enrich(&mut b, paypal, "");
+    enrich(&mut b, merchants, paypal, "");
     b.is_salary = crate::salary::salary_signal(&b);
     b
 }
@@ -1703,6 +1716,8 @@ impl Vault {
         let tx = db.unchecked_transaction()?;
         // before the dry run, which may add a provisional archive account
         let suggested_account_id = suggest_account(&tx, &decode(&data), &rows, &file_name)?;
+        // the samples look like the booking list: with the user's merchant changes (#1373)
+        let merchants = self.merchant_rules(&tx)?;
         let st = run(&tx, &rows, &file_name, target_account_id, true, true)?;
         let mut cats: Vec<String> = rows
             .iter()
@@ -1723,7 +1738,7 @@ impl Vault {
                 .iter()
                 .take(6)
                 .enumerate()
-                .map(|(i, r)| sample(r, i as i64, target_account_id.unwrap_or(0)))
+                .map(|(i, r)| sample(r, i as i64, target_account_id.unwrap_or(0), &merchants))
                 .collect(),
             suggested_account_name: account_name_from_file(&file_name),
             suggested_account_id,
@@ -2128,6 +2143,47 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
             .find(|a| a.id == res.account_id)
             .unwrap();
         assert_eq!(acc.balance_cents, 76_544);
+        // no software name as the bank (#1467)
+        assert_eq!(acc.bank_name, "");
+    }
+
+    /// Offline accounts older versions created carry a software name as
+    /// their bank; opening clears it, a bank name of its own stays (#1467).
+    #[test]
+    fn opening_clears_the_old_import_bank_name() {
+        let (_dir, v) = vault();
+        let res = v
+            .import_moneymoney_data(
+                CSV.as_bytes().to_vec(),
+                "Giro alt.csv".into(),
+                None,
+                true,
+                true,
+            )
+            .unwrap();
+        let db = v.db().unwrap();
+        db.execute(
+            "UPDATE accounts SET bank_name = ?1 WHERE id = ?2",
+            params![OLD_IMPORT_BANK_NAME, res.account_id],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name, bank_name)
+             VALUES ((SELECT group_id FROM accounts WHERE id = ?1), 'other', 'Sparbuch', 'Sparkasse')",
+            [res.account_id],
+        )
+        .unwrap();
+        clear_old_import_bank_name(&db).unwrap();
+        let bank = |filter: &str| -> String {
+            db.query_row(
+                &format!("SELECT bank_name FROM accounts WHERE {filter}"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(bank(&format!("id = {}", res.account_id)), "");
+        assert_eq!(bank("name = 'Sparbuch'"), "Sparkasse");
     }
 
     /// MoneyMoney's exports append the SEPA references to the purpose, the

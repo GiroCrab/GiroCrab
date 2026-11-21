@@ -60,7 +60,18 @@ public final class AppModel {
     var accountMarkers: [Int64: AccountMarker] = [:] { didSet { refreshAccountMarkerVisibility() } }
     /// Custom label for „Ohne Kategorie“ (vault setting `ui.uncategorized_name`, #597); empty = default.
     var uncategorizedName = ""
-    var categories: [GiroCrabCore.Category] = [] { didSet { refreshOtherCurrencies() } }
+    var categories: [GiroCrabCore.Category] = [] {
+        didSet {
+            categoriesRequest = categorySumsRequest
+            categoriesAwaitRefresh = false
+            refreshOtherCurrencies()
+        }
+    }
+    /// What `categories` were loaded for: a column without a booking list reloads them only
+    /// when it needs other sums (#1413).
+    @ObservationIgnored var categoriesRequest: CategorySumsRequest?
+    /// A background refresh (sync, merge, filter change) is to bring new sums.
+    @ObservationIgnored var categoriesAwaitRefresh = false
     /// "Zusätzlich" next to the sidebar totals (#1049): per category (with subcategories) what it holds in
     /// currencies other than EUR, which its total leaves out. Empty when no booking has another currency.
     var categoryOtherTotals: [Int64: [CurrencyAmount]] = [:]
@@ -90,6 +101,10 @@ public final class AppModel {
     var listBalances = ListBalances()
     /// Watches Ansicht › Saldo anzeigen, which the settings window can change too.
     @ObservationIgnored private var runningBalanceObserver: NSKeyValueObservation?
+    /// Bumped whenever the effective total set changes (#337: account / group
+    /// switch, group move). The overall money figures (cashflow card) follow
+    /// it — the booking list count alone does not move, it is a proof view.
+    var totalsVersion = 0
     /// Flows of the selected account/group in the selected period; nil = not loaded yet.
     var selectionFlow: (consumption: Int64, invested: Int64, income: Int64)? { didSet { refreshOtherCurrencies() } }
     /// „Ohne Kategorie“ badge while list filters narrow the sums; nil = the accounts' own counts (#357).
@@ -124,6 +139,14 @@ public final class AppModel {
     /// (legacy "1"/"true" from the old toggle count as "google").
     var logoProvider = "off"
     var onlineLogos: Bool { logoProvider != "off" }
+    /// Händlererkennung (#1373, Einstellungen › Händler). Off, bookings show their counterparty
+    /// without merchant name or logo: no logo domain to edit, no logo tip.
+    var merchantRecognitionEnabled = true
+    /// Bumped when the merchant settings may have changed (own change, iCloud merge, sync):
+    /// Einstellungen › Händler reads its list again.
+    var merchantSettingsRevision = 0
+    /// Merchant setting changes queued so far; only the newest reloads the views (`changeMerchants`).
+    @ObservationIgnored var merchantWriteCount = 0
     /// Not observed: signets read it in their body (`cachedLogo`), and filling it
     /// must not re-render every signet on screen.
     @ObservationIgnored var logoCache: [String: (image: Image, pixels: Int)] = [:]
@@ -151,19 +174,13 @@ public final class AppModel {
             // Geplant, Lastschriften, Belege and Vermögen show no booking list: loading it for
             // all accounts only replaced the list the column shows next (#1396).
             guard MainColumn(sidebarSelection) == .bookings else {
-                let cancelsLoad = selectionLoadTask != nil
-                if cancelsLoad { endSelectionLoad() }
-                // The sidebar sums drop the account filter of a category view (#406): one shown, or one
-                // whose sums are still in because the cancelled load would have replaced them.
-                let sumsMayBeFiltered: Bool
-                switch shownSelection {
-                case .category?, .uncategorized?: sumsMayBeFiltered = true
-                default: sumsMayBeFiltered = cancelsLoad
-                }
-                if sumsMayBeFiltered, !categoryAccountFilter.isEmpty { reloadCategories() }
+                if selectionLoadTask != nil { endSelectionLoad() }
                 // the recurring data and salary cycle follow the selection (all accounts here)
                 refreshSalaryCycle()
                 refreshRecurring()
+                // The sidebar sums drop the account filter of a category view (#406) and take the period,
+                // pay cycle or refresh a cancelled load would have brought (#1413).
+                if categoriesAwaitRefresh || categoriesRequest != categorySumsRequest { reloadCategories() }
                 return
             }
             reloadSelection(periodChanged: false)
@@ -190,8 +207,19 @@ public final class AppModel {
     /// switch between categories leaves the views reading them alone.
     private(set) var showsOverview = true
     private(set) var showsNewBookings = false
-    /// The column now shows `sidebarSelection` (its data is in, or the placeholder stands in).
-    func showSelection() { shownSelection = sidebarSelection }
+    /// The period of the data the column shows: `period` once that data is in, so the header and the
+    /// tile subtitles never name a period the list, chart and tiles do not show yet (#1413).
+    private(set) var shownPeriod = PeriodSetting(.all)
+    /// `period` with its custom dates, as the loads read it.
+    var requestedPeriod: PeriodSetting { PeriodSetting(period, customFrom: customPeriodFrom, customTo: customPeriodTo) }
+    /// The pay cycle behind the shown data (`salaryCycle` belongs to `sidebarSelection`, #1413).
+    private(set) var shownSalaryCycle: SalaryCycle?
+    /// The column now shows `sidebarSelection` in `period` (its data is in, or the placeholder stands in).
+    func showSelection() {
+        shownSelection = sidebarSelection
+        shownPeriod = requestedPeriod
+        shownSalaryCycle = salaryCycle
+    }
     /// Per sidebar row: is it the selected one (`sidebarRowSelection(for:)`), kept in step by
     /// `sidebarSelection`.
     @ObservationIgnored var sidebarRowSelections: [SidebarItem: SidebarRowSelection] = [:]
@@ -266,6 +294,10 @@ public final class AppModel {
         get { directionFilter }
         set { loadingFilterInBackground { directionFilter = newValue } }
     }
+    var interactiveIncludeSubcategories: Bool {
+        get { includeSubcategories }
+        set { loadingFilterInBackground { includeSubcategories = newValue } }
+    }
     /// Amount range as set by the header popover (the list follows in the background, #357).
     var interactiveAmountFilter: AmountFilter {
         get { amountFilter }
@@ -286,7 +318,10 @@ public final class AppModel {
         }
     }
     /// Latest salary of the selected accounts; start of the `.sinceSalary` period.
-    var salaryCycle: SalaryCycle?
+    var salaryCycle: SalaryCycle? {
+        // The column already shows the selection unless a load still holds its old data (#1413).
+        didSet { if selectionLoadTask == nil || isLoadingSelection { shownSalaryCycle = salaryCycle } }
+    }
     /// Recurring series of the selected accounts (GitHub #35).
     var recurring: [RecurringSeries] = [] {
         didSet { recurringByKey = Dictionary(grouping: recurring, by: \.baseKey) }
@@ -312,10 +347,29 @@ public final class AppModel {
         }
     }
 
-    /// Any list filter of the header row (status, type, tags, accounts, amount, search) narrows the list.
+    /// Category scope for this session, shared across category selections.
+    var includeSubcategories = true {
+        didSet {
+            guard includeSubcategories != oldValue, !suspendsFilterReloads,
+                  case .category? = sidebarSelection else { return }
+            listLimit = Self.defaultListLimit
+            reloadAfterFilterChange()
+        }
+    }
+
+    var showsSubcategoryFilter: Bool {
+        if case .category? = shownSelection { return true }
+        return false
+    }
+
+    private var excludesSubcategories: Bool {
+        showsSubcategoryFilter && !includeSubcategories
+    }
+
+    /// Any list filter of the header row narrows the list.
     var hasActiveListFilters: Bool {
         statusFilter != .all || directionFilter != .all || tagFilter.isActive || amountFilter.isActive
-            || !searchText.isEmpty || !categoryAccountIDs.isEmpty
+            || !searchText.isEmpty || !categoryAccountIDs.isEmpty || excludesSubcategories
     }
 
     /// „Filter zurücksetzen“ (#840): clears every list filter with a single reload; the period stays.
@@ -325,6 +379,7 @@ public final class AppModel {
             defer { suspendsFilterReloads = false }
             statusFilter = .all
             directionFilter = .all
+            includeSubcategories = true
             clearTagFilter()
             amountFilter = AmountFilter()
             categoryAccountFilter = []
@@ -346,7 +401,7 @@ public final class AppModel {
 
     /// Filled icon while any filter is active.
     var filterSymbol: String {
-        statusFilter == .all && directionFilter == .all
+        statusFilter == .all && directionFilter == .all && !excludesSubcategories
             ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
     }
     /// Income / expenses only (GitHub #53); filtered in the core, so totals and CSV follow.
@@ -877,7 +932,7 @@ public final class AppModel {
         }
         if options.freshVault || options.demoSeed {
             // Developer switches only (screenshots): synchronous, not the normal start path.
-            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? Bundle.main.preferredLocalizations.first ?? "de")
+            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? AppLanguage.coreCode)
         }
         if options.freshVault {
             openFreshVault()
@@ -1129,7 +1184,7 @@ public final class AppModel {
         Task { @MainActor [weak self] in
             let mayHoldRealData = await Task.detached(priority: .userInitiated) { () -> Bool in
                 // Core texts follow the language the app bundle resolved (German without a bundle).
-                GiroCrabCore.setLanguage(code: Bundle.main.preferredLocalizations.first ?? "de")
+                GiroCrabCore.setLanguage(code: AppLanguage.coreCode)
                 // Decrypted QuickLook copies a crash or force quit may have left behind.
                 Self.removeQuickLookFiles()
                 return Self.vaultMayHoldRealData

@@ -32,9 +32,9 @@ Sheet {
     /// comdirect logins can switch between FinTS and comdirect's own API.
     readonly property bool isComdirect: kind === "Comdirect"
         || (kind === "FinTsGeneric" && ["20041111", "20041133", "20041144", "20041155"].indexOf(connection.bank_code) >= 0)
-    readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank", "Bhw"].indexOf(kind) >= 0
+    readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
     /// ConnectionsUI.swift › ConnectionEditSheet: these portals take a password, not a PIN
-    readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank", "Bhw"].indexOf(kind) >= 0
+    readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
     /// AppModel+Rah.swift › usesRah10 (#460): the secret is the key file's password, the login is fixed.
     readonly property bool isRah10: !!connection && kind === "FinTsGeneric"
         && (AppModel.run(() => AppModel.core("connection_key", { connection_id: connection.id })) || "").endsWith(":rah10")
@@ -46,6 +46,7 @@ Sheet {
         case "FinTsGeneric": return ["fints.url." + connection.bank_code, "fints.product_id", "fints.product_version"]
         case "Comdirect": return ["comdirect.client_id", "comdirect.client_secret"]
         case "PayPal": return ["paypal.client_id", "paypal.client_secret", "paypal.environment"]
+        case "Kontist": return ["kontist.client_id", "kontist.client_secret"]
         case "Bunq": return ["bunq.environment"]
         case "EnableBanking": return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
         default: return []
@@ -66,6 +67,7 @@ Sheet {
         case "VolksbankKasselGoettingen": case "Direkt1822": case "FinTsGeneric": return "FinTS 3.0"
         case "Comdirect": return "comdirect REST-API"
         case "PayPal": return "PayPal REST-App"
+        case "Kontist": return "Kontist OAuth2-Client"
         case "Bunq": return "bunq API"
         case "Ibkr": return "Interactive Brokers Flex Web Service"
         default: return "Enable Banking (PSD2)"
@@ -193,7 +195,7 @@ Sheet {
     }
     ConfirmDialog {
         id: confirmRemove
-        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(sheet.connection.display_name) : ""
+        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(AppModel.masking(sheet.connection.display_name)) : ""
         message: qsTr("Alle Konten dieses Bankzugangs werden samt Buchungen, Belegen und gespeicherten Zugangsdaten aus dem Tresor gelöscht. Das lässt sich nicht widerrufen.")
         actionTitle: qsTr("Entfernen")
         onConfirmed: { const id = sheet.connection.id; sheet.close(); AppModel.removeConnection(id) }
@@ -237,7 +239,7 @@ Sheet {
             spacing: 10
             SymbolTile { symbol: sheet.connection ? sheet.connection.sf_symbol : ""; size: 34; tint: Theme.accent }
             ColumnLayout { spacing: 2; Layout.fillWidth: true
-                Text { text: sheet.connection ? sheet.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text }
+                Text { text: sheet.connection ? sheet.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text; Sensitive {} }
                 Text { text: sheet.descriptor ? sheet.descriptor.protocol : ""; font.pixelSize: Theme.caption; color: Theme.secondary } }
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
@@ -255,10 +257,10 @@ Sheet {
                 SettingsFormSection {
                     title: qsTr("Zugang")
                     SettingsFormRow { label: qsTr("Anzeigename")
-                        TextField { text: sheet.name; onTextEdited: sheet.name = text; Layout.fillWidth: true; Layout.preferredWidth: 300 } }
+                        TextField { text: sheet.name; onTextEdited: sheet.name = text; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
                     SettingsFormRow { label: sheet.descriptor ? sheet.descriptor.login_label : qsTr("Benutzerkennung")
-                        TextField { text: sheet.login; onTextEdited: sheet.login = text; enabled: !sheet.isRah10; Layout.fillWidth: true; Layout.preferredWidth: 300 } }
-                    SettingsFormRow { visible: sheet.isTR && sheet.login !== ""; label: qsTr("Gespeichert als")
+                        TextField { text: sheet.login; onTextEdited: sheet.login = text; enabled: !sheet.isRah10; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
+                    SettingsFormRow { visible: sheet.isTR && sheet.login !== ""; label: qsTr("Gespeichert als"); personal: true
                               value: sheet.isTR && sheet.login !== "" ? AppModel.core("normalize_phone_number", { input: sheet.login }) : "" }
                     SettingsFormRow {
                         readonly property string blz: !sheet.connection ? "" : sheet.connection.bank_code !== "" ? sheet.connection.bank_code : (sheet.descriptor ? sheet.descriptor.bank_code : "")
@@ -448,6 +450,7 @@ Sheet {
                 echoMode: kf.secret && !kf.isRevealed ? TextInput.Password : TextInput.Normal
                 text: sheet.values[kf.key] || ""
                 placeholderText: kf.label
+                Accessible.name: kf.label   // TextField(label, …).labelsHidden() (ff91866)
                 onTextEdited: sheet.setValue(kf.key, text)
             }
             IconButton {
