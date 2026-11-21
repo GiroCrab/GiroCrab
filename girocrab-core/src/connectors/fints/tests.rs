@@ -1543,7 +1543,9 @@ async fn a_rejected_account_list_is_no_warning_when_the_upd_lists_the_accounts()
     c.upd = vec![upd_acc("0532013000", "", IBAN_A, "Girokonto", &["HKSAL"])];
     let r = c.fetch(&test_ctx()).await.unwrap();
     assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    // the sync went on after the rejection: the balance was read
     assert_eq!(r.accounts.len(), 1);
+    assert_eq!(r.accounts[0].balance_cents, 123_456);
 
     // Without UPD accounts the rejection is the reason nothing came: still reported.
     let (url, _) = mock_bank(vec![NO_PERMISSION]);
