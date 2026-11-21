@@ -14,6 +14,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     match kind {
         ConnectorKind::Advanzia => advanzia::bank_descriptor(kind),
+        ConnectorKind::Edenred => BankDescriptor {
+            kind,
+            name: "Edenred".into(),
+            protocol: tr("Direkt-Login (Web-Session)").into(),
+            bank_code: String::new(),
+            sf_symbol: "fork.knife".into(),
+            login_label: tr("Kartenbezeichnung").into(),
+            secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
+            required_settings: vec![],
+            note: tr("Edenred-Benefitkarten (z. B. Essenszuschuss, Sachbezug): Guthaben und Kartenumsätze aus nutzer.edenred.de. Anmeldung im eingebetteten Browser-Fenster wie gewohnt. Inoffiziell: liest die Daten, die das Portal selbst lädt, Änderungen sind möglich.").into(),
+        },
         ConnectorKind::VolksbankKasselGoettingen => BankDescriptor {
             kind,
             name: "Volksbank Kassel Göttingen".into(),
@@ -397,6 +408,15 @@ pub struct MatrixEntry {
 /// FinTS functions (securities, PDF statements) are offered where the bank's
 /// BPD advertises them.
 pub const BANK_MATRIX: &[MatrixEntry] = &[
+    MatrixEntry {
+        name: "Edenred",
+        kind: Some(ConnectorKind::Edenred),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[Capability::Transactions, Capability::Balances],
+        status: Status::TestingWanted,
+        issues: &[],
+    },
     MatrixEntry {
         name: "Advanzia Bank",
         kind: Some(ConnectorKind::Advanzia),
@@ -870,6 +890,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::AmazonOrders => Box::new(crate::importers::amazon_orders::WebOnlyConnector),
         ConnectorKind::Fnz => Box::new(fnz::WebOnlyConnector),
         ConnectorKind::Advanzia => Box::new(advanzia::WebOnlyConnector),
+        ConnectorKind::Edenred => Box::new(crate::importers::portal_import::PortalOnlyConnector),
         ConnectorKind::Ibkr => Box::new(ibkr::IbkrConnector::new()),
         ConnectorKind::Quirion => Box::new(quirion::WebOnlyConnector),
         ConnectorKind::SchwaebischHall => Box::new(schwaebisch_hall::WebOnlyConnector),

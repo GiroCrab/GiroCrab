@@ -140,6 +140,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
         ),
         (ConnectorKind::Comdirect, "comdirect", "comdirect"),
         (
+            ConnectorKind::Edenred,
+            "Edenred",
+            "edenred ticket plus city card benefits essenszuschuss sachbezug gutschein",
+        ),
+        (
             ConnectorKind::TradeRepublic,
             "Trade Republic",
             "trade republic depot broker",

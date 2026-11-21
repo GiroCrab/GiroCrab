@@ -50,6 +50,9 @@ pub enum ConnectorKind {
     Uberspace,
     /// Advanzia credit card via an authenticated WebKit session.
     Advanzia,
+    /// Edenred benefit cards (nutzer.edenred.de) via the embedded portal
+    /// browser: balance and card transactions.
+    Edenred,
     /// Bausparkasse Schwäbisch Hall (Bausparverträge, postbox PDFs) via the
     /// "Mein Konto" portal, authenticated inside the embedded browser (#290).
     SchwaebischHall,
@@ -98,6 +101,7 @@ impl ConnectorKind {
             ConnectorKind::VolkswagenBank => "volkswagenbank",
             ConnectorKind::Uberspace => "uberspace",
             ConnectorKind::Advanzia => "advanzia",
+            ConnectorKind::Edenred => "edenred",
             ConnectorKind::SchwaebischHall => "schwaebischhall",
             ConnectorKind::EquatePlus => "equateplus",
             ConnectorKind::Ffb => "ffb",
@@ -161,6 +165,7 @@ impl ConnectorKind {
             ConnectorKind::VolkswagenBank,
             ConnectorKind::Uberspace,
             ConnectorKind::Advanzia,
+            ConnectorKind::Edenred,
             ConnectorKind::SchwaebischHall,
             ConnectorKind::EquatePlus,
             ConnectorKind::Ffb,

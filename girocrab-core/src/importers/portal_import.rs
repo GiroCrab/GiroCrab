@@ -438,6 +438,9 @@ pub(crate) struct Capture {
     pub pending: Vec<Parsed>,
     /// A pending list (possibly empty) was among the captured responses (diagnostics).
     pub pending_listed: bool,
+    /// The portal's own booking list was among the responses (Edenred): even when
+    /// none of its entries counts (all declined), the visible table is not read instead.
+    pub bookings_listed: bool,
     pub balance: Option<(String, i64)>,
 }
 
@@ -547,7 +550,10 @@ fn find_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
 /// Returns the matched key and the balance in cents.
 fn find_balance(v: &Value, kind: ConnectorKind) -> Option<(String, i64)> {
     let owed = |c: i64| {
-        if charges_positive(kind) || c > 0 {
+        // a benefit card holds a credit, not a debt
+        if kind == ConnectorKind::Edenred {
+            c
+        } else if charges_positive(kind) || c > 0 {
             -c.abs()
         } else {
             c
@@ -617,6 +623,90 @@ pub fn parse_json_bodies(bodies: &[String], kind: ConnectorKind) -> (Vec<Parsed>
     (c.posted, c.balance.map(|(_, c)| c))
 }
 
+/// Edenred (`nutzer.edenred.de`): the portal's card list and card operations in
+/// the shape the generic reader understands. Operations become a `transactions`
+/// list (`operation_ref`, `date`, the merchant `outlet.name`, the sum of the
+/// wallet amounts: negative = payment); the card list becomes the card balance,
+/// the sum of the wallets' `total_balance` (a credit, not a debt), written as a
+/// balance summary so that 0 counts too. Edenred gives amounts and balances in
+/// cents. Other bodies stay as they are.
+fn edenred_body(v: &Value) -> Option<Value> {
+    let data = v.get("data")?;
+    let items = data
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| vec![data.clone()]);
+    // An empty list is the booking list of a card without (or with only declined)
+    // operations: it must count as present, or the visible table would be read instead.
+    if items.is_empty() || items.iter().any(|i| i.get("operation_ref").is_some()) {
+        let tx: Vec<Value> = items
+            .iter()
+            .filter(|i| {
+                let status = format!("{} {}", text_of(i, "status"), text_of(i, "cleared_status"))
+                    .to_lowercase();
+                !["declin", "reject", "cancel", "fail", "refus"]
+                    .iter()
+                    .any(|w| status.contains(w))
+            })
+            .filter_map(|i| {
+                let wallets = i.pointer("/transaction_details/wallets")?.as_array()?;
+                let cents: i64 = wallets
+                    .iter()
+                    .filter_map(|w| edenred_cents(w.get("amount")?))
+                    .sum();
+                let outlet = text_of(i, "/outlet/name");
+                let text = if outlet.is_empty() {
+                    text_of(i, "type")
+                } else {
+                    outlet
+                };
+                Some(serde_json::json!({
+                    "date": text_of(i, "date"),
+                    "amount": cents as f64 / 100.0,
+                    "description": text,
+                    "identifier": text_of(i, "operation_ref"),
+                }))
+            })
+            .collect();
+        return Some(serde_json::json!({ "transactions": tx }));
+    }
+    let wallets: Vec<&Value> = items
+        .iter()
+        .filter_map(|i| i.get("wallets")?.as_array())
+        .flatten()
+        .collect();
+    if wallets.iter().any(|w| w.get("total_balance").is_some()) {
+        let cents: i64 = wallets
+            .iter()
+            .filter_map(|w| edenred_cents(w.get("total_balance")?))
+            .sum();
+        let amount = cents as f64 / 100.0;
+        return Some(serde_json::json!({
+            "current_balance": amount,
+            "card_balance": amount,
+            "wallet_balance": amount,
+        }));
+    }
+    None
+}
+
+/// An Edenred amount: a number of cents (2406 = 24,06 €).
+fn edenred_cents(v: &Value) -> Option<i64> {
+    v.as_f64()
+        .or_else(|| v.as_str()?.trim().parse().ok())
+        .map(|c| c.round() as i64)
+}
+
+/// The text at `key` (a field name or a JSON pointer), "" if missing.
+fn text_of(v: &Value, key: &str) -> String {
+    let x = if key.starts_with('/') {
+        v.pointer(key)
+    } else {
+        v.get(key)
+    };
+    x.and_then(value_text).unwrap_or_default()
+}
+
 pub(crate) fn parse_capture(bodies: &[String], kind: ConnectorKind) -> Capture {
     let mut c = Capture::default();
     let mut cards = HashMap::new();
@@ -624,9 +714,25 @@ pub(crate) fn parse_capture(bodies: &[String], kind: ConnectorKind) -> Capture {
         let Ok(v) = serde_json::from_str::<Value>(b) else {
             continue;
         };
+        let v = match kind {
+            ConnectorKind::Edenred => match edenred_body(&v) {
+                Some(t) => {
+                    c.bookings_listed |= t.get("transactions").is_some();
+                    t
+                }
+                None => v,
+            },
+            _ => v,
+        };
         walk(&v, kind, false, &mut c);
         card_directory(&v, &mut cards);
-        if c.balance.is_none() {
+        // Edenred reloads its card list while the portal is open: the latest
+        // reported balance counts; a body without one keeps the earlier one.
+        if kind == ConnectorKind::Edenred {
+            if let Some(b) = find_balance(&v, kind) {
+                c.balance = Some(b);
+            }
+        } else if c.balance.is_none() {
             c.balance = find_balance(&v, kind);
         }
     }
@@ -970,7 +1076,7 @@ fn to_fetch(
     holds: Vec<Parsed>,
     balance: Option<i64>,
 ) -> FetchResult {
-    let (account, transactions) = card_account(
+    let (mut account, transactions) = card_account(
         &account_ref(kind, connection_id),
         name,
         "",
@@ -978,6 +1084,10 @@ fn to_fetch(
         holds,
         balance,
     );
+    // a benefit card holds a credit: no credit-card rules (open amount, settlement)
+    if kind == ConnectorKind::Edenred {
+        account.kind = AccountKind::PaymentService;
+    }
     FetchResult {
         // a reported balance, even 0, replaces the stored one
         balances_reported: if balance.is_some() {
@@ -1060,6 +1170,37 @@ pub(crate) fn account_ref(kind: ConnectorKind, connection_id: i64) -> String {
         kind.as_str().replace(':', "-"),
         connection_id
     )
+}
+
+/// Connector of a portal the app reads in its embedded browser (Edenred): a
+/// sync always goes through the portal window, never through the core.
+pub struct PortalOnlyConnector;
+
+#[async_trait::async_trait]
+impl crate::connectors::BankConnector for PortalOnlyConnector {
+    async fn begin(
+        &mut self,
+        _: &crate::connectors::ConnectContext,
+    ) -> crate::error::CoreResult<crate::connectors::Phase> {
+        Err(CoreError::BrowserLoginRequired {
+            message: tr("Bitte im Portal-Fenster anmelden und abrufen.").into(),
+        })
+    }
+    async fn respond(
+        &mut self,
+        ctx: &crate::connectors::ConnectContext,
+        _: crate::connectors::ChallengeResponse,
+    ) -> crate::error::CoreResult<crate::connectors::Phase> {
+        self.begin(ctx).await
+    }
+    async fn fetch(
+        &mut self,
+        _: &crate::connectors::ConnectContext,
+    ) -> crate::error::CoreResult<FetchResult> {
+        Err(CoreError::BrowserLoginRequired {
+            message: tr("Bitte im Portal-Fenster anmelden und abrufen.").into(),
+        })
+    }
 }
 
 // ------------------------------------------------------------------ several cards (#243)
@@ -1645,7 +1786,9 @@ impl Vault {
         balance: Option<i64>,
     ) -> Result<SyncSummary, CoreError> {
         let (kind, name) = self.portal_connection(connection_id)?;
-        if parsed.is_empty() && (holds.is_empty() || balance.is_none()) {
+        // Edenred: the balance alone is worth storing (a card without bookings)
+        let balance_only = kind == ConnectorKind::Edenred && balance.is_some();
+        if parsed.is_empty() && !balance_only && (holds.is_empty() || balance.is_none()) {
             return Err(CoreError::InvalidInput {
                 message: tr("Keine Umsätze erkannt.").into(),
             });
@@ -1766,11 +1909,12 @@ impl Vault {
             posted: mut parsed,
             pending,
             pending_listed,
+            bookings_listed,
             ..
         } = capture;
         let from_json = parsed.len();
         // The visible table only when the JSON held no bookings at all (it may mix in pending rows).
-        if parsed.is_empty() && pending.is_empty() {
+        if parsed.is_empty() && pending.is_empty() && !bookings_listed {
             let rows: Vec<Vec<String>> = serde_json::from_str(&dom_rows_json).unwrap_or_default();
             parsed = parse_dom_rows(&rows, kind);
         }
@@ -1803,9 +1947,13 @@ impl Vault {
             0
         };
         let mut n = c.posted.len() + holds;
-        if c.posted.is_empty() && c.pending.is_empty() {
+        if c.posted.is_empty() && c.pending.is_empty() && !c.bookings_listed {
             let rows: Vec<Vec<String>> = serde_json::from_str(&dom_rows_json).unwrap_or_default();
             n = parse_dom_rows(&rows, kind).len();
+        }
+        // Edenred: a card without bookings (new or used up) still brings its balance
+        if n == 0 && kind == ConnectorKind::Edenred && c.balance.is_some() {
+            n = 1;
         }
         Ok(n as u32)
     }
@@ -2105,6 +2253,130 @@ mod tests {
         let joined = keys.into_iter().collect::<Vec<_>>().join(", ");
         assert_eq!(joined, "charges_amount, statement_balance_amount");
         assert!(!joined.contains("6266") && !joined.contains("36.88"));
+    }
+
+    #[test]
+    fn edenred_operations_and_card_balance() {
+        let cards = r#"{"data":[{"card_ref":"C1","account_ref":"A1","status":"active","wallets":[{"currency":"EUR","product_ref":"P","product_type":"meal","total_balance":4250}]},{"card_ref":"C0","account_ref":"A0","status":"expired","wallets":[{"currency":"EUR","product_ref":"P","product_type":"meal","total_balance":0}]}],"meta":{"status":"ok"}}"#;
+        let ops = r#"{"data":[
+            {"operation_ref":"OP1","date":"2026-11-12T11:30:00.000Z","currency":"EUR","status":"accepted","cleared_status":"cleared","type":"payment","outlet":{"name":"Kantine Musterhaus","ref":"O1"},"transaction_details":{"wallets":[{"amount":-740,"product_ref":"P","status":"ok"}]}},
+            {"operation_ref":"OP2","date":"2026-11-01T00:00:00.000Z","currency":"EUR","status":"accepted","cleared_status":"cleared","type":"load","outlet":{"name":"","ref":""},"transaction_details":{"wallets":[{"amount":5000,"product_ref":"P","status":"ok"}]}},
+            {"operation_ref":"OP3","date":"2026-11-13T12:00:00.000Z","currency":"EUR","status":"declined","cleared_status":"","type":"payment","outlet":{"name":"Bistro","ref":"O2"},"transaction_details":{"wallets":[{"amount":-990,"product_ref":"P","status":"ko"}]}}
+        ],"meta":{"status":"ok"}}"#;
+        let c = parse_capture(
+            &[cards.to_string(), ops.to_string()],
+            ConnectorKind::Edenred,
+        );
+        // a credit in cents, the sum of the cards' wallets
+        assert_eq!(c.balance.map(|(_, b)| b), Some(4250));
+        let got: Vec<(String, i64, String, Option<String>)> = c
+            .posted
+            .iter()
+            .map(|p| (p.date.clone(), p.cents, p.text.clone(), p.id.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "2026-11-12".to_string(),
+                    -740,
+                    "Kantine Musterhaus".to_string(),
+                    Some("OP1".to_string())
+                ),
+                (
+                    "2026-11-01".to_string(),
+                    5000,
+                    "load".to_string(),
+                    Some("OP2".to_string())
+                ),
+            ]
+        );
+        // a balance of 0 counts (cards used up)
+        let empty = r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":0}]}]}"#;
+        let c = parse_capture(&[empty.to_string()], ConnectorKind::Edenred);
+        assert_eq!(c.balance.map(|(_, b)| b), Some(0));
+    }
+
+    #[test]
+    fn declined_edenred_operations_never_come_back_from_the_table() {
+        let declined = r#"{"data":[{"operation_ref":"OP3","date":"2026-11-13T12:00:00.000Z","status":"declined","outlet":{"name":"Bistro"},"transaction_details":{"wallets":[{"amount":-990}]}}]}"#;
+        let empty = r#"{"data":[],"meta":{"status":"ok"}}"#;
+        for (i, ops) in [declined, empty].into_iter().enumerate() {
+            let dir = crate::test_support::TempDir::new(&format!("girocrab-edenred-declined-{i}"));
+            let v = Vault::open(
+                dir.join("v.db").to_string_lossy().to_string(),
+                vec![3u8; 32],
+            )
+            .unwrap();
+            let conn = v
+                .add_bank_connection(ConnectorKind::Edenred, String::new(), "Edenred".into())
+                .unwrap();
+            let cards =
+                r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":2500}]}]}"#.to_string();
+            // the page (still) shows the declined payment in its table
+            let rows = r#"[["13.11.2026","Bistro","-9,90"]]"#.to_string();
+            let bodies = vec![ops.to_string(), cards];
+            let c = parse_capture(&bodies, ConnectorKind::Edenred);
+            assert!(c.bookings_listed, "case {i}");
+            v.clone().import_portal_capture(conn, bodies, rows).unwrap();
+            let n: i64 = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 0, "case {i}");
+        }
+    }
+
+    #[test]
+    fn edenred_takes_the_latest_balance() {
+        let cards = |cents: i64| {
+            format!(r#"{{"data":[{{"card_ref":"C1","wallets":[{{"total_balance":{cents}}}]}}]}}"#)
+        };
+        let other = r#"{"data":{"cardOrigin":"x"}}"#.to_string();
+        let c = parse_capture(
+            &[cards(4250), other.clone(), cards(3510), other],
+            ConnectorKind::Edenred,
+        );
+        assert_eq!(c.balance.map(|(_, b)| b), Some(3510));
+    }
+
+    #[test]
+    fn an_edenred_card_without_bookings_brings_its_balance() {
+        let dir = crate::test_support::TempDir::new("girocrab-edenred-balance-only");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![3u8; 32],
+        )
+        .unwrap();
+        let conn = v
+            .add_bank_connection(ConnectorKind::Edenred, String::new(), "Edenred".into())
+            .unwrap();
+        let cards =
+            r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":2500}]}]}"#.to_string();
+        assert_eq!(
+            v.clone()
+                .preview_portal_capture(conn, vec![cards.clone()], "[]".into())
+                .unwrap(),
+            1
+        );
+        v.clone()
+            .import_portal_capture(conn, vec![cards], "[]".into())
+            .unwrap();
+        let (balance, kind): (i64, String) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT balance_cents, kind FROM accounts WHERE deleted_ms IS NULL",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((balance, kind.as_str()), (2500, "payment_service"));
     }
 
     #[test]
