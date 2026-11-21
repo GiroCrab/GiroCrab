@@ -50,6 +50,8 @@
 //! - 34: per-account total switch (#337): `accounts.include_in_total` and its
 //!   sync stamp `accounts.total_ms`; existing amazon-orders accounts start
 //!   excluded (stamp 0, so any explicit user choice wins on sync).
+//! - 35: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
+//!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -100,6 +102,7 @@ const STEPS: &[Step] = &[
     Step::Hook(account_notes),                                 // 32: account notes sync (#980)
     Step::Sql(crate::recipients::SCHEMA),                      // 33: hidden recipients (#978)
     Step::Hook(account_total_flag),                            // 34 (#337)
+    Step::Hook(account_bank_label),                            // 35 (#1467)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -893,6 +896,20 @@ fn account_total_flag(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// Step 35 (#1467): what the sidebar shows in place of the bank name, with
+/// its sync stamp; NULL keeps the bank name.
+fn account_bank_label(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "bank_label")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN bank_label TEXT;")?;
+    }
+    if !has_column(conn, "main", "accounts", "bank_label_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN bank_label_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,7 +1079,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 34);
+        assert_eq!(SCHEMA_VERSION, 35);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
