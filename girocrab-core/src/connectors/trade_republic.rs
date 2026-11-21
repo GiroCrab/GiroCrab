@@ -262,17 +262,30 @@ struct DocumentCandidate {
     id: String,
     date: String,
     title: String,
-    kind_text: String,
+    event_context: String,
 }
 
 impl DocumentCandidate {
+    fn from_timeline_item(item: &Value, id: String, date: String) -> Self {
+        let subtitle = item["subtitle"].as_str().unwrap_or_default();
+        let event_type = item["eventType"].as_str().unwrap_or_default();
+        Self {
+            id,
+            date,
+            title: item["title"].as_str().unwrap_or_default().into(),
+            event_context: format!("{subtitle} {event_type}").to_lowercase(),
+        }
+    }
+
     fn classify(&self, title: &str) -> (&'static str, &'static str) {
         let lower = title.to_lowercase();
-        let doc_type =
-            refine_document_type(crate::documents::type_from_title(&lower), &self.kind_text);
+        let doc_type = refine_document_type(
+            crate::documents::type_from_title(&lower),
+            &self.event_context,
+        );
         let account_hint =
             if doc_type != "steuer" && matches!(lower.as_str(), "dokumente" | "dokument") {
-                &self.kind_text
+                &self.event_context
             } else {
                 &lower
             };
@@ -1629,12 +1642,11 @@ impl BankConnector for TradeRepublicConnector {
                     .iter()
                     .any(|k| kind_text.contains(k))
                 {
-                    doc_candidates.push(DocumentCandidate {
-                        id: item_id.clone(),
-                        date: date.clone(),
-                        title: item["title"].as_str().unwrap_or_default().to_string(),
-                        kind_text: kind_text.clone(),
-                    });
+                    doc_candidates.push(DocumentCandidate::from_timeline_item(
+                        &item,
+                        item_id.clone(),
+                        date.clone(),
+                    ));
                 }
                 if !item_id.is_empty() && is_trade_kind(&kind_text) {
                     trade_rows.push(TradeRow {
@@ -1883,9 +1895,22 @@ mod tests {
                 id: "evt-1".into(),
                 date: "2026-11-21".into(),
                 title: "Apple".into(),
-                kind_text: event.into(),
+                event_context: event.into(),
             };
             assert_eq!(candidate.classify("Dokumente").1, expected, "{event}");
+        }
+    }
+
+    #[test]
+    fn an_instrument_name_cannot_route_a_purchase_to_the_cash_account() {
+        for title in ["Interest Rate Hedged Bond ETF", "Deka Zins Plus"] {
+            let candidate = DocumentCandidate::from_timeline_item(
+                &json!({"title": title, "subtitle": "Kauf", "eventType": "trade"}),
+                "evt-1".into(),
+                "2026-11-21".into(),
+            );
+            assert_eq!(candidate.title, title);
+            assert_eq!(candidate.classify("Dokumente"), ("abrechnung", DEPOT_REF));
         }
     }
 
@@ -1919,7 +1944,7 @@ mod tests {
             id: "trade-1".into(),
             date: "2025-12-04".into(),
             title: "Apple".into(),
-            kind_text: "kauf trade apple".into(),
+            event_context: "kauf trade".into(),
         };
         let (doc_type, account_ref) = candidate.classify("Dokumente");
         assert_eq!((doc_type, account_ref), ("abrechnung", DEPOT_REF));
