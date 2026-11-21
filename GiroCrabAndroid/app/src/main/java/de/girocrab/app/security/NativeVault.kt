@@ -1,6 +1,8 @@
 package de.girocrab.app.security
 
 import java.io.File
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
 
 /**
  * Handle on an open vault of `girocrab-core`, reached through the UniFFI bindings.
@@ -8,6 +10,10 @@ import java.io.File
  * Reading data stays in Rust: this type only exposes what the Kotlin side needs to prove it
  * really opened the vault (account count and names) until the snapshot mapper from #1429 (3.1)
  * arrives. Nothing here re-implements core logic.
+ *
+ * Every member throws when the call cannot be made. Returning `0` or an empty list on a failed
+ * reflection call would make "no accounts" and "the binding could not be reached" look identical —
+ * and a test asserting zero would then always pass.
  */
 interface OwnVault : AutoCloseable {
     val accountCount: Int
@@ -29,15 +35,23 @@ class NativeVaultOpener {
      * Opens (or creates) the vault at [path] with the raw 32-byte master key.
      *
      * Returns null when the core is not linked; a key of the wrong length is refused before
-     * anything is touched, and `CoreException` from the core (wrong key, corrupt file) surfaces
-     * unchanged to the caller.
+     * anything is touched. A failure inside the core (wrong key, corrupt file) is rethrown as the
+     * core's own exception — `Method.invoke` would otherwise wrap it in
+     * [InvocationTargetException] and hide what actually went wrong.
      */
     fun open(path: String, key: ByteArray): OwnVault? {
         require(key.size == MASTER_KEY_BYTES) {
             "master key must be $MASTER_KEY_BYTES bytes, was ${key.size}"
         }
         val resolved = entry ?: return null
-        val handle = resolved.openMethod.invoke(resolved.receiver, path, key) ?: return null
+        // The core opens a file, it does not create directories: `filesDir/vaults` is missing on a
+        // fresh install, and the core then reports a database error without any message.
+        File(path).parentFile?.let { dir ->
+            if (!dir.isDirectory && !dir.mkdirs()) {
+                throw IllegalStateException("cannot create ${dir.path}")
+            }
+        }
+        val handle = invoke(resolved.openMethod, resolved.receiver, path, key) ?: return null
         return Handle(handle)
     }
 
@@ -48,16 +62,11 @@ class NativeVaultOpener {
     // --- reflection plumbing -------------------------------------------------------------
 
     /**
-     * Kotlin companion functions are only `static` on the class when annotated with `@JvmStatic`;
-     * UniFFI does not do that. So the receiver is either the class itself or its `Companion`
-     * instance — resolved by looking for the method, not by guessing.
+     * The method is resolved together with its receiver: Kotlin companion functions are only
+     * `static` on the class with `@JvmStatic`, which UniFFI does not emit, so looking the method
+     * up on the class while calling it on the `Companion` throws `NoSuchMethodException`.
      */
-    /**
-     * The method is resolved together with its receiver: looking it up on the class while the
-     * receiver is the `Companion` throws `NoSuchMethodException` at call time (found the hard
-     * way in CI).
-     */
-    private class Entry(val openMethod: java.lang.reflect.Method, val receiver: Any?)
+    private class Entry(val openMethod: Method, val receiver: Any?)
 
     private val entry: Entry? by lazy {
         val cls = runCatching { Class.forName(VAULT_CLASS) }.getOrNull() ?: return@lazy null
@@ -67,40 +76,58 @@ class NativeVaultOpener {
         findOpen(companion.javaClass)?.let { Entry(it, companion) }
     }
 
-    private fun findOpen(target: Class<*>): java.lang.reflect.Method? =
+    private fun findOpen(target: Class<*>): Method? =
         runCatching { target.getMethod("open", String::class.java, ByteArray::class.java) }.getOrNull()
 
     private class Handle(private val vault: Any) : OwnVault {
         override val accountCount: Int
             get() {
-                // `accountCount(): UInt` is erased to a plain int on the JVM.
-                val raw = call("accountCount") ?: return 0
-                return (raw as? Number)?.toInt() ?: 0
+                val raw = call("accountCount") as? Number
+                    ?: throw IllegalStateException("accountCount did not return a number")
+                return raw.toInt()
             }
 
         override val accountNames: List<String>
             get() {
-                val list = call("listAccounts") as? List<*> ?: return emptyList()
-                return list.mapNotNull { account ->
-                    runCatching {
-                        account?.javaClass?.getMethod("getName")?.invoke(account) as? String
-                    }.getOrNull()
+                val list = call("listAccounts") as? List<*>
+                    ?: throw IllegalStateException("listAccounts did not return a list")
+                return list.map { account ->
+                    val name = account?.let { invoke(it.javaClass.getMethod("getName"), it) }
+                    name as? String ?: throw IllegalStateException("account without a name getter")
                 }
             }
 
         /** UniFFI objects implement AutoCloseable; older bindings used `destroy`. */
         override fun close() {
-            val closed = runCatching { vault.javaClass.getMethod("close").invoke(vault) }.isSuccess
-            if (!closed) runCatching { vault.javaClass.getMethod("destroy").invoke(vault) }
+            val closed = runCatching { invoke(vault.javaClass.getMethod("close"), vault) }.isSuccess
+            if (!closed) runCatching { invoke(vault.javaClass.getMethod("destroy"), vault) }
         }
 
-        private fun call(name: String): Any? =
-            runCatching { vault.javaClass.getMethod(name).invoke(vault) }.getOrNull()
+        private fun call(name: String): Any? {
+            val method = methods.firstOrNull { it.name == name || it.name.startsWith("$name-") }
+                ?: throw IllegalStateException(
+                    "generated binding has no '$name' (found ${methods.joinToString { it.name }}); " +
+                        "a value-class return can mangle the JVM name",
+                )
+            return invoke(method, vault)
+        }
+
+        private val methods: List<Method> by lazy {
+            vault.javaClass.methods.filter { it.parameterCount == 0 }
+        }
     }
 
     companion object {
         /** Matches `Vault::open`: the raw master key is 32 bytes and wiped by the core. */
         const val MASTER_KEY_BYTES = 32
         private const val VAULT_CLASS = "uniffi.girocrab_core.Vault"
+
+
+        private fun invoke(method: Method, receiver: Any?, vararg args: Any?): Any? =
+            try {
+                method.invoke(receiver, *args)
+            } catch (e: InvocationTargetException) {
+                throw e.targetException ?: e
+            }
     }
 }
