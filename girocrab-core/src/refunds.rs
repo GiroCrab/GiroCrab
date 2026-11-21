@@ -904,6 +904,10 @@ impl CategoryRefunds {
         };
         let income = if refund_income_cents > 0 { rest } else { 0 };
         let (into, into_income) = this.into.get(&id).copied().unwrap_or((0, 0));
+        // `rest`: what the refund's own category keeps in the filter. It is income when the
+        // refund still has an unassigned remainder, else it stays in the booking's own flow.
+        // `into`: what refunds pay back of bookings in the filter (an expense reduction there),
+        // `into_income`: the part of that the core books as income.
         [
             (flow, rest - income + into),
             (crate::merchants::FlowKind::Income, income + into_income),
