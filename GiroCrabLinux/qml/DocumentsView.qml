@@ -4,8 +4,8 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtCore
 
-// DocumentsUI.swift › DocumentsView: "Belege & PostBox" – list left, preview right.
-// The scope (Alle Dokumente / Belege / PostBox, #526) sits in the toolbar like on the Mac
+// DocumentsUI.swift › DocumentsView: "Belege & Postbox" – list left, preview right.
+// The scope (Alle Dokumente / Belege / Postbox, #526) sits in the toolbar like on the Mac
 // (Main.qml › DocumentsScope). Linux keeps its search field above the list.
 Rectangle {
     id: view
@@ -173,7 +173,7 @@ Rectangle {
                     Text { Layout.alignment: Qt.AlignHCenter; font.pixelSize: Theme.title3 + 1; font.weight: Font.Bold; color: Theme.text
                            text: view.unfiltered ? qsTr("Keine Belege") : qsTr("Keine passenden Dokumente") }
                     Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; color: Theme.secondary
-                           text: view.unfiltered ? qsTr("Belege kommen beim Abruf (Trade Republic, comdirect-PostBox, FinTS-Kontoauszug) oder per Drag & Drop.")
+                           text: view.unfiltered ? qsTr("Belege kommen beim Abruf (Trade Republic, comdirect-Postbox, FinTS-Kontoauszug) oder per Drag & Drop.")
                                                  : qsTr("Für diese Auswahl wurden keine Dokumente gefunden.") }
                     Button { visible: !view.unfiltered; Layout.alignment: Qt.AlignHCenter; text: qsTr("Alle Dokumente anzeigen"); onClicked: view.showAll() }
                 }
@@ -210,7 +210,7 @@ Rectangle {
         onAccepted: {
             if (!selectedFiles.length) return
             // An unmatched upload has no account. Make it visible even when the dialog
-            // was opened from PostBox or a filtered account.
+            // was opened from Postbox or a filtered account.
             DocumentsScope.current = "receipts"
             AppModel.documentsAccountFilter = null
             searchField.text = ""

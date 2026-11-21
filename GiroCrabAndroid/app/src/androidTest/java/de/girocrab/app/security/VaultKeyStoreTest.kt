@@ -123,6 +123,51 @@ class VaultKeyStoreTest {
         assertEquals(VaultKeyStore.State.Invalidated, store().state())
     }
 
+    /**
+     * The way out of `Invalidated`: the dead Keystore entry has to go, otherwise every later setup
+     * fails on the same alias. Afterwards the vault comes back from a backup.
+     */
+    @Test
+    fun resetForNewSetupAfterLostKeyAllowsAFreshStart() {
+        val stored = store()
+        stored.storeWrapped(ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { 3 }, stored.setupCipher())
+        deleteAlias()
+
+        assertEquals(VaultKeyStore.State.Invalidated, store().state())
+
+        store().resetForNewSetup()
+        assertEquals(VaultKeyStore.State.NotSetUp, store().state())
+
+        val fresh = store()
+        fresh.storeWrapped(ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { 9 }, fresh.setupCipher())
+        assertEquals(VaultKeyStore.State.Ready, store().state())
+    }
+
+    /**
+     * An invalidated key still answers getKey(), so only deleting the entry lets setup mint a new
+     * one (#1557). The emulator cannot invalidate a key, so this checks the deletion itself.
+     */
+    @Test
+    fun resetForNewSetupDeletesTheStillPresentKeystoreEntry() {
+        val s = store()
+        s.storeWrapped(ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { 4 }, s.setupCipher())
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        assertTrue(keyStore.containsAlias(alias))
+
+        store().resetForNewSetup()
+
+        val after = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        assertTrue("Keystore entry '$alias' must be gone after resetForNewSetup()", !after.containsAlias(alias))
+        assertEquals(VaultKeyStore.State.NotSetUp, store().state())
+
+        // A second reset with nothing left must not fail.
+        store().resetForNewSetup()
+
+        val fresh = store()
+        fresh.storeWrapped(ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { 8 }, fresh.setupCipher())
+        assertEquals(VaultKeyStore.State.Ready, store().state())
+    }
+
     @Test
     fun tamperedCiphertextFailsToUnwrap() {
         val s = store()

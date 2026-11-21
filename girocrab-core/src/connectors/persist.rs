@@ -904,6 +904,22 @@ pub(crate) fn store_fetch(
                     .optional()?,
                 _ => None,
             };
+            // A Trade Republic PDF can be filed at its depot while the booking lives at tr:cash.
+            let booking_id = match (booking_id, &d.booking_external_id) {
+                (None, Some(ext))
+                    if kind == ConnectorKind::TradeRepublic && d.account_ref == "tr:depot" =>
+                {
+                    tx.query_row(
+                        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+                          WHERE a.connection_id = ?1 AND a.external_ref = 'tr:cash'
+                            AND t.external_id = ?2",
+                        params![connection_id, ext],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                }
+                (booking, _) => booking,
+            };
             // without bytes (download failed) only a stored copy gets its account
             let added = if d.bytes.is_empty() {
                 Ok(None)
@@ -1155,7 +1171,7 @@ pub(crate) enum PostboxMode {
     Off,
     /// When it is on for the login and due.
     Due,
-    /// Now ("PostBox jetzt abrufen").
+    /// Now ("Postbox jetzt abrufen").
     Now,
 }
 
@@ -1250,7 +1266,7 @@ impl Vault {
         }
         if !is_comdirect_fints(&key) {
             return Err(CoreError::invalid(tr(
-                "Die PostBox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
+                "Die Postbox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
             )));
         }
         for k in ["comdirect.client_id", "comdirect.client_secret"] {
@@ -1283,7 +1299,7 @@ impl Vault {
     ) -> Result<Arc<SyncSession>, CoreError> {
         if !self.comdirect_postbox_enabled(connection_id)? {
             return Err(CoreError::invalid(tr(
-                "Der PostBox-Abruf ist für diesen Zugang nicht eingeschaltet.",
+                "Der Postbox-Abruf ist für diesen Zugang nicht eingeschaltet.",
             )));
         }
         if !documents_fetch_on(&*self.db()?, connection_id)? {

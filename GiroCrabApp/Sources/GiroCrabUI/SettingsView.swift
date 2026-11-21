@@ -400,7 +400,7 @@ struct MerchantLogoSettingsSection: View {
 }
 
 #if os(macOS)
-/// Automatic copy of all documents (statements, receipts, PostBox) into a
+/// Automatic copy of all documents (statements, receipts, Postbox) into a
 /// folder, e.g. in iCloud Drive (GitHub #57).
 struct DocumentFolderSettings: View {
     @Environment(AppModel.self) private var model
@@ -438,7 +438,7 @@ struct DocumentFolderSettings: View {
                         }
                     }
                 }
-                Text("Kontoauszüge, Belege und PostBox-Dokumente werden nach jedem Sync als Kopie abgelegt: <Ordner>/<Konto>/<Jahr>/. Vorhandene Dateien werden nie überschrieben. Achtung: Im Ordner liegen die PDFs unverschlüsselt – in iCloud Drive also auch in Ihrer iCloud.")
+                Text("Kontoauszüge, Belege und Postbox-Dokumente werden nach jedem Sync als Kopie abgelegt: <Ordner>/<Konto>/<Jahr>/. Vorhandene Dateien werden nie überschrieben. Achtung: Im Ordner liegen die PDFs unverschlüsselt – in iCloud Drive also auch in Ihrer iCloud.")
                     .appFont(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } header: { Text("Dokumentenordner").appSectionHeader() }
@@ -784,17 +784,10 @@ struct ICloudSyncSection: View {
         .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { r in
             if case .success(let url) = r {
                 Task {
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    // iCloud may still be listing the folder: wait briefly before calling it empty.
-                    let hasVault = await ICloudFolderMigration.waitForVault(in: url, wait: 6)
-                    let sub = hasVault ? nil : ICloudFolderMigration.vaultSubfolder(in: url)
-                    if scoped { url.stopAccessingSecurityScopedResource() }
-                    if let sub {
-                        wrongFolderHint = sub
-                    } else if !hasVault {
-                        pendingFolder = url
-                    } else {
-                        do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { }
+                    switch await ICloudFolderMigration.inspectPicked(url) {
+                    case .subfolder(let sub): wrongFolderHint = sub
+                    case .empty: pendingFolder = url
+                    case .found: do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { }
                     }
                 }
             }
@@ -856,6 +849,7 @@ struct KeyPasteSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
+    @State private var picking = false
 
     private var valid: Bool { (try? VaultKeyManager.parseKey(text)) != nil }
     private var working: Bool { model.keyAdoption == .working }
@@ -880,6 +874,20 @@ struct KeyPasteSheet: View {
                     .appFont(.caption).foregroundStyle(Theme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if case .notFound(let message, let searched) = model.keyAdoption {
+                // The other device may sync via a folder in iCloud Drive (#1503).
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .appFont(.caption).foregroundStyle(Theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let searched {
+                    LabeledContent("Gesucht in") { Text(searched).sensitive() }
+                        .appFont(.caption)
+                }
+            }
+            if model.keyAdoption.offersFolderPick {
+                Button("Ordner wählen …", systemImage: "folder.badge.gearshape") { picking = true }
+                    .disabled(!valid)
+            }
             HStack {
                 Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
@@ -894,6 +902,9 @@ struct KeyPasteSheet: View {
         .macFrame(minWidth: 420)
         .interactiveDismissDisabled(working)
         .onAppear { model.keyAdoption = .idle }
+        .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { r in
+            if case .success(let url) = r { model.adoptSyncKey(text, folder: url) }
+        }
         .onChange(of: model.keyAdoption) { _, state in
             if state == .done { text = ""; dismiss() }
         }

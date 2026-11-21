@@ -245,7 +245,7 @@ struct EquatePlusWebSheet: View {
             PortalWebView(browser: browser).macFrame(minWidth: 760, minHeight: 620)
             Divider()
             // where the optional PDFs go, before anyone looks for them in the accounts
-            Text("Dokumente werden unter „Belege & PostBox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto.")
+            Text("Dokumente werden unter „Belege & Postbox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto.")
                 .appFont(.caption2).foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12).padding(.top, 8)
@@ -381,7 +381,7 @@ struct EquatePlusWebSheet: View {
                 failureSummary = failures.summary
                 let message = open == 0
                     ? String(localized: "EquatePlus: Keine neuen Dokumente.")
-                    : String(localized: "EquatePlus: \(downloaded) neue PDFs in „Belege & PostBox“.")
+                    : String(localized: "EquatePlus: \(downloaded) neue PDFs in „Belege & Postbox“.")
                 model.toast = message
                 if failed == 0 { close() }
                 else {

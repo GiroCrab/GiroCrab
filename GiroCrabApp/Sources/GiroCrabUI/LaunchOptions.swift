@@ -6,7 +6,7 @@ import Foundation
 ///  GIROCRAB_DEMO_SEED=1   same, via environment (works for Xcode schemes / iOS)
 ///  --demo-sync            (with demo data) start "Sync All" right away, to
 ///                         see the push-TAN / code / redirect 2FA sheets
-///  --view alltag|sparplaene|belege|vermoegen|vermoegen-wertpapiere|vermoegen-sachwerte|geplant  start in "Alltag & Konsum" / "Sparpläne & Perks" / "Belege & PostBox" / "Vermögen"
+///  --view alltag|sparplaene|belege|vermoegen|vermoegen-wertpapiere|vermoegen-sachwerte|geplant  start in "Alltag & Konsum" / "Sparpläne & Perks" / "Belege & Postbox" / "Vermögen"
 ///  --fresh-vault          (developer) empty personal vault in a temp folder,
 ///                         fixed key, no Keychain – to try onboarding/setup
 ///  --keep-fresh-vault     (developer) like --fresh-vault, but reopen the temp vault
@@ -77,6 +77,7 @@ public struct LaunchOptions: Sendable {
     /// (demo) preselect the account whose name contains this text
     public var selectAccount: String?
     /// (demo) preselect the booking whose merchant/counterparty contains this text
+    /// (in „Belege & Postbox“: the document whose title contains it)
     public var pickBooking: String?
     /// (demo) `--depot-tab activities|plans`: tab of the securities depot view
     public var depotTab: String?

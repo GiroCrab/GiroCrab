@@ -4,7 +4,8 @@ import GiroCrabCore
 /// Bookings dragged from the list onto a sidebar category (#366, macOS only:
 /// iOS has no drag pasteboard to tell them from accounts). A plain string like
 /// `GroupDrag`, so the sidebar's drop zones receive it. Every other `String`
-/// or `URL` drop target sees it too and must ignore it.
+/// or `URL` drop target sees it too and must ignore it. The row drags it as
+/// part of `BookingDragItem`, next to the JSON for other apps.
 enum BookingDrag {
     static let prefix = "girocrab-bookings:"
 

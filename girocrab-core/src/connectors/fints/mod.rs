@@ -510,8 +510,13 @@ impl BankConnector for FinTsConnector {
     }
 
     async fn fetch(&mut self, ctx: &ConnectContext) -> CoreResult<FetchResult> {
-        let mut errors: Vec<String> = Vec::new();
-        let accounts = self.account_list(ctx, &mut errors).await;
+        let (accounts, list_error) = self.account_list(ctx).await;
+        // A rejected HKSPA only matters when the UPD lists no account either: flatex
+        // answers it with 9380 on every sync and serves all accounts anyway (#1083).
+        let mut errors: Vec<String> = list_error
+            .filter(|_| accounts.is_empty())
+            .into_iter()
+            .collect();
         let mut result = FetchResult::default();
         let mut ok_any = false;
         // not yet booked entries ("vorgemerkt"), see `camt::HOLD_PREFIX`

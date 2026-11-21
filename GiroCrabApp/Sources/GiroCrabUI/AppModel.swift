@@ -554,11 +554,11 @@ public final class AppModel {
     var iconColorTarget: IconColorTarget?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
-    /// "Belege & PostBox" filtered to one account (#172); nil = all accounts,
-    /// `documentsWithoutAccount` = documents without an account (e.g. PostBox, #838).
+    /// "Belege & Postbox" filtered to one account (#172); nil = all accounts,
+    /// `documentsWithoutAccount` = documents without an account (e.g. Postbox, #838).
     var documentsScope: DocumentsScope = .all
     var documentsAccountFilter: Int64?
-    /// "Belege & PostBox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
+    /// "Belege & Postbox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
     /// documents without an account (they have no bank connection). Set it with `selectDocumentsConnection`.
     var documentsConnectionFilter: Int64?
     static let documentsWithoutAccount: Int64 = -1
@@ -574,7 +574,7 @@ public final class AppModel {
     /// Sidebar badges: scheduled payments / active mandates over all accounts (SQL counts).
     var plannedCount = 0
     var mandateCount = 0
-    /// Unread documents (badge of „Belege & PostBox“), a partial-index COUNT.
+    /// Unread documents (badge of „Belege & Postbox“), a partial-index COUNT.
     var unseenDocumentCount = 0
     /// Counts the sidebar badge reads: an older read that finishes late must not overwrite a newer one.
     @ObservationIgnored var sidebarCountsGeneration = 0
@@ -707,6 +707,10 @@ public final class AppModel {
     var activeChallenge: ActiveChallenge?
     var payeeCheck: PendingPayeeCheck?
     var syncingConnectionID: Int64?
+    /// The one account the running sync of `syncingConnectionID` covers
+    /// ("<Konto> abrufen", statements), nil for the whole login. Set with it by
+    /// `startSync`; read only through `isSyncing(_:)` (#1572).
+    var syncingAccountID: Int64?
     var toast: String?
     /// Text of the error alert. Clearing it also clears title and retry.
     var errorMessage: String? {
@@ -751,7 +755,13 @@ public final class AppModel {
     }
 
     var activeSession: SyncSession?
-    var activeTransfer: TransferSession?
+    var activeTransfer: TransferSession? {
+        // the frozen order data belongs to one session: a new one, the end, a cancel or the lock clears it
+        didSet { if activeTransfer !== oldValue { activeTransferComparison = nil } }
+    }
+    /// Recipient IBAN and amount of the single transfer as handed to the bank (#949), frozen when it
+    /// starts: the TAN card never follows later edits of `transferDraft`. Nil for batch, standing order, debit.
+    var activeTransferComparison: TanComparison?
     var showTransferSheet = false
     /// Batch transfer (#240): sheet, the rows being edited, and whether the running session is one.
     var showBatchSheet = false
@@ -874,7 +884,7 @@ public final class AppModel {
     /// Account whose statements (HKEKA) are being fetched by the running session.
     var statementsAccountID: Int64?
     var statementsCountBefore = 0
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     var postboxConnectionID: Int64?
     /// Account whose login syncs only it ("<Konto> abrufen", #1124). Set by
     /// `requestSyncAccount`, kept through prompts and retries, cleared by a
@@ -1485,13 +1495,15 @@ public final class AppModel {
                 let cloud = CloudSyncManager.shared
                 await cloud.sync(vault: v, remoteKey: pasted, mergeOnly: true)
                 if let e = cloud.lastError { self.keyAdoption = .failed(e); self.toast = e; return }
+                // Also with the device's own key (#1503): nothing found and nothing here
+                // means the other device syncs elsewhere, not „done“.
+                let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
+                if !cloud.lastMergeFoundSnapshot && !hasData {
+                    // Name the place and offer another folder (#1503): the sheet stays open.
+                    self.keyAdoption = .notFound(KeyAdoptionState.notFoundMessage(location: cloud.location), searched: cloud.folderName)
+                    return
+                }
                 if pasted != current {
-                    let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
-                    if !cloud.lastMergeFoundSnapshot && !hasData {
-                        let msg = String(localized: "Noch kein iCloud-Tresor gefunden. Aktivieren Sie iCloud Sync auf dem anderen Gerät, warten Sie auf den ersten Upload und versuchen Sie es erneut.")
-                        self.keyAdoption = .failed(msg); self.toast = msg
-                        return
-                    }
                     try v.rekey(newKey: pasted)
                     do {
                         // On failure importKey writes `current` back into the keychain.
@@ -1509,6 +1521,26 @@ public final class AppModel {
             } catch {
                 self.keyAdoption = .failed(describe(error)); self.toast = describe(error)
             }
+        }
+    }
+
+    /// „Ordner wählen …“ in the paste sheet after no vault was found (#1503):
+    /// syncs via the picked folder from now on and adopts the pasted key there.
+    /// A folder without a vault is refused, so adopting never starts a new vault.
+    func adoptSyncKey(_ text: String, folder url: URL, wait: TimeInterval = 6) {
+        guard keyAdoption != .working else { return }
+        keyAdoption = .working
+        Task {
+            let picked = await ICloudFolderMigration.inspectPicked(url, wait: wait)
+            if let message = KeyAdoptionState.pickedFolderMessage(picked) {
+                // names the folder just picked, not the one still configured
+                self.keyAdoption = .notFound(message, searched: ICloudFolderMigration.displayName(for: url)); return
+            }
+            do { try CloudSyncManager.shared.setFolder(url, chosen: true) } catch {
+                self.keyAdoption = .failed(describe(error)); return
+            }
+            self.keyAdoption = .idle
+            self.adoptSyncKey(text)
         }
     }
 

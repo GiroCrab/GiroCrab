@@ -8,6 +8,19 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GiroCrabDistribution</key>
 	<string>$(GIROCRAB_DISTRIBUTION)</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>de.girocrab.transactions</string>
+			<key>UTTypeDescription</key>
+			<string>GiroCrab Buchungen</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+		</dict>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

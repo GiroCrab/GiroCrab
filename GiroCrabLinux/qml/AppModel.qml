@@ -339,12 +339,17 @@ QtObject {
     /// `--demo-sync`: "Alle abrufen" right away (simulated PIN / TAN dialogs).
     readonly property bool optionDemoSync: launchArgs.indexOf("--demo-sync") >= 0
     /// `--demo-sheet <name>`, `--demo-settings <tab>[:edit|add|remove]` (opened by presentLaunchOptions).
-    readonly property string demoSheet: launchValue("--demo-sheet")
+    /// `--demo-sheet report[:<sheet>]` (#384): `demoSheet` is the name without the `report:`
+    /// prefix (LaunchOptions.demoSheetName); the bug report opens over the view or that sheet.
+    readonly property string demoSheetOption: launchValue("--demo-sheet")
+    readonly property bool demoSheetOpensReport: demoSheetOption === "report" || demoSheetOption.startsWith("report:")
+    readonly property string demoSheet: demoSheetOption === "report" ? ""
+        : demoSheetOption.startsWith("report:") ? demoSheetOption.slice(7) : demoSheetOption
     readonly property string demoSettings: launchValue("--demo-settings")
     /// `--demo-seed` or GIROCRAB_DEMO_SEED=1|true|yes; `--screenshot`, `--demo-sync`,
     /// `--demo-sheet` and `--demo-settings` imply it (reproducible pictures).
     readonly property bool optionDemoSeed: launchArgs.indexOf("--demo-seed") >= 0 || vaultInfo.demo_seed === true
-        || screenshotMode || optionDemoSync || demoSheet !== "" || demoSettings !== ""
+        || screenshotMode || optionDemoSync || demoSheetOption !== "" || demoSettings !== ""
 
     // MARK: - Vault lifecycle
 
@@ -855,7 +860,7 @@ QtObject {
         if (!sel.startsWith("category:")) return null
         const r = periodRange()
         return ["category_history_by_unit", { category_id: Number(sel.slice(9)), account_ids: categoryAccountIDs,
-                                              date_from: r[0], date_to: r[1], key_length: 7 }]
+                                              date_from: r[0], date_to: r[1], key_length: BalanceChartPrefs.categoryKeyLength }]
     }
     /// AppModel+Loading.swift › reloadCategoryHistory (cheap SQL aggregate, still off the GUI
     /// thread). Callers check `selectionLoadTakes` first: a running selection load brings it.
@@ -1417,7 +1422,7 @@ QtObject {
         if (sel === "newBookings") return qsTr("Neue Umsätze")
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.name : qsTr("Bank") }
         if (sel === "uncategorized") return SidebarModel.uncategorizedLabel
-        if (sel === "documents") return qsTr("Belege & PostBox")
+        if (sel === "documents") return qsTr("Belege & Postbox")
         if (sel === "wealth") return qsTr("Vermögen")
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.name : qsTr("Gruppe") }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? g.name : qsTr("Gruppe") }
@@ -1425,7 +1430,34 @@ QtObject {
         if (sel.startsWith("category:")) { const c = categories.find(c => "category:" + c.id === sel); return c ? c.path : qsTr("Kategorie") }
         return ""
     }
+    /// AppModel+Loading.swift › headerTotalAccounts: accounts behind the header total of the
+    /// current selection (null: single account / not a total).
+    readonly property var headerTotalAccounts: {
+        const sel = sidebarSelection
+        if (sel === "all") return liquidAccounts
+        if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.accounts : null }
+        if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.accounts : null }
+        if (sel.startsWith("userGroup:")) { const ids = userGroupAccountIDs(sel.slice(10)); return allAccounts.filter(a => ids.indexOf(a.id) >= 0) }
+        return null
+    }
+    /// headerTotalSplit (#569, AllAccountsRoot.swift › HeaderTotal.split): the header total in the
+    /// base currency (EUR, or the single shared currency when no EUR account is there) plus every
+    /// further currency (alphabetical) – never mixed into one number. null: one currency only.
+    readonly property var headerTotalSplit: {
+        const accounts = headerTotalAccounts
+        if (!accounts) return null
+        const sums = {}
+        for (const a of accounts) { const c = a.currency ? a.currency.toUpperCase() : "EUR"; sums[c] = (sums[c] || 0) + a.balance_cents }
+        const codes = Object.keys(sums)
+        const primary = sums["EUR"] !== undefined || codes.length !== 1 ? "EUR" : codes[0]
+        const others = codes.filter(c => c !== primary).sort().map(c => ({ currency: c, cents: sums[c] }))
+        return others.length ? { currency: primary, cents: sums[primary] || 0, others: others } : null
+    }
     readonly property var headerBalance: {
+        const hb = headerBalanceUnsplit, split = headerTotalSplit
+        return hb && split ? { label: hb.label, cents: split.cents } : hb
+    }
+    readonly property var headerBalanceUnsplit: {
         const sel = sidebarSelection
         if (sel === "all") return { label: qsTr("Verfügbar (Giro, Tagesgeld, Karten)"), cents: liquidBalance }
         if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : qsTr("Kontostand"), cents: a.balance_cents } : null }
@@ -1870,7 +1902,7 @@ QtObject {
             || quietSyncConnectionID === connection.id)
             statementsAccountID = null
         const statementsFor = statementsAccountID
-        // "PostBox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
+        // "Postbox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
         if (postboxConnectionID !== connection.id || quietSyncConnectionID === connection.id) postboxConnectionID = null
         const postboxNow = postboxConnectionID !== null
         const quiet = quietSyncConnectionID === connection.id
@@ -1885,7 +1917,7 @@ QtObject {
             }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
         }
         if (quiet) {
-            // no new approval in the background (e.g. the comdirect PostBox, #838); prepared
+            // no new approval in the background (e.g. the comdirect Postbox, #838); prepared
             // off the GUI thread like the rest of the automatic fetch
             coreAsync("begin_quiet_sync", { connection_id: connection.id, secret: secret, demo: isDemo }, id => {
                 if (gen !== syncGeneration) { coreAsync("session_cancel", { session: id }, null, () => {}); return }
@@ -2493,10 +2525,10 @@ QtObject {
     /// Bumped whenever documents change, so lists re-read them.
     property int documentsVersion: 0
     property var documentsAccountFilter: null
-    /// `documentsAccountFilter` value for documents without an account (e.g. PostBox, #838).
+    /// `documentsAccountFilter` value for documents without an account (e.g. Postbox, #838).
     readonly property int documentsWithoutAccount: -1
     property var statementsAccountID: null
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     property var postboxConnectionID: null
     property int statementsCountBefore: 0
     property var accountDocumentsFor: null      // AccountDocumentsSheet
@@ -2581,7 +2613,7 @@ QtObject {
         let unmatched = 0
         const finish = () => {
             if (linked.length) toast = qsTr("Beleg zugeordnet: %1").arg(linked.join(", "))
-            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
+            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             documentsChanged()
         }
         const next = i => {
@@ -2610,21 +2642,21 @@ QtObject {
     }
     function autoStatements(a) { return run(() => core("auto_statements_enabled", { account_id: a.id })) || false }
     function setAutoStatements(a, on) { run(() => core("set_auto_statements", { account_id: a.id, enabled: on })) }
-    /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
+    /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     function comdirectPostbox(id) { return run(() => core("comdirect_postbox_enabled", { connection_id: id })) || false }
     function setComdirectPostbox(id, on) { run(() => core("set_comdirect_postbox", { connection_id: id, enabled: on })) }
-    /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
+    /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     function fetchComdirectPostbox(c) {
         if (syncingConnectionID !== null) return
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect PostBox.
+    /// Toast suffix of a sync with the comdirect Postbox.
     function postboxNote(s) {
         if (s.postbox_documents === null || s.postbox_documents === undefined)
-            return qsTr("PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
-        return s.postbox_documents === 0 ? qsTr("keine neuen PostBox-Dokumente")
-            : qsTr("%1 neue PostBox-Dokumente").arg(s.postbox_documents)
+            return qsTr("Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
+        return s.postbox_documents === 0 ? qsTr("keine neuen Postbox-Dokumente")
+            : qsTr("%1 neue Postbox-Dokumente").arg(s.postbox_documents)
     }
     function docSymbol(d) {
         switch (d.doc_type) {
@@ -4117,7 +4149,14 @@ QtObject {
             }
         }
         if (demoSheet !== "" && !Payments.presentDemoSheet(demoSheet) && !DirectDebits.presentDemoSheet(demoSheet)) presentDemoSheet(demoSheet)
+        // `report[:<sheet>]` (RootView.swift): the bug report over the view or the demo sheet,
+        // once that is laid out; `--screenshot` then saves the report window
+        if (demoSheetOpensReport) {
+            screenshotWindow = qsTr("Problem melden")
+            demoReportTimer.start()
+        }
     }
+    property Timer demoReportTimer: Timer { interval: 1200; onTriggered: model.showBugReport = true }
     /// The one switch for `--demo-sheet <name>` (AppModel.swift › presentDemoSheet):
     /// opens that sheet pre-filled with fictional data.
     function presentDemoSheet(name) {

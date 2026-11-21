@@ -472,7 +472,7 @@ pub fn build(input: &SidebarInput, money: &dyn Fn(i64, &str) -> String) -> Vec<S
     // ---- Dokumente
     rows.push(section("documents", "Dokumente"));
     if !folded("documents") {
-        let mut docs = SideRow::new(kind::ITEM, Target::Documents.key(), "Belege & PostBox");
+        let mut docs = SideRow::new(kind::ITEM, Target::Documents.key(), "Belege & Postbox");
         docs.depth = 1;
         docs.icon = "document".into();
         if input.document_count > 0 {
@@ -639,6 +639,7 @@ pub(crate) mod testing {
             opening_balance_date: String::new(),
             balance_derived: false,
             note: String::new(),
+            bank_label: None,
         }
     }
 }
