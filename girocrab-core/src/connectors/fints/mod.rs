@@ -795,6 +795,7 @@ impl BankConnector for FinTsConnector {
                 .unwrap_or_else(|| match kind {
                     AccountKind::Loan => "Darlehen".into(),
                     AccountKind::Savings => "Sparkonto".into(),
+                    AccountKind::TimeDeposit => "Festgeld".into(),
                     AccountKind::CreditCard => "Kreditkarte".into(),
                     AccountKind::Brokerage => "Depot".into(),
                     _ => "Girokonto".into(),

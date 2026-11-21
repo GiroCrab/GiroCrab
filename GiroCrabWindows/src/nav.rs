@@ -186,6 +186,7 @@ pub fn kind_label(k: AccountKind) -> &'static str {
     match k {
         AccountKind::Checking => "Girokonten",
         AccountKind::Savings => "Sparkonten",
+        AccountKind::TimeDeposit => "Festgeld",
         AccountKind::CreditCard => "Kreditkarten",
         AccountKind::PaymentService => "Zahlungsdienste",
         AccountKind::Brokerage => "Depots",
@@ -195,9 +196,10 @@ pub fn kind_label(k: AccountKind) -> &'static str {
 }
 
 /// Order of the account kinds in "Kontoart" mode.
-const KIND_ORDER: [AccountKind; 7] = [
+const KIND_ORDER: [AccountKind; 8] = [
     AccountKind::Checking,
     AccountKind::Savings,
+    AccountKind::TimeDeposit,
     AccountKind::CreditCard,
     AccountKind::PaymentService,
     AccountKind::Brokerage,
@@ -304,7 +306,7 @@ fn grouped<'a>(
 fn account_icon(kind: AccountKind) -> &'static str {
     match kind {
         AccountKind::Checking => "bank",
-        AccountKind::Savings | AccountKind::Cash => "banknote",
+        AccountKind::Savings | AccountKind::TimeDeposit | AccountKind::Cash => "banknote",
         AccountKind::CreditCard | AccountKind::PaymentService => "card",
         AccountKind::Brokerage => "chart",
         AccountKind::Loan => "house",

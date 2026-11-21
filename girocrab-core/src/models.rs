@@ -178,6 +178,8 @@ impl ConnectorKind {
 pub enum AccountKind {
     Checking,
     Savings,
+    /// Fixed-term deposit (Festgeld, #1002): money is tied up until maturity.
+    TimeDeposit,
     CreditCard,
     PaymentService,
     Brokerage,
@@ -191,6 +193,7 @@ impl AccountKind {
         match self {
             AccountKind::Checking => "checking",
             AccountKind::Savings => "savings",
+            AccountKind::TimeDeposit => "time_deposit",
             AccountKind::CreditCard => "credit_card",
             AccountKind::PaymentService => "payment_service",
             AccountKind::Brokerage => "brokerage",
@@ -201,6 +204,7 @@ impl AccountKind {
     pub fn from_str(s: &str) -> Self {
         match s {
             "savings" => AccountKind::Savings,
+            "time_deposit" => AccountKind::TimeDeposit,
             "credit_card" => AccountKind::CreditCard,
             "payment_service" => AccountKind::PaymentService,
             "brokerage" => AccountKind::Brokerage,
@@ -214,6 +218,7 @@ impl AccountKind {
         match self {
             AccountKind::Checking => "building.columns",
             AccountKind::Savings => "banknote",
+            AccountKind::TimeDeposit => "lock.circle",
             AccountKind::CreditCard => "creditcard",
             AccountKind::PaymentService => "envelope.circle",
             AccountKind::Brokerage => "chart.line.uptrend.xyaxis",

@@ -3718,3 +3718,24 @@ fn adopt_account_reuses_imported_trade_republic_checking_account_without_iban() 
         assert_eq!(ext, "tr:cash");
     }
 }
+
+/// #1002: a fixed-term deposit is told from a savings account by its name.
+#[test]
+fn suggests_time_deposit_for_festgeld_names() {
+    let kind = |name: &str| {
+        let mut a = src_acc(1, "123", "50050201", "", "EUR");
+        a.name = name.into();
+        suggest_kind(&a, "Testbank")
+    };
+    assert_eq!(kind("Festgeld 12 Monate"), AccountKind::TimeDeposit);
+    assert_eq!(kind("Termingeldkonto"), AccountKind::TimeDeposit);
+    assert_eq!(kind("Tagesgeld"), AccountKind::Savings);
+    // the bank name must not turn a Festgeld into a card
+    let mut a = src_acc(1, "123", "50050201", "", "EUR");
+    a.name = "Festgeld 12 Monate".into();
+    assert_eq!(
+        suggest_kind(&a, "American Express"),
+        AccountKind::TimeDeposit
+    );
+    assert_eq!(kind("Girokonto"), AccountKind::Checking);
+}

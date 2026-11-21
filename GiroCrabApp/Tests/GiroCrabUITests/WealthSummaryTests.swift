@@ -11,7 +11,7 @@ final class WealthSummaryTests: XCTestCase {
         XCTAssertEqual(s.netCents, s.cashCents + s.assetsCents + s.creditCents + s.liabilitiesCents)
         let included = s.cash + s.depots + s.liabilities
         XCTAssertTrue(included.allSatisfy { $0.archivedUnix == nil && $0.inTotal && $0.currency == "EUR" })
-        XCTAssertTrue(s.cash.allSatisfy { [.checking, .savings, .cash, .paymentService].contains($0.kind) })
+        XCTAssertTrue(s.cash.allSatisfy { [.checking, .savings, .timeDeposit, .cash, .paymentService].contains($0.kind) })
         XCTAssertTrue(s.depots.allSatisfy { $0.kind == .brokerage })
         XCTAssertTrue(s.liabilities.allSatisfy { $0.kind == .creditCard || $0.kind == .loan })
     }

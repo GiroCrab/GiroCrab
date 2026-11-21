@@ -897,6 +897,53 @@ fn automatic_names_and_bank_name_are_updated_user_names_kept() {
     std::fs::remove_file(path).ok();
 }
 
+/// #1002: a stored Festgeld stays one when a later retrieval reports the account as Savings.
+#[test]
+fn stored_time_deposit_is_not_turned_back_into_savings() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "Bank".into())
+        .unwrap();
+    let acc = |kind| RemoteAccount {
+        external_ref: "F".into(),
+        name: "Festgeld".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind,
+        balance_cents: 0,
+        balance_date: "2026-11-11".into(),
+    };
+    let fetch = |kind| {
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc(kind)],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    };
+    let kind = || -> String {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT kind FROM accounts WHERE external_ref = 'F'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    fetch(AccountKind::TimeDeposit);
+    assert_eq!(kind(), "time_deposit");
+    fetch(AccountKind::Savings);
+    assert_eq!(kind(), "time_deposit");
+    std::fs::remove_file(path).ok();
+}
+
 #[test]
 fn complete_account_list_marks_the_missing_ones() {
     let (v, path) = demo_vault();
