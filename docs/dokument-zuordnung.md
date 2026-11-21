@@ -13,6 +13,6 @@ der Geldbuchung auf dem Verrechnungskonto erscheinen.
 - FNZ und Quirion verwenden die gemeinsamen Titelregeln für Dokumenttypen. Ihre Ablage
   folgt weiterhin dem Bankabruf.
 
-Titelregeln und Prüfbeispiele stehen in `girocrab-core/data/document_rules.json`. Die Reihenfolge
-der Regeln entscheidet bei mehreren Treffern. Konto- und Depotregeln bleiben beim jeweiligen
-Connector. Die PDF-Textauswertung läuft lokal.
+Titelregeln und Prüfbeispiele stehen in `girocrab-core/src/documents.rs`. Bei mehreren Treffern
+gilt die erste Regel. Die Konto- und Depotregeln stehen beim jeweiligen Connector. Die
+PDF-Textauswertung läuft lokal.
