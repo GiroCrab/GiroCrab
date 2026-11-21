@@ -258,6 +258,84 @@ struct TradeRow {
     icon: String,
 }
 
+/// The account a Trade Republic document belongs to (`tr:depot` or `tr:cash`), decided by what the
+/// document is, never by the way it arrived (a booking's detail screen or the activity list): a
+/// confirmation or credit for a security (trade, savings plan, dividend, corporate action, the
+/// depot statement) belongs to the depot and documents a booking of the settlement account; account
+/// statements, interest and fees belong to the settlement account. `None`: nothing says so, the
+/// document stays where it is (tax papers, general information, an older document just called
+/// "Dokumente" whose event is not known).
+///
+/// `head`: the lower-cased document name before the dash; `doc_type`: its type; `generic`: the name
+/// says nothing ("Dokumente").
+fn document_account_ref(head: &str, doc_type: &str, generic: bool) -> Option<&'static str> {
+    if generic {
+        // the type came from the timeline event: a trade, a savings plan or a dividend
+        return (doc_type == "abrechnung").then_some("tr:depot");
+    }
+    if doc_type == "kontoauszug" {
+        return Some(if head.contains("depot") {
+            "tr:depot"
+        } else {
+            "tr:cash"
+        });
+    }
+    // interest and fees of the settlement account (a dividend is no interest)
+    if !head.contains("dividende")
+        && ["zins", "gebühr", "kontoführung"]
+            .iter()
+            .any(|k| head.contains(k))
+    {
+        return Some("tr:cash");
+    }
+    if is_securities_notice(head) || doc_type == "abrechnung" {
+        return Some("tr:depot");
+    }
+    None
+}
+
+/// Trade Republic names older documents just "Dokumente": what they are follows from the event of
+/// the timeline entry they belong to (a dividend, a savings plan execution, a tax booking).
+fn refine_document_type(doc_type: &'static str, event_text: &str) -> &'static str {
+    if doc_type != "beleg" || event_text.is_empty() {
+        return doc_type;
+    }
+    let has = |k: &str| event_text.contains(k);
+    if has("steuer") || has("tax") {
+        "steuer"
+    } else if has("dividend")
+        || has("ausschüttung")
+        || has("sparplan")
+        || has("savings_plan")
+        || has("kauf")
+        || has("trade")
+        || has("order")
+    {
+        "abrechnung"
+    } else {
+        doc_type
+    }
+}
+
+/// An account-level notice about a security (dividend election, corporate action):
+/// it belongs to the depot, not to the settlement account.
+fn is_securities_notice(lower_title: &str) -> bool {
+    [
+        "dividende",
+        "wahlweise",
+        "kapitalmaßnahme",
+        "split",
+        "umtausch",
+        "spin-off",
+        "fusion",
+        "hauptversammlung",
+        "rückkaufangebot",
+        "prospekt",
+    ]
+    .iter()
+    .any(|k| lower_title.contains(k))
+}
+
 fn is_trade_kind(kind_text: &str) -> bool {
     [
         "kauf",
@@ -1644,13 +1722,16 @@ impl BankConnector for TradeRepublicConnector {
                     }
                     let doc_title = d["title"].as_str().unwrap_or("Dokument").to_string();
                     let lower = doc_title.to_lowercase();
-                    let doc_type = if lower.contains("steuer") {
-                        "steuer"
-                    } else if lower.contains("abrechnung") || lower.contains("bestätigung") {
-                        "abrechnung"
-                    } else {
-                        "beleg"
-                    };
+                    let doc_type = refine_document_type(
+                        crate::documents::type_from_title(&lower),
+                        &title.to_lowercase(),
+                    );
+                    let account_ref = document_account_ref(
+                        &lower,
+                        doc_type,
+                        lower == "dokumente" || lower == "dokument",
+                    )
+                    .unwrap_or("tr:cash");
                     let doc_date = d["detail"]
                         .as_str()
                         .and_then(|s| crate::documents::dates_in(s).into_iter().next())
@@ -1658,7 +1739,7 @@ impl BankConnector for TradeRepublicConnector {
                     // strip the presigned query part for a stable de-dup key
                     let stable = url.split('?').next().unwrap_or(&url).to_string();
                     out.documents.push(crate::documents::RemoteDocument {
-                        account_ref: "tr:cash".into(),
+                        account_ref: account_ref.into(),
                         booking_external_id: Some(item_id.clone()),
                         title: format!("{doc_title} – {title}"),
                         doc_type: doc_type.into(),

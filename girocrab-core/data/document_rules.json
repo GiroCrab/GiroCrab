@@ -1,0 +1,45 @@
+{
+  "_hinweis": "Titelregeln für importierte Bankbelege. Details: docs/dokument-zuordnung.md.",
+  "version": 1,
+
+  "_dokumenttypen": "Core-Typen in Prüfreihenfolge: der erste Eintrag, dessen Wort im kleingeschriebenen Titel vorkommt, gewinnt. Kein Treffer: `standard`.",
+  "dokumenttypen": [
+    { "typ": "steuer", "enthaelt": ["steuer", "ertragsaufstellung", "vorabpauschale"] },
+    { "typ": "kontoauszug", "enthaelt": ["auszug", "statement", "abschluss", "finanzreport"] },
+    {
+      "typ": "postbox",
+      "enthaelt": [
+        "wahlweise", "kundenvereinbarung", "rechtliche", "mitteilung", "information", "kundenanschreiben",
+        "bedingungsänderung", "vertragsunterlagen", "antrag", "löschbestätigung", "prospekt", "hauptversammlung",
+        "rückkaufangebot", "geschäftsbedingungen", "agb", "agreement", "datenschutz", "leistungsverzeichnis",
+        "eignungsprüfung", "treuhand", "hinweise"
+      ]
+    },
+    { "typ": "abrechnung", "enthaelt": ["abrechnung", "bestätigung", "dividende", "ausführungsanzeige", "ertragsgutschrift", "thesaurierend"] }
+  ],
+  "standard": "beleg",
+
+  "_pruefbeispiele": "Erfundene Titel und ihre erwarteten App-Typen.",
+  "pruefbeispiele": [
+    { "bank": "comdirect", "titel": "Wertpapierabrechnung Kauf 12,5 St. WKN A1JX52 (VANGUARD FTSE ALL-WORLD) vom 01.02.2024", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Wertpapierabrechnung Verkauf 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Dividendengutschrift 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Ertragsgutschrift 100 St. WKN 847101 (FONDAK P) vom 10.10.2024", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Gutschrift thesaurierend 100 St. WKN ETF001 vom 01.02.2024", "typ": "abrechnung" },
+    { "bank": "comdirect", "titel": "Steuermitteilung WKN A1JX52 vom 31.07.2024", "typ": "steuer" },
+    { "bank": "comdirect", "titel": "Jahressteuerbescheinigung 2023", "typ": "steuer" },
+    { "bank": "comdirect", "titel": "Finanzreport Nr. 12 per 31.12.2024", "typ": "kontoauszug" },
+    { "bank": "comdirect", "titel": "Kosteninformation MSCI World WKN A1H2QY vom 01.03.2024", "typ": "postbox" },
+    { "bank": "DKB", "titel": "Kauf - WKN A1JX52 - Wertpapierabrechnung vom 23.07.2021 zu Depot 1 - Ordernr. 2", "typ": "abrechnung" },
+    { "bank": "DKB", "titel": "Ertragsabrechnung Dividenden vom 01.06.2023 zu Depot 1", "typ": "abrechnung" },
+    { "bank": "DKB", "titel": "Depotauszug vom 15.01.2023 zu Depot 1", "typ": "kontoauszug" },
+    { "bank": "DKB", "titel": "Kontoauszug 3/2024 vom 31.03.2024 zu Konto 1", "typ": "kontoauszug" },
+    { "bank": "Quirion", "titel": "Rechnungsabschluss 2024 Konto 1 EUR", "typ": "kontoauszug" },
+    { "bank": "Quirion", "titel": "Erträgnisabrechnung IE00B3RBWM25", "typ": "abrechnung" },
+    { "bank": "Quirion", "titel": "Quartalsbericht Q3 2024 Globales Portfolio", "typ": "postbox" },
+    { "bank": "finvesto / FNZ", "titel": "OnlineAuszug-Nr 12 2025", "typ": "kontoauszug" },
+    { "bank": "Trade Republic", "titel": "Wertpapierabrechnung Sparplan – JPM USD EM Bond", "typ": "abrechnung" },
+    { "bank": "Trade Republic", "titel": "Dividende – Apple", "typ": "abrechnung" },
+    { "bank": "Trade Republic", "titel": "Kosteninformation – Apple", "typ": "postbox" }
+  ]
+}

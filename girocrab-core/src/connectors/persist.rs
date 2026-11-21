@@ -891,6 +891,22 @@ pub(crate) fn store_fetch(
                     .optional()?,
                 _ => None,
             };
+            // A Trade Republic PDF can be filed at its depot while the booking lives at tr:cash.
+            let booking_id = match (booking_id, &d.booking_external_id) {
+                (None, Some(ext))
+                    if kind == ConnectorKind::TradeRepublic && d.account_ref == "tr:depot" =>
+                {
+                    tx.query_row(
+                        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+                          WHERE a.connection_id = ?1 AND a.external_ref = 'tr:cash'
+                            AND t.external_id = ?2",
+                        params![connection_id, ext],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                }
+                (booking, _) => booking,
+            };
             // without bytes (download failed) only a stored copy gets its account
             let added = if d.bytes.is_empty() {
                 Ok(None)
