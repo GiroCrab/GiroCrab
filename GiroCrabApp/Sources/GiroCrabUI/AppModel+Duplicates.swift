@@ -66,7 +66,9 @@ extension AppModel {
             }
             guard isCurrent(pin) else { return }
             refreshDuplicates()
-            reloadAll()
+            // list, categories and balance history load off the main actor;
+            // a newer load supersedes this one
+            reloadAllInBackground()
         }
     }
 
