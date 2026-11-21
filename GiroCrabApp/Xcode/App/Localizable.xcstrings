@@ -11913,6 +11913,50 @@
         }
       }
     },
+    "Dieser Teil ist bereits vollständig erstattet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This part is already fully refunded."
+          }
+        }
+      }
+    },
+    "Dieser Teil ist bereits vollständig zugeordnet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This part is already fully assigned."
+          }
+        }
+      }
+    },
+    "Dieser Teil ist vollständig erstattet. Wählen Sie einen anderen Teil oder heben Sie eine Verknüpfung auf." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This part is fully refunded. Choose another part or remove a link."
+          }
+        }
+      }
+    },
+    "Dieser Teil ist vollständig zugeordnet. Wählen Sie einen anderen Teil oder heben Sie eine Verknüpfung auf." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This part is fully assigned. Choose another part or remove a link."
+          }
+        }
+      }
+    },
     "Dieser Tresor wurde mit einer neueren GiroCrab-Version gespeichert. Bitte die App aktualisieren." : {
       "extractionState" : "manual",
       "localizations" : {

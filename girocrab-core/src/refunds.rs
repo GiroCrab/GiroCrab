@@ -1398,15 +1398,19 @@ impl Vault {
         let Some(role) = Role::of(live(&db, transaction_id)?) else {
             return Ok(Vec::new());
         };
-        self.suggestions(&db, transaction_id, role, Expand::Whole)
+        self.suggestions(&db, transaction_id, role, Expand::Whole, 0)
     }
 
     /// [`refund_suggestions`](Self::refund_suggestions) among the rows of
     /// [`refund_part_candidates`](Self::refund_part_candidates).
+    /// `own_part`: the part of the split booking the link would be made for (its position
+    /// from 1), 0 for any of its amounts. With a part, „same amount“ means that part's amount
+    /// and a part that is used up gets no suggestions.
     pub fn refund_part_suggestions(
         &self,
         transaction_id: i64,
         pays_back: bool,
+        own_part: u32,
     ) -> CoreResult<Vec<RefundSuggestion>> {
         let db = self.db()?;
         live(&db, transaction_id)?;
@@ -1415,7 +1419,28 @@ impl Vault {
         } else {
             Role::Original
         };
-        self.suggestions(&db, transaction_id, role, Expand::Parts)
+        self.suggestions(&db, transaction_id, role, Expand::Parts, own_part)
+    }
+
+    /// What the booking has left for a further link as a refund (`pays_back`) or as a booking
+    /// that is paid back: of its part `own_part` (position from 1) when it names one on that
+    /// side, else of the booking as a whole (`RefundLinks::refund_open_cents` /
+    /// `original_open_cents`).
+    pub fn refund_part_open(
+        &self,
+        transaction_id: i64,
+        pays_back: bool,
+        own_part: u32,
+    ) -> CoreResult<i64> {
+        let db = self.db()?;
+        let amount = live(&db, transaction_id)?;
+        let role = if pays_back {
+            Role::Refund
+        } else {
+            Role::Original
+        };
+        let parts = split_parts(&db)?;
+        Ok(shares(&db, &parts)?.open(&parts, transaction_id, amount, i64::from(own_part), role))
     }
 }
 
@@ -1457,6 +1482,7 @@ impl Vault {
         transaction_id: i64,
         role: Role,
         expand: Expand,
+        own_part: u32,
     ) -> CoreResult<Vec<RefundSuggestion>> {
         const MAX: usize = 3;
         let pool = pool(self, db, transaction_id, role, Some(WINDOW_DAYS), expand)?;
@@ -1472,15 +1498,36 @@ impl Vault {
             .query_map([transaction_id], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<_, _>>()?;
         // the amounts of the booking that can be linked: all of it, or one of its parts
-        let mut own_amounts = vec![pool.amount];
-        own_amounts.extend(
-            split_parts(db)?
-                .get(&transaction_id)
-                .into_iter()
-                .flatten()
-                .filter(|p| p.amount.signum() == role.sign())
-                .map(|p| p.amount),
-        );
+        let parts = split_parts(db)?;
+        let own_amounts = match named(&parts, transaction_id, i64::from(own_part), role) {
+            // the sheet links one part: its amount, and nothing when it is used up
+            Some(p) if own_part > 0 => {
+                let amount = live(db, transaction_id)?;
+                if shares(db, &parts)?.open(
+                    &parts,
+                    transaction_id,
+                    amount,
+                    i64::from(own_part),
+                    role,
+                ) == 0
+                {
+                    return Ok(Vec::new());
+                }
+                vec![p.amount]
+            }
+            _ => {
+                let mut all = vec![pool.amount];
+                all.extend(
+                    parts
+                        .get(&transaction_id)
+                        .into_iter()
+                        .flatten()
+                        .filter(|p| p.amount.signum() == role.sign())
+                        .map(|p| p.amount),
+                );
+                all
+            }
+        };
         let source_refs = reference_tokens(&pool.reference);
         let counterparty = pool.counterparty.trim().to_lowercase();
         let matches = |row: &Row, reason: RefundMatch| -> bool {

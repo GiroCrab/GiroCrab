@@ -835,14 +835,14 @@ fn part_of_a_split_income_is_suggested_by_its_amount() {
     v.set_transaction_splits(income, vec![part(ca, 30000), part(cb, 2000)])
         .unwrap();
     let suggested: Vec<(i64, u32, RefundMatch)> = v
-        .refund_part_suggestions(o, false)
+        .refund_part_suggestions(o, false, 0)
         .unwrap()
         .into_iter()
         .map(|s| (s.booking.id, s.booking.refund_part, s.reason))
         .collect();
     assert_eq!(suggested, vec![(income, 2, RefundMatch::SameAmount)]);
     v.link_refund_parts(income, 2, o, 0).unwrap();
-    assert!(v.refund_part_suggestions(o, false).unwrap().is_empty());
+    assert!(v.refund_part_suggestions(o, false, 0).unwrap().is_empty());
 }
 
 /// An income that is split differently or not at all any more keeps its links as links of the
@@ -1200,7 +1200,7 @@ fn fee_part_of_an_income_can_be_paid_back() {
         .collect();
     assert_eq!(offered, vec![(income, 2, -500, "QA B".to_string())]);
     assert_eq!(
-        v.refund_part_suggestions(back, true)
+        v.refund_part_suggestions(back, true, 0)
             .unwrap()
             .into_iter()
             .map(|s| (s.booking.id, s.booking.part, s.reason))
@@ -1504,4 +1504,38 @@ fn qa_a_changed_split_keeps_the_link_order_of_a_collective_refund() {
         allocations(&v, r),
         [(second, Some(5000)), (first, Some(5000))]
     );
+}
+
+/// QA v12 (Mac): the picker links one part of a split refund. „Same amount“ compares that
+/// part, and a part that is used up has nothing open and no suggestions while the other has.
+#[test]
+fn qa_suggestions_and_open_amount_follow_the_selected_part_of_a_split_refund() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let whole = add(&v, a, -1599, "2026-03-01", "Shop", "whole");
+    let part = add(&v, a, -800, "2026-03-02", "Other", "part");
+    let r = add(&v, a, 1599, "2026-03-10", "Refunder", "refund");
+    let sp = |c: i64, amount: i64| TransactionSplitInput {
+        category_id: Some(c),
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(r, vec![sp(ca, 799), sp(cb, 800)])
+        .unwrap();
+    let same = |own: u32| -> Vec<i64> {
+        v.refund_part_suggestions(r, true, own)
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.reason == RefundMatch::SameAmount)
+            .map(|s| s.booking.id)
+            .collect()
+    };
+    assert_eq!(same(2), [part]);
+    assert!(same(1).is_empty());
+    assert!(same(0).contains(&whole));
+    v.link_refund_parts(r, 2, whole, 0).unwrap();
+    assert_eq!(v.refund_part_open(r, true, 2).unwrap(), 0);
+    assert_eq!(v.refund_part_open(r, true, 1).unwrap(), 799);
+    assert_eq!(v.refund_part_open(r, true, 0).unwrap(), 799);
+    assert!(v.refund_part_suggestions(r, true, 2).unwrap().is_empty());
 }

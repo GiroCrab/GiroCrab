@@ -304,9 +304,7 @@ struct RefundPickerSheet: View {
                 }
             }
             if ownOpen == 0, !(top.isEmpty && others.isEmpty) {
-                Label(fromRefund ? "Die Erstattung ist vollständig zugeordnet. Heben Sie eine Verknüpfung auf, um eine andere Buchung zu wählen."
-                          : "Die Buchung ist vollständig erstattet. Heben Sie eine Verknüpfung auf, um eine andere Erstattung zu wählen.",
-                      systemImage: "checkmark.circle")
+                Label(usedUpNote, systemImage: "checkmark.circle")
                     .appFont(.caption)
                     .foregroundStyle(Theme.secondary)
             }
@@ -338,9 +336,22 @@ struct RefundPickerSheet: View {
     /// The whole row is one button, the circle in front included.
     /// Why an unlinked row cannot be chosen: this booking or that one has nothing left to link.
     /// What this booking has left for a further link, in the role the sheet shows.
-    private var ownOpen: Int64? { links.map { fromRefund ? $0.refundOpenCents : $0.originalOpenCents } }
+    /// Of the selected part when the booking is split: another part may still have something left.
+    @State private var ownOpen: Int64?
+
+    private var usedUpNote: LocalizedStringKey {
+        if ownParts.count > 1, ownPart > 0 {
+            return fromRefund ? "Dieser Teil ist vollständig zugeordnet. Wählen Sie einen anderen Teil oder heben Sie eine Verknüpfung auf."
+                : "Dieser Teil ist vollständig erstattet. Wählen Sie einen anderen Teil oder heben Sie eine Verknüpfung auf."
+        }
+        return fromRefund ? "Die Erstattung ist vollständig zugeordnet. Heben Sie eine Verknüpfung auf, um eine andere Buchung zu wählen."
+            : "Die Buchung ist vollständig erstattet. Heben Sie eine Verknüpfung auf, um eine andere Erstattung zu wählen."
+    }
 
     private func blocked(_ r: RefundBooking) -> LocalizedStringKey? {
+        if ownOpen == 0, ownParts.count > 1, ownPart > 0 {
+            return fromRefund ? "Dieser Teil ist bereits vollständig zugeordnet." : "Dieser Teil ist bereits vollständig erstattet."
+        }
         if ownOpen == 0 {
             return fromRefund ? "Die Erstattung ist bereits vollständig zugeordnet." : "Die Buchung ist bereits vollständig erstattet."
         }
@@ -395,13 +406,17 @@ struct RefundPickerSheet: View {
         let query = search
         do {
             let paysBack = fromRefund
-            let result = try await model.vaultOffMain { vault -> (RefundLinks, [RefundSuggestion], [RefundBooking], [TransactionSplit]) in
-                (try vault.refundLinks(transactionId: id), try vault.refundPartSuggestions(transactionId: id, paysBack: paysBack),
+            let part = ownPart
+            let result = try await model.vaultOffMain { vault -> (RefundLinks, [RefundSuggestion], [RefundBooking], [TransactionSplit], Int64) in
+                (try vault.refundLinks(transactionId: id),
+                 try vault.refundPartSuggestions(transactionId: id, paysBack: paysBack, ownPart: part),
                  try vault.refundPartCandidates(transactionId: id, paysBack: paysBack, query: query, limit: 200),
-                 try vault.listTransactionSplits(transactionId: id))
+                 try vault.listTransactionSplits(transactionId: id),
+                 try vault.refundPartOpen(transactionId: id, paysBack: paysBack, ownPart: part))
             }
             guard run == loads, let result else { return }
             links = result.0
+            ownOpen = result.4
             // a linked booking is shown on top only
             let linkedIDs = Set(linked.map(Self.key))
             top = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
