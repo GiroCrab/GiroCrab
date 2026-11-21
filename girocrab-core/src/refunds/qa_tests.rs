@@ -642,8 +642,9 @@ fn removing_the_split_links_its_refunds_to_the_whole_booking() {
     assert_eq!(refunds_of(&v, o), vec![(first, 0, Some(3000))]);
 }
 
-/// A booking that is split differently spreads what its refunds pay back from its last part
-/// to its first, each part filled until the refund runs out.
+/// A link to the whole of a split booking (its split was removed and it was split again) spreads
+/// what its refunds pay back from its last part to its first, each part filled until the refund
+/// runs out.
 #[test]
 fn changed_split_spreads_its_refunds_from_the_last_part_to_the_first() {
     let (_d, v, a) = fixture();
@@ -658,6 +659,7 @@ fn changed_split_spreads_its_refunds_from_the_last_part_to_the_first() {
     v.link_refund(r, o, 1).unwrap();
     assert_eq!(all_expenses(&v, [ca, cb, cc]), [0, -4000, 0]);
 
+    v.set_transaction_splits(o, Vec::new()).unwrap();
     v.set_transaction_splits(o, vec![part(ca, -5000), part(cb, -3000), part(cc, -2000)])
         .unwrap();
     assert_eq!(refunds_of(&v, o), vec![(r, 0, Some(6000))]);
@@ -845,8 +847,8 @@ fn part_of_a_split_income_is_suggested_by_its_amount() {
     assert!(v.refund_part_suggestions(o, false, 0).unwrap().is_empty());
 }
 
-/// An income that is split differently or not at all any more keeps its links as links of the
-/// whole income, like an outgoing booking.
+/// An income that is split differently keeps its link with the part it names; split not at all
+/// any more it keeps it as a link of the whole income, like an outgoing booking.
 #[test]
 fn changed_split_of_an_income_links_it_as_a_whole() {
     let (_d, v, a) = fixture();
@@ -869,11 +871,12 @@ fn changed_split_of_an_income_links_it_as_a_whole() {
     v.set_transaction_splits(income, vec![part(cb, 30000), part(ca, 2000)])
         .unwrap();
     assert_eq!(own(&v), vec![(2, Some(2000))]);
-    // other amounts: the whole income pays back, taken from its last part first
+    // other amounts: still only the second part pays back, with its new amount
     v.set_transaction_splits(income, vec![part(ca, 29000), part(cb, 3000)])
         .unwrap();
-    assert_eq!(own(&v), vec![(0, Some(5000))]);
-    assert_eq!([ca, cb].map(|c| totals(&v, c).0), [27000, 0]);
+    assert_eq!(own(&v), vec![(2, Some(3000))]);
+    assert_eq!([ca, cb].map(|c| totals(&v, c).0), [29000, 0]);
+    // no split any more: the whole income pays back
     v.set_transaction_splits(income, Vec::new()).unwrap();
     assert_eq!(own(&v), vec![(0, Some(5000))]);
 }
@@ -1471,7 +1474,7 @@ fn search_finds_bookings_before_and_after() {
 }
 
 /// QA v12: a refund for two bookings keeps the order its links were made in when the split of
-/// the first one changes (its part link becomes a link to the whole booking).
+/// the first one changes (v15: the link stays with its part, which has another amount now).
 #[test]
 fn qa_a_changed_split_keeps_the_link_order_of_a_collective_refund() {
     let (_d, v, a) = fixture();
@@ -1494,15 +1497,68 @@ fn qa_a_changed_split_keeps_the_link_order_of_a_collective_refund() {
     );
     v.set_transaction_splits(first, vec![sp(ca, -7000), sp(cb, -3000)])
         .unwrap();
-    // still first: it is filled before the second booking gets anything
-    assert_eq!(allocations(&v, r)[0].0, first);
-    assert_eq!(v.refund_links(second).unwrap().refunded_cents, Some(0));
+    // still first and still its first part only: the second booking gets the rest
+    assert_eq!(
+        allocations(&v, r),
+        [(first, Some(7000)), (second, Some(3000))]
+    );
     // a link removed and made again is a new link: it goes to the back
-    v.unlink_refund(r, first, 0).unwrap();
+    v.unlink_refund(r, first, 1).unwrap();
     v.link_refund(r, first, 1).unwrap();
     assert_eq!(
         allocations(&v, r),
         [(second, Some(5000)), (first, Some(5000))]
+    );
+}
+
+/// QA v15: a link to one part of a split booking stays with that part when the booking is
+/// split differently; it never widens to the whole booking. Only when its part is gone (fewer
+/// parts, no split) it becomes a link to the whole booking.
+#[test]
+fn qa_a_changed_split_keeps_the_link_with_its_part() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let split_booking = booking(&v, a, -8000);
+    let exact = booking(&v, a, -10000);
+    let r = booking(&v, a, 10000);
+    let sp = |c: i64, amount: i64| TransactionSplitInput {
+        category_id: Some(c),
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(split_booking, vec![sp(ca, -3000), sp(cb, -5000)])
+        .unwrap();
+    v.link_refund(r, split_booking, 1).unwrap();
+    v.link_refund(r, exact, 0).unwrap();
+    assert_eq!(
+        allocations(&v, r),
+        [(split_booking, Some(3000)), (exact, Some(7000))]
+    );
+    let linked_parts = |v: &Vault| -> Vec<u32> {
+        v.refund_links(r)
+            .unwrap()
+            .originals
+            .iter()
+            .filter(|b| b.id == split_booking)
+            .map(|b| b.part)
+            .collect()
+    };
+    v.set_transaction_splits(split_booking, vec![sp(ca, -4000), sp(cb, -4000)])
+        .unwrap();
+    // part 1 with its new 40,00, not the whole 80,00
+    assert_eq!(linked_parts(&v), [1]);
+    assert_eq!(
+        allocations(&v, r),
+        [(split_booking, Some(4000)), (exact, Some(6000))]
+    );
+    // the other part is still free for a further refund
+    assert_eq!(v.refund_part_open(split_booking, false, 2).unwrap(), 4000);
+    // the part is gone with the split: now the whole booking
+    v.set_transaction_splits(split_booking, Vec::new()).unwrap();
+    assert_eq!(linked_parts(&v), [0]);
+    assert_eq!(
+        allocations(&v, r),
+        [(split_booking, Some(8000)), (exact, Some(2000))]
     );
 }
 

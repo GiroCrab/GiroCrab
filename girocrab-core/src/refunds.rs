@@ -1,8 +1,8 @@
 //! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
 //! (outgoing). One original can have several refunds and one refund can pay back several originals
 //! (step 38); links do not chain. A link to a split booking names one of its parts (step 39,
-//! `original_part`): the refund pays back that part only. A booking that is split differently
-//! or not at all any more keeps its refunds as links to the whole booking (`split_changed`);
+//! `original_part`): the refund pays back that part only. A link whose part is gone (the split
+//! was removed or has no such part any more) becomes a link to the whole booking (`split_changed`);
 //! such a link to a split booking fills its parts from the last to the first. A split refund
 //! works the same way (step 40, `refund_part`): the link names the part of the income that is
 //! the refund, and a link to the whole of a split refund takes from its parts from the last to
@@ -1122,10 +1122,13 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
 }
 
 /// The booking `id` is split differently or not at all any more (call it with the new parts
-/// stored): the parts its links name are gone, so every such link becomes a link to the whole
-/// booking. The old row stays as a tombstone and the new one gets a new stamp (both reach the
-/// other devices). It keeps `created_ms`, the stamp of when the link was made, which
-/// is what the shares are filled by: a link keeps its place among a refund's other links.
+/// stored). A link stays with the part it names while the booking still has a part of that
+/// direction at that position, whatever its new amount: the link the user made for one part
+/// never spreads to the others. Only a link whose part is gone (the split was removed, has
+/// fewer parts, or the part changed its direction) becomes a link to the whole booking. The old
+/// row stays as a tombstone and the new one gets a new stamp (both reach the other devices). It
+/// keeps `created_ms`, the stamp of when the link was made, which is what the shares are filled
+/// by: a link keeps its place among a refund's other links.
 pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
     let links: Vec<(i64, i64, i64, i64, i64)> = conn
         .prepare(
@@ -1137,7 +1140,16 @@ pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?
         .collect::<Result<_, _>>()?;
+    let parts = split_parts(conn)?;
     for (refund, original, part, refund_part, created) in links {
+        let (own, role) = if original == id {
+            (part, Role::Original)
+        } else {
+            (refund_part, Role::Refund)
+        };
+        if named(&parts, id, own, role).is_some() {
+            continue;
+        }
         let changed = next_change(conn)?;
         conn.execute(
             "UPDATE refund_links SET deleted_ms=?5,changed_ms=?5 WHERE refund_id=?1 AND original_id=?2 AND original_part=?3 AND refund_part=?4",
@@ -1157,7 +1169,6 @@ pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
     }
     // without the part that paid back or was paid back the booking may have no amount on that
     // side any more (store credit in a purchase that is not split any more): that link goes
-    let parts = split_parts(conn)?;
     let amount = live(conn, id)?;
     for role in [Role::Refund, Role::Original] {
         if Shares::total(&parts, id, amount, role) == 0 {
