@@ -4359,6 +4359,119 @@ fn a_foreign_closed_account_leaves_the_repair_note_of_its_target() {
     assert_eq!(archive_unknown(&db).unwrap(), vec![other]);
 }
 
+/// A bank account with the fixture Girokonto's IBAN, as a fetch leaves it after taking over an
+/// import of v0.8.5: the bank's reference, archived like that import did (or `archived` = None).
+fn taken_over_giro(v: &Vault, archived: Option<(i64, i64)>) -> i64 {
+    let db = v.db().unwrap();
+    let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+    let (unix, ms) = archived.map_or((None, 0), |(u, m)| (Some(u), m));
+    db.execute(
+        "INSERT INTO accounts(group_id, external_ref, name, iban, currency, kind, balance_cents, archived_unix, archived_ms)
+         VALUES (?1, 'fints:0532013000', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0, ?2, ?3)",
+        params![gid, unix, ms],
+    )
+    .unwrap();
+    db.last_insert_rowid()
+}
+
+fn archived_unix(v: &Vault, id: i64) -> Option<i64> {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT archived_unix FROM accounts WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_taken_over_account_without_imported_bookings_returns_when_its_source_is_open() {
+    // #998: step 36 cannot see it (no reference, no imported bookings); its own MoneyMoney
+    // account, found by IBAN, can – open brings it back, closed keeps it archived
+    for (closed, stays_archived) in [(false, false), (true, true)] {
+        let v = vault();
+        let giro = taken_over_giro(&v, Some((1_790_000_000, 1_790_001_000_123)));
+        let extra = if closed {
+            "UPDATE accounts SET refresh = 16 WHERE rowid = 1;"
+        } else {
+            ""
+        };
+        import_with(&v, &fake_db_with(false, extra), |_| {});
+        assert_eq!(
+            archived_unix(&v, giro).is_some(),
+            stays_archived,
+            "closed: {closed}"
+        );
+    }
+}
+
+#[test]
+fn a_noted_account_taken_over_by_iban_takes_its_sources_state() {
+    // the repair noted it after a fetch had taken it over: its own source (same IBAN) decides
+    let v = vault();
+    let giro = taken_over_giro(&v, None);
+    note_archive_unknown(&v.db().unwrap(), &[giro]).unwrap();
+    import_with(
+        &v,
+        &fake_db_with(false, "UPDATE accounts SET refresh = 16 WHERE rowid = 1;"),
+        |_| {},
+    );
+    assert!(archived_unix(&v, giro).is_some());
+    assert!(archive_unknown(&v.db().unwrap()).unwrap().is_empty());
+}
+
+#[test]
+fn an_account_two_logins_went_into_links_only_the_first() {
+    // the Girokonto (comdirect) and an account of another login both go into one account of an
+    // earlier import: the first one links it, the other login gets no connection that stays empty
+    let v = vault();
+    let shared = {
+        let db = v.db().unwrap();
+        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name, currency, kind, balance_cents)
+             VALUES (?1, 'moneymoney-db:999:ffff', 'Gemeinsam', 'EUR', 'checking', 0)",
+            [gid],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let path = fake_db_with(
+        false,
+        "INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (5, 2, '7777', '52090000', 0, '', 'EUR', 'Volksbank Giro', 'Max Mustermann', 0, 0, 5, 0, 1, 'GEHEIM');",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert!(
+        p.banks
+            .iter()
+            .any(|b| b.mm_id == 2 && !b.connection_options.is_empty())
+    );
+    let mut o = options_from(&p, true);
+    for c in o.accounts.iter_mut() {
+        c.import = c.mm_id == 1 || c.mm_id == 5;
+        if c.import {
+            c.target_account_id = Some(shared);
+        }
+    }
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert_eq!(r.connections_created, 1);
+    let connections = v.list_bank_connections().unwrap();
+    assert_eq!(connections.len(), 1);
+    assert_eq!(
+        v.list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == shared)
+            .unwrap()
+            .connection_id,
+        Some(connections[0].id)
+    );
+}
+
 #[test]
 fn reimport_moves_accounts_to_the_connection_chosen_now() {
     // imported with the bank's own connection, imported again with Enable Banking before

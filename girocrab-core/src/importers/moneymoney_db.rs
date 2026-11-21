@@ -3261,12 +3261,15 @@ impl ImportCtx<'_> {
             let revived = crate::sync_merge::revive_account_if_deleted(conn, id)?;
             // Nobody chose the archive state of a revived account (it comes back
             // active) or of one the #998 repair reactivated: MoneyMoney's applies –
-            // for the latter only from the MoneyMoney account it came from, not
-            // from another one merged into it.
-            let own: bool = conn.query_row(
-                "SELECT external_ref = ?2 FROM accounts WHERE id = ?1",
-                params![id, ext],
-                |r| r.get(0),
+            // for the latter only from the MoneyMoney account it came from (its
+            // reference, or the same IBAN once a fetch took it over), not from
+            // another one merged into it.
+            let (own, wrongly_archived): (bool, bool) = conn.query_row(
+                "SELECT external_ref = ?2 OR (?3 <> '' AND upper(replace(IFNULL(iban, ''), ' ', '')) = ?3),
+                        archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?4
+                   FROM accounts WHERE id = ?1",
+                params![id, ext, a.iban, crate::schema::ARCHIVE_STAMP_GAP_MS],
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
             let before = self.archive_unknown.len();
             if own {
@@ -3275,6 +3278,14 @@ impl ImportCtx<'_> {
             let unknown = self.archive_unknown.len() != before;
             if a.closed && (revived || unknown) {
                 archive_closed(conn, id)?;
+            } else if own && wrongly_archived && !a.closed {
+                // still archived by the import of v0.8.5 and taken over by a fetch
+                // without imported bookings, so step 36 could not tell: its own
+                // MoneyMoney account says it is in use (stamped like step 36)
+                conn.execute(
+                    "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1 WHERE id = ?1",
+                    [id],
+                )?;
             }
             let cur: String = conn
                 .query_row("SELECT currency FROM accounts WHERE id = ?1", [id], |r| {
@@ -3441,6 +3452,11 @@ impl ImportCtx<'_> {
     /// Finds or creates the bank logins the user chose, then links the
     /// imported accounts and lists the Enable Banking connections.
     fn connect_banks(&mut self) -> CoreResult<()> {
+        // an account two sources from different logins went into links the first one
+        // only, or the other login would get a connection that stays empty
+        let mut linked = HashSet::new();
+        self.to_link
+            .retain(|(account, _, _)| linked.insert(*account));
         let (conn, src, options) = (self.conn, self.src, self.options);
         // MoneyMoney bank rowid -> connection id
         let mut bank_connection: HashMap<i64, i64> = HashMap::new();

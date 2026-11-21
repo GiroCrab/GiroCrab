@@ -144,8 +144,10 @@ pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
 /// are in use: they left the totals and syncs skipped them. Such an archive carries MoneyMoney's
 /// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]), and the vault merge
 /// copies time and stamp as a pair. Only the import archived that way: accounts that still carry
-/// its reference, and those with its bookings (`mm-…`) – a fetch took them over by IBAN in the
-/// meantime (the reference is gone, the archive stayed), or the import merged into a bank account.
+/// its reference, and those with its bookings (`mm-…`, not the `mm-switch-…` marks of a switch):
+/// a fetch took them over by IBAN in the meantime (the reference is gone, the archive stayed), or
+/// the import merged into a bank account. One taken over without imported bookings stays; the next
+/// import brings it back when its own MoneyMoney account reports it open.
 /// The reactivation is stamped one millisecond after that wrong archive: the merge carries it to
 /// devices that still hold the archive, an edit made after it (on any device) still wins, and two
 /// devices that repair the same account stamp it alike, so neither takes the other's. Some of these
@@ -161,7 +163,8 @@ fn unarchive_cancelled_refreshes(conn: &Connection) -> CoreResult<()> {
                 AND deleted_ms IS NULL
                 AND (external_ref LIKE 'moneymoney-db:%'
                      OR EXISTS (SELECT 1 FROM transactions t
-                                 WHERE t.account_id = accounts.id AND t.external_id LIKE 'mm-%'))
+                                 WHERE t.account_id = accounts.id AND t.external_id LIKE 'mm-%'
+                                   AND t.external_id NOT LIKE 'mm-switch-%'))
               RETURNING id",
         )?
         .query_map([ARCHIVE_STAMP_GAP_MS], |r| r.get(0))?
@@ -1122,9 +1125,12 @@ mod tests {
                (1,'moneymoney-db:3','Gelöscht',1790000000,1790001000123,1790003000000),
                (1,'moneymoney-db:4','Früher archiviert',1700000000,0,NULL),
                (1,'DE89370400440532013000','Bankkonto',1790000000,1790001000123,NULL),
-               (1,'DE02120300000000202051','Übernommen',1790000000,1790001000123,NULL);
+               (1,'DE02120300000000202051','Übernommen',1790000000,1790001000123,NULL),
+               (1,'DE02500105170137075030','Umgestellt',1790000000,1790001000123,NULL);
              INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
                  SELECT id, 'mm-abc-1', '2026-01-01', -5 FROM accounts WHERE name = 'Übernommen';
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 SELECT id, 'mm-switch-pending-hold-1', '2026-01-01', -5 FROM accounts WHERE name = 'Umgestellt';
              PRAGMA user_version = 35;",
         )
         .unwrap();
@@ -1152,6 +1158,8 @@ mod tests {
         assert_eq!(row("Gelöscht").1, Some(1790000000));
         assert_eq!(row("Früher archiviert").1, Some(1700000000));
         assert_eq!(row("Bankkonto").1, Some(1790000000));
+        // the mark of a switch is no imported booking
+        assert_eq!(row("Umgestellt").1, Some(1790000000));
         // taken over by a fetch: the import's reference is gone, its bookings show it
         let (adopted, archived, _) = row("Übernommen");
         assert_eq!(archived, None);
