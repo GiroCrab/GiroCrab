@@ -450,14 +450,14 @@ Rectangle {
     readonly property var securitiesPositions: scope === "securities" ? DepotMetrics.mergedPositions(DepotMetrics.makePositions(heldAssets)) : []
     /// Which depot(s) hold a position: the same security in two depots names both.
     readonly property var depotNames: {
-        const names = {}
+        const names = Object.create(null)
         for (const depot of selection.summary.securities)
             for (const a of selection.assets[depot.id] || []) {
                 const key = DepotMetrics.compositionKey(a.holding)
                 names[key] = names[key] || []
                 if (names[key].indexOf(depot.name) < 0) names[key].push(depot.name)
             }
-        const out = {}
+        const out = Object.create(null)
         for (const k in names) out[k] = names[k].join(", ")
         return out
     }

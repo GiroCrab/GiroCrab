@@ -154,9 +154,10 @@ QtObject {
     }
     /// One row per security across several depots: quantity, value, share and gain add up.
     function mergedPositions(items) {
-        const groups = {}
+        // keyed by name when there is no ISIN/WKN: no prototype ("constructor" is a name too)
+        const groups = Object.create(null)
         for (const p of items) { const k = compositionKey(p.holding); (groups[k] = groups[k] || []).push(p) }
-        const seen = {}, out = []
+        const seen = Object.create(null), out = []
         for (const item of items) {
             const key = compositionKey(item.holding)
             if (seen[key]) continue
@@ -238,7 +239,7 @@ QtObject {
     }
     function colorIndices(keys) {
         const unique = Array.from(new Set(keys)).sort()
-        const taken = {}, out = {}
+        const taken = {}, out = Object.create(null)
         let count = 0
         for (const key of unique) {
             let i = startIndex(key)
@@ -263,7 +264,7 @@ QtObject {
     function compositionGroups(assets, mode) {
         const items = drawable(assets)
         if (mode === "position") {
-            const cents = {}, labels = {}, own = {}
+            const cents = Object.create(null), labels = Object.create(null), own = Object.create(null)
             const idx = colorIndices(items.map(a => compositionKey(a.holding)))
             for (const a of items) {
                 const h = a.holding, k = compositionKey(h)
@@ -275,7 +276,7 @@ QtObject {
                 id: k, label: labels[k] || k, cents: cents[k], count: 1, color: palette[idx[k]], unclassified: false,
                 personal: !!own[k], memberKeys: [k] }))
         }
-        const by = {}
+        const by = Object.create(null)
         for (const a of items) {
             const c = a.classification
             const key = mode === "assetClass" ? c.asset_class : c.instrument

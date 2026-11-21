@@ -51,6 +51,14 @@ AssetSectionCard {
         const positions = s.count > 1 ? " · " + qsTr("%1 Positionen").arg(s.count) : ""
         return s.label + " · " + Fmt.money(s.cents, currency) + " · " + shareText(s.cents) + positions
     }
+    /// The name as read aloud: masked like the drawn one (personal for an own item, else a label).
+    function spokenLabel(s) { return AppModel.masking(s.label, s.personal ? AppModel.redactPersonal : AppModel.redactLabels) }
+    /// detailText as read aloud: name, amount and share masked like their drawn texts.
+    function spokenDetail(s) {
+        const positions = s.count > 1 ? " · " + qsTr("%1 Positionen").arg(s.count) : ""
+        return spokenLabel(s) + " · " + AppModel.masking(Fmt.money(s.cents, currency), AppModel.redactAmounts)
+            + " · " + AppModel.masking(shareText(s.cents), AppModel.redactAmounts) + positions
+    }
 
     // grouping and drawing, side by side or stacked
     Flow {
@@ -267,7 +275,7 @@ AssetSectionCard {
                     onClicked: card.choose(tile.s)
                 }
                 Accessible.role: Accessible.Button
-                Accessible.name: card.detailText(s)
+                Accessible.name: card.spokenDetail(s)
             }
         }
         // the detail card in the bottom right corner
@@ -328,7 +336,7 @@ AssetSectionCard {
                 HoverHandler { id: legendArea; cursorShape: Qt.PointingHandCursor }
                 ToolTip.visible: legendArea.hovered; ToolTip.delay: 600; ToolTip.text: AppModel.masking(card.detailText(entry.modelData), AppModel.redactAmounts)
                 Accessible.role: Accessible.Button
-                Accessible.name: entry.modelData.label
+                Accessible.name: card.spokenLabel(entry.modelData)
                 Accessible.checked: card.selected === entry.modelData.id
                 Accessible.description: qsTr("Positionen dieser Gruppe anzeigen oder Filter aufheben")
             }

@@ -24,6 +24,14 @@ Rectangle {
     property bool selectable: false
     signal selected(var position)
     signal opened(var position)
+    /// RowTaps (macOS): a double click first – a single click may leave the view, so it waits
+    /// out the double-click interval before `selected`.
+    Timer {
+        id: clickTimer
+        property var position: null
+        interval: Qt.styleHints.mouseDoubleClickInterval
+        onTriggered: table.selected(position)
+    }
     signal copyAll()
     /// Extra context-menu entries of the host: position => [{ title, action, separator }]
     property var rowActions: null
@@ -146,9 +154,13 @@ Rectangle {
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: m => {
                             if (m.button === Qt.RightButton) { rowMenu.position = rowBox.p; rowMenu.rebuild(); rowMenu.popup(); return }
-                            if (table.selectable) table.selected(rowBox.p)
+                            if (table.selectable) { clickTimer.position = rowBox.p; clickTimer.restart() }
                         }
-                        onDoubleClicked: m => { if (m.button === Qt.LeftButton && table.selectable) table.opened(rowBox.p) }
+                        onDoubleClicked: m => {
+                            if (m.button !== Qt.LeftButton || !table.selectable) return
+                            clickTimer.stop()
+                            table.opened(rowBox.p)
+                        }
                     }
                     // wide: the columns
                     RowLayout {
@@ -185,7 +197,7 @@ Rectangle {
                             Layout.fillWidth: true; Layout.minimumHeight: 44
                             spacing: 10
                             ColumnLayout { spacing: 2; Layout.fillWidth: true
-                                Text { text: rowBox.p.displayName; Layout.fillWidth: true; elide: Text.ElideRight; wrapMode: rowBox.open ? Text.WordWrap : Text.NoWrap
+                                Text { text: rowBox.p.displayName; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight; wrapMode: rowBox.open ? Text.WordWrap : Text.NoWrap
                                        maximumLineCount: rowBox.open ? 3 : 1; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text
                                        Sensitive { labels: !rowBox.p.isOwnItem } }
                                 // quantity and price are figures: protected like amounts
@@ -204,12 +216,21 @@ Rectangle {
                             // a narrow window keeps the pencil at hand
                             EditButton { p: rowBox.p }
                             Item {
+                                id: detailsButton
                                 implicitWidth: 18; implicitHeight: 18
                                 SFIcon { anchors.centerIn: parent; symbol: "chevron.right"; size: 10; color: Theme.secondary; rotation: rowBox.open ? 90 : 0
                                          Behavior on rotation { NumberAnimation { duration: 200 } } }
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: table.toggle(rowBox.p.id) }
+                                // a Button on the Mac: Tab reaches it, Space / Return opens the details
+                                activeFocusOnTab: true
+                                Keys.onSpacePressed: table.toggle(rowBox.p.id)
+                                Keys.onReturnPressed: table.toggle(rowBox.p.id)
+                                Keys.onEnterPressed: table.toggle(rowBox.p.id)
+                                Rectangle { visible: detailsButton.activeFocus; anchors.fill: parent; anchors.margins: -2
+                                            radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
                                 Accessible.role: Accessible.Button
                                 Accessible.name: rowBox.open ? qsTr("Details ausblenden") : qsTr("Details anzeigen")
+                                Accessible.onPressAction: table.toggle(rowBox.p.id)
                             }
                         }
                         // everything the wide table shows in columns, as labelled lines
@@ -344,7 +365,7 @@ Rectangle {
         id: nb
         property var p
         spacing: 2
-        Text { text: nb.p.displayName; Layout.fillWidth: true; elide: Text.ElideRight
+        Text { text: nb.p.displayName; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight
                font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text
                Sensitive { labels: !nb.p.isOwnItem } }
         RowLayout {

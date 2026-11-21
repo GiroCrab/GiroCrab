@@ -180,12 +180,21 @@ ColumnLayout {
                         // a narrow window keeps the jump at hand
                         Jump { t: row.t }
                         Item {
+                            id: detailsButton
                             implicitWidth: 18; implicitHeight: 18
                             SFIcon { anchors.centerIn: parent; symbol: "chevron.right"; size: 10; color: Theme.secondary; rotation: row.open ? 90 : 0
                                      Behavior on rotation { NumberAnimation { duration: 200 } } }
                             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: av.toggle(row.t.id) }
+                            // a Button on the Mac: Tab reaches it, Space / Return opens the details
+                            activeFocusOnTab: true
+                            Keys.onSpacePressed: av.toggle(row.t.id)
+                            Keys.onReturnPressed: av.toggle(row.t.id)
+                            Keys.onEnterPressed: av.toggle(row.t.id)
+                            Rectangle { visible: detailsButton.activeFocus; anchors.fill: parent; anchors.margins: -2
+                                        radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
                             Accessible.role: Accessible.Button
                             Accessible.name: row.open ? qsTr("Details ausblenden") : qsTr("Details anzeigen")
+                            Accessible.onPressAction: av.toggle(row.t.id)
                         }
                     }
                     ColumnLayout {

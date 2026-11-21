@@ -233,8 +233,17 @@ AssetAccountFrame {
             width: parent.width
             spacing: 0
             Item {
+                id: soldToggle
                 Layout.fillWidth: true
                 implicitHeight: soldHead.implicitHeight + 20
+                function toggle() { prefs.showSoldAssets = !prefs.showSoldAssets }
+                // a Button on the Mac: Tab reaches it, Space / Return folds it
+                activeFocusOnTab: true
+                Keys.onSpacePressed: toggle()
+                Keys.onReturnPressed: toggle()
+                Keys.onEnterPressed: toggle()
+                Rectangle { visible: soldToggle.activeFocus; anchors.fill: parent; anchors.margins: 2
+                            radius: 6; color: "transparent"; border.width: 2; border.color: Theme.accent }
                 RowLayout {
                     id: soldHead
                     x: 16; y: 10; width: parent.width - 32
@@ -244,9 +253,11 @@ AssetAccountFrame {
                     Text { text: qsTr("Ehemalige Positionen (%1)").arg(tv.sold.length); font.pixelSize: Theme.subheadline + 1
                            font.weight: Font.DemiBold; color: Theme.secondary; Layout.fillWidth: true }
                 }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: prefs.showSoldAssets = !prefs.showSoldAssets }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: soldToggle.toggle() }
                 Accessible.role: Accessible.Button
+                Accessible.name: qsTr("Ehemalige Positionen (%1)").arg(tv.sold.length)
                 Accessible.description: prefs.showSoldAssets ? qsTr("Ausgeklappt") : qsTr("Eingeklappt")
+                Accessible.onPressAction: toggle()
             }
             Rectangle { visible: prefs.showSoldAssets; Layout.fillWidth: true; implicitHeight: 1; color: Theme.border }
             Repeater {

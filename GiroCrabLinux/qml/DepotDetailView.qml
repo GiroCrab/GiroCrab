@@ -159,7 +159,7 @@ AssetAccountFrame {
         visible: dv.loaded && DepotState.depotTab === "activities"
         Layout.fillWidth: true
         all: dv.loaded ? dv.transactions : []
-        shown: dv.loaded ? DepotMetrics.filteredActivities(dv.transactions, dv.account.id, dv.activityFilter, DepotState.query, dv.periodRange[0], dv.periodRange[1]) : []
+        shown: dv.loaded && DepotState.depotTab === "activities" ? DepotMetrics.filteredActivities(dv.transactions, dv.account.id, dv.activityFilter, DepotState.query, dv.periodRange[0], dv.periodRange[1]) : []
         filter: dv.activityFilter
         query: DepotState.query
         periodTitle: DepotState.depotPeriodTitle
