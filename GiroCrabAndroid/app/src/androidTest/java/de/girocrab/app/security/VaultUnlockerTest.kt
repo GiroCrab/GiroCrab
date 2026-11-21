@@ -117,9 +117,32 @@ class VaultUnlockerTest {
         assertFalse(vaultFile.exists())
     }
 
+    /**
+     * Android never creates a vault (#1459, Import-only). With a key but no file, opening would
+     * create an empty vault and make "the data is gone" look like "there was never data".
+     */
+    @Test
+    fun missingVaultFileIsReportedWithoutPrompt() {
+        storeWrappedKey()
+        var prompted = false
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            prompted = true
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.VaultMissing, result)
+        assertFalse("a missing vault must not prompt", prompted)
+        assertFalse("an empty vault must not be created", vaultFile.exists())
+    }
+
     @Test
     fun authenticatedPromptOpensTheVault() {
-        storeWrappedKey()
+        val key = storeWrappedKey()
+        // The import created the file on a real device; here it is created directly.
+        handleOrFail(opener.open(vaultFile.path, key)).close()
         val unlocker = unlocker { cipher, _, _, onResult ->
             onResult(PromptResult.Succeeded(cipher))
         }
@@ -167,7 +190,7 @@ class VaultUnlockerTest {
      * Stores a key and proves the plain round-trip first. If the unlocker test fails afterwards,
      * the defect is in the unlocker, not in the store — otherwise both look identical in the log.
      */
-    private fun storeWrappedKey() {
+    private fun storeWrappedKey(): ByteArray {
         val key = ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { (it + 11).toByte() }
         val store = keyStore()
         store.storeWrapped(key, store.setupCipher())
@@ -177,7 +200,11 @@ class VaultUnlockerTest {
             key,
             store.readWrapped(store.unlockCipher()),
         )
+        return key
     }
+
+    private fun handleOrFail(vault: OwnVault?): OwnVault =
+        vault ?: throw AssertionError("core did not return a handle (not linked?)")
 
     private fun deleteAlias() {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

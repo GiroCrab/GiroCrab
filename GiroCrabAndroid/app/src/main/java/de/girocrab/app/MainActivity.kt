@@ -14,6 +14,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import android.os.LocaleList
 import android.view.WindowManager
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -27,6 +28,7 @@ import de.girocrab.app.ui.screens.PortfolioAndAssetsScreen
 import de.girocrab.app.ui.screens.AddBankDialog
 import de.girocrab.app.ui.screens.AnalyticsScreen
 import de.girocrab.app.ui.screens.BookingDetailSheet
+import de.girocrab.app.ui.screens.ImportPasswordDialog
 import de.girocrab.app.ui.screens.BookingStreamScreen
 import de.girocrab.app.ui.screens.CategoryManagerDialog
 import de.girocrab.app.ui.screens.PaymentsScreen
@@ -71,9 +73,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.girocrab.app.model.AppViewModel
 import de.girocrab.app.model.VaultState
 import de.girocrab.app.security.AndroidCipherPrompt
+import de.girocrab.app.security.ImportResult
 import de.girocrab.app.security.NativeVaultOpener
 import de.girocrab.app.security.UnlockResult
 import de.girocrab.app.security.VaultKeyStore
+import de.girocrab.app.security.VaultImporter
 import de.girocrab.app.security.VaultUnlocker
 import de.girocrab.app.ui.screens.BiometricLockScreen
 import de.girocrab.app.ui.screens.DemoBanner
@@ -196,6 +200,31 @@ fun GiroCrabRoot(
         }
     }
     var unlockMessage by remember { mutableStateOf<String?>(null) }
+    // Only offered after a vault really opened: a labelled way out, not a silent demo fallback.
+    var demoEscape by remember { mutableStateOf(false) }
+
+    // Import path from #1428 (2.6): Android never creates a vault, so this is the only way in.
+    val importer = remember(context) {
+        (context as? FragmentActivity)?.let { activity ->
+            VaultImporter(
+                keyStore = VaultKeyStore(VaultKeyStore.defaultFile(activity.filesDir)),
+                opener = NativeVaultOpener(),
+                prompt = AndroidCipherPrompt(activity),
+                filesDir = activity.filesDir,
+            )
+        }
+    }
+    var pendingBackup by remember { mutableStateOf<File?>(null) }
+    val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val target = File(context.cacheDir, "import.gcbackup")
+        val copied = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            } ?: error("no stream")
+        }.isSuccess
+        if (copied) pendingBackup = target else unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+    }
 
     if (state.loading && state.vaultState == VaultState.Locked) {
         Box(Modifier.fillMaxSize())
@@ -212,11 +241,39 @@ fun GiroCrabRoot(
                     unlockMessage = "Entsperren ist auf diesem Gerät nicht verfügbar."
                 } else {
                     unlockMessage = null
-                    request.unlock { result -> unlockMessage = describe(result) }
+                    demoEscape = false
+                    request.unlock { result ->
+                        unlockMessage = describe(result)
+                        demoEscape = result is UnlockResult.Opened
+                    }
                 }
             },
             onBackToDemo = { if (lockPreview) lockPreview = false else vm.showDemo() },
+            demoEscape = demoEscape,
+            onImportRequest = if (lockPreview) null else {{
+                pickBackup.launch(arrayOf("*/*"))
+            }},
         )
+        pendingBackup?.let { file ->
+            ImportPasswordDialog(
+                fileName = file.name,
+                onSubmit = { password ->
+                    pendingBackup = null
+                    val request = importer
+                    if (request == null) {
+                        unlockMessage = "Import ist auf diesem Gerät nicht verfügbar."
+                    } else {
+                        unlockMessage = "Sicherung wird eingespielt …"
+                        request.import(file.path, password) { result ->
+                            unlockMessage = describeImport(result)
+                            demoEscape = result is ImportResult.Imported
+                            file.delete()
+                        }
+                    }
+                },
+                onDismiss = { pendingBackup = null },
+            )
+        }
         return
     }
 
@@ -442,6 +499,21 @@ private fun GiroCrabIntro(skip: Boolean) {
  * Message for the lock screen. Opening the vault is proven by the account count — the data itself
  * still comes from the mapper in #1429 (3.1), so the handle is closed again right here.
  */
+private fun describeImport(result: ImportResult): String = when (result) {
+    is ImportResult.Imported -> {
+        // Counting is only a proof that data arrived; the list itself follows with #1429.
+        val count = try {
+            result.vault.accountCount
+        } finally {
+            result.vault.close()
+        }
+        "Sicherung eingespielt: $count Konten. Anzeige folgt mit dem Mapper (#1429)."
+    }
+    ImportResult.RefusedByUser -> "Import abgebrochen — es wurde nichts geschrieben."
+    ImportResult.Unavailable -> "Import ist auf diesem Gerät nicht verfügbar."
+    is ImportResult.Failed -> result.message
+}
+
 private fun describe(result: UnlockResult): String = when (result) {
     is UnlockResult.Opened -> {
         // `accountCount` throws when the handle is unusable, so the handle is closed in `finally`
@@ -453,8 +525,13 @@ private fun describe(result: UnlockResult): String = when (result) {
         }
         "Tresor geöffnet: $count Konten. Die Anzeige folgt mit dem Mapper (#1429)."
     }
-    UnlockResult.NoVaultOnDevice -> "Auf diesem Gerät liegt noch kein Tresor. Import folgt (#1428, 2.6)."
-    UnlockResult.KeyInvalidated -> "Der Geräteschlüssel ist ungültig (neue Biometrie oder zurückgesetzte Sperre). Nur eine Sicherung bringt den Tresor zurück."
+    UnlockResult.NoVaultOnDevice ->
+        "Auf diesem Gerät liegt noch kein Tresor. Spiele eine Sicherung vom Desktop ein — dort über „Tresor sichern“ erzeugt."
+    UnlockResult.KeyInvalidated ->
+        "Der Geräteschlüssel ist ungültig: neue Biometrie oder zurückgesetzte Gerätesperre. " +
+            "Ohne ihn sind die Daten nicht lesbar — spiele eine Sicherung vom Desktop ein."
+    UnlockResult.VaultMissing ->
+        "Die Tresordatei fehlt auf diesem Gerät. Nur eine Sicherung vom Desktop bringt die Daten zurück."
     UnlockResult.Unavailable -> "Entsperren ist auf diesem Gerät nicht verfügbar."
     is UnlockResult.Refused -> result.message ?: "Entsperren abgebrochen."
 }

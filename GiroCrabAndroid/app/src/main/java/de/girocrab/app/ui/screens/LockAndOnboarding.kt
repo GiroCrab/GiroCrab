@@ -28,12 +28,14 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
@@ -72,6 +75,8 @@ fun BiometricLockScreen(
     onBackToDemo: () -> Unit,
     modifier: Modifier = Modifier,
     autoPrompt: Boolean = true,
+    demoEscape: Boolean = false,
+    onImportRequest: (() -> Unit)? = null,
 ) {
     var previewHint by remember { mutableStateOf<String?>(null) }
 
@@ -118,11 +123,21 @@ fun BiometricLockScreen(
                 Spacer(Modifier.width(8.dp))
                 Text("Entsperren")
             }
+            // The only way onto real data: Android never creates a vault, it imports one (#1428).
+            if (!previewMode && onImportRequest != null) {
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(onClick = onImportRequest) {
+                    Icon(Icons.Default.CloudDownload, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Aus Sicherung einspielen")
+                }
+            }
             if (previewMode) {
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onBackToDemo) { Text("Zurück zur Demo") }
-            } else if (message != null) {
-                // The vault may be open-able while the app cannot show it yet (#1429): give a way out.
+            } else if (demoEscape) {
+                // A vault opened, but the app cannot show it yet (#1429): offer a labelled way out
+                // instead of silently falling back to the demo.
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onBackToDemo) { Text("Weiter in der Demo") }
             }
@@ -242,4 +257,52 @@ private fun ActionButton(icon: ImageVector, label: String, primary: Boolean, onC
     }
     if (primary) Button(onClick, Modifier.fillMaxWidth()) { content() }
     else OutlinedButton(onClick, Modifier.fillMaxWidth()) { content() }
+}
+
+
+/**
+ * Password for a desktop backup ("Tresor sichern"). Importing needs it because the file is
+ * encrypted with it — the desktop's vault key is never part of the transfer.
+ */
+@Composable
+fun ImportPasswordDialog(
+    fileName: String,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var reveal by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sicherung einspielen") },
+        text = {
+            Column {
+                Text(
+                    "Passwort der Sicherung. Es wurde beim „Tresor sichern“ auf dem Desktop gesetzt.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(fileName, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    singleLine = true,
+                    label = { Text("Passwort") },
+                    visualTransformation = if (reveal) androidx.compose.ui.text.input.VisualTransformation.None
+                    else PasswordVisualTransformation(),
+                )
+                TextButton(onClick = { reveal = !reveal }) {
+                    Text(if (reveal) "Passwort verbergen" else "Passwort anzeigen")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSubmit(password) }, enabled = password.isNotEmpty()) {
+                Text("Einspielen")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
+    )
 }
