@@ -33,6 +33,12 @@ final class KeyAdoptionFolderTests: XCTestCase {
         XCTAssertNotEqual(KeyAdoptionState.notFoundMessage(location: .folder), KeyAdoptionState.notFoundMessage(location: .container))
     }
 
+    func test_folder_pick_offered_after_not_found_and_failure_only() {
+        XCTAssertTrue(KeyAdoptionState.notFound("x", searched: nil).offersFolderPick)
+        XCTAssertTrue(KeyAdoptionState.failed("Schlüssel passt nicht").offersFolderPick)
+        for state in [KeyAdoptionState.idle, .working, .done] { XCTAssertFalse(state.offersFolderPick) }
+    }
+
     func test_inspect_picked_folder() async throws {
         let withVault = try dir("GiroCrab", snapshot: true)
         let empty = try dir("Leer")
@@ -52,11 +58,14 @@ final class KeyAdoptionFolderTests: XCTestCase {
         let cloud = CloudSyncManager.shared
         let chosenBefore = cloud.folderChosen
         let nameBefore = cloud.folderName
-        model.adoptSyncKey(String(repeating: "ab", count: 32), folder: try dir("Leer"), wait: 0)
+        let empty = try dir("Leer")
+        model.adoptSyncKey(String(repeating: "ab", count: 32), folder: empty, wait: 0)
         XCTAssertEqual(model.keyAdoption, .working)
         for _ in 0..<100 where model.keyAdoption == .working { try await Task.sleep(for: .milliseconds(20)) }
-        guard case .notFound(let message) = model.keyAdoption else { return XCTFail("expected .notFound, got \(model.keyAdoption)") }
+        guard case .notFound(let message, let searched) = model.keyAdoption else { return XCTFail("expected .notFound, got \(model.keyAdoption)") }
         XCTAssertEqual(message, KeyAdoptionState.pickedFolderMessage(.empty))
+        XCTAssertEqual(searched, ICloudFolderMigration.displayName(for: empty), "names the folder just picked, not the configured one")
+        XCTAssertTrue(model.keyAdoption.offersFolderPick)
         XCTAssertEqual(cloud.folderChosen, chosenBefore, "a folder without a vault never becomes the sync folder")
         XCTAssertEqual(cloud.folderName, nameBefore)
         XCTAssertTrue(model.demoActive)

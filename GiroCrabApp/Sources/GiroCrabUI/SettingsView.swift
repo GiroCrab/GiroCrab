@@ -868,15 +868,17 @@ struct KeyPasteSheet: View {
                     .appFont(.caption).foregroundStyle(Theme.negative)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if case .notFound(let message) = model.keyAdoption {
+            if case .notFound(let message, let searched) = model.keyAdoption {
                 // The other device may sync via a folder in iCloud Drive (#1503).
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .appFont(.caption).foregroundStyle(Theme.warning)
                     .fixedSize(horizontal: false, vertical: true)
-                if let folder = CloudSyncManager.shared.folderName {
-                    LabeledContent("Gesucht in") { Text(folder).sensitive() }
+                if let searched {
+                    LabeledContent("Gesucht in") { Text(searched).sensitive() }
                         .appFont(.caption)
                 }
+            }
+            if model.keyAdoption.offersFolderPick {
                 Button("Ordner wählen …", systemImage: "folder.badge.gearshape") { picking = true }
                     .disabled(!valid)
             }

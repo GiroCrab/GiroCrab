@@ -782,7 +782,17 @@ enum KeyAdoptionState: Equatable {
     /// No vault where this device looked (#1503): the sheet names the place and
     /// offers „Ordner wählen …“, since a Mac without the app's iCloud container
     /// syncs via the folder „GiroCrab“ in iCloud Drive.
-    case notFound(String)
+    /// `searched`: the place looked in, shown redacted under the message.
+    case notFound(String, searched: String?)
+
+    /// „Ordner wählen …“ stays offered after a failure too: the picked folder
+    /// may hold a vault the pasted key cannot open (#1503).
+    var offersFolderPick: Bool {
+        switch self {
+        case .notFound, .failed: return true
+        case .idle, .working, .done: return false
+        }
+    }
 
     /// Why nothing was found where the device looked; the sheet shows the place
     /// itself (`CloudSyncManager.folderName`, redacted like in Settings).
