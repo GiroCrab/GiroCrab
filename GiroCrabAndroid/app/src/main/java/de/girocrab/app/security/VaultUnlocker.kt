@@ -86,7 +86,8 @@ class VaultUnlocker(
         val key = try {
             keyStore.readWrapped(authenticated)
         } catch (e: Exception) {
-            onResult(UnlockResult.Refused(e.message))
+            // A bare `message` hides the cause: GCM tag failures and Keystore errors carry none.
+            onResult(UnlockResult.Refused("Entsperren fehlgeschlagen (${e.javaClass.simpleName}: ${e.message})"))
             return
         }
         try {
