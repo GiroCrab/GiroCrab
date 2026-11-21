@@ -187,6 +187,14 @@ pub(super) fn worst_vop_code(candidates: &[&str]) -> String {
         .unwrap_or_default()
 }
 
+/// FinTS VOP 1.02, E.8.1: the flow is steered by return codes, not by the
+/// result in HIVPP. A name deviation (also "not applicable") always comes with
+/// 3945 and 3090; 3091 tells the client that no HKVPA is needed. 3091 without
+/// 3945 and 3090 therefore reports no deviation, even if HIVPP has no result.
+pub(super) fn reports_no_deviation(reply: &BankReply) -> bool {
+    reply.has("3091") && !reply.has("3945") && !reply.has("3090")
+}
+
 /// VOP result code from HIVPP: the single-transaction result (EVPE) and the
 /// codes in the payment status report; the worst one wins.
 pub(super) fn vop_result_code(h: &Segment) -> String {
@@ -635,8 +643,9 @@ impl FinTsConnector {
         Ok((reply, polled))
     }
 
-    /// Reads HIVPP. `None` = go on to the approval (match, or the bank did
-    /// not report a result); `Some` = the user has to confirm.
+    /// Reads HIVPP. `None` = go on to the approval (match, no HIVPP, or 3091
+    /// without a result and without 3945/3090, see `reports_no_deviation`);
+    /// `Some` = the user has to confirm.
     pub(super) fn evaluate_payee(&mut self, reply: &BankReply) -> Option<PayeeCheck> {
         let h = reply.first("HIVPP")?;
         self.vop_id = h.binary(1).map(|b| b.to_vec()).filter(|b| !b.is_empty());
@@ -652,6 +661,13 @@ impl FinTsConnector {
         if result == PayeeMatch::Match && !reply.has("3945") {
             // 3091: the bank needs no HKVPA; the challenge is simply answered.
             self.vop_with_tan = self.vop_id.is_some() && !reply.has("3091");
+            return None;
+        }
+        if code.is_empty() && reports_no_deviation(reply) {
+            // The bank sent no result (allowed, FinTS VOP 1.02 C.10.7.1.1) but
+            // said by return code that none is needed: no name-check dialog.
+            // The order is already with the bank, its challenge is answered.
+            self.vop_with_tan = false;
             return None;
         }
         Some(PayeeCheck {
