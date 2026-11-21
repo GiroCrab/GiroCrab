@@ -89,8 +89,13 @@ extension AppModel {
 
     /// Bitcoin Core: stored only once the node answers (RPC server on, `.cookie` found, wallet
     /// there); otherwise its error says what is missing and nothing is added. The data
-    /// directory Bitcoin-Qt uses is taken over when none is set.
+    /// directory Bitcoin-Qt uses is taken over when none is set. Runs in the personal vault, so
+    /// the check uses its settings and the detected directory is saved there, not in the demo.
     private func addBitcoinCore(login: String) {
+        runInOwnVault { [self] in checkAndAddBitcoinCore(login: login) }
+    }
+
+    private func checkAndAddBitcoinCore(login: String) {
         let set = settingEntry(BitcoinCoreDatadir.key).map(\.value).flatMap { $0.isEmpty ? nil : $0 }
         let detected = set == nil ? BitcoinCoreDatadir.detected() : nil
         let datadir = set ?? detected ?? ""
