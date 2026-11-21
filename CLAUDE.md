@@ -21,6 +21,7 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
   `merchants/custom.rs` – the user's merchant settings (#1373): master switch, switched-off bundled merchants, own merchants, iCloud merge
 - `girocrab-core/src/recipients.rs` – known recipients of the transfer form (one per IBAN, cached), hidden IBANs + merge (#978)
 - `girocrab-core/src/documents.rs` – booking documents / PDF text extraction
+- `girocrab-core/src/document_links.rs` – linked receipts (#590): references to documents kept outside the vault (schema step, `impl Vault` API, iCloud merge by uuid), listed together with the stored files of `documents.rs`; `document_links/tests.rs`
 - `girocrab-core/src/text.rs` – text helpers (mojibake repair etc.)
 - `girocrab-core/src/local_api.rs` + `local_api/server.rs` – read-only local interface for external analysis (#136): queries, scope/token, Unix socket server (`docs/local-api.md`)
 - `girocrab-mcp/` – MCP stdio adapter for that socket (own crate, no core dependency outside tests; architecture, bundling, local testing: `docs/local-api-entwicklung.md`)

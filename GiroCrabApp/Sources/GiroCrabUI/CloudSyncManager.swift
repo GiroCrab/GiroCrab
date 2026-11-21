@@ -450,7 +450,8 @@ public final class CloudSyncManager {
             lastError = nil
             record(merge)
             let changed = merge.stats.contains {
-                $0.accountsAdded + $0.categoriesAdded + $0.rulesAdded + $0.bookingsAdded + $0.bookingsUpdated + $0.groupsUpdated > 0
+                $0.accountsAdded + $0.categoriesAdded + $0.rulesAdded + $0.bookingsAdded + $0.bookingsUpdated + $0.groupsUpdated
+                    + $0.documentsUpdated > 0
             }
             if changed { onMerged?() }
         }

@@ -484,6 +484,7 @@ mod tests {
             file_name: format!("{id}.pdf"),
             size_bytes: size,
             source_url: String::new(),
+            link_url: String::new(),
             doc_date: date.into(),
             created_at: 0,
             seen: true,
