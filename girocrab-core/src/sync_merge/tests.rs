@@ -4621,3 +4621,135 @@ fn opening_purges_secrets_of_connections_deleted_earlier() {
     let v = open(&dir, "a.db");
     assert_eq!(connection_settings(&v, c), 0);
 }
+
+/// A depot from the bank and its imported twin (same account number); the
+/// twin holds `positions` and one securities transaction. Returns (bank, twin).
+fn depot_pair(v: &Vault, positions: usize) -> (i64, i64) {
+    let c = comdirect(v);
+    exec(
+        v,
+        "INSERT OR IGNORE INTO account_groups(id, name) VALUES (1, 'G')",
+    );
+    let db = v.db().unwrap();
+    let add = |ext: &str| -> i64 {
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, kind)
+             VALUES (?1, 1, ?2, 'Depot', '9001', 'EUR', 'brokerage')",
+            params![c, ext],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let bank = add("depot:E5AA");
+    let twin = add("moneymoney-db:22:4de55d4e");
+    for i in 0..positions {
+        db.execute(
+            "INSERT INTO holdings(account_id, isin, name, quantity, value_cents) VALUES (?1, ?2, 'Fonds', 1, 100000)",
+            params![twin, format!("DE000000000{i}")],
+        )
+        .unwrap();
+    }
+    db.execute(
+        "INSERT INTO security_transactions(account_id, external_id, booking_date, isin, direction)
+         VALUES (?1, 'st-1', '2026-11-01', 'DE0000000000', 'buy')",
+        [twin],
+    )
+    .unwrap();
+    (bank, twin)
+}
+
+fn positions_of(v: &Vault, account: i64) -> i64 {
+    n(
+        v,
+        &format!("SELECT count(*) FROM holdings WHERE account_id = {account}"),
+    )
+}
+
+/// Folding a depot twin moves its positions and securities transactions to
+/// the bank depot – before, the bank depot showed 0 until its next fetch.
+#[test]
+fn folded_depot_twin_hands_over_positions() {
+    let dir = temp_dir("twin-depot-holdings");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert!(
+        n(
+            &v,
+            &format!("SELECT deleted_ms IS NOT NULL FROM accounts WHERE id = {twin}")
+        ) == 1
+    );
+    assert_eq!(positions_of(&v, bank), 2);
+    assert_eq!(positions_of(&v, twin), 0);
+    assert_eq!(
+        n(
+            &v,
+            &format!("SELECT count(*) FROM security_transactions WHERE account_id = {bank}")
+        ),
+        1
+    );
+}
+
+/// The bank depot already fetched its inventory, empty (all sold): the
+/// twin's older positions are dropped, not handed over, and do not come
+/// back on a later open.
+#[test]
+fn twin_positions_do_not_override_a_fetched_empty_depot() {
+    let dir = temp_dir("twin-depot-fetched-empty");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO depot_observations(account_id, kind, position, source, observed_ms, value_date, currency, value_cents, confirmed)
+             VALUES ({bank}, 'total', '', 'fetch', 1, '2026-11-10', 'EUR', 0, 1)"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 0);
+    assert_eq!(positions_of(&v, twin), 0);
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 0);
+}
+
+/// A fetch that brought only the balance (no inventory, unconfirmed) is no
+/// inventory of the bank's own: the twin's positions still move over.
+#[test]
+fn twin_positions_move_to_a_depot_that_only_fetched_its_balance() {
+    let dir = temp_dir("twin-depot-balance-only");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO depot_observations(account_id, kind, position, source, observed_ms, value_date, currency, value_cents, confirmed)
+             VALUES ({bank}, 'total', '', 'fetch', 1, '2026-11-10', 'EUR', 200000, 0)"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 2);
+    assert_eq!(positions_of(&v, twin), 0);
+}
+
+/// The bank depot's own positions (from a fetch) are newer: they stay, the
+/// twin's are dropped.
+#[test]
+fn bank_depot_with_positions_keeps_its_own() {
+    let dir = temp_dir("twin-depot-own");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO holdings(account_id, isin, name, quantity, value_cents) VALUES ({bank}, 'DE000BANK001', 'Aktie', 3, 50000)"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 1);
+    assert_eq!(positions_of(&v, twin), 0);
+}

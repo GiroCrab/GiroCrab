@@ -417,10 +417,41 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
         ),
         params![twin, bank],
     )?;
+    // asked before the history moves: the twin's may hold fetches too
+    move_depot_data(conn, twin, bank)?;
     // the imported depot history belongs to the bank's account from now on (#578)
     crate::depot_values::move_account(conn, twin, bank)?;
     // so does the user's note (newer edit wins, like a merge, #980)
     crate::user_groups::pass_note_on(conn, twin, bank)?;
     super::soft_delete_account(conn, twin)?;
+    Ok(())
+}
+
+/// A depot's positions and securities transactions go with it to the bank
+/// account, like `connections::deduplicate` moves them: positions only while
+/// the bank account has none and never fetched an inventory of its own (a
+/// confirmed fetch: one that brought only the balance doesn't count),
+/// else they are outdated and dropped (an empty inventory is one too: all
+/// sold); securities transactions once per external id.
+fn move_depot_data(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
+    let bank_has_inventory: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM holdings WHERE account_id = ?1)
+             OR EXISTS (SELECT 1 FROM depot_observations
+                         WHERE account_id = ?1 AND source = ?2 AND confirmed != 0)",
+        params![bank, crate::depot_values::observations::SOURCE_FETCH],
+        |r| r.get(0),
+    )?;
+    if bank_has_inventory {
+        conn.execute("DELETE FROM holdings WHERE account_id = ?1", [twin])?;
+    } else {
+        conn.execute(
+            "UPDATE holdings SET account_id = ?2 WHERE account_id = ?1",
+            params![twin, bank],
+        )?;
+    }
+    conn.execute(
+        "UPDATE OR IGNORE security_transactions SET account_id = ?2 WHERE account_id = ?1",
+        params![twin, bank],
+    )?;
     Ok(())
 }
