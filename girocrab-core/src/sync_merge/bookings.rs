@@ -440,51 +440,60 @@ pub(crate) fn merge_bookings(
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
-                // An allocation must sum to the WINNING amount (#1471): one
-                // that does not is no candidate — it neither outranks a
-                // fitting allocation of the other side nor acts as an
-                // explicit clear (a newer stamp with identical cents keeps
-                // fitting splits alive just the same). Fitting allocations
-                // and explicit clears rank by stamp as before. The figure
-                // both merge directions agree on is the amount the field
-                // merge itself would take — (amount_ms, amount) — even
-                // where an unstamped row keeps its own stored amount.
-                let (amount, amount_ms) = if (o.amount.1, o.amount.0) > (previous.1, previous.0) {
-                    o.amount
-                } else {
-                    previous
-                };
+                // An allocation must sum to the amount STORED on its own
+                // row (#1471): one that does not is no candidate — it
+                // neither outranks a fitting allocation of the other side
+                // nor acts as an explicit clear, and its stamp must not
+                // become a synthetic clear outranking a later fitting
+                // allocation. Fitting allocations and explicit clears rank
+                // by stamp as before; a clear born from a rejection
+                // carries no clock at all — only a real clear or a real
+                // edit stamps one.
+                let amount = local_amounts[&id].0;
                 let fits = |s: &[SplitLine]| {
                     s.is_empty() || s.iter().map(|sp| sp.1).sum::<i64>() == amount
                 };
-                match (fits(&m.splits), fits(&o.fields.splits)) {
-                    (true, true) => take_ranked(
-                        &mut m.splits,
-                        &mut m.splits_ms,
-                        &o.fields.splits,
-                        o.fields.splits_ms,
-                        Clone::clone,
-                    ),
-                    // the other side's allocation is obsolete: the local state stays
-                    (true, false) => {}
-                    // the local allocation is obsolete: the other side's state
-                    // wins, whatever the stamps; a clear it owes to the same
-                    // correction is stamped newer than the dropped allocation,
-                    // so that cannot return by equal stamp
-                    (false, true) => {
-                        if o.fields.splits.is_empty() {
-                            m.splits.clear();
-                            m.splits_ms = m.splits_ms.max(o.fields.splits_ms).max(amount_ms) + 1;
-                        } else {
+                if previous.1 == 0 && o.amount.1 == 0 && previous.0 != o.amount.0 {
+                    // Unstamped amounts differ: each row keeps its own
+                    // amount (immutable contract), so no allocation can
+                    // sum to both rows — both merge orders select the
+                    // same state by clearing. A real clear keeps its
+                    // stamp; a rejection alone carries no clock.
+                    m.splits.clear();
+                    m.splits_ms = 0;
+                    if old.splits.is_empty() {
+                        m.splits_ms = m.splits_ms.max(old.splits_ms);
+                    }
+                    if o.fields.splits.is_empty() {
+                        m.splits_ms = m.splits_ms.max(o.fields.splits_ms);
+                    }
+                } else {
+                    match (fits(&m.splits), fits(&o.fields.splits)) {
+                        (true, true) => take_ranked(
+                            &mut m.splits,
+                            &mut m.splits_ms,
+                            &o.fields.splits,
+                            o.fields.splits_ms,
+                            Clone::clone,
+                        ),
+                        // the other side's allocation is obsolete: the local
+                        // state stays, stamp included
+                        (true, false) => {}
+                        // the local allocation is obsolete: the other
+                        // side's state wins with its own stamp — a fitting
+                        // allocation, or the explicit clear as it was made
+                        (false, true) => {
                             m.splits = o.fields.splits.clone();
                             m.splits_ms = o.fields.splits_ms;
                         }
-                    }
-                    // nothing fits the winning amount: clear, stamped newer
-                    // than both rejected allocations and the correction
-                    (false, false) => {
-                        m.splits.clear();
-                        m.splits_ms = m.splits_ms.max(o.fields.splits_ms).max(amount_ms) + 1;
+                        // nothing fits the stored amount: clear without a
+                        // clock of its own (0) — a rejection must not
+                        // outrank a fitting allocation that an offline
+                        // peer stamped before the correction
+                        (false, false) => {
+                            m.splits.clear();
+                            m.splits_ms = 0;
+                        }
                     }
                 }
                 // derived balances count live bookings only (#1471): apply
