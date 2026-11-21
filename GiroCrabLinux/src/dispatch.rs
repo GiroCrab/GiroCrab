@@ -1605,6 +1605,9 @@ vault_methods! {
     unlink_refund_parts(refund_id, refund_part, original_id, original_part)
     refund_links(transaction_id) refund_suggestions(transaction_id)
     refund_candidates(transaction_id, query, limit)
+    refund_part_suggestions(transaction_id, pays_back, own_part)
+    refund_part_candidates(transaction_id, pays_back, query, limit)
+    refund_part_open(transaction_id, pays_back, own_part)
     // --- import / export ---
     export_bookings_csv(filter)
     // --- transfer ---

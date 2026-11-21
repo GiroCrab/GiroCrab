@@ -8,13 +8,22 @@ import QtQuick.Layouts
 Sheet {
     id: sheet
     readonly property var booking: AppModel.refundBooking
-    readonly property bool fromRefund: booking !== null && booking.amount_cents > 0
+    /// The side of the selected part, else of the booking: a part of the other direction
+    /// (a credit in a purchase) is linked on its own side.
+    readonly property bool fromRefund: {
+        if (booking === null) return false
+        const own = ownParts.find(p => p.part === ownPart)
+        return own ? own.amount > 0 : booking.amount_cents > 0
+    }
     property var links: null
     property var top: []
     property var candidates: []
-    /// Eligible parts of the booking the sheet was opened from ({ part, text }).
+    /// The parts of the booking the sheet was opened from ({ part, amount, text }).
     property var ownParts: []
     property int ownPart: 0
+    /// What the selected part (else the booking) has left for a further link.
+    property var ownOpen: null
+    onOwnPartChanged: reload()
     property string search: ""
     property string error: ""
     visible: booking !== null
@@ -25,7 +34,8 @@ Sheet {
 
     readonly property var linked: links ? (fromRefund ? links.originals : links.refunds) : []
     /// The booking has nothing left for a further link.
-    readonly property bool usedUp: links !== null && (fromRefund ? links.refund_open_cents : links.original_open_cents) === 0
+    readonly property bool usedUp: ownOpen === 0
+    readonly property bool partUsedUp: usedUp && ownParts.length > 1 && ownPart > 0
     /// Candidates below the suggestions; a linked or suggested booking is shown once only.
     readonly property var others: candidates.filter(c => !linked.some(l => same(l, c)) && !top.some(s => same(s.booking, c)))
     /// A split booking appears once per part.
@@ -42,16 +52,23 @@ Sheet {
         const b = booking
         if (b === null) return
         try {
-            links = AppModel.core("refund_links", { transaction_id: b.id })
-            top = sheet.search.trim() === "" ? AppModel.core("refund_suggestions", { transaction_id: b.id }).filter(s => !linked.some(l => same(l, s.booking))) : []
-            candidates = AppModel.core("refund_candidates", { transaction_id: b.id, query: sheet.search, limit: 200 })
             const splits = AppModel.core("list_transaction_splits", { transaction_id: b.id })
             ownParts = splits.map((s, i) => {
                 const c = s.category_id ? AppModel.categoryByID(s.category_id) : null
                 return { part: i + 1, amount: s.amount_cents,
                          text: [qsTr("Teil %1").arg(i + 1), c ? c.path : "", s.note, Fmt.money(s.amount_cents, b.currency)].filter(t => t !== "").join(" · ") }
-            }).filter(p => fromRefund ? p.amount > 0 : p.amount < 0)
-            if (!ownParts.some(p => p.part === ownPart)) ownPart = ownParts.length > 0 ? ownParts[0].part : 0
+            })
+            if (!ownParts.some(p => p.part === ownPart)) {
+                // starts with a part on the booking's own side; the change reloads
+                const own = ownParts.find(p => (p.amount > 0) === (b.amount_cents > 0)) || ownParts[0]
+                const part = own ? own.part : 0
+                if (part !== ownPart) { ownPart = part; return }
+            }
+            const side = { transaction_id: b.id, pays_back: fromRefund }
+            links = AppModel.core("refund_links", { transaction_id: b.id })
+            ownOpen = AppModel.core("refund_part_open", Object.assign({ own_part: ownPart }, side))
+            top = sheet.search.trim() === "" ? AppModel.core("refund_part_suggestions", Object.assign({ own_part: ownPart }, side)).filter(s => !linked.some(l => same(l, s.booking))) : []
+            candidates = AppModel.core("refund_part_candidates", Object.assign({ query: sheet.search, limit: 200 }, side))
             error = ""
         } catch (e) { error = e.message }
     }
@@ -74,6 +91,7 @@ Sheet {
     }
     /// Why an unlinked row cannot be chosen, "" when it can.
     function blocked(row) {
+        if (partUsedUp) return fromRefund ? qsTr("Dieser Teil ist bereits vollständig zugeordnet.") : qsTr("Dieser Teil ist bereits vollständig erstattet.")
         if (usedUp) return fromRefund ? qsTr("Die Erstattung ist bereits vollständig zugeordnet.") : qsTr("Die Buchung ist bereits vollständig erstattet.")
         if (row.open_cents === 0) return fromRefund ? qsTr("Diese Buchung ist bereits vollständig erstattet.") : qsTr("Diese Erstattung ist bereits vollständig zugeordnet.")
         return ""
@@ -85,7 +103,8 @@ Sheet {
     readonly property var sumLines: {
         if (links === null || booking === null) return []
         const money = c => AppModel.masking(Fmt.money(c, booking.currency), AppModel.redactAmounts)
-        const total = Math.abs(booking.amount_cents)
+        // of a split booking: its parts on the side the sheet shows
+        const total = fromRefund ? links.refund_total_cents : links.original_total_cents
         const out = []
         if (!fromRefund && links.refunded_cents !== null) out.push(qsTr("Erstattet: %1 von %2").arg(money(links.refunded_cents)).arg(money(total)))
         if (fromRefund && links.assigned_cents !== null) {
@@ -195,7 +214,11 @@ Sheet {
                 Repeater { model: sheet.linked; RefundRow { required property var modelData; row: modelData; isLinked: true } }
                 Text {
                     visible: sheet.usedUp && (sheet.top.length > 0 || sheet.others.length > 0)
-                    text: sheet.fromRefund
+                    text: sheet.partUsedUp
+                        ? (sheet.fromRefund
+                            ? qsTr("Dieser Teil ist vollständig zugeordnet. Wählen Sie einen anderen Teil oder heben Sie eine Verknüpfung auf.")
+                            : qsTr("Dieser Teil ist vollständig erstattet. Wählen Sie einen anderen Teil oder heben Sie eine Verknüpfung auf."))
+                        : sheet.fromRefund
                         ? qsTr("Die Erstattung ist vollständig zugeordnet. Heben Sie eine Verknüpfung auf, um eine andere Buchung zu wählen.")
                         : qsTr("Die Buchung ist vollständig erstattet. Heben Sie eine Verknüpfung auf, um eine andere Erstattung zu wählen.")
                     font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.topMargin: 4
