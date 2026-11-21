@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// SettingsView.swift: the macOS Settings window with its tabs Allgemein, Banken, Sicherheit.
+// SettingsView.swift: the macOS Settings window with its tabs Allgemein, Banken, Sicherheit, Analyse.
 // Dropped on Linux: Dokumente (document folder), Updates (Sparkle).
 ApplicationWindow {
     id: win
@@ -19,7 +19,9 @@ ApplicationWindow {
         // SettingsView.swift › settingsPane(height:): "Allgemein" 600 since #343/#388 (it scrolls)
         { id: "general", title: qsTr("Allgemein"), symbol: "gearshape", height: 600 },
         { id: "banks", title: qsTr("Banken"), symbol: "building.columns", height: 600 },
-        { id: "security", title: qsTr("Sicherheit"), symbol: "lock.shield", height: 780 }]
+        { id: "security", title: qsTr("Sicherheit"), symbol: "lock.shield", height: 780 },
+        // ExternalAccessSettings (#136): settingsPane(height: 640)
+        { id: "externalAccess", title: qsTr("Analyse"), symbol: "chart.bar.doc.horizontal", height: 640 }]
     readonly property int tabIndex: Math.max(0, tabs.findIndex(t => t.id === AppModel.settingsTab))
     width: 680 * Theme.textScale   // SettingsPaneFrame: 680 × textScale
     // never taller than the screen (small laptop displays)
@@ -32,58 +34,68 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Close]; onActivated: win.close() }
 
-    ColumnLayout {
+    /// What Problem melden draws over the main window (#384, BugReportWindow.settingsLayers).
+    readonly property Item captureItem: content
+    // opaque, so the bug report picture of this window has its background (a grabbed
+    // item carries no window colour)
+    Rectangle {
+        id: content
         anchors.fill: parent
-        spacing: 0
-        // Toolbar-style tab picker
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 62
-            color: Theme.sidebar
-            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
-            RowLayout {
-                anchors.centerIn: parent
-                spacing: 4
-                Repeater {
-                    model: win.tabs
-                    Rectangle {
-                        id: tab
-                        required property var modelData
-                        required property int index
-                        readonly property bool current: win.tabIndex === index
-                        implicitWidth: Math.max(76, col.implicitWidth + 20); implicitHeight: 50
-                        radius: 7
-                        color: current ? Theme.withAlpha(Theme.secondary, 0.14) : "transparent"
-                        ColumnLayout {
-                            id: col
-                            anchors.centerIn: parent
-                            spacing: 3
-                            SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: tab.modelData.symbol; size: 20; color: tab.current ? Theme.accent : Theme.secondary }
-                            Text { Layout.alignment: Qt.AlignHCenter; text: tab.modelData.title; font.pixelSize: Theme.callout; color: tab.current ? Theme.accent : Theme.text }
+        color: win.color
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 0
+            // Toolbar-style tab picker
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: 62
+                color: Theme.sidebar
+                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+                RowLayout {
+                    anchors.centerIn: parent
+                    spacing: 4
+                    Repeater {
+                        model: win.tabs
+                        Rectangle {
+                            id: tab
+                            required property var modelData
+                            required property int index
+                            readonly property bool current: win.tabIndex === index
+                            implicitWidth: Math.max(76, col.implicitWidth + 20); implicitHeight: 50
+                            radius: 7
+                            color: current ? Theme.withAlpha(Theme.secondary, 0.14) : "transparent"
+                            ColumnLayout {
+                                id: col
+                                anchors.centerIn: parent
+                                spacing: 3
+                                SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: tab.modelData.symbol; size: 20; color: tab.current ? Theme.accent : Theme.secondary }
+                                Text { Layout.alignment: Qt.AlignHCenter; text: tab.modelData.title; font.pixelSize: Theme.callout; color: tab.current ? Theme.accent : Theme.text }
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: AppModel.settingsTab = tab.modelData.id }
                         }
-                        MouseArea { anchors.fill: parent; onClicked: AppModel.settingsTab = tab.modelData.id }
                     }
                 }
             }
-        }
-        StackLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            currentIndex: win.tabIndex
-            GeneralSettings {}
-            BankConnectionsSettings { enabled: AppModel.isUnlocked }
-            SecuritySettings { id: security }
-        }
-        // AppVersion.swift › AppVersionFooter: a subtle line under every pane. Linux shows the
-        // core version it was built on (the same number as „Kern-Version“ in Sicherheit), plus
-        // the app version only when it differs – no build number, no TestFlight pin.
-        TextEdit {
-            Layout.fillWidth: true
-            Layout.topMargin: 6; Layout.bottomMargin: 6
-            horizontalAlignment: TextEdit.AlignHCenter
-            readOnly: true; selectByMouse: true
-            text: "GiroCrab " + security.versionText
-            font.pixelSize: Theme.caption2; color: Theme.tertiary
+            StackLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                currentIndex: win.tabIndex
+                GeneralSettings {}
+                BankConnectionsSettings { enabled: AppModel.isUnlocked }
+                SecuritySettings { id: security }
+                ExternalAccessSettings { enabled: AppModel.isUnlocked }
+            }
+            // AppVersion.swift › AppVersionFooter: a subtle line under every pane. Linux shows the
+            // core version it was built on (the same number as „Kern-Version“ in Sicherheit), plus
+            // the app version only when it differs – no build number, no TestFlight pin.
+            TextEdit {
+                Layout.fillWidth: true
+                Layout.topMargin: 6; Layout.bottomMargin: 6
+                horizontalAlignment: TextEdit.AlignHCenter
+                readOnly: true; selectByMouse: true
+                text: "GiroCrab " + security.versionText
+                font.pixelSize: Theme.caption2; color: Theme.tertiary
+            }
         }
     }
 }

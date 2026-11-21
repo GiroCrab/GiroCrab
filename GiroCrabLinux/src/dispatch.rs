@@ -29,6 +29,10 @@ unsafe extern "C" {
         count: usize,
         out: *const std::os::raw::c_char,
     ) -> bool;
+    fn girocrab_compose_capture(
+        spec: *const std::os::raw::c_char,
+        out: *const std::os::raw::c_char,
+    ) -> bool;
     fn girocrab_copy_image(path: *const std::os::raw::c_char) -> bool;
     fn girocrab_show_in_file_manager(path: *const std::os::raw::c_char) -> bool;
 }
@@ -119,6 +123,7 @@ fn reset_app() -> R {
         "reset_app in tests only with GIROCRAB_NO_KEYCHAIN and temporary XDG dirs"
     );
     crate::sessions::cancel_all();
+    crate::local_api::stop();
     *VAULT.lock().unwrap() = None;
     OWN.lock().unwrap().take();
     remove_quicklook_files();
@@ -279,6 +284,18 @@ fn own_vault() -> Result<Arc<Vault>, String> {
         .unwrap()
         .clone()
         .ok_or_else(|| crate::i18n::tr("Tresor ist gesperrt"))
+}
+
+/// `AppModel.localApiTarget`: the own vault while it is the one shown (never the demo).
+fn local_api_target() -> Result<Arc<Vault>, String> {
+    let own = OWN.lock().unwrap().clone();
+    let shown = VAULT.lock().unwrap().clone();
+    match (own, shown) {
+        (Some(own), Some(shown)) if Arc::ptr_eq(&own, &shown) => Ok(own),
+        _ => Err(crate::i18n::tr(
+            "Die externe Analyse ist nur mit Ihrem eigenen, entsperrten Tresor verfügbar – nicht mit den Demo-Daten.",
+        )),
+    }
 }
 
 /// A path from a QML file dialog (`file://…` URL or plain path).
@@ -543,6 +560,16 @@ fn call(method: &str, a: &Value) -> R {
                 girocrab_compose_report(base.as_ptr(), flat.as_ptr(), masks.len(), out.as_ptr())
             })
         }
+        "bug_report_compose_capture" => {
+            // BugReport.snapshot (#384): the main window and the dialogs over it on one
+            // canvas (cpp/prepare.cpp › girocrab_compose_capture describes `spec`).
+            let spec = std::ffi::CString::new(arg::<Value>(a, "spec")?.to_string())
+                .map_err(|e| e.to_string())?;
+            let out =
+                std::ffi::CString::new(arg::<String>(a, "path")?).map_err(|e| e.to_string())?;
+            // SAFETY: GUI thread (Core.call); both strings outlive the call.
+            ok(unsafe { girocrab_compose_capture(spec.as_ptr(), out.as_ptr()) })
+        }
         "copy_image" => {
             let path =
                 std::ffi::CString::new(arg::<String>(a, "path")?).map_err(|e| e.to_string())?;
@@ -599,6 +626,8 @@ fn call(method: &str, a: &Value) -> R {
         "lock" => {
             // endBankDialogsForLock: no bank dialog keeps running or writing into the vault.
             crate::sessions::cancel_all();
+            // the socket closes before the vault goes (AppModel+LocalApi.swift)
+            crate::local_api::stop();
             remove_quicklook_files();
             if let Some(v) = OWN.lock().unwrap().take() {
                 let _ = v.checkpoint();
@@ -607,6 +636,47 @@ fn call(method: &str, a: &Value) -> R {
             ok(())
         }
         "is_unlocked" => ok(VAULT.lock().unwrap().is_some()),
+        // --- Einstellungen › Analyse (AppModel+LocalApi.swift, #136): only on the own vault
+        // while it is shown; each write is a job that ends by matching the socket to it ---
+        "local_api_scope" => ok(local_api_target()?
+            .local_api_scope()
+            .map_err(|e| e.to_string())?),
+        "local_api_reconcile" => ok(crate::local_api::job(local_api_target()?, |_| Ok(()))),
+        "set_local_api_scope" => {
+            let scope: girocrab_core::local_api::ShareScope = arg(a, "scope")?;
+            ok(crate::local_api::job(local_api_target()?, move |v| {
+                v.set_local_api_scope(scope)
+            }))
+        }
+        "create_local_api_token" => ok(crate::local_api::job(local_api_target()?, |v| {
+            v.create_local_api_token()
+        })),
+        "revoke_local_api_token" => ok(crate::local_api::job(local_api_target()?, |v| {
+            v.revoke_local_api_token()
+        })),
+        // in process, without a token (tests, the app itself)
+        "local_api_request" => {
+            ok(local_api_target()?.local_api_request(&arg::<String>(a, "request")?))
+        }
+        "local_api_stop" => {
+            crate::local_api::stop();
+            ok(())
+        }
+        "local_api_client_config" => ok(crate::local_api::helper_path().map(|h| {
+            crate::local_api::client_config(
+                &h.display().to_string(),
+                &crate::local_api::socket_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+                arg::<Option<String>>(a, "token").ok().flatten().as_deref(),
+            )
+        })),
+        // runs girocrab-mcp for up to 45 s: Core.callAsync only
+        "local_api_check" => ok(crate::local_api::check(arg(a, "token")?)),
+        "local_api_check_cancel" => {
+            crate::local_api::cancel_check();
+            ok(())
+        }
         // --- background loads (AppModel.loadOffMain) ---
         "supersede" => {
             supersede(arg(a, "channel")?, arg(a, "token")?);
@@ -1351,6 +1421,8 @@ pub fn remove_quicklook_files() {
 
 /// `AppModel.makeDemoVault`: throw-away vault in the temp dir with fixed key.
 fn open_demo() -> R {
+    // the socket never serves the demo (AppModel+LocalApi.swift › localApiTarget)
+    crate::local_api::stop();
     remove_quicklook_files();
     let path = std::env::temp_dir().join("GiroCrab-Demo.girocrab");
     for suffix in ["", "-wal", "-shm"] {
@@ -2864,6 +2936,62 @@ mod tests {
         call_ok("lock", json!({}));
     }
 
+    /// Problem melden (#384): the main window and a dialog over it on one canvas, which grows
+    /// to hold a dialog that stands out of the window; an unreadable layer leaves no picture.
+    #[test]
+    fn bug_report_compose_capture() {
+        let dir = std::env::temp_dir().join(format!("girocrab-compose-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |n: &str| dir.join(n).display().to_string();
+        let png_size = |p: &str| {
+            let b = std::fs::read(p).unwrap();
+            assert_eq!(&b[1..4], b"PNG");
+            let be = |i: usize| u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+            (be(16), be(20))
+        };
+        // a "window" and a "dialog" picture to compose
+        let window = path("window.png");
+        let spec = json!({ "width": 40, "height": 30, "background": "#ffffffff",
+                           "layers": [{ "fill": "#ff336699", "x": 0, "y": 0, "width": 40, "height": 30, "radius": 0 }] });
+        assert_eq!(
+            call_ok(
+                "bug_report_compose_capture",
+                json!({ "spec": spec, "path": window })
+            ),
+            json!(true)
+        );
+        assert_eq!(png_size(&window), (40, 30));
+        let out = path("capture.png");
+        let spec = json!({ "width": 50, "height": 40, "background": "#00000000", "layers": [
+            { "image": window, "x": 0, "y": 10, "width": 40, "height": 30 },
+            { "fill": "#20000000", "x": 0, "y": 10, "width": 40, "height": 30, "radius": 0 },
+            { "image": window, "x": 20, "y": 0, "width": 30, "height": 20, "radius": 6 },
+            { "fill": "#ff8e8e93", "x": 24, "y": 4, "width": 10, "height": 6, "radius": 3 } ] });
+        assert_eq!(
+            call_ok(
+                "bug_report_compose_capture",
+                json!({ "spec": spec, "path": out })
+            ),
+            json!(true)
+        );
+        assert_eq!(png_size(&out), (50, 40));
+        // fail closed: a missing layer picture, a bad colour or no size
+        for spec in [
+            json!({ "width": 10, "height": 10, "layers": [{ "image": path("missing.png"), "x": 0, "y": 0, "width": 5, "height": 5 }] }),
+            json!({ "width": 10, "height": 10, "layers": [{ "fill": "nope", "x": 0, "y": 0, "width": 5, "height": 5 }] }),
+            json!({ "width": 0, "height": 10, "layers": [] }),
+        ] {
+            assert_eq!(
+                call_ok(
+                    "bug_report_compose_capture",
+                    json!({ "spec": spec, "path": path("x.png") })
+                ),
+                json!(false)
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// Problem melden (#301): the sanitizer through the bridge, the vault's payee names and
     /// the issue URL. No network: the URL is only built, never opened.
     #[test]
@@ -3349,6 +3477,142 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as f64
+    }
+
+    /// Einstellungen › Analyse (#136, AppModel+LocalApi.swift): the socket starts only for the
+    /// own vault while it is shown, switched on and with a key; it answers with that key in
+    /// `$XDG_RUNTIME_DIR` (folder 0700, socket 0600) and closes for the demo, when switched
+    /// off (which revokes the key) and on lock.
+    #[test]
+    fn local_api_socket_round_trip() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::fs::PermissionsExt;
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        // short: sun_path holds 108 bytes
+        let run = std::path::PathBuf::from(format!("/tmp/gcl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&run);
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let saved = std::env::var_os("XDG_RUNTIME_DIR");
+        set_env("XDG_RUNTIME_DIR", Some(&run));
+        let socket = run.join("girocrab/girocrab.sock");
+        let v = Vault::open(run.join("own.girocrab").display().to_string(), vec![9; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let request = |token: &str, method: &str| -> Value {
+            let mut s = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+            writeln!(s, "{}", json!({ "v": 1, "token": token, "method": method })).unwrap();
+            let mut line = String::new();
+            BufReader::new(s).read_line(&mut line).unwrap();
+            serde_json::from_str(&line).unwrap()
+        };
+
+        // nothing for the demo (own vault not in front)
+        call_ok("open_demo", json!({}));
+        *OWN.lock().unwrap() = Some(v.clone());
+        let demo: Value = serde_json::from_str(&call_json("local_api_reconcile", "{}")).unwrap();
+        assert!(demo.get("err").is_some(), "never the demo: {demo}");
+        *VAULT.lock().unwrap() = Some(v.clone());
+
+        let state = call_ok("local_api_reconcile", json!({}))["state"].clone();
+        assert_eq!(state["running"], json!(false), "off by default");
+        assert_eq!(state["scope"]["enabled"], json!(false));
+        assert_eq!(state["socket_path"], json!(socket.display().to_string()));
+        let account = call_ok("list_accounts", json!({}))[0]["id"].clone();
+        let mut scope = state["scope"].clone();
+        scope["enabled"] = json!(true);
+        scope["account_ids"] = json!([account]);
+        let r = call_ok("set_local_api_scope", json!({ "scope": scope }));
+        assert_eq!(r["error"], Value::Null);
+        assert_eq!(r["state"]["running"], json!(false), "no key yet");
+        let r = call_ok("create_local_api_token", json!({}));
+        let token = r["value"].as_str().unwrap().to_string();
+        assert!(token.starts_with("gcapi_"));
+        assert_eq!(r["state"]["running"], json!(true), "{r}");
+        assert_eq!(
+            r["state"]["scope"]["token_sha256"].as_str().unwrap().len(),
+            64
+        );
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&run.join("girocrab")), 0o700);
+        assert_eq!(mode(&socket), 0o600);
+
+        let info = request(&token, "info");
+        assert!(info.get("result").is_some(), "{info}");
+        let accounts = request(&token, "accounts");
+        assert_eq!(
+            accounts["result"].as_array().map(Vec::len),
+            Some(1),
+            "{accounts}"
+        );
+        assert_eq!(
+            request("gcapi_wrong", "info")["error"]["code"],
+            json!("unauthorized")
+        );
+        // in process, without a key
+        let inproc: Value = serde_json::from_str(
+            call_ok(
+                "local_api_request",
+                json!({ "request": r#"{"v":1,"method":"info"}"# }),
+            )
+            .as_str()
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(inproc.get("result").is_some(), "{inproc}");
+        // the entry for an MCP client names this socket
+        let config = call_ok("local_api_client_config", json!({ "token": null }));
+        if let Some(c) = config.as_str() {
+            assert!(c.contains(&socket.display().to_string()) && c.contains("gcapi_…"));
+            // „Verbindung testen“ with a built helper (`cargo build -p girocrab-mcp`)
+            let check = call_ok("local_api_check", json!({ "token": token }));
+            assert_eq!(check["result"], json!("works"), "{check}");
+            let check = call_ok("local_api_check", json!({ "token": null }));
+            assert_eq!(check["result"], json!("reachableWithoutKey"), "{check}");
+            let check = call_ok("local_api_check", json!({ "token": "gcapi_wrong" }));
+            assert_eq!(check["result"], json!("keyRejected"), "{check}");
+        }
+
+        // the demo in front closes the socket and removes its file
+        call_ok("open_demo", json!({}));
+        assert!(!socket.exists(), "closed for the demo");
+        *VAULT.lock().unwrap() = Some(v.clone());
+        assert_eq!(
+            call_ok("local_api_reconcile", json!({}))["state"]["running"],
+            json!(true)
+        );
+        assert!(socket.exists());
+
+        // switching off revokes the key (#811)
+        let mut off = call_ok("local_api_scope", json!({}));
+        off["enabled"] = json!(false);
+        let r = call_ok("set_local_api_scope", json!({ "scope": off }));
+        assert_eq!(r["state"]["running"], json!(false));
+        assert_eq!(r["state"]["scope"]["token_sha256"], json!(""));
+        assert!(!socket.exists());
+        let mut on = r["state"]["scope"].clone();
+        on["enabled"] = json!(true);
+        let r = call_ok("set_local_api_scope", json!({ "scope": on }));
+        assert_eq!(
+            r["state"]["running"],
+            json!(false),
+            "back on needs a new key"
+        );
+
+        // lock closes it as well
+        let token = call_ok("create_local_api_token", json!({}))["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(request(&token, "info")["v"], json!(1));
+        call_ok("lock", json!({}));
+        assert!(!socket.exists(), "closed on lock");
+        assert!(std::os::unix::net::UnixStream::connect(&socket).is_err());
+
+        *VAULT.lock().unwrap() = None;
+        *OWN.lock().unwrap() = None;
+        drop(v);
+        set_env("XDG_RUNTIME_DIR", saved);
+        let _ = std::fs::remove_dir_all(run);
     }
 }
 
