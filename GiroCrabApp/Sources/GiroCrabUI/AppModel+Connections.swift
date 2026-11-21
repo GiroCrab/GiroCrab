@@ -346,9 +346,17 @@ extension AppModel {
     static func portalLoginKey(_ id: Int64) -> String { "pin.conn.\(id).login" }
     static func portalLoginAutofillDisabledKey(_ id: Int64) -> String { "portal.login.autofill.disabled.\(id)" }
 
-    func setConnectionPin(_ id: Int64, _ pin: String?) {
-        guard let vault else { return }
-        runCore { try vault.setConnectionPin(connectionId: id, pin: pin) }
+    /// Stores or clears a connection PIN and reports whether the vault write succeeded.
+    @discardableResult
+    func setConnectionPin(_ id: Int64, _ pin: String?) -> Bool {
+        guard let vault else { return false }
+        do {
+            try vault.setConnectionPin(connectionId: id, pin: pin)
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
     func clearSession(_ id: Int64) {
