@@ -602,8 +602,10 @@ struct DayCardRow: View {
                     .simultaneousGesture(TapGesture(count: 2).onEnded { model.editNote(for: b) })
                     .contextMenu { rowMenu(b) }
                     #if os(macOS)
-                    // onto a sidebar category (#366); the payload is read when the drag starts
-                    .draggable(BookingDrag.payload(model.categorizeTargets(for: b).map(\.id)))
+                    // onto a sidebar category (#366) or into another app (BookingDragItem);
+                    // the payload is read when the drag starts
+                    .draggable(BookingDragItem(bookings: model.categorizeTargets(for: b),
+                                               accounts: model.accountsByID))
                     #endif
             if !isLast || density == .compact {
                 Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1)

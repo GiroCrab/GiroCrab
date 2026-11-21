@@ -121,6 +121,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>GiroCrabDistribution</key><string>developer-id</string>
     <key>GiroCrabBuildDate</key><string>${BUILD_DATE}</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>de.girocrab.transactions</string>
+            <key>UTTypeDescription</key><string>GiroCrab Buchungen</string>
+            <key>UTTypeConformsTo</key><array><string>public.json</string></array>
+        </dict>
+    </array>
 ${ICON_KEY}
 ${SPARKLE_KEYS}
 </dict>
