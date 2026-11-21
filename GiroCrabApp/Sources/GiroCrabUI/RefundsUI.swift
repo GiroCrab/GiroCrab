@@ -76,6 +76,14 @@ private struct RefundBookingLine: View {
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
                     .sensitive()
+                // a split booking is linked by one of its parts
+                if row.part > 0 {
+                    Text(verbatim: [String(localized: "Teil \(Int(row.part))"), row.partLabel].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .appFont(.caption, weight: .medium)
+                        .foregroundStyle(Theme.accent)
+                        .lineLimit(1)
+                        .sensitive(.labels)
+                }
                 if showsPurpose, !purpose.isEmpty {
                     Text(purpose)
                         .appFont(.caption)
@@ -148,6 +156,10 @@ struct RefundPickerSheet: View {
     @State private var top: [RefundSuggestion] = []
     @State private var loaded = false
     @State private var search = ""
+    /// The outgoing parts of a split booking the sheet was opened from, and the one the next
+    /// refund is linked to.
+    @State private var ownParts: [(part: UInt32, split: TransactionSplit)] = []
+    @State private var ownPart: UInt32 = 0
     @State private var loadError: String?
     /// Counts the loads: only the newest one may show its result.
     @State private var loads = 0
@@ -158,9 +170,16 @@ struct RefundPickerSheet: View {
     private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The list below the suggestions; a search shows every hit, also a suggested one.
     private var others: [RefundBooking] {
-        var ids = Set(linked.map(\.id))
-        if !isSearching { ids.formUnion(top.map(\.booking.id)) }
-        return candidates.filter { !ids.contains($0.id) }
+        var ids = Set(linked.map(Self.key))
+        if !isSearching { ids.formUnion(top.map { Self.key($0.booking) }) }
+        return candidates.filter { !ids.contains(Self.key($0)) }
+    }
+    /// A split booking appears once per part.
+    private static func key(_ r: RefundBooking) -> String { "\(r.id)-\(r.part)" }
+    private func partTitle(_ p: (part: UInt32, split: TransactionSplit)) -> String {
+        let category = p.split.categoryId.flatMap { id in model.categories.first { $0.id == id }?.name } ?? ""
+        return ([String(localized: "Teil \(Int(p.part))"), category, p.split.note].filter { !$0.isEmpty } + [Money.format(p.split.amountCents, currency: booking.currency.isEmpty ? "EUR" : booking.currency.uppercased())])
+            .joined(separator: " · ")
     }
 
     var body: some View {
@@ -198,6 +217,12 @@ struct RefundPickerSheet: View {
                     .appFont(.caption)
                     .foregroundStyle(Theme.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !ownParts.isEmpty {
+                    Picker("Erstattung für", selection: $ownPart) {
+                        ForEach(ownParts, id: \.part) { Text(partTitle($0)).tag($0.part) }
+                    }
+                    .sensitive([.labels, .amounts])
+                }
                 TextField("Name oder Verwendungszweck suchen", text: $search)
                     .textFieldStyle(.roundedBorder)
                     .sensitive() // typed names
@@ -238,7 +263,7 @@ struct RefundPickerSheet: View {
         List {
             if !linked.isEmpty {
                 Section {
-                    ForEach(linked, id: \.id) { row($0, isLinked: true) }
+                    ForEach(linked, id: \.self) { row($0, isLinked: true) }
                 } header: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(fromRefund ? "Verknüpfte ursprüngliche Buchungen (\(linked.count))" : "Verknüpfte Erstattungen (\(linked.count))")
@@ -259,14 +284,14 @@ struct RefundPickerSheet: View {
             }
             if !top.isEmpty {
                 Section {
-                    ForEach(top, id: \.booking.id) { row($0.booking, isLinked: false, reason: $0.reason) }
+                    ForEach(top, id: \.booking) { row($0.booking, isLinked: false, reason: $0.reason) }
                 } header: {
                     Text("Vorschläge")
                 }
             }
             if !others.isEmpty {
                 Section {
-                    ForEach(others, id: \.id) { row($0, isLinked: false) }
+                    ForEach(others, id: \.self) { row($0, isLinked: false) }
                 } header: {
                     Text(isSearching ? "Suchergebnisse" : "Weitere Buchungen")
                 }
@@ -325,9 +350,9 @@ struct RefundPickerSheet: View {
         let refundID = fromRefund ? booking.id : r.id
         let originalID = fromRefund ? r.id : booking.id
         if isLinked {
-            model.unlinkRefund(refundID: refundID, originalID: originalID)
+            model.unlinkRefund(refundID: refundID, originalID: originalID, part: r.part)
         } else {
-            model.linkRefund(refundID: refundID, originalID: originalID)
+            model.linkRefund(refundID: refundID, originalID: originalID, part: fromRefund ? r.part : ownPart)
         }
     }
 
@@ -337,16 +362,21 @@ struct RefundPickerSheet: View {
         let id = booking.id
         let query = search
         do {
-            let result = try await model.vaultOffMain { vault -> (RefundLinks, [RefundSuggestion], [RefundBooking]) in
+            let outgoing = !fromRefund
+            let result = try await model.vaultOffMain { vault -> (RefundLinks, [RefundSuggestion], [RefundBooking], [TransactionSplit]) in
                 (try vault.refundLinks(transactionId: id), try vault.refundSuggestions(transactionId: id),
-                 try vault.refundCandidates(transactionId: id, query: query, limit: 200))
+                 try vault.refundCandidates(transactionId: id, query: query, limit: 200),
+                 outgoing ? try vault.listTransactionSplits(transactionId: id) : [])
             }
             guard run == loads, let result else { return }
             links = result.0
             // a linked booking is shown on top only
-            let linkedIDs = Set(linked.map(\.id))
-            top = result.1.filter { !linkedIDs.contains($0.booking.id) }
+            let linkedIDs = Set(linked.map(Self.key))
+            top = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
             candidates = result.2
+            // parts count from 1 in the order of the split; only outgoing ones take a refund
+            ownParts = result.3.enumerated().map { (part: UInt32($0.offset + 1), split: $0.element) }.filter { $0.split.amountCents < 0 }
+            if !ownParts.contains(where: { $0.part == ownPart }) { ownPart = ownParts.first?.part ?? 0 }
             loadError = nil
         } catch {
             guard run == loads else { return }
@@ -376,12 +406,12 @@ struct RefundLinksCard: View {
             if let originals = links?.originals, !originals.isEmpty {
                 Text(originals.count == 1 ? "Ursprüngliche Buchung" : "Ursprüngliche Buchungen (\(originals.count))")
                     .appFont(.caption).foregroundStyle(Theme.secondary)
-                ForEach(originals, id: \.id) { line($0, refundID: booking.id, originalID: $0.id) }
+                ForEach(originals, id: \.self) { line($0, refundID: booking.id, originalID: $0.id) }
             }
             if let refunds = links?.refunds, !refunds.isEmpty {
                 Text(refunds.count == 1 ? "Erstattung dieser Buchung" : "Erstattungen dieser Buchung (\(refunds.count))")
                     .appFont(.caption).foregroundStyle(Theme.secondary)
-                ForEach(refunds, id: \.id) { line($0, refundID: $0.id, originalID: booking.id) }
+                ForEach(refunds, id: \.self) { line($0, refundID: $0.id, originalID: booking.id) }
             }
             if let links {
                 ForEach(RefundSum.lines(booking: booking, links: links), id: \.self) {
@@ -417,7 +447,7 @@ struct RefundLinksCard: View {
             }
             .buttonStyle(.plain)
             .help("Diese Buchung in der Liste anzeigen")
-            Button { model.unlinkRefund(refundID: refundID, originalID: originalID) } label: {
+            Button { model.unlinkRefund(refundID: refundID, originalID: originalID, part: r.part) } label: {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.tertiary)
             }
             .buttonStyle(.borderless)

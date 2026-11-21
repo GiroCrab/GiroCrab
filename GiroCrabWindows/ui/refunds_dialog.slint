@@ -4,7 +4,7 @@
 import { Button, ListView, LineEdit } from "std-widgets.slint";
 
 // kind: 0 section header, 1 linked, 2 suggestion, 3 further booking
-export struct RefundRow { kind: int, id: int, title: string, detail: string, amount: string, share: string, share-empty: bool, reason: string, blocked: string }
+export struct RefundRow { kind: int, id: int, part: int, title: string, detail: string, amount: string, share: string, share-empty: bool, reason: string, blocked: string }
 
 export component RefundsPanel inherits VerticalLayout {
     in property <color> ink;
@@ -20,7 +20,7 @@ export component RefundsPanel inherits VerticalLayout {
     in property <string> status;
     in property <[RefundRow]> rows;
     callback search(string);
-    callback toggle(int);
+    callback toggle(int, int);
     callback close();
     spacing: 10px;
     Text { text: root.from-refund ? "Ursprüngliche Buchung zuordnen" : "Erstattung zuordnen"; color: root.ink; font-size: 18px; font-weight: 700; }
@@ -43,7 +43,7 @@ export component RefundsPanel inherits VerticalLayout {
                 // the circle is part of the row: one click selects
                 touch := TouchArea {
                     enabled: r.kind != 0 && r.blocked == "";
-                    clicked => { root.toggle(r.id); }
+                    clicked => { root.toggle(r.id, r.part); }
                 }
                 if r.kind == 0: Text { x: 10px; text: r.title; color: root.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                 if r.kind != 0: HorizontalLayout {

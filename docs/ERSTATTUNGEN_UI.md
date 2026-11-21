@@ -90,6 +90,9 @@ Namen, Konto und Verwendungszweck tragen `.sensitive()`, Beträge und die Summe 
 
 `swift run GiroCrabMac --demo-seed --demo-sheet refund` öffnet das Blatt für den ersten Eingang der Demo-Daten,
 `--demo-sheet refund-linked` mit bereits verknüpfter Buchung (zeigt auch Zeichen und Karte).
+`--demo-sheet refund-split` teilt den ersten Vorschlag in zwei eigene Kategorien: das Blatt führt statt der
+geteilten Buchung ihre Teile („Teil 1 · Garten“), die Verknüpfung gilt dem gewählten Teil. `--demo-sheet refund-split-out`
+öffnet das Blatt dieser geteilten Ausgabe; „Erstattung für“ wählt dort den Teil, dem die nächste Erstattung gilt.
 
 ## Geteilte Buchungen
 

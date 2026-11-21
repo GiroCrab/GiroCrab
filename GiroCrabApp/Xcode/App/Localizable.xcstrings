@@ -14008,6 +14008,17 @@
         }
       }
     },
+    "Erstattung für" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refund for"
+          }
+        }
+      }
+    },
     "Erstattung zu:" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30245,6 +30256,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Electronics"
+          }
+        }
+      }
+    },
+    "Teil %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Part %lld"
           }
         }
       }

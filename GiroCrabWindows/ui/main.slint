@@ -909,7 +909,7 @@ export component MainWindow inherits Window {
     in property <[RefundRow]> rf-rows;
     callback refunds-request();
     callback refund-search(string);
-    callback refund-toggle(int);
+    callback refund-toggle(int, int);
     in property <string> sp-title;
     in property <string> sp-amount;
     in property <string> sp-remaining;
@@ -2278,7 +2278,7 @@ export component MainWindow inherits Window {
             from-refund: root.rf-from-refund; booking-title: root.rf-title; booking-amount: root.rf-amount;
             sums: root.rf-sums; hint: root.rf-hint; status: root.rf-status; rows: root.rf-rows;
             search(t) => { root.refund-search(t); }
-            toggle(id) => { root.refund-toggle(id); }
+            toggle(id, part) => { root.refund-toggle(id, part); }
             close() => { root.refunds-open = false; root.refocus(); }
         }
     }

@@ -186,11 +186,19 @@ final class RefundLinkTests: XCTestCase {
         ]
         try vault.setTransactionSplits(transactionId: original.id, splits: parts)
 
+        // the picker lists the parts instead of the split booking; a link names one of them
+        let offered = try vault.refundCandidates(transactionId: refund.id, query: "", limit: 200).filter { $0.id == original.id }
+        XCTAssertEqual(offered.map(\.part), [1, 2])
+        XCTAssertEqual(offered.map(\.amountCents), parts.map(\.amountCents))
         model.linkRefund(refundID: refund.id, originalID: original.id)
+        XCTAssertNotNil(model.errorMessage)
+        model.errorMessage = nil
+        model.linkRefund(refundID: refund.id, originalID: original.id, part: 2)
 
         XCTAssertNil(model.errorMessage)
-        // only what the original takes up of the refund moves; the rest stays income
-        let assigned = min(refund.amountCents, -original.amountCents)
+        XCTAssertEqual(try vault.refundLinks(transactionId: refund.id).originals.map(\.part), [2])
+        // only what the chosen part takes up of the refund moves; the rest stays income
+        let assigned = min(refund.amountCents, -(original.amountCents + 1))
         XCTAssertEqual(try flow().incomeCents, before.incomeCents - assigned)
         XCTAssertEqual(try flow().consumptionCents, before.consumptionCents - assigned)
         XCTAssertEqual(try vault.listTransactionSplits(transactionId: original.id).map(\.amountCents), parts.map(\.amountCents))

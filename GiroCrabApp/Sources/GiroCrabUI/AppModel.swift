@@ -1108,7 +1108,7 @@ public final class AppModel {
             showMoneyMoneyImport = true
         case "recurring":
             showRecurringSheet = true
-        case "refund", "refund-linked":
+        case "refund", "refund-linked", "refund-split", "refund-split-out":
             // "Ursprüngliche Buchung zuordnen …" (#714) for the first incoming booking the core
             // has suggestions for (else the first one); `refund-linked`: already linked to the
             // nearest candidate
@@ -1117,7 +1117,26 @@ public final class AppModel {
             if let refund = suggested ?? incoming.first {
                 if name == "refund-linked",
                    let original = try? vault?.refundCandidates(transactionId: refund.id, query: "", limit: 1).first {
-                    linkRefund(refundID: refund.id, originalID: original.id)
+                    linkRefund(refundID: refund.id, originalID: original.id, part: original.part)
+                }
+                // `refund-split`: the first suggestion is split into two own categories, the sheet
+                // lists its parts; `refund-split-out`: the sheet of that split booking (choice of the part)
+                if name.hasPrefix("refund-split"), let vault,
+                   let original = (try? vault.refundSuggestions(transactionId: refund.id).first?.booking)
+                       ?? (try? vault.refundCandidates(transactionId: refund.id, query: "", limit: 1).first),
+                   let first = try? vault.createCategory(name: "Garten", parentId: nil, sfSymbol: "leaf", colorHex: "#4C9A2A"),
+                   let second = try? vault.createCategory(name: "Werkzeug", parentId: nil, sfSymbol: "hammer", colorHex: "#8A6D3B") {
+                    let half = original.amountCents / 2
+                    try? vault.setTransactionSplits(transactionId: original.id, splits: [
+                        TransactionSplitInput(categoryId: first, amountCents: half, note: ""),
+                        TransactionSplitInput(categoryId: second, amountCents: original.amountCents - half, note: ""),
+                    ])
+                    reloadAll()
+                    if name == "refund-split-out", let split = booking(withID: original.id) {
+                        selectedBookingID = split.id
+                        refundPickerBooking = split
+                        break
+                    }
                 }
                 selectedBookingID = refund.id
                 refundPickerBooking = booking(withID: refund.id) ?? refund

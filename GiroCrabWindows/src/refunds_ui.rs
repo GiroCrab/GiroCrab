@@ -22,8 +22,9 @@ struct Ui {
     /// The booking the dialog is open for: (id, amount in cents, currency).
     booking: Option<(i64, i64, String)>,
     search: String,
-    /// Ids linked right now (a click on one of them removes the link).
-    linked: Vec<i64>,
+    /// Linked right now, as (id, part of the split original): a click on one of them removes
+    /// the link.
+    linked: Vec<(i64, u32)>,
 }
 
 thread_local! {
@@ -84,12 +85,23 @@ fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<Re
     let row = |b: &RefundBooking, kind: i32, reason: &str| RefundRow {
         kind,
         id: b.id as i32,
+        part: b.part as i32,
         title: daily::mask(&b.display_name, privacy).into(),
-        detail: format!(
-            "{} · {}",
+        // a split booking is linked by one of its parts
+        detail: [
             german_date(&b.booking_date),
-            daily::mask(&b.account_name, privacy)
-        )
+            daily::mask(&b.account_name, privacy),
+            if b.part > 0 {
+                format!("Teil {}", b.part)
+            } else {
+                String::new()
+            },
+            daily::mask(&b.part_label, privacy),
+        ]
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
         .into(),
         amount: cash(b.amount_cents, &b.currency).into(),
         share: match b.share_cents {
@@ -117,11 +129,11 @@ fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<Re
         }));
         out.extend(linked.iter().map(|b| row(b, 1, "")));
     }
-    let shown = |id: i64| linked.iter().any(|b| b.id == id);
+    let shown = |c: &RefundBooking| linked.iter().any(|b| (b.id, b.part) == (c.id, c.part));
     let top: Vec<&RefundSuggestion> = l
         .suggestions
         .iter()
-        .filter(|s| !shown(s.booking.id))
+        .filter(|s| !shown(&s.booking))
         .collect();
     if !top.is_empty() {
         out.push(header("Vorschläge".into()));
@@ -137,7 +149,12 @@ fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<Re
     let others: Vec<&RefundBooking> = l
         .candidates
         .iter()
-        .filter(|c| !shown(c.id) && !top.iter().any(|s| s.booking.id == c.id))
+        .filter(|c| {
+            !shown(c)
+                && !top
+                    .iter()
+                    .any(|s| (s.booking.id, s.booking.part) == (c.id, c.part))
+        })
         .collect();
     if !others.is_empty() {
         out.push(header(
@@ -186,7 +203,7 @@ fn show(win: &MainWindow, loaded: Loaded) {
     } else {
         &loaded.links.refunds
     };
-    with_ui(|u| u.linked = linked.iter().map(|b| b.id).collect());
+    with_ui(|u| u.linked = linked.iter().map(|b| (b.id, b.part)).collect());
     let hint = match (
         loaded.links.open_cents == 0 && !linked.is_empty(),
         from_refund,
@@ -286,14 +303,17 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
     });
 
     let (weak, vault) = (win.as_weak(), vault_of);
-    win.on_refund_toggle(move |other| {
+    win.on_refund_toggle(move |other, part| {
         let (Some(win), Some(v)) = (weak.upgrade(), vault()) else {
             return;
         };
         let other = i64::from(other);
+        // from a split outgoing booking there is no choice of the part here: the core
+        // refuses the link and says why
+        let part = u32::try_from(part).unwrap_or(0);
         let Some((booking, cents, unlink)) = with_ui(|u| {
             let b = u.booking.as_ref()?;
-            Some((b.0, b.1, u.linked.contains(&other)))
+            Some((b.0, b.1, u.linked.contains(&(other, part))))
         }) else {
             return;
         };
@@ -305,9 +325,9 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         let weak = win.as_weak();
         std::thread::spawn(move || {
             let done = if unlink {
-                v.unlink_refund(refund, original)
+                v.unlink_refund(refund, original, part)
             } else {
-                v.link_refund(refund, original)
+                v.link_refund(refund, original, part)
             }
             .map_err(|e| e.to_string());
             let _ = weak.upgrade_in_event_loop(move |win| match done {
@@ -340,6 +360,8 @@ mod tests {
             purpose: String::new(),
             share_cents: share,
             open_cents: open,
+            part: 0,
+            part_label: String::new(),
         }
     }
 

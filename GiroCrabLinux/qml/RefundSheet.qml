@@ -12,6 +12,10 @@ Sheet {
     property var links: null
     property var top: []
     property var candidates: []
+    /// The outgoing parts of a split booking the sheet was opened from ({ part, text }), and
+    /// the one the next refund is linked to (0: not split).
+    property var ownParts: []
+    property int ownPart: 0
     property string search: ""
     property string error: ""
     visible: booking !== null
@@ -24,7 +28,9 @@ Sheet {
     /// The booking has nothing left for a further link.
     readonly property bool usedUp: links !== null && links.open_cents === 0
     /// Candidates below the suggestions; a linked or suggested booking is shown once only.
-    readonly property var others: candidates.filter(c => !linked.some(l => l.id === c.id) && !top.some(s => s.booking.id === c.id))
+    readonly property var others: candidates.filter(c => !linked.some(l => same(l, c)) && !top.some(s => same(s.booking, c)))
+    /// A split booking appears once per part.
+    function same(a, b) { return a.id === b.id && a.part === b.part }
 
     property Connections changes: Connections {
         target: AppModel
@@ -40,11 +46,18 @@ Sheet {
             links = AppModel.core("refund_links", { transaction_id: b.id })
             top = sheet.search.trim() === "" ? AppModel.core("refund_suggestions", { transaction_id: b.id }) : []
             candidates = AppModel.core("refund_candidates", { transaction_id: b.id, query: sheet.search, limit: 200 })
+            const splits = fromRefund ? [] : AppModel.core("list_transaction_splits", { transaction_id: b.id })
+            ownParts = splits.map((s, i) => {
+                const c = s.category_id ? AppModel.categoryByID(s.category_id) : null
+                return { part: i + 1, amount: s.amount_cents,
+                         text: [qsTr("Teil %1").arg(i + 1), c ? c.path : "", s.note, Fmt.money(s.amount_cents, b.currency)].filter(t => t !== "").join(" · ") }
+            }).filter(p => p.amount < 0)
+            if (!ownParts.some(p => p.part === ownPart)) ownPart = ownParts.length > 0 ? ownParts[0].part : 0
             error = ""
         } catch (e) { error = e.message }
     }
     function toggle(row, isLinked) {
-        AppModel.setRefundLink(fromRefund ? booking.id : row.id, fromRefund ? row.id : booking.id, !isLinked)
+        AppModel.setRefundLink(fromRefund ? booking.id : row.id, fromRefund ? row.id : booking.id, fromRefund || isLinked ? row.part : ownPart, !isLinked)
     }
     /// Why an unlinked row cannot be chosen, "" when it can.
     function blocked(row) {
@@ -91,7 +104,7 @@ Sheet {
                 Layout.fillWidth: true
                 spacing: 1
                 Text { text: rr.row.display_name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
-                Text { text: Fmt.date(rr.row.booking_date) + " · " + rr.row.account_name; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                Text { text: [Fmt.date(rr.row.booking_date), rr.row.account_name, rr.row.part > 0 ? qsTr("Teil %1").arg(rr.row.part) : "", rr.row.part_label].filter(t => t !== "").join(" · "); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                 Text { visible: text !== ""; text: rr.row.purpose; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
             }
             Text {
@@ -127,6 +140,14 @@ Sheet {
             text: sheet.booking ? sheet.booking.merchant_name + " · " + Fmt.money(sheet.booking.amount_cents, sheet.booking.currency) : ""
             font.pixelSize: Theme.body; color: Theme.secondary
             Sensitive { amounts: true }
+        }
+        AppComboBox {
+            visible: sheet.ownParts.length > 0
+            Layout.fillWidth: true
+            model: sheet.ownParts.map(p => p.text)
+            currentIndex: Math.max(0, sheet.ownParts.findIndex(p => p.part === sheet.ownPart))
+            onActivated: index => sheet.ownPart = sheet.ownParts[index].part
+            Accessible.name: qsTr("Erstattung für")
         }
         TextField {
             Layout.fillWidth: true
