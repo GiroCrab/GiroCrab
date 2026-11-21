@@ -104,18 +104,24 @@ extension AppModel {
         let detected = storedDatadir.isEmpty ? BitcoinCoreDatadir.detected() : nil
         let datadir = storedDatadir.isEmpty ? detected ?? "" : storedDatadir
         Task { @MainActor [weak self] in
+            let checkError: Error?
             do {
                 _ = try await checkBitcoinCore(datadir: datadir, rpcUrl: rpcURL, wallet: login)
+                checkError = nil
             } catch {
-                self?.showError(String(localized: "Bitcoin Core nicht erreichbar"), describe(error))
-                return
+                checkError = error
             }
             guard let self else { return }
+            // also before a node error: one about values no longer set would mislead
             guard isCurrent(pin),
                   (settingEntry(BitcoinCoreDatadir.key)?.value ?? "") == storedDatadir,
                   (settingEntry("bitcoin_core.rpc_url")?.value ?? "") == rpcURL else {
                 showError(String(localized: "Bitcoin Core nicht hinzugefügt"),
                           String(localized: "Tresor oder Einstellungen haben sich während der Prüfung geändert. Bitte füge Bitcoin Core noch einmal hinzu."))
+                return
+            }
+            if let checkError {
+                showError(String(localized: "Bitcoin Core nicht erreichbar"), describe(checkError))
                 return
             }
             if let detected { saveSetting(BitcoinCoreDatadir.key, detected) }
