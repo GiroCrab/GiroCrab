@@ -8,6 +8,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -87,7 +88,20 @@ class VaultKeyStoreTest {
         assertEquals(VaultKeyStore.State.NotSetUp, store().state())
         // The alias survives on purpose: a new setup reuses it instead of gambling on a new key.
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        assert(keyStore.containsAlias(alias))
+        assertTrue("Keystore entry '$alias' must survive clearWrapped()", keyStore.containsAlias(alias))
+    }
+
+    /**
+     * The wrapped file alone is worthless: if the Keystore entry is gone, the state must say so
+     * instead of quietly generating a key that cannot decrypt the file.
+     */
+    @Test
+    fun missingKeystoreEntryIsReportedAsInvalidated() {
+        val s = store()
+        s.storeWrapped(ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { 7 }, s.setupCipher())
+        deleteAlias()
+
+        assertEquals(VaultKeyStore.State.Invalidated, store().state())
     }
 
     @Test
@@ -96,6 +110,15 @@ class VaultKeyStoreTest {
         s.storeWrapped(ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { 5 }, s.setupCipher())
         val bytes = wrappedFile.readBytes()
         wrappedFile.writeBytes(bytes.copyOf(3))
+
+        assertEquals(VaultKeyStore.State.Invalidated, store().state())
+    }
+
+    /** A blob with a non-12-byte IV cannot be opened by the Keystore; it must be refused up front. */
+    @Test
+    fun foreignIvLengthIsReportedAsInvalidated() {
+        wrappedFile.parentFile?.mkdirs()
+        wrappedFile.writeBytes(byteArrayOf(1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
         assertEquals(VaultKeyStore.State.Invalidated, store().state())
     }
