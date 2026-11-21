@@ -596,10 +596,16 @@ pub(crate) fn merge_attached(
             "UPDATE accounts SET color_hex = ?2, color_ms = ?3 WHERE id = ?1 AND (?4 OR color_ms < ?3)",
             params![id, color, colored, fresh],
         )? as u32;
-        changed += tx.execute(
+        let archive_taken = tx.execute(
             "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3 WHERE id = ?1 AND (?4 OR archived_ms < ?3)",
             params![id, archived, archived_ms, fresh],
         )? as u32;
+        // a newer state from another device was chosen there: the next import here no longer
+        // gives this account MoneyMoney's state (the #998 note is local to each device)
+        if archive_taken > 0 && !fresh {
+            crate::importers::moneymoney_db::forget_archive_unknown(tx, id)?;
+        }
+        changed += archive_taken;
         // total switch (#337): the one field merge of value and stamp — newer
         // stamp wins, an equal stamp breaks the tie towards `true` (like the
         // group flag), inserted accounts take both unconditionally

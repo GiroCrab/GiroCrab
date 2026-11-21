@@ -2365,39 +2365,20 @@ pub(crate) fn adopt_account(
         // those the #998 repair reactivated while another one fits (they may
         // be closed cards, too)
         let unknown = archive_unknown(conn)?;
-        // exactly one fitting account, those whose state is known first
-        let pick = |ids: Vec<i64>| -> Option<i64> {
-            let known: Vec<i64> = ids
-                .iter()
-                .copied()
-                .filter(|id| !unknown.contains(id))
-                .collect();
-            let ids = if known.is_empty() { ids } else { known };
-            (ids.len() == 1).then(|| ids[0])
-        };
-        let single = |iban_filter: &str| -> CoreResult<Option<i64>> {
-            let mut st = conn.prepare(&format!(
-                "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
-                   AND kind = ?2 AND archived_unix IS NULL {iban_filter}"
-            ))?;
-            let ids = st
-                .query_map(params![connection_id, kind.as_str()], |r| r.get(0))?
-                .collect::<Result<_, _>>()?;
-            Ok(pick(ids))
-        };
         let currency = currency.trim().to_uppercase();
-        let single_cur = |extra_filter: &str| -> CoreResult<Option<i64>> {
+        // imported accounts of this kind on the login; `currency` "" = any
+        let candidates = |filter: &str, currency: &str| -> CoreResult<Vec<i64>> {
             let mut st = conn.prepare(&format!(
                 "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
                    AND kind = ?2 AND archived_unix IS NULL
-                   AND (?3 = '' OR upper(IFNULL(currency, '')) IN ('', ?3)) {extra_filter}"
+                   AND (?3 = '' OR upper(IFNULL(currency, '')) IN ('', ?3)) {filter}"
             ))?;
             let ids = st
                 .query_map(params![connection_id, kind.as_str(), currency], |r| {
                     r.get(0)
                 })?
                 .collect::<Result<_, _>>()?;
-            Ok(pick(ids))
+            Ok(ids)
         };
         // the other way reports a marked account under another reference
         // (FinTS `<number>-Depot`, REST its depot id): the only live one of
@@ -2424,21 +2405,37 @@ pub(crate) fn adopt_account(
                 .collect::<Result<_, _>>()?;
             (ids.len() == 1).then(|| ids[0])
         };
-        let found = match marked {
+        match marked {
             Some(id) => Some(id),
-            None => single("AND replace(IFNULL(iban, ''), ' ', '') = ''")?,
-        };
-        match found {
-            Some(id) => Some(id),
-            // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade Republic
-            // clearing account) may still adopt a single imported account of the same kind
-            // and currency on this login (#1114).
-            None if kind == AccountKind::CreditCard
-                || (kind == AccountKind::Checking && external_ref == "tr:cash") =>
-            {
-                single_cur("")?
+            None => {
+                let no_iban = candidates("AND replace(IFNULL(iban, ''), ' ', '') = ''", "")?;
+                // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade Republic
+                // clearing account) may still adopt a single imported account of the same kind
+                // and currency on this login (#1114).
+                let same_currency = if kind == AccountKind::CreditCard
+                    || (kind == AccountKind::Checking && external_ref == "tr:cash")
+                {
+                    candidates("", &currency)?
+                } else {
+                    Vec::new()
+                };
+                // exactly one fitting account; those whose state is known first in both
+                // lists, so a card the repair reactivated never wins over a known one
+                let known = |ids: &[i64]| -> Vec<i64> {
+                    ids.iter()
+                        .copied()
+                        .filter(|id| !unknown.contains(id))
+                        .collect()
+                };
+                [
+                    known(&no_iban),
+                    known(&same_currency),
+                    no_iban,
+                    same_currency,
+                ]
+                .into_iter()
+                .find_map(|ids| (ids.len() == 1).then(|| ids[0]))
             }
-            None => None,
         }
     } else {
         // Wallets in several currencies can share one IBAN (Finom EUR/USD):

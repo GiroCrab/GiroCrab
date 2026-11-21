@@ -3702,6 +3702,44 @@ fn portal_sync_prefers_cards_whose_state_is_known() {
 }
 
 #[test]
+fn a_known_card_with_an_iban_wins_over_a_reactivated_one_without() {
+    // the known-state preference spans both lookups: the reactivated old card is the only
+    // one without an IBAN, the active card has the IBAN MoneyMoney stored for it
+    let v = vault();
+    let conn_id = v
+        .add_bank_connection(
+            ConnectorKind::AmazonVisa,
+            String::new(),
+            "visa-login".into(),
+        )
+        .unwrap();
+    let db = v.db().unwrap();
+    let gid = Vault::ensure_group(&db, "Kreditkarten", "creditcard", 1).unwrap();
+    let card = |ext: &str, iban: &str| -> i64 {
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
+             VALUES (?1, ?2, ?3, ?3, ?4, 'EUR', 'credit_card', 0)",
+            params![conn_id, gid, ext, iban],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let old = card("moneymoney-db:30:aaaa", "");
+    let active = card("moneymoney-db:32:bbbb", "DE89370400440532013000");
+    let adopt =
+        || adopt_account(&db, conn_id, "visa:1", "", "EUR", AccountKind::CreditCard).unwrap();
+    // without the note the card without an IBAN is the one (#1114)
+    assert_eq!(adopt(), Some(old));
+    db.execute(
+        "UPDATE accounts SET external_ref = 'moneymoney-db:30:aaaa' WHERE id = ?1",
+        [old],
+    )
+    .unwrap();
+    note_archive_unknown(&db, &[old]).unwrap();
+    assert_eq!(adopt(), Some(active));
+}
+
+#[test]
 fn external_refs_never_change() {
     // Imported accounts are matched again by this ref on the next import.
     assert_eq!(fnv("12345678|0532013000"), "663cb359");

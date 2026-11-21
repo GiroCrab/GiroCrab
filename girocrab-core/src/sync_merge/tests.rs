@@ -3713,6 +3713,39 @@ fn loan_links_skip_deleted_bookings_and_match_by_key() {
     }
 }
 
+/// #998: the repair noted an imported account on A (state unknown). The user then decides on B;
+/// once A takes that newer choice over, A's next import must not give the account
+/// MoneyMoney's state again. Without a newer choice the note stays.
+#[test]
+fn a_newer_archive_choice_from_another_device_ends_the_repair_note() {
+    use crate::importers::moneymoney_db::{archive_unknown, note_archive_unknown};
+    let dir = temp_dir("archive-note");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    for v in [&a, &b] {
+        exec(
+            v,
+            "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+             INSERT INTO accounts(id, group_id, external_ref, name) VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte');",
+        );
+        fill_missing_uuids(&v.db().unwrap()).unwrap();
+    }
+    note_archive_unknown(&a.db().unwrap(), &[1]).unwrap();
+    both_ways(&a, &b);
+    assert_eq!(archive_unknown(&a.db().unwrap()).unwrap(), vec![1]);
+    // archived and reactivated on B: stays active, A forgets the note
+    b.set_account_archived(1, true).unwrap();
+    b.set_account_archived(1, false).unwrap();
+    both_ways(&a, &b);
+    assert!(archive_unknown(&a.db().unwrap()).unwrap().is_empty());
+    assert_eq!(
+        n(
+            &a,
+            "SELECT archived_unix IS NULL FROM accounts WHERE id = 1"
+        ),
+        1
+    );
+}
+
 /// A archived and deleted account A1; B took that over and then got A1 again
 /// from the bank (revive). Both end with A1 live, unarchived and in totals.
 #[test]
