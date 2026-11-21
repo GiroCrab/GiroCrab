@@ -709,7 +709,7 @@ public final class AppModel {
     @ObservationIgnored var localApiJobs = 0
     var activeChallenge: ActiveChallenge?
     var payeeCheck: PendingPayeeCheck?
-    var syncingConnectionID: Int64?
+    var syncingConnectionID: Int64? { didSet { if syncingConnectionID == nil { resumePaymentLink() } } }
     /// The one account the running sync of `syncingConnectionID` covers
     /// ("<Konto> abrufen", statements), nil for the whole login. Set with it by
     /// `startSync`; read only through `isSyncing(_:)` (#1572).
@@ -760,7 +760,10 @@ public final class AppModel {
     var activeSession: SyncSession?
     var activeTransfer: TransferSession? {
         // the frozen order data belongs to one session: a new one, the end, a cancel or the lock clears it
-        didSet { if activeTransfer !== oldValue { activeTransferComparison = nil } }
+        didSet {
+            if activeTransfer !== oldValue { activeTransferComparison = nil }
+            if activeTransfer == nil { resumePaymentLink() }
+        }
     }
     /// Recipient IBAN and amount of the single transfer as handed to the bank (#949), frozen when it
     /// starts: the TAN card never follows later edits of `transferDraft`. Nil for batch, standing order, debit.
@@ -793,6 +796,9 @@ public final class AppModel {
     /// Print dialog (GitHub #53).
     var showPrintSheet = false
     var transferDraft = TransferDraft()
+    /// A `girocrab://transfer` link that came while the form could not open (vault locked,
+    /// accounts still loading, a sync running): shown once that is over (`presentPendingPaymentLink`).
+    var pendingPaymentLink: ParsedPayment?
     /// Opt-in clipboard check (#663): pasteboard `changeCount` last looked at, so the same
     /// content is offered once. Never the content itself; in memory only.
     var clipboardChangeCountHandled: Int?

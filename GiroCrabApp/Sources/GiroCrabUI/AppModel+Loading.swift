@@ -108,6 +108,8 @@ extension AppModel {
             sidebarSelection = .allAccounts
         }
         rebuildAccountIndex()
+        // After unlocking or a sync: a transfer link that came meanwhile.
+        resumePaymentLink()
     }
 
     func reloadDashboard() {
