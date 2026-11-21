@@ -19,6 +19,11 @@ Sheet {
         const action = qsTr("Aktion"), view = qsTr("Ansicht")
         const add = (title, subtitle, symbol, fn) => out.push({ title: title, subtitle: subtitle, symbol: symbol, action: fn })
         for (const s of m.scopes) add(s.title, view, "rectangle.split.3x1", () => m.scope = s.id)
+        // the list's scopes only over the booking list: the depot tabs while a securities depot
+        // is shown, nothing for Sachwerte (#564)
+        if (DepotState.presentation !== "bookings") out.length = 0
+        if (DepotState.presentation === "securities")
+            for (const t of DepotState.depotTabs) add(t.title, view, "rectangle.split.3x1", () => DepotState.depotTab = t.id)
         if (m.canTransfer) add(qsTr("Überweisung senden"), action + " · " + Fmt.keys("Strg+N"), "paperplane", () => m.openTransfer())
         if (!m.bankingBlocksAll) add(qsTr("Alle Konten abrufen"), action + " · " + Fmt.keys("Strg+R"), "arrow.triangle.2.circlepath", () => m.requestSyncAll())
         add(qsTr("Regeln bearbeiten"), action, "wand.and.stars", () => m.openRuleEditor(null))

@@ -474,6 +474,11 @@ fn call(method: &str, a: &Value) -> R {
         "bic_for_iban" => ok(girocrab_core::connectors::fints_directory::bic_for_iban(
             arg(a, "iban")?,
         )),
+        // --- Depot-Wertverlauf (DepotDetailView.swift, #578): the key of a held position ---
+        "holding_position_key" => ok(holding_position_key(
+            &arg::<String>(a, "isin")?,
+            &arg::<String>(a, "name")?,
+        )),
         "parse_amount_to_cents" => {
             ok(girocrab_core::parse_amount_to_cents(arg(a, "text")?).map_err(|e| e.to_string())?)
         }
@@ -1455,6 +1460,26 @@ fn read_invoice(a: &Value) -> R {
     ok(json!({ "xml": xml, "epc": epc, "text": text }))
 }
 
+/// `holding_position_key` of the core (ffi.rs, not reachable from Rust): the key under which
+/// `depot_value_positions` lists a held position. A valid ISIN, else `cash` for the liquidity
+/// line, else `name:` and the lower-cased name with single spaces
+/// (`depot_values::observations::position_key`).
+fn holding_position_key(isin: &str, name: &str) -> Option<String> {
+    if let Some(isin) = girocrab_core::asset_classification::normalized_isin(isin) {
+        return Some(isin);
+    }
+    let low = name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    match low.as_str() {
+        "" => None,
+        "liquidität" | "liquiditaet" | "liquidity" | "cash" => Some("cash".into()),
+        _ => Some(format!("name:{low}")),
+    }
+}
+
 /// Vault methods, plus the ones whose errors the sheet shows differently.
 fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
     match method {
@@ -1633,6 +1658,9 @@ vault_methods! {
     tag_totals(filter) tag_account_counts(tag_id)
     // --- Anlageklassen (AssetClassificationUI, DepotMetrics) ---
     classified_assets(account_id)
+    // --- Depot-Wertverlauf (DepotValueHistory.swift, PositionHistorySheet.swift, #578/#761) ---
+    depot_value_history(account_ids, days) depot_value_positions(account_id)
+    position_value_history(account_id, position)
     set_asset_class_override(security_key, value) set_instrument_override(security_key, value)
     // --- Händler-Logos (AppModel+Logos, MerchantLogoSettingsSection); logos: `merchant_logo` ---
     online_logo_provider() clear_logo_cache() set_merchant_domain(merchant_key, domain)
@@ -2582,6 +2610,211 @@ mod tests {
             assert!(t["direction"].is_string() && t["booking_date"].is_string());
             assert!(t["fees_cents"].is_i64() && t["taxes_cents"].is_i64());
         }
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Depot and Sachwerte views (DepotDetailView.qml, DepotPositionsTable.qml, DepotActivitiesView.qml,
+    /// TangibleAccountDetailView.qml, #564/#625): the fields DepotMetrics.qml reads, round-tripped as JSON.
+    #[test]
+    fn depot_view_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-depot-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![6; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let tangible = call("list_tangible_account_ids", json!({}));
+        let accounts = call("list_accounts", json!({}));
+        let depots: Vec<_> = accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| {
+                a["kind"] == "Brokerage" && !tangible.as_array().unwrap().contains(&a["id"])
+            })
+            .map(|a| a["id"].clone())
+            .collect();
+        assert!(!depots.is_empty(), "demo has a securities depot");
+        let mut holdings = 0;
+        let mut linked = 0;
+        for depot in &depots {
+            for c in call("classified_assets", json!({ "account_id": depot }))
+                .as_array()
+                .unwrap()
+            {
+                let h = &c["holding"];
+                for key in ["isin", "wkn", "name", "custody_type", "currency"] {
+                    assert!(h[key].is_string(), "holding.{key}");
+                }
+                assert!(h["quantity"].is_f64() && h["value_cents"].is_i64());
+                assert!(h["current_price_cents"].is_i64() && h["purchase_price_cents"].is_i64());
+                // optional figures and the trading currency (#625) are present, null or a number
+                for key in [
+                    "prev_day_value_cents",
+                    "profit_loss_purchase_cents",
+                    "profit_loss_prev_day_cents",
+                    "native_price_cents",
+                    "native_value_cents",
+                ] {
+                    assert!(h[key].is_null() || h[key].is_i64(), "holding.{key}");
+                }
+                assert!(c["classification"]["asset_class"].is_string());
+                assert!(c["classification"]["instrument"].is_string());
+                assert!(c["asset_item_id"].is_null());
+                // what the QML sends back for a holding (e.g. a merged position) parses again
+                let back: girocrab_core::Holding =
+                    serde_json::from_value(h.clone()).expect("holding round trip");
+                assert_eq!(serde_json::to_value(&back).unwrap(), *h);
+                holdings += 1;
+            }
+            for t in call("list_security_transactions", json!({ "account_id": depot }))
+                .as_array()
+                .unwrap()
+            {
+                assert_eq!(&t["account_id"], depot);
+                for key in [
+                    "booking_date",
+                    "settlement_date",
+                    "isin",
+                    "wkn",
+                    "name",
+                    "currency",
+                    "booking_text",
+                ] {
+                    assert!(t[key].is_string(), "transaction.{key}");
+                }
+                for key in ["value_cents", "fees_cents", "taxes_cents"] {
+                    assert!(t[key].is_i64(), "transaction.{key}");
+                }
+                assert!(
+                    ["Buy", "Sell", "Dividend", "Fee", "Tax", "Other"]
+                        .contains(&t["direction"].as_str().unwrap())
+                );
+                assert!(t["cash_transaction_id"].is_null() || t["cash_transaction_id"].is_i64());
+                if t["cash_transaction_id"].is_i64() {
+                    linked += 1;
+                }
+            }
+        }
+        assert!(holdings > 0, "demo depots hold positions");
+        assert!(linked > 0, "demo activities link to clearing bookings");
+        // Sachwerte: items as positions, yesterday's unit value of a priced item
+        for c in call("classified_assets", json!({ "account_id": tangible[0] }))
+            .as_array()
+            .unwrap()
+        {
+            assert!(c["asset_item_id"].is_i64());
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Depot value history (DepotValueHistory.qml, PositionHistorySheet.qml, #578/#761): the demo
+    /// depots have a history, held positions find theirs by `holding_position_key`, and every
+    /// point carries the fields the chart reads.
+    #[test]
+    fn depot_value_history_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-values-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![6; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let point_fields = |p: &Value| {
+            let date = p["date"].as_str().expect("date");
+            assert_eq!(date.len(), 10, "ISO day");
+            assert!(p["value_cents"].is_i64());
+            assert!(p["covered_depots"].as_u64().unwrap() <= p["total_depots"].as_u64().unwrap());
+        };
+        let tangible = call("list_tangible_account_ids", json!({}));
+        let depots: Vec<i64> = call("list_accounts", json!({}))
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| {
+                a["kind"] == "Brokerage" && !tangible.as_array().unwrap().contains(&a["id"])
+            })
+            .map(|a| a["id"].as_i64().unwrap())
+            .collect();
+        // all depots in the total, then one by one
+        let all = call(
+            "depot_value_history",
+            json!({ "account_ids": [], "days": 3650 }),
+        );
+        assert!(
+            all.as_array().unwrap().len() > 1,
+            "demo depots have a history"
+        );
+        all.as_array().unwrap().iter().for_each(point_fields);
+        let back: Vec<girocrab_core::DepotValuePoint> =
+            serde_json::from_value(all.clone()).expect("points round trip");
+        assert_eq!(serde_json::to_value(&back).unwrap(), all);
+        let mut matched = 0;
+        for depot in &depots {
+            for p in call(
+                "depot_value_history",
+                json!({ "account_ids": [depot], "days": 3650 }),
+            )
+            .as_array()
+            .unwrap()
+            {
+                point_fields(p);
+            }
+            let positions = call("depot_value_positions", json!({ "account_id": depot }));
+            for p in positions.as_array().unwrap() {
+                for key in ["position", "name", "currency", "first_date", "last_date"] {
+                    assert!(p[key].is_string(), "position.{key}");
+                }
+                assert!(p["last_value_cents"].is_i64() && p["held"].is_boolean());
+                let history = call(
+                    "position_value_history",
+                    json!({ "account_id": depot, "position": p["position"] }),
+                );
+                history.as_array().unwrap().iter().for_each(point_fields);
+            }
+            // DepotDetailView.qml: a held position's key is one `depot_value_positions` lists
+            let held: Vec<Value> = positions
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|p| p["held"] == json!(true))
+                .map(|p| p["position"].clone())
+                .collect();
+            for c in call("classified_assets", json!({ "account_id": depot }))
+                .as_array()
+                .unwrap()
+            {
+                let key: Value = serde_json::from_str::<Value>(&call_json(
+                    "holding_position_key",
+                    &json!({ "isin": c["holding"]["isin"], "name": c["holding"]["name"] })
+                        .to_string(),
+                ))
+                .unwrap()["ok"]
+                    .clone();
+                if held.contains(&key) {
+                    matched += 1;
+                }
+            }
+        }
+        assert!(matched > 0, "held demo positions find their history");
+        assert_eq!(
+            holding_position_key(" de0005557508 ", "x"),
+            Some("DE0005557508".into())
+        );
+        assert_eq!(
+            holding_position_key("-", "  Liquidität "),
+            Some("cash".into())
+        );
+        assert_eq!(
+            holding_position_key("", "Gold  Bar"),
+            Some("name:gold bar".into())
+        );
+        assert_eq!(holding_position_key("", " "), None);
         let _ = std::fs::remove_file(path);
     }
 
