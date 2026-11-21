@@ -1550,6 +1550,32 @@ async fn order_source_account_without_upd_restrictions_allows_every_order() {
     }
 }
 
+#[test]
+fn own_account_transfer_from_savings_uses_hkcum() {
+    // #1513: the savings account allows only SEPA-Umbuchung, the current account both.
+    let mut c = FinTsConnector::new("37040044");
+    c.upd = vec![
+        upd_acc("0532013000", "", IBAN_A, "Tagesgeld", &["HKSAL", "HKCUM"]),
+        upd_acc(
+            "0000202051",
+            "",
+            IBAN_B,
+            "Girokonto",
+            &["HKSAL", "HKCCS", "HKCUM"],
+        ),
+    ];
+    // Savings → own current account: Umbuchung, also with spaces in the IBAN.
+    assert!(c.is_upd_internal_transfer(IBAN_A, IBAN_B));
+    assert!(c.is_upd_internal_transfer("DE89 3704 0044 0532 0130 00", IBAN_B));
+    // A source that allows HKCCS keeps the regular transfer.
+    assert!(!c.is_upd_internal_transfer(IBAN_B, IBAN_A));
+    // A recipient outside this login is never an Umbuchung.
+    assert!(!c.is_upd_internal_transfer(IBAN_A, "DE75512108001245126199"));
+    // Without an explicit HKCUM in the UPD nothing changes.
+    c.upd[0] = upd_acc("0532013000", "", IBAN_A, "Tagesgeld", &["HKSAL"]);
+    assert!(!c.is_upd_internal_transfer(IBAN_A, IBAN_B));
+}
+
 #[tokio::test]
 async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
     // #1083 (flatex): the camt request gets 0030, a TAN the running fetch cannot

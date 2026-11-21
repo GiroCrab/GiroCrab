@@ -353,7 +353,8 @@ pub(super) fn batch_order(
 }
 
 impl FinTsConnector {
-    /// Sends HKCCS (regular), HKCSE (scheduled) or HKIPZ (instant) + HKTAN
+    /// Sends HKCCS (regular), HKCUM (to an own account when the UPD allows only
+    /// that, #1513), HKCSE (scheduled) or HKIPZ (instant) + HKTAN
     /// process 4. An instant order the bank does not offer ends as
     /// `TransferResult::InstantDeclined` without sending anything. There is
     /// never an automatic second order.
@@ -367,6 +368,10 @@ impl FinTsConnector {
             "HKIPZ"
         } else if job.execution_date.is_some() {
             "HKCSE"
+        } else if self.bank_supports("HKCUM")
+            && self.is_upd_internal_transfer(&job.source_iban, &job.recipient_iban)
+        {
+            "HKCUM"
         } else {
             "HKCCS"
         };

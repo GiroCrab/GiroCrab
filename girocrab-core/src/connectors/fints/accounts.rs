@@ -190,6 +190,20 @@ impl FinTsConnector {
         Ok(upd.is_none_or(|u| u.allows(seg_id)).then_some(acc))
     }
 
+    /// #1513: a transfer to another account of this login from a source whose
+    /// UPD refuses HKCCS but lists HKCUM (typical for savings accounts) goes
+    /// out as SEPA-Umbuchung. Only an explicit UPD entry counts.
+    pub(super) fn is_upd_internal_transfer(&self, source_iban: &str, recipient_iban: &str) -> bool {
+        let find = |iban: &str| {
+            let want = normalize_iban(iban);
+            self.upd.iter().find(|u| normalize_iban(&u.iban) == want)
+        };
+        let (Some(src), Some(_)) = (find(source_iban), find(recipient_iban)) else {
+            return false;
+        };
+        !src.allows("HKCCS") && src.allowed.contains("HKCUM")
+    }
+
     pub(super) async fn balance(
         &mut self,
         ctx: &ConnectContext,
