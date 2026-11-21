@@ -10624,6 +10624,17 @@
         }
       }
     },
+    "Der zugeordnete Betrag mindert die Ausgaben am Datum der Erstattung, nicht am Datum der ursprünglichen Buchung. Unter dem Filter „Einnahmen“ steht er deshalb als geminderte Ausgabe." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The assigned amount reduces expenses on the refund's date, not on the date of the original transaction. Under the “Income” filter it therefore shows as a reduced expense."
+          }
+        }
+      }
+    },
     "Derivat / strukturiertes Produkt" : {
       "extractionState" : "manual",
       "localizations" : {

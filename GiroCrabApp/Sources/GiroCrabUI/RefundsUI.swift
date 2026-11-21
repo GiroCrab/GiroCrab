@@ -456,6 +456,13 @@ struct RefundLinksCard: View {
                         .foregroundStyle(Theme.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if (links.assignedCents ?? 0) > 0 || (links.refundedCents ?? 0) > 0 {
+                    // why month and filter figures differ from what the user may expect (docs: Auswertung)
+                    Text("Der zugeordnete Betrag mindert die Ausgaben am Datum der Erstattung, nicht am Datum der ursprünglichen Buchung. Unter dem Filter „Einnahmen“ steht er deshalb als geminderte Ausgabe.")
+                        .appFont(.caption)
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

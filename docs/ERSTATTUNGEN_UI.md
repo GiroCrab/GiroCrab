@@ -167,6 +167,11 @@ Kategorie abzüglich des zugeordneten Teils; er zählt am Datum und auf dem Kont
 Seitenleiste folgen dagegen wie die Buchungsliste dem Filter „Ausgaben“ / „Einnahmen“ (#621): dort trägt die Zeile der
 Erstattung die Minderung, unter „Ausgaben“ stehen also die Buchungen ohne Abzug.
 
+Zwei Folgen davon wirken ohne Erklärung wie ein Fehler, deshalb nennt die Karte „Erstattung“ im Inspektor sie in
+einer Zeile unter den Summen, sobald etwas zugeordnet ist: Die Minderung zählt im Monat der Erstattung, der Monat des
+Kaufs zeigt die Ausgabe weiter in voller Höhe; und unter dem Filter „Einnahmen“ steht der zugeordnete Betrag als
+geminderte Ausgabe (positiver Wert bei „Ausgaben“), nicht als Einnahme.
+
 In der Buchungszeile steht neben dem Erstattungssymbol nur dann ein Betrag (`Booking.refund_part_cents`), wenn die
 Buchung erst zum Teil erstattet bzw. zugeordnet ist; ganz erstattete oder zugeordnete Buchungen zeigen nur das Symbol. Nach dem Aufheben der Verknüpfung gilt wieder die Einordnung des Core. Beträge, Kategorien und
 Kontostände ändern sich dadurch nicht.
