@@ -8,6 +8,8 @@ import QtQuick.Layouts
 // button of the stream header's filter row (StreamHeaderCard.qml), state in TagFilter.qml.
 Popup {
     id: pop
+    // ReportDialogs.swift › capturablePopover (#384): drawn into the bug report picture
+    Component.onDestruction: ReportDialogs.untrack(pop)
     /// [Int64?: TagTotal] keyed by String(tag_id) ("null" = untagged); null while loading.
     property var totals: null
     padding: 12
@@ -15,7 +17,7 @@ Popup {
     margins: 8
     // (the height settles once the content is laid out at the popover's width)
     onImplicitHeightChanged: if (visible) place()
-    onOpened: place()
+    onOpened: { place(); ReportDialogs.track(pop) }
     function place() {
         if (!parent) return
         const top = parent.mapToItem(null, 0, 0).y
@@ -30,7 +32,7 @@ Popup {
     background: Rectangle { radius: 9; color: Theme.card; border.color: Theme.border }
     // .task { totals = await model.loadTagTotals() }
     onAboutToShow: { place(); totals = null; TagFilter.loadTotals(m => { if (pop.visible) pop.totals = m || {} }) }
-    onClosed: TagFilter.shown = false
+    onClosed: { TagFilter.shown = false; ReportDialogs.untrack(pop) }
     /// TagFilter.shown (and the button on screen): opens and closes the popover.
     property bool wanted: false
     onWantedChanged: wanted ? open() : close()
