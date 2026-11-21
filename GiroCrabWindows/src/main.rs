@@ -373,10 +373,10 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
         },
         has_note: !b.note.is_empty() && !privacy,
         // the same sign for a refund and its original; the amount only while covered in part (#714)
+        refund_linked: b.refund_linked,
         refund: match (b.refund_linked, b.refund_part_cents) {
-            (false, _) => "".into(),
-            (true, Some(part)) if !privacy => format!("↺ {}", money(part, &b.currency)).into(),
-            (true, _) => "↺".into(),
+            (true, Some(part)) if !privacy => money(part, &b.currency).into(),
+            _ => "".into(),
         },
         expand_detail: if privacy {
             "".into()

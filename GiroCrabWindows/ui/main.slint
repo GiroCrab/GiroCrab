@@ -16,7 +16,7 @@ export { RecLine }
 
 export struct AccountRow { id: int, name: string, bank: string, iban: string, header: string, monogram: string, dot: color, balance: string, currency: string, negative: bool, archived: bool }
 export struct CategoryRow { id: int, name: string, depth: int, color: color }
-export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string, refund: string }
+export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string, refund-linked: bool, refund: string }
 export struct DayGroup { title: string, sum: string, negative: bool, rows: [BookingRow], show-month: bool, month: string, month-income: string, month-expense: string }
 export struct BarGroup { label: string, income: float, expense: float }
 export struct BudgetLine { name: string, amount: string, progress: float, color: color, over: bool }
@@ -87,6 +87,7 @@ component Icon inherits Path {
         : name == "arrow-in" ? "M 9 2.5 L 13.5 2.5 L 13.5 13.5 L 9 13.5 M 2 8 L 10 8 M 7 5 L 10 8 L 7 11"
         : name == "document" ? "M 4 2 L 9.5 2 L 12.5 5 L 12.5 14 L 4 14 Z M 9.5 2 L 9.5 5 L 12.5 5 M 6 8 L 10.5 8 M 6 10.5 L 10.5 10.5"
         : name == "folder" ? "M 2 4 L 6.5 4 L 8 5.5 L 14 5.5 L 14 12.5 L 2 12.5 Z"
+        : name == "refund" ? "M 6 3 L 3 6 L 6 9 M 3 6 L 10 6 A 3.5 3.5 0 0 1 10 13 L 6 13"
         : name == "search" ? "M 2.5 7 A 4.5 4.5 0 1 0 11.5 7 A 4.5 4.5 0 1 0 2.5 7 M 10.5 10.5 L 14 14"
         : "";
 }
@@ -454,6 +455,8 @@ component BookingLine inherits Rectangle {
                 spacing: 6px;
                 Text { text: b.counterparty; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
                 if b.has-note: Text { text: "📎"; font-size: 11px; color: Theme.muted; }
+                // drawn, not a character: the text font has no such sign (#714)
+                if b.refund-linked: Icon { name: "refund"; width: 12px; height: 12px; y: (parent.height - self.height) / 2; }
                 if b.refund != "": Text { text: b.refund; font-size: 11px; color: Theme.muted; }
             }
             if !root.compact || root.active: HorizontalLayout {
