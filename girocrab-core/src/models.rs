@@ -490,7 +490,7 @@ pub struct Booking {
     pub refund_link: crate::refunds::RefundLinkKind,
     /// A linked booking that its links cover only in part (#714): the covered cents (of a refund
     /// what its originals take up, of an original what its refunds pay back). `None` when
-    /// unlinked, fully covered or linked across currencies.
+    /// unlinked, fully covered, covered with nothing (its links take 0) or linked across currencies.
     pub refund_part_cents: Option<i64>,
     /// The part of a refund that is linked but taken up by no original: it stays income in
     /// the sums, while the booking's `flow` (consumption) holds for the rest. 0 otherwise.

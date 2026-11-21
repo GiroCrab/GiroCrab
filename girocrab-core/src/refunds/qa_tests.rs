@@ -1562,6 +1562,50 @@ fn qa_a_changed_split_keeps_the_link_with_its_part() {
     );
 }
 
+/// QA v16: a booking whose link takes nothing (the refund is used up by a link made earlier)
+/// carries the marker without an amount: the amount is for a booking covered in part.
+#[test]
+fn qa_a_link_that_takes_nothing_shows_no_amount_in_the_row() {
+    let (_d, v, a) = fixture();
+    let first = booking(&v, a, -10000);
+    let second = booking(&v, a, -5000);
+    let r = booking(&v, a, 10000);
+    let (ca, cb) = categories(&v);
+    v.set_transaction_splits(
+        first,
+        vec![
+            TransactionSplitInput {
+                category_id: Some(ca),
+                amount_cents: -6000,
+                note: String::new(),
+            },
+            TransactionSplitInput {
+                category_id: Some(cb),
+                amount_cents: -4000,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    v.link_refund(r, first, 1).unwrap();
+    v.link_refund(r, second, 0).unwrap();
+    let row = |v: &Vault, id: i64| {
+        let page = v.list_transactions(BookingFilter::default()).unwrap();
+        let t = page.transactions.into_iter().find(|t| t.id == id).unwrap();
+        (t.refund_link, t.refund_part_cents)
+    };
+    assert_eq!(row(&v, second), (RefundLinkKind::Original, Some(4000)));
+    // without its split the first booking takes the whole refund
+    v.set_transaction_splits(first, Vec::new()).unwrap();
+    assert_eq!(
+        allocations(&v, r),
+        [(first, Some(10000)), (second, Some(0))]
+    );
+    assert_eq!(row(&v, second), (RefundLinkKind::Original, None));
+    assert_eq!(row(&v, first), (RefundLinkKind::Original, None));
+    assert_eq!(row(&v, r), (RefundLinkKind::Refund, None));
+}
+
 /// QA v12 (Mac): the picker links one part of a split refund. „Same amount“ compares that
 /// part, and a part that is used up has nothing open and no suggestions while the other has.
 #[test]

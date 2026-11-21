@@ -63,7 +63,8 @@ extension AppModel {
             let (covered, total) = kind == .refund ? (links.assignedCents, links.refundTotalCents) : (links.refundedCents, links.originalTotalCents)
             patchLoadedRows([id]) { row in
                 row.refundLink = kind
-                row.refundPartCents = covered.flatMap { $0 < total ? $0 : nil }
+                // like the core: no amount for a link that takes nothing
+                row.refundPartCents = covered.flatMap { $0 > 0 && $0 < total ? $0 : nil }
                 row.refundIncomeCents = links.refundIncomeCents
             }
             if refundPickerBooking?.id == id { refundPickerBooking?.refundLink = kind }

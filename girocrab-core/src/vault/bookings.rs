@@ -372,7 +372,8 @@ impl BookingFinisher {
         t.refund_part_cents = pays
             .or(self.refund_covered.original.get(&t.id).copied())
             .filter(|(covered, total)| {
-                covered < total && !self.refund_covered.mixed.contains(&t.id)
+                // a link that takes nothing (the other links use everything up) shows no 0,00
+                (1..*total).contains(covered) && !self.refund_covered.mixed.contains(&t.id)
             })
             .map(|(covered, _)| covered);
         // A refund the user linked to its original booking (#714) is no income: like a refund
