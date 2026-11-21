@@ -294,6 +294,18 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Dokumentenabruf ist für diesen Zugang ausgeschaltet." => {
             "Document retrieval is switched off for this connection."
         }
+        "Der Name des Händlers fehlt." => "The merchant name is missing.",
+        "Der Name des Händlers ist länger als 80 Zeichen." => {
+            "The merchant name is longer than 80 characters."
+        }
+        "Diesen Händler gibt es in der eingebauten Liste nicht." => {
+            "This merchant is not in the built-in list."
+        }
+        "Diesen eigenen Händler gibt es nicht mehr." => "This custom merchant no longer exists.",
+        "Ein Suchwort ist länger als 60 Zeichen." => "A search word is longer than 60 characters.",
+        "Mindestens ein Suchwort mit zwei oder mehr Buchstaben oder Ziffern angeben." => {
+            "Enter at least one search word with two or more letters or digits."
+        }
         "Der Name des Tags fehlt." => "The tag name is missing.",
         "Der Name des Tags ist länger als 64 Zeichen." => {
             "The tag name is longer than 64 characters."
@@ -380,11 +392,14 @@ fn english(de: &str) -> Option<&'static str> {
         "EquatePlus: Unvollständige oder nicht unterstützte Bestandsdaten. Es wurden keine Daten übernommen." => {
             "EquatePlus: Incomplete or unsupported inventory data. No data was imported."
         }
+        "EquatePlus: Neue Programmkennungen konnten den bisherigen Depots nicht eindeutig zugeordnet werden. Prüfen und archivieren Sie die alten Depots vor einem erneuten Abruf." => {
+            "EquatePlus: The new program IDs could not be reliably matched to your existing depots. Review and archive the old depots before trying again."
+        }
         "Bitte bei EquatePlus im Browserfenster anmelden und die Bestände abrufen." => {
             "Please sign in to EquatePlus in the browser window and fetch your holdings."
         }
-        "Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet." => {
-            "Employee share plans with available and restricted holdings. Sign in in the browser window with EquateAccess or SMS. Unofficial portal interface; subject to change and restrictions under the terms of use. PDF documents can optionally be loaded; they are kept under “Belege & PostBox” and are not assigned to bookings or activities automatically."
+        "Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & Postbox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet." => {
+            "Employee share plans with available and restricted holdings. Sign in in the browser window with EquateAccess or SMS. Unofficial portal interface; subject to change and restrictions under the terms of use. PDF documents can optionally be loaded; they are kept under “Documents & Postbox” and are not assigned to bookings or activities automatically."
         }
         "quirion: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
             "quirion: Incomplete or invalid portal response. No data was imported."
@@ -752,7 +767,7 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Umsätze (HKCAZ/camt.052) – {1}" => "{0}: transactions (HKCAZ/camt.052) – {1}",
         "{0}: Umsätze (HKKAZ/MT940) – {1}" => "{0}: transactions (HKKAZ/MT940) – {1}",
         "{0}: Kartenumsätze ({1}) – {2}" => "{0}: card transactions ({1}) – {2}",
-        "PostBox" => "PostBox",
+        "Postbox" => "Postbox",
         "Online-Archiv" => "Online archive",
         "QR-Code mit dem TAN-Generator scannen" => "Scan the QR code with the TAN generator",
         "Scannen Sie den QR-Code mit dem SecurePlus Generator und geben Sie die angezeigte TAN ein. GiroCrab lädt danach die Dokumente aus dem Online-Archiv." => {
@@ -787,11 +802,11 @@ fn english(de: &str) -> Option<&'static str> {
         "Freigabe erhalten. {0} von {1} Dokumenten geladen, danach folgt der Abruf der Konten." => {
             "Approved. {0} of {1} documents loaded, then the accounts are fetched."
         }
-        "Die PostBox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen." => {
-            "The PostBox can only be fetched additionally for comdirect logins via FinTS."
+        "Die Postbox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen." => {
+            "The Postbox can only be fetched additionally for comdirect logins via FinTS."
         }
-        "Der PostBox-Abruf ist für diesen Zugang nicht eingeschaltet." => {
-            "Fetching the PostBox is not switched on for this login."
+        "Der Postbox-Abruf ist für diesen Zugang nicht eingeschaltet." => {
+            "Fetching the Postbox is not switched on for this login."
         }
         "{0}: Die Freigabe in der Banking-App ist nicht rechtzeitig erfolgt. Bitte erneut abrufen und in der App bestätigen." => {
             "{0}: the approval in the banking app did not arrive in time. Please fetch again and confirm in the app."
@@ -939,8 +954,8 @@ fn english(de: &str) -> Option<&'static str> {
             "OAuth device login + GraphQL API of the official CLI"
         }
         "(nicht nötig – Anmeldung im Browser)" => "(not needed – sign in in the browser)",
-        "Vorher auf scalable.capital unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff." => {
-            "First enable CLI access on scalable.capital under Profile → Security → “Agentic Investing”. You sign in in the browser; the login has to be renewed every 7 days. Read-only."
+        "Vorher im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff." => {
+            "First enable CLI access in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”. You sign in in the browser; the login has to be renewed every 7 days. Read-only."
         }
         "Keine Scalable-Sitzung – bitte anmelden." => "No Scalable session – please sign in.",
         "Scalable-Sitzung abgelaufen ({0}) – bitte erneut anmelden." => {
@@ -953,14 +968,16 @@ fn english(de: &str) -> Option<&'static str> {
             "Scalable Capital: could not start the login ({0}: {1})."
         }
         "Bei Scalable Capital im Browser anmelden" => "Sign in to Scalable Capital in the browser",
-        "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe." => {
-            "Open {0} and confirm the code {1} there. GiroCrab then waits for the approval automatically."
+        "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe. Erscheint dort „Aktivierung abgelehnt – Wir können Ihr Gerät nicht aktivieren“, schalten Sie zuerst im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den Zugriff ein und starten Sie die Anmeldung neu." => {
+            "Open {0} and confirm the code {1} there. GiroCrab then waits for the approval automatically. If it shows “Activation denied – We are not able to activate your device”, first switch on access in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”, and start the login again."
         }
         "Browser-Anmeldung" => "Browser login",
         "Die Browser-Anmeldung ist abgelaufen – bitte erneut starten." => {
             "The browser login expired – please start again."
         }
-        "Die Anmeldung wurde im Browser abgelehnt." => "The login was declined in the browser.",
+        "Die Anmeldung wurde im Browser abgelehnt. Prüfen Sie, ob im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ der Zugriff eingeschaltet ist, und starten Sie die Anmeldung neu." => {
+            "The login was declined in the browser. Check that access is switched on in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”, and start the login again."
+        }
         "Anmeldung in der Scalable-App freigeben" => "Approve the login in the Scalable app",
         "Scalable Capital hat eine Freigabe-Anfrage an Ihr verknüpftes Gerät gesendet. Bitte dort bestätigen." => {
             "Scalable Capital sent an approval request to your linked device. Please confirm it there."

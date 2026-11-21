@@ -332,7 +332,7 @@ impl Vault {
             None,
             Some(account_id),
             title,
-            "postbox",
+            crate::documents::account_document_type(title),
             "application/pdf",
             &format!("quirion_{}.pdf", URL_SAFE_NO_PAD.encode(key)),
             &bytes,

@@ -26,7 +26,7 @@ Sheet {
             spacing: 10
             SymbolTile { symbol: sheet.active ? sheet.active.connection.sf_symbol : ""; size: 30; tint: Theme.accent }
             ColumnLayout { spacing: 0; Layout.fillWidth: true
-                Text { text: sheet.active ? sheet.active.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text }
+                Text { text: sheet.active ? sheet.active.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text; Sensitive {} }
                 Text { text: sheet.c ? sheet.c.method_name : ""; font.pixelSize: Theme.caption; color: Theme.secondary } }
             SyncBatchProgressLabel {}
         }
@@ -51,7 +51,7 @@ Sheet {
                 BusyIndicator { implicitWidth: 18; implicitHeight: 18; running: parent.visible }
                 Text { text: sheet.active && sheet.active.waiting ? qsTr("Warte auf Freigabe …") : qsTr("Push-Nachricht gesendet"); color: Theme.secondary; font.pixelSize: Theme.callout + 1 } }
         }
-        // .progress: approval given, a longer download runs (comdirect PostBox, #838)
+        // .progress: approval given, a longer download runs (comdirect Postbox, #838)
         ColumnLayout {
             visible: sheet.c !== null && sheet.c.kind === "Progress"
             Layout.fillWidth: true; spacing: 12
@@ -72,8 +72,9 @@ Sheet {
                 color: "white"; radius: 8
                 Image { id: img; anchors.fill: parent; anchors.margins: 4; source: sheet.c && sheet.c.image_url ? sheet.c.image_url : ""
                         fillMode: Image.PreserveAspectFit; smooth: false }
+                Sensitive {}   // photoTAN/QR codes encode the order
             }
-            Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: sheet.c ? sheet.c.message : ""; color: Theme.secondary; font.pixelSize: Theme.body }
+            Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: sheet.c ? sheet.c.message : ""; color: Theme.secondary; font.pixelSize: Theme.body; Sensitive {} }   // a transfer TAN names payee and amount
             TextField {
                 id: code
                 Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 220
@@ -109,7 +110,7 @@ Sheet {
             ColumnLayout {
                 visible: sheet.showManualRedirect
                 Layout.fillWidth: true; spacing: 8
-                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: sheet.c ? sheet.c.message : ""; font.pixelSize: Theme.caption; color: Theme.secondary }
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: sheet.c ? sheet.c.message : ""; font.pixelSize: Theme.caption; color: Theme.secondary; Sensitive {} }   // a transfer TAN names payee and amount
                 Button { visible: sheet.c && !!sheet.c.redirect_url; text: qsTr("Zustimmungsseite öffnen"); onClicked: Qt.openUrlExternally(sheet.c.redirect_url) }
                 TextField { id: redirectField; Layout.fillWidth: true; placeholderText: qsTr("Weitergeleitete Adresse hier einfügen")
                             onTextChanged: code.text = text; onAccepted: sheet.submit() }
@@ -121,7 +122,7 @@ Sheet {
             BusyIndicator { implicitWidth: 18; implicitHeight: 18; running: parent.visible }
             Text { text: qsTr("Freigabe wird übernommen …"); color: Theme.secondary; font.pixelSize: Theme.callout + 1 }
         }
-        Text { visible: sheet.active && sheet.active.error !== ""; text: sheet.active ? sheet.active.error : ""; color: "red"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        Text { visible: sheet.active && sheet.active.error !== ""; text: sheet.active ? sheet.active.error : ""; color: Theme.negative; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Text { visible: sheet.c && sheet.c.expires_in_seconds !== null; text: sheet.c && sheet.c.expires_in_seconds ? qsTr("Gültig noch etwa %1 Min.").arg(Math.floor(sheet.c.expires_in_seconds / 60)) : ""
                font.pixelSize: Theme.caption; color: Theme.tertiary }
         SyncPromptButtons {
@@ -135,6 +136,6 @@ Sheet {
     component ChallengeTexts: ColumnLayout {
         Layout.fillWidth: true; spacing: 8
         Text { Layout.alignment: Qt.AlignHCenter; text: sheet.c ? sheet.c.title : ""; font.pixelSize: Theme.title3 + 2; font.weight: Font.Bold; color: Theme.text }
-        Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: sheet.c ? sheet.c.message : ""; color: Theme.secondary; font.pixelSize: Theme.body }
+        Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: sheet.c ? sheet.c.message : ""; color: Theme.secondary; font.pixelSize: Theme.body; Sensitive {} }   // a transfer TAN names payee and amount
     }
 }

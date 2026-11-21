@@ -139,6 +139,14 @@ public final class AppModel {
     /// (legacy "1"/"true" from the old toggle count as "google").
     var logoProvider = "off"
     var onlineLogos: Bool { logoProvider != "off" }
+    /// Händlererkennung (#1373, Einstellungen › Händler). Off, bookings show their counterparty
+    /// without merchant name or logo: no logo domain to edit, no logo tip.
+    var merchantRecognitionEnabled = true
+    /// Bumped when the merchant settings may have changed (own change, iCloud merge, sync):
+    /// Einstellungen › Händler reads its list again.
+    var merchantSettingsRevision = 0
+    /// Merchant setting changes queued so far; only the newest reloads the views (`changeMerchants`).
+    @ObservationIgnored var merchantWriteCount = 0
     /// Not observed: signets read it in their body (`cachedLogo`), and filling it
     /// must not re-render every signet on screen.
     @ObservationIgnored var logoCache: [String: (image: Image, pixels: Int)] = [:]
@@ -286,6 +294,10 @@ public final class AppModel {
         get { directionFilter }
         set { loadingFilterInBackground { directionFilter = newValue } }
     }
+    var interactiveIncludeSubcategories: Bool {
+        get { includeSubcategories }
+        set { loadingFilterInBackground { includeSubcategories = newValue } }
+    }
     /// Amount range as set by the header popover (the list follows in the background, #357).
     var interactiveAmountFilter: AmountFilter {
         get { amountFilter }
@@ -335,10 +347,29 @@ public final class AppModel {
         }
     }
 
-    /// Any list filter of the header row (status, type, tags, accounts, amount, search) narrows the list.
+    /// Category scope for this session, shared across category selections.
+    var includeSubcategories = true {
+        didSet {
+            guard includeSubcategories != oldValue, !suspendsFilterReloads,
+                  case .category? = sidebarSelection else { return }
+            listLimit = Self.defaultListLimit
+            reloadAfterFilterChange()
+        }
+    }
+
+    var showsSubcategoryFilter: Bool {
+        if case .category? = shownSelection { return true }
+        return false
+    }
+
+    private var excludesSubcategories: Bool {
+        showsSubcategoryFilter && !includeSubcategories
+    }
+
+    /// Any list filter of the header row narrows the list.
     var hasActiveListFilters: Bool {
         statusFilter != .all || directionFilter != .all || tagFilter.isActive || amountFilter.isActive
-            || !searchText.isEmpty || !categoryAccountIDs.isEmpty
+            || !searchText.isEmpty || !categoryAccountIDs.isEmpty || excludesSubcategories
     }
 
     /// „Filter zurücksetzen“ (#840): clears every list filter with a single reload; the period stays.
@@ -348,6 +379,7 @@ public final class AppModel {
             defer { suspendsFilterReloads = false }
             statusFilter = .all
             directionFilter = .all
+            includeSubcategories = true
             clearTagFilter()
             amountFilter = AmountFilter()
             categoryAccountFilter = []
@@ -369,7 +401,7 @@ public final class AppModel {
 
     /// Filled icon while any filter is active.
     var filterSymbol: String {
-        statusFilter == .all && directionFilter == .all
+        statusFilter == .all && directionFilter == .all && !excludesSubcategories
             ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
     }
     /// Income / expenses only (GitHub #53); filtered in the core, so totals and CSV follow.
@@ -522,11 +554,11 @@ public final class AppModel {
     var iconColorTarget: IconColorTarget?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
-    /// "Belege & PostBox" filtered to one account (#172); nil = all accounts,
-    /// `documentsWithoutAccount` = documents without an account (e.g. PostBox, #838).
+    /// "Belege & Postbox" filtered to one account (#172); nil = all accounts,
+    /// `documentsWithoutAccount` = documents without an account (e.g. Postbox, #838).
     var documentsScope: DocumentsScope = .all
     var documentsAccountFilter: Int64?
-    /// "Belege & PostBox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
+    /// "Belege & Postbox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
     /// documents without an account (they have no bank connection). Set it with `selectDocumentsConnection`.
     var documentsConnectionFilter: Int64?
     static let documentsWithoutAccount: Int64 = -1
@@ -542,7 +574,7 @@ public final class AppModel {
     /// Sidebar badges: scheduled payments / active mandates over all accounts (SQL counts).
     var plannedCount = 0
     var mandateCount = 0
-    /// Unread documents (badge of „Belege & PostBox“), a partial-index COUNT.
+    /// Unread documents (badge of „Belege & Postbox“), a partial-index COUNT.
     var unseenDocumentCount = 0
     /// Counts the sidebar badge reads: an older read that finishes late must not overwrite a newer one.
     @ObservationIgnored var sidebarCountsGeneration = 0
@@ -675,6 +707,10 @@ public final class AppModel {
     var activeChallenge: ActiveChallenge?
     var payeeCheck: PendingPayeeCheck?
     var syncingConnectionID: Int64?
+    /// The one account the running sync of `syncingConnectionID` covers
+    /// ("<Konto> abrufen", statements), nil for the whole login. Set with it by
+    /// `startSync`; read only through `isSyncing(_:)` (#1572).
+    var syncingAccountID: Int64?
     var toast: String?
     /// Text of the error alert. Clearing it also clears title and retry.
     var errorMessage: String? {
@@ -842,7 +878,7 @@ public final class AppModel {
     /// Account whose statements (HKEKA) are being fetched by the running session.
     var statementsAccountID: Int64?
     var statementsCountBefore = 0
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     var postboxConnectionID: Int64?
     /// Account whose login syncs only it ("<Konto> abrufen", #1124). Set by
     /// `requestSyncAccount`, kept through prompts and retries, cleared by a
@@ -900,7 +936,7 @@ public final class AppModel {
         }
         if options.freshVault || options.demoSeed {
             // Developer switches only (screenshots): synchronous, not the normal start path.
-            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? Bundle.main.preferredLocalizations.first ?? "de")
+            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? AppLanguage.coreCode)
         }
         if options.freshVault {
             openFreshVault()
@@ -1152,7 +1188,7 @@ public final class AppModel {
         Task { @MainActor [weak self] in
             let mayHoldRealData = await Task.detached(priority: .userInitiated) { () -> Bool in
                 // Core texts follow the language the app bundle resolved (German without a bundle).
-                GiroCrabCore.setLanguage(code: Bundle.main.preferredLocalizations.first ?? "de")
+                GiroCrabCore.setLanguage(code: AppLanguage.coreCode)
                 // Decrypted QuickLook copies a crash or force quit may have left behind.
                 Self.removeQuickLookFiles()
                 return Self.vaultMayHoldRealData

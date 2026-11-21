@@ -1,5 +1,5 @@
 //! Wires the sidebar navigation and the views behind it (depot / Sachwerte, Vermögen, Geplant,
-//! Lastschriften, Belege & PostBox, rules dialog) to the window. Every vault call runs on a
+//! Lastschriften, Belege & Postbox, rules dialog) to the window. Every vault call runs on a
 //! worker thread; results are applied on the UI thread and dropped when a newer load started.
 //! The logic itself lives in `nav`, `portfolio` and `lists` (pure, unit-tested).
 
@@ -542,7 +542,7 @@ pub fn render_view(win: &MainWindow) {
             set_rows(win, rows, "Keine Lastschrift-Mandate");
         }
         MODE_DOCUMENTS => {
-            win.set_view_title("Belege & PostBox".into());
+            win.set_view_title("Belege & Postbox".into());
             let (mut rows, accounts) = with_ui(|u| {
                 (
                     lists::document_rows(&u.docs, &date),

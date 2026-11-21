@@ -205,6 +205,9 @@ pub(crate) fn store_fetch(
         if kind == ConnectorKind::Advanzia {
             super::advanzia::prepare_import(&tx, connection_id, &mut data)?;
         }
+        if kind == ConnectorKind::EquatePlus {
+            super::equateplus::prepare_import(&tx, connection_id, &mut data)?;
+        }
         let generic_bank_name = descriptor(kind).name;
         // No name from the bank: the connection's display name (the bank picked
         // when adding it, or renamed later) beats the generic "FinTS-Bank".
@@ -285,6 +288,12 @@ pub(crate) fn store_fetch(
             |r| r.get(0),
         )?;
         let mut new_accounts: Vec<String> = Vec::new();
+        let fetched_cards: Vec<&str> = data
+            .accounts
+            .iter()
+            .filter(|a| a.kind == AccountKind::CreditCard && !a.account_number.is_empty())
+            .map(|a| a.account_number.as_str())
+            .collect();
         for acc in &data.accounts {
             if blocked_refs.contains(&acc.external_ref) {
                 continue;
@@ -307,8 +316,10 @@ pub(crate) fn store_fetch(
                     connection_id,
                     &acc.external_ref,
                     &acc.iban,
+                    &acc.account_number,
                     &acc.currency,
                     acc.kind,
+                    &fetched_cards,
                 )?,
             };
             // Sub-accounts known from an earlier import/sync without a connection
@@ -891,6 +902,22 @@ pub(crate) fn store_fetch(
                     .optional()?,
                 _ => None,
             };
+            // A Trade Republic PDF can be filed at its depot while the booking lives at tr:cash.
+            let booking_id = match (booking_id, &d.booking_external_id) {
+                (None, Some(ext))
+                    if kind == ConnectorKind::TradeRepublic && d.account_ref == "tr:depot" =>
+                {
+                    tx.query_row(
+                        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+                          WHERE a.connection_id = ?1 AND a.external_ref = 'tr:cash'
+                            AND t.external_id = ?2",
+                        params![connection_id, ext],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                }
+                (booking, _) => booking,
+            };
             // without bytes (download failed) only a stored copy gets its account
             let added = if d.bytes.is_empty() {
                 Ok(None)
@@ -1020,6 +1047,13 @@ pub(crate) fn store_fetch(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(connection_id, (kind, data));
+        } else if kind == ConnectorKind::EquatePlus {
+            // A fresh snapshot supersedes any previously deferred program selection.
+            vault
+                .pending_account_fetches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&connection_id);
         }
         // The catch-up after switching retrieval on again is done once a sync brings no new document
         // and left none out (a failed request, a limit).
@@ -1134,7 +1168,7 @@ pub(crate) enum PostboxMode {
     Off,
     /// When it is on for the login and due.
     Due,
-    /// Now ("PostBox jetzt abrufen").
+    /// Now ("Postbox jetzt abrufen").
     Now,
 }
 
@@ -1229,7 +1263,7 @@ impl Vault {
         }
         if !is_comdirect_fints(&key) {
             return Err(CoreError::invalid(tr(
-                "Die PostBox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
+                "Die Postbox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
             )));
         }
         for k in ["comdirect.client_id", "comdirect.client_secret"] {
@@ -1262,7 +1296,7 @@ impl Vault {
     ) -> Result<Arc<SyncSession>, CoreError> {
         if !self.comdirect_postbox_enabled(connection_id)? {
             return Err(CoreError::invalid(tr(
-                "Der PostBox-Abruf ist für diesen Zugang nicht eingeschaltet.",
+                "Der Postbox-Abruf ist für diesen Zugang nicht eingeschaltet.",
             )));
         }
         if !documents_fetch_on(&*self.db()?, connection_id)? {

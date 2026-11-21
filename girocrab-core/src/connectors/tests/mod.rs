@@ -1872,6 +1872,51 @@ fn fetch_with_document() -> FetchResult {
 }
 
 #[test]
+fn comdirect_keeps_an_ambiguous_postbox_document_without_an_account() {
+    let dir = crate::test_support::TempDir::new("girocrab-comdirect-ambiguous-postbox");
+    let v = Vault::open(
+        dir.join("v.db").to_string_lossy().into_owned(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let kind = ConnectorKind::Comdirect;
+    let conn = v
+        .add_bank_connection(kind, String::new(), "login".into())
+        .unwrap();
+    let mut fetched = fetch_with_document();
+    let first = &mut fetched.accounts[0];
+    first.external_ref = "giro-1".into();
+    first.name = "Girokonto 1".into();
+    first.iban = "DE75200411550765432100".into();
+    fetched.accounts.push(RemoteAccount {
+        external_ref: "giro-2".into(),
+        name: "Girokonto 2".into(),
+        iban: "DE61200411550876543210".into(),
+        ..fetched.accounts[0].clone()
+    });
+    let notice = &mut fetched.documents[0];
+    notice.account_ref.clear();
+    notice.title = "Kundeninformation".into();
+    notice.source_url = "comdirect:postbox:ambiguous".into();
+    comdirect_postbox::assign_documents(
+        &mut fetched.documents,
+        &fetched.accounts.iter().collect::<Vec<_>>(),
+    );
+    assert!(fetched.documents[0].account_ref.is_empty());
+    store_fetch(&v, kind, conn, fetched).unwrap();
+    let account_id: Option<i64> = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT account_id FROM booking_documents WHERE source_url = ?1",
+            ["comdirect:postbox:ambiguous"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(account_id, None);
+}
+
+#[test]
 fn document_retrieval_is_on_by_default_and_per_connection() {
     let dir = crate::test_support::TempDir::new("girocrab-docs-switch");
     let v = Vault::open(

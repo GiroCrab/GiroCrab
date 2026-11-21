@@ -147,7 +147,7 @@ fn demo_documents(conn: &Connection, today: Date) -> CoreResult<()> {
         lines.push(format!("Datum: {date}"));
         lines.push(
             if bank {
-                "Bankdokument aus der PostBox"
+                "Bankdokument aus der Postbox"
             } else {
                 "Selbst hinzugefuegter Beleg"
             }

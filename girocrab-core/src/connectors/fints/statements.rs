@@ -154,6 +154,25 @@ pub(super) fn hex_decode(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Period of a statements request (HKCAZ/HKKAZ): from `since` (YYYY-MM-DD), open end.
+/// An explicit "bis" date of today cuts off entries a bank already dates on the
+/// next business day, e.g. weekend card holds and credits dated Monday (#1570);
+/// an empty "bis" means "up to the current state".
+pub(super) fn request_period(since: &str) -> (String, String) {
+    (since.replace('-', ""), String::new())
+}
+
+#[test]
+fn request_period_leaves_end_open() {
+    // Saturday fetch: entries dated on the following Monday must not be cut off.
+    let (from, to) = request_period("2026-11-01");
+    assert_eq!(from, "20261101");
+    assert!(
+        to.is_empty(),
+        "an explicit end date drops entries dated on the next business day"
+    );
+}
+
 impl FinTsConnector {
     pub(super) fn hkcaz(
         &self,
@@ -183,8 +202,7 @@ impl FinTsConnector {
         label: &str,
     ) -> CoreResult<(Vec<RemoteTransaction>, Option<i64>)> {
         let format = self.st.camt_formats.first().cloned().unwrap_or_default();
-        let from = ctx.since.replace('-', "");
-        let to = today().replace('-', "");
+        let (from, to) = request_period(&ctx.since);
         let mut touchdown: Option<String> = None;
         let mut txs = Vec::new();
         let mut closing = None;
@@ -348,8 +366,7 @@ impl FinTsConnector {
         } else {
             Self::ktv(acc)
         };
-        let from = ctx.since.replace('-', "");
-        let to = today().replace('-', "");
+        let (from, to) = request_period(&ctx.since);
         let mut touchdown: Option<String> = None;
         let mut data = Vec::<u8>::new();
         for _page in 0..50 {

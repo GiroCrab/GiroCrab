@@ -107,7 +107,7 @@ struct SidebarView: View {
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
                 Image(systemName: "doc.on.doc").foregroundStyle(Theme.secondary).frame(width: 20)
-                Text("Belege & PostBox").fontWeight(.medium).appDefaultFont()
+                Text("Belege & Postbox").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
             .badge(model.unseenDocumentCount)
@@ -186,10 +186,6 @@ struct SidebarView: View {
         .refreshable { await model.refreshCurrentView() }
         .background(Theme.sidebar)
         .navigationTitle("GiroCrab")
-        #if os(macOS)
-        // Keep traffic lights / sidebar toggle clear of the first row.
-        .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 28) }
-        #endif
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 6) {
                 // Marketing screenshots (`--screenshot`) look like a real vault: no demo banner.
@@ -444,7 +440,7 @@ struct SidebarView: View {
     /// `drop` sits inside the context menu (and the caller's drag), so its drop
     /// zones don't cover the row for clicks.
     private func accountRow(_ account: Account, drop: DropSlot? = nil) -> some View {
-        AccountRow(account: account, syncing: model.syncingConnectionID != nil && model.syncingConnectionID == account.connectionId)
+        AccountRow(account: account, syncing: model.isSyncing(account))
             .dropSlot(drop)
             .background {
                 if dialogAccountID == account.id {
@@ -645,7 +641,18 @@ private struct SidebarSelectionList<Content: View>: View {
 
     var body: some View {
         #if os(macOS)
-        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) { content }
+        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) {
+            // Keeps traffic lights / sidebar toggle clear of the first row. A row, not a top inset:
+            // the list ignores `contentMargins`, and with a safe-area inset its scroll view started
+            // 28 pt below the toolbar, so the line AppKit shows there once the list is scrolled sat
+            // lower than the toolbar line, with a toolbar-like band above it. Untagged, so it
+            // cannot be selected.
+            Color.clear
+                .frame(height: 28)
+                .listRowInsets(EdgeInsets())
+                .accessibilityHidden(true)
+            content
+        }
         #else
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) { content }
@@ -806,7 +813,7 @@ struct AccountRow: View {
                             .help("Archiviert – wird nicht mehr abgerufen")
                     } else {
                         Text(searchAwareSubtitle)
-                            .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
+                            .sensitive(searchAwareSubtitle == account.bankName && account.bankLabel == nil ? [] : .personal) // owner / IBAN hits, own bank label
                             .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -833,12 +840,12 @@ struct AccountRow: View {
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
-    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
+    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
         let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
         // the owner tells accounts of the same name apart
         let owner = model.accountDistinction(account)
-        return [account.bankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        return [account.sidebarBankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private var searchAwareSubtitle: String {

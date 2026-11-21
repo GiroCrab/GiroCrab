@@ -1057,8 +1057,10 @@ mod tests {
                 c,
                 "DE10200411550123456789",
                 "DE10200411550123456789",
+                "",
                 "EUR",
                 crate::models::AccountKind::Checking,
+                &[],
             )
             .unwrap();
             assert_eq!(adopted, Some(acc));
@@ -1447,8 +1449,10 @@ mod tests {
             c,
             "dep-1",
             "",
+            "",
             "EUR",
             crate::models::AccountKind::Brokerage,
+            &[],
         )
         .unwrap();
         assert_eq!(adopted, Some(depot));
@@ -1482,8 +1486,10 @@ mod tests {
                 c,
                 iban,
                 iban,
+                "",
                 "EUR",
                 crate::models::AccountKind::Checking,
+                &[],
             )
             .unwrap();
             assert_eq!(adopted, Some(giro));
@@ -1561,8 +1567,17 @@ mod tests {
             let db = a.db().unwrap();
             let iban = "DE10200411550123456789";
             let take = |ext: &str, iban: &str, kind| {
-                crate::importers::moneymoney_db::adopt_account(&db, c, ext, iban, "EUR", kind)
-                    .unwrap()
+                crate::importers::moneymoney_db::adopt_account(
+                    &db,
+                    c,
+                    ext,
+                    iban,
+                    "",
+                    "EUR",
+                    kind,
+                    &[],
+                )
+                .unwrap()
             };
             assert_eq!(
                 take("A1B2C3", iban, crate::models::AccountKind::Checking),
@@ -1689,11 +1704,110 @@ mod tests {
             c,
             "dep-1",
             "",
+            "",
             "EUR",
             crate::models::AccountKind::Brokerage,
+            &[],
         )
         .unwrap();
         assert_eq!(adopted, Some(depot));
+    }
+
+    /// The other way reports the depot under another reference (FinTS:
+    /// `<number>-Depot`, REST: its depot id) and without IBAN; a deleted
+    /// leftover of its kind on the login must not stop the takeover.
+    #[test]
+    fn the_other_way_takes_over_the_marked_depot_under_a_new_reference() {
+        let dir = crate::test_support::TempDir::new("girocrab-switch-new-ref");
+        let (v, c, _, depot, _) = comdirect_vault(dir.path(), "v.db");
+        v.switch_comdirect_access(c).unwrap();
+        let db = v.db().unwrap();
+        let adopted = crate::importers::moneymoney_db::adopt_account(
+            &db,
+            c,
+            "123456700-Depot",
+            "",
+            "",
+            "EUR",
+            crate::models::AccountKind::Brokerage,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(adopted, Some(depot));
+        // the takeover replaced the marker: a second depot of the same fetch
+        // does not land in the same account
+        let external_ref: String = db
+            .query_row(
+                "SELECT external_ref FROM accounts WHERE id = ?1",
+                [depot],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(external_ref, "123456700-Depot");
+        let second = crate::importers::moneymoney_db::adopt_account(
+            &db,
+            c,
+            "987654300-Depot",
+            "",
+            "",
+            "EUR",
+            crate::models::AccountKind::Brokerage,
+            &[],
+        )
+        .unwrap();
+        assert_ne!(second, Some(depot));
+    }
+
+    /// Two marked depots on the login: which one is which is unknown, so
+    /// neither is taken over.
+    #[test]
+    fn two_marked_depots_are_not_guessed() {
+        let dir = crate::test_support::TempDir::new("girocrab-switch-two-depots");
+        let (v, c, _, _, _) = comdirect_vault(dir.path(), "v.db");
+        add_account(&v, c, "dep-2", "brokerage", false);
+        v.switch_comdirect_access(c).unwrap();
+        let db = v.db().unwrap();
+        let adopted = crate::importers::moneymoney_db::adopt_account(
+            &db,
+            c,
+            "123456700-Depot",
+            "",
+            "",
+            "EUR",
+            crate::models::AccountKind::Brokerage,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(adopted, None);
+    }
+
+    /// The switch marks archived accounts too; a closed depot must not take
+    /// over the reference of a new one.
+    #[test]
+    fn an_archived_marked_depot_is_not_taken_over() {
+        let dir = crate::test_support::TempDir::new("girocrab-switch-archived");
+        let (v, c, _, depot, _) = comdirect_vault(dir.path(), "v.db");
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET archived_unix = 1 WHERE id = ?1",
+                [depot],
+            )
+            .unwrap();
+        v.switch_comdirect_access(c).unwrap();
+        let db = v.db().unwrap();
+        let adopted = crate::importers::moneymoney_db::adopt_account(
+            &db,
+            c,
+            "123456700-Depot",
+            "",
+            "",
+            "EUR",
+            crate::models::AccountKind::Brokerage,
+            &[],
+        )
+        .unwrap();
+        assert_ne!(adopted, Some(depot));
     }
 
     /// A marked twin that still has bookings is not thrown away: its key is

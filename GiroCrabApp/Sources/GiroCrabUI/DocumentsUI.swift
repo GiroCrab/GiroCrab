@@ -190,7 +190,7 @@ struct DocumentsCard: View {
     }
 }
 
-// MARK: - "Belege & PostBox" view (center column)
+// MARK: - "Belege & Postbox" view (center column)
 
 struct DocumentsScopePicker: View {
     var compact = false
@@ -213,7 +213,7 @@ struct DocumentsScopePicker: View {
     }
 }
 
-/// „Belege & PostBox“: documents, not bookings. Layout, filters, read status, export and the rules for
+/// „Belege & Postbox“: documents, not bookings. Layout, filters, read status, export and the rules for
 /// changing this view (no booking inspector here, nothing assigned in the view): `docs/BELEGE_UND_POSTBOX_UI.md`.
 struct DocumentsView: View {
     @Environment(\.reportRedaction) private var redaction
@@ -364,7 +364,7 @@ struct DocumentsView: View {
                 .overlay {
                     if docs.isEmpty && model.documentsScope == .all && model.documentsAccountFilter == nil && model.documentsConnectionFilter == nil && !unlinkedOnly && !unseenOnly && search.isEmpty
                         && typeFilter == nil && yearFilter == nil {
-                        ContentUnavailableView("Keine Belege", systemImage: "doc.on.doc", description: Text("Belege kommen beim Abruf (Trade Republic, comdirect-PostBox, FinTS-Kontoauszug) oder per Drag & Drop."))
+                        ContentUnavailableView("Keine Belege", systemImage: "doc.on.doc", description: Text("Belege kommen beim Abruf (Trade Republic, comdirect-Postbox, FinTS-Kontoauszug) oder per Drag & Drop."))
                     } else if docs.isEmpty {
                         ContentUnavailableView {
                             Label("Keine passenden Dokumente", systemImage: "doc.on.doc")
@@ -464,7 +464,7 @@ struct DocumentsView: View {
             case .success(let urls):
                 guard !urls.isEmpty else { return }
                 // An unmatched upload has no account. Make it visible even when
-                // the dialog was opened from PostBox or a filtered account.
+                // the dialog was opened from Postbox or a filtered account.
                 model.documentsScope = .receipts
                 model.documentsAccountFilter = nil
                 model.documentsConnectionFilter = nil
@@ -662,7 +662,7 @@ enum DocumentFilters {
         case "abrechnung": String(localized: "Abrechnung")
         case "steuer": String(localized: "Steuer")
         case "kontoauszug": String(localized: "Kontoauszug")
-        case "postbox": String(localized: "PostBox")
+        case "postbox": String(localized: "Postbox")
         case "beleg": String(localized: "Beleg")
         default: type
         }

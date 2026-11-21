@@ -75,6 +75,9 @@ struct PlannedPaymentsView: View {
                     }
                     // Keyboard like the booking list: ↑/↓ move the selection, which
                     // scrolls into view; a click on a row gives the list the focus.
+                    // Appearing never takes the focus (#1533): the list shows up only once
+                    // the background load is in, and grabbing the focus then turned the
+                    // sidebar's selection from accent blue to grey a moment after the click.
                     .focusable()
                     .focusEffectDisabled()
                     .focused($listFocused)
@@ -90,7 +93,6 @@ struct PlannedPaymentsView: View {
                         guard let id else { return }
                         withAnimation(Motion.animation(.easeOut(duration: 0.15))) { proxy.scrollTo(id) }
                     }
-                    .onAppear { listFocused = model.options.screenshotPath == nil }
                 }
             }
         }

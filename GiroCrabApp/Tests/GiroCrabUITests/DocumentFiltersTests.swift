@@ -36,7 +36,7 @@ final class DocumentFiltersTests: XCTestCase {
     }
 }
 
-/// Bank connection filter of "Belege & PostBox" (#1042).
+/// Bank connection filter of "Belege & Postbox" (#1042).
 @MainActor
 final class DocumentsConnectionFilterTests: XCTestCase {
     private func model() -> AppModel {

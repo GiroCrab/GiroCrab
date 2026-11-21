@@ -111,7 +111,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             login_label: tr("Zugangsbezeichnung").into(),
             secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
             required_settings: vec![],
-            note: tr("Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.").into(),
+            note: tr("Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & Postbox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.").into(),
         },
         ConnectorKind::Quirion => BankDescriptor {
             kind,
@@ -302,7 +302,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             login_label: tr("E-Mail (nur Anzeige)").into(),
             secret_label: tr("(nicht nötig – Anmeldung im Browser)").into(),
             required_settings: vec![],
-            note: tr("Vorher auf scalable.capital unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff.").into(),
+            note: tr("Vorher im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff.").into(),
         },
         ConnectorKind::Ibkr => BankDescriptor {
             kind,
@@ -899,6 +899,32 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
 #[cfg(test)]
 mod matrix_tests {
     use super::*;
+
+    /// The other direction: a connector in the matrix that `ConnectorKind::all()`
+    /// misses has no descriptor in `bank_catalog()` (the add form stays empty)
+    /// and its stored connections are not recognised (`from_str`).
+    #[test]
+    fn every_matrix_connector_is_listed_in_all_kinds() {
+        for e in BANK_MATRIX {
+            let Some(kind) = e.kind else { continue };
+            assert!(
+                ConnectorKind::all().contains(&kind),
+                "{}: {kind:?} missing in ConnectorKind::all()",
+                e.name
+            );
+            assert_eq!(
+                ConnectorKind::from_str(kind.as_str()),
+                Some(kind),
+                "{}",
+                e.name
+            );
+            assert!(
+                bank_catalog().iter().any(|d| d.kind == kind),
+                "{}: no catalog entry",
+                e.name
+            );
+        }
+    }
 
     #[test]
     fn every_connector_kind_has_a_matrix_row() {
