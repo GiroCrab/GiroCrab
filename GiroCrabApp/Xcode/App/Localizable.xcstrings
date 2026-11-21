@@ -11814,6 +11814,17 @@
         }
       }
     },
+    "Dieser Teil der Buchung wurde erstattet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This part of the transaction was refunded."
+          }
+        }
+      }
+    },
     "Dieser Tresor wurde mit einer neueren GiroCrab-Version gespeichert. Bitte die App aktualisieren." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13866,6 +13877,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Replaced by a custom merchant"
+          }
+        }
+      }
+    },
+    "Erst dieser Teil der Erstattung ist Buchungen zugeordnet. Der Rest zählt weiter als Einnahme." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only this part of the refund is assigned to transactions so far. The rest still counts as income."
           }
         }
       }

@@ -168,6 +168,8 @@ fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Booking)> {
             external_id: r.get(27)?,
             tags: Vec::new(),
             refund_link: crate::refunds::RefundLinkKind::None,
+            refund_part_cents: None,
+            refund_income_cents: 0,
         },
     ))
 }
@@ -264,6 +266,8 @@ pub(super) struct BookingFinisher {
     loan_links: HashMap<i64, i64>,
     /// Refunds linked to their original booking (#714): never income.
     linked_refunds: HashSet<i64>,
+    /// What the links of a linked booking cover (`refunds::covered`).
+    refund_covered: HashMap<i64, i64>,
     paypal_accounts: HashSet<i64>,
     /// Merchant recognition with the user's changes (#1373).
     merchants: Arc<MerchantRules>,
@@ -275,6 +279,7 @@ impl BookingFinisher {
         let category_flows = Vault::category_flows(db)?;
         let loan_links = crate::loans::link_map(db)?;
         let linked_refunds = crate::refunds::linked_refund_ids(db)?;
+        let refund_covered = crate::refunds::covered(db)?;
         let salary_ibans = crate::salary::marked_salary_ibans(db)?;
         let overrides = crate::insights::load_overrides(db)?;
         // Own IBANs: uncategorised bookings to / from them are transfers (Issue #94).
@@ -306,6 +311,7 @@ impl BookingFinisher {
             pair_transfers,
             loan_links,
             linked_refunds,
+            refund_covered,
             paypal_accounts,
             merchants,
         })
@@ -365,10 +371,19 @@ impl BookingFinisher {
             t.merchant.domain_source = "override".into();
             t.merchant_domain = Some(d.clone());
         }
+        t.refund_part_cents = self
+            .refund_covered
+            .get(&t.id)
+            .copied()
+            .filter(|covered| *covered < t.amount_cents.saturating_abs());
         // A refund the user linked to its original booking (#714) is no income: like a refund
-        // the wording gives away, it reduces the expenses of the analysis instead.
+        // the wording gives away, it reduces the expenses of the analysis instead. Only what
+        // its originals take up does; the rest stays income until it is assigned too.
         if t.flow == FlowKind::Income && self.linked_refunds.contains(&t.id) {
             t.flow = FlowKind::Consumption;
+            t.refund_income_cents = t
+                .refund_part_cents
+                .map_or(0, |covered| t.amount_cents - covered);
         }
         if let Some(loan) = self.loan_links.get(&t.id) {
             t.flow = match visible {
@@ -963,9 +978,10 @@ impl Vault {
                     .as_ref()
                     .is_none_or(|set| set.contains(&t.account_id))
             {
-                per.entry(t.currency.to_uppercase())
-                    .or_default()
-                    .add(t.flow, share);
+                let sums = per.entry(t.currency.to_uppercase()).or_default();
+                for (flow, share) in flow_parts(t.flow, share, t.refund_income_cents) {
+                    sums.add(flow, share);
+                }
             }
         })?;
         Ok(per
@@ -1016,6 +1032,8 @@ impl Vault {
 /// `BookingFinisher::finish`.
 pub(crate) struct BookingClass {
     pub(crate) flow: FlowKind,
+    /// `Booking::refund_income_cents`.
+    pub(crate) refund_income_cents: i64,
     pub(crate) merchant: Arc<str>,
     /// The shown merchant name in lower case, for the search (#1373).
     pub(crate) name: Arc<str>,
@@ -1130,6 +1148,7 @@ impl Vault {
                 t.id,
                 BookingClass {
                     flow: t.flow,
+                    refund_income_cents: t.refund_income_cents,
                     merchant,
                     name,
                 },
@@ -1252,18 +1271,20 @@ impl Vault {
             if counts_for_totals
                 && crate::planning::counts_in_sums(filter.account_ids.len(), &currency)
             {
-                match kpi_side(class.flow, share) {
-                    KpiSide::Income => income += share,
-                    KpiSide::Expense => expense += share,
-                    KpiSide::Neutral => {}
+                for (kind, share) in flow_parts(class.flow, share, class.refund_income_cents) {
+                    match kpi_side(kind, share) {
+                        KpiSide::Income => income += share,
+                        KpiSide::Expense => expense += share,
+                        KpiSide::Neutral => {}
+                    }
+                    match kind {
+                        FlowKind::Consumption => consumption += share,
+                        FlowKind::Investment => investment += share,
+                        FlowKind::Perk => perk += share,
+                        _ => {}
+                    }
+                    flow.add(kind, share);
                 }
-                match class.flow {
-                    FlowKind::Consumption => consumption += share,
-                    FlowKind::Investment => investment += share,
-                    FlowKind::Perk => perk += share,
-                    _ => {}
-                }
-                flow.add(class.flow, share);
             }
             total += 1;
             if with_rows {
@@ -1355,18 +1376,20 @@ impl Vault {
             if counts_for_totals
                 && crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
             {
-                match kpi_side(t.flow, share) {
-                    KpiSide::Income => income += share,
-                    KpiSide::Expense => expense += share,
-                    KpiSide::Neutral => {}
+                for (kind, share) in flow_parts(t.flow, share, t.refund_income_cents) {
+                    match kpi_side(kind, share) {
+                        KpiSide::Income => income += share,
+                        KpiSide::Expense => expense += share,
+                        KpiSide::Neutral => {}
+                    }
+                    match kind {
+                        FlowKind::Consumption => consumption += share,
+                        FlowKind::Investment => investment += share,
+                        FlowKind::Perk => perk += share,
+                        _ => {}
+                    }
+                    flow.add(kind, share);
                 }
-                match t.flow {
-                    FlowKind::Consumption => consumption += share,
-                    FlowKind::Investment => investment += share,
-                    FlowKind::Perk => perk += share,
-                    _ => {}
-                }
-                flow.add(t.flow, share);
             }
             // Only the page is kept. `whole_days` adds the rest of its last day:
             // sorted by day, it follows directly.

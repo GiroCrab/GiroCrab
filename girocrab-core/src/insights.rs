@@ -169,12 +169,16 @@ impl Vault {
             .collect();
         for b in &all {
             if let Some(mf) = monthly.get_mut(&month_key(&b.booking_date)) {
-                match b.flow {
-                    FlowKind::Consumption => mf.consumption_cents += -b.amount_cents,
-                    FlowKind::Investment => mf.investment_cents += -b.amount_cents,
-                    FlowKind::Perk if b.amount_cents < 0 => mf.investment_cents += -b.amount_cents,
-                    FlowKind::Income => mf.income_cents += b.amount_cents,
-                    _ => {}
+                for (flow, cents) in
+                    crate::models::flow_parts(b.flow, b.amount_cents, b.refund_income_cents)
+                {
+                    match flow {
+                        FlowKind::Consumption => mf.consumption_cents += -cents,
+                        FlowKind::Investment => mf.investment_cents += -cents,
+                        FlowKind::Perk if cents < 0 => mf.investment_cents += -cents,
+                        FlowKind::Income => mf.income_cents += cents,
+                        _ => {}
+                    }
                 }
             }
         }

@@ -1065,6 +1065,8 @@ mod tests {
             external_id: String::new(),
             tags: Vec::new(),
             refund_link: crate::refunds::RefundLinkKind::None,
+            refund_part_cents: None,
+            refund_income_cents: 0,
         }
     }
 

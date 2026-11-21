@@ -236,6 +236,23 @@ fn entries(
 
 /// Ids of the refunds with a live link. The booking list reads them as refunds, not as income
 /// (`BookingFinisher`): a linked refund reduces the expenses instead of raising the income.
+/// How much of every linked booking its links cover: of a refund what its originals take up, of
+/// an original what its refunds pay back. A booking with a link between different currencies is
+/// left out (nothing is added up there, #569).
+pub(crate) fn covered(conn: &Connection) -> CoreResult<HashMap<i64, i64>> {
+    let (shares, mixed) = shares(conn)?;
+    let mut out: HashMap<i64, i64> = HashMap::new();
+    for ((refund, original), share) in shares {
+        *out.entry(refund).or_default() += share;
+        *out.entry(original).or_default() += share;
+    }
+    for (refund, original) in mixed {
+        out.remove(&refund);
+        out.remove(&original);
+    }
+    Ok(out)
+}
+
 pub(crate) fn linked_refund_ids(conn: &Connection) -> CoreResult<std::collections::HashSet<i64>> {
     Ok(markers(conn)?
         .into_iter()

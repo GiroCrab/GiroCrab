@@ -861,7 +861,7 @@ struct BookingRow: View {
                             .help("Wiederkehrende Buchung")
                             .accessibilityLabel("Wiederkehrend")
                     }
-                    RefundLinkMarker(kind: booking.refundLink)
+                    RefundLinkMarker(kind: booking.refundLink, partCents: booking.refundPartCents, currency: booking.currency)
                     if isSingleLine && showsCategoryChip {
                         // Keep the name and amount first. Show the category only
                         // when its complete label fits; the purpose yields first.

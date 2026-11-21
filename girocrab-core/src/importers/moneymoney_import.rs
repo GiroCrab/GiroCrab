@@ -1679,6 +1679,8 @@ fn sample(r: &MmRow, i: i64, account_id: i64, merchants: &MerchantRules) -> Book
         external_id: String::new(),
         tags: Vec::new(),
         refund_link: crate::refunds::RefundLinkKind::None,
+        refund_part_cents: None,
+        refund_income_cents: 0,
     };
     // preview of an import: no connection yet, a payment service reads as before
     let paypal = b.account_kind == AccountKind::PaymentService;

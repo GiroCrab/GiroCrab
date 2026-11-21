@@ -102,6 +102,13 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(Dictionary(uniqueKeysWithValues: own.originals.map { ($0.id, $0.shareCents) }),
                        Dictionary(uniqueKeysWithValues: originals.map { ($0.id, Optional(-$0.amountCents)) }))
         XCTAssertNil(try vault.refundCandidates(transactionId: refund.id, query: "", limit: 1).first?.shareCents)
+        // the row marker carries the amount only while the booking is covered in part
+        for b in model.bookings where b.id == refund.id || originals.contains(where: { $0.id == b.id }) {
+            let links = try vault.refundLinks(transactionId: b.id)
+            let covered = b.id == refund.id ? links.assignedCents : links.refundedCents
+            XCTAssertEqual(b.refundPartCents, covered.flatMap { $0 < abs(b.amountCents) ? $0 : nil })
+            XCTAssertEqual(b.refundIncomeCents, b.id == refund.id ? b.amountCents - (covered ?? b.amountCents) : 0)
+        }
         let ownLines = RefundSum.lines(booking: refund, links: own)
         XCTAssertEqual(ownLines.count, 2)
         XCTAssertTrue(ownLines[1].contains(money(refund.amountCents - assigned)))
@@ -134,7 +141,7 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertTrue(InspectorLayout(storageValue: "note,receipt").visible.contains(.refunds))
     }
 
-    /// A linked refund is no income: the core returns it as a reduced expense, for a split
+    /// A linked refund is no income as far as it is assigned: the core returns that part as a reduced expense, for a split
     /// original too, and the split stays as it is.
     func testLinkedRefundOfSplitOriginalLeavesIncomeAndKeepsSplit() throws {
         let vault = try XCTUnwrap(model.vault)
@@ -152,8 +159,10 @@ final class RefundLinkTests: XCTestCase {
         model.linkRefund(refundID: refund.id, originalID: original.id)
 
         XCTAssertNil(model.errorMessage)
-        XCTAssertEqual(try flow().incomeCents, before.incomeCents - refund.amountCents)
-        XCTAssertEqual(try flow().consumptionCents, before.consumptionCents - refund.amountCents)
+        // only what the original takes up of the refund moves; the rest stays income
+        let assigned = min(refund.amountCents, -original.amountCents)
+        XCTAssertEqual(try flow().incomeCents, before.incomeCents - assigned)
+        XCTAssertEqual(try flow().consumptionCents, before.consumptionCents - assigned)
         XCTAssertEqual(try vault.listTransactionSplits(transactionId: original.id).map(\.amountCents), parts.map(\.amountCents))
         XCTAssertEqual(try vault.refundLinks(transactionId: original.id).refunds.map(\.id), [refund.id])
 

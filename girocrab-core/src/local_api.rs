@@ -643,10 +643,14 @@ impl Vault {
                     booking_count: 0,
                 });
             e.booking_count += 1;
-            match kpi_side(t.flow, t.amount_cents) {
-                KpiSide::Income => e.income_cents += t.amount_cents,
-                KpiSide::Expense => e.expense_cents -= t.amount_cents,
-                KpiSide::Neutral => {}
+            for (flow, cents) in
+                crate::models::flow_parts(t.flow, t.amount_cents, t.refund_income_cents)
+            {
+                match kpi_side(flow, cents) {
+                    KpiSide::Income => e.income_cents += cents,
+                    KpiSide::Expense => e.expense_cents -= cents,
+                    KpiSide::Neutral => {}
+                }
             }
         }
         // Per category: one split-aware SQL sum over the same bookings; a deleted

@@ -488,6 +488,13 @@ pub enum CategorySource {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Booking {
     pub refund_link: crate::refunds::RefundLinkKind,
+    /// A linked booking that its links cover only in part (#714): the covered cents (of a refund
+    /// what its originals take up, of an original what its refunds pay back). `None` when
+    /// unlinked, fully covered or linked across currencies.
+    pub refund_part_cents: Option<i64>,
+    /// The part of a refund that is linked but taken up by no original: it stays income in
+    /// the sums, while the booking's `flow` (consumption) holds for the rest. 0 otherwise.
+    pub refund_income_cents: i64,
     pub id: i64,
     pub account_id: i64,
     pub account_name: String,
@@ -928,6 +935,23 @@ impl SelectionFlow {
             self.income_cents += amount_cents;
         }
     }
+}
+
+/// A booking's share in the sums by flow: a linked refund that its originals take up only in
+/// part (#714) reduces the expenses with that part and is income with the rest
+/// (`Booking::refund_income_cents`); every other booking counts whole.
+pub(crate) fn flow_parts(
+    flow: crate::merchants::FlowKind,
+    amount_cents: i64,
+    refund_income_cents: i64,
+) -> [(crate::merchants::FlowKind, i64); 2] {
+    use crate::merchants::FlowKind;
+    let income = if flow == FlowKind::Consumption {
+        refund_income_cents.clamp(0, amount_cents.max(0))
+    } else {
+        0
+    };
+    [(flow, amount_cents - income), (FlowKind::Income, income)]
 }
 
 /// Side of a booking in the income / expense KPIs. The one definition used by

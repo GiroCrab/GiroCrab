@@ -47,10 +47,22 @@ extension AppModel {
 
     private func refundLinksChanged(_ ids: [Int64]) {
         guard let vault else { return }
-        for id in Set(ids) {
+        // a link shifts the shares of the bookings around it too: refresh those markers as well
+        var affected = Set(ids)
+        for id in ids {
+            guard let links = try? vault.refundLinks(transactionId: id) else { continue }
+            affected.formUnion((links.originals + links.refunds).map(\.id))
+        }
+        for id in affected {
             guard let links = try? vault.refundLinks(transactionId: id) else { continue }
             let kind: RefundLinkKind = !links.originals.isEmpty ? .refund : (links.refunds.isEmpty ? .none : .original)
-            patchLoadedRows([id]) { $0.refundLink = kind }
+            let covered = kind == .refund ? links.assignedCents : links.refundedCents
+            patchLoadedRows([id]) { row in
+                let part = covered.flatMap { $0 < abs(row.amountCents) ? $0 : nil }
+                row.refundLink = kind
+                row.refundPartCents = part
+                row.refundIncomeCents = kind == .refund ? part.map { row.amountCents - $0 } ?? 0 : 0
+            }
             if refundPickerBooking?.id == id { refundPickerBooking?.refundLink = kind }
         }
         refundLinksRevision += 1

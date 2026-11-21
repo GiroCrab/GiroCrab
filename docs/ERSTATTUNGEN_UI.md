@@ -99,7 +99,11 @@ die Verknüpfungen bestehen.
 
 ## Auswertung
 
-Eine verknüpfte Erstattung zählt nicht als Einnahme. Wie eine Erstattung, die der Core am Buchungstext erkennt,
-mindert sie die Ausgaben: in den Kennzahlen der Buchungsliste, im Cashflow und in den Auswertungen, die auf derselben
-Einordnung beruhen. Nach dem Aufheben der Verknüpfung gilt wieder die Einordnung des Core. Beträge, Kategorien und
+Eine verknüpfte Erstattung zählt nicht als Einnahme, soweit sie Buchungen zugeordnet ist. Wie eine Erstattung, die der
+Core am Buchungstext erkennt, mindert dieser Teil die Ausgaben: in den Kennzahlen der Buchungsliste, im Cashflow und in
+den Auswertungen, die auf derselben Einordnung beruhen. Der noch nicht zugeordnete Rest bleibt Einnahme
+(`Booking.refund_income_cents`, `models::flow_parts`), bis auch er zugeordnet ist.
+
+In der Buchungszeile steht neben dem Erstattungssymbol nur dann ein Betrag (`Booking.refund_part_cents`), wenn die
+Buchung erst zum Teil erstattet bzw. zugeordnet ist; ganz erstattete oder zugeordnete Buchungen zeigen nur das Symbol. Nach dem Aufheben der Verknüpfung gilt wieder die Einordnung des Core. Beträge, Kategorien und
 Kontostände ändern sich dadurch nicht.

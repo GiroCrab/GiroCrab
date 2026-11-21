@@ -519,6 +519,46 @@ fn linked_refund_is_no_income_in_the_analysis() {
 }
 
 #[test]
+fn only_the_assigned_part_of_a_refund_reduces_the_expenses() {
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    seed(&v);
+    let small = add(&v, -2_000, "2025-06-01", "Versandhaus", "a");
+    let other = add(&v, -4_000, "2025-06-02", "Versandhaus", "b");
+    let refund = add(&v, 5_000, "2025-06-10", "Versandhaus", "");
+    let page = |v: &Vault| v.list_transactions(BookingFilter::default()).unwrap();
+    let row = |v: &Vault, id: i64| {
+        let t = page(v).transactions.into_iter().find(|t| t.id == id);
+        t.map(|t| (t.refund_part_cents, t.refund_income_cents))
+            .unwrap()
+    };
+    let before = page(&v);
+    v.link_refund(refund, small).unwrap();
+    // 20 of the 50 are assigned: they reduce the expenses, 30 stay income
+    let part = page(&v);
+    assert_eq!(part.income_cents, before.income_cents - 2_000);
+    assert_eq!(part.expense_cents, before.expense_cents + 2_000);
+    assert_eq!(part.flow.income_cents, before.flow.income_cents - 2_000);
+    assert_eq!(
+        part.flow.consumption_cents,
+        before.flow.consumption_cents - 2_000
+    );
+    assert_eq!(
+        format!("{:?}", v.selection_flow(vec![], None, None).unwrap()),
+        format!("{:?}", part.flow)
+    );
+    assert_eq!(row(&v, refund), (Some(2_000), 3_000));
+    // the original is paid back in full: just the marker
+    assert_eq!(row(&v, small), (None, 0));
+    v.link_refund(refund, other).unwrap();
+    let full = page(&v);
+    assert_eq!(full.income_cents, before.income_cents - 5_000);
+    assert_eq!(full.expense_cents, before.expense_cents + 5_000);
+    assert_eq!(row(&v, refund), (None, 0));
+    assert_eq!(row(&v, other), (Some(3_000), 0));
+}
+
+#[test]
 fn refund_larger_than_its_original_is_spread_over_several() {
     let d = TempDir::new("refunds");
     let v = open(&d, "v");

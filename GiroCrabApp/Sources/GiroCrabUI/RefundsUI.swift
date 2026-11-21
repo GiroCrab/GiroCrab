@@ -7,14 +7,27 @@ import GiroCrabCore
 /// Small arrow behind the name of a linked booking: a refund, or a booking that has refunds.
 struct RefundLinkMarker: View {
     let kind: RefundLinkKind
+    /// Only for a booking its links cover in part: the covered cents, shown next to the symbol.
+    var partCents: Int64?
+    var currency = "EUR"
 
     var body: some View {
         if kind != .none {
-            Image(systemName: kind == .refund ? "arrow.uturn.backward" : "arrow.uturn.backward.circle")
-                .appFont(.caption, weight: .semibold)
-                .foregroundStyle(Theme.secondary)
-                .help(kind == .refund ? "Erstattung – mit der ursprünglichen Buchung verknüpft" : "Mit einer Erstattung verknüpft")
-                .accessibilityLabel(kind == .refund ? "Verknüpfte Erstattung" : "Hat verknüpfte Erstattung")
+            HStack(spacing: 3) {
+                Image(systemName: kind == .refund ? "arrow.uturn.backward" : "arrow.uturn.backward.circle")
+                    .appFont(.caption, weight: .semibold)
+                    .help(kind == .refund ? "Erstattung – mit der ursprünglichen Buchung verknüpft" : "Mit einer Erstattung verknüpft")
+                    .accessibilityLabel(kind == .refund ? "Verknüpfte Erstattung" : "Hat verknüpfte Erstattung")
+                if let partCents {
+                    Text(Money.format(partCents, currency: currency.isEmpty ? "EUR" : currency.uppercased()))
+                        .appFont(.caption, monospacedDigit: true)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .sensitive(.amounts)
+                        .help(kind == .refund ? "Erst dieser Teil der Erstattung ist Buchungen zugeordnet. Der Rest zählt weiter als Einnahme." : "Dieser Teil der Buchung wurde erstattet.")
+                }
+            }
+            .foregroundStyle(Theme.secondary)
         }
     }
 }
