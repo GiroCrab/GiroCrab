@@ -16,6 +16,15 @@ use crate::models::{ConnectorKind, Holding};
 use crate::payment_input::{GiroCodeMatrix, PaymentDetails};
 use crate::{BankDescriptor, CoreError};
 
+#[uniffi::export(async_runtime = "tokio")]
+async fn check_bitcoin_core(
+    datadir: String,
+    rpc_url: String,
+    wallet: String,
+) -> Result<String, CoreError> {
+    crate::connectors::bitcoin_core::check_bitcoin_core(datadir, rpc_url, wallet).await
+}
+
 #[uniffi::export]
 fn core_version() -> String {
     crate::core_version()

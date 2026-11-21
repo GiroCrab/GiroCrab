@@ -188,6 +188,7 @@ struct ConnectionEditSheet: View {
         case .tradeRepublic: return []
         case .americanExpress, .amazonVisa, .advanzia: return []
         case .bunq: return ["bunq.environment"]
+        case .bitcoinCore: return ["bitcoin_core.datadir", "bitcoin_core.rpc_url"]
         case .enableBanking: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
         case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .finpension: return []
         }
@@ -586,6 +587,7 @@ struct ConnectionEditSheet: View {
         case .bunq: return "bunq API"
         case .ibkr: return "Interactive Brokers Flex Web Service"
         case .alteLeipziger: return "fin4u"
+        case .bitcoinCore: return String(localized: "Bitcoin Core (eigener Knoten)")
         default: return "Enable Banking (PSD2)"
         }
     }
@@ -631,7 +633,8 @@ struct ConnectionEditSheet: View {
                     revealButton(key)
                 }
             } else {
-                TextField(label, text: binding(key))
+                // a prompt, so an empty field is visible (and clickable) in the grouped form
+                TextField(label, text: binding(key), prompt: Text("nicht gesetzt"))
                     .autocorrectionDisabled()
             }
             if let help = entry?.help {

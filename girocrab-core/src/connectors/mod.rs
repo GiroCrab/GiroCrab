@@ -20,6 +20,7 @@ pub mod advanzia;
 pub mod amazon_documents;
 pub mod bank_directory;
 pub mod bhw;
+pub mod bitcoin_core;
 pub mod broker_documents;
 pub mod bunq;
 pub mod comdirect;

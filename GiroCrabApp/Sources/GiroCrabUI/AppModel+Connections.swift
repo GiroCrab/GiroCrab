@@ -78,6 +78,35 @@ extension AppModel {
     }
 
     private func addConnectionChecked(_ kind: ConnectorKind, login: String) {
+        if kind == .bitcoinCore, !isDemo, !Self.isMagicDemoLogin(login) {
+            addBitcoinCore(login: login)
+            return
+        }
+        addConnectionStored(kind, login: login)
+    }
+
+    /// Bitcoin Core: stored only once the node answers (RPC server on, `.cookie` found, wallet
+    /// there); otherwise its error says what is missing and nothing is added. The data
+    /// directory Bitcoin-Qt uses is taken over when none is set.
+    private func addBitcoinCore(login: String) {
+        let set = settingEntry(BitcoinCoreDatadir.key).map(\.value).flatMap { $0.isEmpty ? nil : $0 }
+        let detected = set == nil ? BitcoinCoreDatadir.detected() : nil
+        let datadir = set ?? detected ?? ""
+        let rpcURL = settingEntry("bitcoin_core.rpc_url")?.value ?? ""
+        Task { @MainActor [weak self] in
+            do {
+                _ = try await checkBitcoinCore(datadir: datadir, rpcUrl: rpcURL, wallet: login)
+            } catch {
+                self?.showError(String(localized: "Bitcoin Core nicht erreichbar"), describe(error))
+                return
+            }
+            guard let self else { return }
+            if let detected { saveSetting(BitcoinCoreDatadir.key, detected) }
+            addConnectionStored(.bitcoinCore, login: login)
+        }
+    }
+
+    private func addConnectionStored(_ kind: ConnectorKind, login: String) {
         runInOwnVault(allowDemo: Self.isMagicDemoLogin(login)) { [self] in
             guard let vault else { return }
             var newID: Int64?

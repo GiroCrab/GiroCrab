@@ -1201,6 +1201,56 @@ fn english(de: &str) -> Option<&'static str> {
             "Kontist: The list of bookings was not delivered completely. Please start the sync again."
         }
         // ------------------------------------------------------------ connectors/uberspace.rs
+        // ------------------------------------------------------------ connectors/bitcoin_core.rs
+        "Bitcoin Core: Die RPC-Adresse ist ungültig." => {
+            "Bitcoin Core: The RPC address is invalid."
+        }
+        "Bitcoin Core: Zugang abgelehnt. Die .cookie-Datei ist veraltet oder Benutzer:Passwort stimmt nicht." => {
+            "Bitcoin Core: Access denied. The .cookie file is outdated or user:password is wrong."
+        }
+        "Bitcoin Core: unerwartete Antwort des Knotens." => {
+            "Bitcoin Core: unexpected answer from the node."
+        }
+        "Bitcoin Core ist nicht erreichbar. Läuft der Knoten, und ist der RPC-Server eingeschaltet (server=1)?" => {
+            "Bitcoin Core cannot be reached. Is the node running, with the RPC server switched on (server=1)?"
+        }
+        "Bitcoin Core meldet: {0}" => "Bitcoin Core reports: {0}",
+        "Bitcoin Core: Die RPC-Adresse muss auf diesem Rechner liegen (127.0.0.1 oder localhost)." => {
+            "Bitcoin Core: The RPC address must be on this computer (127.0.0.1 or localhost)."
+        }
+        "Bitcoin Core: Im Knoten ist keine Wallet geladen." => {
+            "Bitcoin Core: The node has no wallet loaded."
+        }
+        "Bitcoin Core: Der Knoten hat mehrere Wallets geladen. Bitte den Wallet-Namen eintragen." => {
+            "Bitcoin Core: The node has several wallets loaded. Please enter the wallet name."
+        }
+        "Bitcoin-Kurs nicht abrufbar. Der Bestand wurde nicht aktualisiert." => {
+            "Bitcoin price not available. The holdings were not updated."
+        }
+        "Bitcoin Core: Keine .cookie-Datei in {0}. Läuft der Knoten mit eingeschaltetem RPC-Server (server=1)?" => {
+            "Bitcoin Core: No .cookie file in {0}. Is the node running with the RPC server switched on (server=1)?"
+        }
+        "Bitcoin Core: Die .cookie-Datei ist unlesbar." => {
+            "Bitcoin Core: The .cookie file cannot be read."
+        }
+        "Eigener Knoten (lokale JSON-RPC-Schnittstelle)" => "Own node (local JSON-RPC interface)",
+        "Wallet-Name (leer = einzige geladene Wallet)" => {
+            "Wallet name (empty = the only loaded wallet)"
+        }
+        "(nicht nötig – nutzt die .cookie-Datei des Knotens)" => {
+            "(not needed – uses the node's .cookie file)"
+        }
+        "Bitcoin Core: der Bestand einer Wallet im eigenen Knoten als Depot mit der Position Bitcoin, bewertet zum aktuellen Euro-Kurs. Der Knoten muss beim Abruf laufen, mit eingeschaltetem RPC-Server (server=1); die Anmeldung erfolgt über seine .cookie-Datei. Über Adressen und Bestand verlässt nichts den Rechner, nur der Kurs wird öffentlich abgefragt." => {
+            "Bitcoin Core: the balance of a wallet in your own node as a depot with the position Bitcoin, valued at the current euro price. The node must be running during the sync, with the RPC server switched on (server=1); it logs in with the node's .cookie file. Nothing about addresses or holdings leaves the computer; only the price is queried publicly."
+        }
+        "Bitcoin-Core-Datenverzeichnis" => "Bitcoin Core data directory",
+        "Ordner des eigenen Knotens mit der .cookie-Datei; leer = Standardordner (Mac: ~/Library/Application Support/Bitcoin)." => {
+            "Folder of your own node with the .cookie file; empty = default folder (Mac: ~/Library/Application Support/Bitcoin)."
+        }
+        "Bitcoin-Core-RPC-Adresse" => "Bitcoin Core RPC address",
+        "Adresse des RPC-Servers auf diesem Rechner; leer = http://127.0.0.1:8332." => {
+            "Address of the RPC server on this computer; empty = http://127.0.0.1:8332."
+        }
         // ------------------------------------------------------------ connectors/hanseatic.rs
         "Online-Banking (Direkt-Login, Freigabe in der App)" => {
             "Online banking (direct login, approval in the app)"
@@ -1691,6 +1741,7 @@ fn english(de: &str) -> Option<&'static str> {
             "Only needed if kontist.dev shows a secret for the client; otherwise leave empty."
         }
         "Kontist" => "Kontist",
+        "Bitcoin Core" => "Bitcoin Core",
         "comdirect Client-Secret" => "comdirect client secret",
         "Wird beim Freischalten des API-Zugangs einmalig angezeigt." => {
             "Shown once when API access is activated."

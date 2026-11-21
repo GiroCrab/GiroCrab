@@ -27,6 +27,20 @@ extension AppModel {
     }
 
     private func requestSyncChecked(_ connection: BankConnection) {
+        // Bitcoin Core on a Mac without a node (the vault came over iCloud): not fetched here,
+        // its balance comes from the Mac running the node
+        if connection.connector == .bitcoinCore, !isDemo,
+           !BitcoinCoreDatadir.nodeOnThisMac(configured: settingEntry(BitcoinCoreDatadir.key)?.value) {
+            toast = String(localized: "\(connection.displayName): wird per iCloud-Sync vom Mac mit Bitcoin Core aktualisiert.")
+            syncNextInQueue()
+            return
+        }
+        // Bitcoin Core: the data directory Bitcoin-Qt uses, unless one is set (stored, so it
+        // shows in the connection's settings and can be changed there)
+        if connection.connector == .bitcoinCore, !isDemo, settingEntry(BitcoinCoreDatadir.key)?.hasValue != true,
+           let dir = BitcoinCoreDatadir.detected() {
+            saveSetting(BitcoinCoreDatadir.key, dir)
+        }
         if connection.connector == .advanzia, !isDemo, !Self.isMagicDemoLogin(connection.loginName) {
             startAdvanzia(connection); return
         }

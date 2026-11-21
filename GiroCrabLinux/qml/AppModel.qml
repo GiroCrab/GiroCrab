@@ -3946,6 +3946,8 @@ QtObject {
         "paypal.client_id": qsTr("PayPal Client-ID"),
         "paypal.client_secret": qsTr("PayPal Secret"),
         "kontist.client_id": qsTr("Kontist Client-ID"),
+        "bitcoin_core.datadir": qsTr("Bitcoin-Core-Datenverzeichnis"),
+        "bitcoin_core.rpc_url": qsTr("Bitcoin-Core-RPC-Adresse"),
         "kontist.client_secret": qsTr("Kontist Client-Secret"),
         "enablebanking.application_id": qsTr("Enable Banking Application-ID"),
         "enablebanking.private_key_pem": qsTr("Enable Banking Private Key"),

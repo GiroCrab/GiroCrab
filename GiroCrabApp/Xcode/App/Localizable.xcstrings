@@ -558,6 +558,17 @@
         }
       }
     },
+    "%@: wird per iCloud-Sync vom Mac mit Bitcoin Core aktualisiert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: updated via iCloud sync from the Mac running Bitcoin Core."
+          }
+        }
+      }
+    },
     "%@: Ø %@, Ende %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7906,6 +7917,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "To"
+          }
+        }
+      }
+    },
+    "Bitcoin Core (eigener Knoten)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitcoin Core (own node)"
+          }
+        }
+      }
+    },
+    "Bitcoin Core nicht erreichbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitcoin Core not reachable"
+          }
+        }
+      }
+    },
+    "Bitcoin-Core-Datenverzeichnis" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitcoin Core data directory"
+          }
+        }
+      }
+    },
+    "Bitcoin-Core-RPC-Adresse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitcoin Core RPC address"
           }
         }
       }
