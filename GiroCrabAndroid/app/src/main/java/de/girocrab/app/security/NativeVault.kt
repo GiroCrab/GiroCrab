@@ -18,6 +18,19 @@ import java.lang.reflect.Method
 interface OwnVault : AutoCloseable {
     val accountCount: Int
     val accountNames: List<String>
+
+    /** Writes a password-protected copy of this vault — the same format the desktop uses. */
+    fun writeBackup(destPath: String, password: String)
+
+    /** Replaces this vault's contents with a backup (`Vault::restore_backup`). */
+    fun restoreBackup(backupPath: String, password: String)
+
+    /**
+     * Creates a local account — needed to prove an import really brought data along (#1428, 2.6)
+     * and the entry point for manual accounts later. [kind] is one of `CHECKING`, `SAVINGS`,
+     * `CREDIT_CARD`, `PAYMENT_SERVICE`, `BROKERAGE`, `CASH`, `LOAN`.
+     */
+    fun createOfflineAccount(name: String, kind: String, currency: String, openingCents: Long): Long
 }
 
 /**
@@ -82,20 +95,42 @@ class NativeVaultOpener {
     private class Handle(private val vault: Any) : OwnVault {
         override val accountCount: Int
             get() {
-                val raw = call("accountCount") as? Number
+                val raw = callNoArgs("accountCount") as? Number
                     ?: throw IllegalStateException("accountCount did not return a number")
                 return raw.toInt()
             }
 
         override val accountNames: List<String>
             get() {
-                val list = call("listAccounts") as? List<*>
+                val list = callNoArgs("listAccounts") as? List<*>
                     ?: throw IllegalStateException("listAccounts did not return a list")
                 return list.map { account ->
                     val name = account?.let { invoke(it.javaClass.getMethod("getName"), it) }
                     name as? String ?: throw IllegalStateException("account without a name getter")
                 }
             }
+
+        override fun writeBackup(destPath: String, password: String) {
+            callWith("writeBackup", destPath, password)
+        }
+
+        override fun restoreBackup(backupPath: String, password: String) {
+            callWith("restoreBackup", backupPath, password)
+        }
+
+        override fun createOfflineAccount(
+            name: String,
+            kind: String,
+            currency: String,
+            openingCents: Long,
+        ): Long {
+            val kindClass = Class.forName(ACCOUNT_KIND_CLASS)
+            val value = kindClass.enumConstants?.firstOrNull { (it as Enum<*>).name == kind }
+                ?: throw IllegalArgumentException("unknown account kind '$kind'")
+            val raw = callWith("createOfflineAccount", name, value, currency, openingCents)
+            return (raw as? Number)?.toLong()
+                ?: throw IllegalStateException("createOfflineAccount did not return an id")
+        }
 
         /**
          * UniFFI objects implement `AutoCloseable`; older bindings only had `destroy`.
@@ -108,20 +143,21 @@ class NativeVaultOpener {
             invoke(close ?: vault.javaClass.getMethod("destroy"), vault)
         }
 
-        private fun call(name: String): Any? {
-            // `Class.getMethods` has no defined order, so the exact name is tried explicitly first
-            // and the mangled `name-<hash>` form is only a fallback.
-            val method = methods.firstOrNull { it.name == name }
-                ?: methods.firstOrNull { it.name.startsWith("$name-") }
-                ?: throw IllegalStateException(
-                    "generated binding has no '$name' (found ${methods.joinToString { it.name }}); " +
-                        "a value-class return can mangle the JVM name",
-                )
-            return invoke(method, vault)
-        }
+        private fun callNoArgs(name: String): Any? = callWith(name)
 
-        private val methods: List<Method> by lazy {
-            vault.javaClass.methods.filter { it.parameterCount == 0 }
+        /**
+         * Resolves by name and argument count; `Class.getMethods` has no defined order, so the
+         * exact name is tried first and the mangled `name-<hash>` form only as a fallback.
+         */
+        private fun callWith(name: String, vararg args: Any?): Any? {
+            val candidates = vault.javaClass.methods.filter { it.parameterCount == args.size }
+            val method = candidates.firstOrNull { it.name == name }
+                ?: candidates.firstOrNull { it.name.startsWith("$name-") }
+                ?: throw IllegalStateException(
+                    "generated binding has no '$name' with ${args.size} arguments " +
+                        "(found ${candidates.joinToString { it.name }}); a value-class return can mangle the JVM name",
+                )
+            return invoke(method, vault, *args)
         }
     }
 
@@ -129,6 +165,7 @@ class NativeVaultOpener {
         /** Matches `Vault::open`: the raw master key is 32 bytes and wiped by the core. */
         const val MASTER_KEY_BYTES = 32
         private const val VAULT_CLASS = "uniffi.girocrab_core.Vault"
+        private const val ACCOUNT_KIND_CLASS = "uniffi.girocrab_core.AccountKind"
 
         private fun invoke(method: Method, receiver: Any?, vararg args: Any?): Any? =
             try {
