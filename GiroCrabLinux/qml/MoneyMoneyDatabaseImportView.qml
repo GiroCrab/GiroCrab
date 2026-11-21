@@ -211,11 +211,18 @@ ColumnLayout {
     /// The bank's connection options (the core's catalogue; the live Enable
     /// Banking list of the Mac app is not loaded here).
     function connectionOptions(b) { return b.connection_options }
+    /// The accounts of login `b` chosen for import.
+    function selectedAccounts(b) { return preview ? preview.accounts.filter(a => a.mm_bank_id === b.mm_id && choice(a).selected) : [] }
+    /// Every account of the login chosen for import is closed in MoneyMoney (#1437).
+    function allClosed(b) { const a = selectedAccounts(b); return a.length > 0 && a.every(x => x.closed) }
+    /// Preselected: the best connection, none for a login whose imported
+    /// accounts are all closed; none at all without an imported account (#1437).
     function chosenKey(b) {
+        if (selectedAccounts(b).length === 0) return ""
         const k = bankChoice[b.mm_id]
         if (k !== undefined) return k
         const o = connectionOptions(b)
-        return o.length ? o[0].key : ""
+        return o.length && !allClosed(b) ? o[0].key : ""
     }
     function chosenOption(b) { const k = chosenKey(b); return connectionOptions(b).find(o => o.key === k) || null }
     function setBankChoice(b, key) { const c = Object.assign({}, bankChoice); c[b.mm_id] = key; bankChoice = c }
@@ -241,7 +248,7 @@ ColumnLayout {
         if (!preview) return []
         return preview.banks.filter(b => { const o = chosenOption(b); return o !== null && o.via === "EnableBanking" }).map(b => ({
             connection_id: -b.mm_id, bank_name: b.name, created: true,
-            accounts: preview.accounts.filter(a => a.mm_bank_id === b.mm_id && choice(a).selected)
+            accounts: selectedAccounts(b)
                 .map(a => ({ name: a.name, iban: a.iban, account_number: a.account_number }))
         }))
     }
@@ -593,7 +600,10 @@ ColumnLayout {
                 FormSection {
                     visible: v.preview !== null
                     enabled: v.createConnections
-                    footers: [v.createConnections && v.chosenEnableBanking && !v.enableBankingReady ? qsTr("Enable Banking richten Sie im nächsten Schritt ein.") : ""]
+                    footers: [
+                        v.preview && v.preview.banks.some(b => v.allClosed(b)) ? qsTr("Bei Zugängen, deren Konten alle aufgelöst sind, ist „Nicht verbinden“ vorgewählt.") : "",
+                        v.createConnections && v.chosenEnableBanking && !v.enableBankingReady ? qsTr("Enable Banking richten Sie im nächsten Schritt ein.") : ""
+                    ]
                     Repeater {
                         model: v.preview ? v.preview.banks : []
                         FormRow {
@@ -602,18 +612,15 @@ ColumnLayout {
                             readonly property var options: v.connectionOptions(modelData)
                             label: modelData.name !== "" ? modelData.name : v.connectorName(modelData.connector)
                             detail: v.bankDetail(modelData)
+                            // "Nicht verbinden" for every login (#1437)
                             AppComboBox {
-                                visible: bankRow.options.length > 1
+                                visible: bankRow.options.length > 0
+                                enabled: v.selectedAccounts(bankRow.modelData).length > 0
                                 Layout.preferredWidth: 240
                                 textRole: "text"
-                                model: bankRow.options.map(o => ({ key: o.key, text: v.optionLabel(o) })).concat([{ key: "", text: qsTr("Nicht verbinden") }])
+                                model: bankRow.options.map((o, i) => ({ key: o.key, text: v.optionLabel(o) + (i === 0 && bankRow.modelData.existing_connection_id !== null ? " · " + qsTr("vorhanden") : "") })).concat([{ key: "", text: qsTr("Nicht verbinden") }])
                                 currentIndex: Math.max(0, model.findIndex(o => o.key === v.chosenKey(bankRow.modelData)))
                                 onActivated: i => v.setBankChoice(bankRow.modelData, model[i].key)
-                            }
-                            Text {
-                                visible: bankRow.options.length === 1
-                                text: bankRow.options.length ? v.optionLabel(bankRow.options[0]) + (bankRow.modelData.existing_connection_id !== null ? " · " + qsTr("vorhanden") : "") : ""
-                                color: Theme.secondary; font.pixelSize: Theme.body
                             }
                             Text { visible: bankRow.options.length === 0; text: qsTr("Nicht verfügbar"); color: Theme.tertiary; font.pixelSize: Theme.body }
                         }

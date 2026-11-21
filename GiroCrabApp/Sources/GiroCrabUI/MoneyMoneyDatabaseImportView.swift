@@ -438,8 +438,13 @@ struct MoneyMoneyDatabaseImportView: View {
                 Section {
                     ForEach(p.banks, id: \.mmId) { b in bankRow(b) }
                 } footer: {
-                    if createConnections, chosenEnableBanking, !enableBankingReady {
-                        footerText("Enable Banking richten Sie im nächsten Schritt ein.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        if p.banks.contains(where: allClosed) {
+                            footerText("Bei Zugängen, deren Konten alle aufgelöst sind, ist „Nicht verbinden“ vorgewählt.")
+                        }
+                        if createConnections, chosenEnableBanking, !enableBankingReady {
+                            footerText("Enable Banking richten Sie im nächsten Schritt ein.")
+                        }
                     }
                 }
                 .disabled(!createConnections)
@@ -459,17 +464,19 @@ struct MoneyMoneyDatabaseImportView: View {
     private func bankRow(_ b: MoneyMoneyDbBank) -> some View {
         let options = connectionOptions(b)
         return LabeledContent {
-            if options.count > 1 {
+            if let first = options.first {
+                // "Nicht verbinden" for every login, preselected when all its accounts are closed (#1437)
                 Picker("Verbindung für \(b.name)", selection: bankBinding(b)) {
-                    ForEach(options, id: \.key) { o in Text(label(o)).tag(o.key) }
+                    ForEach(options, id: \.key) { o in
+                        let existing = o.key == first.key && b.existingConnectionId != nil
+                        Text(label(o) + (existing ? " · " + String(localized: "vorhanden") : "")).tag(o.key)
+                    }
                     Divider()
                     Text("Nicht verbinden").tag("")
                 }
                 .labelsHidden()
                 .fixedSize()
-            } else if let o = options.first {
-                Text(label(o) + (b.existingConnectionId != nil ? " · " + String(localized: "vorhanden") : ""))
-                    .foregroundStyle(Theme.secondary)
+                .disabled(selectedAccounts(b).isEmpty) // no account imported: no login (#1437)
             } else {
                 Text("Nicht verfügbar").foregroundStyle(Theme.tertiary)
             }
@@ -817,14 +824,33 @@ struct MoneyMoneyDatabaseImportView: View {
 
     private func bankBinding(_ b: MoneyMoneyDbBank) -> Binding<String> {
         Binding(
-            get: { bankChoice[b.mmId] ?? connectionOptions(b).first?.key ?? "" },
+            get: { selectedAccounts(b).isEmpty ? "" : bankChoice[b.mmId] ?? defaultKey(b) },
             set: { bankChoice[b.mmId] = $0 }
         )
     }
 
-    /// The connection chosen for a bank (nil = none).
+    /// The accounts of login `b` chosen for import.
+    private func selectedAccounts(_ b: MoneyMoneyDbBank) -> [MoneyMoneyDbAccount] {
+        (preview?.accounts ?? []).filter { $0.mmBankId == b.mmId && (choices[$0.mmId]?.selected ?? true) }
+    }
+
+    /// Every account of the login chosen for import is closed in MoneyMoney (#1437).
+    private func allClosed(_ b: MoneyMoneyDbBank) -> Bool {
+        let accounts = selectedAccounts(b)
+        return !accounts.isEmpty && accounts.allSatisfy(\.closed)
+    }
+
+    /// The preselected connection: the best one, none ("") for a login whose
+    /// imported accounts are all closed (#1437).
+    private func defaultKey(_ b: MoneyMoneyDbBank) -> String {
+        allClosed(b) ? "" : connectionOptions(b).first?.key ?? ""
+    }
+
+    /// The connection chosen for a bank (nil = none). A login without an
+    /// imported account gets none: the import would leave it empty (#1437).
     private func chosenOption(_ b: MoneyMoneyDbBank) -> MoneyMoneyDbConnectionOption? {
-        let key = bankChoice[b.mmId] ?? connectionOptions(b).first?.key ?? ""
+        guard !selectedAccounts(b).isEmpty else { return nil }
+        let key = bankChoice[b.mmId] ?? defaultKey(b)
         return connectionOptions(b).first { $0.key == key }
     }
 
@@ -854,8 +880,7 @@ struct MoneyMoneyDatabaseImportView: View {
         return p.banks.filter { chosenOption($0)?.via == .enableBanking }.map { b in
             MoneyMoneyDbPsd2Connection(
                 connectionId: -b.mmId, bankName: b.name, created: true,
-                accounts: p.accounts
-                    .filter { $0.mmBankId == b.mmId && (choices[$0.mmId]?.selected ?? true) }
+                accounts: selectedAccounts(b)
                     .map { MoneyMoneyDbPsd2Account(name: $0.name, iban: $0.iban, accountNumber: $0.accountNumber) })
         }
     }
@@ -1075,7 +1100,7 @@ extension AppModel {
                                 owner: "Max Mustermann", groupName: group, mmBankId: bankId, isPortfolio: portfolio, suggestedKind: kind,
                                 existingAccountId: existing?.id, existingAccountName: existing?.name, bookingCount: count, pendingCount: pending, holdingCount: portfolio ? 3 : 0,
                                 notesCount: 0, firstDate: from, lastDate: to, statementCount: kind == .checking ? 48 : 0, computedBalanceCents: balance,
-                                balanceSource: "Anfangssaldo laut Saldenverlauf der Datenbank + Umsätze")
+                                balanceSource: "Anfangssaldo laut Saldenverlauf der Datenbank + Umsätze", closed: false)
         }
         let accounts = [
             acc(1, "Girokonto", "comdirect", "20041111", iban: "DE89370400440532013000", kind: .checking, existing: existingGiro,

@@ -52,6 +52,8 @@
 //!   excluded (stamp 0, so any explicit user choice wins on sync).
 //! - 35: merchant recognition settings (#1373): tables `merchant_switches` (master switch and
 //!   switched-off bundled merchants) and `custom_merchants` (own merchants), both merged.
+//! - 36: repair (#998): accounts the MoneyMoney import archived because their last refresh there
+//!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -103,6 +105,7 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::recipients::SCHEMA),                      // 33: hidden recipients (#978)
     Step::Hook(account_total_flag),                            // 34 (#337)
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
+    Step::Hook(unarchive_cancelled_refreshes),                 // 36: repair (#998)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -129,6 +132,34 @@ fn account_notes(conn: &Connection) -> CoreResult<()> {
     )?;
     conn.execute("DELETE FROM settings WHERE key GLOB 'account.note.*'", [])?;
     Ok(())
+}
+
+/// An archive the app (`set_account_archived`, also the account selection) or the MoneyMoney
+/// import sets carries its time and its stamp from the same second. Step 36 takes an archive
+/// whose time lies more than this before its stamp for one the import of v0.8.5 made.
+pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
+
+/// Step 36 (#998): the MoneyMoney import of v0.8.5 read `cancel_tsp` (when the last refresh of an
+/// account was cancelled there, e.g. a TAN not confirmed) as "closed" and archived accounts that
+/// are in use: they left the totals and syncs skipped them. Such an archive carries MoneyMoney's
+/// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]); only accounts the
+/// importer owns were archived that way, and the vault merge copies time and stamp as a pair.
+/// The reactivation is stamped, so the merge carries it to the other devices. Some of these
+/// accounts are closed in MoneyMoney after all, which the vault cannot tell: they are noted
+/// ([`moneymoney_db::ARCHIVE_UNKNOWN_KEY`]) so the next import gives them MoneyMoney's state.
+///
+/// [`moneymoney_db::ARCHIVE_UNKNOWN_KEY`]: crate::importers::moneymoney_db::ARCHIVE_UNKNOWN_KEY
+fn unarchive_cancelled_refreshes(conn: &Connection) -> CoreResult<()> {
+    let ids: Vec<i64> = conn
+        .prepare(
+            "UPDATE accounts SET archived_unix = NULL, archived_ms = ?1
+              WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?2
+                AND deleted_ms IS NULL AND external_ref LIKE 'moneymoney-db:%'
+              RETURNING id",
+        )?
+        .query_map([crate::dates::now_ms(), ARCHIVE_STAMP_GAP_MS], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    crate::importers::moneymoney_db::note_archive_unknown(conn, &ids)
 }
 
 /// Step 31: `booking_documents.seen_at` (NULL = unread). The documents a vault has already count
@@ -1065,7 +1096,54 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 35);
+        assert_eq!(SCHEMA_VERSION, 36);
+    }
+
+    /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for
+    /// the next import; an account the user archived, a deleted one, an archive from before the
+    /// stamps and one the importer does not own stay as they are.
+    #[test]
+    fn accounts_archived_for_a_cancelled_refresh_are_reactivated() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO account_groups(name,sf_symbol,sort_order) VALUES ('Konten','building.columns',1);
+             INSERT INTO accounts(group_id,external_ref,name,archived_unix,archived_ms,deleted_ms) VALUES
+               (1,'moneymoney-db:1','Girokonto',1790000000,1790001000123,NULL),
+               (1,'moneymoney-db:2','Alte Karte',1790002000,1790002000456,NULL),
+               (1,'moneymoney-db:3','Gelöscht',1790000000,1790001000123,1790003000000),
+               (1,'moneymoney-db:4','Früher archiviert',1700000000,0,NULL),
+               (1,'DE89370400440532013000','Bankkonto',1790000000,1790001000123,NULL);
+             PRAGMA user_version = 35;",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        // (id, archived_unix, archived_ms)
+        let row = |name: &str| {
+            conn.query_row(
+                "SELECT id, archived_unix, archived_ms FROM accounts WHERE name = ?1",
+                [name],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Option<i64>>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+        };
+        let (giro, archived, stamp) = row("Girokonto");
+        assert_eq!(archived, None);
+        assert!(stamp > 1790001000123, "stamped, so the merge carries it");
+        assert_eq!(row("Alte Karte").1, Some(1790002000));
+        assert_eq!(row("Gelöscht").1, Some(1790000000));
+        assert_eq!(row("Früher archiviert").1, Some(1700000000));
+        assert_eq!(row("Bankkonto").1, Some(1790000000));
+        assert_eq!(
+            crate::importers::moneymoney_db::archive_unknown(&conn).unwrap(),
+            vec![giro]
+        );
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
