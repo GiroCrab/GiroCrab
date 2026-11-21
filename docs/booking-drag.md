@@ -2,6 +2,8 @@
 
 Auf dem Mac lassen sich Buchungen aus der Liste in andere Programme ziehen, etwa in eine Belegverwaltung, die daraus Einträge ohne Beleg anlegt. Gezogen wird die Buchung unter dem Mauszeiger, oder die ganze Mehrfachauswahl, wenn die Buchung zu ihr gehört. Dieselbe Geste legt Buchungen weiterhin auf eine Kategorie in der Seitenleiste (#366).
 
+Die Belegverwaltung [Receipts Space](https://receipts-app.com/) liest dieses Format: Auf ihr Fenster gezogene Buchungen werden dort zu Einträgen mit Datum, Bezahldatum, Betrag, Gegenseite, IBAN und Verwendungszweck, denen nur noch der Beleg fehlt.
+
 ## Für Entwickler empfangender Apps
 
 Der Zug enthält zwei Darstellungen:
