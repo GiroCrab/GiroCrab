@@ -83,13 +83,44 @@ extension AppModel {
 
     /// Everything that shows merchant names, logos or a merchant's history loads again in the
     /// background; the shown data stays until then. Flows, totals, recurring series and the
-    /// sidebar read the bundled table and stay as they are. A merchant filter is left: its key
-    /// may name nobody any more (a copy has its own key, the recognition off gives `x:` keys).
+    /// sidebar read the bundled table and stay as they are.
     private func merchantsChanged() {
         merchantSettingsRevision += 1
-        if merchantFocus != nil { leaveMerchantFocus() }
-        refreshSelectedBookingHistory()
-        startSelectionLoad(keepingShown: true)
         reloadDashboard()
+        Task { [weak self] in
+            // a merchant filter that names nobody any more would show an empty list
+            await self?.leaveStaleMerchantFocus()
+            guard let self else { return }
+            self.startSelectionLoad(keepingShown: true)
+            await self.selectionLoadTask?.value
+            // the selected booking may carry a new merchant key now: its history, and a
+            // booking kept on screen outside the page, follow the published data
+            self.refreshSelectedBookingHistory()
+            await self.refreshStickyBooking()
+        }
+    }
+
+    /// Leaves the merchant filter when its key names no booking any more: a copy has its own
+    /// key, the recognition off gives `x:` keys. After a change here and after a merge.
+    func leaveStaleMerchantFocus() async {
+        guard let focus = merchantFocus else { return }
+        let key = focus.key
+        let found = try? await vaultOffMain { try $0.merchantHistory(merchantKey: key, accountId: 0) }
+        guard let history = found ?? nil, history.all.count == 0, merchantFocus == focus else { return }
+        leaveMerchantFocus()
+    }
+
+    /// The booking kept on screen outside the loaded page (`stickyBooking`), read again so it
+    /// shows its merchant under the new settings.
+    private func refreshStickyBooking() async {
+        guard let sticky = stickyBooking else { return }
+        let filter = BookingFilter(accountIds: [sticky.accountId], categoryId: nil, includeSubcategories: true,
+                                   uncategorizedOnly: false, search: nil, dateFrom: sticky.bookingDate,
+                                   dateTo: sticky.bookingDate, limit: 0, offset: 0, scope: .all,
+                                   merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
+        let found = try? await vaultOffMain { try $0.listTransactions(filter: filter).transactions }
+        guard let fresh = (found ?? nil)?.first(where: { $0.id == sticky.id }),
+              stickyBooking?.id == sticky.id else { return }
+        stickyBooking = fresh
     }
 }

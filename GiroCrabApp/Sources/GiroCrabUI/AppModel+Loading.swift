@@ -53,6 +53,8 @@ extension AppModel {
         merchantStatsCache = [:]
         loadMerchantStats(keepShown: true)
         startSelectionLoad(keepingShown: true)
+        // merchant settings from another device may leave the merchant filter empty (#1373)
+        if merchantFocus != nil { Task { [weak self] in await self?.leaveStaleMerchantFocus() } }
     }
 
     func reloadAccounts() {

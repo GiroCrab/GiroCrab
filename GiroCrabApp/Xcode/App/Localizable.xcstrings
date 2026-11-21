@@ -12352,13 +12352,13 @@
         }
       }
     },
-    "Eigene Händler gehen den eingebauten vor. Passen mehrere, gewinnt das längste Suchwort. Ein Suchwort passt nur als ganzes Wort (auch mehrere Wörter wie „muster shop“), Groß- und Kleinschreibung zählen nicht. Die Einstellungen gelten auf allen Geräten mit iCloud-Abgleich." : {
+    "Eigene Händler gehen den eingebauten vor. Gesucht wird zuerst in der Gegenseite; passen dort mehrere, gewinnt das längste Suchwort. Ein Suchwort passt nur als ganzes Wort (auch mehrere Wörter wie „muster shop“), Groß- und Kleinschreibung zählen nicht. Die Einstellungen gelten auf allen Geräten mit iCloud-Abgleich." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Custom merchants come before the built-in ones. If several match, the longest search word wins. A search word only matches as a whole word (also several words such as “sample shop”), regardless of case. The settings apply on all devices that sync via iCloud."
+            "value" : "Custom merchants come before the built-in ones. The counterparty is searched first; if several match there, the longest search word wins. A search word only matches as a whole word (also several words such as “sample shop”), regardless of case. The settings apply on all devices that sync via iCloud."
           }
         }
       }
@@ -18629,6 +18629,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No access anymore: %@"
+          }
+        }
+      }
+    },
+    "Kein eigener Händler passt zur Suche." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No custom merchant matches the search."
           }
         }
       }

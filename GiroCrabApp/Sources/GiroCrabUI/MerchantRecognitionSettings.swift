@@ -23,6 +23,9 @@ struct MerchantRecognitionSettings: View {
     /// Position of each bundled merchant in the list, fixed when the pane opens or the search
     /// changes: a switched row must not jump away under the pointer.
     @State private var order: [String: Int] = [:]
+    /// Writes still running per switch: a read may only replace a shown switch position
+    /// once its write is done.
+    @State private var inFlight: [String: Int] = [:]
 
     private var enabled: Bool { pending[""] ?? recognition?.enabled ?? model.merchantRecognitionEnabled }
 
@@ -51,14 +54,22 @@ struct MerchantRecognitionSettings: View {
                 }
             }
             Group {
+                Section {
+                    TextField("Händler oder Suchwort suchen", text: $search)
+                        .textFieldStyle(.roundedBorder)
+                        .sensitive() // typed text
+                }
                 customSection
                 builtinSection
             }
             .disabled(!enabled)
         }
         .formStyle(.grouped)
-        // opened, or a vault swap (demo ↔ own): read the list and sort it
-        .task(id: model.vaultRevision) { await reload(sorting: true) }
+        // opened, or a vault swap (demo ↔ own): forget the old vault's switches, read and sort
+        .task(id: model.vaultRevision) {
+            pending = [:]
+            await reload(sorting: true)
+        }
         // a change here or a merge from another device: read it again, rows stay in place
         .onChange(of: model.merchantSettingsRevision) { Task { await reload(sorting: false) } }
         .onChange(of: search) { sortBuiltin() }
@@ -81,9 +92,24 @@ struct MerchantRecognitionSettings: View {
 
     // MARK: Own merchants
 
+    /// The own merchants the search finds (by name and search word).
+    private var customRows: [CustomMerchant] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        return (recognition?.custom ?? []).filter { m in
+            query.isEmpty
+                || m.name.localizedCaseInsensitiveContains(query)
+                || m.needles.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
     @ViewBuilder private var customSection: some View {
         Section {
-            ForEach(recognition?.custom ?? [], id: \.uuid) { customRow($0) }
+            let rows = customRows
+            if !search.trimmingCharacters(in: .whitespaces).isEmpty, rows.isEmpty, recognition?.custom.isEmpty == false {
+                Text("Kein eigener Händler passt zur Suche.")
+                    .appFont(.callout).foregroundStyle(Theme.secondary)
+            }
+            ForEach(rows, id: \.uuid) { customRow($0) }
             Button {
                 editing = MerchantDraft()
             } label: {
@@ -92,7 +118,7 @@ struct MerchantRecognitionSettings: View {
         } header: {
             Text("Eigene Händler").appSectionHeader()
         } footer: {
-            Text("Eigene Händler gehen den eingebauten vor. Passen mehrere, gewinnt das längste Suchwort. Ein Suchwort passt nur als ganzes Wort (auch mehrere Wörter wie „muster shop“), Groß- und Kleinschreibung zählen nicht. Die Einstellungen gelten auf allen Geräten mit iCloud-Abgleich.")
+            Text("Eigene Händler gehen den eingebauten vor. Gesucht wird zuerst in der Gegenseite; passen dort mehrere, gewinnt das längste Suchwort. Ein Suchwort passt nur als ganzes Wort (auch mehrere Wörter wie „muster shop“), Groß- und Kleinschreibung zählen nicht. Die Einstellungen gelten auf allen Geräten mit iCloud-Abgleich.")
                 .appFont(.footnote)
                 .foregroundStyle(.secondary)
                 .leadingFooter()
@@ -166,9 +192,6 @@ struct MerchantRecognitionSettings: View {
         let all = recognition?.builtin ?? []
         let off = all.filter { !isOn($0) }.count
         Section {
-            TextField("Händler oder Suchwort suchen", text: $search)
-                .textFieldStyle(.roundedBorder)
-                .sensitive() // typed text
             let rows = builtinRows
             if recognition != nil && rows.isEmpty {
                 Text("Kein eingebauter Händler passt zur Suche.")
@@ -241,7 +264,9 @@ struct MerchantRecognitionSettings: View {
     /// back, unless it was flipped again meanwhile, and says why.
     private func flip(_ key: String, to on: Bool, _ write: @escaping () async throws -> Void) {
         pending[key] = on
+        inFlight[key, default: 0] += 1
         Task {
+            defer { inFlight[key] = max(0, (inFlight[key] ?? 1) - 1) }
             do {
                 try await write()
                 writeError = nil
@@ -286,11 +311,19 @@ struct MerchantRecognitionSettings: View {
         let load = loads
         do {
             let found = try await model.merchantRecognition()
-            guard !Task.isCancelled, load == loads, let found else { return }
+            guard !Task.isCancelled, load == loads else { return }
+            guard let found else {
+                // locked or switched meanwhile: show nothing of that vault any more
+                recognition = nil
+                pending = [:]
+                order = [:]
+                return
+            }
             recognition = found
-            // a switch whose write is still queued keeps its new position
+            // a switch keeps its new position only while its write is still running
             pending = pending.filter { key, on in
-                (key.isEmpty ? found.enabled : found.builtin.first { $0.key == key }?.enabled) != on
+                inFlight[key, default: 0] > 0
+                    && (key.isEmpty ? found.enabled : found.builtin.first { $0.key == key }?.enabled) != on
             }
             if sorting || order.isEmpty { sortBuiltin() }
             loadError = nil

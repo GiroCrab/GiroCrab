@@ -124,14 +124,35 @@ final class MerchantRecognitionTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    /// A merchant filter may name nobody after a change (a copy has its own key): it is left.
-    func testAChangeLeavesTheMerchantFilter() async throws {
+    /// A merchant filter that names nobody after a change (a copy has its own key, the
+    /// recognition off gives `x:` keys) is left; one that still names bookings stays.
+    func testAChangeLeavesAMerchantFilterThatNamesNobody() async throws {
         let brand = try brandBooking()
+        let other = try XCTUnwrap(model.bookings.first { $0.merchant.known && $0.merchant.key != brand.merchant.key })
         model.focusMerchant(of: brand)
         XCTAssertEqual(model.merchantFocus?.key, brand.merchant.key)
+        try await model.setBuiltinMerchantEnabled(other.merchant.key, false)
+        try await awaitBookings { _ in model.selectionLoadTask == nil }
+        XCTAssertEqual(model.merchantFocus?.key, brand.merchant.key, "its merchant is still there")
         try await model.setMerchantRecognitionEnabled(false)
+        for _ in 0..<2500 where model.merchantFocus != nil { try await Task.sleep(for: .milliseconds(2)) }
         XCTAssertNil(model.merchantFocus)
-        try await awaitBookings { $0.allSatisfy { !$0.merchant.known } }
+    }
+
+    /// The booking search finds the name the user gave a merchant (it is in no booking text).
+    func testTheSearchFindsAnOwnMerchantName() async throws {
+        let brand = try brandBooking()
+        let loaded = try await model.merchantRecognition()
+        let original = try XCTUnwrap(loaded?.builtin.first { $0.key == brand.merchant.key })
+        try await model.saveCustomMerchant(uuid: nil, name: "Supermarkt Ecke", needles: original.needles, basedOn: original.key)
+        let vault = try XCTUnwrap(model.vault)
+        let found = try vault.listTransactions(filter: BookingFilter(
+            accountIds: [], categoryId: nil, includeSubcategories: true, uncategorizedOnly: false,
+            search: "Supermarkt Ecke", dateFrom: nil, dateTo: nil, limit: 0, offset: 0,
+            scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false
+        )).transactions
+        XCTAssertTrue(found.contains { $0.id == brand.id })
+        XCTAssertTrue(found.allSatisfy { $0.merchantName == "Supermarkt Ecke" })
     }
 
     /// Quick toggles reach the vault in the order they were made.

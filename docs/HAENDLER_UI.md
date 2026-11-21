@@ -14,8 +14,8 @@ wachsen. Was der Nutzer ändert, liegt daneben im Tresor und wird per iCloud mit
   Verwendungszwecks), ohne Händlernamen, Markenfarbe und Logo, auch ohne eine im Inspektor gesetzte Logo-Domain.
 - **Eingebaute Händler**, jeder mit eigenem Schalter. Ein ausgeschalteter wird nicht mehr erkannt; die Buchung zeigt den
   nächsten passenden Händler oder ihre Gegenseite.
-- **Eigene Händler** mit Name und Suchwörtern. Sie gehen den eingebauten vor; passen mehrere, gewinnt das längste
-  Suchwort. „Bearbeiten“ eines eingebauten Händlers legt eine Kopie als eigenen Händler an (mit Logo, Farbe und Art des
+- **Eigene Händler** mit Name und Suchwörtern. Sie gehen den eingebauten vor; gesucht wird zuerst in der Gegenseite,
+  passen dort mehrere, gewinnt das längste Suchwort. „Bearbeiten“ eines eingebauten Händlers legt eine Kopie als eigenen Händler an (mit Logo, Farbe und Art des
   Originals), die das Original ersetzt, solange es sie gibt. Das wird beim Laden abgeleitet und nicht als Schalter
   gespeichert: Wird die letzte Kopie gelöscht, wird das Original wieder erkannt, es sei denn, der Nutzer hat es selbst
   ausgeschaltet. Eine Kopie eines Zahlungsdienstes schaut weiter dahinter, eine Kopie einer Untermarke (fraenk,
@@ -37,15 +37,23 @@ Ein eigener Reiter der Einstellungen (macOS: Fenster, iPhone/iPad: Blatt), von o
 | --- | --- |
 | Händlererkennung | Hauptschalter „Händler erkennen“, darunter ein Satz, was aus bedeutet |
 | Händler-Logos | „Logos aus dem Internet laden“ und „Logo-Cache leeren“ (zogen aus „Allgemein“ hierher); aus, solange die Erkennung aus ist |
+| Suchfeld | Filtert beide Listen: eigene Händler nach Name und Suchwort, eingebaute nach Name, Schlüssel und Suchwort |
 | Eigene Händler | Je Zeile Zeichen, Name, Suchwörter und ggf. „Kopie von …“, rechts Bearbeiten und Löschen (beides auch im Kontextmenü); darunter „Eigenen Händler hinzufügen …“ |
-| Eingebaute Händler | Suchfeld (Name, Schlüssel, Suchwort), dann je Zeile Zeichen, Name, Suchwörter, Art, Bearbeiten und der Schalter. Ein von einer Kopie ersetzter Händler zeigt „Ersetzt durch eigenen Händler“, sein Schalter ist gesperrt. Ausgeschaltete und ersetzte stehen oben, sonst nach Name |
+| Eingebaute Händler | Je Zeile Zeichen, Name, Suchwörter, Art, Bearbeiten und der Schalter. Ein von einer Kopie ersetzter Händler zeigt „Ersetzt durch eigenen Händler“, sein Schalter ist gesperrt. Ausgeschaltete und ersetzte stehen oben, sonst nach Name |
 
 Die beiden Listen sind ausgegraut, solange die Erkennung aus ist. Ein Schalter steht sofort in der neuen Stellung; die
 Änderung läuft im Hintergrund, nach den Änderungen davor (`settingsWriteTask`). Danach lädt alles, was Händlernamen
 zeigt, im Hintergrund neu (`AppModel.changeMerchants`: Liste, Inspektor mit Händler-Historie, Dashboard); bei mehreren
-schnellen Änderungen nur einmal, nach der letzten. Die gezeigten Daten bleiben bis dahin stehen. Konsum, Summen,
+schnellen Änderungen nur einmal, nach der letzten. Die gezeigten Daten bleiben bis dahin stehen; danach folgen die
+Händler-Historie der gewählten Buchung und eine außerhalb der Seite festgehaltene Buchung. Konsum, Summen,
 wiederkehrende Zahlungen und die Seitenleiste hängen nicht an den Einstellungen und laden nicht neu. Ein aktiver
-Händlerfilter (Händler-Historie) wird verlassen, weil sein Schlüssel danach niemanden mehr nennen kann.
+Händlerfilter (Händler-Historie) wird verlassen, wenn sein Schlüssel keine Buchung mehr nennt (eine Kopie hat einen
+eigenen Schlüssel, ausgeschaltet gelten `x:`-Schlüssel); dasselbe nach einem iCloud-Merge.
+
+Die Buchungssuche im Hauptfenster findet Buchungen auch über den angezeigten Händlernamen, also über den Namen
+eines eigenen Händlers („Supermarkt Ecke“) und eingebaute Namen, die in keinem Buchungstext stehen („Amazon“ für
+„AMZN Mktp“). Die Namen kommen aus den zwischengespeicherten Buchungsklassen des Kerns und werden nur gelesen,
+wenn das Suchwort in einem dieser Namen vorkommt.
 
 Die Reihenfolge der eingebauten Liste wird beim Öffnen und bei jeder neuen Suche festgelegt, nicht nach jedem Schalter:
 Eine Zeile springt nicht unter dem Mauszeiger weg. Nach einer eigenen Änderung, einem Merge oder einem Abruf
@@ -67,8 +75,8 @@ Meldung (kein Name, kein Suchwort, zu lang) steht unter den Feldern, das Blatt b
 Satz, dass sie Logo, Farbe und Art des Originals behält und es ersetzt, solange es sie gibt.
 
 Gesucht wird wie bei den eingebauten Händlern: zuerst in der Gegenseite, ohne Gegenseite im Verwendungszweck (dort nur
-Suchwörter ab vier Zeichen), bei Zahlungsdiensten auch dahinter („PayPal … Ihr Einkauf bei …“). Ein Suchwort passt nur
-als ganzes Wort (auch mehrere Wörter): „dm“ trifft nicht „Dmitri“, und die Kopie von „TIER“ nicht „Tierarzt“ (in der
+Suchwörter ab vier Zeichen), bei Zahlungsdiensten auch dahinter („PayPal … Ihr Einkauf bei …“). Ziffernfolgen zählen
+ganz („123456“ trifft nicht „123459“). Ein Suchwort passt nur als ganzes Wort (auch mehrere Wörter): „dm“ trifft nicht „Dmitri“, und die Kopie von „TIER“ nicht „Tierarzt“ (in der
 eingebauten Liste begrenzen Leerzeichen solche Wörter, die Kopie zeigt sie ohne).
 
 ## Regeln
