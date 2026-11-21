@@ -957,6 +957,18 @@ fn english(de: &str) -> Option<&'static str> {
             "Read-only: the extended public key of the wallet account (e.g. m/84'/0'/0') derives the receive and change addresses; it cannot spend anything. Transactions come from mempool.space or your own Esplora server (connection settings); that server sees all addresses of the wallet. The euro price comes from mempool.space. Never enter the private key (xprv) or the recovery words."
         }
         "Eingang" => "Incoming",
+        "Das ist kein Schlüssel eines Wallet-Kontos. Bitte den Konto-Schlüssel eintragen (z. B. m/84'/0'/0')." => {
+            "This is not the key of a wallet account. Please enter the account key (e.g. m/84'/0'/0')."
+        }
+        "Der Bitcoin-Server hat unvollständige Transaktionsdaten geliefert." => {
+            "The Bitcoin server sent incomplete transaction data."
+        }
+        "Das Wallet nutzt mehr Adressen, als ein Abruf durchsucht (5000 je Kette). Der Saldo wäre unvollständig." => {
+            "The wallet uses more addresses than one sync searches (5000 per chain). The balance would be incomplete."
+        }
+        "Keine Umsätze gefunden. Bitte prüfen, ob der Schlüssel zum richtigen Wallet-Konto gehört." => {
+            "No transactions found. Please check that the key belongs to the right wallet account."
+        }
         "Das ist der Schlüssel einer einzelnen Adresskette. Bitte den Schlüssel des Wallet-Kontos eintragen (z. B. m/84'/0'/0'), sonst fehlen die Wechselgeld-Adressen." => {
             "This is the key of a single address chain. Please enter the key of the wallet account (e.g. m/84'/0'/0'), otherwise the change addresses are missing."
         }

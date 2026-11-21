@@ -55,6 +55,10 @@ pub enum KeyError {
     /// The key of one address chain (`m/84'/0'/0'/0`, depth 4): its change
     /// addresses are out of reach, so every payment would look like a full loss.
     ChainLevel,
+    /// Neither an account key (depth 3, `m/84'/0'/0'`) nor a wallet root (depth
+    /// 0 or 1, as some wallets use): e.g. a coin-type key `m/84'/0'`, whose
+    /// accounts are hardened children it cannot derive.
+    NotAccount,
 }
 
 const XPUB: [u8; 4] = [0x04, 0x88, 0xB2, 0x1E];
@@ -72,7 +76,11 @@ impl ExtendedPubKey {
     /// script type wins over the key's prefix.
     pub fn parse_input(text: &str) -> Result<Self, KeyError> {
         let mut t = text.trim();
-        if let Some((body, _checksum)) = t.split_once('#') {
+        if let Some((body, checksum)) = t.split_once('#') {
+            // a descriptor with a checksum (BIP380): a changed wrapper or key must not pass
+            if descriptor_checksum(body).as_deref() != Some(checksum.trim()) {
+                return Err(KeyError::Malformed);
+            }
             t = body.trim();
         }
         let mut kind = None;
@@ -98,10 +106,17 @@ impl ExtendedPubKey {
                 .map(|(_, r)| r)
                 .ok_or(KeyError::Malformed)?;
         }
-        let bare = t.split('/').next().unwrap_or(t).trim();
-        let mut key = Self::parse(bare)?;
-        if key.depth == 4 {
-            return Err(KeyError::ChainLevel);
+        let (bare, path) = t.split_once('/').map_or((t, ""), |(k, p)| (k, p));
+        // the scan derives the receive (0) and change (1) chain; another path would
+        // name addresses it never looks at
+        if !matches!(path.trim(), "" | "<0;1>/*" | "0/*" | "1/*") {
+            return Err(KeyError::Unsupported);
+        }
+        let mut key = Self::parse(bare.trim())?;
+        match key.depth {
+            0 | 1 | 3 => {}
+            4 => return Err(KeyError::ChainLevel),
+            _ => return Err(KeyError::NotAccount),
         }
         if let Some(k) = kind {
             key.kinds = vec![k];
@@ -195,6 +210,57 @@ pub fn address(kind: ScriptKind, key: &[u8; 33]) -> String {
         }
         ScriptKind::P2wpkh => segwit_v0_address("bc", &h),
     }
+}
+
+// ------------------------------------------------------------------ descriptor checksum (BIP380)
+
+const DESC_INPUT: &str = "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
+
+/// The 8-character checksum of an output descriptor (BIP380), `None` for a
+/// character outside the descriptor alphabet.
+pub fn descriptor_checksum(desc: &str) -> Option<String> {
+    const GEN: [u64; 5] = [
+        0xf5dee51989,
+        0xa9fdca3312,
+        0x1bab10e32d,
+        0x3706b1677a,
+        0x644d626ffd,
+    ];
+    fn step(chk: u64, value: u64) -> u64 {
+        let top = chk >> 35;
+        let mut chk = ((chk & 0x7_ffff_ffff) << 5) ^ value;
+        for (i, g) in GEN.iter().enumerate() {
+            if (top >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+        chk
+    }
+    let mut chk = 1u64;
+    let mut groups = Vec::with_capacity(3);
+    for c in desc.chars() {
+        let v = DESC_INPUT.find(c)? as u64;
+        chk = step(chk, v & 31);
+        groups.push(v >> 5);
+        if groups.len() == 3 {
+            chk = step(chk, groups[0] * 9 + groups[1] * 3 + groups[2]);
+            groups.clear();
+        }
+    }
+    match groups.len() {
+        1 => chk = step(chk, groups[0]),
+        2 => chk = step(chk, groups[0] * 3 + groups[1]),
+        _ => {}
+    }
+    for _ in 0..8 {
+        chk = step(chk, 0);
+    }
+    chk ^= 1;
+    Some(
+        (0..8)
+            .map(|i| CHARSET[((chk >> (5 * (7 - i))) & 31) as usize] as char)
+            .collect(),
+    )
 }
 
 // ------------------------------------------------------------------ Base58Check

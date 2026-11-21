@@ -89,10 +89,13 @@ fn hardened_children_cannot_be_derived() {
     assert!(k.child(0x8000_0000).is_none());
 }
 
+/// A block time shortly after the genesis block (2011).
+const T0: i64 = 1_300_000_000;
+
 fn tx(txid: &str, time: Option<i64>, vin: &[(&str, i64)], vout: &[(&str, i64)]) -> Value {
     json!({
         "txid": txid,
-        "status": match time { Some(t) => json!({"confirmed": true, "block_time": t}), None => json!({"confirmed": false}) },
+        "status": match time { Some(t) => json!({"confirmed": true, "block_time": T0 + t}), None => json!({"confirmed": false}) },
         "vin": vin.iter().map(|(a, v)| json!({"prevout": {"scriptpubkey_address": a, "value": v}})).collect::<Vec<_>>(),
         "vout": vout.iter().map(|(a, v)| json!({"scriptpubkey_address": a, "value": v})).collect::<Vec<_>>(),
     })
@@ -126,7 +129,7 @@ fn wallet_transactions_net_received_against_spent_and_skip_unconfirmed() {
         tx("c", None, &[("x", 9)], &[("mine2", 9)]),
         tx("d", Some(3_000), &[("mine2", 25_000)], &[("mine1", 24_500)]),
     ];
-    let w = wallet_transactions(&txs, &own);
+    let w = wallet_transactions(&txs, &own).unwrap();
     let summary: Vec<(&str, i64)> = w.iter().map(|t| (t.txid.as_str(), t.net_sats)).collect();
     // a twice listed tx counts once; the self-transfer costs its fee only
     assert_eq!(summary, vec![("a", 75_000), ("b", -31_000), ("d", -500)]);
@@ -138,13 +141,21 @@ struct Fake {
     asked: Mutex<Vec<String>>,
     /// Size of the first page (a server with larger pages); `None` = 25.
     first_page: Option<usize>,
+    /// Every address has a transaction (a wallet beyond the address cap).
+    all_used: bool,
+    /// The server ignores the cursor and sends the first page again.
+    ignore_cursor: bool,
 }
 
 #[async_trait]
 impl TxSource for Fake {
     async fn address_txs(&self, address: &str, after: Option<&str>) -> CoreResult<Vec<Value>> {
         self.asked.lock().unwrap().push(address.to_string());
+        if self.all_used {
+            return Ok(vec![tx(address, Some(1), &[("x", 1)], &[(address, 1)])]);
+        }
         let all = self.by_address.get(address).cloned().unwrap_or_default();
+        let after = if self.ignore_cursor { None } else { after };
         Ok(match after {
             None => all
                 .into_iter()
@@ -189,7 +200,7 @@ async fn scan_follows_the_gap_limit_and_pages() {
         own.contains(&addr(1, 19)) && !own.contains(&addr(1, 20)),
         "change chain: 20 unused"
     );
-    let w = wallet_transactions(&txs, &own);
+    let w = wallet_transactions(&txs, &own).unwrap();
     assert_eq!(w.iter().map(|t| t.net_sats).sum::<i64>(), 30_001);
 }
 
@@ -362,6 +373,7 @@ async fn an_xpub_of_a_native_segwit_wallet_finds_its_bc1q_history() {
     let (own, txs) = scan(&k, &fake).await.unwrap();
     assert_eq!(
         wallet_transactions(&txs, &own)
+            .unwrap()
             .iter()
             .map(|t| t.net_sats)
             .sum::<i64>(),
@@ -372,8 +384,11 @@ async fn an_xpub_of_a_native_segwit_wallet_finds_its_bc1q_history() {
 #[test]
 fn output_descriptors_are_accepted_and_set_the_script_type() {
     let x = zpub_as_xpub();
-    let k = ExtendedPubKey::parse_input(&format!("wpkh([73c5da0a/84h/0h/0h]{x}/<0;1>/*)#abcdefgh"))
-        .unwrap();
+    let k = ExtendedPubKey::parse_input(&format!(
+        "wpkh([73c5da0a/84h/0h/0h]{x}/<0;1>/*)#{}",
+        keys::descriptor_checksum(&format!("wpkh([73c5da0a/84h/0h/0h]{x}/<0;1>/*)")).unwrap()
+    ))
+    .unwrap();
     assert_eq!((k.kinds.clone(), k.depth), (vec![ScriptKind::P2wpkh], 3));
     assert_eq!(
         keys::address(ScriptKind::P2wpkh, &k.public_key(0, 0).unwrap()),
@@ -422,14 +437,14 @@ async fn an_xpub_scans_segwit_and_legacy() {
         vec![tx("l", Some(1), &[("x", 1)], &[(&legacy, 3_000)])],
     );
     let (own, txs) = scan(&k, &fake).await.unwrap();
-    assert_eq!(wallet_transactions(&txs, &own).len(), 1);
+    assert_eq!(wallet_transactions(&txs, &own).unwrap().len(), 1);
     // a wallet with coins under both types: both count
     fake.by_address.insert(
         segwit.clone(),
         vec![tx("s", Some(2), &[("x", 1)], &[(&segwit, 4_000)])],
     );
     let (own, txs) = scan(&k, &fake).await.unwrap();
-    let w = wallet_transactions(&txs, &own);
+    let w = wallet_transactions(&txs, &own).unwrap();
     assert_eq!(w.iter().map(|t| t.net_sats).sum::<i64>(), 7_000);
 }
 
@@ -446,7 +461,11 @@ async fn larger_pages_are_followed_too() {
     };
     fake.by_address.insert(addr.clone(), many);
     let (own, txs) = scan(&k, &fake).await.unwrap();
-    assert_eq!(wallet_transactions(&txs, &own).len(), 80, "50 + 25 + 5");
+    assert_eq!(
+        wallet_transactions(&txs, &own).unwrap().len(),
+        80,
+        "50 + 25 + 5"
+    );
 }
 
 #[test]
@@ -468,4 +487,120 @@ fn a_negative_total_reports_no_position() {
             .holdings
             .is_empty()
     );
+}
+
+#[test]
+fn a_confirmed_copy_counts_although_an_unconfirmed_one_came_first() {
+    let own: HashSet<String> = ["mine".to_string()].into();
+    let unconfirmed = tx("t", None, &[("x", 1)], &[("mine", 900)]);
+    let confirmed = tx("t", Some(5), &[("x", 1)], &[("mine", 900)]);
+    let w = wallet_transactions(&[unconfirmed, confirmed.clone(), confirmed], &own).unwrap();
+    assert_eq!(w.iter().map(|t| t.net_sats).collect::<Vec<_>>(), vec![900]);
+}
+
+#[test]
+fn incomplete_transaction_data_is_an_error_but_coinbase_inputs_are_fine() {
+    let own: HashSet<String> = ["mine".to_string()].into();
+    let mut no_prevout = tx(
+        "p",
+        Some(5),
+        &[("mine", 1_000)],
+        &[("mine", 600), ("shop", 300)],
+    );
+    no_prevout["vin"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("prevout");
+    assert!(
+        wallet_transactions(&[no_prevout], &own).is_err(),
+        "the change would count as a deposit"
+    );
+    let mut no_value = tx("v", Some(5), &[("x", 1)], &[("mine", 600)]);
+    no_value["vout"][0].as_object_mut().unwrap().remove("value");
+    assert!(wallet_transactions(&[no_value], &own).is_err());
+    let mut too_old = tx("o", Some(5), &[("x", 1)], &[("mine", 600)]);
+    too_old["status"]["block_time"] = json!(1_000);
+    assert!(wallet_transactions(&[too_old], &own).is_err());
+    let mut mined = tx("m", Some(5), &[], &[("mine", 625_000_000)]);
+    mined["vin"] = json!([{"is_coinbase": true}]);
+    // an output without an address (OP_RETURN) is fine too
+    mined["vout"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"value": 0}));
+    let w = wallet_transactions(&[mined], &own).unwrap();
+    assert_eq!(w[0].net_sats, 625_000_000);
+}
+
+#[tokio::test]
+async fn a_wallet_beyond_the_address_cap_is_not_reported_as_complete() {
+    let k = ExtendedPubKey::parse(ZPUB).unwrap();
+    let fake = Fake {
+        all_used: true,
+        ..Default::default()
+    };
+    assert!(scan(&k, &fake).await.is_err());
+}
+
+#[tokio::test]
+async fn a_server_that_repeats_a_page_is_an_error() {
+    let k = ExtendedPubKey::parse(ZPUB).unwrap();
+    let addr = keys::address(ScriptKind::P2wpkh, &k.public_key(0, 0).unwrap());
+    let many: Vec<Value> = (0..30)
+        .map(|i| tx(&format!("r{i}"), Some(100 + i), &[("x", 1)], &[(&addr, 10)]))
+        .collect();
+    let mut fake = Fake {
+        ignore_cursor: true,
+        ..Default::default()
+    };
+    fake.by_address.insert(addr, many);
+    assert!(scan(&k, &fake).await.is_err());
+}
+
+#[test]
+fn descriptor_checksums_paths_and_depths_are_checked() {
+    // BIP380 test vector
+    assert_eq!(
+        keys::descriptor_checksum("raw(deadbeef)").as_deref(),
+        Some("89f8spxm")
+    );
+    let body = format!("wpkh({ZPUB}/<0;1>/*)");
+    let sum = keys::descriptor_checksum(&body).unwrap();
+    assert!(ExtendedPubKey::parse_input(&format!("{body}#{sum}")).is_ok());
+    // the wrapper changed, the checksum no longer fits
+    let changed = format!("pkh({ZPUB}/<0;1>/*)#{sum}");
+    assert_eq!(
+        ExtendedPubKey::parse_input(&changed),
+        Err(KeyError::Malformed)
+    );
+    // paths the scan does not derive
+    for path in ["/<2;3>/*", "/5/*", "/0h/*", "/0/0"] {
+        assert_eq!(
+            ExtendedPubKey::parse_input(&format!("wpkh({ZPUB}{path})")),
+            Err(KeyError::Unsupported),
+            "{path}"
+        );
+    }
+    for path in ["", "/<0;1>/*", "/0/*", "/1/*"] {
+        assert!(
+            ExtendedPubKey::parse_input(&format!("wpkh({ZPUB}{path})")).is_ok(),
+            "{path}"
+        );
+    }
+    // a coin-type key (depth 2) cannot reach its accounts
+    let mut raw = keys::base58check_decode(ZPUB).unwrap();
+    raw[4] = 2;
+    let coin_type = keys::base58check_encode(raw[0], &raw[1..]);
+    assert_eq!(
+        ExtendedPubKey::parse_input(&coin_type),
+        Err(KeyError::NotAccount)
+    );
+}
+
+#[test]
+fn the_price_day_is_the_utc_day_for_request_and_cache() {
+    // 23:30 UTC on 14 Nov 2023 is already the 15th in Berlin; the price is the 14th's
+    let t = 1_700_004_600;
+    assert_eq!(price_day(t), "2023-11-14");
+    assert_eq!(price_day(day_start(t)), "2023-11-14");
 }

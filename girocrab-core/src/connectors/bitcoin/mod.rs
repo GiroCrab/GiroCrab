@@ -48,6 +48,7 @@ fn key_message(e: KeyError) -> String {
         KeyError::Private => tr("Das ist ein privater Schlüssel. Bitte nur den erweiterten öffentlichen Schlüssel (xpub, ypub oder zpub) eintragen."),
         KeyError::Unsupported => tr("Dieses Schlüsselformat wird nicht unterstützt. Möglich sind xpub, ypub und zpub (Bitcoin-Mainnet, Einzelsignatur)."),
         KeyError::Malformed => tr("Der Schlüssel ist ungültig. Bitte den erweiterten öffentlichen Schlüssel (xpub, ypub oder zpub) vollständig eintragen."),
+        KeyError::NotAccount => tr("Das ist kein Schlüssel eines Wallet-Kontos. Bitte den Konto-Schlüssel eintragen (z. B. m/84'/0'/0')."),
         KeyError::ChainLevel => tr("Das ist der Schlüssel einer einzelnen Adresskette. Bitte den Schlüssel des Wallet-Kontos eintragen (z. B. m/84'/0'/0'), sonst fehlen die Wechselgeld-Adressen."),
     }
     .to_string()
@@ -121,87 +122,120 @@ pub struct WalletTx {
     pub net_sats: i64,
 }
 
-/// Inputs and outputs of an Esplora transaction: `(address, sats)`.
+/// Inputs and outputs of a confirmed Esplora transaction: `(address, sats)`;
+/// an output script without an address (`OP_RETURN` …) has an empty one.
 struct RawTx {
     txid: String,
-    time: Option<i64>,
+    time: i64,
     inputs: Vec<(String, i64)>,
     outputs: Vec<(String, i64)>,
 }
 
-fn raw_tx(v: &Value) -> Option<RawTx> {
-    let txid = v.get("txid")?.as_str()?.to_string();
+/// All bitcoins there will ever be, in satoshis: no amount can be larger.
+const MAX_SATS: i64 = 21_000_000 * 100_000_000;
+/// Block time of the genesis block: no confirmed transaction is older.
+const GENESIS_TIME: i64 = 1_231_006_505;
+
+fn incomplete() -> CoreError {
+    CoreError::invalid(tr(
+        "Der Bitcoin-Server hat unvollständige Transaktionsdaten geliefert.",
+    ))
+}
+
+/// A confirmed transaction, `None` for an unconfirmed one. Missing amounts, a
+/// missing `prevout` of a non-coinbase input or an impossible time are an error:
+/// leaving such an input out would count the change as a deposit.
+fn raw_tx(v: &Value) -> CoreResult<Option<RawTx>> {
+    let txid = v
+        .get("txid")
+        .and_then(Value::as_str)
+        .ok_or_else(incomplete)?
+        .to_string();
     let status = v.get("status");
-    let confirmed = status
+    if status
         .and_then(|s| s.get("confirmed"))
         .and_then(Value::as_bool)
-        == Some(true);
-    let time = confirmed
-        .then(|| {
-            status
-                .and_then(|s| s.get("block_time"))
-                .and_then(Value::as_i64)
-        })
-        .flatten();
-    let pair = |o: &Value| -> Option<(String, i64)> {
-        Some((
-            o.get("scriptpubkey_address")?.as_str()?.to_string(),
-            o.get("value")?.as_i64()?,
-        ))
+        != Some(true)
+    {
+        return Ok(None);
+    }
+    let latest = jiff::Timestamp::now().as_second() + 86_400;
+    let time = status
+        .and_then(|s| s.get("block_time"))
+        .and_then(Value::as_i64)
+        .filter(|t| (GENESIS_TIME..=latest).contains(t))
+        .ok_or_else(incomplete)?;
+    let amount = |o: &Value| -> CoreResult<(String, i64)> {
+        let sats = o
+            .get("value")
+            .and_then(Value::as_i64)
+            .filter(|v| (0..=MAX_SATS).contains(v))
+            .ok_or_else(incomplete)?;
+        let address = o
+            .get("scriptpubkey_address")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Ok((address.to_string(), sats))
     };
-    let inputs = v
+    let mut inputs = Vec::new();
+    for i in v
         .get("vin")
         .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|i| i.get("prevout").and_then(pair))
-                .collect()
-        })
-        .unwrap_or_default();
+        .ok_or_else(incomplete)?
+    {
+        if i.get("is_coinbase").and_then(Value::as_bool) == Some(true) {
+            continue; // newly mined coins have no previous output
+        }
+        inputs.push(amount(i.get("prevout").ok_or_else(incomplete)?)?);
+    }
     let outputs = v
         .get("vout")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(pair).collect())
-        .unwrap_or_default();
-    Some(RawTx {
+        .ok_or_else(incomplete)?
+        .iter()
+        .map(amount)
+        .collect::<CoreResult<Vec<_>>>()?;
+    Ok(Some(RawTx {
         txid,
         time,
         inputs,
         outputs,
-    })
+    }))
 }
 
 /// Net effect of every confirmed transaction on the wallet `own`, oldest first.
-pub fn wallet_transactions(txs: &[Value], own: &HashSet<String>) -> Vec<WalletTx> {
+/// A transaction listed several times (once per address, unconfirmed at first)
+/// counts once, from a confirmed copy.
+pub fn wallet_transactions(txs: &[Value], own: &HashSet<String>) -> CoreResult<Vec<WalletTx>> {
     let mut seen = HashSet::new();
-    let mut out: Vec<WalletTx> = txs
-        .iter()
-        .filter_map(raw_tx)
-        .filter(|t| seen.insert(t.txid.clone()))
-        .filter_map(|t| {
-            let time = t.time?;
-            let received: i64 = t
-                .outputs
-                .iter()
-                .filter(|(a, _)| own.contains(a))
-                .map(|(_, v)| v)
-                .sum();
-            let spent: i64 = t
-                .inputs
-                .iter()
-                .filter(|(a, _)| own.contains(a))
-                .map(|(_, v)| v)
-                .sum();
-            Some(WalletTx {
+    let mut out = Vec::new();
+    for v in txs {
+        let Some(t) = raw_tx(v)? else { continue };
+        if !seen.insert(t.txid.clone()) {
+            continue;
+        }
+        let received: i64 = t
+            .outputs
+            .iter()
+            .filter(|(a, _)| own.contains(a))
+            .map(|(_, v)| v)
+            .sum();
+        let spent: i64 = t
+            .inputs
+            .iter()
+            .filter(|(a, _)| own.contains(a))
+            .map(|(_, v)| v)
+            .sum();
+        if received != spent {
+            out.push(WalletTx {
                 txid: t.txid,
-                time,
+                time: t.time,
                 net_sats: received - spent,
-            })
-        })
-        .filter(|t| t.net_sats != 0)
-        .collect();
+            });
+        }
+    }
     out.sort_by(|a, b| a.time.cmp(&b.time).then_with(|| a.txid.cmp(&b.txid)));
-    out
+    Ok(out)
 }
 
 // ------------------------------------------------------------------ scanning
@@ -262,6 +296,12 @@ pub async fn scan(
                 "bitcoin: {kind:?} chain {chain}: {index} addresses, {used} used, {} tx entries",
                 txs.len() - before
             ));
+            if unused < GAP_LIMIT {
+                // stopped by the cap, not by the gap: the rest of the chain is unknown
+                return Err(CoreError::invalid(tr(
+                    "Das Wallet nutzt mehr Adressen, als ein Abruf durchsucht (5000 je Kette). Der Saldo wäre unvollständig.",
+                )));
+            }
         }
     }
     Ok((own, txs))
@@ -270,18 +310,26 @@ pub async fn scan(
 async fn address_history(source: &dyn TxSource, address: &str) -> CoreResult<Vec<Value>> {
     let mut all = source.address_txs(address, None).await?;
     let mut confirmed: Vec<String> = confirmed_ids(&all);
+    let mut cursors = HashSet::new();
     // a full page of confirmed transactions: the next page starts after the last one
-    // (some servers hand out larger pages; a page that brings nothing new ends it)
+    // (some servers hand out larger pages); an empty page ends the list
     while confirmed.len() >= PAGE {
         let last = confirmed.last().cloned().unwrap_or_default();
+        if !cursors.insert(last.clone()) {
+            // the server sent a page again: going on would loop or miss transactions
+            return Err(CoreError::invalid(tr(
+                "Der Bitcoin-Server hat unerwartet geantwortet.",
+            )));
+        }
         let page = source.address_txs(address, Some(&last)).await?;
         let next = confirmed_ids(&page);
-        if next.is_empty() || next.contains(&last) {
-            all.extend(page);
-            break;
+        if next.contains(&last) {
+            return Err(CoreError::invalid(tr(
+                "Der Bitcoin-Server hat unerwartet geantwortet.",
+            )));
         }
-        confirmed = next;
         all.extend(page);
+        confirmed = next;
     }
     Ok(all)
 }
@@ -302,7 +350,12 @@ struct Esplora {
 /// that parallel syncs together keep the public servers' rate limits.
 static NEXT_SLOT: std::sync::Mutex<Option<tokio::time::Instant>> = std::sync::Mutex::new(None);
 
-/// Reserves the next request slot `gap` after the previous one and waits for it.
+/// End of the pause after an "HTTP 429"; requests already waiting for their
+/// slot look at it again before they go out.
+static COOLDOWN: std::sync::Mutex<Option<tokio::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Reserves the next request slot `gap` after the previous one and waits for
+/// it and for a pause another request started meanwhile.
 async fn wait_for_slot(gap: std::time::Duration) {
     let slot = {
         let mut next = NEXT_SLOT.lock().unwrap_or_else(|e| e.into_inner());
@@ -312,12 +365,22 @@ async fn wait_for_slot(gap: std::time::Duration) {
         slot
     };
     tokio::time::sleep_until(slot).await;
+    loop {
+        let until = *COOLDOWN.lock().unwrap_or_else(|e| e.into_inner());
+        match until {
+            Some(t) if t > tokio::time::Instant::now() => tokio::time::sleep_until(t).await,
+            _ => break,
+        }
+    }
 }
 
-/// After "HTTP 429" every Bitcoin sync of the process waits `pause`.
+/// After "HTTP 429" every Bitcoin sync of the process waits `pause`, also the
+/// requests that already wait for their slot.
 fn push_back_all(pause: std::time::Duration) {
-    let mut next = NEXT_SLOT.lock().unwrap_or_else(|e| e.into_inner());
     let until = tokio::time::Instant::now() + pause;
+    let mut cooldown = COOLDOWN.lock().unwrap_or_else(|e| e.into_inner());
+    *cooldown = Some(cooldown.map_or(until, |t| t.max(until)));
+    let mut next = NEXT_SLOT.lock().unwrap_or_else(|e| e.into_inner());
     *next = Some(next.map_or(until, |t| t.max(until)));
 }
 
@@ -360,6 +423,21 @@ async fn send(http: &reqwest::Client, url: &str) -> CoreResult<reqwest::Response
 }
 
 async fn get_json(http: &reqwest::Client, url: &str) -> CoreResult<Value> {
+    let mut attempt = 0;
+    loop {
+        match get_json_once(http, url).await {
+            // the connection broke while the answer was being read: ask again
+            Err(CoreError::Network { .. }) if attempt < 3 => {
+                attempt += 1;
+                crate::depot_debug::log("bitcoin: connection lost while reading, retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(2 * attempt)).await;
+            }
+            other => return other,
+        }
+    }
+}
+
+async fn get_json_once(http: &reqwest::Client, url: &str) -> CoreResult<Value> {
     let mut resp = send(http, url).await?;
     for wait in BACKOFF_SECS {
         if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -410,6 +488,14 @@ pub fn historical_eur_price(v: &Value) -> Option<f64> {
 /// Midnight (UTC) of the day of `unix` seconds.
 pub fn day_start(unix: i64) -> i64 {
     unix - unix.rem_euclid(86_400)
+}
+
+/// The UTC calendar day of `unix` seconds (`YYYY-MM-DD`): the day whose price
+/// is asked for and the key it is kept under.
+pub fn price_day(unix: i64) -> String {
+    crate::dates::iso(crate::dates::utc_date(
+        jiff::Timestamp::from_second(day_start(unix)).unwrap_or_default(),
+    ))
 }
 
 fn cents(sats: i64, eur_per_btc: f64) -> i64 {
@@ -471,7 +557,7 @@ pub fn to_fetch(
         let date = crate::dates::iso(crate::dates::local_date(
             jiff::Timestamp::from_second(t.time).unwrap_or_default(),
         ));
-        let day = day_prices.get(&date).copied().unwrap_or(0);
+        let day = day_prices.get(&price_day(t.time)).copied().unwrap_or(0);
         let incoming = t.net_sats > 0;
         out.security_transactions.push(RemoteSecurityTransaction {
             account_ref: reference.to_string(),
@@ -559,7 +645,7 @@ impl BankConnector for BitcoinConnector {
             },
         )
         .await?;
-        let txs = wallet_transactions(&raw, &own);
+        let txs = wallet_transactions(&raw, &own)?;
         let sats: i64 = txs.iter().map(|t| t.net_sats).sum();
         if sats < 0 {
             // more spent than received: part of the history is missing, so no figure is right
@@ -586,9 +672,7 @@ impl BankConnector for BitcoinConnector {
         let mut warnings = Vec::new();
         let mut by_day: HashMap<String, i64> = HashMap::new();
         for t in &txs {
-            let date = crate::dates::iso(crate::dates::local_date(
-                jiff::Timestamp::from_second(t.time).unwrap_or_default(),
-            ));
+            let date = price_day(t.time);
             if state.day_prices.contains_key(&date) || by_day.contains_key(&date) {
                 continue;
             }
@@ -607,8 +691,12 @@ impl BankConnector for BitcoinConnector {
             }
         }
         state.day_prices.extend(by_day);
-        if txs.is_empty() && key.depth != 3 {
-            warnings.push(tr("Keine Umsätze gefunden. Der Schlüssel ist kein Konto-Schlüssel (z. B. m/84'/0'/0'); viele Wallets nutzen nur Adressen unterhalb eines solchen.").to_string());
+        if txs.is_empty() {
+            warnings.push(if key.depth == 3 {
+                tr("Keine Umsätze gefunden. Bitte prüfen, ob der Schlüssel zum richtigen Wallet-Konto gehört.").to_string()
+            } else {
+                tr("Keine Umsätze gefunden. Der Schlüssel ist kein Konto-Schlüssel (z. B. m/84'/0'/0'); viele Wallets nutzen nur Adressen unterhalb eines solchen.").to_string()
+            });
         }
         let mut out = to_fetch(
             &account_ref(&key),
