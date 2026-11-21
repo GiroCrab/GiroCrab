@@ -1193,6 +1193,19 @@ impl MerchantRules {
         self.settings.enabled
     }
 
+    /// Whether the name of an own merchant or of a bundled one in use contains `term`
+    /// (lower case): the shown names that may be in no booking text (search, #1373).
+    pub(crate) fn names_contain(&self, term: &str) -> bool {
+        self.settings.enabled
+            && (self
+                .custom
+                .iter()
+                .any(|c| c.name.to_lowercase().contains(term))
+                || entries().iter().any(|e| {
+                    !self.settings.disabled.contains(e.key) && e.name.to_lowercase().contains(term)
+                }))
+    }
+
     fn clear_cache(&self) {
         *self.cache.lock().unwrap_or_else(PoisonError::into_inner) = ResolveCache::default();
     }

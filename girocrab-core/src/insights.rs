@@ -511,7 +511,7 @@ impl Vault {
                 account_ids: vec![account_id],
                 ..Default::default()
             };
-            let (cte, where_sql, args, _) = Vault::filter_clauses(&db, &filter)?;
+            let (cte, where_sql, args, _) = self.filter_clauses(&db, &filter)?;
             let sql = format!(
                 "{cte}SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id \
                  LEFT JOIN categories cat ON cat.id = t.category_id AND cat.deleted_ms IS NULL \

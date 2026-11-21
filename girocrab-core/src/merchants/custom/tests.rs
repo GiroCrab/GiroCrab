@@ -557,3 +557,55 @@ fn rules_are_kept_while_the_tables_stay_the_same() {
     assert!(!Arc::ptr_eq(&first, &changed));
     assert!(changed.settings().disabled.contains("rewe"));
 }
+
+#[test]
+fn the_search_finds_the_shown_merchant_name() {
+    let dir = TempDir::new("merchant-custom-search");
+    let v = open(&dir, "v.db");
+    let shop = book(&v, "REWE Markt GmbH", "Einkauf", "", "2026-10-03", -25_00);
+    let amzn = book(
+        &v,
+        "AMZN Mktp DE",
+        "Bestellung 302",
+        "",
+        "2026-10-04",
+        -19_99,
+    );
+    let rent = book(
+        &v,
+        "Hausverwaltung Muster",
+        "Oktober",
+        "",
+        "2026-10-01",
+        -800_00,
+    );
+    let found = |q: &str| -> Vec<i64> {
+        let filter = BookingFilter {
+            search: Some(q.into()),
+            ..Default::default()
+        };
+        let mut ids: Vec<i64> = v
+            .list_transactions(filter)
+            .unwrap()
+            .transactions
+            .iter()
+            .map(|b| b.id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    // a bundled name that no booking text contains
+    assert_eq!(found("amazon"), [amzn]);
+    create(&v, "Supermarkt Ecke", &["rewe markt"], Some("rewe"));
+    assert_eq!(found("Supermarkt Ecke"), [shop]);
+    assert_eq!(found("ecke supermarkt"), [shop], "every word, in any order");
+    assert!(found("ecke hausverwaltung").is_empty());
+    assert_eq!(found("REWE"), [shop], "the texts still count");
+    // a search that no merchant name contains does not finish every booking
+    book(&v, "Muster", "", "", "2026-10-05", -1_00);
+    assert_eq!(found("hausverwaltung"), [rent]);
+    assert!(v.cached_booking_classes(&v.db().unwrap()).is_none());
+    // recognition off: the shown names are the counterparties
+    v.set_merchant_recognition_enabled(false).unwrap();
+    assert!(found("amazon").is_empty());
+}

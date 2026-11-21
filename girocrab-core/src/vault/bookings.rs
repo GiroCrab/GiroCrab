@@ -385,6 +385,7 @@ impl Vault {
     /// expression) of a `BookingFilter`; shared by the list and bulk updates.
     #[allow(clippy::type_complexity)]
     pub(crate) fn filter_clauses(
+        &self,
         db: &rusqlite::Connection,
         filter: &BookingFilter,
     ) -> Result<(String, String, Vec<Box<dyn ToSql>>, String), CoreError> {
@@ -549,6 +550,7 @@ impl Vault {
                      OR REPLACE(UPPER(IFNULL(a.account_number, '')), ' ', '') LIKE ?{n} ESCAPE '\\')"
                 ));
             } else {
+                let merchants = self.merchant_rules(db)?;
                 let mut ors = Vec::new();
                 for term in q.split_whitespace() {
                     let like = format!(
@@ -587,6 +589,15 @@ impl Vault {
                             args.push(Box::new(cents.abs()));
                             alt.push_str(&format!(" OR ABS(t.amount_cents) = ?{}", args.len()));
                         }
+                    }
+                    // The shown merchant name (#1373): an own merchant's name or a bundled
+                    // one ("Amazon" for "AMZN Mktp") is in no booking text.
+                    if let Some(ids) = self.shown_merchant_ids(db, &merchants, term)? {
+                        args.push(Box::new(ids));
+                        alt.push_str(&format!(
+                            " OR t.id IN (SELECT value FROM json_each(?{}))",
+                            args.len()
+                        ));
                     }
                     alt.push(')');
                     ors.push(alt);
@@ -638,7 +649,7 @@ impl Vault {
         if only_accounts.is_empty() {
             return Ok(Vec::new());
         }
-        let (cte, mut where_sql, mut args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, mut where_sql, mut args, share_sql) = self.filter_clauses(db, filter)?;
         let ph: Vec<String> = only_accounts
             .iter()
             .map(|id| {
@@ -711,7 +722,7 @@ impl Vault {
         filter: &BookingFilter,
         mut visit: impl FnMut(i64, Booking),
     ) -> Result<(), CoreError> {
-        let (cte, where_sql, args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
         let sql = booking_select(&cte, &where_sql, &share_sql);
         let args = params_from_iter(args.iter().map(|b| b.as_ref()));
         let classes = filters_by_class(filter)
@@ -834,7 +845,7 @@ impl Vault {
             return Ok(ids);
         }
         let mut db = self.db()?;
-        let (cte, where_sql, args, _) = Self::filter_clauses(&db, &filter)?;
+        let (cte, where_sql, args, _) = self.filter_clauses(&db, &filter)?;
         let tx = db.transaction()?;
         let ids: Vec<i64> = {
             let sql = format!(
@@ -873,7 +884,7 @@ impl Vault {
             return Ok(self.list_page(filter, false)?.total_count);
         }
         let db = self.db()?;
-        let (cte, where_sql, args, _) = Self::filter_clauses(&db, &filter)?;
+        let (cte, where_sql, args, _) = self.filter_clauses(&db, &filter)?;
         let sql = format!(
             "{cte}SELECT count(*) FROM transactions t JOIN accounts a ON a.id = t.account_id \
              LEFT JOIN categories cat ON cat.id = t.category_id AND cat.deleted_ms IS NULL \
@@ -964,7 +975,7 @@ impl Vault {
         filter: &BookingFilter,
     ) -> Result<Vec<(i64, i64)>, CoreError> {
         let classes = self.booking_classes(db)?;
-        let (cte, where_sql, args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
         let sql = format!("{cte}SELECT t.id, {share_sql} {BOOKING_FROM_SQL} WHERE {where_sql}");
         let mut stmt = db.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(args.iter().map(|b| b.as_ref())), |r| {
@@ -990,6 +1001,8 @@ impl Vault {
 pub(crate) struct BookingClass {
     pub(crate) flow: FlowKind,
     pub(crate) merchant: Arc<str>,
+    /// The shown merchant name in lower case, for the search (#1373).
+    pub(crate) name: Arc<str>,
 }
 
 type BookingClasses = Arc<HashMap<i64, BookingClass>>;
@@ -1072,7 +1085,7 @@ impl Vault {
         let stamp = self.data_stamp(db);
         let finisher = self.booking_finisher(db)?;
         let (cte, where_sql, args, share_sql) =
-            Self::filter_clauses(db, &BookingFilter::default())?;
+            self.filter_clauses(db, &BookingFilter::default())?;
         let sql = format!(
             "{cte}SELECT {} {BOOKING_FROM_SQL} WHERE {where_sql}",
             booking_columns(&share_sql)
@@ -1082,25 +1095,27 @@ impl Vault {
             params_from_iter(args.iter().map(|b| b.as_ref())),
             booking_from_row,
         )?;
-        // Thousands of bookings share a few hundred merchants: one key each.
-        let mut merchants: HashSet<Arc<str>> = HashSet::new();
+        // Thousands of bookings share a few hundred merchants: one key and name each.
+        let mut shared: HashSet<Arc<str>> = HashSet::new();
+        let mut intern = |s: String| -> Arc<str> {
+            shared.get(s.as_str()).cloned().unwrap_or_else(|| {
+                let s: Arc<str> = s.into();
+                shared.insert(s.clone());
+                s
+            })
+        };
         let mut classes = HashMap::new();
         for row in rows {
             let (_, mut t) = row?;
             finisher.finish(&mut t, None);
-            let merchant = merchants
-                .get(t.merchant.key.as_str())
-                .cloned()
-                .unwrap_or_else(|| {
-                    let key: Arc<str> = t.merchant.key.into();
-                    merchants.insert(key.clone());
-                    key
-                });
+            let name = intern(t.merchant.name.to_lowercase());
+            let merchant = intern(t.merchant.key);
             classes.insert(
                 t.id,
                 BookingClass {
                     flow: t.flow,
                     merchant,
+                    name,
                 },
             );
         }
@@ -1108,6 +1123,29 @@ impl Vault {
         self.list_cache
             .keep(db, stamp, |s| s.classes = Some(classes.clone()));
         Ok(classes)
+    }
+
+    /// The bookings whose shown merchant name contains `term` (a JSON id array), or
+    /// `None` when no own or bundled merchant name in use contains it. The other names
+    /// come from the counterparty or the purpose, which the text search covers, so a
+    /// search for anything else never builds the booking classes.
+    fn shown_merchant_ids(
+        &self,
+        db: &rusqlite::Connection,
+        merchants: &MerchantRules,
+        term: &str,
+    ) -> Result<Option<String>, CoreError> {
+        let term = term.to_lowercase();
+        if !merchants.names_contain(&term) {
+            return Ok(None);
+        }
+        let ids: Vec<i64> = self
+            .booking_classes(db)?
+            .iter()
+            .filter(|(_, c)| c.name.contains(term.as_str()))
+            .map(|(id, _)| *id)
+            .collect();
+        Ok(Some(format!("[{}]", sql_int_list(&ids))))
     }
 
     /// `booking_classes` if no write happened since they were built. For callers
@@ -1156,7 +1194,7 @@ impl Vault {
         with_rows: bool,
     ) -> Result<Option<BookingPage>, CoreError> {
         let classes = self.booking_classes(db)?;
-        let (cte, where_sql, args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
         let order = if with_rows {
             " ORDER BY t.booking_date DESC, t.id DESC"
         } else {
@@ -1233,7 +1271,7 @@ impl Vault {
             }
             let page_ids: Vec<i64> = kept[start..end].iter().map(|(id, _)| *id).collect();
             if !page_ids.is_empty() {
-                let (cte, mut where_sql, mut args, share_sql) = Self::filter_clauses(db, filter)?;
+                let (cte, mut where_sql, mut args, share_sql) = self.filter_clauses(db, filter)?;
                 // One JSON parameter instead of one per id: no variable limit to hit.
                 let json = format!(
                     "[{}]",
