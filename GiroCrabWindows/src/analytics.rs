@@ -106,7 +106,14 @@ pub fn categories(rows: &[&Row], expenses: bool, n: usize) -> Vec<Slice> {
         } else {
             &r.category_name
         };
-        add(&mut v, name, &r.category_color_hex, r.amount_cents.abs());
+        let cents = if expenses {
+            r.amount_cents.abs()
+        } else {
+            income(r)
+        };
+        if cents != 0 {
+            add(&mut v, name, &r.category_color_hex, cents);
+        }
     }
     finish(v, n)
 }
@@ -132,12 +139,19 @@ pub fn tags(rows: &[&Row], n: usize) -> Vec<Slice> {
     v
 }
 
+/// What an incoming row counts as income: of a refund linked to its bookings only what none
+/// of them takes up, the rest lowers the expenses (`net_expenses`, #714).
+fn income(r: &Row) -> i64 {
+    r.refund_income_cents
+        .map_or(r.amount_cents, |rest| rest.clamp(0, r.amount_cents))
+}
+
 /// (income, expenses, net) cents of the rows, transfers excluded.
 pub fn totals(rows: &[&Row]) -> (i64, i64, i64) {
     let inc: i64 = rows
         .iter()
         .filter(|r| !r.transfer && r.amount_cents > 0)
-        .map(|r| r.amount_cents)
+        .map(|r| income(r))
         .sum();
     let exp: i64 = rows
         .iter()
@@ -181,6 +195,25 @@ mod tests {
         assert_eq!(t[0].count, 2);
         assert_eq!(t[0].cents, -400);
         assert_eq!(totals(&refs), (500, 400, 100));
+    }
+
+    /// QA v12 (#6): a linked refund is income only for what no booking takes up.
+    #[test]
+    fn a_linked_refund_counts_as_income_only_for_its_unassigned_rest() {
+        let mut full = row(10000, "A", &[]);
+        full.refund_income_cents = Some(0);
+        let mut part = row(5000, "B", &[]);
+        part.refund_income_cents = Some(2000);
+        let rows = [full, part, row(10200, "C", &[])];
+        let refs: Vec<&Row> = rows.iter().collect();
+        assert_eq!(totals(&refs).0, 12200);
+        let c = categories(&refs, false, 5);
+        assert_eq!(
+            c.iter()
+                .map(|s| (s.name.as_str(), s.cents))
+                .collect::<Vec<_>>(),
+            [("C", 10200), ("B", 2000)]
+        );
     }
 
     #[test]

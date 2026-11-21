@@ -391,6 +391,7 @@ pub(crate) mod tests {
             documents: 0,
             refund_linked: false,
             refund_part_cents: None,
+            refund_income_cents: None,
         }
     }
 

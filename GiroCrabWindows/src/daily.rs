@@ -146,6 +146,9 @@ pub struct Row {
     pub refund_linked: bool,
     /// What is assigned or refunded so far, only while that is a part of the amount.
     pub refund_part_cents: Option<i64>,
+    /// Of a linked refund: what no original takes up and so stays income; the rest lowers
+    /// the expenses instead (`Booking::refund_income_cents`). `None`: counts whole.
+    pub refund_income_cents: Option<i64>,
 }
 
 impl From<&Booking> for Row {
@@ -199,6 +202,10 @@ impl From<&Booking> for Row {
             documents: b.document_count,
             refund_linked: b.refund_link != girocrab_core::refunds::RefundLinkKind::None,
             refund_part_cents: b.refund_part_cents,
+            refund_income_cents: (b.refund_link == girocrab_core::refunds::RefundLinkKind::Refund
+                && b.amount_cents > 0
+                && b.flow == girocrab_core::merchants::FlowKind::Consumption)
+                .then_some(b.refund_income_cents),
         }
     }
 }
@@ -485,6 +492,7 @@ mod tests {
             documents: 0,
             refund_linked: false,
             refund_part_cents: None,
+            refund_income_cents: None,
         }
     }
 
