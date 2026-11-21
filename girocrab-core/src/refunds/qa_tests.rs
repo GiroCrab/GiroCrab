@@ -1469,3 +1469,39 @@ fn search_finds_bookings_before_and_after() {
     v.link_refund(early, purchase, 0).unwrap();
     assert_eq!(allocations(&v, early), vec![(purchase, Some(2000))]);
 }
+
+/// QA v12: a refund for two bookings keeps the order its links were made in when the split of
+/// the first one changes (its part link becomes a link to the whole booking).
+#[test]
+fn qa_a_changed_split_keeps_the_link_order_of_a_collective_refund() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let first = booking(&v, a, -10000);
+    let second = booking(&v, a, -5000);
+    let r = booking(&v, a, 10000);
+    let sp = |c: i64, amount: i64| TransactionSplitInput {
+        category_id: Some(c),
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(first, vec![sp(ca, -6000), sp(cb, -4000)])
+        .unwrap();
+    v.link_refund(r, first, 1).unwrap();
+    v.link_refund(r, second, 0).unwrap();
+    assert_eq!(
+        allocations(&v, r),
+        [(first, Some(6000)), (second, Some(4000))]
+    );
+    v.set_transaction_splits(first, vec![sp(ca, -7000), sp(cb, -3000)])
+        .unwrap();
+    // still first: it is filled before the second booking gets anything
+    assert_eq!(allocations(&v, r)[0].0, first);
+    assert_eq!(v.refund_links(second).unwrap().refunded_cents, Some(0));
+    // a link removed and made again is a new link: it goes to the back
+    v.unlink_refund(r, first, 0).unwrap();
+    v.link_refund(r, first, 1).unwrap();
+    assert_eq!(
+        allocations(&v, r),
+        [(second, Some(5000)), (first, Some(5000))]
+    );
+}

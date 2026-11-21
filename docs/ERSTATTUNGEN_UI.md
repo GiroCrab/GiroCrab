@@ -152,8 +152,8 @@ aus `planning::store_splits`):
   danach geteilt wird, und für eine Verknüpfung von einem anderen Gerät, deren Teil es hier nicht gibt.
 - **Nur Kategorie oder Notiz eines Teils geändert:** Die Verknüpfung bleibt bei ihrem Teil.
 
-Die umgestellten Verknüpfungen reihen sich hinter den übrigen ein (neuer Stempel, damit die Änderung die anderen
-Geräte erreicht); untereinander behalten sie ihre Reihenfolge. Eine neue Verknüpfung zu einer geteilten Buchung nennt
+Die umgestellten Verknüpfungen behalten ihren Platz unter den Verknüpfungen ihrer Erstattung (der Stempel des
+Anlegens `created_ms` bleibt; nur `changed_ms` ist neu, damit die Änderung die anderen Geräte erreicht). Eine neue Verknüpfung zu einer geteilten Buchung nennt
 weiterhin einen Teil.
 
 ## Auswertung
@@ -180,7 +180,7 @@ Kontostände ändern sich dadurch nicht.
 
 ## Reihenfolge und Grenze
 
-Die Anteile werden in der Reihenfolge gefüllt, in der die Verknüpfungen angelegt wurden (`refund_links.changed_ms`;
+Die Anteile werden in der Reihenfolge gefüllt, in der die Verknüpfungen angelegt wurden (`refund_links.created_ms`;
 bei gleichem Stempel von zwei Geräten nach Datum und Bankkennung der Buchungen, auf beiden Geräten gleich):
 Die zuerst verknüpfte Buchung bekommt ihren Anteil zuerst, die nächste höchstens den Rest. So stehen die verknüpften
 Zeilen auch in der Auswahl und im Inspektor. Ist eine Erstattung vollständig zugeordnet oder eine Buchung vollständig

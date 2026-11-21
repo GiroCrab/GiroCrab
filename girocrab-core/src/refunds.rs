@@ -367,7 +367,7 @@ fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shar
             "SELECT l.refund_id,l.original_id,l.original_part,l.refund_part,r.amount_cents,o.amount_cents,r.currency,o.currency
              FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id
              WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL
-             ORDER BY l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,l.refund_id,l.original_id",
+             ORDER BY l.created_ms,l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,l.refund_id,l.original_id",
         )?
         .query_map([], |r| {
             Ok((
@@ -1124,13 +1124,14 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
 /// The booking `id` is split differently or not at all any more (call it with the new parts
 /// stored): the parts its links name are gone, so every such link becomes a link to the whole
 /// booking. The old row stays as a tombstone and the new one gets a new stamp (both reach the
-/// other devices); the links keep their order among themselves.
+/// other devices). It keeps `created_ms`, the stamp of when the link was made, which
+/// is what the shares are filled by: a link keeps its place among a refund's other links.
 pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
     let links: Vec<(i64, i64, i64, i64, i64)> = conn
         .prepare(
             "SELECT refund_id,original_id,original_part,refund_part,created_ms FROM refund_links
              WHERE deleted_ms IS NULL AND ((original_id=?1 AND original_part>0) OR (refund_id=?1 AND refund_part>0))
-             ORDER BY changed_ms,refund_id,original_id,original_part,refund_part",
+             ORDER BY created_ms,changed_ms,refund_id,original_id,original_part,refund_part",
         )?
         .query_map([id], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
@@ -1150,7 +1151,7 @@ pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
         // a booking linked by several of its parts keeps one link
         conn.execute(
             "INSERT INTO refund_links(refund_id,original_id,original_part,refund_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?4,?5,?6,NULL)
-             ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",
+             ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",
             params![refund, original, part, refund_part, created, changed + 1],
         )?;
     }
@@ -1230,7 +1231,7 @@ impl Vault {
             i64::from(refund_part),
         )?;
         let changed = next_change(&db)?;
-        db.execute("INSERT INTO refund_links(refund_id,original_id,original_part,refund_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?4,?5,?3,?3,NULL) ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",params![refund_id,original_id,changed,original_part,refund_part])?;
+        db.execute("INSERT INTO refund_links(refund_id,original_id,original_part,refund_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?4,?5,?3,?3,NULL) ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",params![refund_id,original_id,changed,original_part,refund_part])?;
         Ok(())
     }
     /// Removes the links of `refund_id` to `original_id` (its part `original_part`), whatever
@@ -1279,7 +1280,7 @@ impl Vault {
             rows(
                 &db,
                 &format!(
-                    "{} JOIN refund_links l ON l.{other}=t.id AND l.{own}=?1 AND l.deleted_ms IS NULL WHERE t.deleted_ms IS NULL ORDER BY l.changed_ms,t.id,l.original_part,l.refund_part",
+                    "{} JOIN refund_links l ON l.{other}=t.id AND l.{own}=?1 AND l.deleted_ms IS NULL WHERE t.deleted_ms IS NULL ORDER BY l.created_ms,l.changed_ms,t.id,l.original_part,l.refund_part",
                     ROWS.replace("{part}", "l.original_part")
                         .replace("{refund_part}", "l.refund_part")
                 ),
