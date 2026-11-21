@@ -117,15 +117,24 @@ fn header(title: String) -> RefundRow {
     }
 }
 
+fn own_open(links: &RefundLinks, from_refund: bool) -> i64 {
+    if from_refund {
+        links.refund_open_cents
+    } else {
+        links.original_open_cents
+    }
+}
+
 /// The rows of the list: linked bookings in the order they were linked (with their share), up to
 /// three suggestions, then the other candidates. A row that takes no further link says why.
+/// What the booking the dialog was opened from has left on the side it is linked on.
 fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<RefundRow> {
     let linked = if from_refund {
         &l.links.originals
     } else {
         &l.links.refunds
     };
-    let used_up = l.links.open_cents == 0;
+    let used_up = own_open(&l.links, from_refund) == 0;
     let cash = |c: i64, cur: &str| daily::mask(&money(c, cur), privacy);
     let row = |b: &RefundBooking, kind: i32, reason: &str| RefundRow {
         kind,
@@ -282,7 +291,7 @@ fn show(win: &MainWindow, loaded: Loaded) {
     )));
     win.set_rf_part_index(index as i32);
     let hint = match (
-        loaded.links.open_cents == 0 && !linked.is_empty(),
+        own_open(&loaded.links, from_refund) == 0 && !linked.is_empty(),
         from_refund,
     ) {
         (false, _) => "",
@@ -470,7 +479,6 @@ mod tests {
                 refunds: Vec::new(),
                 refunded_cents: None,
                 assigned_cents: Some(1599 - open),
-                open_cents: open,
                 refund_total_cents: 1599,
                 refund_open_cents: open,
                 original_total_cents: 0,

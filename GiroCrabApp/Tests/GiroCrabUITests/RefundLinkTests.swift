@@ -136,7 +136,7 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertTrue(open[1].contains(further), open[1])
 
         model.linkRefund(refundID: refund.id, originalID: originals[1].id)
-        XCTAssertEqual(try vault.refundLinks(transactionId: refund.id).openCents, 0)
+        XCTAssertEqual(try vault.refundLinks(transactionId: refund.id).refundOpenCents, 0)
         let usedUp = RefundSum.lines(booking: originals[0], links: try vault.refundLinks(transactionId: originals[0].id))
         XCTAssertEqual(usedUp.count, 2)
         XCTAssertFalse(usedUp[1].contains(further), usedUp[1])
@@ -189,7 +189,7 @@ final class RefundLinkTests: XCTestCase {
         var links = try vault.refundLinks(transactionId: refund.id)
         XCTAssertEqual(links.originals.map(\.id), [small.id, large.id])
         XCTAssertEqual(links.originals.map(\.shareCents), [-small.amountCents, refund.amountCents + small.amountCents])
-        XCTAssertEqual(links.openCents, 0)
+        XCTAssertEqual(links.refundOpenCents, 0)
         XCTAssertNil(model.errorMessage)
 
         let third = try XCTUnwrap(try vault.refundCandidates(transactionId: refund.id, query: "", limit: 200)

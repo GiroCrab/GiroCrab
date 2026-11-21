@@ -64,7 +64,7 @@ fn validation_replace_unlink_and_markers() {
         v.link_refund(b[2], b[1], 0).unwrap_err().to_string(),
         "Ungültige Eingabe: Die Erstattung ist bereits vollständig zugeordnet."
     );
-    assert_eq!(v.refund_links(b[2]).unwrap().open_cents, 0);
+    assert_eq!(v.refund_links(b[2]).unwrap().refund_open_cents, 0);
     v.db()
         .unwrap()
         .execute(
@@ -77,7 +77,7 @@ fn validation_replace_unlink_and_markers() {
         v.link_refund(b[3], b[0], 0).unwrap_err().to_string(),
         "Ungültige Eingabe: Die Buchung ist bereits vollständig erstattet."
     );
-    assert_eq!(v.refund_links(b[2]).unwrap().open_cents, 30);
+    assert_eq!(v.refund_links(b[2]).unwrap().refund_open_cents, 30);
     // a second original is added, the first link stays
     v.link_refund(b[2], b[1], 0).unwrap();
     assert_eq!(originals(&v, b[2]), vec![b[0], b[1]]);
@@ -513,7 +513,7 @@ fn split_original_keeps_its_parts_and_takes_partial_refunds() {
         vec![(first, 2, "b", Some(3_000)), (second, 1, "a", Some(2_000))]
     );
     assert_eq!(
-        (links.refunded_cents, links.open_cents),
+        (links.refunded_cents, links.original_open_cents),
         (Some(5_000), 5_000)
     );
     let own = &v.refund_links(first).unwrap().originals[0];
@@ -662,7 +662,7 @@ fn refund_larger_than_its_original_is_spread_over_several() {
             .collect::<Vec<_>>(),
         vec![(second, Some(4_000)), (first, Some(1_000))]
     );
-    assert_eq!(own.open_cents, 0);
+    assert_eq!(own.refund_open_cents, 0);
     // used up: no suggestion or link for it any more, and the candidates say so
     let third = add(&v, -700, "2025-06-03", "Versandhaus", "c");
     assert!(v.link_refund(refund, third, 0).is_err());

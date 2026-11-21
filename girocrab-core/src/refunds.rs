@@ -177,9 +177,6 @@ pub struct RefundLinks {
     /// For a refund: how much of it its originals take up, never more than its amount; the rest
     /// belongs to no linked booking. `None` without originals or with mixed currencies.
     pub assigned_cents: Option<i64>,
-    /// What the booking itself has left for a further link ([`RefundBooking::open_cents`]), on
-    /// its own side: as a refund when it is an incoming booking, else as an original.
-    pub open_cents: i64,
     /// What the booking can pay back at most: its amount when it is incoming, of a split
     /// booking the sum of its incoming parts (also those of an outgoing booking).
     pub refund_total_cents: i64,
@@ -506,6 +503,9 @@ fn validate(
             "Eine Erstattung muss positiv und die ursprüngliche Buchung negativ sein.",
         )));
     }
+    // no chains: the amount that is paid back (`original`, `part`) must not pay back itself,
+    // and the one that pays back (`refund`, `refund_part`) must not be paid back. Hence the
+    // crossed parameters: ?1/?3 look for the original as a refund, ?2/?4 for the refund as an original.
     let conflict: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND ((refund_id=?1 AND refund_part=?3) OR (original_id=?2 AND original_part=?4)))",
         params![original, refund, part, refund_part],
@@ -1241,8 +1241,9 @@ impl Vault {
     /// `original_part`: for a split booking the part the refund pays back (its position from 1
     /// in `list_transaction_splits`; an outgoing part, also of an incoming booking), else 0.
     /// Fails for wrong signs, deleted bookings, chains, a split booking without a part and
-    /// amounts that are used up. A split refund is linked as a whole; `link_refund_parts`
-    /// names the part of it that is the refund.
+    /// amounts that are used up. A split outgoing booking cannot be linked as a whole: it
+    /// needs `original_part`. A split incoming `refund_id` pays back as a whole here, filled
+    /// from its last part to its first; `link_refund_parts` names the one part that pays back.
     pub fn link_refund(
         &self,
         refund_id: i64,
@@ -1275,7 +1276,8 @@ impl Vault {
         Ok(())
     }
     /// Removes the links of `refund_id` to `original_id` (its part `original_part`), whatever
-    /// part of the refund they name; no-op without one.
+    /// part of the refund they name: all of them when several parts of the refund pay back
+    /// that amount (`unlink_refund_parts` removes one). No-op without one.
     pub fn unlink_refund(
         &self,
         refund_id: i64,
@@ -1371,7 +1373,6 @@ impl Vault {
                 .iter()
                 .map(|o| link(transaction_id, o.id, o))
                 .collect()),
-            open_cents: Role::of(own_amount).map_or(0, open),
             refund_total_cents: total(Role::Refund),
             refund_open_cents: open(Role::Refund),
             original_total_cents: total(Role::Original),

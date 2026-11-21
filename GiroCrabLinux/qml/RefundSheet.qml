@@ -25,7 +25,7 @@ Sheet {
 
     readonly property var linked: links ? (fromRefund ? links.originals : links.refunds) : []
     /// The booking has nothing left for a further link.
-    readonly property bool usedUp: links !== null && links.open_cents === 0
+    readonly property bool usedUp: links !== null && (fromRefund ? links.refund_open_cents : links.original_open_cents) === 0
     /// Candidates below the suggestions; a linked or suggested booking is shown once only.
     readonly property var others: candidates.filter(c => !linked.some(l => same(l, c)) && !top.some(s => same(s.booking, c)))
     /// A split booking appears once per part.

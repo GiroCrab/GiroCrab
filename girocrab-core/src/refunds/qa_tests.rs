@@ -106,7 +106,7 @@ fn qa_larger_refund_only_assigned_part_in_totals_and_insights() {
         let o = booking(&v, a, -n);
         v.link_refund(r, o, 0).unwrap();
     }
-    assert_eq!(v.refund_links(r).unwrap().open_cents, 4000);
+    assert_eq!(v.refund_links(r).unwrap().refund_open_cents, 4000);
     assert_eq!(
         (page(&v, None).income_cents, page(&v, None).expense_cents),
         (4000, 0)
@@ -127,7 +127,7 @@ fn qa_invalid_sign_self_other_refund_and_deleted() {
     assert!(v.link_refund(r, income, 0).is_err());
     v.link_refund(r, o, 0).unwrap();
     v.delete_manual_booking(o).unwrap();
-    assert_eq!(v.refund_links(r).unwrap().open_cents, 5000);
+    assert_eq!(v.refund_links(r).unwrap().refund_open_cents, 5000);
     assert!(v.refund_links(r).unwrap().originals.is_empty());
     assert_eq!(page(&v, None).income_cents, 7000);
     assert!(v.link_refund(r, o, 0).is_err());
@@ -143,8 +143,8 @@ fn qa_cross_currency_never_consumes_eur_capacity() {
     let o = booking(&v, a, -3000);
     v.link_refund(r, o, 0).unwrap();
     assert_eq!(allocations(&v, r), vec![(o, None)]);
-    assert_eq!(v.refund_links(r).unwrap().open_cents, 10000);
-    assert_eq!(v.refund_links(o).unwrap().open_cents, 3000);
+    assert_eq!(v.refund_links(r).unwrap().refund_open_cents, 10000);
+    assert_eq!(v.refund_links(o).unwrap().original_open_cents, 3000);
     assert_eq!(page(&v, None).expense_cents, -3000);
 }
 
@@ -248,8 +248,11 @@ fn qa_split_original_parts_unchanged_and_category_expenses() {
     assert_eq!(page(&v, Some(cb)).expense_cents, -4000);
 }
 
+/// The link API takes transaction ids only. The id of a split row is a different namespace and
+/// is never looked up: a number that happens to be both names the transaction. Front ends pass
+/// the split booking's id with the part's position (`RefundBooking::part`).
 #[test]
-fn qa_split_part_ids_are_a_separate_namespace_not_supported_targets() {
+fn qa_link_ids_are_transaction_ids_a_split_part_is_named_by_its_position() {
     let (_d, v, a) = fixture();
     let (ca, cb) = categories(&v);
     for _ in 0..3 {
@@ -363,7 +366,7 @@ fn qa_merge_conflicting_order_preserves_capacity_and_converges() {
     };
     assert_eq!(amounts(&a, r), vec![6000, 4000]);
     assert_eq!(amounts(&a, r), amounts(&b, br));
-    assert_eq!(a.refund_links(r).unwrap().open_cents, 0);
+    assert_eq!(a.refund_links(r).unwrap().refund_open_cents, 0);
     let extra = booking(&a, account, -1000);
     assert!(a.link_refund(r, extra, 0).is_err());
 }
@@ -778,7 +781,7 @@ fn part_of_a_split_income_is_the_refund() {
     );
     assert_eq!(links.originals[0].refund_part_label, "QA B");
     assert_eq!(
-        (links.assigned_cents, links.open_cents),
+        (links.assigned_cents, links.refund_open_cents),
         (Some(2000), 30000)
     );
     let back = v.refund_links(o).unwrap();
