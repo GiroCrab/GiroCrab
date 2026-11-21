@@ -30,7 +30,8 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
 
         func apply() {
             guard !applying, let window, let titlebar = window.standardWindowButton(.closeButton)?.superview else { return }
-            if splitView?.window !== window || background?.superview !== titlebar {
+            // Also after the probe left the window and came back: that removed the observers.
+            if observers.isEmpty || splitView?.window !== window || background?.superview !== titlebar {
                 splitView = Self.sidebarSplitView(in: window.contentView)
                 background = Self.detailBackground(in: titlebar)
                 observe(window)
