@@ -48,8 +48,8 @@ extension AppModel {
         reloadTags()
         reloadSettings()
         reloadDashboard()
-        merchantStatsCache = [:]
-        loadMerchantStats(keepShown: true)
+        // the merchant history restarts once the selection load has published
+        // the new page: started now, it would read the selected booking's old row
         startSelectionLoad(keepingShown: true)
     }
 
