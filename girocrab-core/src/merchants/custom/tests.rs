@@ -22,15 +22,17 @@ fn book(v: &Vault, counterparty: &str, purpose: &str, iban: &str, date: &str, ce
         [],
     )
     .unwrap();
+    // once: without a connection the unique index lets `INSERT OR IGNORE` add it again
     c.execute(
-        "INSERT OR IGNORE INTO accounts(group_id, external_ref, name) \
-         VALUES ((SELECT id FROM account_groups WHERE name='G'), 'A1', 'Konto')",
+        "INSERT INTO accounts(group_id, external_ref, name) \
+         SELECT (SELECT id FROM account_groups WHERE name='G'), 'A1', 'Konto' \
+          WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE external_ref = 'A1')",
         [],
     )
     .unwrap();
     c.execute(
         "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose, counterparty_iban) \
-         VALUES ((SELECT id FROM accounts LIMIT 1), lower(hex(randomblob(8))), ?1, ?2, ?3, ?4, ?5)",
+         VALUES ((SELECT id FROM accounts WHERE external_ref = 'A1'), lower(hex(randomblob(8))), ?1, ?2, ?3, ?4, ?5)",
         params![date, cents, counterparty, purpose, iban],
     )
     .unwrap();
@@ -608,4 +610,45 @@ fn the_search_finds_the_shown_merchant_name() {
     // recognition off: the shown names are the counterparties
     v.set_merchant_recognition_enabled(false).unwrap();
     assert!(found("amazon").is_empty());
+}
+
+#[test]
+fn two_merchants_made_in_one_millisecond_keep_their_order() {
+    let dir = TempDir::new("merchant-custom-order");
+    let v = open(&dir, "v.db");
+    let shop = book(&v, "Muster Laden", "", "", "2026-10-03", -5_00);
+    for name in ["Erster", "Zweiter", "Dritter"] {
+        create(&v, name, &["muster"], None);
+    }
+    let created: Vec<i64> = v
+        .db()
+        .unwrap()
+        .prepare("SELECT created_ms FROM custom_merchants ORDER BY created_ms")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(created.windows(2).all(|w| w[0] < w[1]), "{created:?}");
+    assert_eq!(
+        booking(&v, shop).merchant_name,
+        "Erster",
+        "a tie goes to the older"
+    );
+}
+
+#[test]
+fn receipts_match_by_the_bundled_name_not_an_own_one() {
+    let dir = TempDir::new("merchant-custom-receipt");
+    let v = open(&dir, "v.db");
+    let shop = book(&v, "REWE Markt GmbH", "Einkauf", "", "2026-10-03", -25_00);
+    create(&v, "Eckladen", &["rewe markt"], Some("rewe"));
+    let best = |text: &str| {
+        let candidates = v.bookings_for_matching(text).unwrap();
+        crate::documents::best_match(&candidates, text).map(|(b, score)| (b.id, score))
+    };
+    // the receipt names the brand: name and date are enough, as before the rename
+    assert_eq!(best("REWE Markt Datum 03.10.2026"), Some((shop, 6)));
+    // the name the user gave the booking is on no receipt and links nothing
+    assert_eq!(best("Eckladen Datum 03.10.2026"), None);
 }

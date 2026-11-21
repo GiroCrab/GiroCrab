@@ -21,7 +21,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{
     CustomEntry, CustomSpec, MerchantInfo, MerchantKind, MerchantRules, MerchantSettings,
-    custom_key, entries, entry_by_key, normalise, to_info,
+    custom_key, entries, entry_by_key, normalise_words, to_info,
 };
 use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
@@ -182,14 +182,15 @@ fn clean_name(name: &str) -> CoreResult<String> {
 }
 
 /// The search words as the resolver compares them: normalised like the booking texts
-/// (lower case, `*`, `/`, `,` … as spaces, legal forms like "GmbH" dropped), without
+/// (`normalise_words`: lower case, `*`, `/`, `,` … as spaces, legal forms like "GmbH"
+/// dropped, digit runs whole), without
 /// duplicates and without words of fewer than two letters or digits (a lone "a" would
 /// name half the bookings).
 pub(crate) fn clean_needles(needles: &[String]) -> CoreResult<Vec<String>> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for needle in needles {
-        let needle = normalise(needle).trim().to_string();
+        let needle = normalise_words(needle).trim().to_string();
         if needle.chars().filter(|c| c.is_alphanumeric()).count() < 2 {
             continue;
         }
@@ -422,10 +423,17 @@ impl Vault {
                     )));
                 }
                 let uuid = uuid::Uuid::new_v4().to_string();
+                // strictly after every merchant made so far: two made within one
+                // millisecond keep their order (the older wins a tie on the search word)
+                let created: i64 = tx.query_row(
+                    "SELECT max(?1, coalesce(max(created_ms) + 1, 0)) FROM custom_merchants",
+                    [now],
+                    |r| r.get(0),
+                )?;
                 tx.execute(
                     "INSERT INTO custom_merchants(uuid, name, needles, based_on, created_ms, changed_ms)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                    params![uuid, name, joined, based_on, now],
+                    params![uuid, name, joined, based_on, created],
                 )?;
                 (uuid, based_on)
             }

@@ -307,6 +307,38 @@ pub struct MerchantResolver;
 
 /// Lower-case, collapse separators, drop noise words and long digit runs.
 pub fn normalise(s: &str) -> String {
+    normalise_text(s, Some(5))
+}
+
+/// Legal forms and noise dropped from the texts before matching.
+const NOISE: &[&str] = &[
+    " sagt danke",
+    " gmbh & co. kg",
+    " gmbh & co kg",
+    " gmbh",
+    " se ",
+    " ag ",
+    " eg ",
+    " kg ",
+    " s.a.r.l.",
+    " s.a.",
+    " e.v.",
+];
+
+/// [`normalise`] for the user's own search words and the texts they are compared
+/// with (#1373): a digit run stays whole (the reference "123456" must not match
+/// "123459"), and spaces are collapsed again after the legal forms are dropped
+/// ("Muster GmbH Shop" matches "muster shop"). The bundled table keeps `normalise`,
+/// so its keys for the analysis do not move.
+pub(crate) fn normalise_words(s: &str) -> String {
+    let text = normalise_text(s, None);
+    let words: Vec<&str> = text.split(' ').filter(|w| !w.is_empty()).collect();
+    format!(" {} ", words.join(" "))
+}
+
+/// Lower case, separators as spaces, runs of spaces collapsed, digit runs cut after
+/// `max_digits`, noise words dropped; padded with a space on both sides.
+fn normalise_text(s: &str, max_digits: Option<usize>) -> String {
     let lower = s.to_lowercase();
     let mut out = String::with_capacity(lower.len() + 2);
     out.push(' ');
@@ -321,7 +353,7 @@ pub fn normalise(s: &str) -> String {
         } else {
             digits = 0;
         }
-        if digits > 5 {
+        if max_digits.is_some_and(|max| digits > max) {
             continue;
         }
         if c == ' ' && out.ends_with(' ') {
@@ -330,19 +362,7 @@ pub fn normalise(s: &str) -> String {
         out.push(c);
     }
     let mut s = out;
-    for noise in [
-        " sagt danke",
-        " gmbh & co. kg",
-        " gmbh & co kg",
-        " gmbh",
-        " se ",
-        " ag ",
-        " eg ",
-        " kg ",
-        " s.a.r.l.",
-        " s.a.",
-        " e.v.",
-    ] {
+    for noise in NOISE {
         // `replace` allocates even without a match; most texts contain none.
         if s.contains(noise) {
             s = s.replace(noise, " ");
@@ -374,38 +394,31 @@ const SECURITIES_HINTS: &[&str] = &[
 /// its ISIN/WKN, a securities keyword, or the needle followed by a legal form
 /// ("Bayer AG").
 fn stock_confirmed(e: &Entry, text: &str, ctx: &str) -> bool {
-    securities_evidence(e, e.needles.iter().copied(), text, ctx)
+    securities_hint(e, ctx)
+        || e.needles.iter().any(|n| {
+            text.find(n.trim())
+                .is_some_and(|p| legal_form_at(text, p + n.trim().len()))
+        })
 }
 
-/// [`stock_confirmed`] with other needles: an own merchant copied from a stock
-/// entry keeps its ISIN/WKN but has the user's search words.
-fn securities_evidence<'a>(
-    e: &Entry,
-    mut needles: impl Iterator<Item = &'a str>,
-    text: &str,
-    ctx: &str,
-) -> bool {
-    if (!e.isin.is_empty() && ctx.contains(&e.isin.to_lowercase()))
+/// ISIN/WKN of the entry or a securities keyword anywhere in the booking.
+fn securities_hint(e: &Entry, ctx: &str) -> bool {
+    (!e.isin.is_empty() && ctx.contains(&e.isin.to_lowercase()))
         || (!e.wkn.is_empty() && ctx.contains(&e.wkn.to_lowercase()))
-    {
-        return true;
-    }
-    if contains_any(ctx, SECURITIES_HINTS) {
-        return true;
-    }
-    needles.any(|n| {
-        text.find(n.trim()).is_some_and(|p| {
-            let rest = text[p + n.trim().len()..].trim_start();
-            let word: String = rest
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '.')
-                .collect();
-            matches!(
-                word.trim_end_matches('.'),
-                "ag" | "se" | "kgaa" | "inc" | "corp" | "plc"
-            )
-        })
-    })
+        || contains_any(ctx, SECURITIES_HINTS)
+}
+
+/// A legal form of a listed company ("AG", "Inc") right after `text[end..]`.
+fn legal_form_at(text: &str, end: usize) -> bool {
+    let word: String = text[end..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '.')
+        .collect();
+    matches!(
+        word.trim_end_matches('.'),
+        "ag" | "se" | "kgaa" | "inc" | "corp" | "plc"
+    )
 }
 
 /// True when `needle` occurs in `text` at the start of a word. "Bausparkasse"
@@ -453,24 +466,35 @@ fn group_member(entry: &Entry, counterparty: &str) -> Option<MerchantInfo> {
     Some(info)
 }
 
-/// [`needle_in`] for a search word the user typed (#1373): whole words only, so "dm"
-/// does not catch "Dmitri" and a copy of "TIER" (bundled as `" tier "`) not
-/// "Tierarzt". An edge of the word that is no letter or digit ("(acc)") needs no
-/// boundary there.
-fn word_in(text: &str, needle: &str) -> bool {
+/// [`needle_in`] for a search word the user typed (#1373): every position where it
+/// stands as a whole word in `text`, so "dm" does not catch "Dmitri" and a copy of
+/// "TIER" (bundled as `" tier "`) not "Tierarzt". An edge of the word that is no letter
+/// or digit ("(acc)") needs no boundary there. Overlapping occurrences count ("ab-ab"
+/// in "xab-ab-ab": the first fails, the second matches). Texts and words come from
+/// [`normalise_words`].
+fn word_starts<'a>(text: &'a str, needle: &'a str) -> impl Iterator<Item = usize> + 'a {
     let open_start = needle.starts_with(|c: char| !c.is_alphanumeric());
     let open_end = needle.ends_with(|c: char| !c.is_alphanumeric());
-    text.match_indices(needle).any(|(i, _)| {
-        (open_start
-            || text[..i]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !c.is_alphanumeric()))
-            && (open_end
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        while let Some(p) = text.get(from..)?.find(needle) {
+            let i = from + p;
+            from = i + text[i..].chars().next().map_or(1, char::len_utf8);
+            let start_ok = open_start
+                || text[..i]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric());
+            let end_ok = open_end
                 || text[i + needle.len()..]
                     .chars()
                     .next()
-                    .is_none_or(|c| !c.is_alphanumeric()))
+                    .is_none_or(|c| !c.is_alphanumeric());
+            if start_ok && end_ok {
+                return Some(i);
+            }
+        }
+        None
     })
 }
 
@@ -1069,27 +1093,24 @@ impl CustomEntry {
 
     /// Its longest search word (of at least `min_len` characters) in `text`, `None` if
     /// none matches. A copy of a stock entry keeps the bundled securities check, so a
-    /// surname ("Max Bayer") does not turn into the share.
+    /// surname ("Max Bayer") does not turn into the share: a securities hint, or a legal
+    /// form right after a whole-word match. `text` and `ctx` come from [`normalise_words`].
     fn matched_in(&self, text: &str, ctx: &str, min_len: usize) -> Option<&str> {
-        let longest = self
-            .needles
+        let stock = self.base.filter(|e| e.kind == K::Stock);
+        let listed = stock.is_some_and(|e| securities_hint(e, ctx));
+        self.needles
             .iter()
-            .filter(|n| n.chars().count() >= min_len && word_in(text, n))
-            .max_by_key(|n| n.chars().count())?;
-        match self.base {
-            Some(e)
-                if e.kind == K::Stock
-                    && !securities_evidence(
-                        e,
-                        self.needles.iter().map(String::as_str),
-                        text,
-                        ctx,
-                    ) =>
-            {
-                None
-            }
-            _ => Some(longest),
-        }
+            .filter(|n| n.chars().count() >= min_len)
+            .filter(|n| {
+                let mut at = word_starts(text, n);
+                if stock.is_none() || listed {
+                    at.next().is_some()
+                } else {
+                    at.any(|i| legal_form_at(text, i + n.len()))
+                }
+            })
+            .max_by_key(|n| n.chars().count())
+            .map(String::as_str)
     }
 
     /// Length of [`matched_in`](Self::matched_in), the measure among own merchants.
@@ -1309,18 +1330,18 @@ impl MerchantRules {
 
     /// The sub-brand of the parent company `parent` that the booking names anywhere
     /// (`ctx`): an own copy of it first, then the bundled one unless switched off.
-    fn sub_brand(&self, parent: &str, ctx: &str) -> Option<MerchantInfo> {
+    fn sub_brand(&self, parent: &str, t: &Texts) -> Option<MerchantInfo> {
         let (_, subs) = SUB_BRANDS.iter().find(|(p, _)| *p == parent)?;
         if let Some(c) = self.best_custom(|c| {
             c.base
                 .filter(|b| subs.contains(&b.key))
-                .and_then(|_| c.longest_in(ctx, ctx, 0))
+                .and_then(|_| c.longest_in(&t.wctx, &t.wctx, 0))
         }) {
             return Some(c.info());
         }
         subs.iter()
             .filter_map(|k| self.bundled_entry(k))
-            .find(|sub| sub.needles.iter().any(|n| needle_in(ctx, n)))
+            .find(|sub| sub.needles.iter().any(|n| needle_in(&t.ctx, n)))
             .map(to_info)
     }
 
@@ -1332,28 +1353,28 @@ impl MerchantRules {
         needle: &str,
         counterparty: &str,
         purpose: &str,
-        cp: &str,
-        pu: &str,
-        ctx: &str,
+        t: &Texts,
     ) -> Option<MerchantInfo> {
-        let behind = cp
-            .split_once(needle)
-            .map(|x| x.1.to_string())
-            .unwrap_or_default();
+        let after = |text: &str| {
+            text.split_once(needle)
+                .map(|x| x.1.to_string())
+                .unwrap_or_default()
+        };
+        let (behind, wbehind) = (after(&t.cp), after(&t.wcp));
         let shop_in = |c: &CustomEntry, text: &str| {
             (c.kind() != K::PaymentService)
-                .then(|| c.longest_in(text, ctx, 0))
+                .then(|| c.longest_in(text, &t.wctx, 0))
                 .flatten()
         };
         if let Some(c) = self
-            .best_custom(|c| shop_in(c, &behind))
-            .or_else(|| self.best_custom(|c| shop_in(c, pu)))
+            .best_custom(|c| shop_in(c, &wbehind))
+            .or_else(|| self.best_custom(|c| shop_in(c, &t.wpu)))
         {
             return Some(c.info());
         }
         if let Some(real) = self
-            .find_checked(&behind, ctx)
-            .or_else(|| self.find_checked(pu, ctx))
+            .find_checked(&behind, &t.ctx)
+            .or_else(|| self.find_checked(&t.pu, &t.ctx))
             .filter(|r| r.kind != K::PaymentService)
         {
             return Some(to_info(real));
@@ -1367,62 +1388,104 @@ impl MerchantRules {
         if !self.settings.enabled {
             return unknown_merchant(counterparty, purpose, false);
         }
-        let cp = normalise(&without_mail_local_parts(counterparty));
-        let pu = normalise(&without_mail_local_parts(purpose));
         // "PayPal *Spotify", "PayPal Europe ... Ihr Einkauf bei Spotify AB": look behind the processor.
-        let ctx = format!("{cp} {pu}");
+        let t = Texts::new(counterparty, purpose, !self.custom.is_empty());
         // Own merchants come first wherever the bundled table looks (#1373). A copy keeps
         // what its original does about matching: a copy of a payment processor still
         // looks behind it, a copy of a sub-brand still wins over the parent company.
-        if let Some(c) = self.best_custom(|c| c.longest_in(&cp, &ctx, 0)) {
+        if let Some(c) = self.best_custom(|c| c.longest_in(&t.wcp, &t.wctx, 0)) {
             if c.kind() == K::PaymentService
-                && let Some(needle) = c.matched_in(&cp, &ctx, 0)
-                && let Some(real) = self.look_behind(needle, counterparty, purpose, &cp, &pu, &ctx)
+                && let Some(needle) = c.matched_in(&t.wcp, &t.wctx, 0)
+                && let Some(real) = self.look_behind(needle, counterparty, purpose, &t)
             {
                 return real;
             }
             // a copy of a parent company still yields to its sub-brands
-            if let Some(sub) = c.base.and_then(|b| self.sub_brand(b.key, &ctx)) {
+            if let Some(sub) = c.base.and_then(|b| self.sub_brand(b.key, &t)) {
                 return sub;
             }
             return c.info();
         }
-        if let Some(entry) = self.find_checked(&cp, &ctx) {
+        if let Some(entry) = self.find_checked(&t.cp, &t.ctx) {
             if entry.kind == K::PaymentService
-                && let Some(real) =
-                    self.look_behind(entry.needles[0], counterparty, purpose, &cp, &pu, &ctx)
+                && let Some(real) = self.look_behind(entry.needles[0], counterparty, purpose, &t)
             {
                 return real;
             }
-            if let Some(sub) = self.sub_brand(entry.key, &ctx) {
+            if let Some(sub) = self.sub_brand(entry.key, &t) {
                 return sub;
             }
             return group_member(entry, counterparty).unwrap_or_else(|| to_info(entry));
+        }
+        // Only the parent company is switched off: the sub-brand it names is still on
+        // ("Telekom Deutschland GmbH", purpose "congstar …").
+        if let Some(sub) = SUB_BRANDS
+            .iter()
+            .filter(|(parent, _)| self.settings.disabled.contains(*parent))
+            .filter(|(parent, _)| {
+                entry_by_key(parent).is_some_and(|e| e.needles.iter().any(|n| needle_in(&t.cp, n)))
+            })
+            .find_map(|(parent, _)| self.sub_brand(parent, &t))
+        {
+            return sub;
         }
         // The purpose names securities and payment processors; anything else only
         // when there is no counterparty, and then not with a short word (" TK ", #1133).
         let no_counterparty = counterparty.trim().is_empty();
         if let Some(c) = self.best_custom(|c| {
             if matches!(c.kind(), K::Etf | K::Crypto | K::Stock | K::PaymentService) {
-                c.longest_in(&pu, &ctx, 0)
+                c.longest_in(&t.wpu, &t.wctx, 0)
             } else if no_counterparty {
-                c.longest_in(&pu, &ctx, 4)
+                c.longest_in(&t.wpu, &t.wctx, 4)
             } else {
                 None
             }
         }) {
             return c.info();
         }
-        if let Some(entry) = self.find_checked(&pu, &ctx).filter(|e| {
+        if let Some(entry) = self.find_checked(&t.pu, &t.ctx).filter(|e| {
             matches!(e.kind, K::Etf | K::Crypto | K::Stock | K::PaymentService)
                 || (no_counterparty
                     && e.needles
                         .iter()
-                        .any(|n| n.trim().len() >= 4 && needle_in(&pu, n)))
+                        .any(|n| n.trim().len() >= 4 && needle_in(&t.pu, n)))
         }) {
             return to_info(entry);
         }
         unknown_merchant(counterparty, purpose, true)
+    }
+}
+
+/// A booking's texts, normalised for the bundled table (`cp`, `pu`, `ctx`, see
+/// [`normalise`]) and for the user's own search words (`w…`, see [`normalise_words`];
+/// empty while there are no own merchants).
+struct Texts {
+    cp: String,
+    pu: String,
+    ctx: String,
+    wcp: String,
+    wpu: String,
+    wctx: String,
+}
+
+impl Texts {
+    fn new(counterparty: &str, purpose: &str, own: bool) -> Self {
+        let counterparty = without_mail_local_parts(counterparty);
+        let purpose = without_mail_local_parts(purpose);
+        let (cp, pu) = (normalise(&counterparty), normalise(&purpose));
+        let (wcp, wpu) = if own {
+            (normalise_words(&counterparty), normalise_words(&purpose))
+        } else {
+            (String::new(), String::new())
+        };
+        Self {
+            ctx: format!("{cp} {pu}"),
+            wctx: format!("{wcp} {wpu}"),
+            cp,
+            pu,
+            wcp,
+            wpu,
+        }
     }
 }
 
@@ -2535,5 +2598,38 @@ mod tests {
             r.resolve_uncached("REWE Markt", "")
         );
         assert_eq!(&*r.bundled("REWE Markt", "").key, "rewe");
+    }
+
+    #[test]
+    fn own_search_words_review_cases() {
+        // overlapping occurrences: the first "ab-ab" fails its left edge, the second counts
+        let r = rules(&[("o", "Overlap", &["ab-ab"], "")], &[], true);
+        assert_eq!(r.resolve("xab-ab-ab", "").key, "u:o");
+        // a reference keeps all its digits
+        let r = rules(&[("d", "Vertrag", &["123456"], "")], &[], true);
+        assert_eq!(r.resolve("Vertrag 123456", "").key, "u:d");
+        assert_ne!(r.resolve("Vertrag 123459", "").key, "u:d");
+        // a legal form in the middle leaves one space between the words
+        let r = rules(&[("m", "Shop", &["muster shop"], "")], &[], true);
+        assert_eq!(r.resolve("Muster GmbH Shop", "").key, "u:m");
+        // a copy of a share checks the legal form at a whole-word match only
+        let r = rules(
+            &[("s", "Bayer-Aktie", &["bayer"], "stock-bayer")],
+            &[],
+            true,
+        );
+        assert_ne!(r.resolve("ABayerInc, Max Bayer", "Geschenk").key, "u:s");
+        // only the parent company is switched off: its sub-brand still shows
+        let r = rules(&[], &["telekom"], true);
+        assert_eq!(
+            r.resolve("Telekom Deutschland GmbH", "congstar Kd-Nr 4711")
+                .key,
+            "congstar"
+        );
+        assert!(
+            r.resolve("Telekom Deutschland GmbH", "Festnetz")
+                .key
+                .starts_with("x:")
+        );
     }
 }
