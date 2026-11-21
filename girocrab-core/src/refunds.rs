@@ -112,29 +112,29 @@ pub struct RefundBooking {
     /// What the booking has left for a further link: its amount less what its links cover. With
     /// 0 it is used up and cannot be linked again.
     pub open_cents: i64,
-    /// The part of a split booking this row stands for (its position from 1, see
-    /// `list_transaction_splits`); `amount_cents` is then the part's amount. 0 = the whole
-    /// booking. On a refund in the links of a split original: the part of that original it
-    /// pays back. Pass it to `link_refund` / `unlink_refund`.
+    /// The part that is paid back (its position from 1, see `list_transaction_splits`), 0 =
+    /// the whole booking: on a row that is paid back the part it stands for (`amount_cents`
+    /// is then the part's amount, also for an outgoing part of an incoming booking), on a row
+    /// that pays back the part of the booking it pays back. Pass it to `link_refund` /
+    /// `unlink_refund`.
     pub part: u32,
     /// Category name and note of that part, for the row; empty without a part.
     pub part_label: String,
-    /// The part of a split refund that pays back (from 1), 0 = the whole refund: on a refund
-    /// the part this row stands for (`amount_cents` is then the part's amount), on an original
-    /// in the links of a split refund the part of that refund. Pass it to `link_refund_parts`
-    /// / `unlink_refund_parts`.
+    /// The part that pays back (from 1), 0 = the whole booking: on a row that pays back the
+    /// part it stands for (`amount_cents` is then the part's amount, also for an incoming part
+    /// of an outgoing booking, like store credit), on a row that is paid back the part of the
+    /// booking that pays. Pass it to `link_refund_parts` / `unlink_refund_parts`.
     pub refund_part: u32,
     /// Category name and note of that part of the refund; empty without one.
     pub refund_part_label: String,
 }
 
 impl RefundBooking {
-    /// The part of its own booking the row stands for.
-    fn own_part(&self) -> u32 {
-        if self.amount_cents < 0 {
-            self.part
-        } else {
-            self.refund_part
+    /// The part of its own booking the row stands for as the end `role` of a link.
+    fn own_part(&self, role: Role) -> u32 {
+        match role {
+            Role::Original => self.part,
+            Role::Refund => self.refund_part,
         }
     }
 }
@@ -177,8 +177,22 @@ pub struct RefundLinks {
     /// For a refund: how much of it its originals take up, never more than its amount; the rest
     /// belongs to no linked booking. `None` without originals or with mixed currencies.
     pub assigned_cents: Option<i64>,
-    /// What the booking itself has left for a further link ([`RefundBooking::open_cents`]).
+    /// What the booking itself has left for a further link ([`RefundBooking::open_cents`]), on
+    /// its own side: as a refund when it is an incoming booking, else as an original.
     pub open_cents: i64,
+    /// What the booking can pay back at most: its amount when it is incoming, of a split
+    /// booking the sum of its incoming parts (also those of an outgoing booking).
+    pub refund_total_cents: i64,
+    /// What of that is left for a further link.
+    pub refund_open_cents: i64,
+    /// What can be paid back of the booking at most: its amount when it is outgoing, of a
+    /// split booking the sum of its outgoing parts (also those of an incoming booking).
+    pub original_total_cents: i64,
+    /// What of that is left for a further link.
+    pub original_open_cents: i64,
+    /// For an incoming booking that pays back: what of it stays income, i.e. all but what
+    /// pays back outgoing bookings (`Booking::refund_income_cents`). Else 0.
+    pub refund_income_cents: i64,
 }
 
 /// One part of a split booking: amount and label (category name, note).
@@ -232,15 +246,40 @@ fn part_of(parts: &HashMap<i64, Vec<Part>>, booking: i64, part: i64) -> Option<&
     parts.get(&booking)?.get(index)
 }
 
-/// [`part_of`] for a link: only a part on the side of its booking (an outgoing part of an
-/// original, an incoming one of a refund of `amount`) pays back or is paid back.
-fn linked_part(
-    parts: &HashMap<i64, Vec<Part>>,
-    booking: i64,
-    amount: i64,
-    part: i64,
-) -> Option<&Part> {
-    part_of(parts, booking, part).filter(|p| p.amount.signum() == amount.signum())
+/// Which end of a link a booking or a part is. An amount is a refund when it is incoming and
+/// an original when it is outgoing, whatever the side of the booking it is a part of: store
+/// credit that paid a part of a purchase is a refund, a fee taken off an income can be paid back.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Refund,
+    Original,
+}
+
+impl Role {
+    fn sign(self) -> i64 {
+        match self {
+            Role::Refund => 1,
+            Role::Original => -1,
+        }
+    }
+    fn other(self) -> Role {
+        match self {
+            Role::Refund => Role::Original,
+            Role::Original => Role::Refund,
+        }
+    }
+    fn of(amount: i64) -> Option<Role> {
+        match amount.signum() {
+            1 => Some(Role::Refund),
+            -1 => Some(Role::Original),
+            _ => None,
+        }
+    }
+}
+
+/// The part a link names, when it can have `role` (see [`Role`]).
+fn named(parts: &HashMap<i64, Vec<Part>>, booking: i64, part: i64, role: Role) -> Option<&Part> {
+    part_of(parts, booking, part).filter(|p| p.amount.signum() == role.sign())
 }
 
 /// A link: refund, original, `original_part`, `refund_part`.
@@ -252,55 +291,107 @@ struct Shares {
     links: HashMap<Link, i64>,
     /// Links between different currencies: they get nothing.
     mixed: std::collections::HashSet<Link>,
-    /// Per booking, and per part (booking, part from 1) of a split booking.
+    /// Per part (booking, part from 1) of a split booking, and per booking without parts
+    /// (booking, 0).
     taken: HashMap<(i64, i64), i64>,
     /// Per link to a split original: what it pays back of which part (from 1).
     into: HashMap<Link, Vec<(i64, i64)>>,
     /// Per link of a split refund: what it takes from which part (from 1).
     from: HashMap<Link, Vec<(i64, i64)>>,
+    /// Per booking with a link that counts: its amount, and what its links cover of it as a
+    /// refund and as an original (`None`: it has no link in that role).
+    linked: HashMap<i64, (i64, Option<i64>, Option<i64>)>,
+    /// Per booking that pays back: what of that goes to outgoing bookings (expenses), not to
+    /// an outgoing part of an incoming booking.
+    expense: HashMap<i64, i64>,
+    /// The links that pay back an outgoing booking.
+    to_expense: std::collections::HashSet<Link>,
 }
 
 impl Shares {
-    /// What a booking (`part` 0) or one part of it has left for a further link.
-    fn open(&self, parts: &HashMap<i64, Vec<Part>>, id: i64, amount: i64, part: i64) -> i64 {
-        let taken = |part: i64| self.taken.get(&(id, part)).copied().unwrap_or(0);
-        let whole = amount.saturating_abs() - taken(0);
-        match linked_part(parts, id, amount, part) {
-            Some(p) => whole.min(p.amount.saturating_abs() - taken(part)),
-            None => whole,
-        }
-        .max(0)
+    fn left(&self, id: i64, part: i64, amount: i64) -> i64 {
+        (amount.saturating_abs() - self.taken.get(&(id, part)).copied().unwrap_or(0)).max(0)
     }
 
-    /// Books `share` on the booking `id` of `amount` and says which of its parts carry it: the
-    /// part the link names, else (a link to the whole of a split booking, or to a part it does
-    /// not have) the parts on the booking's side from the last to the first, each until the
-    /// share runs out. Empty for a booking without parts.
-    fn place(
-        &mut self,
+    /// What the booking `id` of `amount` can give or take in `role` at most: its amount when
+    /// it is on that side, of a split booking the sum of its parts on that side.
+    fn total(parts: &HashMap<i64, Vec<Part>>, id: i64, amount: i64, role: Role) -> i64 {
+        match parts.get(&id) {
+            Some(own) => own
+                .iter()
+                .filter(|p| p.amount.signum() == role.sign())
+                .map(|p| p.amount.saturating_abs())
+                .sum(),
+            None if amount.signum() == role.sign() => amount.saturating_abs(),
+            None => 0,
+        }
+    }
+
+    /// What of [`Shares::total`] is left for a further link.
+    fn side_open(&self, parts: &HashMap<i64, Vec<Part>>, id: i64, amount: i64, role: Role) -> i64 {
+        match parts.get(&id) {
+            Some(own) => (1i64..)
+                .zip(own)
+                .filter(|(_, p)| p.amount.signum() == role.sign())
+                .map(|(n, p)| self.left(id, n, p.amount))
+                .sum(),
+            None if amount.signum() == role.sign() => self.left(id, 0, amount),
+            None => 0,
+        }
+    }
+
+    /// Whether the end `part` of the booking `id` can have `role`: the part it names is on
+    /// that side, or (no such part) the booking has an amount on that side at all.
+    fn fits(parts: &HashMap<i64, Vec<Part>>, id: i64, amount: i64, part: i64, role: Role) -> bool {
+        named(parts, id, part, role).is_some() || Self::total(parts, id, amount, role) > 0
+    }
+
+    /// What the end `part` of the booking `id` has left for a further link in `role`: the
+    /// part it names, else the booking as a whole.
+    fn open(
+        &self,
         parts: &HashMap<i64, Vec<Part>>,
         id: i64,
         amount: i64,
         part: i64,
+        role: Role,
+    ) -> i64 {
+        match named(parts, id, part, role) {
+            Some(p) => self.left(id, part, p.amount),
+            None => self.side_open(parts, id, amount, role),
+        }
+    }
+
+    /// Books `share` on that end and says which parts of the booking carry it: the part the
+    /// link names, else (a link to the whole of a split booking, or to a part it does not
+    /// have) its parts on that side from the last to the first, each until the share runs
+    /// out. Empty for a booking without parts.
+    fn place(
+        &mut self,
+        parts: &HashMap<i64, Vec<Part>>,
+        id: i64,
+        part: i64,
+        role: Role,
         share: i64,
     ) -> Vec<(i64, i64)> {
-        *self.taken.entry((id, 0)).or_default() += share;
-        if linked_part(parts, id, amount, part).is_some() {
+        if named(parts, id, part, role).is_some() {
             *self.taken.entry((id, part)).or_default() += share;
             return vec![(part, share)];
         }
+        let Some(own) = parts.get(&id) else {
+            *self.taken.entry((id, 0)).or_default() += share;
+            return Vec::new();
+        };
         let mut left = share;
         let mut placed = Vec::new();
-        let own = parts.get(&id).map(Vec::as_slice).unwrap_or_default();
         for (n, p) in own.iter().enumerate().rev() {
-            if p.amount.signum() != amount.signum() {
+            if p.amount.signum() != role.sign() {
                 continue;
             }
             let n = n as i64 + 1;
-            let taken = self.taken.entry((id, n)).or_default();
-            let take = left.min(p.amount.saturating_abs() - *taken);
+            let take = left.min(self.left(id, n, p.amount));
             if take > 0 {
-                *taken += take;
+                *self.taken.entry((id, n)).or_default() += take;
                 left -= take;
                 placed.push((n, take));
             }
@@ -309,24 +400,24 @@ impl Shares {
     }
 }
 
-/// The live links between a refund (incoming) and an original (outgoing) that both exist. A
-/// booking whose amount changed its side since is no refund or original any more.
-const LIVE: &str = "l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL AND r.amount_cents>0 AND o.amount_cents<0";
-
-/// What every live link pays back, filled in the order the links were made: a link takes at
-/// most what the earlier links left of its refund and of its original (of the parts it names).
-/// A link to the whole of a split booking (it names no part, or one the booking does not
-/// have) uses the parts on that booking's side from the last to the first, each until the
-/// share runs out. Links between different currencies get nothing.
+/// What every live link pays back, filled in the order the links were made (links made in the
+/// same millisecond on two devices: by what both devices know of the bookings, not by their
+/// local ids): a link takes at
+/// most what the earlier links left of the amount that pays back and of the amount it pays
+/// back (the parts it names, see [`Role`]). A link to the whole of a split booking (it names
+/// no part, or one the booking does not have) uses the parts on that booking's side from the
+/// last to the first, each until the share runs out. A link whose ends are not an incoming
+/// and an outgoing amount (any more) counts for nothing; links between different currencies
+/// get no share.
 fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shares> {
     type Row = (i64, i64, i64, i64, i64, i64, String, String);
     let links: Vec<Row> = conn
-        .prepare(&format!(
+        .prepare(
             "SELECT l.refund_id,l.original_id,l.original_part,l.refund_part,r.amount_cents,o.amount_cents,r.currency,o.currency
              FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id
-             WHERE {LIVE}
-             ORDER BY l.changed_ms,r.booking_date,o.booking_date,l.refund_id,l.original_id,l.original_part,l.refund_part"
-        ))?
+             WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL
+             ORDER BY l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,l.refund_id,l.original_id",
+        )?
         .query_map([], |r| {
             Ok((
                 r.get(0)?,
@@ -343,15 +434,41 @@ fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shar
     let mut out = Shares::default();
     for (r, o, part, refund_part, r_amount, o_amount, r_cur, o_cur) in links {
         let link = (r, o, part, refund_part);
+        if r == o
+            || !Shares::fits(parts, r, r_amount, refund_part, Role::Refund)
+            || !Shares::fits(parts, o, o_amount, part, Role::Original)
+        {
+            continue;
+        }
+        out.linked
+            .entry(r)
+            .or_insert((r_amount, None, None))
+            .1
+            .get_or_insert(0);
+        out.linked
+            .entry(o)
+            .or_insert((o_amount, None, None))
+            .2
+            .get_or_insert(0);
         if currency_code(&r_cur) != currency_code(&o_cur) {
             out.mixed.insert(link);
             continue;
         }
         let share = out
-            .open(parts, r, r_amount, refund_part)
-            .min(out.open(parts, o, o_amount, part));
-        let from = out.place(parts, r, r_amount, refund_part, share);
-        let into = out.place(parts, o, o_amount, part, share);
+            .open(parts, r, r_amount, refund_part, Role::Refund)
+            .min(out.open(parts, o, o_amount, part, Role::Original));
+        let from = out.place(parts, r, refund_part, Role::Refund, share);
+        let into = out.place(parts, o, part, Role::Original, share);
+        if let Some((_, Some(paid), _)) = out.linked.get_mut(&r) {
+            *paid += share;
+        }
+        if o_amount < 0 {
+            *out.expense.entry(r).or_default() += share;
+            out.to_expense.insert(link);
+        }
+        if let Some((_, _, Some(back))) = out.linked.get_mut(&o) {
+            *back += share;
+        }
         out.from.insert(link, from);
         out.into.insert(link, into);
         out.links.insert(link, share);
@@ -369,17 +486,29 @@ fn live(conn: &Connection, id: i64) -> CoreResult<i64> {
     .ok_or_else(|| CoreError::invalid(tr("Die Buchung existiert nicht oder wurde gelöscht.")))
 }
 
-fn validate(conn: &Connection, refund: i64, original: i64) -> CoreResult<()> {
+/// A link must join an incoming amount (the refund: an incoming booking, or an incoming part
+/// of any split booking) to an outgoing one of another booking, and no amount is both.
+fn validate(
+    conn: &Connection,
+    parts: &HashMap<i64, Vec<Part>>,
+    refund: i64,
+    original: i64,
+    part: i64,
+    refund_part: i64,
+) -> CoreResult<()> {
     let r = live(conn, refund)?;
     let o = live(conn, original)?;
-    if refund == original || r <= 0 || o >= 0 {
+    if refund == original
+        || !Shares::fits(parts, refund, r, refund_part, Role::Refund)
+        || !Shares::fits(parts, original, o, part, Role::Original)
+    {
         return Err(CoreError::invalid(tr(
             "Eine Erstattung muss positiv und die ursprüngliche Buchung negativ sein.",
         )));
     }
     let conflict: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND (refund_id=?1 OR original_id=?2))",
-        params![original, refund],
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND ((refund_id=?1 AND refund_part=?3) OR (original_id=?2 AND original_part=?4)))",
+        params![original, refund, part, refund_part],
         |r| r.get(0),
     )?;
     if conflict {
@@ -390,10 +519,10 @@ fn validate(conn: &Connection, refund: i64, original: i64) -> CoreResult<()> {
     Ok(())
 }
 
-/// [`validate`] for a link the user makes here: a split booking is linked by one of its
-/// outgoing parts, a split refund by one of its incoming parts or as a whole (`refund_part`
-/// 0), and a booking (or part) that is used up takes no further link. Links arriving from
-/// another device are not held to this; they get a share of 0.
+/// [`validate`] for a link the user makes here: of a split booking a part is linked (an
+/// outgoing one is paid back, an incoming one pays back; a split incoming booking may also pay
+/// back as a whole, `refund_part` 0), and an amount that is used up takes no further link.
+/// Links arriving from another device are not held to this; they get a share of 0.
 fn validate_new(
     conn: &Connection,
     refund: i64,
@@ -401,13 +530,17 @@ fn validate_new(
     part: i64,
     refund_part: i64,
 ) -> CoreResult<()> {
-    validate(conn, refund, original)?;
-    let (r, o) = (live(conn, refund)?, live(conn, original)?);
     let parts = split_parts(conn)?;
+    validate(conn, &parts, refund, original, part, refund_part)?;
+    let (r, o) = (live(conn, refund)?, live(conn, original)?);
     let fits = match parts.get(&original) {
-        Some(_) => linked_part(&parts, original, o, part).is_some(),
+        Some(_) => named(&parts, original, part, Role::Original).is_some(),
         None => part == 0,
-    } && (refund_part == 0 || linked_part(&parts, refund, r, refund_part).is_some());
+    } && if refund_part == 0 {
+        r > 0
+    } else {
+        named(&parts, refund, refund_part, Role::Refund).is_some()
+    };
     if !fits {
         return Err(CoreError::invalid(tr(
             "Bei einer geteilten Buchung wird ein Teil verknüpft.",
@@ -419,14 +552,14 @@ fn validate_new(
         |r| r.get(0),
     )?;
     if !linked {
-        // a link that could take nothing would only mislead: the booking is used up
+        // a link that could take nothing would only mislead: the amount is used up
         let shares = shares(conn, &parts)?;
-        if shares.open(&parts, refund, r, refund_part) == 0 {
+        if shares.open(&parts, refund, r, refund_part, Role::Refund) == 0 {
             return Err(CoreError::invalid(tr(
                 "Die Erstattung ist bereits vollständig zugeordnet.",
             )));
         }
-        if shares.open(&parts, original, o, part) == 0 {
+        if shares.open(&parts, original, o, part, Role::Original) == 0 {
             return Err(CoreError::invalid(tr(
                 "Die Buchung ist bereits vollständig erstattet.",
             )));
@@ -450,15 +583,27 @@ struct Row {
     end_to_end_id: String,
 }
 
-/// `expand`: a split booking is returned as the parts on its side (the outgoing parts of an
-/// outgoing booking, the incoming ones of an incoming booking), one row each, instead of as a
-/// whole: the bookings a link can be made to.
+/// How [`rows`] lists the bookings a link can be made to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Expand {
+    /// As read: the rows of existing links.
+    No,
+    /// Every amount that can have the role: a booking without parts as a whole, a split
+    /// booking by its parts on that side, whatever the side of the booking itself.
+    Parts,
+    /// What `link_refund` can name (a front end without a choice of the part that pays
+    /// back): what is paid back like `Parts`, what pays back only as a whole incoming booking.
+    Whole,
+}
+
+/// The bookings of `sql` as the end `role` of a link, see [`Expand`].
 fn rows(
     conn: &Connection,
     sql: &str,
     args: impl rusqlite::Params,
     rules: &crate::merchants::MerchantRules,
-    expand: bool,
+    role: Role,
+    expand: Expand,
 ) -> CoreResult<Vec<Row>> {
     let read: Vec<Row> = conn
         .prepare(sql)?
@@ -498,29 +643,37 @@ fn rows(
     for row in read {
         let id = row.booking.id;
         let whole = row.booking.amount_cents;
-        let own: Vec<u32> = match parts.get(&id) {
-            Some(own) if expand => (1..=own.len() as u32).collect(),
-            _ => vec![row.booking.own_part()],
+        let on_side = whole.signum() == role.sign();
+        let of_side = |own: &Vec<Part>| -> Vec<u32> {
+            (1u32..)
+                .zip(own)
+                .filter(|(_, p)| p.amount.signum() == role.sign())
+                .map(|(n, _)| n)
+                .collect()
+        };
+        let own: Vec<u32> = match (expand, parts.get(&id)) {
+            (Expand::No, _) => vec![match role {
+                Role::Original => row.booking.part,
+                Role::Refund => row.booking.refund_part,
+            }],
+            (Expand::Parts, Some(own)) => of_side(own),
+            (Expand::Whole, Some(own)) if role == Role::Original => of_side(own),
+            _ if on_side => vec![0],
+            _ => Vec::new(),
         };
         for part in own {
-            let split = linked_part(&parts, id, whole, i64::from(part));
-            if expand && part > 0 && split.is_none() {
-                continue;
-            }
             let mut b = row.booking.clone();
-            // the row stands for a part of its own booking: an original for one of its
-            // outgoing parts, a refund for one of its incoming parts
-            let (own, label) = if whole < 0 {
-                (&mut b.part, &mut b.part_label)
-            } else {
-                (&mut b.refund_part, &mut b.refund_part_label)
+            let (own, label) = match role {
+                Role::Original => (&mut b.part, &mut b.part_label),
+                Role::Refund => (&mut b.refund_part, &mut b.refund_part_label),
             };
             *own = part;
-            if let Some(p) = split {
+            // the row stands for the part of its booking the link names
+            if let Some(p) = named(&parts, id, i64::from(part), role) {
                 *label = p.label.clone();
                 b.amount_cents = p.amount;
             }
-            b.open_cents = shares.open(&parts, id, whole, i64::from(part));
+            b.open_cents = shares.open(&parts, id, whole, i64::from(part), role);
             rows.push(Row {
                 booking: b,
                 end_to_end_id: row.end_to_end_id.clone(),
@@ -530,25 +683,45 @@ fn rows(
     Ok(rows)
 }
 
-/// How much of every linked booking its links cover: of a refund what its originals take up, of
-/// an original what its refunds pay back.
+/// How much of every linked booking its links cover.
 pub(crate) struct Covered {
-    /// Per booking with a link that gets a share (also one of 0).
-    pub(crate) cents: HashMap<i64, i64>,
+    /// Per booking that pays back: what its originals take up, and what it can pay back at
+    /// most (`Shares::total`).
+    pub(crate) refund: HashMap<i64, (i64, i64)>,
+    /// Per booking that pays back: what of that lowers expenses, because it pays back an
+    /// outgoing booking. What pays back an outgoing part of an income (a fee) raises that
+    /// income instead and stays income.
+    pub(crate) expense: HashMap<i64, i64>,
+    /// Per booking that is paid back: what its refunds pay back, and what can be paid back.
+    pub(crate) original: HashMap<i64, (i64, i64)>,
     /// The bookings with a link between different currencies: nothing is added up for them
     /// (#569), so their sum is not shown.
     pub(crate) mixed: std::collections::HashSet<i64>,
 }
 
 pub(crate) fn covered(conn: &Connection) -> CoreResult<Covered> {
-    let shares = shares(conn, &split_parts(conn)?)?;
-    Ok(Covered {
-        cents: shares
-            .taken
+    let parts = split_parts(conn)?;
+    let shares = shares(conn, &parts)?;
+    let side = |role: Role| -> HashMap<i64, (i64, i64)> {
+        shares
+            .linked
             .iter()
-            .filter(|((_, part), _)| *part == 0)
-            .map(|((id, _), taken)| (*id, *taken))
-            .collect(),
+            .filter_map(|(id, (amount, paid, back))| {
+                let covered = match role {
+                    Role::Refund => paid,
+                    Role::Original => back,
+                };
+                Some((
+                    *id,
+                    ((*covered)?, Shares::total(&parts, *id, *amount, role)),
+                ))
+            })
+            .collect()
+    };
+    Ok(Covered {
+        refund: side(Role::Refund),
+        original: side(Role::Original),
+        expense: shares.expense.clone(),
         mixed: shares
             .mixed
             .iter()
@@ -562,8 +735,8 @@ pub(crate) fn covered(conn: &Connection) -> CoreResult<Covered> {
 /// (`Shares::place`); what is left of the refund stays where it is.
 #[derive(Default)]
 pub(crate) struct Moved {
-    /// (refund, category it counts in, cents).
-    into: Vec<(i64, Option<i64>, i64)>,
+    /// (refund, category it counts in, cents, whether it pays back an outgoing booking).
+    into: Vec<(i64, Option<i64>, i64, bool)>,
     /// What leaves a refund without parts: (refund, cents).
     paid: HashMap<i64, i64>,
     /// What leaves the parts of a split refund: (refund, row id of the part in
@@ -593,17 +766,18 @@ pub(crate) fn moves(conn: &Connection) -> CoreResult<Moved> {
     let mut drawn: HashMap<(i64, i64), (Option<i64>, i64)> = HashMap::new();
     for (link, share) in shares.links.iter().filter(|(_, share)| **share > 0) {
         let (refund, original, ..) = *link;
+        let expense = shares.to_expense.contains(link);
         match parts.get(&original) {
             Some(_) => {
                 for (n, cents) in shares.into.get(link).into_iter().flatten() {
                     if let Some(p) = part_of(&parts, original, *n) {
-                        out.into.push((refund, p.category, *cents));
+                        out.into.push((refund, p.category, *cents, expense));
                     }
                 }
             }
             None => {
                 if let Some(category) = own.get(&original) {
-                    out.into.push((refund, *category, *share));
+                    out.into.push((refund, *category, *share, expense));
                 }
             }
         }
@@ -629,7 +803,8 @@ pub(crate) fn moves(conn: &Connection) -> CoreResult<Moved> {
 
 /// [`Moved`] as table expressions for SQL sums.
 pub(crate) struct MovedSql {
-    /// (refund_id, category_id, amount_cents): what counts where the paid-back booking is.
+    /// (refund_id, category_id, amount_cents, expense): what counts where the paid-back
+    /// booking is; `expense` 1 when that is an outgoing booking.
     pub(crate) into: String,
     /// (refund_id, cents): what leaves a refund without parts.
     pub(crate) paid: String,
@@ -665,13 +840,13 @@ pub(crate) fn moves_sql(conn: &Connection) -> CoreResult<Option<MovedSql>> {
     paid.sort_unstable();
     Ok(Some(MovedSql {
         into: table(
-            &["refund_id", "category_id", "amount_cents"],
+            &["refund_id", "category_id", "amount_cents", "expense"],
             moved
                 .into
                 .iter()
-                .map(|(refund, category, cents)| {
+                .map(|(refund, category, cents, expense)| {
                     let category = category.map_or("NULL".to_string(), |c| c.to_string());
-                    format!("({refund},{category},{cents})")
+                    format!("({refund},{category},{cents},{})", i32::from(*expense))
                 })
                 .collect(),
         ),
@@ -696,8 +871,9 @@ pub(crate) fn moves_sql(conn: &Connection) -> CoreResult<Option<MovedSql>> {
 pub(crate) struct CategoryRefunds {
     /// Per refund: what its links pay back in total.
     assigned: HashMap<i64, i64>,
-    /// Per refund: what of that counts in the filtered categories.
-    into: HashMap<i64, i64>,
+    /// Per refund: what of that counts in the filtered categories, as a lower expense and (what
+    /// pays back an outgoing part of an income) as income.
+    into: HashMap<i64, (i64, i64)>,
     /// Per split refund: what its links take from its parts in the filtered categories.
     out_of: HashMap<i64, i64>,
 }
@@ -715,10 +891,15 @@ impl CategoryRefunds {
             into: HashMap::new(),
             out_of: HashMap::new(),
         };
-        for (refund, category, cents) in moved.into {
+        for (refund, category, cents, expense) in moved.into {
             *out.assigned.entry(refund).or_default() += cents;
             if categories.contains(&category) {
-                *out.into.entry(refund).or_default() += cents;
+                let into = out.into.entry(refund).or_default();
+                if expense {
+                    into.0 += cents;
+                } else {
+                    into.1 += cents;
+                }
             }
         }
         for (refund, _, category, cents) in moved.drawn {
@@ -748,7 +929,7 @@ impl CategoryRefunds {
     ) -> [(crate::merchants::FlowKind, i64); 2] {
         let Some((this, assigned)) = this
             .and_then(|m| Some((m, m.assigned.get(&id)?)))
-            .filter(|_| amount_cents > 0)
+            .filter(|_| amount_cents != 0)
         else {
             return crate::models::split_flow_parts(
                 flow,
@@ -758,8 +939,9 @@ impl CategoryRefunds {
             );
         };
         let rest = match this.out_of.get(&id) {
-            // a split refund: what its links leave of its parts in the filter
-            Some(taken) => (share_cents - taken).max(0),
+            // a split booking: what its links leave of its parts in the filter (a part that
+            // pays nothing back, like a fee taken off a refund, counts as it is)
+            Some(taken) => share_cents - taken,
             // else the refund is in the filter as a whole or not at all
             None => {
                 let open = (amount_cents - assigned).max(0);
@@ -767,37 +949,41 @@ impl CategoryRefunds {
             }
         };
         let income = if refund_income_cents > 0 { rest } else { 0 };
-        let into = this.into.get(&id).copied().unwrap_or(0);
+        let (into, into_income) = this.into.get(&id).copied().unwrap_or((0, 0));
         [
             (flow, rest - income + into),
-            (crate::merchants::FlowKind::Income, income),
+            (crate::merchants::FlowKind::Income, income + into_income),
         ]
     }
 }
 
-pub(crate) fn linked_refund_ids(conn: &Connection) -> CoreResult<std::collections::HashSet<i64>> {
-    Ok(markers(conn)?
-        .into_iter()
-        .filter(|(_, kind)| *kind == RefundLinkKind::Refund)
-        .map(|(id, _)| id)
-        .collect())
-}
-
-/// The booking a link is looked for, and the bookings of the other direction around it.
+/// The booking a link is looked for, and the amounts of the other role around it.
 struct Pool {
+    /// What the booking can pay back or what can be paid back of it, with the sign of its
+    /// role (`Shares::total`).
     amount: i64,
     currency: String,
     date: String,
     counterparty: String,
     merchant: String,
     reference: String,
+    /// What it has left for a further link.
+    open: i64,
     /// Nearest booking date first.
     rows: Vec<Row>,
 }
 
-/// `days`: how far back (refund) or ahead (outgoing booking) the pool reaches; `None` = no bound.
-/// Empty when the booking itself is the other end of a link (no chains).
-fn pool(vault: &Vault, db: &Connection, id: i64, days: Option<u32>) -> CoreResult<Pool> {
+/// `role`: what the booking `id` is in the links looked for. `days`: how far back (it pays
+/// back) or ahead (it is paid back) the pool reaches; `None` = no bound. Empty when the
+/// booking has no amount of that role.
+fn pool(
+    vault: &Vault,
+    db: &Connection,
+    id: i64,
+    role: Role,
+    days: Option<u32>,
+    expand: Expand,
+) -> CoreResult<Pool> {
     let rules = vault.merchant_rules(db)?;
     let (amount, currency, date, counterparty, purpose, e2e): (
         i64,
@@ -815,28 +1001,30 @@ fn pool(vault: &Vault, db: &Connection, id: i64, days: Option<u32>) -> CoreResul
         .optional()?
         .ok_or_else(|| CoreError::invalid(tr("Die Buchung existiert nicht oder wurde gelöscht.")))?;
     let merchant = rules.resolve_with_bundled(&counterparty, &purpose).0.name;
+    let parts = split_parts(db)?;
+    let total = Shares::total(&parts, id, amount, role);
     let mut out = Pool {
-        amount,
+        amount: total * role.sign(),
         currency,
         date,
         counterparty,
         merchant,
         reference: format!("{purpose} {e2e}"),
+        open: shares(db, &parts)?.side_open(&parts, id, amount, role),
         rows: Vec::new(),
     };
-    let conflict: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND ((?2>0 AND original_id=?1) OR (?2<0 AND refund_id=?1)))",
-        params![id, amount],
-        |r| r.get(0),
-    )?;
-    if amount == 0 || conflict {
+    if total == 0 {
         return Ok(out);
     }
     let days = days.map_or(f64::MAX, f64::from);
-    let direction = if amount > 0 {
-        "t.amount_cents<0 AND julianday(?1)-julianday(t.booking_date) BETWEEN 0 AND ?3"
-    } else {
-        "t.amount_cents>0 AND julianday(t.booking_date)-julianday(?1) BETWEEN 0 AND ?3"
+    // the amounts of the other role: bookings on that side and split bookings with a part on it
+    let direction = match role {
+        Role::Refund => {
+            "(t.amount_cents<0 OR EXISTS(SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.amount_cents<0)) AND julianday(?1)-julianday(t.booking_date) BETWEEN 0 AND ?3"
+        }
+        Role::Original => {
+            "(t.amount_cents>0 OR EXISTS(SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.amount_cents>0)) AND julianday(t.booking_date)-julianday(?1) BETWEEN 0 AND ?3"
+        }
     };
     out.rows = rows(
         db,
@@ -846,7 +1034,8 @@ fn pool(vault: &Vault, db: &Connection, id: i64, days: Option<u32>) -> CoreResul
         ),
         params![out.date, id, days],
         &rules,
-        true,
+        role.other(),
+        expand,
     )?;
     Ok(out)
 }
@@ -882,15 +1071,24 @@ fn days_between(a: &str, b: &str) -> Option<i64> {
     Some(crate::dates::days_between(day(a)?, day(b)?).abs())
 }
 
+/// What every linked booking is in its links, for the marker in the list: a booking that pays
+/// back is a refund (also an outgoing booking with a part that does), else one that is paid
+/// back an original.
 pub(crate) fn markers(conn: &Connection) -> CoreResult<HashMap<i64, RefundLinkKind>> {
-    let mut out = HashMap::new();
-    let pairs = conn.prepare(&format!("SELECT refund_id,original_id FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id WHERE {LIVE}"))?
- .query_map([], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
-    for (r, o) in pairs {
-        out.insert(r, RefundLinkKind::Refund);
-        out.insert(o, RefundLinkKind::Original);
+    let covered = covered(conn)?;
+    Ok(covered.markers())
+}
+
+impl Covered {
+    pub(crate) fn markers(&self) -> HashMap<i64, RefundLinkKind> {
+        let mut out: HashMap<i64, RefundLinkKind> = self
+            .original
+            .keys()
+            .map(|id| (*id, RefundLinkKind::Original))
+            .collect();
+        out.extend(self.refund.keys().map(|id| (*id, RefundLinkKind::Refund)));
+        out
     }
-    Ok(out)
 }
 
 type LinkRow = (i64, i64, i64, i64, Option<i64>, i64, i64);
@@ -945,12 +1143,10 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
         {
             continue;
         }
-        if deleted.is_none() {
-            match validate(conn, r, o) {
-                Ok(()) => {}
-                Err(CoreError::InvalidInput { .. }) => continue,
-                Err(error) => return Err(error),
-            }
+        // a link the bookings here do not fit (their sides or parts differ for now) is kept:
+        // it counts for nothing (`shares`) until they do, and the devices stay alike
+        if r == o {
+            continue;
         }
         conn.execute(
             "INSERT INTO refund_links(refund_id,original_id,original_part,refund_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?6,?7,?3,?4,?5)
@@ -961,10 +1157,10 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
     Ok(())
 }
 
-/// The booking `id` is split differently or not at all any more: the parts its links name are
-/// gone, so every such link becomes a link to the whole booking. The old row stays as a
-/// tombstone and the new one gets a new stamp (both reach the other devices); the links keep
-/// their order among themselves.
+/// The booking `id` is split differently or not at all any more (call it with the new parts
+/// stored): the parts its links name are gone, so every such link becomes a link to the whole
+/// booking. The old row stays as a tombstone and the new one gets a new stamp (both reach the
+/// other devices); the links keep their order among themselves.
 pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
     let links: Vec<(i64, i64, i64, i64, i64)> = conn
         .prepare(
@@ -994,6 +1190,22 @@ pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
             params![refund, original, part, refund_part, created, changed + 1],
         )?;
     }
+    // without the part that paid back or was paid back the booking may have no amount on that
+    // side any more (store credit in a purchase that is not split any more): that link goes
+    let parts = split_parts(conn)?;
+    let amount = live(conn, id)?;
+    for role in [Role::Refund, Role::Original] {
+        if Shares::total(&parts, id, amount, role) == 0 {
+            let changed = next_change(conn)?;
+            conn.execute(
+                match role {
+                    Role::Refund => "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE deleted_ms IS NULL AND refund_id=?1",
+                    Role::Original => "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE deleted_ms IS NULL AND original_id=?1",
+                },
+                params![id, changed],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -1021,9 +1233,10 @@ impl Vault {
     /// Links the incoming booking `refund_id` to the outgoing booking `original_id`; its other
     /// links stay (a refund can pay back several bookings, a booking can have several refunds).
     /// `original_part`: for a split booking the part the refund pays back (its position from 1
-    /// in `list_transaction_splits`), else 0. Fails for wrong signs, deleted bookings, chains,
-    /// a split booking without a part and bookings that are used up. A split refund is linked
-    /// as a whole; `link_refund_parts` names the part of it that is the refund.
+    /// in `list_transaction_splits`; an outgoing part, also of an incoming booking), else 0.
+    /// Fails for wrong signs, deleted bookings, chains, a split booking without a part and
+    /// amounts that are used up. A split refund is linked as a whole; `link_refund_parts`
+    /// names the part of it that is the refund.
     pub fn link_refund(
         &self,
         refund_id: i64,
@@ -1032,9 +1245,10 @@ impl Vault {
     ) -> CoreResult<()> {
         self.link_refund_parts(refund_id, 0, original_id, original_part)
     }
-    /// `link_refund` for a split refund: `refund_part` is the part of the income that pays
-    /// back (its position from 1 in `list_transaction_splits`), at most with its amount; 0 is
-    /// the whole refund.
+    /// `link_refund` with the part that pays back: `refund_part` is an incoming part of the
+    /// split booking `refund_id` (its position from 1 in `list_transaction_splits`), at most
+    /// with its amount; 0 is the whole booking, which must be incoming then. The part may
+    /// belong to an outgoing booking (store credit that paid a part of a purchase).
     pub fn link_refund_parts(
         &self,
         refund_id: i64,
@@ -1088,12 +1302,14 @@ impl Vault {
         )?;
         Ok(())
     }
-    /// The live links of one booking; deleted bookings are left out.
+    /// The live links of one booking; deleted bookings are left out. `originals`: what it pays
+    /// back, `refunds`: what pays it back. A split booking with parts on both sides can have
+    /// both.
     pub fn refund_links(&self, transaction_id: i64) -> CoreResult<RefundLinks> {
         let db = self.db()?;
-        live(&db, transaction_id)?;
+        let own_amount = live(&db, transaction_id)?;
         let rules = self.merchant_rules(&db)?;
-        let side = |own: &str, other: &str| {
+        let side = |own: &str, other: &str, role: Role| {
             rows(
                 &db,
                 &format!(
@@ -1103,19 +1319,15 @@ impl Vault {
                 ),
                 [transaction_id],
                 &rules,
-                false,
+                role,
+                Expand::No,
             )
             .map(|rows| rows.into_iter().map(|r| r.booking).collect::<Vec<_>>())
         };
-        let mut originals = side("refund_id", "original_id")?;
-        let mut refunds = side("original_id", "refund_id")?;
+        let mut originals = side("refund_id", "original_id", Role::Original)?;
+        let mut refunds = side("original_id", "refund_id", Role::Refund)?;
         let parts = split_parts(&db)?;
         let shares = shares(&db, &parts)?;
-        let own_amount: i64 = db.query_row(
-            "SELECT amount_cents FROM transactions WHERE id=?1",
-            [transaction_id],
-            |r| r.get(0),
-        )?;
         let link = |refund: i64, original: i64, row: &RefundBooking| -> Link {
             (
                 refund,
@@ -1125,23 +1337,25 @@ impl Vault {
             )
         };
         // the part of this booking a link names, for the row of the booking on its other end
-        let own_label = |part: u32| {
-            linked_part(&parts, transaction_id, own_amount, i64::from(part))
+        let own_label = |part: u32, role: Role| {
+            named(&parts, transaction_id, i64::from(part), role)
                 .map(|p| p.label.clone())
                 .unwrap_or_default()
         };
         for o in &mut originals {
             o.share_cents = shares.links.get(&link(transaction_id, o.id, o)).copied();
-            o.refund_part_label = own_label(o.refund_part);
+            o.refund_part_label = own_label(o.refund_part, Role::Refund);
         }
         for r in &mut refunds {
             r.share_cents = shares.links.get(&link(r.id, transaction_id, r)).copied();
-            r.part_label = own_label(r.part);
+            r.part_label = own_label(r.part, Role::Original);
         }
         let sum = |links: Vec<Link>| -> Option<i64> {
             (!links.is_empty() && !links.iter().any(|l| shares.mixed.contains(l)))
                 .then(|| links.iter().filter_map(|l| shares.links.get(l)).sum())
         };
+        let total = |role: Role| Shares::total(&parts, transaction_id, own_amount, role);
+        let open = |role: Role| shares.side_open(&parts, transaction_id, own_amount, role);
         Ok(RefundLinks {
             refunded_cents: sum(refunds
                 .iter()
@@ -1151,7 +1365,16 @@ impl Vault {
                 .iter()
                 .map(|o| link(transaction_id, o.id, o))
                 .collect()),
-            open_cents: shares.open(&parts, transaction_id, own_amount, 0),
+            open_cents: Role::of(own_amount).map_or(0, open),
+            refund_total_cents: total(Role::Refund),
+            refund_open_cents: open(Role::Refund),
+            original_total_cents: total(Role::Original),
+            original_open_cents: open(Role::Original),
+            refund_income_cents: if own_amount > 0 && !originals.is_empty() {
+                (own_amount - shares.expense.get(&transaction_id).copied().unwrap_or(0)).max(0)
+            } else {
+                0
+            },
             originals,
             refunds,
         })
@@ -1160,7 +1383,8 @@ impl Vault {
     /// outgoing bookings before it, for an outgoing booking the incoming ones after it; all
     /// accounts and currencies. Without `query` the last / next 365
     /// days, with one (name or purpose) every such booking. Resolves the merchant of every
-    /// booking it reads, so call it off the main thread.
+    /// booking it reads, so call it off the main thread. For a front end without a choice of
+    /// the part that pays back: every row can be linked with `link_refund`.
     pub fn refund_candidates(
         &self,
         transaction_id: i64,
@@ -1168,13 +1392,82 @@ impl Vault {
         limit: u32,
     ) -> CoreResult<Vec<RefundBooking>> {
         let db = self.db()?;
+        let Some(role) = Role::of(live(&db, transaction_id)?) else {
+            return Ok(Vec::new());
+        };
+        self.candidates(&db, transaction_id, role, query, limit, Expand::Whole)
+    }
+
+    /// [`refund_candidates`](Self::refund_candidates) with every amount that can be linked,
+    /// for `link_refund_parts`. `pays_back`: the booking is looked at as the one that pays
+    /// back (its incoming amounts), else as the one that is paid back (its outgoing amounts);
+    /// a split booking with parts on both sides can be either. The rows are the amounts of
+    /// the other role: bookings on that side, and of every split booking its parts on that
+    /// side, also the incoming parts of an outgoing booking (store credit that paid a part of
+    /// a purchase) and the outgoing parts of an incoming booking (a fee taken off an income).
+    pub fn refund_part_candidates(
+        &self,
+        transaction_id: i64,
+        pays_back: bool,
+        query: String,
+        limit: u32,
+    ) -> CoreResult<Vec<RefundBooking>> {
+        let db = self.db()?;
+        live(&db, transaction_id)?;
+        let role = if pays_back {
+            Role::Refund
+        } else {
+            Role::Original
+        };
+        self.candidates(&db, transaction_id, role, query, limit, Expand::Parts)
+    }
+
+    /// Up to three bookings of [`refund_candidates`](Self::refund_candidates) (365 days) that most
+    /// likely belong to `transaction_id`, filled in this order, the nearest date first within
+    /// each: the same amount in the other direction, the same counterparty or merchant within
+    /// two months, a shared reference in the texts. Bookings already linked to it are left out.
+    pub fn refund_suggestions(&self, transaction_id: i64) -> CoreResult<Vec<RefundSuggestion>> {
+        let db = self.db()?;
+        let Some(role) = Role::of(live(&db, transaction_id)?) else {
+            return Ok(Vec::new());
+        };
+        self.suggestions(&db, transaction_id, role, Expand::Whole)
+    }
+
+    /// [`refund_suggestions`](Self::refund_suggestions) among the rows of
+    /// [`refund_part_candidates`](Self::refund_part_candidates).
+    pub fn refund_part_suggestions(
+        &self,
+        transaction_id: i64,
+        pays_back: bool,
+    ) -> CoreResult<Vec<RefundSuggestion>> {
+        let db = self.db()?;
+        live(&db, transaction_id)?;
+        let role = if pays_back {
+            Role::Refund
+        } else {
+            Role::Original
+        };
+        self.suggestions(&db, transaction_id, role, Expand::Parts)
+    }
+}
+
+impl Vault {
+    fn candidates(
+        &self,
+        db: &Connection,
+        transaction_id: i64,
+        role: Role,
+        query: String,
+        limit: u32,
+        expand: Expand,
+    ) -> CoreResult<Vec<RefundBooking>> {
         let query = query.trim().to_lowercase();
         if limit == 0 {
-            live(&db, transaction_id)?;
             return Ok(Vec::new());
         }
         let days = query.is_empty().then_some(WINDOW_DAYS);
-        let pool = pool(self, &db, transaction_id, days)?;
+        let pool = pool(self, db, transaction_id, role, days, expand)?;
         Ok(pool
             .rows
             .into_iter()
@@ -1191,33 +1484,43 @@ impl Vault {
             .collect())
     }
 
-    /// Up to three bookings of [`refund_candidates`](Self::refund_candidates) (365 days) that most
-    /// likely belong to `transaction_id`, filled in this order, the nearest date first within
-    /// each: the same amount in the other direction, the same counterparty or merchant within
-    /// two months, a shared reference in the texts. Bookings already linked to it are left out.
-    pub fn refund_suggestions(&self, transaction_id: i64) -> CoreResult<Vec<RefundSuggestion>> {
+    fn suggestions(
+        &self,
+        db: &Connection,
+        transaction_id: i64,
+        role: Role,
+        expand: Expand,
+    ) -> CoreResult<Vec<RefundSuggestion>> {
         const MAX: usize = 3;
-        let db = self.db()?;
-        let pool = pool(self, &db, transaction_id, Some(WINDOW_DAYS))?;
+        let pool = pool(self, db, transaction_id, role, Some(WINDOW_DAYS), expand)?;
         // a booking that is used up itself takes no further link: nothing to suggest
-        let parts = split_parts(&db)?;
-        if shares(&db, &parts)?.open(&parts, transaction_id, pool.amount, 0) == 0 {
+        if pool.open == 0 {
             return Ok(Vec::new());
         }
         let linked: std::collections::HashSet<(i64, u32)> = db
-            .prepare(
-                "SELECT original_id,original_part FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL
-                 UNION SELECT refund_id,refund_part FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",
-            )?
+            .prepare(match role {
+                Role::Refund => "SELECT original_id,original_part FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL",
+                Role::Original => "SELECT refund_id,refund_part FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",
+            })?
             .query_map([transaction_id], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<_, _>>()?;
+        // the amounts of the booking that can be linked: all of it, or one of its parts
+        let mut own_amounts = vec![pool.amount];
+        own_amounts.extend(
+            split_parts(db)?
+                .get(&transaction_id)
+                .into_iter()
+                .flatten()
+                .filter(|p| p.amount.signum() == role.sign())
+                .map(|p| p.amount),
+        );
         let source_refs = reference_tokens(&pool.reference);
         let counterparty = pool.counterparty.trim().to_lowercase();
         let matches = |row: &Row, reason: RefundMatch| -> bool {
             let b = &row.booking;
             match reason {
                 RefundMatch::SameAmount => {
-                    b.amount_cents == -pool.amount
+                    own_amounts.contains(&b.amount_cents.saturating_neg())
                         && currency_code(&b.currency) == currency_code(&pool.currency)
                 }
                 RefundMatch::SameMerchant => {
@@ -1236,6 +1539,7 @@ impl Vault {
                 }
             }
         };
+        let other = role.other();
         let mut out: Vec<RefundSuggestion> = Vec::new();
         for reason in [
             RefundMatch::SameAmount,
@@ -1246,13 +1550,13 @@ impl Vault {
                 if out.len() == MAX {
                     return Ok(out);
                 }
-                let id = (row.booking.id, row.booking.own_part());
+                let id = (row.booking.id, row.booking.own_part(other));
                 // a booking that is used up cannot be linked: no suggestion
                 if linked.contains(&id)
                     || row.booking.open_cents == 0
                     || out
                         .iter()
-                        .any(|s| (s.booking.id, s.booking.own_part()) == id)
+                        .any(|s| (s.booking.id, s.booking.own_part(other)) == id)
                 {
                     continue;
                 }

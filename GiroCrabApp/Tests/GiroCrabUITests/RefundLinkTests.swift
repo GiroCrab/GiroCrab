@@ -287,6 +287,40 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(kind(refund.id), RefundLinkKind.none)
     }
 
+    /// Store credit that paid a part of a purchase (an incoming part of an outgoing booking)
+    /// pays back the booking the credit was given for; the purchase is marked as what pays back.
+    func testStoreCreditInAPurchasePaysBackABooking() throws {
+        // the credit is spent after the booking it was given for: the selection looks ahead
+        let originals = try pair().originals.sorted { ($0.bookingDate, $0.id) < ($1.bookingDate, $1.id) }
+        let (returned, purchase) = (originals[0], originals[1])
+        let vault = try XCTUnwrap(model.vault)
+        try vault.setTransactionSplits(transactionId: purchase.id, splits: [
+            TransactionSplitInput(categoryId: nil, amountCents: purchase.amountCents * 2, note: ""),
+            TransactionSplitInput(categoryId: nil, amountCents: -purchase.amountCents, note: "Guthaben")
+        ])
+        // the purchase as a whole pays nothing back
+        model.linkRefund(refundID: purchase.id, originalID: returned.id)
+        XCTAssertNotNil(model.errorMessage)
+        model.errorMessage = nil
+
+        model.linkRefund(refundID: purchase.id, originalID: returned.id, refundPart: 2)
+
+        XCTAssertNil(model.errorMessage)
+        let links = try vault.refundLinks(transactionId: purchase.id)
+        XCTAssertEqual(links.originals.map(\.id), [returned.id])
+        XCTAssertEqual(links.refundTotalCents, -purchase.amountCents)
+        XCTAssertEqual(links.assignedCents, min(-purchase.amountCents, -returned.amountCents))
+        XCTAssertEqual(kind(purchase.id), .refund)
+        XCTAssertEqual(kind(returned.id), .original)
+        // the selection of the returned booking lists the credit part
+        let offered = try vault.refundPartCandidates(transactionId: returned.id, paysBack: false, query: "", limit: 200)
+        XCTAssertTrue(offered.contains { $0.id == purchase.id && $0.refundPart == 2 && $0.amountCents == -purchase.amountCents })
+
+        model.unlinkRefundOriginals(refundID: purchase.id)
+        XCTAssertEqual(kind(purchase.id), RefundLinkKind.none)
+        XCTAssertEqual(kind(returned.id), RefundLinkKind.none)
+    }
+
     /// The suggestions are candidates too, at most three, and never an already linked booking.
     func testSuggestionsAreAtMostThreeCandidates() throws {
         let vault = try XCTUnwrap(model.vault)

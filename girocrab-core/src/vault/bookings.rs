@@ -264,9 +264,7 @@ pub(super) struct BookingFinisher {
     /// Both legs of detected bank ↔ payment-service transfers (#302).
     pair_transfers: HashSet<i64>,
     loan_links: HashMap<i64, i64>,
-    /// Refunds linked to their original booking (#714): never income.
-    linked_refunds: HashSet<i64>,
-    /// What the links of a linked booking cover (`refunds::covered`).
+    /// What the refund links of a linked booking cover (#714, `refunds::covered`).
     refund_covered: crate::refunds::Covered,
     paypal_accounts: HashSet<i64>,
     /// Merchant recognition with the user's changes (#1373).
@@ -278,7 +276,6 @@ impl BookingFinisher {
         let paths = Vault::category_paths(db)?;
         let category_flows = Vault::category_flows(db)?;
         let loan_links = crate::loans::link_map(db)?;
-        let linked_refunds = crate::refunds::linked_refund_ids(db)?;
         let refund_covered = crate::refunds::covered(db)?;
         let salary_ibans = crate::salary::marked_salary_ibans(db)?;
         let overrides = crate::insights::load_overrides(db)?;
@@ -310,7 +307,6 @@ impl BookingFinisher {
             own_ibans,
             pair_transfers,
             loan_links,
-            linked_refunds,
             refund_covered,
             paypal_accounts,
             merchants,
@@ -371,17 +367,25 @@ impl BookingFinisher {
             t.merchant.domain_source = "override".into();
             t.merchant_domain = Some(d.clone());
         }
-        let covered = self.refund_covered.cents.get(&t.id).copied();
-        t.refund_part_cents = covered.filter(|covered| {
-            *covered < t.amount_cents.saturating_abs() && !self.refund_covered.mixed.contains(&t.id)
-        });
+        // what the booking pays back, else what is paid back of it: (covered, at most)
+        let pays = self.refund_covered.refund.get(&t.id).copied();
+        t.refund_part_cents = pays
+            .or(self.refund_covered.original.get(&t.id).copied())
+            .filter(|(covered, total)| {
+                covered < total && !self.refund_covered.mixed.contains(&t.id)
+            })
+            .map(|(covered, _)| covered);
         // A refund the user linked to its original booking (#714) is no income: like a refund
         // the wording gives away, it reduces the expenses of the analysis instead. Only what
         // its originals take up does; the rest stays income until it is assigned too (all of
-        // it when its links take up nothing, as between different currencies).
-        if t.flow == FlowKind::Income && self.linked_refunds.contains(&t.id) {
+        // it when its links take up nothing, as between different currencies). An outgoing
+        // booking with a part that pays back (store credit) stays what it is.
+        if pays.is_some() && t.flow == FlowKind::Income {
+            // what pays back an outgoing part of an income (a fee) raises that income: only
+            // what pays back an expense lowers the expenses
+            let paid = self.refund_covered.expense.get(&t.id).copied().unwrap_or(0);
             t.flow = FlowKind::Consumption;
-            t.refund_income_cents = (t.amount_cents - covered.unwrap_or(0)).max(0);
+            t.refund_income_cents = (t.amount_cents - paid).max(0);
         }
         if let Some(loan) = self.loan_links.get(&t.id) {
             t.flow = match visible {

@@ -57,13 +57,14 @@ extension AppModel {
         }
         for id in affected {
             guard let links = try? vault.refundLinks(transactionId: id) else { continue }
+            // like the core's rows: a booking that pays back is a refund, also an outgoing one
+            // with a part that does
             let kind: RefundLinkKind = !links.originals.isEmpty ? .refund : (links.refunds.isEmpty ? .none : .original)
-            let covered = kind == .refund ? links.assignedCents : links.refundedCents
+            let (covered, total) = kind == .refund ? (links.assignedCents, links.refundTotalCents) : (links.refundedCents, links.originalTotalCents)
             patchLoadedRows([id]) { row in
-                let part = covered.flatMap { $0 < abs(row.amountCents) ? $0 : nil }
                 row.refundLink = kind
-                row.refundPartCents = part
-                row.refundIncomeCents = kind == .refund ? part.map { row.amountCents - $0 } ?? 0 : 0
+                row.refundPartCents = covered.flatMap { $0 < total ? $0 : nil }
+                row.refundIncomeCents = links.refundIncomeCents
             }
             if refundPickerBooking?.id == id { refundPickerBooking?.refundLink = kind }
         }

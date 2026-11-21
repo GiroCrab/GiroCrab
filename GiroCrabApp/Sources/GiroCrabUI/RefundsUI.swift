@@ -56,6 +56,8 @@ struct RefundLinkMenu: View {
 /// One booking of a refund link: name, date and account, the amount at the end.
 private struct RefundBookingLine: View {
     let row: RefundBooking
+    /// The row is the amount that pays back (a refund, or an incoming part of any booking).
+    let paysBack: Bool
     /// The sheet has room for the purpose; the inspector card has not.
     var showsPurpose = false
 
@@ -67,9 +69,8 @@ private struct RefundBookingLine: View {
     /// other end: "für Teil 1 · …" (of the booking a refund pays back), "aus Teil 2 · …" (of the refund).
     private var partLines: [String] {
         let text = { (title: String, label: String) in [title, label].filter { !$0.isEmpty }.joined(separator: " · ") }
-        let refund = row.amountCents > 0
         var out: [String] = []
-        if refund {
+        if paysBack {
             if row.refundPart > 0 { out.append(text(String(localized: "Teil \(Int(row.refundPart))"), row.refundPartLabel)) }
             if row.part > 0 { out.append(text(String(localized: "für Teil \(Int(row.part))"), row.partLabel)) }
         } else {
@@ -143,16 +144,18 @@ enum RefundSum {
         let money = { (cents: Int64) in Money.format(cents, currency: currency) }
         var out: [String] = []
         if let refunded = links.refundedCents {
-            out.append(String(localized: "Erstattet: \(money(refunded)) von \(money(abs(booking.amountCents)))"))
-            let total = links.refunds.reduce(Int64(0)) { $0 + $1.amountCents }
+            out.append(String(localized: "Erstattet: \(money(refunded)) von \(money(links.originalTotalCents))"))
+            // a refund linked to several parts of this booking counts once
+            var seen = Set<String>()
+            let total = links.refunds.filter { seen.insert("\($0.id)-\($0.refundPart)").inserted }.reduce(Int64(0)) { $0 + $1.amountCents }
             if total > refunded {
                 out.append(String(localized: "Die Erstattungen betragen zusammen \(money(total)). Was über diese Buchung hinausgeht, zählt hier nicht und kann weiteren Buchungen zugeordnet werden."))
             }
         }
         if let assigned = links.assignedCents {
-            out.append(String(localized: "Zugeordnet: \(money(assigned)) von \(money(booking.amountCents))"))
-            if assigned < booking.amountCents {
-                out.append(String(localized: "Noch offen: \(money(booking.amountCents - assigned)). Sie können weitere Buchungen zuordnen."))
+            out.append(String(localized: "Zugeordnet: \(money(assigned)) von \(money(links.refundTotalCents))"))
+            if links.refundOpenCents > 0 {
+                out.append(String(localized: "Noch offen: \(money(links.refundOpenCents)). Sie können weitere Buchungen zuordnen."))
             }
         }
         return out
@@ -173,17 +176,20 @@ struct RefundPickerSheet: View {
     @State private var top: [RefundSuggestion] = []
     @State private var loaded = false
     @State private var search = ""
-    /// The parts of a split booking the sheet was opened from that can be linked (the outgoing
-    /// parts of an outgoing booking, the incoming ones of a refund), and the one the next link
-    /// is made for.
+    /// The parts of a split booking the sheet was opened from, and the one the next link is
+    /// made for. An incoming part pays back (also store credit in a purchase), an outgoing one
+    /// is paid back (also a fee taken off an income): the sheet follows the chosen part.
     @State private var ownParts: [(part: UInt32, split: TransactionSplit)] = []
     @State private var ownPart: UInt32 = 0
     @State private var loadError: String?
     /// Counts the loads: only the newest one may show its result.
     @State private var loads = 0
 
-    /// The sheet was opened from a refund: its originals are chosen. Otherwise refunds are collected.
-    private var fromRefund: Bool { booking.amountCents > 0 }
+    /// The booking (its chosen part) pays back: the bookings it pays back are chosen. Otherwise
+    /// what pays it back is collected.
+    private var fromRefund: Bool {
+        ownParts.first { $0.part == ownPart }.map { $0.split.amountCents > 0 } ?? (booking.amountCents > 0)
+    }
     private var linked: [RefundBooking] { (fromRefund ? links?.originals : links?.refunds) ?? [] }
     private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The list below the suggestions; a search shows every hit, also a suggested one.
@@ -271,7 +277,7 @@ struct RefundPickerSheet: View {
             }
         }
         .macFrame(minWidth: 540, idealWidth: 580, minHeight: 520)
-        .task(id: "\(model.vaultRevision)|\(model.refundLinksRevision)|\(search)") { await reload() }
+        .task(id: "\(model.vaultRevision)|\(model.refundLinksRevision)|\(search)|\(ownPart)") { await reload() }
         #if os(macOS)
         .onExitCommand { dismiss() }
         #endif
@@ -293,7 +299,7 @@ struct RefundPickerSheet: View {
                     }
                 }
             }
-            if links?.openCents == 0, !(top.isEmpty && others.isEmpty) {
+            if ownOpen == 0, !(top.isEmpty && others.isEmpty) {
                 Label(fromRefund ? "Die Erstattung ist vollständig zugeordnet. Heben Sie eine Verknüpfung auf, um eine andere Buchung zu wählen."
                           : "Die Buchung ist vollständig erstattet. Heben Sie eine Verknüpfung auf, um eine andere Erstattung zu wählen.",
                       systemImage: "checkmark.circle")
@@ -327,8 +333,11 @@ struct RefundPickerSheet: View {
 
     /// The whole row is one button, the circle in front included.
     /// Why an unlinked row cannot be chosen: this booking or that one has nothing left to link.
+    /// What this booking has left for a further link, in the role the sheet shows.
+    private var ownOpen: Int64? { links.map { fromRefund ? $0.refundOpenCents : $0.originalOpenCents } }
+
     private func blocked(_ r: RefundBooking) -> LocalizedStringKey? {
-        if links?.openCents == 0 {
+        if ownOpen == 0 {
             return fromRefund ? "Die Erstattung ist bereits vollständig zugeordnet." : "Die Buchung ist bereits vollständig erstattet."
         }
         if r.openCents == 0 {
@@ -345,7 +354,7 @@ struct RefundPickerSheet: View {
                     .appFont(.title3)
                     .foregroundStyle(isLinked ? Theme.accent : Theme.tertiary)
                     .accessibilityHidden(true)
-                RefundBookingLine(row: r, showsPurpose: true)
+                RefundBookingLine(row: r, paysBack: !fromRefund, showsPurpose: true)
                 if let reason {
                     Text(Self.label(reason))
                         .appFont(.caption2, weight: .medium)
@@ -381,10 +390,10 @@ struct RefundPickerSheet: View {
         let id = booking.id
         let query = search
         do {
-            let outgoing = !fromRefund
+            let paysBack = fromRefund
             let result = try await model.vaultOffMain { vault -> (RefundLinks, [RefundSuggestion], [RefundBooking], [TransactionSplit]) in
-                (try vault.refundLinks(transactionId: id), try vault.refundSuggestions(transactionId: id),
-                 try vault.refundCandidates(transactionId: id, query: query, limit: 200),
+                (try vault.refundLinks(transactionId: id), try vault.refundPartSuggestions(transactionId: id, paysBack: paysBack),
+                 try vault.refundPartCandidates(transactionId: id, paysBack: paysBack, query: query, limit: 200),
                  try vault.listTransactionSplits(transactionId: id))
             }
             guard run == loads, let result else { return }
@@ -393,11 +402,12 @@ struct RefundPickerSheet: View {
             let linkedIDs = Set(linked.map(Self.key))
             top = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
             candidates = result.2
-            // parts count from 1 in the order of the split; only outgoing ones take a refund,
-            // only incoming ones of a refund pay back
+            // parts count from 1 in the order of the split; the sheet starts with a part on the
+            // booking's own side
             ownParts = result.3.enumerated().map { (part: UInt32($0.offset + 1), split: $0.element) }
-                .filter { outgoing ? $0.split.amountCents < 0 : $0.split.amountCents > 0 }
-            if !ownParts.contains(where: { $0.part == ownPart }) { ownPart = ownParts.first?.part ?? 0 }
+            if !ownParts.contains(where: { $0.part == ownPart }) {
+                ownPart = (ownParts.first { ($0.split.amountCents > 0) == (booking.amountCents > 0) } ?? ownParts.first)?.part ?? 0
+            }
             loadError = nil
         } catch {
             guard run == loads else { return }
@@ -427,12 +437,12 @@ struct RefundLinksCard: View {
             if let originals = links?.originals, !originals.isEmpty {
                 Text(originals.count == 1 ? "Ursprüngliche Buchung" : "Ursprüngliche Buchungen (\(originals.count))")
                     .appFont(.caption).foregroundStyle(Theme.secondary)
-                ForEach(originals, id: \.self) { line($0, refundID: booking.id, originalID: $0.id) }
+                ForEach(originals, id: \.self) { line($0, paysBack: false, refundID: booking.id, originalID: $0.id) }
             }
             if let refunds = links?.refunds, !refunds.isEmpty {
                 Text(refunds.count == 1 ? "Erstattung dieser Buchung" : "Erstattungen dieser Buchung (\(refunds.count))")
                     .appFont(.caption).foregroundStyle(Theme.secondary)
-                ForEach(refunds, id: \.self) { line($0, refundID: $0.id, originalID: booking.id) }
+                ForEach(refunds, id: \.self) { line($0, paysBack: true, refundID: $0.id, originalID: booking.id) }
             }
             if let links {
                 ForEach(RefundSum.lines(booking: booking, links: links), id: \.self) {
@@ -455,11 +465,11 @@ struct RefundLinksCard: View {
         }
     }
 
-    private func line(_ r: RefundBooking, refundID: Int64, originalID: Int64) -> some View {
+    private func line(_ r: RefundBooking, paysBack: Bool, refundID: Int64, originalID: Int64) -> some View {
         HStack(spacing: 6) {
             Button { model.revealBooking(r.id) } label: {
                 HStack(spacing: 6) {
-                    RefundBookingLine(row: r)
+                    RefundBookingLine(row: r, paysBack: paysBack)
                     Image(systemName: "chevron.right")
                         .appFont(.caption2, weight: .semibold)
                         .foregroundStyle(Theme.tertiary)

@@ -378,6 +378,11 @@ mod tests {
                 refunded_cents: None,
                 assigned_cents: Some(1599 - open),
                 open_cents: open,
+                refund_total_cents: 1599,
+                refund_open_cents: open,
+                original_total_cents: 0,
+                original_open_cents: 0,
+                refund_income_cents: open,
             },
             suggestions: vec![RefundSuggestion {
                 booking: booking(3, -1599, None, 1599),

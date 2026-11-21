@@ -18,9 +18,13 @@ Der Core verteilt dazu jede Erstattung (älteste zuerst) auf ihre ursprüngliche
 Buchung nicht mehr aufnimmt, bleibt für die nächste. `RefundLinks.refunded_cents` (für die ursprüngliche Buchung) und
 `assigned_cents` (für die Erstattung) tragen das Ergebnis; bei verschiedenen Währungen fehlen sie (#569).
 
-- Eine Erstattung ist ein Eingang (Betrag > 0), die ursprüngliche Buchung ein Ausgang (Betrag < 0). Buchungen mit
-  Betrag 0 haben keine Einträge.
-- Keine Ketten: Eine Erstattung ist nie zugleich ursprüngliche Buchung einer anderen.
+- Eine Erstattung ist ein eingehender Betrag (> 0), die ursprüngliche Buchung ein ausgehender (< 0). Das gilt je
+  Betrag, nicht je Buchung: Auch ein eingehender Teil einer Ausgabe zahlt zurück (ein Guthaben, mit dem ein Teil eines
+  Kaufs bezahlt wurde), und ein ausgehender Teil einer Einnahme kann erstattet werden (eine abgezogene Gebühr).
+  Buchungen mit Betrag 0 haben keine Einträge.
+- Keine Ketten: Ein Betrag ist nie zugleich Erstattung und ursprüngliche Buchung. Eine geteilte Buchung mit Teilen
+  beider Richtungen kann beides sein, mit verschiedenen Teilen; ihre eigenen Teile lassen sich nicht miteinander
+  verknüpfen.
 - Konten und Währungen dürfen sich unterscheiden (Kauf mit der Karte, Erstattung aufs Girokonto).
 - Bei einer Splitbuchung gilt die Verknüpfung einem ihrer Teile (siehe „Geteilte Buchungen“); ihre Teile bleiben, wie
   sie sind. Das gilt für beide Seiten: bei einer geteilten Ausgabe für den Teil, der erstattet wird, bei einer
@@ -100,6 +104,7 @@ Namen, Konto und Verwendungszweck tragen `.sensitive()`, Beträge und die Summe 
 geteilten Buchung ihre Teile („Teil 1 · Garten“), die Verknüpfung gilt dem gewählten Teil. `--demo-sheet refund-split-out`
 öffnet das Blatt dieser geteilten Ausgabe; „Erstattung für“ wählt dort den Teil, dem die nächste Erstattung gilt.
 `--demo-sheet refund-split-in` teilt die Einnahme selbst; „Erstattung aus“ wählt den Teil, der die Erstattung ist.
+`--demo-sheet refund-credit` öffnet das Blatt eines Kaufs, der zum Teil mit einem Guthaben bezahlt wurde.
 
 ## Geteilte Buchungen
 
@@ -114,6 +119,21 @@ wählt „Erstattung aus“ den Teil für die nächste Verknüpfung, im Blatt ei
 ihren eingehenden Teilen zur Auswahl. Eine Verknüpfung der ganzen geteilten Einnahme (`refund_part` 0: aus der Zeit vor
 der Teilung, oder von einer Oberfläche ohne diese Auswahl über `link_refund`) nimmt ihren Anteil aus den Teilen vom
 letzten zum ersten.
+
+**Teile der Gegenrichtung.** Die Rolle hängt am Teil: Ein eingehender Teil einer Ausgabe (Guthaben) wird über
+`refund_part` verknüpft und zahlt eine andere Buchung zurück; ein ausgehender Teil einer Einnahme (Gebühr) wird über
+`original_part` verknüpft und kann erstattet werden. Im Blatt wählt dieselbe Auswahl den Teil; je nach Richtung des
+gewählten Teils sammelt das Blatt ursprüngliche Buchungen oder Erstattungen (`refund_part_candidates` mit
+`pays_back`). In der Auswahl einer Erstattung stehen deshalb auch die ausgehenden Teile von Einnahmen, in der Auswahl
+einer Ausgabe die eingehenden Teile anderer Ausgaben. In der Buchungsliste trägt eine Buchung, die etwas zurückzahlt,
+das Zeichen der Erstattung, auch wenn sie selbst eine Ausgabe ist. In der Auswertung senkt nur, was eine Ausgabe
+zurückzahlt, die Ausgaben; was eine Gebühr in einer Einnahme zurückzahlt, bleibt Einnahme. Ein Guthaben-Teil ändert
+die Kennzahlen nicht (das Geld der Buchung bleibt dasselbe), er zählt aber in der Kategorie der zurückgezahlten
+Buchung statt in seiner eigenen. Hat eine Buchung nach dem Ändern oder Aufheben ihrer Aufteilung keinen Betrag der
+verknüpften Richtung mehr, werden diese Verknüpfungen aufgehoben.
+
+Oberflächen ohne Auswahl des zahlenden Teils (`refund_candidates`, `link_refund`) bekommen eine Einnahme nur als
+Ganzes angeboten und keine Guthaben-Teile; die ausgehenden Teile, auch die von Einnahmen, stehen dort zur Auswahl.
 
 Die Teile werden über ihre Position gezählt. Deshalb übernimmt der Abgleich zwischen Geräten die Teile in ihrer
 Reihenfolge (`sync_merge::bookings::load_splits`), statt sie zu sortieren.
@@ -152,7 +172,8 @@ Kontostände ändern sich dadurch nicht.
 
 ## Reihenfolge und Grenze
 
-Die Anteile werden in der Reihenfolge gefüllt, in der die Verknüpfungen angelegt wurden (`refund_links.changed_ms`):
+Die Anteile werden in der Reihenfolge gefüllt, in der die Verknüpfungen angelegt wurden (`refund_links.changed_ms`;
+bei gleichem Stempel von zwei Geräten nach Datum und Bankkennung der Buchungen, auf beiden Geräten gleich):
 Die zuerst verknüpfte Buchung bekommt ihren Anteil zuerst, die nächste höchstens den Rest. So stehen die verknüpften
 Zeilen auch in der Auswahl und im Inspektor. Ist eine Erstattung vollständig zugeordnet oder eine Buchung vollständig
 erstattet (`open_cents == 0`), nimmt sie keine weitere Verknüpfung an: Der Core lehnt sie ab, die Auswahl zeigt die

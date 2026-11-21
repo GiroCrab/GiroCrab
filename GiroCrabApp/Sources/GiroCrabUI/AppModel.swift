@@ -1108,7 +1108,7 @@ public final class AppModel {
             showMoneyMoneyImport = true
         case "recurring":
             showRecurringSheet = true
-        case "refund", "refund-linked", "refund-split", "refund-split-out", "refund-split-in":
+        case "refund", "refund-linked", "refund-split", "refund-split-out", "refund-split-in", "refund-credit":
             // "Ursprüngliche Buchung zuordnen …" (#714) for the first incoming booking the core
             // has suggestions for (else the first one); `refund-linked`: already linked to the
             // nearest candidate
@@ -1137,6 +1137,20 @@ public final class AppModel {
                         refundPickerBooking = split
                         break
                     }
+                }
+                // `refund-credit`: a purchase paid in part with store credit (an incoming part of an
+                // outgoing booking); its sheet offers that part as what pays back
+                if name == "refund-credit", let vault,
+                   let purchase = bookings.first(where: { $0.amountCents < -1 && $0.id != refund.id }),
+                   let credit = try? vault.createCategory(name: "Guthaben", parentId: nil, sfSymbol: "giftcard", colorHex: "#4C9A2A") {
+                    try? vault.setTransactionSplits(transactionId: purchase.id, splits: [
+                        TransactionSplitInput(categoryId: purchase.categoryId, amountCents: purchase.amountCents * 2, note: ""),
+                        TransactionSplitInput(categoryId: credit, amountCents: -purchase.amountCents, note: ""),
+                    ])
+                    reloadAll()
+                    selectedBookingID = purchase.id
+                    refundPickerBooking = booking(withID: purchase.id) ?? purchase
+                    break
                 }
                 // `refund-split-in`: the income itself is split, the sheet offers the choice of
                 // the part that is the refund

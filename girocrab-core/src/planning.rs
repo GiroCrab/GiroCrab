@@ -71,19 +71,23 @@ pub(crate) fn effective_sql(
     extra: &str,
     condition: &str,
 ) -> Result<String, CoreError> {
-    effective_sql_own(db, extra, condition, "")
+    effective_sql_own(db, extra, condition, false)
 }
 
-/// `effective_sql` with `own`: more conditions on `t` that hold for the bookings themselves
-/// but not for what refunds pay back. That part hangs on the refund, an incoming booking, so
-/// `" AND +t.amount_cents < 0"` as `condition` would drop it; as `own` it gives the expenses
-/// less what was paid back.
+/// `effective_sql` for the expenses (`expenses`): only outgoing bookings, less what refunds pay
+/// back of them. That part hangs on the refund, an incoming booking, so a condition on every
+/// row (`" AND +t.amount_cents < 0"` as `condition`) would drop it.
 pub(crate) fn effective_sql_own(
     db: &rusqlite::Connection,
     extra: &str,
     condition: &str,
-    own: &str,
+    expenses: bool,
 ) -> Result<String, CoreError> {
+    let own = if expenses {
+        " AND +t.amount_cents < 0"
+    } else {
+        ""
+    };
     let Some(moves) = crate::refunds::moves_sql(db)? else {
         return Ok(format!(
             "(
@@ -99,6 +103,8 @@ pub(crate) fn effective_sql_own(
         ));
     };
     let (into, paid, drawn) = (&moves.into, &moves.paid, &moves.drawn);
+    // what pays back an outgoing part of an income (a fee) is no lower expense
+    let paid_back = if expenses { " AND m.expense = 1" } else { "" };
     Ok(format!(
         "(
     SELECT t.category_id AS category_id, t.amount_cents - COALESCE(paid.cents, 0) AS amount_cents, t.booking_date AS booking_date{extra}
@@ -113,7 +119,7 @@ pub(crate) fn effective_sql_own(
     UNION ALL
     SELECT m.category_id, m.amount_cents, t.booking_date{extra}
       FROM {into} m JOIN transactions t ON t.id = m.refund_id
-     WHERE t.deleted_ms IS NULL{condition}
+     WHERE t.deleted_ms IS NULL{condition}{paid_back}
 )"
     ))
 }
@@ -566,9 +572,7 @@ pub(crate) fn store_splits(
         )?
         .query_map([id], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
-    if !old.iter().eq(lines.iter().map(|(_, cents, _)| cents)) {
-        crate::refunds::split_changed(conn, id)?;
-    }
+    let changed = !old.iter().eq(lines.iter().map(|(_, cents, _)| cents));
     conn.execute(
         "DELETE FROM transaction_splits WHERE transaction_id = ?1",
         [id],
@@ -578,6 +582,9 @@ pub(crate) fn store_splits(
     )?;
     for (category, cents, note) in lines {
         insert.execute(params![id, category, cents, note.as_ref().trim()])?;
+    }
+    if changed {
+        crate::refunds::split_changed(conn, id)?;
     }
     conn.prepare_cached("UPDATE transactions SET splits_ms = ?2 WHERE id = ?1")?
         .execute(params![id, crate::dates::now_ms()])?;
