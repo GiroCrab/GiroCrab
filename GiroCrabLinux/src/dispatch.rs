@@ -2112,7 +2112,6 @@ mod tests {
         }
     }
 
-    /// Händler-Historie (#299): the merchant's stats over all accounts and in one account.
     /// Kategorie-Vorschläge (#664, CategorySuggestions.qml) and Regeln vergeben Tags (#580,
     /// RuleEditorView.qml / RuleForm.qml / TagManagerSheet.qml): suggestions only for
     /// uncategorised bookings, with the basis as its enum name; a tag-only rule (category 0)
@@ -2219,6 +2218,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// Händler-Historie (#299): the merchant's stats over all accounts and in one account.
     #[test]
     fn merchant_history() {
         let path =

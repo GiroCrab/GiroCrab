@@ -45,7 +45,7 @@ Sheet {
         if (!visible) return ""
         const key = []
         for (const r of AppModel.rules) if (r.tag_ids && r.tag_ids.length)
-            key.push([r.id, r.enabled ? 1 : 0, r.match_count].concat(r.tag_ids).join(","))
+            key.push([r.id, r.enabled ? 1 : 0, r.match_count, r.pattern, r.field, r.match_kind].concat(r.tag_ids).join(","))
         for (const t of TagsModel.tags) key.push(t.id + ":" + t.booking_count)
         return key.join(";")
     }
