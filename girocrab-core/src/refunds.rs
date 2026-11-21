@@ -17,44 +17,12 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 
-/// Step 38: a refund may pay back several bookings, so the key is the pair.
-pub(crate) const SCHEMA_PAIRS: &str = "
-CREATE TABLE refund_links_pairs (
- refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
- original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
- created_ms INTEGER NOT NULL,
- changed_ms INTEGER NOT NULL,
- deleted_ms INTEGER,
- PRIMARY KEY (refund_id, original_id)
-);
-INSERT INTO refund_links_pairs SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms FROM refund_links;
-DROP TABLE refund_links;
-ALTER TABLE refund_links_pairs RENAME TO refund_links;
-CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
-";
-
-/// Step 39: a link to a split booking names the part it pays back: `original_part` is the
-/// part's position among the booking's parts (from 1), 0 is the whole booking.
-pub(crate) const SCHEMA_PARTS: &str = "
-CREATE TABLE refund_links_parts (
- refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
- original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
- original_part INTEGER NOT NULL DEFAULT 0,
- created_ms INTEGER NOT NULL,
- changed_ms INTEGER NOT NULL,
- deleted_ms INTEGER,
- PRIMARY KEY (refund_id, original_id, original_part)
-);
-INSERT INTO refund_links_parts SELECT refund_id,original_id,0,created_ms,changed_ms,deleted_ms FROM refund_links;
-DROP TABLE refund_links;
-ALTER TABLE refund_links_parts RENAME TO refund_links;
-CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
-";
-
-/// Step 40: a link from a split refund names the part of it that pays back: `refund_part` is
-/// the part's position among the refund's parts (from 1), 0 is the whole refund.
-pub(crate) const SCHEMA_SIDES: &str = "
-CREATE TABLE refund_links_sides (
+/// Step 37: the links between refunds and the bookings they pay back. A refund may pay back
+/// several bookings and a booking may have several refunds, so the key is the pair with the
+/// parts it names: `original_part` / `refund_part` are the position of a split booking's part
+/// (from 1), 0 is the whole booking. A removed link stays as a tombstone (`deleted_ms`).
+pub(crate) const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS refund_links (
  refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
  original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
  original_part INTEGER NOT NULL DEFAULT 0,
@@ -63,20 +31,6 @@ CREATE TABLE refund_links_sides (
  changed_ms INTEGER NOT NULL,
  deleted_ms INTEGER,
  PRIMARY KEY (refund_id, original_id, original_part, refund_part)
-);
-INSERT INTO refund_links_sides SELECT refund_id,original_id,original_part,0,created_ms,changed_ms,deleted_ms FROM refund_links;
-DROP TABLE refund_links;
-ALTER TABLE refund_links_sides RENAME TO refund_links;
-CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
-";
-
-pub(crate) const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS refund_links (
- refund_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
- original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
- created_ms INTEGER NOT NULL,
- changed_ms INTEGER NOT NULL,
- deleted_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
 ";
