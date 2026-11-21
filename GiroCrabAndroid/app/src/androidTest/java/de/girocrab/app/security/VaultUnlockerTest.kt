@@ -68,6 +68,7 @@ class VaultUnlockerTest {
     @Test
     fun cancelledPromptUnlocksNothing() {
         storeWrappedKey()
+        val sizeBefore = vaultBytes()
         var prompted = false
         val unlocker = unlocker { _, _, _, onResult ->
             prompted = true
@@ -79,12 +80,13 @@ class VaultUnlockerTest {
 
         assertTrue("the prompt has to be shown", prompted)
         assertTrue("cancellation must not open anything, was $result", result is UnlockResult.Refused)
-        assertFalse("no vault may be created after a cancelled prompt", vaultFile.exists())
+        assertEquals("a cancelled prompt must not write to the vault", sizeBefore, vaultBytes())
     }
 
     @Test
     fun failedPromptUnlocksNothing() {
         storeWrappedKey()
+        val sizeBefore = vaultBytes()
         val unlocker = unlocker { _, _, _, onResult ->
             onResult(PromptResult.Failed("zu viele Versuche"))
         }
@@ -93,7 +95,7 @@ class VaultUnlockerTest {
         unlocker.unlock { result = it }
 
         assertEquals(UnlockResult.Refused("zu viele Versuche"), result)
-        assertFalse(vaultFile.exists())
+        assertEquals("a failed prompt must not write to the vault", sizeBefore, vaultBytes())
     }
 
     /**
@@ -103,6 +105,7 @@ class VaultUnlockerTest {
     @Test
     fun foreignCipherIsRefused() {
         storeWrappedKey()
+        val sizeBefore = vaultBytes()
         // An *initialized* cipher from the same key: only the identity check can refuse it, so the
         // test cannot pass just because an uninitialized cipher would fail anyway.
         val foreign = keyStore().unlockCipher()
@@ -114,7 +117,7 @@ class VaultUnlockerTest {
         unlocker.unlock { result = it }
 
         assertTrue("a foreign cipher must be refused, was $result", result is UnlockResult.Refused)
-        assertFalse(vaultFile.exists())
+        assertEquals("a foreign cipher must not write to the vault", sizeBefore, vaultBytes())
     }
 
     /**
@@ -202,6 +205,8 @@ class VaultUnlockerTest {
         if (createVault) handleOrFail(opener.open(vaultFile.path, key)).close()
         return key
     }
+
+    private fun vaultBytes(): Long = if (vaultFile.exists()) vaultFile.length() else 0L
 
     private fun handleOrFail(vault: OwnVault?): OwnVault =
         vault ?: throw AssertionError("core did not return a handle (not linked?)")
