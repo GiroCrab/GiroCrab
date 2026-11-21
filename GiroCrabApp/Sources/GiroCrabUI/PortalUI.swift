@@ -1083,6 +1083,7 @@ struct PortalWebSheet: View {
     /// done, or when nothing is stored; false while the form is not there yet.
     private func fillStoredLogin() async -> Bool {
         let id = connection.id
+        guard !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)) else { return true }
         let stored = try? await model.vaultOffMain {
             (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
         }
