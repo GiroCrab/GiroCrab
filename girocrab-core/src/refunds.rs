@@ -1,6 +1,6 @@
 //! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
 //! (outgoing). One original can have several refunds and one refund can pay back several originals
-//! (step 37); links do not chain. A link to a split booking names one of its parts (step 38,
+//! (step 38); links do not chain. A link to a split booking names one of its parts (step 39,
 //! `original_part`): the refund pays back that part only. The link only documents what belongs together: amounts, categories and balances remain
 //! unchanged. Removing a link keeps the row as a tombstone (`deleted_ms`), so the removal reaches
 //! the other devices; the newest change wins on merge.
@@ -12,7 +12,7 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 
-/// Step 37: a refund may pay back several bookings, so the key is the pair.
+/// Step 38: a refund may pay back several bookings, so the key is the pair.
 pub(crate) const SCHEMA_PAIRS: &str = "
 CREATE TABLE refund_links_pairs (
  refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
@@ -28,7 +28,7 @@ ALTER TABLE refund_links_pairs RENAME TO refund_links;
 CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
 ";
 
-/// Step 38: a link to a split booking names the part it pays back: `original_part` is the
+/// Step 39: a link to a split booking names the part it pays back: `original_part` is the
 /// part's position among the booking's parts (from 1), 0 is the whole booking.
 pub(crate) const SCHEMA_PARTS: &str = "
 CREATE TABLE refund_links_parts (
