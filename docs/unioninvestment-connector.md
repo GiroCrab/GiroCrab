@@ -57,7 +57,7 @@ when its PDF is downloaded has not been verified. After three failed downloads i
 stops and reports how many are missing; the next fetch continues with those.
 
 Consistency checks before anything is stored: the sum of the positions must
-match the depot value (1 ct tolerance per position), ISINs must be well formed,
+match the depot value (1 ct tolerance per portal entry (investment goal)), ISINs must be well formed,
 and every price date must be a valid date. A failed check imports nothing.
 
 ## Limits

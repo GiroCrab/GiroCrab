@@ -52,7 +52,7 @@ enum UnionInvestmentScripts {
       };
       // The goals endpoint is versioned through its media type; plain application/json answers 406.
       const GOALS = 'application/vv.anlageziel.v3+json';
-      const request = async (path, accept = 'application/json, text/plain, */*') => {
+      const request = async (path, accept = 'application/json, text/plain, */*', read = r => r) => {
         if (location.origin !== pageOrigin || !authorization)
           throw new Error('Union Investment: Bitte erneut anmelden.');
         if (!prefixes.some(p => path.startsWith(p)) || path.includes('://') || path.includes('..'))
@@ -68,10 +68,10 @@ enum UnionInvestmentScripts {
             if (r.status === 401 || r.status === 403) authorization = null;
             throw new Error('Union Investment: Abruf fehlgeschlagen (HTTP ' + r.status + '). Bitte erneut anmelden.');
           }
-          return r;
+          return await read(r);
         } finally { clearTimeout(timeout); }
       };
-      const json = async (path, accept) => (await request(path, accept)).json();
+      const json = (path, accept) => request(path, accept, r => r.json());
       const attachment = /^\/postbox\/depot\/(\d+)\/message\/(\d+)\/attachment\/(\d+)$/;
       // letters to the depot owner that belong to no depot
       const ownerAttachment = /^\/postbox\/user\/depotowner\/(\d+)\/message\/(\d+)\/attachment\/(\d+)$/;
@@ -147,7 +147,7 @@ enum UnionInvestmentScripts {
         },
         pdf: async path => {
           if (typeof path !== 'string' || !(attachment.test(path) || ownerAttachment.test(path))) throw new Error('Union Investment: Ungültiger Dokumentpfad.');
-          const bytes = new Uint8Array(await (await request(path)).arrayBuffer());
+          const bytes = new Uint8Array(await request(path, undefined, r => r.arrayBuffer()));
           if (bytes.length < 5 || String.fromCharCode(...bytes.subarray(0, 5)) !== '%PDF-')
             throw new Error('Union Investment: Der Download ist kein PDF.');
           return base64(bytes);

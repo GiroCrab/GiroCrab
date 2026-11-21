@@ -82,6 +82,12 @@ fn positions(depot: &Value) -> CoreResult<Vec<Position>> {
         let value = cents(item, "value")?;
         let unrealized = cents(item, "unrealized")?;
         let price = number(item, "price")?;
+        // value = shares x redemption price; the price is shown rounded to cents, so allow
+        // 1 ct plus half a cent per share for that rounding
+        let expected = (quantity * price * 100.0).round() as i64;
+        if (value - expected).abs() > 1 + (quantity * 0.5).ceil() as i64 {
+            return Err(invalid());
+        }
         match out.iter_mut().find(|p| p.isin == isin) {
             Some(p) => {
                 p.quantity += quantity;
@@ -139,11 +145,12 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
             return Err(invalid());
         }
         let account_ref = format!("depot:{number_}");
+        let source_rows = rows(depot, "items")?.len() as i64;
         let positions = positions(depot)?;
         let depot_value = cents(depot, "value")?;
-        // the portal's own depot value must match the listed funds (rounding: 1 ct per row)
+        // the portal's own depot value must match the listed funds (rounding: 1 ct per portal entry, not per merged ISIN)
         let total: i64 = positions.iter().map(|p| p.value).sum();
-        if (total - depot_value).abs() > positions.len() as i64 {
+        if (total - depot_value).abs() > source_rows {
             return Err(invalid());
         }
         result.accounts.push(RemoteAccount {
@@ -408,6 +415,28 @@ mod tests {
         let r = snapshot(&f.to_string()).unwrap();
         assert_eq!(r.holdings[0].holding.value_cents, 8398);
         assert_eq!(r.holdings[0].holding.quantity, 1.0001);
+    }
+
+    #[test]
+    fn rounding_is_tolerated_per_source_row_not_per_isin() {
+        // six goals in one fund: each row rounds to 83.98, the portal total is 503.90
+        let mut f = fixture();
+        f["depots"][0]["items"] = json!(
+            (0..6)
+                .map(|_| item("DE0000000001", 1.0, 83.9833, 83.9833, 0.0))
+                .collect::<Vec<_>>()
+        );
+        f["depots"][0]["value"] = json!(503.90);
+        let r = snapshot(&f.to_string()).unwrap();
+        assert_eq!(r.holdings.len(), 1);
+    }
+
+    #[test]
+    fn rejects_value_that_does_not_match_shares_times_price() {
+        let mut f = fixture();
+        f["depots"][0]["items"] = json!([item("DE0000000001", 1.0, 10.0, 100.0, 0.0)]);
+        f["depots"][0]["value"] = json!(100.0);
+        assert!(snapshot(&f.to_string()).is_err());
     }
 
     #[test]
