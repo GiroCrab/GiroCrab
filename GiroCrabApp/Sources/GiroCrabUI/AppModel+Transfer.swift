@@ -8,6 +8,15 @@ extension AppModel {
     /// Checking accounts that are connected via FinTS (HKCCS-capable banks).
     var transferAccounts: [Account] { sendableAccounts(of: .checking) }
 
+    /// Amount and IBAN end to compare on the TAN device (#949): only while a single transfer waits for its
+    /// approval (not for batches, standing orders, direct debits or the login TAN of a sync).
+    var tanComparison: TanComparison? {
+        guard activeTransfer != nil, activeChallenge != nil,
+              !activeTransferIsBatch, !activeTransferIsStanding, !activeTransferIsDebit,
+              let cents = try? parseAmountToCents(text: transferDraft.amountText), cents > 0 else { return nil }
+        return TanComparison(iban: transferDraft.iban, amountCents: cents)
+    }
+
     /// Savings accounts (Tagesgeld) the bank lets us book from, but only as an
     /// internal transfer (Umbuchung) to an own account (GitHub #582). Kept apart
     /// from `transferAccounts` so standing orders, batches and direct debits

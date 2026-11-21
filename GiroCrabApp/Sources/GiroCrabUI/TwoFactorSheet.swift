@@ -48,6 +48,7 @@ struct TwoFactorSheet: View {
                     Text(c.title).appFont(.title3, weight: .bold)
                     Text(c.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .sensitive() // a transfer TAN names payee and amount
+                    if let comparison = model.tanComparison { TanComparisonHint(comparison: comparison) }
                     if let s = c.redirectUrl, let url = URL(string: s) {
                         Button { openURL(url) } label: { Label("Im Browser anmelden", systemImage: "safari") }
                             .buttonStyle(.borderedProminent)
@@ -90,6 +91,7 @@ struct TwoFactorSheet: View {
                     }
                     Text(c.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .sensitive() // a transfer TAN names payee and amount
+                    if let comparison = model.tanComparison { TanComparisonHint(comparison: comparison) }
                     TextField("TAN / Code", text: $code)
                         .appFont(.title2, design: .monospaced)
                         .multilineTextAlignment(.center)

@@ -8128,6 +8128,17 @@
         }
       }
     },
+    "Bitte gleichen Sie Betrag und die letzten 4 Ziffern der Empfänger-IBAN vor der Freigabe auf Ihrem TAN-Gerät / Smartphone ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Before approving, please compare the amount and the last 4 digits of the recipient IBAN on your TAN device / smartphone."
+          }
+        }
+      }
+    },
     "Bitte mindestens ein Konto wählen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13272,6 +13283,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Manage recipients: stop suggesting outdated IBANs"
+          }
+        }
+      }
+    },
+    "Empfänger-IBAN" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recipient IBAN"
           }
         }
       }
