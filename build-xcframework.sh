@@ -272,8 +272,6 @@ SWIFT
 # rewriting identical bindings or headers would recompile GiroCrabCore and all
 # of GiroCrabUI. No -t/-a: rsync would stamp unchanged files with the staging
 # time.
-# rsync creates only the last directory: a fresh clone or worktree has no generated/ yet.
-mkdir -p "$(dirname "$OUT")"
 rsync -rl --checksum --delete "$STAGE/" "$OUT/"
 rm -rf "$STAGE"
 

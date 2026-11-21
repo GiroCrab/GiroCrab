@@ -108,6 +108,7 @@ extension AppModel {
             sidebarSelection = .allAccounts
         }
         rebuildAccountIndex()
+        accountsLoaded = true
         // After unlocking or a sync: a transfer link that came meanwhile.
         resumePaymentLink()
     }

@@ -8304,17 +8304,6 @@
         }
       }
     },
-    "Bitte zuerst die geöffnete Überweisung abschließen oder schließen und den Link dann erneut öffnen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Please finish or close the open transfer first, then open the link again."
-          }
-        }
-      }
-    },
     "Blau" : {
       "extractionState" : "manual",
       "localizations" : {

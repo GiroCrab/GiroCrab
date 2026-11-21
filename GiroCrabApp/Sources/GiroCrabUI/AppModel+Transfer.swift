@@ -135,41 +135,39 @@ extension AppModel {
         case .failure(let failure):
             showError(String(localized: "Link nicht übernommen"), failure.message)
         case .success(let payment):
+            // A newer link replaces one still waiting: the last one opened is what the user
+            // asked for, and nothing of the earlier one was shown yet.
             pendingPaymentLink = payment
             presentPendingPaymentLink()
         }
     }
 
-    /// Opens the form for `pendingPaymentLink` once the vault is open, its accounts are
-    /// loaded and no sync or bank order is running; later events retry (`resumePaymentLink`).
+    /// Opens the form for `pendingPaymentLink` once the vault is open, its accounts are loaded,
+    /// no sync or bank order is running and no form is open (also not one on its result step:
+    /// the link waits until it is closed, never replaces it). Later events retry (`resumePaymentLink`).
     func presentPendingPaymentLink() {
-        guard let payment = pendingPaymentLink, vault != nil, !groups.isEmpty,
-              syncingConnectionID == nil, activeTransfer == nil else { return }
+        guard let payment = pendingPaymentLink, vault != nil, accountsLoaded,
+              syncingConnectionID == nil, activeTransfer == nil,
+              !showTransferSheet, !showBatchSheet, !showStandingSheet else { return }
         pendingPaymentLink = nil
-        // A form the user is filling in is never replaced.
-        if showTransferSheet || showBatchSheet || showStandingSheet {
-            showError(String(localized: "Link nicht übernommen"),
-                      String(localized: "Bitte zuerst die geöffnete Überweisung abschließen oder schließen und den Link dann erneut öffnen."))
-            return
-        }
-        guard canTransfer else {
+        // The link names a recipient, and a savings account books only to own accounts:
+        // without a checking account to send from, the link's recipient would be lost.
+        guard canTransfer, let checking = (transferAccounts + giroCodeAccounts).first else {
             showError(String(localized: "Link nicht übernommen"),
                       String(localized: "Es gibt kein Girokonto mit IBAN, von dem aus überwiesen werden kann."))
             return
         }
         transferDraft = TransferDraft(accountID: transferDraft.accountID)
         presentTransfer()
-        // The link names a recipient: a savings account books only to own accounts.
-        if allAccounts.first(where: { $0.id == transferDraft.accountID })?.kind == .savings,
-           let checking = (transferAccounts + giroCodeAccounts).first {
+        if allAccounts.first(where: { $0.id == transferDraft.accountID })?.kind == .savings {
             transferDraft.accountID = checking.id
         }
         fillTransferDraft(payment)
         transferDraft.fromLink = true
     }
 
-    /// After unlocking, a sync or a bank order: a link that came meanwhile (later, so the
-    /// rest of that reload is in place before the form picks its account).
+    /// After unlocking, a sync, a bank order or a closed form: a link that came meanwhile
+    /// (later, so the rest of that change is in place before the form picks its account).
     func resumePaymentLink() {
         guard pendingPaymentLink != nil else { return }
         Task { @MainActor [weak self] in self?.presentPendingPaymentLink() }

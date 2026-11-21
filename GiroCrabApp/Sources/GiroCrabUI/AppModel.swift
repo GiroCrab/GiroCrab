@@ -768,13 +768,14 @@ public final class AppModel {
     /// Recipient IBAN and amount of the single transfer as handed to the bank (#949), frozen when it
     /// starts: the TAN card never follows later edits of `transferDraft`. Nil for batch, standing order, debit.
     var activeTransferComparison: TanComparison?
-    var showTransferSheet = false
+    // A transfer link waits while a form is open, also on its result step (`pendingPaymentLink`).
+    var showTransferSheet = false { didSet { if !showTransferSheet { resumePaymentLink() } } }
     /// Batch transfer (#240): sheet, the rows being edited, and whether the running session is one.
-    var showBatchSheet = false
+    var showBatchSheet = false { didSet { if !showBatchSheet { resumePaymentLink() } } }
     var batchDraft = BatchDraft()
     var activeTransferIsBatch = false
     /// Standing orders (#496): sheet, the order being edited, the bank's orders, and whether the running session is one.
-    var showStandingSheet = false
+    var showStandingSheet = false { didSet { if !showStandingSheet { resumePaymentLink() } } }
     var standingDraft = StandingDraft()
     var standingOrders: [StandingOrderInfo] = []
     /// What the bank of the order being edited allows (nil = unknown, the form offers everything).
@@ -799,6 +800,9 @@ public final class AppModel {
     /// A `girocrab://transfer` link that came while the form could not open (vault locked,
     /// accounts still loading, a sync running): shown once that is over (`presentPendingPaymentLink`).
     var pendingPaymentLink: ParsedPayment?
+    /// The open vault's accounts have been loaded once (`applyAccountGroups`): an empty list then
+    /// means no accounts, not "not loaded yet". Reset with the vault (`releaseVaultState`).
+    @ObservationIgnored var accountsLoaded = false
     /// Opt-in clipboard check (#663): pasteboard `changeCount` last looked at, so the same
     /// content is offered once. Never the content itself; in memory only.
     var clipboardChangeCountHandled: Int?
@@ -1732,6 +1736,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
+        accountsLoaded = false
         groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; tagFilter = BookingTagFilter(); showTagFilter = false; showTagManager = false; tagDraft = TagDraft(); connections = []; settings = []
         page = nil; listBalances = ListBalances(); dashboard = nil; merchantStats = nil; merchantAccountStats = nil; categorySuggestion = nil; listSuggestions = [:]; logoCache = [:]
     }

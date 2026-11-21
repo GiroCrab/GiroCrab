@@ -83,7 +83,8 @@ final class PaymentLinkTests: XCTestCase {
         XCTAssertTrue(model.transferDraft.fromLink)
     }
 
-    func testLinkNeverReplacesAnOpenForm() throws {
+    /// Also an open form on its result step: the link waits until the form is closed.
+    func testLinkWaitsForAnOpenFormAndNeverReplacesIt() async throws {
         let model = demoModel()
         try XCTSkipUnless(model.canTransfer, "demo vault without transfer accounts")
         model.openTransfer()
@@ -91,8 +92,36 @@ final class PaymentLinkTests: XCTestCase {
         model.openLink(link)
         XCTAssertEqual(model.transferDraft.name, "Eigene Eingabe")
         XCTAssertFalse(model.transferDraft.fromLink)
-        XCTAssertNil(model.pendingPaymentLink)
-        XCTAssertNotNil(model.errorMessage)
+        XCTAssertNotNil(model.pendingPaymentLink)
+        XCTAssertNil(model.errorMessage)
+        model.showTransferSheet = false
+        for _ in 0..<20 where !model.showTransferSheet { await Task.yield() }
+        XCTAssertTrue(model.showTransferSheet)
+        XCTAssertEqual(model.transferDraft.name, "Stadtwerke")
+        XCTAssertTrue(model.transferDraft.fromLink)
+    }
+
+    func testLinkWaitsUntilTheAccountsAreLoaded() async throws {
+        let model = demoModel()
+        try XCTSkipUnless(model.canTransfer, "demo vault without transfer accounts")
+        model.accountsLoaded = false
+        model.openLink(link)
+        XCTAssertFalse(model.showTransferSheet)
+        XCTAssertNil(model.errorMessage)
+        model.applyAccountGroups(model.groups, model.userGroups)
+        for _ in 0..<20 where !model.showTransferSheet { await Task.yield() }
+        XCTAssertTrue(model.showTransferSheet)
+    }
+
+    func testNewerLinkReplacesAWaitingOne() async throws {
+        let model = demoModel()
+        try XCTSkipUnless(model.canTransfer, "demo vault without transfer accounts")
+        model.syncingConnectionID = 1
+        model.openLink(link)
+        model.openLink(URL(string: "girocrab://transfer?name=Neu&iban=DE89370400440532013000")!)
+        model.syncingConnectionID = nil
+        for _ in 0..<20 where !model.showTransferSheet { await Task.yield() }
+        XCTAssertEqual(model.transferDraft.name, "Neu")
     }
 
     func testInvalidLinkShowsAnError() {
