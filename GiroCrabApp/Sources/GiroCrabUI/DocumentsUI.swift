@@ -610,8 +610,8 @@ struct DocumentsView: View {
     /// Type and year pickers: only with a choice, or while their filter is on, so an active filter
     /// never loses its control.
     private func typeAndYearChoices(_ found: [DocumentInfo]) -> TypeAndYearChoices {
-        let types = DocumentFilters.types(of: found)
-        let years = DocumentFilters.years(of: found)
+        let types = DocumentFilters.types(of: found, active: typeFilter)
+        let years = DocumentFilters.years(of: found, active: yearFilter)
         return TypeAndYearChoices(types: types, years: years,
                                   showsType: types.count > 1 || typeFilter != nil,
                                   showsYear: years.count > 1 || yearFilter != nil)
@@ -805,13 +805,19 @@ enum DocumentFilters {
     /// Known types in reading order; others follow alphabetically.
     private static let order = ["abrechnung", "steuer", "kontoauszug", "postbox", "beleg"]
 
-    static func types(of docs: [DocumentInfo]) -> [String] {
-        let present = Set(docs.map(\.docType).filter { !$0.isEmpty })
+    /// The types to offer: those of `docs`, plus the one being filtered by (`active`), even when the
+    /// documents found now have none of it: a picker needs an item for its selection (#1543).
+    static func types(of docs: [DocumentInfo], active: String? = nil) -> [String] {
+        var present = Set(docs.map(\.docType).filter { !$0.isEmpty })
+        if let active, !active.isEmpty { present.insert(active) }
         return order.filter(present.contains) + present.subtracting(order).sorted()
     }
 
-    static func years(of docs: [DocumentInfo]) -> [Int] {
-        Array(Set(docs.compactMap { Int($0.docDate.prefix(4)) })).sorted(by: >)
+    /// The years to offer, newest first: those of `docs`, plus the one being filtered by (`active`).
+    static func years(of docs: [DocumentInfo], active: Int? = nil) -> [Int] {
+        var present = Set(docs.compactMap { Int($0.docDate.prefix(4)) })
+        if let active { present.insert(active) }
+        return present.sorted(by: >)
     }
 
     static func typeTitle(_ type: String) -> String {

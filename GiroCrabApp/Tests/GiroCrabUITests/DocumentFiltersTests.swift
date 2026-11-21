@@ -18,6 +18,25 @@ final class DocumentFiltersTests: XCTestCase {
         XCTAssertEqual(DocumentFilters.years(of: docs), [2026, 2025, 2024])
     }
 
+    /// A picker needs an item for its selection: the type or year being filtered by stays offered when a
+    /// new search, account or bank connection no longer has a document of it (#1543).
+    func testActiveTypeAndYearStayOfferedWhenTheFoundDocumentsLackThem() {
+        let found = [doc(1, "abrechnung", "2026-03-01"), doc(2, "kontoauszug", "2026-02-01")]
+        XCTAssertEqual(DocumentFilters.years(of: found), [2026])
+        XCTAssertEqual(DocumentFilters.years(of: found, active: 2025), [2026, 2025])
+        XCTAssertEqual(DocumentFilters.years(of: found, active: 2027), [2027, 2026])
+        // already there: not twice
+        XCTAssertEqual(DocumentFilters.years(of: found, active: 2026), [2026])
+        // known types keep their reading order, an unknown active one follows alphabetically
+        XCTAssertEqual(DocumentFilters.types(of: found, active: "steuer"), ["abrechnung", "steuer", "kontoauszug"])
+        XCTAssertEqual(DocumentFilters.types(of: found, active: "zzz"), ["abrechnung", "kontoauszug", "zzz"])
+        XCTAssertEqual(DocumentFilters.types(of: found, active: "abrechnung"), ["abrechnung", "kontoauszug"])
+        // nothing found at all: the active value is the only choice
+        XCTAssertEqual(DocumentFilters.types(of: [], active: "steuer"), ["steuer"])
+        XCTAssertEqual(DocumentFilters.years(of: [], active: 2025), [2025])
+        XCTAssertEqual(DocumentFilters.types(of: [], active: nil), [])
+    }
+
     func testTypeAndYearNarrowTheListTogether() {
         XCTAssertEqual(DocumentFilters.apply(docs, type: "abrechnung", year: nil).map(\.id), [1, 2])
         XCTAssertEqual(DocumentFilters.apply(docs, type: nil, year: 2025).map(\.id), [2, 3])

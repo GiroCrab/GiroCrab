@@ -33,7 +33,8 @@ Breite füllen; die Beschriftung steht auf der Grundlinie des Feldtexts und wird
 Bankzugang „Ohne Konto“). Jede Beschriftungszelle enthält alle Beschriftungen der Spalte unsichtbar übereinander und ist
 damit so breit wie die längste (Schriftgröße, Sprache), ohne Messen und ohne Zustand. VoiceOver liest die Beschriftung
 des Pickers selbst, die sichtbare ist ausgeblendet. Typ und Jahr erscheinen, wenn es eine Wahl gibt oder ihr Filter
-gesetzt ist. Darunter „Nur ungelesene“ und „Nur ohne zugeordneten Umsatz“ als Ankreuzfelder (Filter sind keine
+gesetzt ist; der gesetzte Wert bleibt auswählbar, auch wenn die gefundenen Dokumente ihn nicht mehr haben (ein Picker
+braucht einen Eintrag für seine Auswahl; `DocumentFilters.types/years(of:active:)`). Darunter „Nur ungelesene“ und „Nur ohne zugeordneten Umsatz“ als Ankreuzfelder (Filter sind keine
 Einstellungen: HIG › Toggles), dann „Beleg hinzufügen …“, der Export und das Menü „Aktionen“ (…) mit „Alle als gelesen
 markieren“ und „Alle Dokumente anzeigen“ (setzt alle Filter zurück).
 
