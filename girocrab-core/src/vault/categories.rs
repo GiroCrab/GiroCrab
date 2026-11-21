@@ -198,8 +198,12 @@ impl Vault {
     /// like `list_categories_filtered` with `BookingDirection::Expense`, less what linked
     /// refunds pay back. That part counts in the category of the paid-back booking, on the
     /// account and at the date of the refund; the rest of a refund is income and not in here.
-    /// A category whose sum is positive (a credit part of a split purchase, more paid back than
-    /// spent) is listed with that sum: a chart of the expenses shows the negative sums only.
+    /// A category whose sum is positive (a credit part of a split purchase that is not linked,
+    /// more paid back than spent) is listed with that sum, like in `list_categories`. The
+    /// expense charts built on this list leave it out (they take the negative sums); the views
+    /// of one category and the income charts show a positive sum as what it is, an incoming
+    /// amount in that category. A linked credit part counts in the category of the booking it
+    /// pays back and leaves its own category at 0.
     pub fn list_category_expenses(
         &self,
         date_from: Option<String>,
