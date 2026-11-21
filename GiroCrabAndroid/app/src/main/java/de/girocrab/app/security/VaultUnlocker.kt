@@ -1,6 +1,5 @@
 package de.girocrab.app.security
 
-import android.os.Build
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -53,7 +52,11 @@ class VaultUnlocker(
     private val title: String = "GiroCrab entsperren",
     private val subtitle: String = "Bestätige deine Identität, um den Tresor zu öffnen",
 ) {
+    /** A second request while a prompt is open must not stack a second prompt. */
+    private var prompting = false
+
     fun unlock(onResult: (UnlockResult) -> Unit) {
+        if (prompting) return
         when (keyStore.state()) {
             VaultKeyStore.State.NotSetUp -> return onResult(UnlockResult.NoVaultOnDevice)
             VaultKeyStore.State.Invalidated -> return onResult(UnlockResult.KeyInvalidated)
@@ -65,12 +68,20 @@ class VaultUnlocker(
             // Key invalidated between state() and here: same answer, the key is unusable.
             return onResult(UnlockResult.KeyInvalidated)
         }
-        prompt.authenticate(cipher, title, subtitle) { result ->
-            when (result) {
-                PromptResult.Cancelled -> onResult(UnlockResult.Refused(null))
-                is PromptResult.Failed -> onResult(UnlockResult.Refused(result.message))
-                is PromptResult.Succeeded -> onAuthenticated(cipher, result.cipher, onResult)
+        prompting = true
+        try {
+            prompt.authenticate(cipher, title, subtitle) { result ->
+                prompting = false
+                when (result) {
+                    PromptResult.Cancelled -> onResult(UnlockResult.Refused(null))
+                    is PromptResult.Failed -> onResult(UnlockResult.Refused(result.message))
+                    is PromptResult.Succeeded -> onAuthenticated(cipher, result.cipher, onResult)
+                }
             }
+        } catch (e: Exception) {
+            // A prompt that never calls back would block every later attempt.
+            prompting = false
+            onResult(UnlockResult.Refused("Entsperren nicht möglich (${e.javaClass.simpleName}: ${e.message})"))
         }
     }
 
@@ -142,7 +153,9 @@ class AndroidCipherPrompt(private val activity: FragmentActivity) : CipherPrompt
             .setTitle(title)
             .setSubtitle(subtitle)
             .setAllowedAuthenticators(authenticators())
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) builder.setNegativeButtonText("Abbrechen")
+            // Biometric-only prompts require a negative button on every API level; it is also what
+            // makes `Cancelled` reachable instead of ending in an error code.
+            .setNegativeButtonText("Abbrechen")
         prompt.authenticate(builder.build(), BiometricPrompt.CryptoObject(cipher))
     }
 
@@ -151,14 +164,12 @@ class AndroidCipherPrompt(private val activity: FragmentActivity) : CipherPrompt
 
     companion object {
         /**
-         * Device credential is only combinable with biometrics from API 30; below that the prompt
-         * needs a negative button and asks for biometrics only.
+         * Biometrics only, on every API level: the Keystore key is created with
+         * `AUTH_BIOMETRIC_STRONG`, so a device PIN could never release it. Offering one would end
+         * in a successful prompt and an unwrappable key — the worst kind of "it almost worked".
          */
-        fun authenticators(): Int =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-            } else {
-                BiometricManager.Authenticators.BIOMETRIC_STRONG
-            }
+        const val AUTHENTICATORS: Int = BiometricManager.Authenticators.BIOMETRIC_STRONG
+
+        fun authenticators(): Int = AUTHENTICATORS
     }
 }
