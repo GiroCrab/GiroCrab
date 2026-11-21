@@ -157,9 +157,9 @@ Sheet {
                         spacing: 8
                         Text { text: Fmt.medium(modelData.date); font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.text; Layout.fillWidth: true }
                         // per piece; with several pieces then what they were worth together
-                        Text { text: Fmt.money(modelData.value_cents); font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.text }
+                        Text { text: Fmt.money(modelData.value_cents); font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.text; Sensitive { amounts: true } }
                         Text { visible: parent.held > 0 && parent.held !== 1; font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.secondary
-                               text: qsTr("gesamt %1").arg(Fmt.money(Math.round(modelData.value_cents * parent.held))) }
+                               text: qsTr("gesamt %1").arg(Fmt.money(Math.round(modelData.value_cents * parent.held))); Sensitive { amounts: true } }
                         RemoveButton { visible: modelData.date !== sheet.item.setup.purchase_date
                                        onClicked: sheet.change("delete_asset_value", { item_id: sheet.item.id, date: modelData.date }) }
                     }
@@ -177,13 +177,13 @@ Sheet {
                     AppComboBox {
                         visible: sheet.canTotal
                         flat: true
-                        implicitWidth: 140
+                        implicitWidth: 140 * Theme.textScale   // TangibleAssetsUI.swift: field widths follow the text size (#650)
                         model: [qsTr("Wert gesamt"), qsTr("Wert je Stück")]
                         currentIndex: sheet.entryMode === "total" ? 0 : 1
                         onActivated: i => sheet.setEntryMode(i === 0 ? "total" : "piece")
                     }
                     Text { visible: !sheet.canTotal; text: qsTr("Wert je Stück"); font.pixelSize: Theme.body; color: Theme.text }
-                    TextField { Layout.fillWidth: true; Layout.minimumWidth: 80; placeholderText: qsTr("Wert"); horizontalAlignment: TextInput.AlignRight
+                    TextField { Layout.fillWidth: true; Layout.minimumWidth: 90 * Theme.textScale; placeholderText: qsTr("Wert"); horizontalAlignment: TextInput.AlignRight
                                 text: sheet.entryText; onTextEdited: sheet.entryText = text }
                     Button {
                         text: qsTr("Eintragen")
@@ -195,6 +195,7 @@ Sheet {
                     visible: sheet.otherValue !== null
                     label: sheet.entryMode === "total" ? qsTr("Wert je Stück") : qsTr("Wert gesamt")
                     value: sheet.otherValue !== null ? Fmt.money(sheet.otherValue) : ""
+                    amounts: true
                 }
             }
 
@@ -226,7 +227,7 @@ Sheet {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
-                    TextField { id: newQuantity; Layout.fillWidth: true; Layout.minimumWidth: 80; placeholderText: qsTr("Neue Anzahl") }
+                    TextField { id: newQuantity; Layout.fillWidth: true; Layout.minimumWidth: 90 * Theme.textScale; placeholderText: qsTr("Neue Anzahl") }
                     Button {
                         text: qsTr("Eintragen")
                         enabled: { const q = NumberText.parseNumber(newQuantity.text); return q !== null && q >= 0 }

@@ -1446,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "girocrab-core"
-version = "0.8.5"
+version = "0.8.7"
 dependencies = [
  "aes 0.9.4",
  "async-trait",
@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "girocrab-linux"
-version = "0.8.5"
+version = "0.8.7"
 dependencies = [
  "base64 0.22.1",
  "cxx",

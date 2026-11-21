@@ -77,6 +77,7 @@ public struct GiroCrabScenes: Scene {
         .defaultSize(width: 460, height: 360)
         Window("Abruf-Protokoll", id: "sync-log") {
             SyncLogView()
+                .toastOverlay()
                 .environment(model)
                 .privacyModeEnvironment()
                 .appTextSize(textSize.effective)
@@ -103,6 +104,8 @@ public struct GiroCrabScenes: Scene {
             // (a window of its own, like a sheet) over the main window, so its
             // views get the same redaction and mark personal data.
             SettingsView()
+                // Notices raised here appear here, not behind it in the main window (#1145).
+                .toastOverlay()
                 .environment(model)
                 .privacyModeEnvironment()
                 .appTextSize(textSize.effective)
@@ -499,7 +502,7 @@ struct MainSplitView: View {
         } detail: {
             HStack(spacing: 0) {
                 bookingColumn
-                // Belege & PostBox has its own preview; the booking inspector would show whatever
+                // Belege & Postbox has its own preview; the booking inspector would show whatever
                 // booking was selected last, whichever document is open.
                 if showInspector, model.mainColumn != .documents {
                     inspectorSplitter
@@ -516,6 +519,7 @@ struct MainSplitView: View {
                             ideal: showInspector && model.mainColumn != .documents ? 700 + InspectorWidth.standard * textScale : 700)
         }
         .navigationSplitViewStyle(.balanced)
+        .sidebarDividerToTop()
     }
 
     /// Draggable grip between the booking column and the inspector; the system
@@ -766,24 +770,7 @@ struct MainSplitView: View {
                 }
                 .dialogSuppressionToggle(isSuppressed: $enableBankingNoticeSuppressed)
         }
-        .overlay(alignment: .bottom) {
-            if let toast = model.toast {
-                Label(toast, systemImage: "checkmark.circle.fill")
-                    .padding(.horizontal, 16).padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
-                    .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
-                    .padding(.bottom, 22)
-                    .transition(Motion.slide(.bottom))
-                    // id: a changed or extended notice gets its full time again
-                    .task(id: toast) {
-                        try? await Task.sleep(nanoseconds: 3_500_000_000)
-                        // replaced meanwhile: the new notice's own task takes over
-                        guard !Task.isCancelled else { return }
-                        withAnimation { model.toast = nil }
-                    }
-            }
-        }
-        .animation(Motion.animation(.spring(duration: 0.3)), value: model.toast)
+        .toastOverlay()
     }
 }
 

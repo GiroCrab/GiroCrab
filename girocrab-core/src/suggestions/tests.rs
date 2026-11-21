@@ -206,6 +206,30 @@ fn merchant_history_suggests_the_hand_picked_category() {
 }
 
 #[test]
+fn merchant_settings_only_rename_and_keep_the_suggestions() {
+    // #1373: the history groups by the bundled merchant, whatever the list shows
+    let f = vault();
+    f.add_n(3, b("REWE Markt GmbH", -23_40).manual("Lebensmittel"));
+    let id = f.add(b("REWE SAGT DANKE 4711", -8_15));
+    let expected = f.suggest(id);
+    assert_eq!(
+        expected.as_ref().map(|s| s.basis),
+        Some(SuggestionBasis::Merchant)
+    );
+    f.v.save_custom_merchant(None, "Eckladen".into(), vec!["rewe markt".into()], None)
+        .unwrap();
+    assert_eq!(f.suggest(id), expected, "an own merchant for part of them");
+    f.v.set_merchant_recognition_enabled(false).unwrap();
+    assert_eq!(f.suggest(id), expected, "recognition off");
+    // a payment service still has nothing behind it to group by
+    let paypal =
+        b("PayPal Europe S.a.r.l. et Cie S.C.A", -12_00).purpose("Ihr Einkauf bei Kleiner Laden");
+    f.add_n(3, paypal.manual("Shopping"));
+    let id = f.add(paypal);
+    assert_eq!(f.suggest(id), None);
+}
+
+#[test]
 fn iban_tells_two_payees_of_the_same_name_apart() {
     let f = vault();
     f.add_n(2, b("Anna Schmidt", -500_00).iban(ANNA_1).manual("Miete"));
@@ -322,11 +346,11 @@ fn only_uncategorised_bookings_get_one() {
     let manual = f.add(b("Edeka Center", -31_00).manual("Haushalt"));
     let rule = f.rule("Haushalt", MatchKind::Keyword, "Edeka", (None, None));
     let by_rule = f.add(b("Edeka Center", -31_00).by_rule(rule, "Haushalt", false));
-    assert!(f
-        .v
-        .suggest_categories(vec![manual, by_rule, 999_999])
-        .unwrap()
-        .is_empty());
+    assert!(
+        f.v.suggest_categories(vec![manual, by_rule, 999_999])
+            .unwrap()
+            .is_empty()
+    );
     assert!(f.v.suggest_categories(vec![]).unwrap().is_empty());
 }
 
@@ -484,7 +508,7 @@ fn the_history_is_read_again_only_after_a_change() {
     let f = vault();
     f.add_n(2, b("Kino Lichtspiele", -12_00).manual("Freizeit"));
     let id = f.add(b("Kino Lichtspiele", -12_00));
-    let cached = || f.v.suggestions.0.lock().unwrap().clone().unwrap();
+    let cached = || f.v.suggestions.current().unwrap();
     assert!(f.suggest(id).is_some());
     let first = cached();
     assert!(f.suggest(id).is_some());

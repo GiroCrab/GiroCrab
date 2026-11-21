@@ -20,7 +20,7 @@
 //! IBAN only when exactly one bank depot has its number, name and bank (#400:
 //! other unlinked accounts without IBAN stay apart).
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 
 use crate::error::CoreResult;
@@ -136,10 +136,10 @@ fn best<'a>(
 ) -> CoreResult<Option<i64>> {
     let mut best: Option<(i64, i64)> = None;
     for c in candidates {
-        if let Some(s) = score(c)? {
-            if best.is_none_or(|(top, _)| s > top) {
-                best = Some((s, c.id));
-            }
+        if let Some(s) = score(c)?
+            && best.is_none_or(|(top, _)| s > top)
+        {
+            best = Some((s, c.id));
         }
     }
     Ok(best.map(|(_, id)| id))
@@ -214,6 +214,9 @@ fn bank_twin(conn: &Connection, mm: &Ident, connection_id: Option<i64>) -> CoreR
         ))?
         .query_map(params![connection_id, mm.kind], ident)?
         .collect::<Result<_, _>>()?;
+    if let Some(id) = switched_depot_twin(conn, mm, &banks)? {
+        return Ok(Some(id));
+    }
     if unlinked_depot {
         let bank_name = |id: i64| -> CoreResult<String> {
             Ok(conn.query_row(
@@ -239,6 +242,40 @@ fn bank_twin(conn: &Connection, mm: &Ident, connection_id: Option<i64>) -> CoreR
     }
     best(banks.iter().filter(|b| same_account(mm, b)), |bank| {
         twin_score(conn, "main", mm, "main", bank)
+    })
+}
+
+/// A depot „Abrufweg umstellen“ marked that the other way did not take over
+/// (another reference, no IBAN): the only bank depot without IBAN whose
+/// number is the marked one's or that plus the sub-account `00` (comdirect:
+/// REST `1234567`, FinTS `123456700`) and that `twin_score` accepts: most
+/// bookings shared or, for an empty depot, the same name. The name is not
+/// required otherwise; the two ways may name the depot differently.
+fn switched_depot_twin(conn: &Connection, mm: &Ident, banks: &[Ident]) -> CoreResult<Option<i64>> {
+    if mm.kind != "brokerage" || !mm.iban.is_empty() || mm.number.is_empty() {
+        return Ok(None);
+    }
+    let marked: bool = conn.query_row(
+        "SELECT IFNULL(external_ref LIKE ?2 || '%', 0) FROM main.accounts WHERE id = ?1",
+        params![mm.id, crate::vault::connections::SWITCH_MARK],
+        |r| r.get(0),
+    )?;
+    if !marked {
+        return Ok(None);
+    }
+    let mut found = Vec::new();
+    for bank in banks.iter().filter(|b| {
+        b.kind == mm.kind
+            && b.iban.is_empty()
+            && (b.number == mm.number || b.number == format!("{}00", mm.number))
+    }) {
+        if twin_score(conn, "main", mm, "main", bank)?.is_some() {
+            found.push(bank.id);
+        }
+    }
+    Ok(match found.as_slice() {
+        [only] => Some(*only),
+        _ => None,
     })
 }
 
@@ -380,8 +417,52 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
         ),
         params![twin, bank],
     )?;
+    // so do securities transactions paid from one of its bookings (#1463 review)
+    conn.execute(
+        &format!(
+            "UPDATE security_transactions SET cash_transaction_id = IFNULL({}, cash_transaction_id)
+              WHERE cash_transaction_id IN (SELECT id FROM transactions WHERE account_id = ?1)",
+            counterpart.replace("{col}", "security_transactions.cash_transaction_id")
+        ),
+        params![twin, bank],
+    )?;
+    // asked before the history moves: the twin's may hold fetches too
+    move_depot_data(conn, twin, bank)?;
     // the imported depot history belongs to the bank's account from now on (#578)
     crate::depot_values::move_account(conn, twin, bank)?;
+    // so does the user's note (newer edit wins, like a merge, #980)
+    crate::user_groups::pass_note_on(conn, twin, bank)?;
+    // and the sidebar's bank label (#1467), the same way
+    crate::user_groups::pass_bank_label_on(conn, twin, bank)?;
     super::soft_delete_account(conn, twin)?;
+    Ok(())
+}
+
+/// A depot's positions and securities transactions go with it to the bank
+/// account, like `connections::deduplicate` moves them: positions only while
+/// the bank account has none and never fetched an inventory of its own (a
+/// confirmed fetch: one that brought only the balance doesn't count),
+/// else they are outdated and dropped (an empty inventory is one too: all
+/// sold); securities transactions once per external id.
+fn move_depot_data(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
+    let bank_has_inventory: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM holdings WHERE account_id = ?1)
+             OR EXISTS (SELECT 1 FROM depot_observations
+                         WHERE account_id = ?1 AND source = ?2 AND confirmed != 0)",
+        params![bank, crate::depot_values::observations::SOURCE_FETCH],
+        |r| r.get(0),
+    )?;
+    if bank_has_inventory {
+        conn.execute("DELETE FROM holdings WHERE account_id = ?1", [twin])?;
+    } else {
+        conn.execute(
+            "UPDATE holdings SET account_id = ?2 WHERE account_id = ?1",
+            params![twin, bank],
+        )?;
+    }
+    conn.execute(
+        "UPDATE OR IGNORE security_transactions SET account_id = ?2 WHERE account_id = ?1",
+        params![twin, bank],
+    )?;
     Ok(())
 }

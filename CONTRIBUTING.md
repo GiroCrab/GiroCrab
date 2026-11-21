@@ -32,7 +32,12 @@ built dependencies and the xcframework; `--deep` also runs `cargo clean` and rem
 Database schema changes are a new migration step plus a fixture vault, see
 [Schema & migrations](docs/ARCHITECTURE.md#schema--migrations).
 
+For lasting architecture decisions, see [how to submit an ADR](docs/adr/README.md#process).
+
 ## Adding a bank in 3 steps
+
+The [ADR 0001 proposal](docs/adr/0001-connector-architecture.md) describes the
+division of work between the connector, core and front end.
 
 1. **Copy the template.** `cp girocrab-core/src/connectors/template.rs girocrab-core/src/connectors/<bank>.rs`
    and implement `begin` (login / challenge), `respond` (TAN/poll) and `fetch` (accounts + bookings).
@@ -135,6 +140,16 @@ New issue authors get this hint once as a comment (`.github/workflows/issue-ai-i
 
 **From an anonymized browser capture (HAR) to your own bank connector (#42).** `@zcarsten` built a connector without prior Rust experience: record the bank portal in the browser DevTools (Network tab, export `.har`), anonymize names, IBANs, balances and credentials in the file *before* sharing it, then let Claude Code / Codex build the connector against `girocrab-core/src/connectors/template.rs` and `CLAUDE.md`. If you don't feel ready for a pull request yet, attach the generated `.patch` / `git diff` to the GitHub issue (as in #42 / PR #642) and we'll take it from there.
 
+## Größere Vorhaben & Vorab-Spezifikation / Larger features & architecture alignment
+
+**DE**
+- **Erst abstimmen, dann Code & Tokens einsetzen:** Bei größeren Themen (Plattform-Parität wie Android/Windows/Linux, übergreifende Architektur-Änderungen oder mehrstufige Features) bitte **vor** dem ersten Code-PR ein Architektur-/Tracking-Issue eröffnen: Ist-Stand, vorgeschlagener Stufen-Schnitt, offene Designfragen und geplante Teil-PRs kurz skizzieren. Das spart allen Beteiligten unnötige Review-Schleifen und Agenten-Tokens.
+- **Ablageort für Spezifikationen:** Architektur-Vorschläge und Meilenstein-Pläne werden im **GitHub-Issue** abgestimmt; dauerhafte Architektur-Dokumentation gehört unter `docs/`. Bitte keine externen Planungs- oder Agenten-Verzeichnisse (wie `.cursor/`, `.claude/` oder Top-Level-Spec-Frameworks ohne Code) als PR einreichen – unsere Triage-Pipeline ist auf lauffähige, testbare Teil-PRs ausgelegt und hält oder schließt reine Planungs-Bäume automatisch.
+
+**EN**
+- **Align before writing code or spending agent tokens:** For larger efforts (platform parity across Android/Windows/Linux, cross-cutting refactors, or multi-stage features), open an architecture/tracking issue **before** sending code PRs: outline the current gap, proposed stages, open design questions, and small PR slices.
+- **Where specs live:** Discuss proposals and task breakdowns in **GitHub Issues**; lasting architecture docs belong in `docs/`. Do not open PRs that add standalone planning or agent framework trees without runnable changes – our automated triage pipeline expects small, testable slices and closes tool-specific planning trees automatically.
+
 ## Picking up an issue
 
 To avoid two people building the same thing (it has happened, e.g. account groups in #31):
@@ -174,6 +189,7 @@ fehlende Angabe mit ⚠️.
 - [ ] **Dependencies and licences:** `scripts/check-third-party-notices.sh` passes, and `THIRD_PARTY_NOTICES.md` is updated in the same PR when `Cargo.toml`, `Cargo.lock` or `Package.swift` changed.
 - [ ] **Brand neutrality:** `scripts/lint-brand-names.sh` passes.
 - [ ] **New access:** new network, process or file access is named in the PR description.
+- [ ] **No hidden code:** `unsafe` only in `girocrab-core/src/sys.rs`; `scripts/lint-no-obfuscation.sh` passes (rules in `docs/ARCHITECTURE.md`). An exception is a new entry in that script.
 
 #### ⚡ Performance & Responsiveness (Pflicht / mandatory)
 

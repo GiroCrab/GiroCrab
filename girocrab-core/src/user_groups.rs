@@ -9,7 +9,7 @@
 //! iCloud sync: groups are keyed by a random uuid. Every user edit stamps a
 //! millisecond timestamp per field (`user_groups.name_ms` / `symbol_ms` /
 //! `total_ms` / `order_ms`, `accounts.placement_ms` / `name_ms` /
-//! `color_ms`); when merging two vaults the newer edit wins field by field, so
+//! `color_ms` / `note_ms`); when merging two vaults the newer edit wins field by field, so
 //! renaming a group on one device and switching its total flag on another
 //! keeps both. Equal stamps with different values (rare) resolve to the larger
 //! value, so both sides still end up identical. Deleted
@@ -53,7 +53,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::connectors::group_for;
 use crate::dates::now_ms;
@@ -332,10 +332,237 @@ pub(crate) fn place_new_account(conn: &Connection, account_id: i64) -> CoreResul
     Ok(())
 }
 
-/// Merges user groups, account placements and account names from the
-/// attached `other` vault (newest edit wins). `acc_map` maps other → local
-/// account ids; accounts in `inserted` were just created by the merge and
-/// take the other side's values unconditionally.
+/// `note_ms` of an account note that schema step 32 moved out of the settings
+/// (#980): older than any edit. Old builds kept no edit time, so two moved
+/// notes that differ are combined instead of one of them winning.
+pub(crate) const MOVED_NOTE_MS: i64 = 1;
+
+/// The snapshot of a device still on an older build, just migrated for a
+/// merge: that device keeps editing its notes without a stamp, so they get
+/// stamp 0 (never edited) and only fill notes this device lacks. Once it
+/// updates, step 32 moves them there and they count like moved notes.
+pub(crate) fn moved_notes_key(account_id: i64) -> String {
+    format!("account.moved_notes.{account_id}")
+}
+
+pub(crate) fn mark_old_build_notes(conn: &Connection) -> CoreResult<()> {
+    conn.execute(
+        "UPDATE accounts SET note_ms = 0 WHERE note_ms = ?1",
+        [MOVED_NOTE_MS],
+    )?;
+    conn.execute(
+        "DELETE FROM settings WHERE key LIKE 'account.moved_notes.%'",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Where an incoming note in `merge_note_from` came from, so constituent moved
+/// notes can be read from the matching vault's `settings`.
+pub(crate) enum NoteOrigin<'a> {
+    None,
+    Schema(&'a str, i64),
+}
+
+fn read_moved_parts(conn: &Connection, schema: &str, id: i64, fallback: &str) -> Vec<String> {
+    let sql = format!("SELECT value FROM {schema}.settings WHERE key = ?1");
+    if let Ok(Some(raw)) = conn
+        .query_row(&sql, [moved_notes_key(id)], |r| r.get::<_, String>(0))
+        .optional()
+        && let Ok(parts) = serde_json::from_str::<Vec<String>>(&raw)
+    {
+        let clean: Vec<String> = parts
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !clean.is_empty() {
+            return clean;
+        }
+    }
+    let trimmed = fallback.trim();
+    if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        vec![trimmed.to_string()]
+    }
+}
+
+fn write_moved_parts(conn: &Connection, id: i64, parts: &[String]) -> CoreResult<()> {
+    let key = moved_notes_key(id);
+    if parts.len() > 1 {
+        let json = serde_json::to_string(parts).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, json],
+        )?;
+    } else {
+        conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+    }
+    Ok(())
+}
+
+/// The note of account `id` and its stamp.
+fn account_note(conn: &Connection, id: i64) -> CoreResult<(String, i64)> {
+    Ok(conn.query_row(
+        "SELECT note, note_ms FROM accounts WHERE id = ?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
+}
+
+/// Merges `(text, ms)` into the note of account `id` like the other account
+/// fields (`take_newer`); moved notes keep every constituent text in a
+/// merge-order-independent order, and stamp-0 notes from old builds only fill
+/// genuinely missing notes. `fresh` takes it unconditionally.
+#[allow(dead_code)]
+pub(crate) fn merge_note(
+    conn: &Connection,
+    id: i64,
+    (text, ms): (String, i64),
+    fresh: bool,
+) -> CoreResult<u32> {
+    merge_note_from(conn, id, (text, ms), fresh, NoteOrigin::None)
+}
+
+pub(crate) fn merge_note_from(
+    conn: &Connection,
+    id: i64,
+    (text, ms): (String, i64),
+    fresh: bool,
+    origin: NoteOrigin<'_>,
+) -> CoreResult<u32> {
+    let (mine, mine_ms) = account_note(conn, id)?;
+    let mut combined_parts: Option<Vec<String>> = None;
+    let (note, note_ms) = if fresh {
+        if ms == MOVED_NOTE_MS
+            && let NoteOrigin::Schema(schema, src_id) = origin
+        {
+            let parts = read_moved_parts(conn, schema, src_id, &text);
+            if parts.len() > 1 {
+                combined_parts = Some(parts);
+            }
+        }
+        (text, ms)
+    } else if ms == 0 {
+        if mine.is_empty() && mine_ms == 0 {
+            (text, 0)
+        } else {
+            (mine.clone(), mine_ms)
+        }
+    } else if ms == MOVED_NOTE_MS && mine_ms == MOVED_NOTE_MS {
+        let mut parts = read_moved_parts(conn, "main", id, &mine);
+        match origin {
+            NoteOrigin::Schema(schema, src_id) => {
+                parts.extend(read_moved_parts(conn, schema, src_id, &text));
+            }
+            NoteOrigin::None => {
+                let t = text.trim();
+                if !t.is_empty() {
+                    parts.push(t.to_string());
+                }
+            }
+        }
+        let (joined, norm) = combine_moved_parts(parts.iter().map(String::as_str));
+        combined_parts = Some(norm);
+        (joined, MOVED_NOTE_MS)
+    } else {
+        let (mut note, mut note_ms) = (mine.clone(), mine_ms);
+        crate::sync_merge::take_newer(&mut note, &mut note_ms, text.clone(), ms);
+        if ms == MOVED_NOTE_MS
+            && note_ms == MOVED_NOTE_MS
+            && let NoteOrigin::Schema(schema, src_id) = origin
+        {
+            let parts = read_moved_parts(conn, schema, src_id, &text);
+            if parts.len() > 1 {
+                combined_parts = Some(parts);
+            }
+        }
+        (note, note_ms)
+    };
+    if note_ms != MOVED_NOTE_MS {
+        conn.execute("DELETE FROM settings WHERE key = ?1", [moved_notes_key(id)])?;
+    } else if let Some(ref parts) = combined_parts {
+        write_moved_parts(conn, id, parts)?;
+    }
+    if note == mine && note_ms == mine_ms {
+        return Ok(0);
+    }
+    Ok(conn.execute(
+        "UPDATE accounts SET note = ?2, note_ms = ?3 WHERE id = ?1",
+        params![id, note, note_ms],
+    )? as u32)
+}
+
+/// When a bank label `?2` with stamp `?3` wins over an account's own (#1467):
+/// a newer stamp, or on an equal one the later in the order bank name (NULL),
+/// hidden (`''`), text.
+const LABEL_WINS: &str = "(bank_label_ms < ?3 OR (bank_label_ms = ?3 AND ?2 IS NOT NULL
+     AND (bank_label IS NULL OR bank_label < ?2)))";
+
+/// The bank label of a folded twin goes on to its bank account when it wins there.
+pub(crate) fn pass_bank_label_on(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
+    let (label, stamp): (Option<String>, i64) = conn.query_row(
+        "SELECT bank_label, bank_label_ms FROM accounts WHERE id = ?1",
+        [from],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    conn.execute(
+        &format!(
+            "UPDATE accounts SET bank_label = ?2, bank_label_ms = ?3 WHERE id = ?1 AND {LABEL_WINS}"
+        ),
+        params![to, label, stamp],
+    )?;
+    Ok(())
+}
+
+/// The note of account `from` merged into account `to` (a folded twin's note
+/// goes to its bank account).
+pub(crate) fn pass_note_on(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
+    merge_note_from(
+        conn,
+        to,
+        account_note(conn, from)?,
+        false,
+        NoteOrigin::Schema("main", from),
+    )?;
+    Ok(())
+}
+
+/// Combines constituent moved notes whole and trimmed: drops any note already
+/// contained in another constituent, sorts the remaining whole notes, and joins
+/// them with a line break. Associative, commutative, and idempotent.
+fn combine_moved_parts<'a>(raw: impl IntoIterator<Item = &'a str>) -> (String, Vec<String>) {
+    let mut unique: Vec<String> = raw
+        .into_iter()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    unique.sort();
+    unique.dedup();
+    let kept: Vec<String> = unique
+        .iter()
+        .filter(|p| {
+            !unique
+                .iter()
+                .any(|q| q.as_str() != p.as_str() && q.contains(p.as_str()))
+        })
+        .cloned()
+        .collect();
+    (kept.join("\n"), kept)
+}
+
+#[cfg(test)]
+fn combine_moved_notes(a: &str, b: &str) -> String {
+    combine_moved_parts([a, b]).0
+}
+
+/// Merges user groups, account placements and account fields (name, colour,
+/// archived, symbol, note) from the attached `other` vault (newest edit wins).
+/// `acc_map` maps other → local account ids; accounts in `inserted` were just
+/// created by the merge and take the other side's values unconditionally.
 pub(crate) fn merge_attached(
     tx: &Connection,
     acc_map: &HashMap<i64, i64>,
@@ -349,24 +576,28 @@ pub(crate) fn merge_attached(
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
-        (Option<i64>, i64, String, i64),
+        (Option<i64>, i64, String, i64, String, i64),
+        (bool, i64, Option<String>, i64),
     )> = tx
         .prepare(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
-                    archived_unix, archived_ms, sf_symbol, symbol_ms
+                    archived_unix, archived_ms, sf_symbol, symbol_ms, note, note_ms,
+                    include_in_total != 0, total_ms, bank_label, bank_label_ms
              FROM other.accounts",
         )?
         .query_map([], |r| {
             Ok((
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
-                (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?),
+                (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?),
+                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?),
             ))
         })?
         .collect::<Result<_, _>>()?;
     for (
         (oid, uuid, order, placed, name, named, color, colored),
-        (archived, archived_ms, symbol, symbol_ms),
+        (archived, archived_ms, symbol, symbol_ms, note, noted),
+        (in_total, total_ms, label, label_ms),
     ) in rows
     {
         let Some(&id) = acc_map.get(&oid) else {
@@ -378,10 +609,11 @@ pub(crate) fn merge_attached(
              WHERE id = ?1 AND (?5 OR placement_ms < ?4)",
             params![id, uuid, order, placed, fresh],
         )? as u32;
-        tx.execute(
+        // counted like the other fields: a merge that only renames reloads the app
+        changed += tx.execute(
             "UPDATE accounts SET name = ?2, name_ms = ?3 WHERE id = ?1 AND (?4 OR name_ms < ?3)",
             params![id, name, named, fresh],
-        )?;
+        )? as u32;
         changed += tx.execute(
             "UPDATE accounts SET color_hex = ?2, color_ms = ?3 WHERE id = ?1 AND (?4 OR color_ms < ?3)",
             params![id, color, colored, fresh],
@@ -390,11 +622,48 @@ pub(crate) fn merge_attached(
             "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3 WHERE id = ?1 AND (?4 OR archived_ms < ?3)",
             params![id, archived, archived_ms, fresh],
         )? as u32;
+        // total switch (#337): the one field merge of value and stamp — newer
+        // stamp wins, an equal stamp breaks the tie towards `true` (like the
+        // group flag), inserted accounts take both unconditionally
+        changed += tx.execute(
+            "UPDATE accounts SET include_in_total = ?2, total_ms = ?3
+              WHERE id = ?1 AND (?4 OR total_ms < ?3 OR (total_ms = ?3 AND include_in_total < ?2))",
+            params![id, in_total, total_ms, fresh],
+        )? as u32;
+        // the sidebar's bank label (#1467): the newer edit wins; an equal stamp
+        // takes the later choice in a fixed order (bank name, hidden, text), so
+        // every device ends up with the same one. Edited on a twin folded here,
+        // it goes on to the bank account, like the note.
+        let label_rows = tx.execute(
+            &format!("UPDATE accounts SET bank_label = ?2, bank_label_ms = ?3 WHERE id = ?1 AND (?4 OR {LABEL_WINS})"),
+            params![id, label, label_ms, fresh],
+        )?;
+        if label_rows > 0
+            && let Some(bank) = crate::sync_merge::twins::folded_into(tx, id)?
+        {
+            pass_bank_label_on(tx, id, bank)?;
+        }
+        changed += label_rows as u32;
         // only a user's choice travels; the type's default stays local
         changed += tx.execute(
             "UPDATE accounts SET sf_symbol = ?2, symbol_ms = ?3 WHERE id = ?1 AND symbol_ms < ?3",
             params![id, symbol, symbol_ms],
         )? as u32;
+        let note_rows = merge_note_from(
+            tx,
+            id,
+            (note, noted),
+            fresh,
+            NoteOrigin::Schema("other", oid),
+        )?;
+        // a MoneyMoney twin folded here and edited on a device that hadn't
+        // folded it yet: the note goes on to the bank account, like the fold
+        if note_rows > 0
+            && let Some(bank) = crate::sync_merge::twins::folded_into(tx, id)?
+        {
+            pass_note_on(tx, id, bank)?;
+        }
+        changed += note_rows;
     }
     changed += combine_same_names(tx)?;
     changed += follow_merges(tx)?;
@@ -632,6 +901,28 @@ pub(crate) fn excluded_from_total(conn: &Connection) -> CoreResult<HashSet<Strin
         .collect())
 }
 
+/// Accounts that count towards overall money figures (#337): their own switch
+/// on, not archived, their group (or a group that group is in) included, not
+/// deleted. The one set behind `BookingFilter.respect_in_total`,
+/// `selection_flow_for_totals`, the dashboard sums and the cashflow card; the
+/// same rule that derives `Account.in_total`. Takes the caller's connection,
+/// so aggregations never take the vault lock a second time.
+pub(crate) fn total_account_ids(conn: &Connection) -> CoreResult<HashSet<i64>> {
+    let excluded = excluded_from_total(conn)?;
+    let rows: Vec<(i64, Option<String>)> = conn
+        .prepare(
+            "SELECT id, user_group_uuid FROM accounts
+              WHERE deleted_ms IS NULL AND archived_unix IS NULL AND include_in_total != 0",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, g)| g.as_ref().is_none_or(|u| !excluded.contains(u)))
+        .map(|(id, _)| id)
+        .collect())
+}
+
 /// `uuid` and all groups below it.
 fn subtree(parents: &HashMap<String, Option<String>>, uuid: &str) -> HashSet<String> {
     parents
@@ -722,10 +1013,20 @@ impl Vault {
             });
             v
         };
-        // archived accounts stay listed but don't count (GiroCrab/GiroCrab#208)
+        // Archived and switched-out accounts stay listed but don't count
+        // (GiroCrab/GiroCrab#208, #337); `in_total` is the effective flag
+        // (own switch, group, archiving). Review point on #1100: an excluded
+        // group's header keeps showing its own balance — the exclusion only
+        // pulls it out of the overview figures, never zeroes its own sum.
         let sum = |v: &[Account]| {
             v.iter()
-                .filter(|a| a.currency == "EUR" && a.archived_unix.is_none())
+                .filter(|a| a.currency == "EUR" && a.in_total)
+                .map(|a| a.balance_cents)
+                .sum()
+        };
+        let sum_own = |v: &[Account]| {
+            v.iter()
+                .filter(|a| a.currency == "EUR" && a.include_in_total && a.archived_unix.is_none())
                 .map(|a| a.balance_cents)
                 .sum()
         };
@@ -752,7 +1053,11 @@ impl Vault {
                 stack.extend(kids.iter().rev().map(|k| (*k, depth + 1)));
             }
             out.push(UserGroup {
-                balance_cents: sum(&accs),
+                balance_cents: if excluded.contains(uuid) {
+                    sum_own(&accs)
+                } else {
+                    sum(&accs)
+                },
                 uuid: uuid.clone(),
                 name: name.clone(),
                 sf_symbol: sf_symbol.clone(),
@@ -861,10 +1166,12 @@ impl Vault {
                 return Err(not_found(u));
             }
         }
-        if let Some(p) = &parent_uuid {
-            if subtree(&effective_parents(&db)?, &uuid).contains(p) {
-                return Err(CoreError::invalid(tr("Eine Gruppe kann nicht in sich selbst oder eine ihrer Untergruppen verschoben werden")));
-            }
+        if let Some(p) = &parent_uuid
+            && subtree(&effective_parents(&db)?, &uuid).contains(p)
+        {
+            return Err(CoreError::invalid(tr(
+                "Eine Gruppe kann nicht in sich selbst oder eine ihrer Untergruppen verschoben werden",
+            )));
         }
         set_parent(&db, &uuid, parent_uuid.as_deref(), now_ms())
     }
@@ -946,10 +1253,10 @@ impl Vault {
         index: Option<u32>,
     ) -> Result<(), CoreError> {
         let db = self.db()?;
-        if let Some(u) = &group_uuid {
-            if !group_exists(&db, u)? {
-                return Err(not_found(u));
-            }
+        if let Some(u) = &group_uuid
+            && !group_exists(&db, u)?
+        {
+            return Err(not_found(u));
         }
         let mut ids: Vec<i64> = db
             .prepare(

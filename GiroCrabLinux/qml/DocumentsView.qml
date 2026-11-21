@@ -4,8 +4,8 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtCore
 
-// DocumentsUI.swift › DocumentsView: "Belege & PostBox" – list left, preview right.
-// The scope (Alle Dokumente / Belege / PostBox, #526) sits in the toolbar like on the Mac
+// DocumentsUI.swift › DocumentsView: "Belege & Postbox" – list left, preview right.
+// The scope (Alle Dokumente / Belege / Postbox, #526) sits in the toolbar like on the Mac
 // (Main.qml › DocumentsScope). Linux keeps its search field above the list.
 Rectangle {
     id: view
@@ -151,12 +151,13 @@ Rectangle {
                         SFIcon { symbol: AppModel.docSymbol(modelData); size: 18; color: Theme.accent; Layout.preferredWidth: 22 }
                         ColumnLayout { id: rowCol; spacing: 2; Layout.fillWidth: true
                             Text { text: modelData.title; font.pixelSize: Theme.body + 1; font.weight: Font.Medium; color: Theme.text
-                                   wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                                   wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true
+                                   Sensitive { amounts: true } }   // DocumentsUI.swift: [.personal, .amounts]
                             Text { text: DocumentsScope.originTitle(modelData) + " · " + (modelData.account_name || qsTr("Ohne Konto"))
                                    font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                             Text { text: modelData.booking_label || qsTr("Ohne zugeordneten Umsatz"); font.pixelSize: Theme.caption
                                    color: !modelData.booking_label && !docRow.bank ? Theme.warning : Theme.secondary
-                                   elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} } }
+                                   elide: Text.ElideRight; Layout.fillWidth: true; Sensitive { amounts: true } } }   // "merchant · amount"
                         Text { text: Fmt.medium(modelData.doc_date); font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.secondary }
                     }
                     MouseArea {
@@ -172,7 +173,7 @@ Rectangle {
                     Text { Layout.alignment: Qt.AlignHCenter; font.pixelSize: Theme.title3 + 1; font.weight: Font.Bold; color: Theme.text
                            text: view.unfiltered ? qsTr("Keine Belege") : qsTr("Keine passenden Dokumente") }
                     Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; color: Theme.secondary
-                           text: view.unfiltered ? qsTr("Belege kommen beim Abruf (Trade Republic, comdirect-PostBox, FinTS-Kontoauszug) oder per Drag & Drop.")
+                           text: view.unfiltered ? qsTr("Belege kommen beim Abruf (Trade Republic, comdirect-Postbox, FinTS-Kontoauszug) oder per Drag & Drop.")
                                                  : qsTr("Für diese Auswahl wurden keine Dokumente gefunden.") }
                     Button { visible: !view.unfiltered; Layout.alignment: Qt.AlignHCenter; text: qsTr("Alle Dokumente anzeigen"); onClicked: view.showAll() }
                 }
@@ -209,7 +210,7 @@ Rectangle {
         onAccepted: {
             if (!selectedFiles.length) return
             // An unmatched upload has no account. Make it visible even when the dialog
-            // was opened from PostBox or a filtered account.
+            // was opened from Postbox or a filtered account.
             DocumentsScope.current = "receipts"
             AppModel.documentsAccountFilter = null
             searchField.text = ""

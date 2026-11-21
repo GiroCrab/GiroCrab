@@ -11,12 +11,12 @@
 <p align="center">FinTS 3.0 · PSD2 · SEPA · Datenimport — 100&nbsp;% lokal verschlüsselt, kostenlos, Daten bleiben auf deinem Gerät.</p>
 
 <p align="center">
-  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.8.5 · Apple Silicon (.dmg)" width="260" height="56"></a>
+  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.8.7 · Apple Silicon (.dmg)" width="260" height="56"></a>
   &nbsp;
   <a href="https://testflight.apple.com/join/KBmvKVpT"><img src="docs/assets/download-ios.svg" alt="iOS &amp; iPadOS App – kostenlos via Apple TestFlight" width="260" height="56"></a>
 </p>
 
-<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.8.5</sub></p>
+<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.8.7</sub></p>
 <p align="center">
   <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe"><img src="docs/assets/download-windows-alpha.svg" alt="Für Windows laden (Alpha – Frühe Vorschau)" width="260" height="56"></a>
   &nbsp;
@@ -50,13 +50,28 @@
 ## 🇩🇪 Deutsch
 
 **Open-Source-Online-Banking für Mac (Apple Silicon) und iPhone/iPad – lokal, verschlüsselt, Daten bleiben auf deinem Gerät.**
-Native SwiftUI-App auf einem Rust-Kern: verschlüsselter **SQLCipher-Banking-Tresor** (XChaCha20-Poly1305 & Argon2id), Kategorienbaum,
+Native SwiftUI-App auf einem Rust-Kern: verschlüsselter **SQLCipher-Banking-Tresor** (AES-256, zufälliger 256-Bit-Schlüssel), Kategorienbaum,
 Regeln, Händler-Erkennung, Sparplan-Ansicht, Darlehens-Tilgungsbalken und direkte Verbindungen
 zu Ihren Banken per **FinTS 3.0 / HBCI** und **PSD2 (Enable Banking)** – ohne Server, ohne Tracking.
 
 ### Für wen ist GiroCrab?
 
 GiroCrab ist eine freie, quelloffene Banking-App (GPLv3) für macOS, Linux (Qt 6 / QML) und – derzeit als Beta über TestFlight – für iPhone und iPad. Alle Daten liegen verschlüsselt auf deinem Gerät. GiroCrab ist ein junges Community-Projekt: Die Bankenabdeckung wächst noch (siehe Bank-Tabelle), und PSD2-Zugänge laufen über einen eigenen, kostenlosen Enable-Banking-Zugang.
+
+### ✨ Neu in v0.8.7
+
+- 🏦 **Neue Banken & Amex-Kontoauszüge (#1168, #1435, #1440, #1451, #1456, #1416):** Native Konnektoren für **Hanseatic Bank** (Kreditkarten, Tages-/Festgeld, SparBrief & Postbox-PDFs), **BHW Bausparkasse** (Bausparverträge, Baudarlehen & Postfach-PDFs) und **Kontist**-Geschäftskonten, automatischer & manueller **PDF-Kontoauszugsabruf für American Express** im Portal-Fenster, **C24, N26 und Bank Norwegian** verifiziert in der Banken-Matrix sowie aktualisierte FinTS-Adresse für **1822direkt**.
+- 🧮 **Kontoschalter für Gesamtsummen & Kontoeinstellungen (#1100, #1445, #1455):** Einzelne Konten lassen sich gezielt aus Gesamtsummen, Cashflow und Vermögen ausschließen (mit iCloud-Sync-Stempel; Amazon-Bestellkonten starten ausgeschlossen), aufgelöste Konten direkt in den Kontoeinstellungen löschen und Konten mit negativem Startsaldo ohne gesperrten „Sichern“-Button bearbeiten.
+- 💸 **Empfängerliste, Buchungsnotizen & FinTS-Überweisungen (#1129, #1130, #1441, #1088, #1419):** Bekannte Empfänger verwalten/ausblenden, direktes Notiz-Symbol an Buchungen mit Hover-Vorschau, sofortige FinTS-Überweisungen ohne unerlaubtes Ausführungsdatum sowie `HISPAS`-SEPA-Formaterkennung (`pain.001.001.09`).
+- 🐧 **Linux-Release-Pakete & Android Native-Build (#1150, #1151, #1458, #1384, #1423, #1443):** EquatePlus-Anmeldung & Beleg-Download, Hintergrund-Sync inkl. sauberem Dialog-Abbruch bei „Alle abrufen“, Privatmodus, Breeze-Icons, direkte `.deb`- & `.flatpak`-Pakete am GitHub-Release sowie CI-geprüfter nativer Rust-/UniFFI-Build unter Android.
+- 🛠️ **iPadOS FinTS-Registrierung, Amex-Saldo & Zeitraumwechsel (#1449, #1446, #1444, #1379):** Eingebaute FinTS-Produktregistrierung jetzt fest verifiziert im iOS/iPadOS-TestFlight-Build (Build 24 unter Version `0.7.5`), korrekter `0,00 €`-Saldo bei bezahlter Amex-Abrechnung, synchroner Kopfbereich beim Zeitraumwechsel und erweiterter Code-Integritäts-Linter (`forbid(unsafe_code)`).
+
+### ✨ Neu in v0.8.6
+
+- 🔍 **Natürliche Suche & Beleg-Filter:** Buchungen über natürliche Suchbegriffe finden und gezielt nach Belegen filtern.
+- 🏦 **Banken, Echtzeitüberweisung & Import-Korrekturen:** Consorsbank-Archiv, FFB-Postfach-PDFs (#1105) & FFB-Depot-Zusammenführung (#1103), Ford-Money-/Opel-Steuerabgleich (#1102), Ford-Money-Freigabe (#1101), Advanzia-Wiederanlegen (#1115), Trade-Republic-Verrechnungskonto beim Import (#1114), PayPal-Fremdwährungen (#1110) & Enable-Banking-Währungsanzeige (#1034), offene Reservierungen (#1111), ING Business im Bankverzeichnis (#974) sowie Echtzeitüberweisung-Statusrückmeldung `3045` (#1121).
+- 🔐 **Sicherheit & FinTS-Registrierung:** In offiziellen Builds wird ausschließlich GiroCrabs offizielle FinTS-Produktregistrierung genutzt (#1092), Connector-Zustände im Speicher geschützt (#1094) und die Schlüsselbund-Prüfung korrigiert (#1084).
+- 📱 **iOS / TestFlight – v0.8.6 unter der Haube (Build 22 unter Version 0.7.5):** Damit Updates ohne Review-Wartezeit sofort bei euch landen, erscheint der komplette **v0.8.6-Funktionsumfang** auf iOS direkt als Build 22 unter Version `0.7.5`.
 
 ### ✨ Neu in v0.8.5
 
@@ -138,9 +153,9 @@ nur um Kategorie und Notiz ergänzt.
 
 *Alle Screenshots zeigen ausschließlich erfundene Demo-Daten (`GIROCRAB_DEMO_SEED=1`).*
 
-- 🔒 **Local-First:** Alle Bankdaten bleiben auf Ihrem Gerät – in einem verschlüsselten Tresor (XChaCha20-Poly1305), geschützt durch Schlüsselbund / Touch ID bzw. Face ID. Es gibt keinen Entwickler-Server.
+- 🔒 **Local-First:** Alle Bankdaten bleiben auf Ihrem Gerät – in einem verschlüsselten Tresor (SQLCipher, AES-256), geschützt durch Schlüsselbund / Touch ID bzw. Face ID. Es gibt keinen Entwickler-Server.
 - 📱 **macOS + iOS (iPhone / iPad):** Eine gemeinsame SwiftUI-Codebasis auf dem Rust-Kern. Voraussetzungen: **macOS 14+ (Apple Silicon, `arm64`)** bzw. **iOS 17+**. Für iPhone und iPad steht die App direkt über **[Apple TestFlight](https://testflight.apple.com/join/KBmvKVpT)** bereit (oder kann optional mit Xcode selbst aus dem Quellcode gebaut werden).
-- ☁️ **Optionale iCloud-Drive-Synchronisation:** Wer möchte, gleicht Tresor-Daten zwischen Macs und iOS-Geräten über den eigenen iCloud-Drive-Ordner (`iCloud Drive/GiroCrab/`) ab. In die Cloud wandert der Tresor nur als **verschlüsselter SQLCipher-Snapshot** (`wal_checkpoint(TRUNCATE)`); der Abgleich erfolgt deterministisch per `ATTACH DATABASE`-Merge. Eine **laufende SQLite-Datenbank mit WAL-Dateien wird nie direkt im Cloud-Speicher geöffnet.** Die Synchronisation ist **standardmäßig ausgeschaltet** und wird erst in den Einstellungen aktiviert; danach läuft der Abgleich beim Entsperren des Tresors. Der Ordner `iCloud Drive/GiroCrab/` wird erst angelegt, wenn Sie die Synchronisation aktivieren. 🔑 **Schlüssel:** Der Tresor-Schlüssel liegt **nicht** im iCloud-Ordner (die frühere Datei `tresor.key` aus v0.4.0 wird beim nächsten Abgleich automatisch gelöscht). Stattdessen teilt GiroCrab ihn standardmäßig über den **iCloud-Schlüsselbund** (`kSecAttrSynchronizable`, abschaltbar in den Einstellungen). Alternativ kopieren Sie den Schlüssel auf dem ersten Gerät („Tresor-Schlüssel kopieren“, Zwischenablage wird nach 60 s geleert) und fügen ihn einmalig auf dem zweiten Gerät ein („Schlüssel einfügen …“). ⚠️ Wer bereits v0.4.0 mit aktivem Sync genutzt hat: Die alte `tresor.key` kann noch in iCloud-Versionen/Papierkorb liegen; eine Schlüsselrotation ist für ein späteres Update geplant.
+- ☁️ **Optionale iCloud-Drive-Synchronisation:** Wer möchte, gleicht Tresor-Daten zwischen Macs und iOS-Geräten über den eigenen iCloud-Drive-Ordner (`iCloud Drive/GiroCrab/`) ab. In die Cloud wandert der Tresor nur als **verschlüsselter SQLCipher-Snapshot** (`wal_checkpoint(TRUNCATE)`); der Abgleich erfolgt deterministisch per `ATTACH DATABASE`-Merge. Eine **laufende SQLite-Datenbank mit WAL-Dateien wird nie direkt im Cloud-Speicher geöffnet.** Die Synchronisation ist **standardmäßig ausgeschaltet** und wird erst in den Einstellungen aktiviert; danach läuft der Abgleich beim Entsperren des Tresors. Der Ordner `iCloud Drive/GiroCrab/` wird erst angelegt, wenn Sie die Synchronisation aktivieren. 🔑 **Schlüssel:** Der Tresor-Schlüssel liegt **nicht** im iCloud-Ordner (die frühere Datei `tresor.key` aus v0.4.0 wird beim nächsten Abgleich automatisch gelöscht). Auf Wunsch teilt GiroCrab ihn über den **iCloud-Schlüsselbund** (`kSecAttrSynchronizable`); das ist standardmäßig ausgeschaltet und wird in den Einstellungen aktiviert. Alternativ kopieren Sie den Schlüssel auf dem ersten Gerät („Tresor-Schlüssel kopieren“, Zwischenablage wird nach 60 s geleert) und fügen ihn einmalig auf dem zweiten Gerät ein („Schlüssel einfügen …“). ⚠️ Wer bereits v0.4.0 mit aktivem Sync genutzt hat: Die alte `tresor.key` kann noch in iCloud-Versionen/Papierkorb liegen; eine Schlüsselrotation ist für ein späteres Update geplant.
 - 🗄️ **Datenbank-Import:** lesender Import einer verschlüsselten `.sqlite`-Datei inkl. Konten, Kategorien, Hierarchie und Buchungshistorie (siehe „Vorhandene Daten übernehmen“).
 - 🏦 **FinTS 3.0 / HBCI-Client & PSD2 für macOS und iOS:** FinTS 3.0 / HBCI (CAMT.052 & MT940 mit intelligenter Latin-1/UTF-8-Erkennung), **bunq** (persönlicher API-Schlüssel), PayPal, Trade-Republic-WebSocket, comdirect-REST sowie eingebettete Web-Session-/CSV-Importe für Amex & Amazon Visa.
 - 💸 **SEPA-Überweisung & Echtzeitüberweisung via FinTS 3.0 / HKCCS** inkl. Verification of Payee (VoP), inkl. PushTAN, SecureGo plus & ChipTAN/photoTAN: IBAN-Prüfung (Mod-97), SEPA-konformer Zeichensatz, Empfängervorschläge aus bisherigen Buchungen und sofort vorgemerkte Buchung.
@@ -183,7 +198,7 @@ nur um Kategorie und Notiz ergänzt.
 ```
 ┌──────────────────────────┐   UniFFI    ┌────────────────────────────────────┐
 │ GiroCrabApp (SwiftUI)    │ ◄─────────► │ girocrab-core (Rust)               │
-│ macOS 14+ (arm64) · iOS  │  Swift-API  │  vault.rs      XChaCha20-Tresor    │
+│ macOS 14+ (arm64) · iOS  │  Swift-API  │  vault.rs      SQLCipher-Tresor    │
 │ 17+ · Face/Touch ID      │             │  rules.rs      Kategorien-Regeln   │
 └──────────────────────────┘             │  merchants.rs  Händler-Erkennung   │
    ▲ optional: iCloud Drive              │  connectors/   FinTS · REST · PSD2 │
@@ -203,11 +218,13 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verifiziert |
 | Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Test gesucht |
+| BHW Bausparkasse | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Test gesucht |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
@@ -223,14 +240,19 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verifiziert |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
+| Kontist | REST-API | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | PayPal | REST-API | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
 | Scalable Capital | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
 | Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| Bank Norwegian | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| C24 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
+| N26 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
 | Weitere Banken per PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
+| Finpension | Datei-Import | ✓ | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht [#300](https://github.com/GiroCrab/GiroCrab/issues/300) |
 
 Weitere deutsche Banken mit FinTS 3.0 (PIN/TAN) lassen sich über BLZ und FinTS-URL anbinden (2.011 Institute im FinTS-Verzeichnis); europäische PSD2-Banken über Enable Banking mit einer eigenen, kostenlosen Anwendung.
 
@@ -243,6 +265,12 @@ FNZ Bank / ebase / finvesto: Einrichtung, Konto- und Depotumsätze, Fondspositio
 
 Eine neue Bank anzubinden dauert meist unter 100 Zeilen: siehe
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) und [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### 🔗 Zusammenspiel mit anderen Apps
+
+- **Buchungen in andere Apps ziehen (macOS):** Eine oder mehrere Buchungen lassen sich aus der Liste in andere Programme ziehen; sie tragen alle Angaben der Buchung als JSON mit, dazu die Belege, die an ihr hängen (Format: [docs/booking-drag.md](docs/booking-drag.md)). Die Belegverwaltung [Receipts Space](https://receipts-app.com/) legt daraus Einträge an, mit Beleg oder als Platzhalter, dem nur noch der Beleg fehlt.
+- **Lesende lokale Schnittstelle (macOS):** Ausgewählte Konten, Buchungen, Kategorien und Summen für Programme auf demselben Mac, standardmäßig aus und nur mit Zugangsschlüssel, auch für KI-Assistenten per MCP ([docs/local-api.md](docs/local-api.md)).
+- **Rechnungen bezahlen:** ZUGFeRD / Factur-X, GiroCode / EPC-QR und PDF-Text aus der Zwischenablage füllen die Überweisung vor.
 
 ### Schnellstart
 
@@ -265,7 +293,7 @@ Die Demo enthält fiktive Konten und erfundene Buchungen – keine echten Daten.
 ### 📦 Download (macOS)
 
 Das fertige Disk-Image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) gibt es unter [GitHub Releases](../../releases) – ohne Rust oder Xcode.
-Aktuelle Version: **v0.8.5**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
+Aktuelle Version: **v0.8.7**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
 **iPhone / iPad:** [TestFlight-Beta beitreten](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel-Macs:** Die offiziellen Binaries sind nur für Apple Silicon (`arm64`). Auf Intel-Macs lässt sich GiroCrab mit Swift/Xcode selbst aus dem Quellcode bauen (siehe [Schnellstart](#schnellstart)).
@@ -279,7 +307,7 @@ und wird auch nicht als solcher angeboten.
 - **Rein lokal:** Alle Verbindungen laufen ausschließlich direkt zwischen **Ihrem Gerät** und **Ihrer Bank** – mit **Ihren** Zugangsdaten,
   **Ihrer** FinTS-Produktregistrierung und **Ihren** API-Schlüsseln. Die Entwickler betreiben **keinen** Server; Konto-, Buchungs- oder
   Zugangsdaten gelangen **zu keinem Zeitpunkt** an die Entwickler. Die optionale iCloud-Synchronisation nutzt ausschließlich Ihren
-  eigenen iCloud-Drive-Speicher (verschlüsselter Snapshot; der Schlüssel läuft über den iCloud-Schlüsselbund, siehe oben).
+  eigenen iCloud-Drive-Speicher (verschlüsselter Snapshot; den Schlüssel teilen Sie per Zwischenablage oder auf Wunsch über den iCloud-Schlüsselbund, siehe oben).
 - **Nutzung auf eigenes Risiko, ohne Gewährleistung** (siehe GPLv3). Das gilt insbesondere für **SEPA-Überweisungen** – prüfen Sie
   Empfänger, IBAN und Betrag vor jeder Freigabe selbst – sowie für **inoffizielle Schnittstellen** (z. B. Trade Republic), die
   jederzeit ausfallen können und gegen Nutzungsbedingungen des Anbieters verstoßen können.
@@ -293,13 +321,28 @@ und wird auch nicht als solcher angeboten.
 ## 🇬🇧 English
 
 **Open-source online banking for Mac (Apple Silicon) and iPhone/iPad – local-first, encrypted, your data stays on your device.**
-A native SwiftUI app on a Rust core: encrypted **SQLCipher banking vault** (XChaCha20-Poly1305 & Argon2id), category tree, rules, merchant
+A native SwiftUI app on a Rust core: encrypted **SQLCipher banking vault** (AES-256, random 256-bit key), category tree, rules, merchant
 recognition, savings-plan view, loan repayment progress and direct connections to your banks via
 **FinTS 3.0 / HBCI** and **PSD2 (Enable Banking)** – no server, no tracking. Money is always `i64` cents, never floats.
 
 ### Who is GiroCrab for?
 
 GiroCrab is a free, open-source banking app (GPLv3) for macOS, Linux (Qt 6 / QML) and – currently in beta via TestFlight – for iPhone and iPad. All data stays encrypted on your device. GiroCrab is a young community project: bank coverage is still growing (see the bank table), and PSD2 access works through your own free Enable Banking account.
+
+### ✨ What's new in v0.8.7
+
+- 🏦 **New Banks & Amex PDF Statements (#1168, #1435, #1440, #1451, #1456, #1416):** Native connectors for **Hanseatic Bank** (credit cards, savings & Postbox PDFs), **BHW Bausparkasse** (home savings, loans & mailbox PDFs), and **Kontist** business accounts, automatic & on-demand **American Express PDF statement downloads** in the portal sheet, verified **C24, N26, and Bank Norwegian** matrix entries, plus updated FinTS endpoint for **1822direkt**.
+- 🧮 **Per-Account Totals Switch & Account Settings (#1100, #1445, #1455):** Exclude individual accounts from overall totals, cashflow, and net worth (synced across devices; Amazon Orders accounts start excluded by default), delete archived accounts directly from Account Settings, and save accounts with negative opening balances cleanly.
+- 💸 **Recipient Management, Booking Notes & FinTS Transfers (#1129, #1130, #1441, #1088, #1419):** Manage/hide saved transfer recipients, jump straight to booking notes via the new list indicator, send immediate FinTS transfers without rejected execution dates, and detect `pain.001.001.09` from `HISPAS`.
+- 🐧 **Linux Release Packages & Android Native Layer (#1150, #1151, #1458, #1384, #1423, #1443):** EquatePlus sign-in & PDFs, auto-sync with clean dialog cancellation during "Retrieve All", full privacy redaction, Breeze fallback icons, prebuilt `.deb` & `.flatpak` release assets, and CI-verified multi-ABI Rust/UniFFI builds on Android.
+- 🛠️ **iPadOS FinTS Registration, Amex €0 Balance & Period Sync (#1449, #1446, #1444, #1379):** Verified built-in FinTS product registration inside the iOS/iPadOS TestFlight archive (Build 24 under version `0.7.5`), accurate `€0.00` Amex balance after paid statements, aligned headers during period switches, and workspace-wide `forbid(unsafe_code)` obfuscation checks.
+
+### ✨ What's new in v0.8.6
+
+- 🔍 **Natural Search & Document Filters:** Find bookings using natural-language queries and filter directly by attached documents.
+- 🏦 **Bank, Instant Transfer & Import Fixes:** Consorsbank archive support, FFB mailbox PDFs (#1105) & FFB depot twin folding (#1103), Ford Money / Opel tax-line matching (#1102), Ford Money approval polling (#1101), Advanzia account re-add fix (#1115), Trade Republic clearing account adoption (#1114), PayPal foreign-currency bookings (#1110) & Enable Banking currency display (#1034), pending reservation retention (#1111), ING Business in bank search (#974), and instant transfer `3045` handover handling (#1121).
+- 🔐 **Security & FinTS Registration:** Official releases always use GiroCrab's built-in FinTS product registration (#1092), harden in-memory connector state (#1094), and fix read-only keychain checks (#1084).
+- 📱 **iOS / TestFlight – Full v0.8.6 under the hood (Build 22 under version 0.7.5):** To deliver updates without Apple review delays, the complete **v0.8.6 feature set** ships on iOS as Build 22 under version `0.7.5`.
 
 ### ✨ What's new in v0.8.5
 
@@ -378,9 +421,9 @@ fetched later via FinTS are recognised as duplicates and not created twice – e
 
 *All screenshots show purely fictional demo data (`GIROCRAB_DEMO_SEED=1`).*
 
-- 🔒 **Local-first:** all banking data lives on your device in an encrypted vault (XChaCha20-Poly1305) protected by the Keychain / Touch ID or Face ID. There is no developer server.
+- 🔒 **Local-first:** all banking data lives on your device in an encrypted vault (SQLCipher, AES-256) protected by the Keychain / Touch ID or Face ID. There is no developer server.
 - 📱 **macOS + iOS (iPhone / iPad):** one SwiftUI codebase on the shared Rust core. Requires **macOS 14+ (Apple Silicon, `arm64`)** or **iOS 17+**. On iPhone and iPad the app is available via **[Apple TestFlight](https://testflight.apple.com/join/KBmvKVpT)** (or optionally built from source with Xcode).
-- ☁️ **Optional iCloud Drive sync:** if you want, sync vault data between Macs and iOS devices through your own iCloud Drive folder (`iCloud Drive/GiroCrab/`). The vault goes to the cloud only as an **encrypted SQLCipher snapshot** (`wal_checkpoint(TRUNCATE)`), and devices are reconciled with a deterministic `ATTACH DATABASE` merge. **A live SQLite database with WAL files is never opened directly in cloud storage.** Sync is **off by default** and has to be enabled in Settings; once on, it runs when the vault is unlocked. The folder `iCloud Drive/GiroCrab/` is only created once you enable sync. 🔑 **Key handling:** the vault key is **not** stored in the iCloud folder (the `tresor.key` file from v0.4.0 is deleted automatically on the next sync). By default GiroCrab shares it through **iCloud Keychain** (`kSecAttrSynchronizable`, can be turned off in Settings). Alternatively, copy the key on the first device (“Copy vault key”, clipboard is cleared after 60 s) and paste it once on the second device (“Paste key …”). ⚠️ If you used v0.4.0 with sync enabled, the old `tresor.key` may still exist in iCloud versions/trash; key rotation is planned for a later release.
+- ☁️ **Optional iCloud Drive sync:** if you want, sync vault data between Macs and iOS devices through your own iCloud Drive folder (`iCloud Drive/GiroCrab/`). The vault goes to the cloud only as an **encrypted SQLCipher snapshot** (`wal_checkpoint(TRUNCATE)`), and devices are reconciled with a deterministic `ATTACH DATABASE` merge. **A live SQLite database with WAL files is never opened directly in cloud storage.** Sync is **off by default** and has to be enabled in Settings; once on, it runs when the vault is unlocked. The folder `iCloud Drive/GiroCrab/` is only created once you enable sync. 🔑 **Key handling:** the vault key is **not** stored in the iCloud folder (the `tresor.key` file from v0.4.0 is deleted automatically on the next sync). If you want, GiroCrab shares it through **iCloud Keychain** (`kSecAttrSynchronizable`); this is off by default and is turned on in Settings. Alternatively, copy the key on the first device (“Copy vault key”, clipboard is cleared after 60 s) and paste it once on the second device (“Paste key …”). ⚠️ If you used v0.4.0 with sync enabled, the old `tresor.key` may still exist in iCloud versions/trash; key rotation is planned for a later release.
 - 🗄️ **Database import:** read-only import of an encrypted `.sqlite` file incl. accounts, categories, hierarchy and booking history (see “Importing existing data”).
 - 🏦 **FinTS 3.0 / HBCI client & PSD2 for macOS and iOS:** FinTS 3.0 / HBCI (CAMT.052 & MT940 with smart Latin-1/UTF-8 decoding), **bunq** (personal API key), PayPal, Trade Republic WebSocket, comdirect REST, and embedded web-session/CSV import for Amex & Amazon Visa.
 - 💸 **Native SEPA credit transfers via FinTS 3.0 / HKCCS** incl. PushTAN, SecureGo plus & ChipTAN/photoTAN: IBAN checksum validation (Mod-97), SEPA-compliant character set, recipient suggestions from past bookings and an instant pending booking.
@@ -434,11 +477,13 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verified |
 | Amazon orders | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Testing wanted |
+| BHW Bausparkasse | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Testing wanted |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
@@ -454,14 +499,19 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verified |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
+| Kontist | REST-API | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | PayPal | REST-API | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited [#156](https://github.com/GiroCrab/GiroCrab/issues/156) |
 | Scalable Capital | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted [#45](https://github.com/GiroCrab/GiroCrab/issues/45) |
 | Amazon Visa | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | American Express | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| Bank Norwegian | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| C24 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | ING Business | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#721](https://github.com/GiroCrab/GiroCrab/issues/721) |
 | More banks via PSD2 (Enable Banking) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
+| N26 | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | PayPal (DE) | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Revolut | Enable Banking (PSD2) | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#289](https://github.com/GiroCrab/GiroCrab/issues/289) |
+| Finpension | Datei-Import | ✓ | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted [#300](https://github.com/GiroCrab/GiroCrab/issues/300) |
 
 Further German banks with FinTS 3.0 (PIN/TAN) can be connected via bank code and FinTS URL (2,011 institutions in the FinTS directory); European PSD2 banks via Enable Banking with your own free application.
 
@@ -471,10 +521,16 @@ Further German banks with FinTS 3.0 (PIN/TAN) can be connected via bank code and
 Adding a bank usually takes under 100 lines – start from
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) and read [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### 🔗 Working with other apps
+
+- **Drag bookings into other apps (macOS):** One or more bookings can be dragged from the list into other programs; they carry all of the booking's details as JSON, together with the receipts attached to it (format: [docs/booking-drag.md](docs/booking-drag.md)). The receipt manager [Receipts Space](https://receipts-app.com/) turns them into entries, with the receipt or as a placeholder that only lacks it.
+- **Read-only local interface (macOS):** Selected accounts, bookings, categories and totals for programs on the same Mac, off by default and only with an access key, also for AI assistants via MCP ([docs/local-api.md](docs/local-api.md)).
+- **Paying invoices:** ZUGFeRD / Factur-X, GiroCode / EPC QR and PDF text from the clipboard pre-fill the transfer.
+
 ### Download (macOS)
 
 The pre-built disk image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) is available under
-[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.5**.
+[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.7**.
 
 > 🧪 **Windows & Android (Early Alpha):** Experimental preview installers for [Windows (`x86_64-setup.exe`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe) and [Android (`.apk`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-Android-alpha.apk) are available for early testing (best tried in demo mode). Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
 **iPhone / iPad:** [join the TestFlight beta](https://testflight.apple.com/join/KBmvKVpT).
@@ -507,7 +563,7 @@ It is **not a payment initiation service and not an account information service 
 
 - **Strictly local:** all connections run directly between **your device** and **your bank**, using **your** credentials,
   **your** FinTS product registration and **your** API keys. The authors operate **no** server, and no account, booking or
-  credential data **ever** reaches the authors. Optional iCloud sync uses only your own iCloud Drive storage (encrypted snapshot; the key goes through iCloud Keychain, see above).
+  credential data **ever** reaches the authors. Optional iCloud sync uses only your own iCloud Drive storage (encrypted snapshot; you share the key via the clipboard or, if you turn it on, through iCloud Keychain, see above).
 - **Use at your own risk, without warranty** (see GPLv3). This applies in particular to **SEPA transfers** – always verify
   recipient, IBAN and amount yourself before authorising – and to **unofficial interfaces** (e.g. Trade Republic), which can
   break at any time and may violate the provider's terms of service.
@@ -536,8 +592,11 @@ include it: they use only an ID you enter yourself, or, for development, one set
 
 ## Security / Sicherheit
 
-XChaCha20-Poly1305 + Argon2id encrypted vault, key in the Keychain (`ThisDeviceOnly`), PINs/TANs only in memory
-(`zeroize`), no telemetry. Merchant logos are **opt-in** (off by default, Settings → Merchant logos); without it, no network
+SQLCipher vault (AES-256 with a per-page HMAC-SHA512, random 256-bit key). On Apple devices the key stays in the Keychain
+(`ThisDeviceOnly`) unless you turn on key sync via iCloud Keychain; Linux and Windows keep it in the system keyring /
+Credential Manager. TANs live only in memory (`zeroize`); a bank PIN is
+kept only if you choose to save it, then inside the encrypted vault (and so also in its encrypted iCloud sync file and
+backups). No telemetry. Merchant logos are **opt-in** (off by default, Settings → Merchant logos); without it, no network
 request is made for logos and everything stays 100 % local. **Never attach real bank data or credentials to issues.**
 
 DE: Händler-Logos sind **standardmäßig deaktiviert** (Opt-in in den Einstellungen) – ohne Zustimmung werden keine Logos aus dem Netz geladen, alles bleibt zu 100 % lokal.
@@ -580,7 +639,7 @@ GiroCrab betreibt **kein eigenes Cloud-Backend** und nutzt kein Headless-Browser
 
 * **Natives FinTS 3.0 / HBCI:** Klassische Banken werden direkt aus dem Rust-Kern (`girocrab-core`) über die offiziellen FinTS-3.0-HTTPS-Endpunkte angesprochen (inkl. starker Kundenauthentifizierung nach TAN-Prozess 996/997, Decoupled-TAN, PushTAN & PhotoTAN sowie Abruf von MT940 / CAMT.052 / CAMT.053 und SEPA-Überweisungen via HKCCS).
 * **Direkte Mobile-/Web-API-Clients in Rust:** Für Banken und Broker ohne FinTS-Schnittstelle (wie Trade Republic oder Scalable Capital) nutzt GiroCrab keine fragilen Browser-Scraper, sondern spricht über `reqwest` + `rustls` direkt die nativen JSON-, GraphQL- und WebSocket-Endpunkte der Banken an (z. B. lokales ECDSA-P256-Device-Pairing und signierte Requests bei Trade Republic).
-* **Zero-Knowledge Datenhaltung & iCloud-Sync (macOS & iOS):** Alle Zugangsdaten, Session-Tokens und Umsätze liegen ausschließlich lokal in deinem mit **XChaCha20-Poly1305 & Argon2id** verschlüsselten SQLCipher-Tresor (geschützt durch Touch ID / Face ID). Über den optionalen **Zero-Knowledge iCloud-Sync** lassen sich Tresore zwischen Mac und iPhone/iPad konfliktfrei auf Buchungs-Fingerprint-Ebene zusammenführen, ohne dass Klartextdaten jemals dein Gerät verlassen.
+* **Zero-Knowledge Datenhaltung & iCloud-Sync (macOS & iOS):** Alle Zugangsdaten, Session-Tokens und Umsätze liegen ausschließlich lokal in deinem verschlüsselten SQLCipher-Tresor (AES-256; geschützt durch Touch ID / Face ID). Über den optionalen **Zero-Knowledge iCloud-Sync** lassen sich Tresore zwischen Mac und iPhone/iPad konfliktfrei auf Buchungs-Fingerprint-Ebene zusammenführen, ohne dass Klartextdaten jemals dein Gerät verlassen.
 
 
 ## 🤝 Contributors / Mitwirkende

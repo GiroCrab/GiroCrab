@@ -62,8 +62,17 @@ pub enum ConnectorKind {
     FordMoney,
     /// Opel Direktbank savings accounts and Postbox PDFs via the web banking (TwoVerify approval).
     OpelDirektbank,
+    /// BHW Bausparkasse: building-savings contracts, loans and mailbox PDFs via the
+    /// myBHW portal's JSON API (one-time code by e-mail or SMS).
+    Bhw,
     /// Finpension (CH): Säule 3a, Freizügigkeit, 1e – import of the CSV/JSON export (#300).
     Finpension,
+    /// Kontist business account via the official GraphQL API (own OAuth2
+    /// client, approval in the Kontist app).
+    Kontist,
+    /// Hanseatic Bank credit cards, savings products and Postbox PDFs via the online banking's
+    /// JSON API (approval in the bank's app).
+    HanseaticBank,
 }
 
 impl ConnectorKind {
@@ -94,7 +103,10 @@ impl ConnectorKind {
             ConnectorKind::Ffb => "ffb",
             ConnectorKind::FordMoney => "fordmoney",
             ConnectorKind::OpelDirektbank => "opeldirektbank",
+            ConnectorKind::Bhw => "bhw",
             ConnectorKind::Finpension => "finpension",
+            ConnectorKind::Kontist => "kontist",
+            ConnectorKind::HanseaticBank => "hanseatic",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -154,7 +166,10 @@ impl ConnectorKind {
             ConnectorKind::Ffb,
             ConnectorKind::FordMoney,
             ConnectorKind::OpelDirektbank,
+            ConnectorKind::HanseaticBank,
+            ConnectorKind::Bhw,
             ConnectorKind::Finpension,
+            ConnectorKind::Kontist,
         ]
     }
 }
@@ -358,8 +373,13 @@ pub struct Account {
     pub initial_balance_cents: Option<i64>,
     /// User-defined group ("Nach Gruppe" view); `None` = "Ohne Gruppe".
     pub user_group_uuid: Option<String>,
-    /// Counts towards the overall total (false if its user group, or a group
-    /// that one is in, is excluded).
+    /// The account's own switch for the overall money totals (#337): whether
+    /// the user let it count. Order accounts (Amazon) start with `false`.
+    #[uniffi(default = true)]
+    #[cfg_attr(feature = "serde", serde(default = "default_true"))]
+    pub include_in_total: bool,
+    /// Counts towards the overall total: the own switch is on AND its user
+    /// group (or a group that one is in) is included AND it is not archived.
     pub in_total: bool,
     /// Marker colour (`#RRGGBB`): the user's choice or a default derived
     /// from the account's sync identity (same on every device).
@@ -379,6 +399,15 @@ pub struct Account {
     /// The balance is computed from the bookings (imports, connectors without
     /// a reported balance), not delivered by the bank; depots and loans never.
     pub balance_derived: bool,
+    /// The user's note on the account (#512), `""` = none. Syncs like the
+    /// name: the newer edit wins (#980).
+    pub note: String,
+    /// What the sidebar shows in place of `bank_name` (#1467): `None` the
+    /// bank name, `Some("")` nothing, else the user's own text. Fetches
+    /// never change it; syncs like the note.
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub bank_label: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -624,11 +653,30 @@ pub struct BookingFilter {
     #[uniffi(default = None)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub amount_max_cents: Option<i64>,
+    /// Overall money figures only (#337): the sums below (`income_cents` …
+    /// `perk_cents`, `flow`) count accounts of the effective total set (own
+    /// switch, group, archiving) — an empty selection after that exclusion
+    /// means "none" (zero sums), never "all accounts". It never touches the
+    /// booking list itself: selection, `total_count`, paging, exports and
+    /// documents are proof views and stay complete. Default `false` keeps the
+    /// proof semantics of every existing caller (single account, category,
+    /// documents, API share, menu bar).
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub respect_in_total: bool,
+}
+
+/// Serde default of [`Account::include_in_total`].
+#[cfg(feature = "serde")]
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BookingPage {
+    /// Proof view: every booking of the filter, regardless of
+    /// `BookingFilter.respect_in_total` — that flag only narrows the sums.
     pub transactions: Vec<Booking>,
     pub total_count: u32,
     /// Sum of `FlowKind::Income` bookings (= `flow.income_cents`).
@@ -789,6 +837,33 @@ pub struct DepotValuePoint {
     pub value_cents: i64,
     pub covered_depots: u32,
     pub total_depots: u32,
+}
+
+/// An amount in one currency: what a category holds in currencies other than EUR (#1049).
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CurrencyAmount {
+    pub currency: String,
+    pub cents: i64,
+}
+
+/// What a category (with its subcategories) holds in one currency other than EUR (#1049).
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CategoryCurrencyAmount {
+    pub category_id: i64,
+    pub currency: String,
+    pub cents: i64,
+}
+
+/// The KPI tiles of one currency other than EUR (#1049): what `SelectionFlow` leaves out.
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CurrencyFlow {
+    pub currency: String,
+    pub consumption_cents: i64,
+    pub invested_cents: i64,
+    pub income_cents: i64,
 }
 
 /// Sum of one category (with subcategories) over one calendar day, month or year (`period` = `yyyy-MM-dd`, `yyyy-MM` or `yyyy`).
@@ -1049,13 +1124,19 @@ pub struct StandingOrderLimits {
     pub weekdays: Vec<u32>,
 }
 
-/// Recipient suggested from past bookings (auto-completion).
-#[derive(Debug, Clone, uniffi::Record)]
+/// Recipient suggested from past bookings (auto-completion, `recipients.rs`): one per IBAN.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KnownRecipient {
+    /// The most used name the IBAN was paid under.
     pub name: String,
     pub iban: String,
+    /// Outgoing bookings to this IBAN.
     pub times_used: u32,
+    /// Date of the latest of them (`YYYY-MM-DD`).
+    pub last_used: String,
+    /// "Nicht mehr vorschlagen": only `list_known_recipients` returns these.
+    pub hidden: bool,
 }
 
 /// Budget progress of one category for one month.

@@ -15,7 +15,9 @@ use std::{
 };
 
 fn invalid() -> CoreError {
-    CoreError::invalid(tr("EquatePlus: Unvollständige oder nicht unterstützte Bestandsdaten. Es wurden keine Daten übernommen."))
+    CoreError::invalid(tr(
+        "EquatePlus: Unvollständige oder nicht unterstützte Bestandsdaten. Es wurden keine Daten übernommen.",
+    ))
 }
 fn label(v: &Value) -> Option<&str> {
     v.as_str()
@@ -43,10 +45,9 @@ fn money(v: &Value, currency: &str) -> CoreResult<f64> {
         .as_str()
         .or(v["currency"]["code"].as_str())
         .or(v["currency"].as_str())
+        && unit != currency
     {
-        if unit != currency {
-            return Err(invalid());
-        }
+        return Err(invalid());
     }
     amount(v)
 }
@@ -347,7 +348,7 @@ fn reconcile(details: &Value, currency: &str, holdings: &[RemoteHolding]) -> Cor
 
 fn snapshot(json: &str) -> CoreResult<FetchResult> {
     let v: Value = serde_json::from_str(json).map_err(|_| invalid())?;
-    if v["version"].as_u64() != Some(1) {
+    if v["version"].as_u64() != Some(2) {
         return Err(invalid());
     }
     let user = identifier(&v["user"]["participant"]["userId"])?;
@@ -363,19 +364,25 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
         return Err(invalid());
     }
     let mut seen = HashSet::new();
+    let mut session_ids = HashSet::new();
     let mut result = FetchResult {
         bank_name: Some("EquatePlus".into()),
         ..Default::default()
     };
     for plan in plans {
         let id = identifier(&plan["id"])?;
-        if !seen.insert(id.clone()) {
+        let module = identifier(&plan["moduleId"])?;
+        if !seen.insert(module.clone()) || !session_ids.insert(id.clone()) {
             return Err(invalid());
         }
         let name = label(&plan["name"])
             .or_else(|| label(&plan["details"]["name"]))
-            .unwrap_or(&id);
-        let account_ref = format!("{}:{}:{}", user.len(), user, id);
+            .unwrap_or(&module);
+        let account_ref = format!("module:{}:{}:{}", user.len(), user, module);
+        result.renamed_refs.push((
+            format!("{}:{}:{}", user.len(), user, id),
+            account_ref.clone(),
+        ));
         let mut lots = Vec::new();
         // Require the root array even for an explicitly empty plan.
         for node in entries(&plan["details"])? {
@@ -389,7 +396,7 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
             name: format!("EquatePlus · {name}"),
             owner: String::new(),
             iban: String::new(),
-            account_number: format!("{user}/{id}"),
+            account_number: format!("{user}/{module}"),
             currency: currency.into(),
             kind: AccountKind::Brokerage,
             balance_cents: balance,
@@ -398,6 +405,66 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
         result.holdings_fetched.push(account_ref);
     }
     Ok(result)
+}
+
+/// A pre-upgrade depot can be migrated when its stored session ID still matches the
+/// ID supplied alongside the module ID. A rotated ID alone can't prove a match.
+pub(super) fn prepare_import(
+    db: &rusqlite::Transaction<'_>,
+    connection_id: i64,
+    data: &mut FetchResult,
+) -> CoreResult<()> {
+    if data.renamed_refs.is_empty() {
+        return Ok(());
+    }
+    let mut query = db.prepare(
+        "SELECT external_ref, archived_unix IS NULL AND deleted_ms IS NULL
+         FROM accounts WHERE connection_id = ?1",
+    )?;
+    let known: BTreeMap<String, bool> = query
+        .query_map([connection_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+
+    data.renamed_refs
+        .retain(|(old, new)| known.contains_key(old) && !known.contains_key(new));
+    let migrated: HashSet<&str> = data
+        .renamed_refs
+        .iter()
+        .map(|(old, _)| old.as_str())
+        .collect();
+    let unmapped_legacy = known
+        .iter()
+        .filter(|(id, _)| !id.starts_with("module:") && !migrated.contains(id.as_str()));
+    let targets: HashSet<&str> = data
+        .renamed_refs
+        .iter()
+        .map(|(_, new)| new.as_str())
+        .collect();
+    let needs_new_accounts = data.accounts.iter().any(|account| {
+        !known.contains_key(&account.external_ref)
+            && !targets.contains(account.external_ref.as_str())
+    });
+    if needs_new_accounts {
+        if unmapped_legacy.clone().any(|(_, active)| *active) {
+            return Err(CoreError::Bank {
+                code: "EQUATEPLUS_PROGRAM_MAPPING".into(),
+                message: tr("EquatePlus: Neue Programmkennungen konnten den bisherigen Depots nicht eindeutig zugeordnet werden. Prüfen und archivieren Sie die alten Depots vor einem erneuten Abruf.").into(),
+            });
+        }
+        // An archived or disabled legacy depot is not consent to import its
+        // possible replacement. Use the existing account confirmation dialog.
+        data.confirm_new_accounts |= unmapped_legacy.count() > 0;
+    }
+    for (old, new) in &data.renamed_refs {
+        if let Some(account) = data.accounts.iter().find(|a| &a.external_ref == new) {
+            db.execute(
+                "UPDATE accounts SET account_number = ?3
+                 WHERE connection_id = ?1 AND external_ref = ?2",
+                params![connection_id, old, account.account_number],
+            )?;
+        }
+    }
+    super::account_selection::rename_refs(db, connection_id, &data.renamed_refs)
 }
 
 #[uniffi::export]
@@ -697,8 +764,8 @@ mod tests {
     use super::*;
     use serde_json::json;
     fn fixture() -> Value {
-        json!({"version":1,"date":"2026-11-15","user":{"participant":{"userId":"test-user"},"reportingCurrency":{"code":"EUR"}},
-          "plans":[{"id":"plan-a","name":"Test Programm","details":{"totals":[{"type":"TOTAL","quantity":{"amount":6.875},"value":{"amount":848.72}}],"entries":[{"entries":[{
+        json!({"version":2,"date":"2026-11-15","user":{"participant":{"userId":"test-user"},"reportingCurrency":{"code":"EUR"}},
+          "plans":[{"id":"plan-a","moduleId":"module-a","name":"Test Programm","details":{"totals":[{"type":"TOTAL","quantity":{"amount":6.875},"value":{"amount":848.72}}],"entries":[{"entries":[{
             "marketPrice":{"amount":123.45,"unit":{"code":"EUR"}},"canTrade":true,
             "entries":[{"VEHICLE":"Test Aktien","QUANTITY":{"amount":2.5},"LOCKED_QTY":{"amount":3.25},"SELL_PURCHASE_PRICE":{"amount":100}},
                        {"VEHICLE":"Test RSU","LOCKED_PERF_QTY":{"amount":1.125}}]}]}]}}]})
@@ -709,7 +776,7 @@ mod tests {
         let mut v = fixture();
         let value_b = qty_b * 50.0;
         v["plans"].as_array_mut().unwrap().push(json!({
-            "id": "plan-b", "name": "Zweites Programm",
+            "id": "plan-b", "moduleId": "module-b", "name": "Zweites Programm",
             "details": {"totals": [{"type":"TOTAL","quantity":{"amount":qty_b},"value":{"amount":value_b}}],
               "entries":[{"entries":[{"marketPrice":{"amount":50.0,"unit":{"code":"EUR"}},"canTrade":true,
                 "entries":[{"VEHICLE":"Test Aktien B","QUANTITY":{"amount":qty_b}}]}]}]}}));
@@ -743,6 +810,88 @@ mod tests {
             .iter()
             .map(|h| h.quantity)
             .sum()
+    }
+
+    #[test]
+    fn session_ids_rotate_without_duplicating_same_name_programs() {
+        let (_dir, vault, connection) = open_vault("equateplus-relogin");
+        let mut data = two_plans(4.0);
+        data["plans"][1]["name"] = data["plans"][0]["name"].clone();
+        vault
+            .clone()
+            .import_equateplus_snapshot(connection, data.to_string())
+            .unwrap();
+        let before: Vec<_> = vault
+            .list_accounts()
+            .unwrap()
+            .iter()
+            .map(|a| a.id)
+            .collect();
+        data["plans"][0]["id"] = json!("new-session-a");
+        data["plans"][1]["id"] = json!("new-session-b");
+        vault
+            .clone()
+            .import_equateplus_snapshot(connection, data.to_string())
+            .unwrap();
+        let after: Vec<_> = vault
+            .list_accounts()
+            .unwrap()
+            .iter()
+            .map(|a| a.id)
+            .collect();
+        assert_eq!(before.len(), 2);
+        assert_eq!(before, after);
+        data["plans"][1]["moduleId"] = data["plans"][0]["moduleId"].clone();
+        assert!(snapshot(&data.to_string()).is_err());
+    }
+
+    #[test]
+    fn upgrade_keeps_the_legacy_depot_and_its_selection_when_the_session_id_matches() {
+        let (_dir, vault, connection) = open_vault("equateplus-legacy");
+        let mut data = snapshot(&fixture().to_string()).unwrap();
+        let (legacy, _) = data.renamed_refs.pop().unwrap();
+        data.accounts[0].external_ref = legacy.clone();
+        data.holdings_fetched[0] = legacy.clone();
+        for holding in &mut data.holdings {
+            holding.account_ref = legacy.clone();
+        }
+        super::super::store_fetch(&vault, ConnectorKind::EquatePlus, connection, data).unwrap();
+        let old_id = vault.list_accounts().unwrap()[0].id;
+
+        let mut rotated = fixture();
+        rotated["plans"][0]["id"] = json!("unknown-upgrade-session");
+        assert!(matches!(
+            vault.clone().import_equateplus_snapshot(connection, rotated.to_string()),
+            Err(CoreError::Bank { code, .. }) if code == "EQUATEPLUS_PROGRAM_MAPPING"
+        ));
+        assert_eq!(vault.list_accounts().unwrap().len(), 1);
+        vault
+            .clone()
+            .set_connection_account_choices(connection, vec![])
+            .unwrap();
+        let deferred = vault
+            .clone()
+            .import_equateplus_snapshot(connection, rotated.to_string())
+            .unwrap();
+        assert_eq!(deferred.accounts_updated, 0);
+        assert_eq!(vault.list_accounts().unwrap().len(), 1);
+        let choices = vault.connection_account_choices(connection).unwrap();
+        assert!(
+            choices
+                .iter()
+                .any(|choice| choice.pending && !choice.enabled)
+        );
+        vault
+            .clone()
+            .import_equateplus_snapshot(connection, fixture().to_string())
+            .unwrap();
+        let accounts = vault.list_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id, old_id);
+        let choices = vault.connection_account_choices(connection).unwrap();
+        assert_eq!(choices.len(), 1);
+        assert!(choices[0].account_ref.starts_with("module:"));
+        assert!(!choices[0].enabled);
     }
 
     #[test]
@@ -835,11 +984,13 @@ mod tests {
             .import_equateplus_snapshot(connection, two_plans(4.0).to_string())
             .unwrap();
         assert_eq!(vault.list_accounts().unwrap().len(), 2);
-        assert!(vault
-            .connection_account_choices(connection)
-            .unwrap()
-            .iter()
-            .all(|c| c.enabled));
+        assert!(
+            vault
+                .connection_account_choices(connection)
+                .unwrap()
+                .iter()
+                .all(|c| c.enabled)
+        );
     }
 
     fn library_doc(id: &str, plan: Option<&str>, service: &str) -> Value {
@@ -876,10 +1027,12 @@ mod tests {
         assert_eq!(keys[0], keys[1], "identical entries share a group");
         assert_ne!(keys[0], keys[2]);
         assert!(keys.iter().all(|k| valid_document_group(k)));
-        assert!(vault
-            .clone()
-            .pending_equateplus_documents(connection, "kein json".into())
-            .is_err());
+        assert!(
+            vault
+                .clone()
+                .pending_equateplus_documents(connection, "kein json".into())
+                .is_err()
+        );
     }
 
     fn pending_docs(vault: &std::sync::Arc<Vault>, connection: i64, list: &Value) -> Vec<String> {
@@ -1032,15 +1185,19 @@ mod tests {
             .unwrap();
         assert_eq!(pending.len(), 3);
         // anything that is not a PDF is rejected
-        assert!(vault
-            .clone()
-            .import_equateplus_document(connection, pending[0].clone(), b"<html>".to_vec())
-            .is_err());
-        for doc in &pending {
-            assert!(vault
+        assert!(
+            vault
                 .clone()
-                .import_equateplus_document(connection, doc.clone(), b"%PDF-1.4 test".to_vec())
-                .unwrap());
+                .import_equateplus_document(connection, pending[0].clone(), b"<html>".to_vec())
+                .is_err()
+        );
+        for doc in &pending {
+            assert!(
+                vault
+                    .clone()
+                    .import_equateplus_document(connection, doc.clone(), b"%PDF-1.4 test".to_vec())
+                    .unwrap()
+            );
         }
         // a few bytes in front of the header are allowed, an HTML page is not
         assert!(has_pdf_header(b"\xEF\xBB\xBF\n%PDF-1.4 test"));
@@ -1053,15 +1210,23 @@ mod tests {
                 .collect::<Vec<u8>>()
         ));
         // a later run: the group is complete, nothing is listed, and storing one again changes nothing
-        assert!(vault
-            .clone()
-            .pending_equateplus_documents(connection, docs.to_string())
-            .unwrap()
-            .is_empty());
-        assert!(!vault
-            .clone()
-            .import_equateplus_document(connection, pending[0].clone(), b"%PDF-1.4 test".to_vec())
-            .unwrap());
+        assert!(
+            vault
+                .clone()
+                .pending_equateplus_documents(connection, docs.to_string())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !vault
+                .clone()
+                .import_equateplus_document(
+                    connection,
+                    pending[0].clone(),
+                    b"%PDF-1.4 test".to_vec()
+                )
+                .unwrap()
+        );
         // the program named in the document is its account; otherwise none, never a guess
         let plan_a = vault
             .list_accounts()
@@ -1096,14 +1261,18 @@ mod tests {
         let other = vault
             .add_bank_connection(ConnectorKind::Quirion, "Andere".into(), "x".into())
             .unwrap();
-        assert!(vault
-            .clone()
-            .pending_equateplus_documents(other, "[]".into())
-            .is_err());
-        assert!(vault
-            .clone()
-            .import_equateplus_document(other, "{}".into(), b"%PDF-".to_vec())
-            .is_err());
+        assert!(
+            vault
+                .clone()
+                .pending_equateplus_documents(other, "[]".into())
+                .is_err()
+        );
+        assert!(
+            vault
+                .clone()
+                .import_equateplus_document(other, "{}".into(), b"%PDF-".to_vec())
+                .is_err()
+        );
     }
 
     #[test]
@@ -1226,11 +1395,13 @@ mod tests {
         bad["plans"][0]["details"]["entries"][0]["entries"][0]["marketPrice"]["unit"]["code"] =
             json!("USD");
         assert!(snapshot(&bad.to_string()).is_err());
-        assert!(quantities(
-            &json!({"QUANTITY":{"amount":2},"TOTAL_UNITS":{"amount":3}}),
-            Some(true)
-        )
-        .is_err());
+        assert!(
+            quantities(
+                &json!({"QUANTITY":{"amount":2},"TOTAL_UNITS":{"amount":3}}),
+                Some(true)
+            )
+            .is_err()
+        );
         assert_eq!(
             quantities(&json!({"UNITS":{"amount":2}}), None).unwrap()[0].1,
             "Verfügbarkeit unbekannt"
@@ -1274,10 +1445,12 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(json!({"id":"broken-plan","details":{}}));
-        assert!(vault
-            .clone()
-            .import_equateplus_snapshot(id, broken.to_string())
-            .is_err());
+        assert!(
+            vault
+                .clone()
+                .import_equateplus_snapshot(id, broken.to_string())
+                .is_err()
+        );
         assert_eq!(
             vault
                 .db()

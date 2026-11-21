@@ -213,6 +213,12 @@ QtObject {
     property string directionFilter: "All"     // BookingDirection
     onDirectionFilterChanged: { listLimit = defaultListLimit; reloadBookings() }
     property string searchText: ""
+    /// AppModel+Selection.swift › coreSearchText: the typed text with German plurals cut back to
+    /// the stem („kredite“ → „kredit“), so the substring search also finds the singular. Always a
+    /// superset of the literal search; the field keeps showing what was typed.
+    function coreSearchText() {
+        try { return core("literal_search_term", { text: searchText }) } catch (e) { return searchText }
+    }
     property Timer searchTimer: Timer { interval: 250; onTriggered: model.reloadBookings() }
     onSearchTextChanged: searchTimer.restart()
     /// AccountSidebarMode (byGroup | byBank | byKind): the explicit choice, else "Nach Gruppe" once a group exists.
@@ -333,12 +339,17 @@ QtObject {
     /// `--demo-sync`: "Alle abrufen" right away (simulated PIN / TAN dialogs).
     readonly property bool optionDemoSync: launchArgs.indexOf("--demo-sync") >= 0
     /// `--demo-sheet <name>`, `--demo-settings <tab>[:edit|add|remove]` (opened by presentLaunchOptions).
-    readonly property string demoSheet: launchValue("--demo-sheet")
+    /// `--demo-sheet report[:<sheet>]` (#384): `demoSheet` is the name without the `report:`
+    /// prefix (LaunchOptions.demoSheetName); the bug report opens over the view or that sheet.
+    readonly property string demoSheetOption: launchValue("--demo-sheet")
+    readonly property bool demoSheetOpensReport: demoSheetOption === "report" || demoSheetOption.startsWith("report:")
+    readonly property string demoSheet: demoSheetOption === "report" ? ""
+        : demoSheetOption.startsWith("report:") ? demoSheetOption.slice(7) : demoSheetOption
     readonly property string demoSettings: launchValue("--demo-settings")
     /// `--demo-seed` or GIROCRAB_DEMO_SEED=1|true|yes; `--screenshot`, `--demo-sync`,
     /// `--demo-sheet` and `--demo-settings` imply it (reproducible pictures).
     readonly property bool optionDemoSeed: launchArgs.indexOf("--demo-seed") >= 0 || vaultInfo.demo_seed === true
-        || screenshotMode || optionDemoSync || demoSheet !== "" || demoSettings !== ""
+        || screenshotMode || optionDemoSync || demoSheetOption !== "" || demoSettings !== ""
 
     // MARK: - Vault lifecycle
 
@@ -692,7 +703,7 @@ QtObject {
     /// The list page carries the selection's sums when no list-only filter narrows it.
     function listHasFlow(f) {
         return f.search === null && f.checked === null && f.direction === "All" && f.scope === "All"
-            && f.category_id === null && !f.uncategorized_only
+            && f.category_id === null && !f.uncategorized_only && !(f.tag_ids || []).length && !f.untagged_only
     }
     function selectionFlowCall(f) {
         const r = periodRange()
@@ -849,7 +860,7 @@ QtObject {
         if (!sel.startsWith("category:")) return null
         const r = periodRange()
         return ["category_history_by_unit", { category_id: Number(sel.slice(9)), account_ids: categoryAccountIDs,
-                                              date_from: r[0], date_to: r[1], key_length: 7 }]
+                                              date_from: r[0], date_to: r[1], key_length: BalanceChartPrefs.categoryKeyLength }]
     }
     /// AppModel+Loading.swift › reloadCategoryHistory (cheap SQL aggregate, still off the GUI
     /// thread). Callers check `selectionLoadTakes` first: a running selection load brings it.
@@ -1194,13 +1205,13 @@ QtObject {
             return { account_ids: [], category_id: null, include_subcategories: true, uncategorized_only: false,
                      search: null, date_from: null, date_to: null, limit: listLimit, offset: 0, scope: "All",
                      merchant_key: null, direction: "All", checked: false, whole_days: true }
-        return {
+        return TagFilter.applyTo({   // + the tag filter (#228)
             // AppModel+Loading.swift › currentFilter: the category views follow the account menu (#406)
             account_ids: showsCategoryAccountFilter ? categoryAccountIDs : selectionAccountIDs(),
             category_id: sel.startsWith("category:") ? Number(sel.slice(9)) : null,
             include_subcategories: true,
             uncategorized_only: sel === "uncategorized",
-            search: searchText === "" ? null : searchText,
+            search: searchText === "" ? null : coreSearchText(),
             date_from: r[0], date_to: r[1],
             limit: listLimit, offset: 0,
             scope: scope,
@@ -1208,7 +1219,7 @@ QtObject {
             direction: directionFilter,
             checked: statusFilter === "all" ? null : statusFilter === "checked",
             whole_days: true
-        }
+        })
     }
 
     // MARK: user groups (AccountGroupsModel.swift)
@@ -1276,9 +1287,31 @@ QtObject {
     }
     /// Shown while searching: its name matches, or a listed account lives in it or a subgroup.
     function isUserGroupListed(g) {
-        if (!isSidebarAccountSearching) return isUserGroupVisible(g)
+        if (!isSidebarAccountSearching) return isUserGroupVisible(g) && !isUserGroupHiddenAsArchived(g)
         return userGroupSubtree(g.uuid).some(n => sidebarTextMatches(n.name, sidebarAccountSearch)
                                                   || n.accounts.some(a => isSidebarAccountListed(a)))
+    }
+    /// isSidebarSectionListed (#814): a kind or bank section is shown while searching only with a hit;
+    /// otherwise it stays unless archived accounts are hidden and it holds nothing but archived
+    /// accounts. A section without accounts stays.
+    function isSidebarSectionListed(accounts) {
+        const listed = accounts.some(a => isSidebarAccountListed(a))
+        if (isSidebarAccountSearching) return listed
+        return listed || !accounts.length || showArchivedAccounts
+    }
+    /// isUserGroupOnlyArchived (#814): archived accounts are hidden and this group (with its subgroups)
+    /// holds accounts, all of them archived. A group without accounts stays.
+    function isUserGroupOnlyArchived(g) {
+        if (showArchivedAccounts) return false
+        const accounts = [].concat(...userGroupSubtree(g.uuid).map(n => n.accounts))
+        return accounts.length > 0 && accounts.every(a => a.archived_unix !== null)
+    }
+    /// The group or any group above it holds only archived accounts: a subgroup never stays behind
+    /// under a hidden parent.
+    function isUserGroupHiddenAsArchived(g) {
+        for (let n = g; n; n = n.parent_uuid ? userGroups.find(x => x.uuid === n.parent_uuid) : null)
+            if (isUserGroupOnlyArchived(n)) return true
+        return false
     }
     function isKindGroupOpen(id) { return isSidebarAccountSearching || !collapsedGroups[id] }
     function isBankGroupOpen(key) { return isSidebarAccountSearching || !collapsedBankGroups[key] }
@@ -1389,7 +1422,7 @@ QtObject {
         if (sel === "newBookings") return qsTr("Neue Umsätze")
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.name : qsTr("Bank") }
         if (sel === "uncategorized") return SidebarModel.uncategorizedLabel
-        if (sel === "documents") return qsTr("Belege & PostBox")
+        if (sel === "documents") return qsTr("Belege & Postbox")
         if (sel === "wealth") return qsTr("Vermögen")
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.name : qsTr("Gruppe") }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? g.name : qsTr("Gruppe") }
@@ -1397,7 +1430,34 @@ QtObject {
         if (sel.startsWith("category:")) { const c = categories.find(c => "category:" + c.id === sel); return c ? c.path : qsTr("Kategorie") }
         return ""
     }
+    /// AppModel+Loading.swift › headerTotalAccounts: accounts behind the header total of the
+    /// current selection (null: single account / not a total).
+    readonly property var headerTotalAccounts: {
+        const sel = sidebarSelection
+        if (sel === "all") return liquidAccounts
+        if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.accounts : null }
+        if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.accounts : null }
+        if (sel.startsWith("userGroup:")) { const ids = userGroupAccountIDs(sel.slice(10)); return allAccounts.filter(a => ids.indexOf(a.id) >= 0) }
+        return null
+    }
+    /// headerTotalSplit (#569, AllAccountsRoot.swift › HeaderTotal.split): the header total in the
+    /// base currency (EUR, or the single shared currency when no EUR account is there) plus every
+    /// further currency (alphabetical) – never mixed into one number. null: one currency only.
+    readonly property var headerTotalSplit: {
+        const accounts = headerTotalAccounts
+        if (!accounts) return null
+        const sums = {}
+        for (const a of accounts) { const c = a.currency ? a.currency.toUpperCase() : "EUR"; sums[c] = (sums[c] || 0) + a.balance_cents }
+        const codes = Object.keys(sums)
+        const primary = sums["EUR"] !== undefined || codes.length !== 1 ? "EUR" : codes[0]
+        const others = codes.filter(c => c !== primary).sort().map(c => ({ currency: c, cents: sums[c] }))
+        return others.length ? { currency: primary, cents: sums[primary] || 0, others: others } : null
+    }
     readonly property var headerBalance: {
+        const hb = headerBalanceUnsplit, split = headerTotalSplit
+        return hb && split ? { label: hb.label, cents: split.cents } : hb
+    }
+    readonly property var headerBalanceUnsplit: {
         const sel = sidebarSelection
         if (sel === "all") return { label: qsTr("Verfügbar (Giro, Tagesgeld, Karten)"), cents: liquidBalance }
         if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : qsTr("Kontostand"), cents: a.balance_cents } : null }
@@ -1633,14 +1693,36 @@ QtObject {
         if (isMagicDemoLogin(c.login_name)) return []
         const d = descriptor(c.connector)
         if (!d) return []
-        return d.required_settings.filter(key => {
-            if (key === "fints.product_id" && fintsProductIDSource !== "") return false
-            const e = settingEntry(key)
-            return !(e && e.has_value)
-        })
+        return userRequiredKeys(d.required_settings).filter(key => { const e = settingEntry(key); return !(e && e.has_value) })
+    }
+    /// Settings the core lists as required that are only an optional override for the user.
+    /// A custom FinTS product ID is one: GiroCrab ships its own, and a value entered once is a
+    /// global setting that covers every bank (AppModel+Connections.swift, #842/#865).
+    readonly property var optionalSettingKeys: ["fints.product_id"]
+    /// The ONLY place that turns `required_settings` into what the user must provide.
+    /// Add-bank sheet, setup and the sidebar use it.
+    function userRequiredKeys(requiredSettings) { return (requiredSettings || []).filter(k => optionalSettingKeys.indexOf(k) < 0) }
+    /// The core's `MissingSetting` (parsed error) for a key that is only an optional override.
+    function isMissingProductID(e) {
+        if (e.kind !== "MissingSetting") return false
+        const m = /key: "([^"]+)"/.exec(e.debug || "")
+        return !!m && optionalSettingKeys.indexOf(m[1]) >= 0
+    }
+    /// The core could not resolve a FinTS registration (no embedded ID and no own one).
+    /// Never a setup form: with an embedded ID the mode returns to `builtin` and the caller
+    /// retries once; otherwise the user is offered the own-ID alternative in an alert.
+    /// Returns true when a retry should follow.
+    function recoverFromMissingProductID() {
+        if (!fintsBuiltinAvailable || fintsProductIDMode === "builtin") return false
+        // only a stored switch is worth a retry; a failed write stays visible as the error (null)
+        try { core("set_fints_product_id_mode", { mode: "builtin" }) }
+        catch (e) { errorMessage = e.message; return null }
+        reloadSettings()
+        reloadProductIDState()
+        return true
     }
     function connectionStatus(id) { return run(() => core("connection_status", { connection_id: id })) || null }
-    /// Amex / Amazon Visa / FNZ / Quirion / Schwäbisch Hall / Amazon orders: embedded web-portal login.
+    /// Amex / Amazon Visa / FNZ / Quirion / Schwäbisch Hall / EquatePlus / Amazon orders: embedded web-portal login.
     function usesPortal(c) { return usesPortalLogin(c) }   // MARK: Web logins
 
     // MARK: - Adding banks
@@ -1716,6 +1798,8 @@ QtObject {
     property var pendingLogin: null          // BankConnection asking for the PIN
     property var setupRequest: null          // { connection, keys }
     property var webLoginConnection: null    // portal login (QtWebEngine)
+    /// The running sync was started by the schedule (AutoSync.qml): no login prompts, no error dialogs.
+    property var quietSyncConnectionID: null
     property var syncQueue: []
     property int syncBatchTotal: 0
     property var syncBatchSkipped: []
@@ -1752,7 +1836,7 @@ QtObject {
         if (!isDemo) {
             const st = connectionStatus(connection.id)
             const missing = missingSettings(connection)
-            if (st && (st.has_pin || (connection.connector === "TradeRepublic" && st.has_session)) && missing.length === 0) {
+            if (st && (st.has_pin || (["TradeRepublic", "Kontist"].indexOf(connection.connector) >= 0 && st.has_session)) && missing.length === 0) {
                 startSync(connection, ""); return
             }
             if (missing.length) { setupRequest = { connection: connection, keys: missing }; return }
@@ -1800,21 +1884,47 @@ QtObject {
     }
     function startSync(connection, secret) {
         if (usesPortal(connection)) { webLoginConnection = connection; return }
+        // a manual sync never overwrites the running automatic session of another login
+        if (quietSyncConnectionID !== null && quietSyncConnectionID !== connection.id) return
+        // a manual sync of the same login while its automatic one runs: cancel that one, this one is not quiet
+        if (quietSyncConnectionID === connection.id && syncingConnectionID === connection.id) {
+            quietSyncConnectionID = null
+            const oldSession = activeSession
+            activeSession = null
+            if (oldSession !== null) coreAsync("session_cancel", { session: oldSession }, null, () => {})
+        }
         pendingLogin = null
         syncingConnectionID = connection.id
         const gen = ++syncGeneration
         // Statements only for an account of exactly this login: a stale value
         // would hand this login's PIN to another bank.
-        if (statementsAccountID !== null && (!accountsByID[statementsAccountID] || accountsByID[statementsAccountID].connection_id !== connection.id))
+        if (statementsAccountID !== null && (!accountsByID[statementsAccountID] || accountsByID[statementsAccountID].connection_id !== connection.id)
+            || quietSyncConnectionID === connection.id)
             statementsAccountID = null
-            postboxConnectionID = null
         const statementsFor = statementsAccountID
-        // "PostBox jetzt abrufen" (#838) only for exactly this login
-        if (postboxConnectionID !== connection.id) postboxConnectionID = null
+        // "Postbox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
+        if (postboxConnectionID !== connection.id || quietSyncConnectionID === connection.id) postboxConnectionID = null
         const postboxNow = postboxConnectionID !== null
+        const quiet = quietSyncConnectionID === connection.id
         // Kept for the "GiroCrab-Registrierung" retry of a rejected product ID, so the
         // login is not asked again; finishSync takes it and clears it.
-        const keepSecret = () => { if (statementsFor === null) failedSyncSecret = secret }
+        const keepSecret = () => { failedSyncSecret = secret }
+        const startSession = id => {
+            activeSession = id
+            coreAsync("session_start", { session: id }, step => {
+                if (activeSession !== id || gen !== syncGeneration) return   // skipped / cancelled meanwhile
+                handleStep(step, connection)
+            }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
+        }
+        if (quiet) {
+            // no new approval in the background (e.g. the comdirect Postbox, #838); prepared
+            // off the GUI thread like the rest of the automatic fetch
+            coreAsync("begin_quiet_sync", { connection_id: connection.id, secret: secret, demo: isDemo }, id => {
+                if (gen !== syncGeneration) { coreAsync("session_cancel", { session: id }, null, () => {}); return }
+                startSession(id)
+            }, err => { if (gen === syncGeneration) finishSync(err, connection) })
+            return
+        }
         let id
         try {
             id = statementsFor !== null
@@ -1827,13 +1937,28 @@ QtObject {
             finishSync(e.message, connection)
             return
         }
-        activeSession = id
-        coreAsync("session_start", { session: id }, step => {
-            if (activeSession !== id || gen !== syncGeneration) return   // skipped / cancelled meanwhile
-            handleStep(step, connection)
-        }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
+        startSession(id)
     }
     function handleStep(step, connection) {
+        // A scheduled sync never asks for a login: the bank wants a new
+        // consent, so stop quietly – the connection view shows it.
+        if (quietSyncConnectionID === connection.id && (step.NeedsChallenge || step.StillWaiting)) {
+            logSync(connection.id, "Cancelled", qsTr("Automatischer Abruf übersprungen: Die Bank verlangt eine neue Freigabe."), 0, "Automatic")
+            quietSyncConnectionID = null
+            const s = activeSession
+            activeSession = null
+            // The next login may be the same bank: go on only once this bank dialog has ended
+            // (as skipCurrentSync); a newer sync meanwhile owns the state.
+            const gen = ++syncGeneration
+            const next = () => {
+                if (gen !== syncGeneration) return
+                syncingConnectionID = null
+                syncNextInQueue()   // never leave a queued login waiting behind a skipped automatic fetch
+            }
+            if (s !== null) coreAsync("session_cancel", { session: s }, next, next)
+            else next()
+            return
+        }
         if (step.NeedsChallenge) {
             const c = step.NeedsChallenge.challenge
             activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "" }
@@ -1846,7 +1971,7 @@ QtObject {
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             const s = step.Finished.summary
-            logSync(connection.id, "Ok", "", s.transactions_imported, syncLogSource())
+            logSync(connection.id, "Ok", "", s.transactions_imported, syncLogSource(connection.id))
             activeChallenge = null
             syncingConnectionID = null
             activeSession = null
@@ -1861,12 +1986,14 @@ QtObject {
                 documentsVersion++
                 toast = syncNotice(connection, s) + " · " + postboxNote(s)
             } else {
-                toast = syncNotice(connection, s)
-                if (s.postbox_documents > 0) {
-                    documentsVersion++
-                    toast += " · " + postboxNote(s)
+                // scheduled syncs only speak up when something changed
+                if (quietSyncConnectionID !== connection.id || s.transactions_imported > 0 || s.new_accounts.length || s.revoked_accounts.length) {
+                    toast = syncNotice(connection, s)
+                    if (s.postbox_documents > 0) toast += " · " + postboxNote(s)
                 }
+                if (s.postbox_documents > 0) documentsVersion++
             }
+            quietSyncConnectionID = null
             reloadAll()
             checkPendingAccountSelection()
             syncNextInQueue()
@@ -1945,6 +2072,7 @@ QtObject {
         if (s !== null && syncingConnectionID !== null)
             logSync(syncingConnectionID, "Cancelled", qsTr("Vom Benutzer abgebrochen"), 0, syncLogSource())
         activeSession = null; activeChallenge = null; pendingLogin = null; syncingConnectionID = null
+        quietSyncConnectionID = null   // a cancelled automatic fetch must not make the next sync quiet
         statementsAccountID = null
         postboxConnectionID = null
         syncGeneration++
@@ -1980,19 +2108,106 @@ QtObject {
     /// Extra actions of the error alert ([{ title, action }]) after the bank rejected the
     /// FinTS registration in use: replace the own one, or switch to the other one.
     property var errorAlternatives: []
+    /// AppModel.swift › errorCloseTitle: title of the closing button ("" = "OK").
+    property string errorCloseTitle: ""
+    /// AppModel.swift › errorOnClose: runs when the alert is closed with that button (not with
+    /// retry or an alternative): "Alle abrufen" goes on with the next login only once the
+    /// error was closed (#1041). Main.qml › errorDialog runs and clears it.
+    property var errorOnClose: null
+    /// AppModel+Sync.swift › errorOpensPrompt: errors answered with a prompt (setup form,
+    /// browser login, FinTS registration) instead of a failure: in "Alle abrufen" the batch
+    /// waits for the prompt, whose "Überspringen" goes on with the next login (#1041).
+    function errorOpensPrompt(e) { return isMissingProductID(e) || e.kind === "BrowserLoginRequired" || e.kind === "MissingSetting" }
     /// PIN of the sync that just failed (memory only, cleared in finishSync).
     property string failedSyncSecret: ""
     function finishSync(err, connection) {
         const e = parseCoreError(err)
-        logSync(connection.id, "Error", e.message, 0, syncLogSource())   // source before statementsAccountID is cleared
+        logSync(connection.id, "Error", e.message, 0, syncLogSource(connection.id))   // source before statementsAccountID is cleared
         const retrySecret = failedSyncSecret
         failedSyncSecret = ""
+        // a „Kontoauszüge abrufen“ that failed stays one in the registration retry below
+        const retryStatements = statementsAccountID
+        if (quietSyncConnectionID === connection.id) {
+            // scheduled sync: a notice instead of dialogs / login prompts
+            quietSyncConnectionID = null
+            pollTimer.stop()
+            activeSession = null; activeChallenge = null; syncingConnectionID = null
+            const name = connection.display_name || ""
+            toast = qsTr("%1: automatischer Abruf fehlgeschlagen – %2").arg(name).arg(e.message)
+            statementsAccountID = null
+            postboxConnectionID = null
+            syncNextInQueue()   // the queue goes on (or is reset) like after a finished sync
+            return
+        }
         statementsAccountID = null
         postboxConnectionID = null
         pollTimer.stop()
         activeSession = null; activeChallenge = null; syncingConnectionID = null
-        resetSyncBatch()
+        const missingID = isMissingProductID(e)
+        // Fall back to GiroCrab's registration (once) and retry with the same login; the batch stays
+        const recovered = missingID ? recoverFromMissingProductID() : false
+        if (recovered === true) {
+            const c = connections.find(x => x.id === connection.id)
+            if (c) { statementsAccountID = retryStatements; startSync(c, retrySecret) }
+            else syncNextInQueue()
+            return
+        }
+        // the switch could not be stored: its error stays the message, no retry
+        if (recovered === null) {
+            resetSyncBatch()
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
+            return
+        }
+        // Kontist on its stored refresh token alone (no password given, none stored) whose
+        // token expired: ask for the password instead of showing an error. Like the Mac
+        // (AppModel+Sync.swift), before "Alle abrufen": the prompt keeps the batch.
+        if (e.kind === "Authentication" && retrySecret === "" && connection.connector === "Kontist") {
+            const st = connectionStatus(connection.id)
+            if (!(st && st.has_pin)) { toast = e.message; pendingLogin = connection; return }
+        }
+        // AppModel+Sync.swift › finishSync: in "Alle abrufen" (#1041) an error ends only this
+        // login. Its alert shows right away; the batch goes on once it is closed
+        // ("Überspringen"), retries this login, or ends.
+        if (syncBatchTotal > 1 && !errorOpensPrompt(e)) {
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
+            errorRetry = () => { const c = connections.find(x => x.id === connection.id); if (c) requestSync(c) }   // the batch goes on after it
+            const alternatives = productIDAlternatives(connection, e, retrySecret)
+            if (!syncQueue.length) {
+                errorAlternatives = alternatives
+            } else {
+                // At most three buttons: Überspringen, one retry, Alle abbrechen. A rejected
+                // FinTS registration is retried with the other one, not the same.
+                const alts = []
+                if (alternatives.length) { errorRetry = null; alts.push(alternatives[alternatives.length - 1]) }
+                alts.push({ title: qsTr("Alle abbrechen"), action: cancelAllSync })
+                errorAlternatives = alts
+                errorCloseTitle = qsTr("Überspringen")
+            }
+            errorOnClose = syncNextInQueue
+            errorMessage = e.message
+            return
+        }
+        // A prompt (browser login, setup form, retry with GiroCrab's registration) keeps the
+        // batch: done, it syncs this login and goes on; cancelled, it skips it.
         if (e.kind === "BrowserLoginRequired") { toast = e.message; webLoginConnection = connection; return }
+        if (missingID) {
+            // Never a setup form for the optional FinTS registration: it would be an empty,
+            // seemingly mandatory field. Offer the own ID instead; in "Alle abrufen" (#1041) the
+            // batch stays: "Überspringen" goes on, "Eigene Registrierung eintragen …" ends it.
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
+            errorRetry = null
+            const own = { title: qsTr("Eigene Registrierung eintragen …"), action: enterOwnProductID }
+            if (syncBatchTotal > 1 && syncQueue.length) {
+                errorAlternatives = [own, { title: qsTr("Alle abbrechen"), action: cancelAllSync }]
+                errorCloseTitle = qsTr("Überspringen")
+                errorOnClose = syncNextInQueue
+            } else {
+                resetSyncBatch()
+                errorAlternatives = [own]
+            }
+            errorMessage = qsTr("Diese Version enthält keine FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein.")
+            return
+        }
         if (e.kind === "MissingSetting") {
             const keys = missingSettings(connection)
             const m = /key: "([^"]+)"/.exec(e.debug || "")
@@ -2000,6 +2215,7 @@ QtObject {
             setupRequest = { connection: connection, keys: keys }
             return
         }
+        resetSyncBatch()
         errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
         errorRetry = () => { const c = connections.find(x => x.id === connection.id); if (c) requestSync(c) }
         errorAlternatives = productIDAlternatives(connection, e, retrySecret)
@@ -2033,11 +2249,25 @@ QtObject {
         }
         return out
     }
-    /// After a rejected registration: switch to the own one and open Settings › Banken.
+    /// After a rejected registration: switch to the own one, open Settings › Banken (FinTS
+    /// registration) and put the cursor into its field (no extra field in the alert).
     function enterOwnProductID() {
-        setFintsProductIDMode("own")
+        // Off to Settings: a waiting "Alle abrufen" ends here instead of stalling (#1041);
+        // the login is fetched again by hand once the registration is in.
+        resetSyncBatch()
+        // Mode `own` only once an ID is stored (OwnProductIDField.commit), or an existing one is replaced:
+        // an empty field must not leave the user in a mode without a registration.
+        const own = settingEntry("fints.product_id")
+        if (own && own.has_value) setFintsProductIDMode("own")
+        showOwnProductID = true
+        focusOwnProductID = true
         openSettings("banks")
     }
+    /// OwnProductIDField takes the focus once (and clears this) when it appears.
+    property bool focusOwnProductID: false
+    /// The bank rejected the registration in use: the own-ID field shows up even in builds
+    /// with a built-in one, so that one can be replaced.
+    property bool showOwnProductID: false
 
     /// Enable Banking redirect (ConsentRedirect.defaultURL unless configured).
     function consentRedirectURL() {
@@ -2295,10 +2525,10 @@ QtObject {
     /// Bumped whenever documents change, so lists re-read them.
     property int documentsVersion: 0
     property var documentsAccountFilter: null
-    /// `documentsAccountFilter` value for documents without an account (e.g. PostBox, #838).
+    /// `documentsAccountFilter` value for documents without an account (e.g. Postbox, #838).
     readonly property int documentsWithoutAccount: -1
     property var statementsAccountID: null
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     property var postboxConnectionID: null
     property int statementsCountBefore: 0
     property var accountDocumentsFor: null      // AccountDocumentsSheet
@@ -2383,7 +2613,7 @@ QtObject {
         let unmatched = 0
         const finish = () => {
             if (linked.length) toast = qsTr("Beleg zugeordnet: %1").arg(linked.join(", "))
-            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
+            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             documentsChanged()
         }
         const next = i => {
@@ -2400,7 +2630,7 @@ QtObject {
         next(0)
     }
     function canFetchStatements(a) {
-        return a && a.connector && a.kind !== "Loan" && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank"].indexOf(a.connector) >= 0
+        return a && a.connector && (a.kind !== "Loan" || a.connector === "Bhw") && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Bhw"].indexOf(a.connector) >= 0
     }
     function fetchStatements(a) {
         if (syncingConnectionID !== null) return
@@ -2412,21 +2642,21 @@ QtObject {
     }
     function autoStatements(a) { return run(() => core("auto_statements_enabled", { account_id: a.id })) || false }
     function setAutoStatements(a, on) { run(() => core("set_auto_statements", { account_id: a.id, enabled: on })) }
-    /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
+    /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     function comdirectPostbox(id) { return run(() => core("comdirect_postbox_enabled", { connection_id: id })) || false }
     function setComdirectPostbox(id, on) { run(() => core("set_comdirect_postbox", { connection_id: id, enabled: on })) }
-    /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
+    /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     function fetchComdirectPostbox(c) {
         if (syncingConnectionID !== null) return
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect PostBox.
+    /// Toast suffix of a sync with the comdirect Postbox.
     function postboxNote(s) {
         if (s.postbox_documents === null || s.postbox_documents === undefined)
-            return qsTr("PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
-        return s.postbox_documents === 0 ? qsTr("keine neuen PostBox-Dokumente")
-            : qsTr("%1 neue PostBox-Dokumente").arg(s.postbox_documents)
+            return qsTr("Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
+        return s.postbox_documents === 0 ? qsTr("keine neuen Postbox-Dokumente")
+            : qsTr("%1 neue Postbox-Dokumente").arg(s.postbox_documents)
     }
     function docSymbol(d) {
         switch (d.doc_type) {
@@ -2590,6 +2820,10 @@ QtObject {
     /// AccountGroupsModel.swift › setAccountOwner: empty clears it.
     function setAccountOwner(id, owner) {
         if (run(() => { core("set_account_owner", { account_id: id, owner: owner }); return true })) reloadAccounts()
+    }
+    /// AppModel.swift › setAccountNote: empty clears it; synced like the name (#980).
+    function setAccountNote(id, note) {
+        if (run(() => { core("set_account_note", { account_id: id, note: note }); return true })) reloadAccounts()
     }
     /// AccountGroupsModel.swift › setAccountKind ("Kontoart ändern …").
     function setAccountKind(id, kind) {
@@ -3030,6 +3264,9 @@ QtObject {
             // The list's own income/expense filter is named in the printout header.
             const notes = directionFilter === "Income" ? [PrintReport.directionTitle("income")]
                         : directionFilter === "Expense" ? [PrintReport.directionTitle("expenses")] : []
+            // and the tag filter (#228), as far as this list applies it
+            const tagNote = TagFilter.noteFor(filter)
+            if (tagNote !== "") notes.push(tagNote)
             return { title: title, period_label: periodTitle, rows: rows, accounts: accounts, daily_balances: ({}),
                      generated_at: new Date(), filter_notes: notes }
         } catch (e) {
@@ -3116,7 +3353,7 @@ QtObject {
                 existing_account_id: o.existing ? o.existing.id : null, existing_account_name: o.existing ? o.existing.name : null,
                 booking_count: o.count, pending_count: o.pending || 0, holding_count: o.portfolio ? 3 : 0, notes_count: 0,
                 first_date: o.from || null, last_date: o.to || null, statement_count: o.kind === "Checking" ? 48 : 0,
-                computed_balance_cents: o.balance, balance_source: "Anfangssaldo laut MoneyMoney-Saldenverlauf + Umsätze"
+                computed_balance_cents: o.balance, balance_source: "Anfangssaldo laut Saldenverlauf der Datenbank + Umsätze"
             }
         }
         const accounts = [
@@ -3160,7 +3397,7 @@ QtObject {
             total_bookings: accounts.reduce((s, a) => s + a.booking_count, 0),
             pending_bookings: 5, notes_count: 312, split_parts: 14,
             date_range_start: "2009-04-01", date_range_end: "2026-11-09", replaces_starter_categories: true,
-            database_path: "MoneyMoney.sqlite", statement_count: statements, statements_dir: "Statements",
+            database_path: "Finanzdaten.sqlite", statement_count: statements, statements_dir: "Statements",
             statements_found: statements, statements_bytes: 38400000, transfer_template_count: 4
         }
     }
@@ -3288,7 +3525,11 @@ QtObject {
         coreAsync("session_start", { session: session }, step => { if (activeTransfer === session) handleTransfer(step, connection) },
                   err => { if (activeTransfer === session) finishTransfer(err) })
     }
-    function suggestRecipients(query) { try { return core("suggest_recipients", { query: query, limit: 6 }) } catch (e) { return [] } }
+    function suggestRecipients(query) { try { return core("suggest_recipients", { query: query, limit: 5 }) } catch (e) { return [] } }
+    // AppModel+Transfer.swift › knownRecipients / setRecipientHidden ("Empfänger verwalten", #978)
+    // throws: a failed read must not read as "no recipients"
+    function knownRecipients(query) { return core("list_known_recipients", { query: query }) }
+    function setRecipientHidden(iban, hidden) { run(() => core("set_recipient_hidden", { iban: iban, hidden: hidden })) }
 
     function startTransfer() {
         withFreshBankingPolicy(() => {
@@ -3538,6 +3779,7 @@ QtObject {
         activeSession = null; activeChallenge = null; payeeCheck = null
         pendingLogin = null; setupRequest = null; webLoginConnection = null
         syncingConnectionID = null; statementsAccountID = null; postboxConnectionID = null
+        quietSyncConnectionID = null
         failedSyncSecret = ""
         syncGeneration++
         resetSyncBatch()
@@ -3578,11 +3820,24 @@ QtObject {
     /// screenshot, so the main window draws `Sensitive {}` content as opaque boxes.
     readonly property int redactPersonal: 1
     readonly property int redactLabels: 2
+    /// `.amounts` (#719): money, balances, sums, shares, chart axis values and readouts.
+    readonly property int redactAmounts: 4
     property int reportRedaction: 0
-    /// (developer) `--redact` / `--redact=labels`: main window drawn as in the screenshot.
-    readonly property int launchRedaction: launchArgs.indexOf("--redact=labels") >= 0 ? redactPersonal | redactLabels
-        : launchArgs.indexOf("--redact") >= 0 ? redactPersonal : 0
-    readonly property int redaction: reportRedaction | launchRedaction
+    /// (developer) `--redact` / `--redact=labels`: main window drawn as in the screenshot;
+    /// `--privacy[=all]` (LaunchOptions.swift): as in privacy mode (amounts, with `=all` personal data too).
+    readonly property int launchRedaction: (launchArgs.indexOf("--redact=labels") >= 0 ? redactPersonal | redactLabels
+        : launchArgs.indexOf("--redact") >= 0 ? redactPersonal : 0)
+        | (launchArgs.indexOf("--privacy=all") >= 0 ? PrivacyMode.scopeRedaction("personal") : 0)
+        | (launchArgs.indexOf("--privacy") >= 0 ? PrivacyMode.scopeRedaction("amounts") : 0)
+    /// The bug report's redaction united with privacy mode (`privacyModeEnvironment()`).
+    readonly property int redaction: reportRedaction | launchRedaction | PrivacyMode.redaction
+    /// `ReportRedaction.effective`: what is actually hidden, `.personal` implies `.amounts`.
+    readonly property int effectiveRedaction: (redaction & redactPersonal) !== 0 ? redaction | redactAmounts : redaction
+    /// `ReportRedaction.masking(_:_:)`: `text`, or the placeholder while `kind` (default
+    /// personal) is hidden – for tooltips and other parameter texts with names or amounts.
+    function masking(text, kind) {
+        return (effectiveRedaction & (kind === undefined ? redactPersonal : kind)) === 0 || !text ? text : searchPlaceholder
+    }
     /// BugReport.searchPlaceholder: stands in for typed search text in the picture.
     readonly property string searchPlaceholder: "•••"
     /// `text`, or the placeholder while the screenshot hides personal data (parameter texts
@@ -3639,6 +3894,7 @@ QtObject {
 
     // Custom period (GitHub #53): remembered across launches.
     Component.onCompleted: {
+        AutoSync.stop()   // creates the schedule singleton; it starts once the own vault is open
         const d = periodRange(previousMonthPeriod())
         customPeriodFrom = String(defaults.value("period/customFrom", "")) || d[0]
         customPeriodTo = String(defaults.value("period/customTo", "")) || d[1]
@@ -3659,20 +3915,19 @@ QtObject {
     property string fintsProductIDMode: ""
     property bool offerProductIDChoice: false
     onSettingsChanged: reloadProductIDState()
-    /// New users start with GiroCrab's registration; users who already entered their own are asked once.
+    /// AppModel+Connections.swift › reloadProductIDState (v0.8.6, #1092): with GiroCrab's
+    /// registration on board it is always used (no choice any more); the own ID stays stored.
     function reloadProductIDState() {
         if (!isUnlocked) return
         try {
             let mode = core("fints_product_id_mode")
-            const own = settingEntry("fints.product_id")
-            const hasOwn = !!(own && own.has_value)
-            if (fintsBuiltinAvailable && mode === "" && !hasOwn && !isDemo) {
+            if (fintsBuiltinAvailable && mode !== "builtin" && !isDemo) {
                 core("set_fints_product_id_mode", { mode: "builtin" })
                 mode = "builtin"
                 fintsProductIDSource = core("fints_product_id_source")
             }
             fintsProductIDMode = mode
-            offerProductIDChoice = fintsBuiltinAvailable && mode === "" && hasOwn && !isDemo
+            offerProductIDChoice = false
         } catch (e) { console.warn(e.message) }
     }
     /// Stores the choice. The user's own ID always stays in the vault.
@@ -3690,6 +3945,8 @@ QtObject {
         "comdirect.client_secret": qsTr("comdirect Client-Secret"),
         "paypal.client_id": qsTr("PayPal Client-ID"),
         "paypal.client_secret": qsTr("PayPal Secret"),
+        "kontist.client_id": qsTr("Kontist Client-ID"),
+        "kontist.client_secret": qsTr("Kontist Client-Secret"),
         "enablebanking.application_id": qsTr("Enable Banking Application-ID"),
         "enablebanking.private_key_pem": qsTr("Enable Banking Private Key"),
         "enablebanking.redirect_url": qsTr("Enable Banking Redirect-URL") })
@@ -3774,7 +4031,7 @@ QtObject {
     /// Selects a booking in the list, widening the filters if it is not loaded.
     function revealBooking(id) {
         if (!bookings.some(b => b.id === id)) {
-            sidebarSelection = "all"; period = "all"; directionFilter = "All"; statusFilter = "all"; searchText = ""
+            sidebarSelection = "all"; period = "all"; directionFilter = "All"; statusFilter = "all"; TagFilter.clear(); searchText = ""
         }
         revealTimer.bookingID = id
         revealTimer.restart()
@@ -3801,8 +4058,14 @@ QtObject {
     /// Bumped whenever a sync wrote a row; the log window reloads on it.
     property int syncLogVersion: 0
     /// Appends a finished sync; the core scrubs logins, PINs, TANs and long numbers.
-    /// SyncLog.swift › syncLogSource: what started the running sync (no scheduled syncs on Linux).
-    function syncLogSource() { return statementsAccountID !== null ? "Statements" : "Manual" }
+    /// SyncLog.swift › syncLogSource(for:): what started the running sync (`connectionID`
+    /// defaults to the running one).
+    function syncLogSource(connectionID) {
+        if (statementsAccountID !== null) return "Statements"
+        const id = connectionID === undefined ? syncingConnectionID : connectionID
+        if (id !== null && quietSyncConnectionID === id) return "Automatic"
+        return "Manual"
+    }
     function logSync(connectionID, outcome, message, imported, source) {
         if (!isUnlocked) return
         try {
@@ -3886,7 +4149,14 @@ QtObject {
             }
         }
         if (demoSheet !== "" && !Payments.presentDemoSheet(demoSheet) && !DirectDebits.presentDemoSheet(demoSheet)) presentDemoSheet(demoSheet)
+        // `report[:<sheet>]` (RootView.swift): the bug report over the view or the demo sheet,
+        // once that is laid out; `--screenshot` then saves the report window
+        if (demoSheetOpensReport) {
+            screenshotWindow = qsTr("Problem melden")
+            demoReportTimer.start()
+        }
     }
+    property Timer demoReportTimer: Timer { interval: 1200; onTriggered: model.showBugReport = true }
     /// The one switch for `--demo-sheet <name>` (AppModel.swift › presentDemoSheet):
     /// opens that sheet pre-filled with fictional data.
     function presentDemoSheet(name) {
@@ -3914,7 +4184,13 @@ QtObject {
         }
         case "category": if (top) newCategoryRequest = { parent: top.id }; break
         // Konten › Tags verwalten … (#228)
-        case "tags": TagManager.open(); break
+        // `tags-accounts`: the first tag's bookings per account (TagManagerSheet.qml)
+        case "tags": case "tags-accounts": TagManager.open(); break
+        // the header's tag filter (#228, part 3) with the first tag ticked
+        case "tag-filter":
+            if (TagsModel.tags.length) TagFilter.set([TagsModel.tags[0].id], false)
+            TagFilter.shown = true
+            break
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = previousMonthPeriod()
@@ -3932,7 +4208,7 @@ QtObject {
                 total_rows: 4820, new_bookings: 4820, duplicates_skipped_or_enriched: 0, notes_count: 312,
                 date_range_start: "2012-01-03", date_range_end: "2026-10-30",
                 detected_categories: ["Haushalt > Lebensmittel", "Gehalt", "Steuern", "Wohnen > Miete", "Mobilität > Tanken", "Freizeit > Restaurants", "Versicherungen", "Reisen"],
-                sample_bookings: [], suggested_account_name: "MoneyMoney-Archiv", suggested_account_id: null
+                sample_bookings: [], suggested_account_name: "Import-Archiv", suggested_account_id: null
             }
             showMoneyMoneyImport = true
             break
@@ -3943,6 +4219,8 @@ QtObject {
         case "recurring": showRecurringSheet = true; break
         case "rules": openRuleEditor(null); break
         case "rule-edit": reloadRules(); ruleDraft = rules.length ? rules[0] : null; showRuleEditor = true; break
+        // a rule that only adds tags (#580)
+        case "rule-tags": reloadRules(); ruleDraft = rules.find(r => r.category_id === 0) || (rules.length ? rules[0] : null); showRuleEditor = true; break
         case "palette": showCommandPalette = true; break
         case "categorizer":
             if (selectedBookingID === null && bookings.length) selectedBookingID = bookings[0].id
@@ -3956,6 +4234,15 @@ QtObject {
             errorAlternatives = [{ title: qsTr("Eigene Registrierung ersetzen …"), action: enterOwnProductID },
                                  { title: qsTr("Mit GiroCrab-Registrierung erneut versuchen"), action: () => {} }]
             errorMessage = "Bank meldet 9078: Das Produkt ist nicht registriert."
+            break
+        case "error-batch":
+            // the error alert of "Alle abrufen" with logins still waiting (#1041)
+            if (!connections.length) break
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connections[0].display_name)
+            errorRetry = () => {}
+            errorAlternatives = [{ title: qsTr("Alle abbrechen"), action: () => {} }]
+            errorCloseTitle = qsTr("Überspringen")
+            errorMessage = "Die Verbindung zur Bank ist fehlgeschlagen."
             break
         case "payee-match": case "payee-close": case "payee-nomatch": {
             const connection = connections.length ? connections[0] : null
@@ -3986,6 +4273,7 @@ QtObject {
         case "Quirion": return "https://banking.quirion.de/login/"
         // starts the B2C sign-in (302 to login.schwaebisch-hall.de), SchwaebischHallScripts.loginURL
         case "SchwaebischHall": return "https://www.schwaebisch-hall.de/bin/bshweb/authentication"
+        case "EquatePlus": return "https://www.equateplus.com/EquatePlusParticipant2/?login"
         case "Fnz": return "https://portal.fnz.de/"
         case "AmazonOrders": return "https://www.amazon.de/gp/css/order-history"
         case "TradeRepublic": return "https://app.traderepublic.com/login"
@@ -4003,6 +4291,7 @@ QtObject {
         case "Fnz": return ["portal.fnz.de"]
         case "Quirion": return ["banking.quirion.de"]
         case "SchwaebischHall": return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
+        case "EquatePlus": return ["www.equateplus.com", "www.emea.equateplus.com", "www.na.equateplus.com"]
         case "TradeRepublic": return ["traderepublic.com"]
         default: return []
         }
@@ -4032,7 +4321,7 @@ QtObject {
     /// under "Erweitert" *and* the credentials are set (PortalUI.swift › usesPortal).
     function usesPortalLogin(c) {
         if (isMagicDemoLogin(c.login_name)) return false
-        if (!isDemo && ["AmazonOrders", "Fnz", "Quirion", "SchwaebischHall"].indexOf(c.connector) >= 0) return true
+        if (!isDemo && ["AmazonOrders", "Fnz", "Quirion", "SchwaebischHall", "EquatePlus"].indexOf(c.connector) >= 0) return true
         if (isDemo || (c.connector !== "AmericanExpress" && c.connector !== "AmazonVisa")) return false
         const optIn = settingEntry(enableBankingOptInKey(c.connector))
         // the card's own application (#824) or the default one

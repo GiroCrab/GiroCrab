@@ -88,6 +88,19 @@ pub struct TransferSession {
     state: AsyncMutex<TransferState>,
 }
 
+#[uniffi::export]
+impl TransferSession {
+    /// True while the session waits for the TAN of the order itself (it was sent), false during the
+    /// login SCA and after the end. The app shows its order comparison (#949) only then.
+    pub fn awaits_order_approval(&self) -> bool {
+        // a step in flight holds the lock: then no challenge is on screen either, so `false`
+        self.state
+            .try_lock()
+            .map(|st| st.stage == Stage::Submitted)
+            .unwrap_or(false)
+    }
+}
+
 impl TransferSession {
     pub(crate) fn new(
         vault: Arc<Vault>,
@@ -142,11 +155,11 @@ impl TransferSession {
                     return Err(e);
                 }
                 Ok(Phase::Challenge(c)) => {
-                    return Ok(TransferStep::NeedsChallenge { challenge: c })
+                    return Ok(TransferStep::NeedsChallenge { challenge: c });
                 }
                 Ok(Phase::Pending(c)) => return Ok(TransferStep::StillWaiting { challenge: c }),
                 Ok(Phase::ConfirmPayee(check)) => {
-                    return Ok(TransferStep::NeedsPayeeConfirmation { check })
+                    return Ok(TransferStep::NeedsPayeeConfirmation { check });
                 }
                 Ok(Phase::Ready) if st.stage == Stage::LoggingIn => {
                     st.stage = Stage::Submitted;
@@ -299,12 +312,12 @@ impl TransferSession {
             Stage::Executed => {
                 return CancelOutcome::CancellationFailed {
                     reason: tr("Die Überweisung wurde bereits ausgeführt.").into(),
-                }
+                };
             }
             Stage::OutcomeUnknown if !st.connector.has_open_order() => {
                 return CancelOutcome::CancellationUnknown {
                     reason: tr("Ob die Überweisung ausgeführt wurde, ist unklar.").into(),
-                }
+                };
             }
             // A closed session only needs another round if the bank may still
             // hold an open order from an earlier, unconfirmed cancellation.

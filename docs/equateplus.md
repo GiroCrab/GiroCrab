@@ -15,7 +15,12 @@ dem angemeldeten Produktionsstandort (`www.equateplus.com`,
 
 ## Bestände
 
-Jedes Programm erhält ein eigenes Depot mit stabiler Programm-ID. Verfügbare,
+Jedes Programm erhält ein eigenes Depot. Dessen Kennung verwendet die Teilnehmerkennung
+und `planModuleId`. Die sitzungsabhängige Plan-ID dient dem Abruf der Programmdetails.
+Vorhandene Depots behalten ihre Konto-ID, wenn die alte Plan-ID noch eindeutig zur aktuellen
+Sitzung passt. Ist eine Zuordnung nach einem Sitzungswechsel nicht möglich, stoppt der Abruf.
+In diesem Fall zuerst die alten Depots prüfen und archivieren. Neue Depots werden erst nach
+Bestätigung übernommen. Verfügbare,
 gesperrte und performancegebundene Bestände erscheinen getrennt; unklare
 Verfügbarkeit wird ausdrücklich gekennzeichnet. RSUs bleiben auch ohne Einstandskurs sichtbar.
 
@@ -51,7 +56,7 @@ Programme und kann jederzeit später angefordert werden:
   Reihenfolge der Portalliste spielt dabei keine Rolle, auch nicht nach einem Teilerfolg.
 - Das Portal bereitet manche Dateien erst vor und meldet zunächst „In Bearbeitung“; GiroCrab
   wartet kurz und fragt erneut.
-- **Wo die Dokumente landen:** unter **Belege & PostBox** (dort per Suche „equateplus“ alle auf einmal). Sie werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.
+- **Wo die Dokumente landen:** unter **Belege & Postbox** (dort per Suche „equateplus“ alle auf einmal). Sie werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.
 - Ein Dokument wird dem Programm-Depot zugeordnet, wenn der im Dokument genannte Programmname
   zu genau einem Programm dieses Zugangs passt, sonst keinem Konto. Eine Zuordnung zu Umsätzen
   oder Aktivitäten gibt es nicht.

@@ -13,11 +13,11 @@
 
 use async_trait::async_trait;
 use base64::Engine;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
-    http_client, paginate, BankConnector, Challenge, ChallengeKind, ChallengeResponse,
-    ConnectContext, FetchResult, Phase, RemoteAccount, RemoteTransaction,
+    BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, FetchResult, Phase,
+    RemoteAccount, RemoteTransaction, http_client_same_host, paginate,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -54,7 +54,7 @@ impl ComdirectConnector {
 
     fn client(&mut self) -> CoreResult<reqwest::Client> {
         if self.client.is_none() {
-            self.client = Some(http_client()?);
+            self.client = Some(http_client_same_host()?);
         }
         Ok(self.client.clone().unwrap())
     }
@@ -182,20 +182,6 @@ impl ComdirectConnector {
         super::read_body_limited(resp, super::MAX_DOC_BYTES).await
     }
 
-    /// PostBox: recent PDF documents (Finanzreport, Wertpapierabrechnungen …),
-    /// all attached to `account_ref`.
-    async fn postbox(
-        &mut self,
-        account_ref: &str,
-        since: &str,
-    ) -> Vec<crate::documents::RemoteDocument> {
-        let mut docs = self.postbox_documents(since).await.unwrap_or_default();
-        for d in &mut docs {
-            d.account_ref = account_ref.to_string();
-        }
-        docs
-    }
-
     /// PostBox PDFs created on or after `since` (`YYYY-MM-DD`, empty = all),
     /// without an account (`account_ref` empty). `None` when the listing
     /// failed, so the caller does not take an empty PostBox for a fetched one.
@@ -290,19 +276,12 @@ impl ComdirectConnector {
 pub(crate) fn postbox_stub(d: &Value) -> Option<crate::documents::RemoteDocument> {
     let id = d["documentId"].as_str().filter(|s| !s.is_empty())?;
     let date = postbox_date(d);
-    let name = d["name"].as_str().unwrap_or("PostBox-Dokument").to_string();
-    let lower = name.to_lowercase();
+    let name = d["name"].as_str().unwrap_or("Postbox-Dokument").to_string();
     Some(crate::documents::RemoteDocument {
         account_ref: String::new(),
         booking_external_id: None,
         title: name.clone(),
-        doc_type: if lower.contains("steuer") {
-            "steuer".into()
-        } else if lower.contains("abrechnung") {
-            "abrechnung".into()
-        } else {
-            "postbox".into()
-        },
+        doc_type: crate::documents::account_document_type(&name).into(),
         mime_type: "application/pdf".into(),
         file_name: format!("{}_{}.pdf", date, name.replace(' ', "_")),
         bytes: Vec::new(),
@@ -464,7 +443,7 @@ impl BankConnector for ComdirectConnector {
             other => {
                 return Err(CoreError::protocol(format!(
                     "unsupported comdirect TAN type '{other}'"
-                )))
+                )));
             }
         };
         self.challenge = Some(c.clone());
@@ -492,7 +471,7 @@ impl BankConnector for ComdirectConnector {
             ChallengeResponse::ConfirmPayee => {
                 return Err(CoreError::protocol(
                     "comdirect: no payee confirmation pending",
-                ))
+                ));
             }
         }
         self.secondary_token(ctx).await?;
@@ -544,11 +523,7 @@ impl BankConnector for ComdirectConnector {
             });
             let mut ids = super::ContentIds::default();
             for t in &self.booked(&id, &ctx.since).await? {
-                let mut rt = map_transaction(t, &id);
-                if rt.external_id.is_empty() {
-                    rt.external_id = ids.next(&rt);
-                }
-                out.transactions.push(rt);
+                out.transactions.push(booked_transaction(t, &id, &mut ids));
             }
             // Not yet booked (card holds, pending transfers). Best effort: an error or a
             // missing right just means no holds; the booked bookings stay untouched.
@@ -560,29 +535,11 @@ impl BankConnector for ComdirectConnector {
             {
                 let mut hold_ids = super::ContentIds::default();
                 for t in page["values"].as_array().cloned().unwrap_or_default() {
-                    let mut rt = map_transaction(&t, &id);
-                    if rt.booking_date.is_empty() {
-                        rt.booking_date = if rt.value_date.is_empty() {
-                            super::today()
-                        } else {
-                            rt.value_date.clone()
-                        };
-                    }
-                    if rt.booking_text.is_empty() {
-                        rt.booking_text = tr("Vorgemerkt").into();
-                    }
-                    rt.external_id = format!("{HOLD_PREFIX}{}", hold_ids.next(&rt));
-                    out.transactions.push(rt);
+                    out.transactions
+                        .push(hold_transaction(&t, &id, &mut hold_ids));
                 }
             } else {
                 holds_ok = false;
-            }
-        }
-        // PostBox documents (optional, errors are ignored; not when document retrieval is off)
-        if ctx.documents.enabled() {
-            if let Some(first) = out.accounts.first().map(|a| a.external_ref.clone()) {
-                let docs = self.postbox(&first, &ctx.since).await;
-                out.documents.extend(docs);
             }
         }
         // Securities accounts (value only)
@@ -675,18 +632,29 @@ impl BankConnector for ComdirectConnector {
         if holds_ok {
             out.hold_prefix = Some(HOLD_PREFIX.into());
         }
+        // The PostBox is fetched once the list includes both cash and securities accounts.
+        if ctx.documents.enabled() && !out.accounts.is_empty() {
+            let mut docs = self.postbox_documents(&ctx.since).await.unwrap_or_default();
+            let accounts: Vec<_> = out
+                .accounts
+                .iter()
+                .filter(|a| !ctx.skipped_accounts.contains(&a.external_ref))
+                .collect();
+            super::comdirect_postbox::assign_documents(&mut docs, &accounts);
+            out.documents.extend(docs);
+        }
         Ok(out)
     }
 
     async fn finish(&mut self, _ctx: &ConnectContext) {
-        if !self.token.is_empty() {
-            if let Ok(c) = self.client() {
-                let _ = c
-                    .delete(format!("{BASE}/oauth/revoke"))
-                    .bearer_auth(self.token.expose())
-                    .send()
-                    .await;
-            }
+        if !self.token.is_empty()
+            && let Ok(c) = self.client()
+        {
+            let _ = c
+                .delete(format!("{BASE}/oauth/revoke"))
+                .bearer_auth(self.token.expose())
+                .send()
+                .await;
         }
         self.token = SecretString::default();
     }
@@ -708,9 +676,11 @@ fn postbox_path(route: &str, first: usize) -> String {
 /// The entries of one offset-paged answer that started at `first`, and the
 /// offset of the next page (`None` after the last one). Without
 /// `paging.matches` a full page means "maybe more" (the next request then
-/// ends with an empty page).
+/// ends with an empty page). A body that is not an object (array, string,
+/// error page) counts as an empty last page.
 fn next_page(mut page: Value, first: usize, page_size: usize) -> (Vec<Value>, Option<usize>) {
-    let Value::Array(values) = page["values"].take() else {
+    // `get_mut`, not `page["values"]`: `IndexMut` panics on a non-object
+    let Some(Value::Array(values)) = page.get_mut("values").map(Value::take) else {
         return (Vec::new(), None);
     };
     let fetched = first + values.len();
@@ -757,6 +727,72 @@ fn map_transaction(t: &Value, account_ref: &str) -> RemoteTransaction {
         mandate_id: sepa_ref(&t["directDebitMandateId"]),
         creditor_id: sepa_ref(&t["directDebitCreditorId"]),
         ..Default::default()
+    }
+}
+
+/// A booked entry with its id: the bank's `reference`, else a content id.
+/// The card merchant is filled in only afterwards, so the id stays the one
+/// earlier versions stored (#1135).
+fn booked_transaction(
+    t: &Value,
+    account_ref: &str,
+    ids: &mut super::ContentIds,
+) -> RemoteTransaction {
+    let mut rt = map_transaction(t, account_ref);
+    if rt.external_id.is_empty() {
+        rt.external_id = ids.next(&rt);
+    }
+    fill_card_merchant(&mut rt);
+    rt
+}
+
+/// A not yet booked entry (card hold, pending transfer) with its hold id and a
+/// date and text to show. Like [`booked_transaction`], the card merchant comes
+/// after the id.
+fn hold_transaction(
+    t: &Value,
+    account_ref: &str,
+    ids: &mut super::ContentIds,
+) -> RemoteTransaction {
+    let mut rt = map_transaction(t, account_ref);
+    if rt.booking_date.is_empty() {
+        rt.booking_date = if rt.value_date.is_empty() {
+            super::today()
+        } else {
+            rt.value_date.clone()
+        };
+    }
+    if rt.booking_text.is_empty() {
+        rt.booking_text = tr("Vorgemerkt").into();
+    }
+    rt.external_id = format!("{HOLD_PREFIX}{}", ids.next(&rt));
+    fill_card_merchant(&mut rt);
+    rt
+}
+
+/// The merchant of a comdirect Visa debit card payment. Neither the REST API
+/// nor FinTS name a counterparty for these bookings (GitHub #1135); the
+/// purpose reads `<merchant>, <place …> … comdirect Visa-Debitkarte <time>`.
+/// Returns the text before the first comma, `None` for any other purpose or
+/// when that comma does not come before the card note.
+pub(crate) fn visa_debit_merchant(purpose: &str) -> Option<String> {
+    const CARD: &str = "visa-debitkarte";
+    let (head, rest) = purpose.split_once(',')?;
+    if head.to_lowercase().contains(CARD) || !rest.to_lowercase().contains(CARD) {
+        return None;
+    }
+    let name = head.trim();
+    (name.chars().count() <= 60 && name.chars().any(char::is_alphabetic)).then(|| name.to_string())
+}
+
+/// Gives a booking without counterparty the merchant of its card payment
+/// (see [`visa_debit_merchant`]); a counterparty from the bank stays. Call it
+/// after the id is set: content ids include the counterparty.
+pub(crate) fn fill_card_merchant(t: &mut RemoteTransaction) {
+    if t.counterparty.trim().is_empty()
+        && let Some(merchant) = visa_debit_merchant(&t.purpose)
+    {
+        t.counterparty = merchant;
     }
 }
 
@@ -1057,6 +1093,21 @@ mod tests {
     }
 
     #[test]
+    fn paging_ends_on_a_body_that_is_not_an_object() {
+        for page in [
+            serde_json::json!([{"values": []}]),
+            serde_json::json!("<html>Wartung</html>"),
+            serde_json::json!(42),
+            serde_json::json!(null),
+            serde_json::json!({"values": "x"}),
+        ] {
+            let (values, next) = super::next_page(page, 0, 500);
+            assert!(values.is_empty());
+            assert_eq!(next, None);
+        }
+    }
+
+    #[test]
     fn postbox_path_pages_by_offset() {
         assert_eq!(
             super::postbox_path(super::POSTBOX_V2, 100),
@@ -1182,5 +1233,106 @@ mod tests {
         assert_eq!(t.booking_date, "");
         assert_eq!(t.value_date, "2026-11-12");
         assert!(t.external_id.is_empty());
+    }
+
+    /// A Visa debit card payment as comdirect sends it (#1135): no creditor
+    /// name, the merchant first in 35-character remittance lines.
+    fn card_payment(creditor: &str, lines: &[&str]) -> serde_json::Value {
+        let info: String = lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| format!("{:02}{l:<35}", i + 1))
+            .collect();
+        serde_json::json!({
+            "reference": "R1", "bookingDate": "2026-11-14", "valutaDate": "2026-11-14",
+            "amount": {"value": "-23.40", "unit": "EUR"},
+            "creditor": {"holderName": creditor},
+            "remittanceInfo": info.trim_end(),
+            "transactionType": {"key": "DIRECT_DEBIT", "text": "Lastschrift / Belastung"}
+        })
+    }
+
+    #[test]
+    fn visa_debit_payment_gets_its_merchant_as_counterparty() {
+        let lines = [
+            "Beispielladen GmbH, Musterstadt DE",
+            "Kartenzahlung am 14.11.2026",
+            "comdirect Visa-Debitkarte 12:34:56",
+        ];
+        let mut ids = crate::connectors::ContentIds::default();
+        let t = super::booked_transaction(&card_payment("", &lines), "acc1", &mut ids);
+        assert_eq!(t.counterparty, "Beispielladen GmbH");
+        assert_eq!(t.external_id, "R1");
+        // the purpose stays as the bank sent it
+        assert_eq!(
+            t.purpose,
+            "Beispielladen GmbH, Musterstadt DE Kartenzahlung am 14.11.2026 comdirect Visa-Debitkarte 12:34:56"
+        );
+        // a name from the bank is kept
+        let named =
+            super::booked_transaction(&card_payment("Muster Markt", &lines), "acc1", &mut ids);
+        assert_eq!(named.counterparty, "Muster Markt");
+    }
+
+    #[test]
+    fn card_merchant_does_not_change_content_ids() {
+        // ids without the bank's reference come from the content, which includes
+        // the counterparty: they must stay the ones stored before #1135
+        let lines = [
+            "Beispielladen GmbH, Musterstadt DE",
+            "comdirect Visa-Debitkarte 12:34:56",
+        ];
+        let mut no_ref = card_payment("", &lines);
+        no_ref["reference"] = serde_json::Value::Null;
+        let before = |t: &serde_json::Value| {
+            let mut ids = crate::connectors::ContentIds::default();
+            ids.next(&super::map_transaction(t, "acc1"))
+        };
+        let booked = super::booked_transaction(
+            &no_ref,
+            "acc1",
+            &mut crate::connectors::ContentIds::default(),
+        );
+        assert_eq!(booked.counterparty, "Beispielladen GmbH");
+        assert_eq!(booked.external_id, before(&no_ref));
+        // a hold: the date it gets is part of its id, the merchant is not
+        no_ref["bookingDate"] = serde_json::Value::Null;
+        let hold = super::hold_transaction(
+            &no_ref,
+            "acc1",
+            &mut crate::connectors::ContentIds::default(),
+        );
+        assert_eq!(hold.counterparty, "Beispielladen GmbH");
+        let mut unnamed = super::map_transaction(&no_ref, "acc1");
+        unnamed.booking_date = "2026-11-14".into();
+        unnamed.booking_text = "Lastschrift / Belastung".into();
+        let id = crate::connectors::ContentIds::default().next(&unnamed);
+        assert_eq!(hold.external_id, format!("{}{id}", super::HOLD_PREFIX));
+    }
+
+    #[test]
+    fn visa_debit_merchant_only_for_card_payments() {
+        use super::visa_debit_merchant as merchant;
+        assert_eq!(
+            merchant("PAYPAL *SHOP, 4029357733 DE ... comdirect Visa-Debitkarte 08:15:00")
+                .as_deref(),
+            Some("PAYPAL *SHOP")
+        );
+        // no card payment, no comma, or nothing readable before the comma
+        assert_eq!(merchant("Miete Januar, Wohnung 3"), None);
+        assert_eq!(
+            merchant("Beispielladen comdirect Visa-Debitkarte 12:34:56"),
+            None
+        );
+        assert_eq!(
+            merchant("1234, Musterstadt comdirect Visa-Debitkarte"),
+            None
+        );
+        assert_eq!(merchant(", Musterstadt comdirect Visa-Debitkarte"), None);
+        // the only comma comes after the card note: no merchant from that part
+        assert_eq!(
+            merchant("Beispielladen Musterstadt comdirect Visa-Debitkarte 12:34:56, Ref 1"),
+            None
+        );
     }
 }

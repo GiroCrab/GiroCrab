@@ -63,6 +63,7 @@ Sheet {
         Text {
             text: sheet.booking ? sheet.booking.merchant_name + " · " + Fmt.money(sheet.booking.amount_cents) : ""
             font.pixelSize: Theme.body; color: Theme.secondary
+            Sensitive { amounts: true }   // [.personal, .amounts]
         }
         Repeater {
             model: sheet.parts
@@ -74,6 +75,7 @@ Sheet {
                 spacing: 8
                 AppComboBox {
                     Layout.preferredWidth: 190
+                    Accessible.name: qsTr("Kategorie")   // Picker("Kategorie", …) (ff91866)
                     model: sheet.categoryOptions
                     textRole: "title"
                     currentIndex: Math.max(0, sheet.categoryOptions.findIndex(o => o.id === row.modelData.categoryID))
@@ -86,6 +88,7 @@ Sheet {
                     horizontalAlignment: TextInput.AlignRight
                     font.features: { "tnum": 1 }
                     onTextEdited: { sheet.parts[row.index].amount = text; sheet.revision++ }
+                    Sensitive { amounts: true }
                 }
                 TextField {
                     Layout.fillWidth: true
@@ -113,6 +116,7 @@ Sheet {
                 text: qsTr("Restbetrag: %1").arg(Fmt.money(sheet.remaining))
                 font.pixelSize: Theme.callout + 1; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
                 color: sheet.remaining === 0 ? Theme.inflow : Theme.warning
+                Sensitive { amounts: true }
             }
             // one click: the rest goes into the last part (#427)
             Button {
@@ -133,7 +137,7 @@ Sheet {
         Text {
             visible: !sheet.valid && sheet.parts.length > 0 && sheet.error === ""
             text: sheet.remaining !== 0
-                ? qsTr("Die Teilbeträge müssen zusammen %1 ergeben (Restbetrag: %2), erst dann lässt sich speichern.").arg(Fmt.money(sheet.total)).arg(Fmt.money(sheet.remaining))
+                ? qsTr("Die Teilbeträge müssen zusammen %1 ergeben (Restbetrag: %2), erst dann lässt sich speichern.").arg(AppModel.masking(Fmt.money(sheet.total), AppModel.redactAmounts)).arg(AppModel.masking(Fmt.money(sheet.remaining), AppModel.redactAmounts))
                 : qsTr("Jeder Teil braucht einen Betrag ungleich 0.")
             font.pixelSize: Theme.callout + 1; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
         }

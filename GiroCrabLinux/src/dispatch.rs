@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 
 use girocrab_core::Vault;
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 type R = Result<Value, String>;
 
-extern "C" {
+unsafe extern "C" {
     fn girocrab_grab_window(path: *const std::os::raw::c_char) -> bool;
     fn girocrab_print_pdf(
         path: *const std::os::raw::c_char,
@@ -27,6 +27,10 @@ extern "C" {
         base: *const std::os::raw::c_char,
         masks: *const f64,
         count: usize,
+        out: *const std::os::raw::c_char,
+    ) -> bool;
+    fn girocrab_compose_capture(
+        spec: *const std::os::raw::c_char,
         out: *const std::os::raw::c_char,
     ) -> bool;
     fn girocrab_copy_image(path: *const std::os::raw::c_char) -> bool;
@@ -402,7 +406,7 @@ pub fn call_json(method: &str, args: &str) -> String {
         match serde_json::from_str(args) {
             Ok(v) => v,
             Err(e) => {
-                return json!({ "err": format!("bad arguments for {method}: {e}") }).to_string()
+                return json!({ "err": format!("bad arguments for {method}: {e}") }).to_string();
             }
         }
     };
@@ -543,6 +547,16 @@ fn call(method: &str, a: &Value) -> R {
                 girocrab_compose_report(base.as_ptr(), flat.as_ptr(), masks.len(), out.as_ptr())
             })
         }
+        "bug_report_compose_capture" => {
+            // BugReport.snapshot (#384): the main window and the dialogs over it on one
+            // canvas (cpp/prepare.cpp › girocrab_compose_capture describes `spec`).
+            let spec = std::ffi::CString::new(arg::<Value>(a, "spec")?.to_string())
+                .map_err(|e| e.to_string())?;
+            let out =
+                std::ffi::CString::new(arg::<String>(a, "path")?).map_err(|e| e.to_string())?;
+            // SAFETY: GUI thread (Core.call); both strings outlive the call.
+            ok(unsafe { girocrab_compose_capture(spec.as_ptr(), out.as_ptr()) })
+        }
         "copy_image" => {
             let path =
                 std::ffi::CString::new(arg::<String>(a, "path")?).map_err(|e| e.to_string())?;
@@ -614,6 +628,10 @@ fn call(method: &str, a: &Value) -> R {
         }
         "batch" => batch(a),
         "reset_app" => reset_app(),
+        // the search field's text as the core searches it (plural stems, #54f83952)
+        "literal_search_term" => ok(crate::search_terms::literal_search_term(&arg::<String>(
+            a, "text",
+        )?)),
         "set_connection_account_choices" => set_connection_account_choices(&vault()?, a),
         // catalog / directory (free functions of the core)
         "bank_catalog" => ok(girocrab_core::bank_catalog()),
@@ -640,6 +658,15 @@ fn call(method: &str, a: &Value) -> R {
             let v = vault()?;
             let s = v
                 .begin_sync(arg(a, "connection_id")?, arg(a, "secret")?, arg(a, "demo")?)
+                .map_err(|e| core_error_json(&e))?;
+            ok(crate::sessions::register(crate::sessions::Session::Sync(s)))
+        }
+        // Automatischer Abruf (AutoSync.qml, PSD2Consent.swift › autoSyncTick, #546): the same
+        // SyncSession without anything that needs a new approval (no comdirect Postbox, #838).
+        "begin_quiet_sync" => {
+            let v = vault()?;
+            let s = v
+                .begin_quiet_sync(arg(a, "connection_id")?, arg(a, "secret")?, arg(a, "demo")?)
                 .map_err(|e| core_error_json(&e))?;
             ok(crate::sessions::register(crate::sessions::Session::Sync(s)))
         }
@@ -888,7 +915,7 @@ fn call(method: &str, a: &Value) -> R {
         }
         // --- Händler-Logos (AppModel+Logos.swift, #33) --- network: called with Core.callAsync
         "merchant_logo" => merchant_logo(&*vault()?, a),
-        // --- portal logins --- (src/web_login.rs: browser cookies, Amex/Amazon/FNZ/quirion/Schwäbisch Hall imports)
+        // --- portal logins --- (src/web_login.rs: browser cookies, Amex/Amazon/FNZ/quirion/Schwäbisch Hall/EquatePlus imports)
         m if crate::web_login::handles(m) => crate::web_login::call(m, a, vault),
         _ => {
             let v = vault()?;
@@ -1081,11 +1108,11 @@ fn save_export_file(a: &Value) -> R {
         path
     } else {
         let mut dir = std::path::PathBuf::from(arg::<String>(a, "dir")?);
-        if !dir.is_dir() {
-            if let Some(fallback) = arg::<Option<String>>(a, "fallback_dir")? {
-                dir = fallback.into();
-                std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            }
+        if !dir.is_dir()
+            && let Some(fallback) = arg::<Option<String>>(a, "fallback_dir")?
+        {
+            dir = fallback.into();
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
         let filename: String = arg(a, "filename")?;
         let (stem, ext) = match filename.rsplit_once('.') {
@@ -1144,7 +1171,7 @@ fn print_pdf(a: &Value) -> R {
 
 /// One step of a bank dialog; a finished or failed dialog leaves the registry.
 fn session_step(method: &str, a: &Value) -> R {
-    use crate::sessions::{Session, RUNTIME};
+    use crate::sessions::{RUNTIME, Session};
     let id: u64 = arg(a, "session")?;
     let s = crate::sessions::get(id)?;
     let code: Option<String> = arg(a, "code")?;
@@ -1280,7 +1307,7 @@ const fn libc_o_nofollow() -> i32 {
     0o400000 // O_NOFOLLOW on Linux
 }
 
-extern "C" {
+unsafe extern "C" {
     fn getuid() -> u32;
 }
 
@@ -1328,10 +1355,11 @@ fn prepared_quicklook_dir() -> Option<std::path::PathBuf> {
 pub fn remove_quicklook_files() {
     use std::os::unix::fs::MetadataExt;
     let dir = quicklook_dir();
-    if let Ok(m) = std::fs::symlink_metadata(&dir) {
-        if m.file_type().is_dir() && m.uid() == current_uid() {
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+    if let Ok(m) = std::fs::symlink_metadata(&dir)
+        && m.file_type().is_dir()
+        && m.uid() == current_uid()
+    {
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -1389,14 +1417,13 @@ fn embedded_invoice_xml(pdf: &[u8]) -> Option<String> {
         if find_bytes(body, MARKER, 0).is_some() {
             return Some(xml_text(body));
         }
-        if body.len() > 8 && body[0] == 0x78 {
-            if let Ok(inflated) =
+        if body.len() > 8
+            && body[0] == 0x78
+            && let Ok(inflated) =
                 miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(body, MAX_INFLATED_STREAM)
-            {
-                if find_bytes(&inflated, MARKER, 0).is_some() {
-                    return Some(xml_text(&inflated));
-                }
-            }
+            && find_bytes(&inflated, MARKER, 0).is_some()
+        {
+            return Some(xml_text(&inflated));
         }
     }
     None
@@ -1449,8 +1476,23 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         // a refusal (`InvalidInput`: loan/depot, gap in the marked bookings) as its plain
         // message, without the „Ungültige Eingabe:“ prefix of other errors.
         "camt053_export" => Some(camt053_export(v, a)),
+        // The Linux cashflow card is the overview: an overall money figure
+        // (#337) — only the effective total set contributes, like the Windows
+        // overview card. Not in the macro below because it carries no
+        // `respect_in_total` from QML.
+        "cashflow_by_period" => Some(cashflow_by_period_totals(v, a)),
         _ => dispatch_vault_methods(v, method, a),
     }
+}
+
+fn cashflow_by_period_totals(v: &Vault, a: &Value) -> R {
+    ok(v.cashflow_by_period(
+        arg(a, "granularity")?,
+        arg(a, "count")?,
+        arg::<Option<Vec<i64>>>(a, "account_ids")?,
+        true,
+    )
+    .map_err(|e| e.to_string())?)
 }
 
 fn camt053_export(v: &Vault, a: &Value) -> R {
@@ -1529,6 +1571,7 @@ vault_methods! {
     set_account_archived(account_id, archived) set_account_color(account_id, color_hex)
     set_account_symbol(account_id, sf_symbol) reset_account_symbol(account_id)
     set_account_kind(account_id, kind) set_account_owner(account_id, owner)
+    set_account_note(account_id, note)
     // categories
     list_categories(date_from, date_to)
     create_category(name, parent_id, sf_symbol, color_hex)
@@ -1546,7 +1589,6 @@ vault_methods! {
     // insights / planning / recurring
     merchant_stats(merchant_key) merchant_history(merchant_key, account_id)
     selection_flow(account_ids, date_from, date_to)
-    cashflow_by_period(granularity, count, account_ids)
     list_category_budget_progress(year, month)
     list_recurring(account_ids) recurring_month(account_ids, year, month)
     // settings
@@ -1560,7 +1602,7 @@ vault_methods! {
     // --- import / export ---
     export_bookings_csv(filter)
     // --- transfer ---
-    suggest_recipients(query, limit)
+    suggest_recipients(query, limit) list_known_recipients(query) set_recipient_hidden(iban, hidden)
     list_transfer_templates() save_transfer_template(template) delete_transfer_template(id)
     // --- settings / recurring ---
     list_ignored_recurring(account_ids)
@@ -1575,8 +1617,14 @@ vault_methods! {
     seed_demo_account_selection()
     // --- Seitenleiste: Zähler und gefilterte Kategorien (AppModel+Loading/Selection) ---
     count_planned_payments() count_active_mandates()
+    list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
+    // --- Offline-Konten und manuelle Buchungen (OfflineAccountsUI.swift, #679, #81) ---
+    create_offline_account(name, kind, currency, opening_cents)
+    save_manual_booking(account_id, booking_id, setup) delete_manual_booking(booking_id)
+    mirror_booking_to_offline_account(booking_id, account_id)
+    correct_offline_balance(account_id, target_cents)
     // --- Geplante Zahlungen (AppModel+Planned, PlannedPaymentsView) ---
     list_planned_payments(from, to, account_ids) planned_payment_totals(from, to, account_ids)
     // --- Daueraufträge (AppModel+StandingOrders, StandingOrderSheet) ---
@@ -1595,6 +1643,12 @@ vault_methods! {
     add_tag_to_bookings(booking_ids, tag_id) remove_tag_from_bookings(booking_ids, tag_id)
     rename_tag(id, name) set_tag_color(id, color_hex) reorder_tags(ids) delete_tag(id)
     merge_tag_into(source, target) set_booking_tags(booking_id, tag_ids)
+    // --- Tag-Filter und Auswertung (AppModel+Tags, TagFilterUI, TagManagerView, #778) ---
+    tag_totals(filter) tag_account_counts(tag_id)
+    // --- Regeln vergeben Tags (AppModel+Tags, RuleEditorView, #580) ---
+    rule_tag_counts()
+    // --- Kategorie-Vorschläge (AppModel+Loading, BookingDetailView, BookingListView, #664) ---
+    suggest_categories(booking_ids)
     // --- Anlageklassen (AssetClassificationUI, DepotMetrics) ---
     classified_assets(account_id)
     set_asset_class_override(security_key, value) set_instrument_override(security_key, value)
@@ -1608,6 +1662,18 @@ mod tests {
 
     /// The tests share the process-wide vault slots.
     static SERIAL: Mutex<()> = Mutex::new(());
+
+    /// Sets (`Some`) or removes (`None`) an environment variable for a test that holds
+    /// `SERIAL`.
+    fn set_env(key: &str, value: Option<impl AsRef<std::ffi::OsStr>>) {
+        // SAFETY: test-only; every test that changes the environment holds `SERIAL`.
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 
     fn call_ok(method: &str, args: Value) -> Value {
         let r: Value = serde_json::from_str(&call_json(method, &args.to_string())).unwrap();
@@ -1624,7 +1690,7 @@ mod tests {
         let run = std::env::temp_dir().join(format!("girocrab-ql-{}", std::process::id()));
         std::fs::create_dir_all(&run).unwrap();
         let saved = std::env::var_os("XDG_RUNTIME_DIR");
-        std::env::set_var("XDG_RUNTIME_DIR", &run);
+        set_env("XDG_RUNTIME_DIR", Some(&run));
         call_ok("open_demo", json!({}));
         let docs = call_ok(
             "list_all_documents",
@@ -1655,11 +1721,54 @@ mod tests {
             !shown.exists() && !fourth.exists(),
             "a vault switch removes every copy"
         );
-        match saved {
-            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
-            None => std::env::remove_var("XDG_RUNTIME_DIR"),
-        }
+        set_env("XDG_RUNTIME_DIR", saved);
         let _ = std::fs::remove_dir_all(run);
+    }
+
+    /// Automatischer Abruf (#546, AutoSync.qml): `begin_quiet_sync` registers a SyncSession in
+    /// the registry that `session_start` drives like a manual one (demo bank, no network).
+    #[test]
+    fn quiet_sync_session_round_trip() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let conns = call_ok("list_bank_connections", json!({}));
+        let conn = conns
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["connector"] == "FinTsGeneric")
+            .or_else(|| conns.as_array().unwrap().first())
+            .expect("the demo has bank connections")
+            .clone();
+        let id = call_ok(
+            "begin_quiet_sync",
+            json!({ "connection_id": conn["id"], "secret": "", "demo": true }),
+        );
+        let id = id.as_u64().expect("a session handle");
+        assert!(crate::sessions::get(id).is_ok());
+        let step = call_ok("session_start", json!({ "session": id }));
+        assert!(
+            ["NeedsChallenge", "StillWaiting", "Finished"]
+                .iter()
+                .any(|k| step.get(k).is_some()),
+            "{step}"
+        );
+        if step.get("Finished").is_none() {
+            call_ok("session_cancel", json!({ "session": id }));
+        }
+        assert!(
+            crate::sessions::get(id).is_err(),
+            "the session left the registry"
+        );
+        let missing: Value = serde_json::from_str(&call_json(
+            "begin_quiet_sync",
+            &json!({ "connection_id": -1, "secret": "", "demo": true }).to_string(),
+        ))
+        .unwrap();
+        assert!(
+            missing.get("err").is_some(),
+            "unknown connection is refused"
+        );
     }
 
     /// Own vault lifecycle with the keychain bypass: create, use, lock, reopen,
@@ -1668,8 +1777,8 @@ mod tests {
     fn own_vault_lifecycle() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("girocrab-test-{}", std::process::id()));
-        std::env::set_var("XDG_DATA_HOME", &dir);
-        std::env::set_var("GIROCRAB_NO_KEYCHAIN", "1");
+        set_env("XDG_DATA_HOME", Some(&dir));
+        set_env("GIROCRAB_NO_KEYCHAIN", Some("1"));
         assert_eq!(call_ok("vault_info", json!({}))["size"], json!(-1));
         let r = call_ok("unlock_own", json!({ "allow_create": true }));
         assert_eq!(r["account_count"], json!(0));
@@ -1701,6 +1810,7 @@ mod tests {
         call_ok("open_demo", json!({}));
         assert!(call_ok("fints_product_id_mode", json!({})).is_string());
         assert!(call_ok("list_ignored_recurring", json!({ "account_ids": [] })).is_array());
+        assert!(call_ok("list_known_recipients", json!({ "query": "" })).is_array());
         let filter =
             json!({ "connection_id": null, "only_errors": false, "search": null, "limit": 0 });
         let before = call_ok("list_sync_log", json!({ "filter": filter }))
@@ -1799,10 +1909,12 @@ mod tests {
         };
         let p = logo_payload(&png(64));
         assert_eq!(p["pixels"], json!(64));
-        assert!(p["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("data:image/png;base64,"));
+        assert!(
+            p["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
         // ICO: a 16 px bitmap and an embedded 48 px PNG → the PNG alone
         let bmp = vec![0u8; 40];
         let big = png(48);
@@ -1881,9 +1993,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("girocrab-reset-{}", std::process::id()));
         let (data, config) = (dir.join("data"), dir.join("config"));
         std::fs::create_dir_all(config.join("GiroCrab")).unwrap();
-        std::env::set_var("XDG_DATA_HOME", &data);
-        std::env::set_var("XDG_CONFIG_HOME", &config);
-        std::env::set_var("GIROCRAB_NO_KEYCHAIN", "1");
+        set_env("XDG_DATA_HOME", Some(&data));
+        set_env("XDG_CONFIG_HOME", Some(&config));
+        set_env("GIROCRAB_NO_KEYCHAIN", Some("1"));
         assert!(vault_path().starts_with(&data) && settings_file().starts_with(&config));
         call_ok("unlock_own", json!({ "allow_create": true }));
         call_ok("use_own", json!({}));
@@ -1925,14 +2037,16 @@ mod tests {
             .iter()
             .map(|k| (*k, std::env::var_os(k)))
             .collect();
-        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
-        std::env::set_var("GIROCRAB_NO_KEYCHAIN", "1");
+        set_env("XDG_DATA_HOME", Some(dir.join("data")));
+        set_env("GIROCRAB_NO_KEYCHAIN", Some("1"));
         let p = call_ok("suggested_backup_password", json!({}));
         let p = p.as_str().unwrap();
         assert_eq!(p.len(), 20);
-        assert!(p.split('-').all(|g| g.len() == 6
-            && g.bytes()
-                .all(|b| b"abcdefghijkmnpqrstuvwxyz23456789".contains(&b))));
+        assert!(p.split('-').all(|g| {
+            g.len() == 6
+                && g.bytes()
+                    .all(|b| b"abcdefghijkmnpqrstuvwxyz23456789".contains(&b))
+        }));
         assert_ne!(
             p,
             call_ok("suggested_backup_password", json!({}))
@@ -1968,10 +2082,7 @@ mod tests {
         call_ok("lock", json!({}));
         let _ = std::fs::remove_dir_all(dir);
         for (k, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
+            set_env(k, v);
         }
     }
 
@@ -2037,6 +2148,112 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    /// Kategorie-Vorschläge (#664, CategorySuggestions.qml) and Regeln vergeben Tags (#580,
+    /// RuleEditorView.qml / RuleForm.qml / TagManagerSheet.qml): suggestions only for
+    /// uncategorised bookings, with the basis as its enum name; a tag-only rule (category 0)
+    /// keeps its `tag_ids` through `save_rule` / `list_rules` and gets a `rule_tag_counts` row.
+    #[test]
+    fn suggestion_and_rule_tag_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-suggest-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![8; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        assert_eq!(
+            call("suggest_categories", json!({ "booking_ids": [] })),
+            json!([])
+        );
+        let filter = json!({
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 0, "offset": 0, "scope": "All", "merchant_key": null, "direction": "All",
+            "checked": null, "whole_days": false, "tag_ids": [], "untagged_only": false });
+        let list =
+            |f: &Value| call("list_transactions", json!({ "filter": f }))["transactions"].clone();
+        // nothing decides yet: no booking of the demo has a clear history of its own
+        let page = list(&filter);
+        let all = page.as_array().unwrap();
+        // three bookings at one merchant: two chosen by hand, the third without a category
+        let key = all
+            .iter()
+            .find(|b| b["merchant"]["name"] == json!("REWE"))
+            .expect("demo has REWE bookings")["merchant"]["key"]
+            .clone();
+        let rewe: Vec<&Value> = all
+            .iter()
+            .filter(|b| b["merchant"]["key"] == key)
+            .take(3)
+            .collect();
+        assert_eq!(rewe.len(), 3, "demo has REWE bookings");
+        let category = rewe[0]["category_id"].clone();
+        for b in &rewe[..2] {
+            call(
+                "set_transaction_category",
+                json!({ "transaction_id": b["id"], "category_id": category }),
+            );
+        }
+        call(
+            "set_transaction_category",
+            json!({ "transaction_id": rewe[2]["id"], "category_id": null }),
+        );
+        let page = list(&filter);
+        let all = page.as_array().unwrap();
+        let ids: Vec<i64> = all.iter().map(|b| b["id"].as_i64().unwrap()).collect();
+        let found = call("suggest_categories", json!({ "booking_ids": ids }));
+        let found = found.as_array().unwrap();
+        for s in found {
+            let b = all.iter().find(|b| b["id"] == s["booking_id"]).unwrap();
+            assert!(
+                b["category_id"].is_null(),
+                "only uncategorised bookings: {s}"
+            );
+            assert!(s["category_id"].is_i64());
+            assert!(["Iban", "Merchant", "Similar"].contains(&s["basis"].as_str().unwrap()));
+            assert!(s["support"].as_u64().unwrap() >= 2);
+            assert!(s["considered"].as_u64() >= s["support"].as_u64());
+        }
+        let s = found
+            .iter()
+            .find(|s| s["booking_id"] == rewe[2]["id"])
+            .expect("a suggestion for the uncategorised REWE booking");
+        assert_eq!(s["category_id"], category);
+        // a rule that only adds a tag
+        let tag = call("list_tags", json!({}))[0]["id"].clone();
+        let id = call(
+            "save_rule",
+            json!({ "rule": {
+                "id": 0, "name": "Nur Tag", "category_id": 0, "field": "Any", "match_kind": "Keyword",
+                "pattern": "a", "case_sensitive": false, "min_amount_cents": null, "max_amount_cents": null,
+                "account_ids": [], "priority": 999, "enabled": true, "match_count": 0, "tag_ids": [tag] } }),
+        );
+        call("apply_rules", json!({ "only_uncategorized": false }));
+        let rules = call("list_rules", json!({}));
+        let saved = rules
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap()
+            .clone();
+        assert_eq!(saved["category_id"], json!(0));
+        assert_eq!(saved["tag_ids"], json!([tag]));
+        let counts = call("rule_tag_counts", json!({}));
+        let row = counts
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["rule_id"] == id)
+            .unwrap()
+            .clone();
+        assert!(row["booking_count"].as_u64().unwrap() > 0);
+        drop(v);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// Händler-Historie (#299): the merchant's stats over all accounts and in one account.
@@ -2144,11 +2361,13 @@ mod tests {
         assert_eq!(preview["status"]["remaining_cents"], json!(500000));
         let id = call("create_manual_loan", json!({ "setup": setup }));
         let loans = call("list_manual_loans", json!({}));
-        assert!(loans
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|l| l["account_id"] == id));
+        assert!(
+            loans
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|l| l["account_id"] == id)
+        );
         call(
             "update_manual_loan",
             json!({ "account_id": id, "setup": setup }),
@@ -2178,6 +2397,96 @@ mod tests {
         );
         drop(v);
         let _ = std::fs::remove_file(path);
+    }
+
+    /// Offline-Konten (#679, #81, OfflineAccounts.qml): create a cash account, book by hand,
+    /// edit, mirror, correct the balance and delete – the balance follows every step.
+    #[test]
+    fn offline_account_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-offline-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![5; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let balance = |id: &Value| {
+            call("list_accounts", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| &a["id"] == id)
+                .unwrap()["balance_cents"]
+                .as_i64()
+                .unwrap()
+        };
+        let id = call(
+            "create_offline_account",
+            json!({ "name": "Kasse", "kind": "Cash", "currency": "", "opening_cents": 5000 }),
+        );
+        assert!(
+            call("list_offline_account_ids", json!({}))
+                .as_array()
+                .unwrap()
+                .contains(&id)
+        );
+        assert_eq!(balance(&id), 5000);
+        let setup = |cents: i64| {
+            json!({ "booking_date": "2026-11-01", "amount_cents": cents, "counterparty": "Bäcker",
+                    "purpose": "Brötchen", "category_id": null, "note": "" })
+        };
+        let booking = call(
+            "save_manual_booking",
+            json!({ "account_id": id, "booking_id": null, "setup": setup(-350) }),
+        );
+        assert_eq!(balance(&id), 4650);
+        assert_eq!(
+            call(
+                "save_manual_booking",
+                json!({ "account_id": id, "booking_id": booking, "setup": setup(-400) }),
+            ),
+            booking
+        );
+        assert_eq!(balance(&id), 4600);
+        // a booking of another account, mirrored with the amount reversed
+        let other = call(
+            "list_transactions",
+            json!({ "filter": {
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 1, "offset": 0, "scope": "All", "merchant_key": null, "direction": "Expense",
+            "checked": null, "whole_days": true, "amount_min_cents": null,
+            "amount_max_cents": null, "with_balances": false } }),
+        )["transactions"][0]
+            .clone();
+        assert_ne!(other["account_id"], id);
+        call(
+            "mirror_booking_to_offline_account",
+            json!({ "booking_id": other["id"], "account_id": id }),
+        );
+        let mirrored = 4600 - other["amount_cents"].as_i64().unwrap();
+        assert_eq!(balance(&id), mirrored);
+        assert!(
+            call(
+                "correct_offline_balance",
+                json!({ "account_id": id, "target_cents": 10000 })
+            )
+            .is_i64()
+        );
+        assert_eq!(balance(&id), 10000);
+        assert!(
+            call(
+                "correct_offline_balance",
+                json!({ "account_id": id, "target_cents": 10000 })
+            )
+            .is_null()
+        );
+        call("delete_manual_booking", json!({ "booking_id": booking }));
+        assert_eq!(balance(&id), 10400);
+        drop(v);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -2316,12 +2625,14 @@ mod tests {
             json!({ "connection_id": second }),
         );
         let rows = choices.as_array().unwrap();
-        assert!(rows
-            .iter()
-            .any(|c| c["pending"] == true && c["enabled"] == false));
-        assert!(rows
-            .iter()
-            .all(|c| c["account_ref"].is_string() && c["existing_connection"].is_string()));
+        assert!(
+            rows.iter()
+                .any(|c| c["pending"] == true && c["enabled"] == false)
+        );
+        assert!(
+            rows.iter()
+                .all(|c| c["account_ref"].is_string() && c["existing_connection"].is_string())
+        );
         let keep: Vec<Value> = rows
             .iter()
             .filter(|c| c["enabled"] == true)
@@ -2340,16 +2651,20 @@ mod tests {
             "connection_account_choices",
             json!({ "connection_id": second }),
         );
-        assert!(after
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|c| c["pending"] == false));
-        assert!(set_connection_account_choices(
-            &v,
-            &json!({ "connection_id": second, "enabled_refs": ["unknown"] }),
-        )
-        .is_err());
+        assert!(
+            after
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|c| c["pending"] == false)
+        );
+        assert!(
+            set_connection_account_choices(
+                &v,
+                &json!({ "connection_id": second, "enabled_refs": ["unknown"] }),
+            )
+            .is_err()
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -2409,10 +2724,12 @@ mod tests {
         let presets = call_ok("asset_weight_presets", json!({}));
         assert!(presets[0]["label"].is_string() && presets[0]["grams"].is_f64());
         let account = call("create_tangible_account", json!({ "name": "" }));
-        assert!(call("list_tangible_account_ids", json!({}))
-            .as_array()
-            .unwrap()
-            .contains(&account));
+        assert!(
+            call("list_tangible_account_ids", json!({}))
+                .as_array()
+                .unwrap()
+                .contains(&account)
+        );
         let setup = json!({ "name": "Bild", "price_source": "manual", "weight_grams": 0.0,
             "purity_permille": 1000.0, "interpolation": "Linear", "purchase_date": "2024-01-10",
             "quantity": 2.0, "purchase_price_cents": 200000, "start_value_cents": 100000,
@@ -2463,10 +2780,12 @@ mod tests {
             json!({ "item_id": item, "date": "2025-07-01" }),
         );
         call("delete_asset_item", json!({ "item_id": item }));
-        assert!(call("list_asset_items", json!({ "account_id": account }))
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(
+            call("list_asset_items", json!({ "account_id": account }))
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -2669,6 +2988,62 @@ mod tests {
         call_ok("lock", json!({}));
     }
 
+    /// Problem melden (#384): the main window and a dialog over it on one canvas, which grows
+    /// to hold a dialog that stands out of the window; an unreadable layer leaves no picture.
+    #[test]
+    fn bug_report_compose_capture() {
+        let dir = std::env::temp_dir().join(format!("girocrab-compose-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |n: &str| dir.join(n).display().to_string();
+        let png_size = |p: &str| {
+            let b = std::fs::read(p).unwrap();
+            assert_eq!(&b[1..4], b"PNG");
+            let be = |i: usize| u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+            (be(16), be(20))
+        };
+        // a "window" and a "dialog" picture to compose
+        let window = path("window.png");
+        let spec = json!({ "width": 40, "height": 30, "background": "#ffffffff",
+                           "layers": [{ "fill": "#ff336699", "x": 0, "y": 0, "width": 40, "height": 30, "radius": 0 }] });
+        assert_eq!(
+            call_ok(
+                "bug_report_compose_capture",
+                json!({ "spec": spec, "path": window })
+            ),
+            json!(true)
+        );
+        assert_eq!(png_size(&window), (40, 30));
+        let out = path("capture.png");
+        let spec = json!({ "width": 50, "height": 40, "background": "#00000000", "layers": [
+            { "image": window, "x": 0, "y": 10, "width": 40, "height": 30 },
+            { "fill": "#20000000", "x": 0, "y": 10, "width": 40, "height": 30, "radius": 0 },
+            { "image": window, "x": 20, "y": 0, "width": 30, "height": 20, "radius": 6 },
+            { "fill": "#ff8e8e93", "x": 24, "y": 4, "width": 10, "height": 6, "radius": 3 } ] });
+        assert_eq!(
+            call_ok(
+                "bug_report_compose_capture",
+                json!({ "spec": spec, "path": out })
+            ),
+            json!(true)
+        );
+        assert_eq!(png_size(&out), (50, 40));
+        // fail closed: a missing layer picture, a bad colour or no size
+        for spec in [
+            json!({ "width": 10, "height": 10, "layers": [{ "image": path("missing.png"), "x": 0, "y": 0, "width": 5, "height": 5 }] }),
+            json!({ "width": 10, "height": 10, "layers": [{ "fill": "nope", "x": 0, "y": 0, "width": 5, "height": 5 }] }),
+            json!({ "width": 0, "height": 10, "layers": [] }),
+        ] {
+            assert_eq!(
+                call_ok(
+                    "bug_report_compose_capture",
+                    json!({ "spec": spec, "path": path("x.png") })
+                ),
+                json!(false)
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// Problem melden (#301): the sanitizer through the bridge, the vault's payee names and
     /// the issue URL. No network: the URL is only built, never opened.
     #[test]
@@ -2743,12 +3118,14 @@ mod tests {
                     "direction": "All" }),
         );
         let cat = cats.as_array().unwrap()[0]["id"].clone();
-        assert!(call(
-            "category_history_by_unit",
-            json!({ "category_id": cat, "account_ids": [], "date_from": null, "date_to": null,
+        assert!(
+            call(
+                "category_history_by_unit",
+                json!({ "category_id": cat, "account_ids": [], "date_from": null, "date_to": null,
                     "key_length": 7 }),
-        )
-        .is_array());
+            )
+            .is_array()
+        );
         // Geplant
         let range = json!({ "from": null, "to": null, "account_ids": [] });
         assert!(call("list_planned_payments", range.clone()).is_array());
@@ -3037,6 +3414,79 @@ mod tests {
         assert_eq!(row(&a["id"]).unwrap()["booking_count"], json!(2));
         call("delete_tag", json!({ "id": a["id"] }));
         assert!(row(&a["id"]).is_none());
+        drop(v);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Tag-Filter und Auswertung (#778, TagFilter.qml / TagManagerSheet.qml): the list filter's
+    /// `tag_ids` (AND) and `untagged_only`, `tag_totals` per tag plus „Ohne Tag“, and
+    /// `tag_account_counts`, whose own rows add up to the tag's booking count.
+    #[test]
+    fn tag_filter_calls() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-tagfilter-{}.girocrab",
+            std::process::id()
+        ));
+        let v = Vault::open(path.display().to_string(), vec![6; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let filter = |tag_ids: Value, untagged: bool| {
+            json!({
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 0, "offset": 0, "scope": "All", "merchant_key": null, "direction": "All",
+            "checked": null, "whole_days": false, "tag_ids": tag_ids, "untagged_only": untagged })
+        };
+        let count = |f: Value| {
+            call("list_transactions", json!({ "filter": f }))["transactions"]
+                .as_array()
+                .unwrap()
+                .len() as u64
+        };
+        let tags = call("list_tags", json!({}));
+        let used: Vec<Value> = tags
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["booking_count"].as_u64().unwrap() > 0)
+            .cloned()
+            .collect();
+        assert!(used.len() >= 2, "demo has tagged bookings");
+        let first = &used[0];
+        let all = count(filter(json!([]), false));
+        let tagged = count(filter(json!([first["id"]]), false));
+        assert_eq!(json!(tagged), first["booking_count"]);
+        let untagged = count(filter(json!([]), true));
+        assert!(untagged > 0 && untagged < all);
+        // several tags: only bookings carrying all of them
+        let both = count(filter(json!([used[0]["id"], used[1]["id"]]), false));
+        assert!(both <= tagged);
+        // totals ignore the filter's own tag choice
+        let totals = call(
+            "tag_totals",
+            json!({ "filter": filter(json!([first["id"]]), true) }),
+        );
+        let rows = totals.as_array().unwrap();
+        let of = |id: &Value| rows.iter().find(|r| r["tag_id"] == *id).cloned();
+        let row = of(&first["id"]).unwrap();
+        assert_eq!(row["booking_count"], first["booking_count"]);
+        assert!(row["sum_cents"].is_i64());
+        assert_eq!(of(&Value::Null).unwrap()["booking_count"], json!(untagged));
+        // per account: own rows add up to the tag's count, linked loans come extra
+        let accounts = call("tag_account_counts", json!({ "tag_id": first["id"] }));
+        let own: u64 = accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["linked"] == json!(false))
+            .map(|r| r["booking_count"].as_u64().unwrap())
+            .sum();
+        assert_eq!(json!(own), first["booking_count"]);
+        assert!(accounts[0]["account_id"].is_i64());
         drop(v);
         let _ = std::fs::remove_file(&path);
     }

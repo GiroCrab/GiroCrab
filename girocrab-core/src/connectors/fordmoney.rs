@@ -41,7 +41,9 @@ use regex::Regex;
 use tokio::task::JoinHandle;
 use zeroize::Zeroize;
 
-use super::uberspace::{attr, attrs, parse_amount, parse_date, text, INPUT};
+use super::html::{
+    Form, INPUT, attr, attrs, de_date, form_by_id, parse_amount, parse_date, partial_updates, text,
+};
 use super::{
     BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, ContentIds,
     Documents, FetchResult, KnownDocuments, Phase, RemoteAccount, RemoteTransaction,
@@ -65,10 +67,6 @@ const LIST_LIMIT: u32 = 1000;
 /// Start of the date range for the read Postbox documents.
 const ARCHIVE_START: &str = "01.01.2010";
 
-static FORM_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<form\b([^>]*)>").unwrap());
-static SELECT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)<select\b([^>]*)>(.*?)</select\s*>").unwrap());
-static OPTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<option\b([^>]*)>").unwrap());
 static A_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<a\b([^>]*)>").unwrap());
 static SPAN_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<span\b([^>]*)>").unwrap());
 /// First parameter of `mojarra.jsfcljs(form, {'<name>':'<name>'}, …)` (quotes
@@ -101,9 +99,6 @@ static PRODUCT_COL: LazyLock<Regex> =
 static ROW_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(contentForm:[A-Za-z0-9_]+:\d+:[A-Za-z0-9_]+)").unwrap());
 static DIGITS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(\d{6,})\b").unwrap());
-static CDATA_UPDATE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)<update id="([^"]+)"><!\[CDATA\[(.*?)\]\]></update>"#).unwrap()
-});
 
 fn page_changed() -> CoreError {
     CoreError::protocol(tr(
@@ -162,101 +157,7 @@ fn push_challenge() -> Challenge {
     }
 }
 
-// ------------------------------------------------------------------ JSF forms
-
-/// A page form as the browser would submit it.
-#[derive(Debug, Clone, PartialEq)]
-struct Form {
-    /// Absolute path the form posts to.
-    action: String,
-    /// Hidden fields, text fields and selects with their current values.
-    fields: Vec<(String, String)>,
-}
-
-impl Form {
-    fn set(&mut self, name: &str, value: &str) {
-        match self.fields.iter_mut().find(|(n, _)| n == name) {
-            Some((_, v)) => *v = value.to_string(),
-            None => self.fields.push((name.to_string(), value.to_string())),
-        }
-    }
-
-    fn get(&self, name: &str) -> Option<&str> {
-        self.fields
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.as_str())
-    }
-
-    /// The fields plus the "clicked" link (`name=name`).
-    fn clicked(&self, name: &str) -> Vec<(String, String)> {
-        let mut out = self.fields.clone();
-        out.push((name.to_string(), name.to_string()));
-        out
-    }
-
-    /// Name of the field ending in `suffix` (generated ids).
-    fn field_ending(&self, suffix: &str) -> Option<&str> {
-        self.fields
-            .iter()
-            .map(|(n, _)| n.as_str())
-            .find(|n| n.ends_with(suffix))
-    }
-}
-
-/// The form with `id` (up to its first `</form>`: these forms nest none).
-fn form_by_id(html: &str, id: &str) -> Option<Form> {
-    let open = FORM_TAG
-        .captures_iter(html)
-        .find(|c| attr(&attrs(&c[1]), "id") == Some(id))?;
-    let a = attrs(&open[1]);
-    let action = attr(&a, "action")?.trim().to_string();
-    if !action.starts_with('/') {
-        return None;
-    }
-    let start = open.get(0)?.end();
-    let rest = &html[start..];
-    let end = rest
-        .to_ascii_lowercase()
-        .find("</form")
-        .unwrap_or(rest.len());
-    let body = &rest[..end];
-    let mut fields = Vec::new();
-    for input in INPUT.captures_iter(body) {
-        let a = attrs(&input[1]);
-        let Some(name) = attr(&a, "name").filter(|n| !n.is_empty()) else {
-            continue;
-        };
-        if attr(&a, "disabled").is_some() {
-            continue;
-        }
-        let kind = attr(&a, "type").unwrap_or("text").to_ascii_lowercase();
-        if matches!(kind.as_str(), "hidden" | "text") {
-            fields.push((
-                name.to_string(),
-                attr(&a, "value").unwrap_or("").to_string(),
-            ));
-        }
-    }
-    for select in SELECT.captures_iter(body) {
-        let a = attrs(&select[1]);
-        let Some(name) = attr(&a, "name") else {
-            continue;
-        };
-        let options: Vec<Vec<(String, String)>> = OPTION
-            .captures_iter(&select[2])
-            .map(|o| attrs(&o[1]))
-            .collect();
-        let chosen = options
-            .iter()
-            .find(|o| attr(o, "selected").is_some())
-            .or(options.first())
-            .and_then(|o| attr(o, "value"))
-            .unwrap_or("");
-        fields.push((name.to_string(), chosen.to_string()));
-    }
-    Some(Form { action, fields })
-}
+// ------------------------------------------------------------------ page helpers
 
 /// Link parameter of the first `<a>` whose `data-wt` matches.
 fn link_param(html: &str, data_wt: &str) -> Option<String> {
@@ -292,14 +193,6 @@ fn approval_of(partial: &str) -> Approval {
     } else {
         Approval::Pending
     }
-}
-
-/// `(update id, content)` of a JSF partial response.
-fn partial_updates(xml: &str) -> Vec<(String, String)> {
-    CDATA_UPDATE
-        .captures_iter(xml)
-        .map(|c| (c[1].to_string(), c[2].to_string()))
-        .collect()
 }
 
 /// Fields of a JSF ajax request.
@@ -422,6 +315,8 @@ fn two_factor(html: &str) -> Option<TwoFactor> {
 #[derive(Debug, Clone, PartialEq)]
 struct Account {
     number: String,
+    /// Empty when the section shows no IBAN of this account (Festgeld lists
+    /// only its number, or the IBAN of its reference account).
     iban: String,
     product: String,
     owner: String,
@@ -430,27 +325,53 @@ struct Account {
     bookings_link: Option<String>,
 }
 
+impl Account {
+    /// `fordmoney:<IBAN>`, or `fordmoney:<number>` without an own IBAN.
+    fn external_ref(&self) -> String {
+        if self.iban.is_empty() {
+            format!("{REF_PREFIX}{}", self.number)
+        } else {
+            format!("{REF_PREFIX}{}", self.iban)
+        }
+    }
+}
+
+/// Structural trace for bug reports (`GIROCRAB_DEPOT_DEBUG=1`): step names
+/// and counts only, never numbers, IBANs or amounts.
+fn trace(msg: &str) {
+    crate::depot_debug::log(&format!("fordmoney {msg}"));
+}
+
 fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
     let mut out = Vec::new();
     for part in html.split("<section class=\"accordion\">").skip(1) {
         let Some(number) = ACCOUNT_NO.captures(part).map(|c| c[1].to_string()) else {
             continue;
         };
-        let labels: HashMap<String, String> = LABEL_VALUE
+        let labels: Vec<(String, String)> = LABEL_VALUE
             .captures_iter(part)
             .map(|c| (text(&c[1]), text(&c[2])))
             .collect();
-        let iban: String = labels
-            .get("IBAN")
-            .map(|v| v.chars().filter(|c| !c.is_whitespace()).collect())
+        // The account's own IBAN ends with its number; a Festgeld section may
+        // show none, or only the IBAN of its reference account.
+        let ibans: Vec<String> = labels
+            .iter()
+            .filter(|(l, _)| l.contains("IBAN"))
+            .map(|(_, v)| v.chars().filter(|c| !c.is_whitespace()).collect())
+            .collect();
+        let iban = ibans
+            .iter()
+            .find(|i| i.len() >= 15 && i.ends_with(&number))
+            .cloned()
             .unwrap_or_default();
-        if iban.len() < 15 || !iban.ends_with(&number) {
+        let Some(balance_cents) = RIGHT_SUM.captures(part).and_then(|c| parse_amount(&c[1])) else {
+            trace(&format!(
+                "account #{}: balance unreadable (sum={})",
+                out.len() + 1,
+                RIGHT_SUM.is_match(part)
+            ));
             return Err(invalid());
-        }
-        let balance_cents = RIGHT_SUM
-            .captures(part)
-            .and_then(|c| parse_amount(&c[1]))
-            .ok_or_else(invalid)?;
+        };
         let bookings_link = A_TAG.captures_iter(part).find_map(|c| {
             let a = attrs(&c[1]);
             let wt = attr(&a, "data-wt")?.to_lowercase();
@@ -461,15 +382,28 @@ fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
                 .captures(attr(&a, "onclick")?)
                 .map(|m| m[1].to_string())
         });
+        let product = PRODUCT
+            .captures(part)
+            .map(|c| text(&c[1]))
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "Tagesgeld".into());
+        trace(&format!(
+            "account #{}: festgeld={} iban_labels={} own_iban={} bookings_link={}",
+            out.len() + 1,
+            product.to_lowercase().contains("festgeld"),
+            ibans.len(),
+            !iban.is_empty(),
+            bookings_link.is_some()
+        ));
         out.push(Account {
             number,
             iban,
-            product: PRODUCT
-                .captures(part)
-                .map(|c| text(&c[1]))
-                .filter(|p| !p.is_empty())
-                .unwrap_or_else(|| "Tagesgeld".into()),
-            owner: labels.get("Kontoinhaber").cloned().unwrap_or_default(),
+            product,
+            owner: labels
+                .iter()
+                .find(|(l, _)| l == "Kontoinhaber")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default(),
             balance_cents,
             bookings_link,
         });
@@ -491,10 +425,13 @@ fn parse_bookings(
         let Some(date) = parse_date(&text(row)) else {
             continue;
         };
-        let amount_cents = AMOUNT
-            .captures(row)
-            .and_then(|c| parse_amount(&c[1]))
-            .ok_or_else(invalid)?;
+        let Some(amount_cents) = AMOUNT.captures(row).and_then(|c| parse_amount(&c[1])) else {
+            trace(&format!(
+                "booking row: amount unreadable (amount_cell={})",
+                AMOUNT.is_match(row)
+            ));
+            return Err(invalid());
+        };
         let kind = KIND.captures(row).map(|c| text(&c[1])).unwrap_or_default();
         let purpose = [
             PURPOSE.captures(row).map(|c| text(&c[1])),
@@ -604,12 +541,6 @@ fn document_file_name(row: &PostboxRow) -> String {
     format!("{}_{}.pdf", row.date, subject.trim().replace(' ', "_"))
 }
 
-/// `YYYY-MM-DD` → `DD.MM.YYYY`.
-fn site_date(iso: &str) -> Option<String> {
-    let d = jiff::civil::Date::strptime("%Y-%m-%d", iso).ok()?;
-    Some(d.strftime("%d.%m.%Y").to_string())
-}
-
 // ------------------------------------------------------------------ connector
 
 /// One response: final URL, content type and body.
@@ -648,6 +579,7 @@ fn client() -> CoreResult<reqwest::Client> {
         ))
         .timeout(std::time::Duration::from_secs(60))
         .cookie_provider(jar)
+        .redirect(super::same_host_redirects())
         .build()?)
 }
 
@@ -765,31 +697,29 @@ impl FordMoneyConnector {
         since: &str,
         today: &str,
     ) -> CoreResult<Vec<RemoteTransaction>> {
+        // Festgeld may offer no transaction list: then it has no bookings.
+        let Some(link) = account.bookings_link.as_deref() else {
+            return Ok(Vec::new());
+        };
         let overview = self.overview().await?;
-        let link = account.bookings_link.as_deref().ok_or_else(page_changed)?;
         let form = form_by_id(&overview, "contentForm").ok_or_else(page_changed)?;
         let page = self.post_page(&form.action, &form.clicked(link)).await?;
 
         let mut form = form_by_id(&page, "contentForm").ok_or_else(page_changed)?;
         let start = form
             .field_ending(":inbox-datetimepicker-start")
-            .ok_or_else(page_changed)?
-            .to_string();
+            .ok_or_else(page_changed)?;
         let end = form
             .field_ending(":inbox-datetimepicker-end")
-            .ok_or_else(page_changed)?
-            .to_string();
-        form.set(&start, &site_date(since).ok_or_else(invalid)?);
-        form.set(&end, &site_date(today).ok_or_else(invalid)?);
+            .ok_or_else(page_changed)?;
+        form.set(&start, &de_date(since).ok_or_else(invalid)?);
+        form.set(&end, &de_date(today).ok_or_else(invalid)?);
         let page = self
             .post_page(&form.action, &form.clicked("contentForm:btnLoad"))
             .await?;
 
         let mut form = form_by_id(&page, "contentForm").ok_or_else(page_changed)?;
-        let limit = form
-            .field_ending(":limit")
-            .ok_or_else(page_changed)?
-            .to_string();
+        let limit = form.field_ending(":limit").ok_or_else(page_changed)?;
         let mut wanted = LIST_LIMIT;
         let mut list = String::new();
         for _ in 0..4 {
@@ -803,11 +733,18 @@ impl FordMoneyConnector {
                 )
                 .await?;
             let updates = partial_updates(&xml);
-            list = updates
+            let Some(found) = updates
                 .iter()
                 .find(|(id, _)| id.ends_with(":transactionList"))
                 .map(|(_, c)| c.clone())
-                .ok_or_else(invalid)?;
+            else {
+                trace(&format!(
+                    "transaction list missing (partial updates={})",
+                    updates.len()
+                ));
+                return Err(invalid());
+            };
+            list = found;
             let more = updates
                 .iter()
                 .any(|(id, c)| id.ends_with(":showMore") && c.contains("moreTransactions"));
@@ -898,21 +835,17 @@ impl FordMoneyConnector {
         if let (Some(mut form), Some(refresh)) = (
             form_by_id(&archive, "contentForm"),
             link_param(&archive, ".button-anzeigen"),
+        ) && let (Some(start), Some(end)) = (
+            form.field_ending(":inbox-datetimepicker-start"),
+            form.field_ending(":inbox-datetimepicker-end"),
         ) {
-            if let (Some(start), Some(end)) = (
-                form.field_ending(":inbox-datetimepicker-start")
-                    .map(str::to_string),
-                form.field_ending(":inbox-datetimepicker-end")
-                    .map(str::to_string),
-            ) {
-                form.set(&start, ARCHIVE_START);
-                form.set(&end, &site_date(&super::today()).unwrap_or_default());
-                if let Ok(wide) = self.post_page(&form.action, &form.clicked(&refresh)).await {
-                    let wide_rows = parse_postbox(&wide);
-                    if wide_rows.len() >= rows.len() {
-                        rows = wide_rows;
-                        list_page = wide;
-                    }
+            form.set(&start, ARCHIVE_START);
+            form.set(&end, &de_date(&super::today()).unwrap_or_default());
+            if let Ok(wide) = self.post_page(&form.action, &form.clicked(&refresh)).await {
+                let wide_rows = parse_postbox(&wide);
+                if wide_rows.len() >= rows.len() {
+                    rows = wide_rows;
+                    list_page = wide;
                 }
             }
         }
@@ -957,8 +890,7 @@ impl BankConnector for FordMoneyConnector {
         let form = form_by_id(&page.html(), "contentForm").ok_or_else(page_changed)?;
         let user = form
             .field_ending(":Benutzerkennung")
-            .ok_or_else(page_changed)?
-            .to_string();
+            .ok_or_else(page_changed)?;
         let mut fields = form.clicked("contentForm:submitLogin");
         fields.retain(|(n, _)| n != &user);
         fields.push((user, login.to_string()));
@@ -990,7 +922,7 @@ impl BankConnector for FordMoneyConnector {
             PollStep::Waiting => return Ok(Phase::Pending(push_challenge())),
             PollStep::Answer(Ok(xml)) => xml,
             PollStep::Answer(Err(CoreError::Network { .. })) => {
-                return Ok(Phase::Pending(push_challenge()))
+                return Ok(Phase::Pending(push_challenge()));
             }
             PollStep::Answer(Err(e)) => return Err(e),
         };
@@ -1025,12 +957,13 @@ impl BankConnector for FordMoneyConnector {
         let today = super::today();
         let overview = self.overview().await?;
         let accounts = parse_accounts(&overview)?;
+        trace(&format!("overview: {} accounts", accounts.len()));
         if accounts.is_empty() {
             return Err(page_changed());
         }
         let refs: HashMap<String, String> = accounts
             .iter()
-            .map(|a| (a.number.clone(), format!("{REF_PREFIX}{}", a.iban)))
+            .map(|a| (a.number.clone(), a.external_ref()))
             .collect();
         let mut known = KnownDocuments::from_state(&ctx.state);
 
@@ -1047,9 +980,14 @@ impl BankConnector for FordMoneyConnector {
 
         let mut out = FetchResult::default();
         for account in &accounts {
-            let account_ref = format!("{REF_PREFIX}{}", account.iban);
+            let account_ref = account.external_ref();
             let since = ctx.since_for(&account_ref).to_string();
             let bookings = self.bookings(account, &account_ref, &since, &today).await?;
+            trace(&format!(
+                "account #{}: {} bookings",
+                out.accounts.len() + 1,
+                bookings.len()
+            ));
             out.transactions.extend(bookings);
             out.accounts.push(RemoteAccount {
                 external_ref: account_ref,
@@ -1105,6 +1043,12 @@ impl BankConnector for FordMoneyConnector {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[tokio::test]
+    async fn login_client_does_not_follow_redirects_to_another_origin() {
+        let client = client().unwrap();
+        crate::connectors::tests::redirects::assert_no_cross_origin_replay(&client).await;
+    }
 
     // Invented pages in the shape of the Ford Money online banking; no real data.
     const LOGIN_PAGE: &str = r#"<html><body>
@@ -1323,12 +1267,66 @@ mod tests {
         );
         assert_eq!(accounts[1].balance_cents, 6_544);
         assert!(parse_accounts("<p>keine Konten</p>").unwrap().is_empty());
+        assert_eq!(a.external_ref(), "fordmoney:DE00123456781000000001");
+        // an IBAN that does not end with the number is never taken as the
+        // account's own (Festgeld shows that of its reference account)
         let foreign =
             overview().replace("DE00 1234 5678 1000 0000 01", "DE00 9999 9999 9999 9999 99");
-        assert!(
-            parse_accounts(&foreign).is_err(),
-            "IBAN must belong to the account number"
+        let accounts = parse_accounts(&foreign).unwrap();
+        assert_eq!(accounts[0].iban, "");
+        assert_eq!(accounts[0].external_ref(), "fordmoney:1000000001");
+    }
+
+    /// #1549: one Tagesgeld and several Festgeld accounts. A Festgeld section
+    /// shows no own IBAN (none, or its reference account's) and no transaction
+    /// list; the sync must read it with its balance instead of failing.
+    #[test]
+    fn festgeld_without_own_iban_or_bookings_link_is_read() {
+        let festgeld = |number: &str, extra: &str, sum: &str| {
+            format!(
+                r##"<section class="accordion">
+              <a class="row accordion-container__header collapsed" data-bs-toggle="collapse" href="#collapse_{number}">
+                <div class="col-sm-10 col-xs-8"><div>Festgeld</div><div class="tg-savings-headline-blue"> {number}</div></div>
+                <div class="col-sm-12 col xs-5 text-right"><span class="content-header__right-sum">{sum}</span></div>
+              </a>
+              <div id="collapse_{number}" class="accordion-container__collapse collapse ">
+                <div class="row eb-row__v-separator-normal">
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-label">Kontoinhaber</div>
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-text">Erika Mustermann</div>
+                </div>{extra}
+              </div>
+            </section>"##
+            )
+        };
+        let reference = r#"
+                <div class="row eb-row__v-separator-small">
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-label">IBAN Referenzkonto</div>
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-text">DE00 1234 5678 1000 0000 01</div>
+                </div>"#;
+        let html = format!(
+            "{}{}{}",
+            account_section(
+                "1000000001",
+                "DE00 1234 5678 1000 0000 01",
+                "1.234,56 €",
+                "contentForm:j_idt331:0:j_idt340"
+            ),
+            festgeld("2000000001", "", "10.000,00 €"),
+            festgeld("2000000002", reference, "5.000,00 €"),
         );
+        let accounts = parse_accounts(&html).unwrap();
+        assert_eq!(accounts.len(), 3);
+        assert_eq!(accounts[0].iban, "DE00123456781000000001");
+        for (a, cents) in accounts[1..].iter().zip([1_000_000, 500_000]) {
+            assert_eq!(a.product, "Festgeld");
+            assert_eq!(a.iban, "", "never the reference account's IBAN");
+            assert_eq!(a.external_ref(), format!("fordmoney:{}", a.number));
+            assert_eq!(a.balance_cents, cents);
+            assert_eq!(a.bookings_link, None);
+        }
+        let refs: std::collections::HashSet<String> =
+            accounts.iter().map(Account::external_ref).collect();
+        assert_eq!(refs.len(), 3, "every account keeps its own ref");
     }
 
     #[test]
@@ -1381,9 +1379,11 @@ mod tests {
         let tx2 = parse_bookings(&list, "fordmoney:DE00", "2000-01-01", &mut again).unwrap();
         assert_eq!(tx2[3].external_id, tx[3].external_id);
         let mut recent = ContentIds::default();
-        assert!(parse_bookings(&list, "a", "2026-11-01", &mut recent)
-            .unwrap()
-            .is_empty());
+        assert!(
+            parse_bookings(&list, "a", "2026-11-01", &mut recent)
+                .unwrap()
+                .is_empty()
+        );
         let broken = list.replace("- 21,37 €", "n/a");
         assert!(parse_bookings(&broken, "a", "2000-01-01", &mut ContentIds::default()).is_err());
     }
@@ -1457,10 +1457,7 @@ mod tests {
             Some("0"),
             "first option without selection"
         );
-        let start = form
-            .field_ending(":inbox-datetimepicker-start")
-            .unwrap()
-            .to_string();
+        let start = form.field_ending(":inbox-datetimepicker-start").unwrap();
         form.set(&start, ARCHIVE_START);
         assert_eq!(form.get(&start), Some(ARCHIVE_START));
         assert_eq!(
@@ -1487,6 +1484,5 @@ mod tests {
         assert_eq!(parse_amount("+            88,88 €"), Some(8_888));
         assert_eq!(parse_amount("12.345,67 €"), Some(1_234_567));
         assert_eq!(parse_amount("—"), None);
-        assert_eq!(site_date("2026-01-05").as_deref(), Some("05.01.2026"));
     }
 }

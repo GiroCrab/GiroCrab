@@ -3,8 +3,9 @@ import Charts
 import GiroCrabCore
 
 /// Day, month, quarter or year sums of the selected category (incl. subcategories) above its
-/// bookings (GitHub #502, #557, #634). Pure expense categories are drawn upwards (magnitude),
-/// mixed ones signed. Bars or a line, following the header's chart type.
+/// bookings (GitHub #502, #557, #634). Values keep their sign; for a category with net expenses
+/// in the period the Y scale is reversed, so its expenses point upwards (#1506). Expenses in
+/// `outflow`, income in `inflow`. Bars or a line, following the header's chart type.
 struct CategorySumChart: View {
     let sums: [CategoryPeriodSum]
     @State private var selected: Date?
@@ -58,9 +59,10 @@ struct CategorySumChart: View {
         unit == .automatic ? .month : unit.calendarComponent
     }
 
-    /// Expense-only series is shown as positive heights.
+    /// A series with net expenses is shown upwards. Decided on its total (the period sum in the header),
+    /// not per bar, so a single refund month does not switch the whole chart (#1506).
     static func flipsSign(_ bars: [Bar]) -> Bool {
-        !bars.isEmpty && bars.allSatisfy { $0.cents <= 0 }
+        bars.reduce(0) { $0 + $1.cents } < 0
     }
 
     /// At most `count` axis labels, one per shown bar (no repeated quarter labels).
@@ -70,9 +72,7 @@ struct CategorySumChart: View {
         return stride(from: 0, to: bars.count, by: every).map { bars[$0].mid }
     }
 
-    private func height(_ b: Bar, flip: Bool) -> Double {
-        Double(flip ? -b.cents : b.cents) / 100
-    }
+    private func euros(_ b: Bar) -> Double { Double(b.cents) / 100 }
 
     /// Gap between neighbouring bars.
     private func inset(_ b: Bar) -> TimeInterval { b.end.timeIntervalSince(b.start) * 0.12 }
@@ -90,18 +90,18 @@ struct CategorySumChart: View {
             Chart {
                 ForEach(bars) { b in
                     if line {
-                        LineMark(x: .value("Zeitraum", b.mid), y: .value("Summe", height(b, flip: flip)))
+                        LineMark(x: .value("Zeitraum", b.mid), y: .value("Summe", euros(b)))
                             .foregroundStyle(Theme.accent.opacity(0.8))
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
                             .interpolationMethod(.monotone)
-                        PointMark(x: .value("Zeitraum", b.mid), y: .value("Summe", height(b, flip: flip)))
-                            .foregroundStyle(b.cents < 0 && !flip ? Theme.outflow : Theme.accent)
+                        PointMark(x: .value("Zeitraum", b.mid), y: .value("Summe", euros(b)))
+                            .foregroundStyle(b.cents < 0 ? Theme.outflow : Theme.accent)
                             .symbolSize(hit == b ? 36 : 10)
                     } else {
                         RectangleMark(xStart: .value("Zeitraum", b.start.addingTimeInterval(inset(b))),
                                       xEnd: .value("Zeitraum", b.end.addingTimeInterval(-inset(b))),
-                                      yStart: .value("Summe", 0.0), yEnd: .value("Summe", height(b, flip: flip)))
-                            .foregroundStyle(b.cents < 0 && !flip ? Theme.outflow : (b.cents < 0 ? Theme.accent : Theme.inflow))
+                                      yStart: .value("Summe", 0.0), yEnd: .value("Summe", euros(b)))
+                            .foregroundStyle(Money.ink(b.cents))
                             .opacity(hit == nil || hit == b ? 0.85 : 0.35)
                             .cornerRadius(1.5)
                     }
@@ -125,6 +125,7 @@ struct CategorySumChart: View {
                 }
             }
             .chartXSelection(value: $selected)
+            .chartYScale(domain: .automatic(reversed: flip))
             .chartYAxis {
                 AxisMarks(position: .trailing) { v in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
@@ -159,7 +160,7 @@ struct CategorySumChart: View {
         }
     }
 
-    /// Audio Graph of the drawn bars (flipped heights included). Built only when
+    /// Audio Graph of the drawn bars (expenses as positive values when the scale is reversed). Built only when
     /// assistive technology asks, not on every hover re-render.
     struct Descriptor: AXChartDescriptorRepresentable {
         let bars: [Bar]

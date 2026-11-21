@@ -17,6 +17,12 @@ RowLayout {
     /// The control on the right takes all the width the label leaves (a borderless text
     /// field in a grouped form, FormTextField).
     property bool fillValue: false
+    /// `value` is money (`.sensitive(.amounts)`): covered in privacy mode and in the bug report.
+    property bool amounts: false
+    /// `value` is personal (`.sensitive()`): an IBAN, a login name, a path that names the user.
+    property bool personal: false
+    /// `detail` is personal (account names and IBANs under a bank).
+    property bool personalDetail: false
     default property alias trailing: trail.data
     Layout.fillWidth: true
     spacing: splitValue ? 12 : 10
@@ -25,7 +31,8 @@ RowLayout {
         Layout.fillWidth: !r.fillValue
         Layout.preferredWidth: r.splitValue ? 200 : -1
         Text { text: r.label; color: Theme.text; font.pixelSize: Theme.body; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        Text { visible: r.detail !== ""; text: r.detail; color: Theme.secondary; font.pixelSize: Theme.caption; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        Text { visible: r.detail !== ""; text: r.detail; color: Theme.secondary; font.pixelSize: Theme.caption; Layout.fillWidth: true; wrapMode: Text.WordWrap
+               Sensitive { when: r.personalDetail } }
     }
     TextEdit {
         visible: r.splitValue && r.value !== ""
@@ -35,12 +42,14 @@ RowLayout {
         font.pixelSize: Theme.body; color: r.valueColor
         horizontalAlignment: Text.AlignRight
         wrapMode: Text.Wrap
+        Sensitive { amounts: r.amounts; when: r.amounts || r.personal }
     }
     RowLayout {
         id: trail
         spacing: r.splitValue ? 6 : 8
         Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
         Layout.fillWidth: r.fillValue
-        Text { visible: !r.splitValue && r.value !== ""; text: r.value; color: r.valueColor; font.pixelSize: Theme.body; font.features: { "tnum": 1 } }
+        Text { visible: !r.splitValue && r.value !== ""; text: r.value; color: r.valueColor; font.pixelSize: Theme.body; font.features: { "tnum": 1 }
+               Sensitive { amounts: r.amounts; when: r.amounts || r.personal } }
     }
 }

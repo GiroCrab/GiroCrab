@@ -7,14 +7,13 @@ extension AppModel {
     /// registration; users who already entered their own are asked once.
     func reloadProductIDState(_ vault: Vault) {
         var mode = (try? vault.fintsProductIdMode()) ?? ""
-        let hasOwn = settingEntry("fints.product_id")?.hasValue == true
-        if fintsBuiltinAvailable, mode.isEmpty, !hasOwn, !isDemo {
+        if fintsBuiltinAvailable, mode != "builtin", !isDemo {
             try? vault.setFintsProductIdMode(mode: "builtin")
             mode = "builtin"
         }
         fintsProductIDMode = mode
         fintsProductIDSource = (try? vault.fintsProductIdSource()) ?? ""
-        offerProductIDChoice = fintsBuiltinAvailable && mode.isEmpty && hasOwn && !isDemo
+        offerProductIDChoice = false
     }
 
     /// Stores the choice. The user's own ID always stays in the vault.
@@ -46,12 +45,14 @@ extension AppModel {
                     try vault.setSetting(key: key, value: value)
                     let entries = try vault.listSettings()
                     let provider = try vault.onlineLogoProvider()
-                    return SettingsSnapshot(entries: entries, logoProvider: provider)
+                    let recognition = try vault.merchantRecognitionEnabled()
+                    return SettingsSnapshot(entries: entries, logoProvider: provider, merchantRecognition: recognition)
                 }
                 // The vault may have been switched or locked meanwhile.
                 guard let self, self.vault === vault else { return }
                 self.settings = result.entries
                 self.logoProvider = result.logoProvider
+                self.merchantRecognitionEnabled = result.merchantRecognition
                 self.reloadProductIDState(vault)
                 self.enableBankingSettingSaved(key)
             } catch {
@@ -64,6 +65,7 @@ extension AppModel {
     private struct SettingsSnapshot: Sendable {
         let entries: [SettingEntry]
         let logoProvider: String
+        let merchantRecognition: Bool
     }
 
     /// Adds a bank login. While demo data is shown, the login goes into the
@@ -290,10 +292,19 @@ extension AppModel {
     }
 
     /// Deletes one archived account incl. bookings/documents/holdings (and its connection if it was the last account).
-    func deleteAccount(_ id: Int64) {
+    ///
+    /// The core deletes only accounts that are saved as archived. `archiveFirst` (account settings, where the
+    /// archive toggle may still be unsaved) archives and deletes in one go; the archive step does not show in
+    /// the UI. If the delete fails afterwards, the account stays archived and the error is shown as usual.
+    func deleteAccount(_ id: Int64, archiveFirst: Bool = false) {
         guard let vault else { return }
-        runCore { try vault.deleteAccount(accountId: id) }
-        if sidebarSelection == .account(id) { sidebarSelection = .allAccounts }
+        var deleted = false
+        runCore {
+            if archiveFirst { try vault.setAccountArchived(accountId: id, archived: true) }
+            try vault.deleteAccount(accountId: id)
+            deleted = true
+        }
+        if deleted, sidebarSelection == .account(id) { sidebarSelection = .allAccounts }
         reloadAll()
     }
 
@@ -328,13 +339,27 @@ extension AppModel {
         reloadAll()
     }
 
-    /// Vault setting with the portal user name of a login (Amex); the password is
-    /// the login's PIN (`setConnectionPin`). `pin.` keys are stored as secrets.
-    static func portalLoginKey(_ id: Int64) -> String { "pin.conn.\(id).login" }
+    /// Whether a portal supports storing its username and password in the vault.
+    nonisolated static func supportsStoredPortalLogin(_ connector: ConnectorKind) -> Bool {
+        connector == .americanExpress || connector == .amazonVisa
+    }
 
-    func setConnectionPin(_ id: Int64, _ pin: String?) {
-        guard let vault else { return }
-        runCore { try vault.setConnectionPin(connectionId: id, pin: pin) }
+    /// Vault setting with the portal user name; the password is the login's PIN
+    /// (`setConnectionPin`). `pin.` keys are stored as secrets.
+    static func portalLoginKey(_ id: Int64) -> String { "pin.conn.\(id).login" }
+    static func portalLoginAutofillDisabledKey(_ id: Int64) -> String { "portal.login.autofill.disabled.\(id)" }
+
+    /// Stores or clears a connection PIN and reports whether the vault write succeeded.
+    @discardableResult
+    func setConnectionPin(_ id: Int64, _ pin: String?) -> Bool {
+        guard let vault else { return false }
+        do {
+            try vault.setConnectionPin(connectionId: id, pin: pin)
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
     func clearSession(_ id: Int64) {

@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 import SwiftUI
 import GiroCrabCore
 
@@ -80,7 +81,7 @@ extension AppModel {
         runCore { try vault.setAutoStatements(accountId: account.id, enabled: on) }
     }
 
-    /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
+    /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     func comdirectPostboxEnabled(_ connectionID: Int64) -> Bool {
         (try? vault?.comdirectPostboxEnabled(connectionId: connectionID)) ?? false
     }
@@ -90,14 +91,14 @@ extension AppModel {
         runCore { try vault.setComdirectPostbox(connectionId: connectionID, enabled: on) }
     }
 
-    /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
+    /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     func fetchComdirectPostbox(_ connection: BankConnection) {
         guard syncingConnectionID == nil else { return }
         postboxConnectionID = connection.id
         requestSync(connection)
     }
 
-    // MARK: - Belege & PostBox
+    // MARK: - Belege & Postbox
 
     func accountDocuments(_ accountID: Int64) -> [DocumentInfo] {
         _ = documentsVersion
@@ -106,7 +107,7 @@ extension AppModel {
     }
 
     /// Connections whose bank delivers documents but whose retrieval is switched off, for the whole
-    /// list or (`accountFilter`) the one account on screen. "Belege & PostBox" explains why nothing new comes.
+    /// list or (`accountFilter`) the one account on screen. "Belege & Postbox" explains why nothing new comes.
     func connectionsWithDocumentsOff(accountFilter: Int64?, connectionFilter: Int64? = nil) -> [BankConnection] {
         var ids: Set<Int64>?
         if let accountFilter {
@@ -123,10 +124,35 @@ extension AppModel {
     }
 
     func canFetchStatements(_ account: Account) -> Bool {
-        guard let c = account.connector, account.kind != .loan else { return false }
+        // BHW loans have statements in the mailbox too (annual statement of the loan).
+        guard let c = account.connector, account.kind != .loan || c == .bhw else { return false }
         // switched off per connection (bank connection dialog): the core would refuse it
         if let cid = account.connectionId, documentsOffConnectionIDs.contains(cid) { return false }
-        return [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .easybank, .fordMoney, .opelDirektbank, .ffb].contains(c)
+        return [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .easybank, .fordMoney, .opelDirektbank, .bhw, .hanseaticBank, .ffb].contains(c)
+    }
+
+    /// BHW mailbox PDFs whose mailbox entry names no listed contract are stored without
+    /// an account; their text layer (PDFKit, which reads fonts the core's extractor cannot)
+    /// names the contract. Returns how many moved to an account and how many could not be
+    /// read or written (a PDF without text, or whose text names no contract, is no failure).
+    func placeBhwDocuments() async -> (placed: Int, failed: Int) {
+        guard let pin = pinVault() else { return (0, 0) }
+        let result = try? await pin.run { vault -> (placed: Int, failed: Int) in
+            var placed = 0
+            var failed = 0
+            for id in try vault.bhwUnplacedDocuments() {
+                // One failing document does not stop the others.
+                do {
+                    let data = try vault.getDocumentBytes(docId: id)
+                    guard let text = PDFDocument(data: data)?.string, !text.isEmpty else { continue }
+                    if try vault.placeBhwDocument(docId: id, text: text) != nil { placed += 1 }
+                } catch {
+                    failed += 1
+                }
+            }
+            return (placed, failed)
+        }
+        return result ?? (0, 1)
     }
 
     /// Explicit "Kontoauszüge abrufen": regular syncs never fetch statements (speed, no extra TAN).
@@ -195,13 +221,13 @@ extension AppModel {
             .filter { scope.includes($0) && (!withoutAccount || $0.accountId == nil) }
     }
 
-    /// Bank connections to offer in the "Belege & PostBox" filter: those with at least one account.
+    /// Bank connections to offer in the "Belege & Postbox" filter: those with at least one account.
     var documentsFilterConnections: [BankConnection] {
         let used = Set(accountsByID.values.compactMap(\.connectionId))
         return connections.filter { used.contains($0.id) }
     }
 
-    /// The account menu of "Belege & PostBox", narrowed to the chosen bank connection (#1042).
+    /// The account menu of "Belege & Postbox", narrowed to the chosen bank connection (#1042).
     var documentsAccountSections: [AccountMenuSection] {
         guard let cid = documentsConnectionFilter, cid != Self.documentsWithoutAccount else { return accountMenuSections }
         return accountMenuSections.compactMap { section in
@@ -224,6 +250,44 @@ extension AppModel {
         try? vault?.getDocumentBytes(docId: doc.id)
     }
 
+    /// The documents of bookings dragged into another app (`BookingDragItem`), read off the main
+    /// thread when that app asks for them. Booking ids are per vault: `pin` is the vault the
+    /// drag started in, and nothing is read unless it is still the open one (before and after
+    /// reading). Stops before `BookingDragExport.documentByteLimit`; a document that cannot be
+    /// read is left out, the others still come along.
+    func dragDocuments(for bookingIDs: [Int64], from pin: VaultPin?) async -> [Int64: [BookingDragExport.Document]] {
+        guard !bookingIDs.isEmpty, let pin, isCurrent(pin) else { return [:] }
+        let limit = BookingDragExport.documentByteLimit
+        let read = try? await pin.run { vault -> [Int64: [BookingDragExport.Document]] in
+            var out: [Int64: [BookingDragExport.Document]] = [:]
+            var total = 0
+            for id in bookingIDs {
+                for doc in (try? vault.listDocumentsForBooking(bookingId: id)) ?? [] {
+                    guard total + Int(doc.sizeBytes) <= limit else { return out }
+                    guard let bytes = try? vault.getDocumentBytes(docId: doc.id) else { continue }
+                    total += bytes.count
+                    out[id, default: []].append(BookingDragExport.Document(
+                        fileName: doc.fileName, mimeType: doc.mimeType,
+                        title: doc.title.isEmpty ? nil : doc.title, data: bytes))
+                }
+            }
+            return out
+        }
+        guard isCurrent(pin) else { return [:] }
+        return read ?? [:]
+    }
+
+    #if os(macOS)
+    /// What a booking row drags: the row, or the multiple selection it belongs to, with the
+    /// documents of those that have any, from the vault open now (`dragDocuments`).
+    func dragItem(for booking: Booking) -> BookingDragItem {
+        let pin = pinVault()
+        return BookingDragItem(bookings: categorizeTargets(for: booking), accounts: accountsByID) { [weak self] ids in
+            await self?.dragDocuments(for: ids, from: pin) ?? [:]
+        }
+    }
+    #endif
+
     /// Marks documents read or unread (opened in the list, or by hand).
     func markDocumentsSeen(_ ids: [Int64], seen: Bool) {
         guard let vault, !ids.isEmpty else { return }
@@ -234,7 +298,7 @@ extension AppModel {
         documentsVersion += 1
     }
 
-    /// Marks every unread document read (sidebar: „Belege & PostBox“).
+    /// Marks every unread document read (sidebar: „Belege & Postbox“).
     func markAllDocumentsSeen() {
         guard let vault else { return }
         runCore {
@@ -302,7 +366,7 @@ extension AppModel {
             if !linked.isEmpty {
                 toast = String(localized: "Beleg zugeordnet: \(linked.joined(separator: ", "))")
             } else if unmatched > 0 {
-                toast = String(localized: "Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
+                toast = String(localized: "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             }
             documentsChanged()
         }

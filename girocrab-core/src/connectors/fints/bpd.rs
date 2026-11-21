@@ -5,13 +5,15 @@
 use std::collections::{HashMap, HashSet};
 
 use super::syntax::Segment;
-use super::{debit, sepa, standing_order, transfer, BankReply, FinTsConnector, UpdAccount};
+use super::{BankReply, FinTsConnector, UpdAccount, debit, sepa, standing_order, transfer};
 
 /// Versions of each business transaction this client implements.
 const IMPLEMENTED: &[(&str, &[u32])] = &[
     ("HKSAL", &[5, 6, 7, 8]),
     ("HKCAZ", &[1]),
     ("HKCCS", &[1]),
+    // SEPA-Umbuchung between the login's own accounts (#1513)
+    ("HKCUM", &[1]),
     ("HKIPZ", &[1]),
     ("HKCSE", &[1]),
     ("HKCCM", &[1]),
@@ -67,10 +69,10 @@ pub(super) fn parse_upd(upd: &Segment) -> UpdAccount {
         a.iban.clear();
     }
     for el in upd.elements.iter().skip(9) {
-        if let Some(first) = el.first() {
-            if is_segment_code(first.text()) {
-                a.allowed.insert(first.text().to_string());
-            }
+        if let Some(first) = el.first()
+            && is_segment_code(first.text())
+        {
+            a.allowed.insert(first.text().to_string());
         }
     }
     a
@@ -309,6 +311,7 @@ impl FinTsConnector {
             ("HIIPZS", "HKIPZ"),
             ("HICSES", "HKCSE"),
             ("HICCMS", "HKCCM"),
+            ("HICUMS", "HKCUM"),
             ("HICDBS", "HKCDB"),
             ("HICDES", "HKCDE"),
             ("HICDNS", "HKCDN"),
@@ -325,6 +328,31 @@ impl FinTsConnector {
                 let list = self.st.pain_formats.entry(tx.to_string()).or_default();
                 if !list.contains(&f) {
                     list.push(f);
+                }
+            }
+        }
+        // FinTS 3.0 banks (e.g. comdirect, #1419) advertise supported SEPA schemas
+        // centrally in HISPAS while HICCSS carries no format list of its own.
+        for spas in reply.all("HISPAS") {
+            for el in &spas.elements {
+                for v in el {
+                    let t = v.text();
+                    let targets: &[&str] = if t.contains("pain.001.") {
+                        &[
+                            "HKCCS", "HKCUM", "HKCSE", "HKCCM", "HKCDE", "HKCDN", "HKCDL",
+                        ]
+                    } else if t.contains("pain.008.") {
+                        &["HKDSE", "HKDME", "HKDSC", "HKDMC", "HKBSE", "HKBME"]
+                    } else {
+                        continue;
+                    };
+                    for tx in targets {
+                        let list = self.st.pain_formats.entry((*tx).to_string()).or_default();
+                        let norm = t.strip_suffix(".xsd").unwrap_or(t);
+                        if !list.iter().any(|f| f == norm) {
+                            list.push(norm.to_string());
+                        }
+                    }
                 }
             }
         }
@@ -391,15 +419,14 @@ impl FinTsConnector {
         if let (Some(hitab), true) = (reply.first("HITAB"), self.tan_medium_override.is_empty()) {
             for el in hitab.elements.iter().skip(2) {
                 let texts: Vec<&str> = el.iter().map(|v| v.text()).collect();
-                if texts.get(1) == Some(&"1") {
-                    if let Some(name) = texts
+                if texts.get(1) == Some(&"1")
+                    && let Some(name) = texts
                         .iter()
                         .skip(2)
                         .find(|t| t.chars().any(|c| c.is_alphabetic()) && t.len() > 2)
-                    {
-                        self.st.tan_medium = name.to_string();
-                        break;
-                    }
+                {
+                    self.st.tan_medium = name.to_string();
+                    break;
                 }
             }
         }

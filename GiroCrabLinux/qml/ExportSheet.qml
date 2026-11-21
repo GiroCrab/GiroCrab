@@ -258,9 +258,9 @@ Sheet {
         if (!accountIDs.length && o.scope !== "selection") { previewCount = 0; previewName = null; return }
         previewCount = null
         const preset = o.scope === "selection" ? "current" : o.periodPreset
-        BookingExport.loadExportBookings(accountIDs.length ? accountIDs : null, preset, bookingIDs, o, BookingExport.isCamt(o.format), bookings => {
+        BookingExport.loadExportBookings(accountIDs.length ? accountIDs : null, preset, bookingIDs, o, BookingExport.isCamt(o.format), (bookings, tagNote) => {
             if (gen !== previewGeneration) return
-            const report = BookingExport.exportReport(bookings, accountIDs, preset, bookingIDs, o)
+            const report = BookingExport.exportReport(bookings, accountIDs, preset, bookingIDs, o, tagNote)
             previewCount = report.rows.length
             const range = BookingExport.camtRange(accountIDs, preset, bookingIDs, o)
             previewName = BookingExport.defaultFilename(report.accounts, report.rows, o.format, fallbackTitle,
@@ -525,9 +525,11 @@ Sheet {
                                                 ColumnLayout {
                                                     spacing: 1; Layout.fillWidth: true
                                                     Text { text: accRow.modelData.name; color: accRow.usable ? Theme.text : Theme.secondary
-                                                           font.pixelSize: Theme.body; elide: Text.ElideRight; Layout.fillWidth: true }
+                                                           font.pixelSize: Theme.body; elide: Text.ElideRight; Layout.fillWidth: true
+                                                           Sensitive {} }
                                                     Text { visible: accRow.sub !== ""; text: accRow.sub; color: Theme.secondary; font.pixelSize: Theme.caption
-                                                           elide: Text.ElideRight; Layout.fillWidth: true }
+                                                           elide: Text.ElideRight; Layout.fillWidth: true
+                                                           Sensitive { when: accRow.usable } }
                                                 }
                                             }
                                             function toggle() {
@@ -651,6 +653,7 @@ Sheet {
                             wrapMode: TextEdit.WrapAnywhere
                             horizontalAlignment: Text.AlignRight
                             font.family: "monospace"; font.pixelSize: Theme.caption; color: Theme.secondary
+                            Sensitive {}   // the name carries the account name
                         }
                     }
                 }
@@ -661,6 +664,7 @@ Sheet {
     // .alert("Export fehlgeschlagen", isPresented: failure != nil)
     Sheet {
         id: failureDialog
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         sheetWidth: 420
         visible: sheet.failure !== ""
         onClosed: sheet.failure = ""

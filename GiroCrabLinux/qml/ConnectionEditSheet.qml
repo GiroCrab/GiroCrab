@@ -22,7 +22,7 @@ Sheet {
     property var revealed: ({})
     property var status: null
     property bool showAdvanced: false
-    /// comdirect via FinTS: PostBox through the bank's API as well (#838).
+    /// comdirect via FinTS: Postbox through the bank's API as well (#838).
     property bool postbox: false
 
     readonly property string kind: connection ? connection.connector : ""
@@ -32,9 +32,9 @@ Sheet {
     /// comdirect logins can switch between FinTS and comdirect's own API.
     readonly property bool isComdirect: kind === "Comdirect"
         || (kind === "FinTsGeneric" && ["20041111", "20041133", "20041144", "20041155"].indexOf(connection.bank_code) >= 0)
-    readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank"].indexOf(kind) >= 0
+    readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
     /// ConnectionsUI.swift › ConnectionEditSheet: these portals take a password, not a PIN
-    readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank"].indexOf(kind) >= 0
+    readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
     /// AppModel+Rah.swift › usesRah10 (#460): the secret is the key file's password, the login is fixed.
     readonly property bool isRah10: !!connection && kind === "FinTsGeneric"
         && (AppModel.run(() => AppModel.core("connection_key", { connection_id: connection.id })) || "").endsWith(":rah10")
@@ -46,6 +46,7 @@ Sheet {
         case "FinTsGeneric": return ["fints.url." + connection.bank_code, "fints.product_id", "fints.product_version"]
         case "Comdirect": return ["comdirect.client_id", "comdirect.client_secret"]
         case "PayPal": return ["paypal.client_id", "paypal.client_secret", "paypal.environment"]
+        case "Kontist": return ["kontist.client_id", "kontist.client_secret"]
         case "Bunq": return ["bunq.environment"]
         case "EnableBanking": return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
         default: return []
@@ -53,7 +54,7 @@ Sheet {
     }
     // With GiroCrab's own registration built in, it is chosen in Settings, not per bank.
     readonly property var keys: AppModel.fintsBuiltinAvailable ? allKeys.filter(k => k !== "fints.product_id") : allKeys
-    /// comdirect via FinTS: the API credentials for the PostBox (#838), shown in its section.
+    /// comdirect via FinTS: the API credentials for the Postbox (#838), shown in its section.
     readonly property var postboxKeys: isComdirect && kind === "FinTsGeneric" ? ["comdirect.client_id", "comdirect.client_secret"] : []
     /// Optional power-user PSD2 credentials (collapsed "Erweitert" section).
     readonly property var advancedKeys: kind === "AmericanExpress"
@@ -66,6 +67,7 @@ Sheet {
         case "VolksbankKasselGoettingen": case "Direkt1822": case "FinTsGeneric": return "FinTS 3.0"
         case "Comdirect": return "comdirect REST-API"
         case "PayPal": return "PayPal REST-App"
+        case "Kontist": return "Kontist OAuth2-Client"
         case "Bunq": return "bunq API"
         case "Ibkr": return "Interactive Brokers Flex Web Service"
         default: return "Enable Banking (PSD2)"
@@ -136,7 +138,40 @@ Sheet {
             if (v !== current) AppModel.saveSetting(key, v)
         }
     }
+    /// ConnectionsUI.swift › saveAll(thenSync:): the login's settings and the account selection,
+    /// saved together; a fetch only starts after the selection is stored (a switched-off
+    /// account must not be fetched).
+    function saveAll(thenSync) {
+        save()
+        const id = connection.id
+        selection.saveIfChanged((ok, message) => {
+            if (ok) {
+                const c = AppModel.connections.find(x => x.id === id)
+                if (thenSync && c) AppModel.requestSync(c)
+            } else {
+                AppModel.errorTitle = qsTr("Kontenauswahl nicht gespeichert")
+                AppModel.errorMessage = message
+            }
+        })
+        close()
+    }
     function current() { return AppModel.connections.find(c => c.id === connection.id) || connection }
+    /// The other save-and-go actions (log in, Postbox, reconnect, import): like `saveAll`, the
+    /// action starts only once the account selection is stored, never with the old one.
+    function saveThen(action) {
+        save()
+        const id = connection.id
+        const fallback = current()
+        selection.saveIfChanged((ok, message) => {
+            // after the sheet has closed, as before (the action may open another sheet)
+            if (ok) Qt.callLater(() => action(AppModel.connections.find(x => x.id === id) || fallback))
+            else {
+                AppModel.errorTitle = qsTr("Kontenauswahl nicht gespeichert")
+                AppModel.errorMessage = message
+            }
+        })
+        close()
+    }
 
     /// PSD2 consent (PSD2Consent.swift): end date and stage.
     readonly property var consentEnd: status && status.consent_valid_until ? new Date(status.consent_valid_until) : null
@@ -160,7 +195,7 @@ Sheet {
     }
     ConfirmDialog {
         id: confirmRemove
-        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(sheet.connection.display_name) : ""
+        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(AppModel.masking(sheet.connection.display_name)) : ""
         message: qsTr("Alle Konten dieses Bankzugangs werden samt Buchungen, Belegen und gespeicherten Zugangsdaten aus dem Tresor gelöscht. Das lässt sich nicht widerrufen.")
         actionTitle: qsTr("Entfernen")
         onConfirmed: { const id = sheet.connection.id; sheet.close(); AppModel.removeConnection(id) }
@@ -194,7 +229,7 @@ Sheet {
         title: qsTr("CSV- oder PDF-Kontoauszug importieren …")
         nameFilters: [qsTr("Kontoauszüge (*.csv *.txt *.pdf)"), qsTr("Alle Dateien (*)")]
         currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
-        onAccepted: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.importStatement(c, selectedFile) }
+        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importStatement(c, file)) }
     }
 
     ColumnLayout {
@@ -204,7 +239,7 @@ Sheet {
             spacing: 10
             SymbolTile { symbol: sheet.connection ? sheet.connection.sf_symbol : ""; size: 34; tint: Theme.accent }
             ColumnLayout { spacing: 2; Layout.fillWidth: true
-                Text { text: sheet.connection ? sheet.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text }
+                Text { text: sheet.connection ? sheet.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text; Sensitive {} }
                 Text { text: sheet.descriptor ? sheet.descriptor.protocol : ""; font.pixelSize: Theme.caption; color: Theme.secondary } }
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
@@ -222,10 +257,10 @@ Sheet {
                 SettingsFormSection {
                     title: qsTr("Zugang")
                     SettingsFormRow { label: qsTr("Anzeigename")
-                        TextField { text: sheet.name; onTextEdited: sheet.name = text; Layout.fillWidth: true; Layout.preferredWidth: 300 } }
+                        TextField { text: sheet.name; onTextEdited: sheet.name = text; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
                     SettingsFormRow { label: sheet.descriptor ? sheet.descriptor.login_label : qsTr("Benutzerkennung")
-                        TextField { text: sheet.login; onTextEdited: sheet.login = text; enabled: !sheet.isRah10; Layout.fillWidth: true; Layout.preferredWidth: 300 } }
-                    SettingsFormRow { visible: sheet.isTR && sheet.login !== ""; label: qsTr("Gespeichert als")
+                        TextField { text: sheet.login; onTextEdited: sheet.login = text; enabled: !sheet.isRah10; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
+                    SettingsFormRow { visible: sheet.isTR && sheet.login !== ""; label: qsTr("Gespeichert als"); personal: true
                               value: sheet.isTR && sheet.login !== "" ? AppModel.core("normalize_phone_number", { input: sheet.login }) : "" }
                     SettingsFormRow {
                         readonly property string blz: !sheet.connection ? "" : sheet.connection.bank_code !== "" ? sheet.connection.bank_code : (sheet.descriptor ? sheet.descriptor.bank_code : "")
@@ -233,7 +268,7 @@ Sheet {
                     }
                     CheckBox {
                         visible: sheet.usesPin
-                        text: sheet.isRah10 ? qsTr("Passwort im Tresor speichern") : sheet.kind === "Bunq" ? qsTr("API-Schlüssel im Tresor speichern") : sheet.kind === "Ibkr" ? qsTr("Flex-Query-ID im Tresor speichern") : sheet.usesPassword ? qsTr("Passwort im Tresor speichern") : qsTr("PIN im Tresor speichern")
+                        text: sheet.isRah10 ? qsTr("Passwort im Tresor speichern") : sheet.kind === "Bunq" ? qsTr("API-Schlüssel im Tresor speichern") : sheet.kind === "Ibkr" ? qsTr("Flex-Query-ID im Tresor speichern") : sheet.kind === "Bhw" ? qsTr("Anmeldedaten im Tresor speichern") : sheet.usesPassword ? qsTr("Passwort im Tresor speichern") : qsTr("PIN im Tresor speichern")
                         checked: sheet.storePin
                         onToggled: sheet.storePin = checked
                     }
@@ -242,7 +277,7 @@ Sheet {
                         Layout.fillWidth: true
                         echoMode: TextInput.Password
                         text: sheet.pin; onTextEdited: sheet.pin = text
-                        placeholderText: sheet.isRah10 ? qsTr("Passwort der Schlüsseldatei (leer = unverändert)") : sheet.status && sheet.status.has_pin ? qsTr("Gespeicherte PIN (leer = unverändert)") : (sheet.kind === "Ibkr" ? qsTr("Flex-Query-ID") : sheet.usesPassword ? qsTr("Passwort") : qsTr("PIN"))
+                        placeholderText: sheet.isRah10 ? qsTr("Passwort der Schlüsseldatei (leer = unverändert)") : sheet.kind === "Bhw" ? (sheet.status && sheet.status.has_pin ? qsTr("Gespeicherte Anmeldedaten (leer = unverändert)") : qsTr("Vorname;TT.MM.JJJJ;PLZ")) : sheet.status && sheet.status.has_pin ? qsTr("Gespeicherte PIN (leer = unverändert)") : (sheet.kind === "Ibkr" ? qsTr("Flex-Query-ID") : sheet.usesPassword ? qsTr("Passwort") : qsTr("PIN"))
                     }
                 }
                 SettingsFormSection {
@@ -256,7 +291,7 @@ Sheet {
                     Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                            text: qsTr("Melden Sie sich im Browser-Fenster mit Ihrem normalen Benutzernamen, Passwort und 2FA an. GiroCrab liest die Umsätze direkt aus dem Portal – es sind keine API-Schlüssel nötig. Die Sitzung bleibt für spätere Abrufe erhalten.") }
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.webLoginConnection = c } }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
                     IconButton { symbol: "doc.badge.plus"; text: qsTr("CSV- oder PDF-Kontoauszug importieren …"); tint: Theme.accent
                                  onClicked: statementDialog.open() }
                     Button { text: qsTr("Web-Sitzung (Cookies) löschen …"); palette.buttonText: Theme.negative
@@ -267,7 +302,7 @@ Sheet {
                     visible: sheet.kind === "SchwaebischHall"
                     title: qsTr("Direkt-Login (Web-Session)")
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.webLoginConnection = c } }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
                     Button { text: qsTr("Web-Sitzung (Cookies) löschen …"); palette.buttonText: Theme.negative
                              onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
                 }
@@ -294,11 +329,11 @@ Sheet {
                 }
                 SettingsFormSection {
                     visible: sheet.isComdirect && sheet.kind === "FinTsGeneric"
-                    title: qsTr("PostBox")
-                    footer: qsTr("Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-PostBox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & PostBox“ lässt sich ein Dokument einem anderen Konto zuordnen.")
+                    title: qsTr("Postbox")
+                    footer: qsTr("Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-Postbox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & Postbox“ lässt sich ein Dokument einem anderen Konto zuordnen.")
                     Repeater { model: sheet.postboxKeys; KeyField { required property string modelData; key: modelData } }
                     CheckBox {
-                        text: qsTr("PostBox über die Schnittstelle der Bank abrufen")
+                        text: qsTr("Postbox über die Schnittstelle der Bank abrufen")
                         checked: sheet.postbox
                         onToggled: {
                             // the switch needs the credentials stored
@@ -310,14 +345,15 @@ Sheet {
                     }
                     Button {
                         visible: sheet.postbox
-                        text: qsTr("PostBox jetzt abrufen")
+                        text: qsTr("Postbox jetzt abrufen")
                         enabled: AppModel.syncingConnectionID === null
-                        onClicked: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.fetchComdirectPostbox(c) }
+                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
                     }
                 }
                 SettingsFormSection {
                     title: qsTr("Kontenauswahl")
-                    AccountSelectionList { connection: sheet.visible ? sheet.connection : null }
+                    // saved by the sheet's own Speichern, so there is a single place to confirm (#720)
+                    AccountSelectionList { id: selection; connection: sheet.visible ? sheet.connection : null; showsSaveButton: false }
                 }
                 SettingsFormSection {
                     title: qsTr("Status")
@@ -352,7 +388,7 @@ Sheet {
                         visible: sheet.kind === "EnableBanking" && sheet.status !== null
                         symbol: "arrow.triangle.2.circlepath"; text: qsTr("Neu verbinden …"); tint: Theme.accent
                         ToolTip.text: qsTr("Neue Zustimmung bei der Bank erteilen (z. B. vor Ablauf oder um Konten hinzuzufügen oder zu entfernen).")
-                        onClicked: { sheet.save(); const c = sheet.connection; sheet.close(); AppModel.reconnect(c) }
+                        onClicked: sheet.saveThen(c => AppModel.reconnect(c))
                     }
                     Text { visible: sheet.kind === "EnableBanking" && sheet.status !== null; Layout.fillWidth: true; wrapMode: Text.WordWrap
                            font.pixelSize: Theme.caption; color: Theme.secondary
@@ -373,7 +409,7 @@ Sheet {
                     IconButton {
                         visible: sheet.isTR
                         symbol: "safari"; text: qsTr("Im Browser-Fenster anmelden …"); tint: Theme.accent
-                        onClicked: { sheet.save(); const c = sheet.current(); sheet.close(); AppModel.webLoginConnection = c }
+                        onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c })
                     }
                 }
             }
@@ -385,10 +421,8 @@ Sheet {
             Button { text: qsTr("Bankzugang entfernen …"); palette.buttonText: Theme.negative; onClicked: confirmRemove.open() }
             Item { Layout.fillWidth: true }
             Button { text: qsTr("Abbrechen"); onClicked: sheet.close() }
-            Button { text: qsTr("Speichern && abrufen")
-                     onClicked: { sheet.save(); const id = sheet.connection.id; sheet.close()
-                                  const c = AppModel.connections.find(x => x.id === id); if (c) AppModel.requestSync(c) } }
-            Button { text: qsTr("Speichern"); highlighted: true; onClicked: { sheet.save(); sheet.close() } }
+            Button { text: qsTr("Speichern && abrufen"); onClicked: sheet.saveAll(true) }
+            Button { text: qsTr("Speichern"); highlighted: true; onClicked: sheet.saveAll(false) }
         }
     }
 
@@ -416,6 +450,7 @@ Sheet {
                 echoMode: kf.secret && !kf.isRevealed ? TextInput.Password : TextInput.Normal
                 text: sheet.values[kf.key] || ""
                 placeholderText: kf.label
+                Accessible.name: kf.label   // TextField(label, …).labelsHidden() (ff91866)
                 onTextEdited: sheet.setValue(kf.key, text)
             }
             IconButton {

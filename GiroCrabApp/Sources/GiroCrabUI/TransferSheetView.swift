@@ -18,8 +18,13 @@ struct TransferSheetView: View {
     @FocusState private var amountFocused: Bool
     /// Row of the recipient list chosen with the arrow keys.
     @State private var highlighted: Int?
+    /// Row to highlight once the list has changed because one was hidden (#978): the next one
+    /// moves into its place. Any other change of the list (typing) clears the highlight.
+    @State private var keepHighlight: Int?
     /// Name just taken from the list: typing it must not reopen the list.
     @State private var pickedName: String?
+    /// "Empfänger verwalten" (#978).
+    @State private var managingRecipients = false
     @State private var dropTargeted = false
     @State private var importNote: String?
     @State private var ownTargetID: Int64?
@@ -92,6 +97,8 @@ struct TransferSheetView: View {
         return GiroCode.payload(name: d.name, iban: d.iban, bic: bicText, amountCents: cents, purpose: d.purpose)
     }
     private var ibanValid: Bool { validateIban(iban: model.transferDraft.iban) }
+    /// The recipient's bank from the Bundesbank BLZ list (#1563); German IBANs only.
+    private var recipientBank: String? { bankNameForIban(iban: model.transferDraft.iban) }
     private var bicText: String { model.transferDraft.bic.trimmingCharacters(in: .whitespaces) }
     private var bicValid: Bool { bicText.isEmpty || Self.looksLikeBIC(bicText) }
     private var cents: Int64? {
@@ -188,6 +195,8 @@ struct TransferSheetView: View {
             switch model.options.demoSheetName {
             case "transfer-confirm": step = .review
             case "transfer-girocode": step = .giroCode
+            case "transfer-recipients": managingRecipients = true
+            case "transfer-suggestions": keepHighlight = 0; suggestions = recipients("n")
             default: break
             }
         }
@@ -207,6 +216,8 @@ struct TransferSheetView: View {
                     .background(Theme.accent.opacity(0.06)).allowsHitTesting(false)
             }
         }
+        // what was hidden or shown again there applies to an open list at once
+        .capturableSheet(isPresented: $managingRecipients, onDismiss: refreshSuggestions) { KnownRecipientsSheet() }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             guard step == .form, let p = providers.first else { return false }
             _ = p.loadObject(ofClass: URL.self) { url, _ in
@@ -242,12 +253,15 @@ struct TransferSheetView: View {
             if new.count > maxPurpose { model.transferDraft.purpose = String(new.prefix(maxPurpose)) }
         }
         .onChange(of: model.transferDraft.name) { _, new in
-            if new == pickedName { suggestions = []; return }
-            pickedName = nil
-            suggestions = nameFocused ? recipients(new) : []
+            if new != pickedName { pickedName = nil }
+            refreshSuggestions()
         }
-        .onChange(of: nameFocused) { _, f in
-            suggestions = f && model.transferDraft.name != pickedName ? recipients(model.transferDraft.name) : []
+        .onChange(of: nameFocused) { refreshSuggestions() }
+        // here, not on the list: that one only exists while it has rows, so it would miss the
+        // list appearing and emptying
+        .onChange(of: suggestions.map(\.iban)) { _, new in
+            highlighted = keepHighlight.flatMap { new.isEmpty ? nil : min($0, new.count - 1) }
+            keepHighlight = nil
         }
     }
 
@@ -259,13 +273,18 @@ struct TransferSheetView: View {
         }
     }
 
-    /// Title left, the two helpers (templates, paste) as small actions right.
+    /// Title left, the helpers (templates, recipients, paste) as small actions right.
     private var header: some View {
         HStack(spacing: 12) {
             Text(title).appFont(.title2, weight: .semibold)
             Spacer()
             if step == .form {
                 TransferTemplatesMenu()
+                Button { managingRecipients = true } label: { Label("Empfänger", systemImage: "person.2") }
+                    .help("Empfänger verwalten: veraltete IBANs nicht mehr vorschlagen")
+                    #if os(iOS)
+                    .labelStyle(.iconOnly)
+                    #endif
                 #if os(macOS)
                 Button { pasteFromClipboard() } label: { Label("Einfügen", systemImage: "doc.on.clipboard") }
                     .keyboardShortcut("v", modifiers: [.command, .shift])
@@ -338,6 +357,7 @@ struct TransferSheetView: View {
                             validity(draft.wrappedValue.iban.isEmpty ? nil : ibanValid,
                                      valid: "Prüfsumme korrekt", invalid: "IBAN ungültig (Prüfsumme/Länge)")
                         }
+                        .withBankLine(draft.wrappedValue.iban, alignment: transferFieldEdge)
                     }
                     LabeledContent("BIC") {
                         HStack(spacing: 8) {
@@ -471,41 +491,77 @@ struct TransferSheetView: View {
         }
     }
 
-    /// Known recipients as a drop-down under the name (#881): one row each,
-    /// pick with the mouse or ↑/↓ and Return; Esc closes it.
+    /// Known recipients as a drop-down under the name (#881): one row per IBAN with
+    /// its last use, pick with the mouse or ↑/↓ and Return; Esc closes it. The row under
+    /// the pointer offers "Nicht mehr vorschlagen" (#978), as does its context menu.
     private var suggestionList: some View {
         VStack(spacing: 0) {
             ForEach(Array(suggestions.enumerated()), id: \.element.iban) { i, r in
-                Button { pick(r) } label: {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(r.name).appFont(.body).lineLimit(1)
-                        Text(formatIBAN(r.iban)).appFont(.caption, design: .monospaced)
-                            .foregroundStyle(Theme.secondary).lineLimit(1)
+                HStack(spacing: 4) {
+                    Button { pick(r) } label: {
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(r.name).appFont(.body).lineLimit(1).sensitive()
+                                Spacer(minLength: 8)
+                                Text("zuletzt \(DateText.medium(r.lastUsed))").appFont(.caption)
+                                    .foregroundStyle(Theme.tertiary).fixedSize()
+                            }
+                            RecipientIBANLine(iban: r.iban)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 8).padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .contentShape(Rectangle())
-                    .background(RoundedRectangle(cornerRadius: 6).fill(i == highlighted ? Theme.selection : .clear))
+                    .buttonStyle(.plain)
+                    Button { hide(r) } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.tertiary)
+                            .padding(.trailing, 8).padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nicht mehr vorschlagen")
+                    .opacity(i == highlighted ? 1 : 0)
+                    .disabled(i != highlighted)
+                    .accessibilityHidden(true)
                 }
-                .buttonStyle(.plain)
+                .background(RoundedRectangle(cornerRadius: 6).fill(i == highlighted ? Theme.selection : .clear))
                 .onHover { if $0 { highlighted = i } }
+                .contextMenu {
+                    Button("Nicht mehr vorschlagen", systemImage: "eye.slash") { hide(r) }
+                }
+                .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(i == highlighted ? .isSelected : [])
-                .sensitive()
+                .accessibilityAction { pick(r) }
+                .accessibilityAction(named: "Nicht mehr vorschlagen") { hide(r) }
             }
         }
         .padding(4)
         .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
         .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
-        .onChange(of: suggestions.map(\.iban)) { _, _ in highlighted = nil }
     }
 
     /// Known recipients for what was typed: only once something is typed, one
-    /// row per IBAN (the most used spelling), at most five.
+    /// row per IBAN (the most used spelling), the most recently used first, at most five.
     private func recipients(_ query: String) -> [KnownRecipient] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        var seen = Set<String>()
-        return model.suggestRecipients(query).filter { seen.insert($0.iban).inserted }.prefix(5).map { $0 }
+        return model.suggestRecipients(query)
+    }
+
+    /// The list for the name as typed: only while the field has the focus and the name was not
+    /// just taken from the list.
+    private func refreshSuggestions() {
+        let name = model.transferDraft.name
+        suggestions = nameFocused && name != pickedName ? recipients(name) : []
+    }
+
+    /// "Nicht mehr vorschlagen": the IBAN leaves the list at once, the highlight keeps its
+    /// place; "Empfänger" shows it again.
+    private func hide(_ r: KnownRecipient) {
+        let before = suggestions.map(\.iban), place = highlighted
+        model.setRecipientHidden(r.iban, true)
+        refreshSuggestions()
+        if suggestions.map(\.iban) != before { keepHighlight = place }
     }
 
     private func moveHighlight(_ step: Int) -> KeyPress.Result {
@@ -576,6 +632,7 @@ struct TransferSheetView: View {
                     amountHeadline
                     summaryRow("An", d.name)
                     summaryRow("IBAN", d.iban)
+                    if let recipientBank { summaryRow("Bank", recipientBank) }
                     if !bicText.isEmpty { summaryRow("BIC", bicText.uppercased()) }
                     summaryRow("Zweck", d.purpose.isEmpty ? "–" : d.purpose)
                     summaryRow("Von", account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "–")
@@ -641,13 +698,14 @@ struct TransferSheetView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
             }
-            // Same rows and labels as the form, without headings (#881).
+            // Same rows and labels as the form (the bank as a row of its own), without headings (#881).
             Section {
                 reviewRow("Von", account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "–")
             }
             Section {
                 reviewRow("Empfänger", d.name)
                 reviewRow("IBAN", d.iban, monospaced: true)
+                if let recipientBank { reviewRow("Bank", recipientBank) }
                 if !bicText.isEmpty { reviewRow("BIC", bicText.uppercased(), monospaced: true) }
             }
             Section {
@@ -817,6 +875,55 @@ struct SourceAccountPicker: View {
     }
 }
 
+/// The recipient's bank under the IBAN field of the transfer, standing order and
+/// mandate forms (#1563), from the Bundesbank BLZ list (German IBANs only). One line,
+/// laid out also without a bank: the form must not jump (nor the fitted transfer
+/// sheet grow) while the IBAN is typed (#881).
+struct IBANBankLine: View {
+    let iban: String
+
+    var body: some View {
+        let bank = bankNameForIban(iban: iban)
+        Text(bank ?? " ")
+            .appFont(.caption)
+            .foregroundStyle(Theme.secondary)
+            .lineLimit(1)
+            .help(bank ?? "")
+            .sensitive() // follows from the IBAN, often names the city
+            .opacity(bank == nil ? 0 : 1)
+            .accessibilityHidden(bank == nil)
+    }
+}
+
+extension View {
+    /// An IBAN field with its `IBANBankLine` under it, on the edge the field's text starts from.
+    func withBankLine(_ iban: String, alignment: Alignment = .trailing) -> some View {
+        VStack(spacing: 4) {
+            self
+            IBANBankLine(iban: iban).frame(maxWidth: .infinity, alignment: alignment)
+        }
+    }
+}
+
+/// A known recipient's IBAN with its bank (#1563), under the name in the form's
+/// suggestions and in "Empfänger verwalten": tells apart several IBANs of one name.
+/// The IBAN never truncates, the bank does.
+struct RecipientIBANLine: View {
+    let iban: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(formatIBAN(iban)).appFont(.caption, design: .monospaced).fixedSize()
+            if let bank = bankNameForIban(iban: iban) {
+                Text(verbatim: " · \(bank)").appFont(.caption)
+            }
+        }
+        .foregroundStyle(Theme.secondary)
+        .lineLimit(1)
+        .sensitive()
+    }
+}
+
 private extension View {
     /// A text field of the transfer form. macOS: bezeled, so an empty field
     /// reads as a field (#881); iOS keeps the inline trailing style.
@@ -828,6 +935,13 @@ private extension View {
         #endif
     }
 }
+
+/// The edge a `transferField`'s text starts from (for the bank line under it).
+#if os(macOS)
+private let transferFieldEdge = Alignment.leading
+#else
+private let transferFieldEdge = Alignment.trailing
+#endif
 
 /// Where the recipient name field is, for the suggestion list over the form.
 private struct NameFieldBounds: PreferenceKey {

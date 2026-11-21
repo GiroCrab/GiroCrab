@@ -96,6 +96,24 @@ ScrollView {
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Vergrößert die Schrift in der ganzen App. Auch im Menü Darstellung mit %1 / %2 / %3.")
                              .arg(Fmt.keys("Strg+Plus")).arg(Fmt.keys("Strg+Minus")).arg(Fmt.keys("Strg+0")) }
+            // SettingsView.swift › Toggle("Privatmodus") + Picker("Im Privatmodus ausblenden") (#719)
+            CheckBox {
+                text: qsTr("Privatmodus")
+                checked: PrivacyMode.enabled
+                onToggled: PrivacyMode.setEnabled(checked)
+            }
+            SettingsFormRow {
+                label: qsTr("Im Privatmodus ausblenden")
+                AppComboBox {
+                    Layout.preferredWidth: 260 * Theme.textScale
+                    model: PrivacyMode.scopes
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: PrivacyMode.scopes.findIndex(s => s.id === PrivacyMode.scope)
+                    onActivated: PrivacyMode.setScope(currentValue)
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Blendet Beträge, Namen, Kontonummern und Verwendungszwecke aus, wenn du die App jemandem zeigst. Auf Wunsch nur die Beträge.") }
             CheckBox {
                 text: qsTr("Auswertungen in der Übersicht anzeigen")
                 checked: AppModel.showStatistics
@@ -152,21 +170,11 @@ ScrollView {
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Nur bei leerem Formular. Der Inhalt wird nur auf diesem Gerät gelesen, nie gespeichert oder protokolliert. Felder werden erst nach Bestätigung im Hinweis ausgefüllt.") }
         }
-        // SettingsView.swift › BalanceChartSettingsSection (GitHub #203)
+        // SettingsView.swift › BalanceChartSettingsSection (GitHub #203): the bar width; the chart
+        // type itself is chosen below the chart (#634)
         SettingsFormSection {
             title: qsTr("Saldoverlauf")
             SettingsFormRow {
-                label: qsTr("Darstellung")
-                AppComboBox {
-                    Layout.preferredWidth: 200 * Theme.textScale
-                    model: BalanceChartPrefs.styles
-                    textRole: "title"; valueRole: "id"
-                    currentIndex: BalanceChartPrefs.styles.findIndex(s => s.id === BalanceChartPrefs.style)
-                    onActivated: BalanceChartPrefs.setStyle(currentValue)
-                }
-            }
-            SettingsFormRow {
-                visible: BalanceChartPrefs.style === "bars"
                 label: qsTr("Balken je")
                 AppComboBox {
                     Layout.preferredWidth: 200 * Theme.textScale
@@ -177,7 +185,7 @@ ScrollView {
                 }
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
-                   text: qsTr("Balken zeigen den durchschnittlichen Saldo je Monat (bei kurzen Zeiträumen je Tag, ab sechs Jahren je Jahr) und machen Trends und Jahre vergleichbar. Gestrichelte Linien markieren den Jahreswechsel. Auch per Rechtsklick auf den Saldoverlauf umschaltbar.") }
+                   text: qsTr("Diagrammart (Linie, Balken, Kreis) und Balkenbreite wählen Sie auch direkt unter dem Diagramm. Balken zeigen den durchschnittlichen Saldo je Monat (bei kurzen Zeiträumen je Tag, ab sechs Jahren je Jahr) und machen Trends und Jahre vergleichbar. Gestrichelte Linien markieren den Jahreswechsel.") }
         }
         // SettingsView.swift › MerchantLogoSettingsSection (GitHub #33); needs an open vault
         SettingsFormSection {
@@ -199,6 +207,27 @@ ScrollView {
                 text: qsTr("Logo-Cache leeren")
                 onClicked: MerchantLogos.clearLogoCache()
             }
+        }
+        // AutomationSettings.swift › AutoSyncSettingsSection (#546): kept outside the vault (QSettings
+        // `[autoSync] hours`), so it is active again after a relaunch. Logic: AutoSync.qml
+        SettingsFormSection {
+            title: qsTr("Abruf")
+            SettingsFormRow {
+                label: qsTr("Automatischer Abruf")
+                AppComboBox {
+                    readonly property int current: AutoSync.selection
+                    // a value set elsewhere stays selectable
+                    readonly property var options: AutoSync.hourOptions.indexOf(current) >= 0
+                        ? AutoSync.hourOptions : AutoSync.hourOptions.concat([current])
+                    Layout.preferredWidth: 200 * Theme.textScale
+                    model: options.map(h => ({ id: h, title: AutoSync.label(h) }))
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: options.indexOf(current)
+                    onActivated: AutoSync.setHours(currentValue)
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Ruft die Kontostände im gewählten Abstand ab, solange GiroCrab läuft und der Tresor entsperrt ist. Bei gesperrtem Tresor wird der Abruf übersprungen und nach dem Entsperren nachgeholt. Es werden nur Zugänge mit gespeicherter PIN oder gültiger Freigabe abgerufen, nie mit einem Anmeldedialog.") }
         }
         Item { implicitHeight: 8 }
     }

@@ -13,7 +13,11 @@ struct MandateEditorSheet: View {
             Form {
                 Section {
                     TextField("Name", text: $draft.name)
-                    TextField("IBAN", text: $draft.iban)
+                    LabeledContent("IBAN") {
+                        TextField("IBAN", text: $draft.iban, prompt: Text("DE00 …"))
+                            .labelsHidden().multilineTextAlignment(.trailing)
+                            .withBankLine(draft.iban)
+                    }
                     TextField("BIC (optional)", text: $draft.bic)
                 } header: { Text("Zahlungspflichtiger").appSectionHeader() }
                 Section {

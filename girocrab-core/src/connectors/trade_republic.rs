@@ -26,15 +26,15 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::cookie::{CookieStore, Jar};
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, ORIGIN, REFERER, SET_COOKIE, USER_AGENT};
+use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, ORIGIN, REFERER, SET_COOKIE, USER_AGENT};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use super::{
-    BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, FetchResult, Phase,
-    RemoteAccount, RemoteHolding, RemoteTransaction, BROWSER_UA,
+    BROWSER_UA, BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext,
+    FetchResult, Phase, RemoteAccount, RemoteHolding, RemoteTransaction,
 };
 use crate::asset_classification::{AssetClass, ClassificationValues, InstrumentKind};
 use crate::error::{CoreError, CoreResult};
@@ -151,11 +151,7 @@ fn parse_decimal_text(text: &str) -> Option<f64> {
             let thousands = tail.len() == 4
                 && head.trim_start_matches('-').len() <= 3
                 && !head.trim_start_matches('-').contains('.');
-            if thousands {
-                t.replace('.', "")
-            } else {
-                t
-            }
+            if thousands { t.replace('.', "") } else { t }
         }
         (None, None) => t,
     };
@@ -258,6 +254,119 @@ struct TradeRow {
     amount_cents: i64,
     currency: String,
     icon: String,
+}
+
+struct DocumentCandidate {
+    id: String,
+    date: String,
+    title: String,
+    event_context: String,
+}
+
+impl DocumentCandidate {
+    fn from_timeline_item(item: &Value, id: String, date: String) -> Self {
+        let subtitle = item["subtitle"].as_str().unwrap_or_default();
+        let event_type = item["eventType"].as_str().unwrap_or_default();
+        Self {
+            id,
+            date,
+            title: item["title"].as_str().unwrap_or_default().into(),
+            event_context: format!("{subtitle} {event_type}").to_lowercase(),
+        }
+    }
+
+    fn classify(&self, title: &str) -> (&'static str, &'static str) {
+        let lower = title.to_lowercase();
+        let doc_type = refine_document_type(
+            crate::documents::type_from_title(&lower),
+            &self.event_context,
+        );
+        let account_hint =
+            if doc_type != "steuer" && matches!(lower.as_str(), "dokumente" | "dokument") {
+                &self.event_context
+            } else {
+                &lower
+            };
+        let account_ref = document_account_ref(account_hint, doc_type).unwrap_or("tr:cash");
+        (doc_type, account_ref)
+    }
+}
+
+/// The account a Trade Republic document belongs to (`tr:depot` or `tr:cash`), decided by what the
+/// document is, never by the way it arrived (a booking's detail screen or the activity list): a
+/// confirmation or credit for a security (trade, savings plan, dividend, corporate action, the
+/// depot statement) belongs to the depot and documents a booking of the settlement account; account
+/// statements, interest and fees belong to the settlement account. `None`: nothing says so, the
+/// document stays where it is (tax papers, general information, an older document just called
+/// "Dokumente" whose event is not known).
+///
+/// `head` is the lower-cased document title or the timeline context for a generic title.
+fn document_account_ref(head: &str, doc_type: &str) -> Option<&'static str> {
+    if doc_type == "kontoauszug" {
+        return Some(if head.contains("depot") {
+            "tr:depot"
+        } else {
+            "tr:cash"
+        });
+    }
+    // interest and fees of the settlement account (a dividend is no interest)
+    if !head.contains("dividende")
+        && (["zins", "gebühr", "kontoführung"]
+            .iter()
+            .any(|k| head.contains(k))
+            || head
+                .split_whitespace()
+                .any(|word| matches!(word, "interest" | "fee" | "fees") || word.ends_with("_fee")))
+    {
+        return Some("tr:cash");
+    }
+    if is_securities_notice(head) || doc_type == "abrechnung" {
+        return Some("tr:depot");
+    }
+    None
+}
+
+/// Trade Republic names older documents just "Dokumente": what they are follows from the event of
+/// the timeline entry they belong to (a dividend, a savings plan execution, a tax booking).
+fn refine_document_type(doc_type: &'static str, event_text: &str) -> &'static str {
+    if doc_type != "beleg" || event_text.is_empty() {
+        return doc_type;
+    }
+    let has = |k: &str| event_text.contains(k);
+    if has("steuer") || has("tax") {
+        "steuer"
+    } else if has("dividend")
+        || has("ausschüttung")
+        || has("sparplan")
+        || has("savings_plan")
+        || has("kauf")
+        || has("trade")
+        || has("order")
+    {
+        "abrechnung"
+    } else {
+        doc_type
+    }
+}
+
+/// An account-level notice about a security (dividend election, corporate action):
+/// it belongs to the depot, not to the settlement account.
+fn is_securities_notice(lower_title: &str) -> bool {
+    [
+        "dividende",
+        "wahlweise",
+        "kapitalmaßnahme",
+        "corporate_action",
+        "split",
+        "umtausch",
+        "spin-off",
+        "fusion",
+        "hauptversammlung",
+        "rückkaufangebot",
+        "prospekt",
+    ]
+    .iter()
+    .any(|k| lower_title.contains(k))
 }
 
 fn is_trade_kind(kind_text: &str) -> bool {
@@ -819,7 +928,7 @@ where
             Ok(None) => {
                 return Err(transport(CoreError::Network {
                     message: trf("WebSocket während „{0}“ geschlossen.", &[&kind]),
-                }))
+                }));
             }
             Ok(Some(Err(e))) => return Err(transport(TradeRepublicConnector::ws_err(e))),
             Ok(Some(Ok(msg))) => msg,
@@ -1067,6 +1176,19 @@ impl TradeRepublicConnector {
         if let Some(c) = &self.client {
             return Ok(c.clone());
         }
+        let c = self.build_client(super::same_host_redirects())?;
+        self.client = Some(c.clone());
+        Ok(c)
+    }
+
+    /// Client for document downloads (GET without credentials in the body). Presigned
+    /// document URLs may redirect to a storage host, so redirects to other hosts are
+    /// followed here; reqwest drops the manual Cookie header on a cross-host redirect.
+    fn document_client(&self) -> CoreResult<reqwest::Client> {
+        self.build_client(reqwest::redirect::Policy::default())
+    }
+
+    fn build_client(&self, redirect: reqwest::redirect::Policy) -> CoreResult<reqwest::Client> {
         let mut h = HeaderMap::new();
         h.insert(USER_AGENT, HeaderValue::from_static(BROWSER_UA));
         h.insert(ORIGIN, HeaderValue::from_static(APP_ORIGIN));
@@ -1083,8 +1205,9 @@ impl TradeRepublicConnector {
             .cookie_provider(self.jar.clone())
             .default_headers(h)
             .timeout(std::time::Duration::from_secs(30))
+            .redirect(redirect)
+            .referer(false)
             .build()?;
-        self.client = Some(c.clone());
         Ok(c)
     }
 
@@ -1103,8 +1226,12 @@ impl TradeRepublicConnector {
 
     fn http_error(step: &str, status: u16, body: &str) -> CoreError {
         let hint = match status {
-            403 | 405 => tr(" – AWS-WAF-Schutz von Trade Republic. Bitte „Im Browser-Fenster anmelden“ verwenden."),
-            426 => tr(" – CLIENT_VERSION_OUTDATED: Trade Republic verlangt einen neueren Client. Bitte „Im Browser-Fenster anmelden“ verwenden."),
+            403 | 405 => tr(
+                " – AWS-WAF-Schutz von Trade Republic. Bitte „Im Browser-Fenster anmelden“ verwenden.",
+            ),
+            426 => tr(
+                " – CLIENT_VERSION_OUTDATED: Trade Republic verlangt einen neueren Client. Bitte „Im Browser-Fenster anmelden“ verwenden.",
+            ),
             401 => tr(" – PIN, Code oder Sitzung ungültig."),
             429 => tr(" – zu viele Versuche, bitte etwas warten."),
             _ => "",
@@ -1163,16 +1290,22 @@ impl TradeRepublicConnector {
 /// refused by Trade Republic.
 fn browser_login_message(expired: bool) -> &'static str {
     if expired {
-        tr("Die Trade-Republic-Sitzung ist abgelaufen. Bitte im Browser-Fenster neu anmelden – die neue Sitzung wird danach gespeichert.")
+        tr(
+            "Die Trade-Republic-Sitzung ist abgelaufen. Bitte im Browser-Fenster neu anmelden – die neue Sitzung wird danach gespeichert.",
+        )
     } else {
-        tr("Trade Republic schützt die Anmeldung mit AWS WAF. Bitte im Browser-Fenster anmelden – die Sitzung wird danach gespeichert und wiederverwendet.")
+        tr(
+            "Trade Republic schützt die Anmeldung mit AWS WAF. Bitte im Browser-Fenster anmelden – die Sitzung wird danach gespeichert und wiederverwendet.",
+        )
     }
 }
 
 /// PIN needed for a direct login. `expired`: as above.
 fn pin_prompt_message(expired: bool) -> &'static str {
     if expired {
-        tr("Die Trade-Republic-Sitzung ist abgelaufen. Bitte die 4-stellige PIN eingeben (oder „Im Browser-Fenster anmelden“).")
+        tr(
+            "Die Trade-Republic-Sitzung ist abgelaufen. Bitte die 4-stellige PIN eingeben (oder „Im Browser-Fenster anmelden“).",
+        )
     } else {
         tr("Bitte die 4-stellige Trade-Republic-PIN eingeben (oder „Im Browser-Fenster anmelden“).")
     }
@@ -1206,7 +1339,12 @@ impl BankConnector for TradeRepublicConnector {
             });
         }
         if self.session.phone.len() < 8 {
-            return Err(CoreError::InvalidInput { message: trf("Telefonnummer fehlt oder ist ungültig („{0}“). Bitte z. B. +4915112345678 eintragen.", &[&ctx.login_name]) });
+            return Err(CoreError::InvalidInput {
+                message: trf(
+                    "Telefonnummer fehlt oder ist ungültig („{0}“). Bitte z. B. +4915112345678 eintragen.",
+                    &[&ctx.login_name],
+                ),
+            });
         }
         if ctx.secret.is_empty() {
             return Err(CoreError::Authentication {
@@ -1307,10 +1445,10 @@ impl BankConnector for TradeRepublicConnector {
         }
         // HTTP 200 with an EMPTY body (or {}) is normal: the session comes as Set-Cookie.
         self.session.cookies = merge_cookies(self.session.cookies.expose(), &set).into();
-        if let Ok(v) = serde_json::from_str::<Value>(&text) {
-            if let Some(t) = v["sessionToken"].as_str() {
-                self.session.session_token = t.into();
-            }
+        if let Ok(v) = serde_json::from_str::<Value>(&text)
+            && let Some(t) = v["sessionToken"].as_str()
+        {
+            self.session.session_token = t.into();
         }
         if self.session.cookies.is_empty() {
             let url: url::Url = API.parse().map_err(|e| CoreError::Protocol {
@@ -1441,7 +1579,7 @@ impl BankConnector for TradeRepublicConnector {
 
         let mut cursor: Option<String> = None;
         let mut sub_id = 2u32;
-        let mut doc_candidates: Vec<(String, String, String)> = Vec::new();
+        let mut doc_candidates = Vec::new();
         let mut trade_rows: Vec<TradeRow> = Vec::new();
         // After document retrieval was switched on again: reach back to the day it was switched off.
         let cutoff = ctx
@@ -1502,10 +1640,10 @@ impl BankConnector for TradeRepublicConnector {
                     .iter()
                     .any(|k| kind_text.contains(k))
                 {
-                    doc_candidates.push((
+                    doc_candidates.push(DocumentCandidate::from_timeline_item(
+                        &item,
                         item_id.clone(),
                         date.clone(),
-                        item["title"].as_str().unwrap_or_default().to_string(),
                     ));
                 }
                 if !item_id.is_empty() && is_trade_kind(&kind_text) {
@@ -1554,11 +1692,12 @@ impl BankConnector for TradeRepublicConnector {
             doc_candidates.clear();
         }
         // --- Beleg-Abruf: timelineDetailV2 -> "Dokumente" section -> PDF download
-        let client = self.client()?;
+        let client = self.document_client()?;
         let mut details: std::collections::HashMap<String, Value> = Default::default();
         // Documents not looked at (more than one pass takes, a failed request): a catch-up goes on.
         let mut docs_incomplete = doc_candidates.len() > 40;
-        for (item_id, date, title) in doc_candidates.into_iter().take(40) {
+        for candidate in doc_candidates.into_iter().take(40) {
+            let item_id = &candidate.id;
             sub_id += 2;
             let Ok(detail) = request(
                 &mut ws,
@@ -1616,24 +1755,17 @@ impl BankConnector for TradeRepublicConnector {
                         continue;
                     }
                     let doc_title = d["title"].as_str().unwrap_or("Dokument").to_string();
-                    let lower = doc_title.to_lowercase();
-                    let doc_type = if lower.contains("steuer") {
-                        "steuer"
-                    } else if lower.contains("abrechnung") || lower.contains("bestätigung") {
-                        "abrechnung"
-                    } else {
-                        "beleg"
-                    };
+                    let (doc_type, account_ref) = candidate.classify(&doc_title);
                     let doc_date = d["detail"]
                         .as_str()
                         .and_then(|s| crate::documents::dates_in(s).into_iter().next())
-                        .unwrap_or_else(|| date.clone());
+                        .unwrap_or_else(|| candidate.date.clone());
                     // strip the presigned query part for a stable de-dup key
                     let stable = url.split('?').next().unwrap_or(&url).to_string();
                     out.documents.push(crate::documents::RemoteDocument {
-                        account_ref: "tr:cash".into(),
+                        account_ref: account_ref.into(),
                         booking_external_id: Some(item_id.clone()),
-                        title: format!("{doc_title} – {title}"),
+                        title: format!("{doc_title} – {}", candidate.title),
                         doc_type: doc_type.into(),
                         mime_type: "application/pdf".into(),
                         file_name: format!("{}_{}.pdf", doc_date, doc_title.replace(' ', "_")),
@@ -1643,7 +1775,7 @@ impl BankConnector for TradeRepublicConnector {
                     });
                 }
             }
-            self.session.doc_items.push(item_id);
+            self.session.doc_items.push(candidate.id);
         }
         out.documents_incomplete = docs_incomplete;
         // --- Wertpapierseite (#314): units, price, fees and taxes of the newest
@@ -1681,39 +1813,54 @@ impl BankConnector for TradeRepublicConnector {
             }
         }
         let portfolio = fetch_portfolio(&mut ws, &mut sub_id, token, &trade_names).await;
-        let has_depot = portfolio.as_ref().is_some_and(|h| !h.is_empty())
-            || !out.security_transactions.is_empty()
-            || ctx.since_by_account.contains_key(DEPOT_REF);
-        if has_depot {
-            let balance_cents = match portfolio {
-                Some(holdings) => {
-                    let total = holdings.iter().map(|h| h.holding.value_cents).sum();
-                    out.holdings = holdings;
-                    out.holdings_fetched.push(DEPOT_REF.into());
-                    total
-                }
-                None => {
-                    // not read: the stored positions and the depot value stay
-                    out.balances_unknown.push(DEPOT_REF.into());
-                    0
-                }
-            };
-            out.accounts.push(RemoteAccount {
-                external_ref: DEPOT_REF.into(),
-                name: "Depot".into(),
-                owner: String::new(),
-                iban: String::new(),
-                // no phone number here: it would show up as an account number
-                account_number: String::new(),
-                currency: "EUR".into(),
-                kind: AccountKind::Brokerage,
-                balance_cents,
-                balance_date: super::today(),
-            });
-        }
+        add_depot_account(
+            &mut out,
+            portfolio,
+            ctx.since_by_account.contains_key(DEPOT_REF),
+        );
         let _ = ws.close(None).await;
         out.state = self.state();
         Ok(out)
+    }
+}
+
+fn add_depot_account(
+    out: &mut FetchResult,
+    portfolio: Option<Vec<RemoteHolding>>,
+    known_depot: bool,
+) {
+    let has_depot = portfolio.as_ref().is_some_and(|h| !h.is_empty())
+        || !out.security_transactions.is_empty()
+        || known_depot
+        // A document filed at the depot is evidence of the account even if the bank did
+        // not return positions or security transactions on this fetch.
+        || out.documents.iter().any(|d| d.account_ref == DEPOT_REF);
+    if has_depot {
+        let balance_cents = match portfolio {
+            Some(holdings) => {
+                let total = holdings.iter().map(|h| h.holding.value_cents).sum();
+                out.holdings = holdings;
+                out.holdings_fetched.push(DEPOT_REF.into());
+                total
+            }
+            None => {
+                // not read: the stored positions and the depot value stay
+                out.balances_unknown.push(DEPOT_REF.into());
+                0
+            }
+        };
+        out.accounts.push(RemoteAccount {
+            external_ref: DEPOT_REF.into(),
+            name: "Depot".into(),
+            owner: String::new(),
+            iban: String::new(),
+            // no phone number here: it would show up as an account number
+            account_number: String::new(),
+            currency: "EUR".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents,
+            balance_date: super::today(),
+        });
     }
 }
 
@@ -1730,6 +1877,117 @@ fn is_trade_republic_host(url: &reqwest::Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_document_uses_the_event_to_determine_its_account() {
+        for (event, expected) in [
+            ("kapitalmaßnahme corporate_action apple", DEPOT_REF),
+            ("corporate_action apple", DEPOT_REF),
+            ("kauf trade apple", DEPOT_REF),
+            ("zinsen interest", "tr:cash"),
+            ("gebühren", "tr:cash"),
+            ("order fee", "tr:cash"),
+            ("steuer dividende apple", "tr:cash"),
+        ] {
+            let candidate = DocumentCandidate {
+                id: "evt-1".into(),
+                date: "2026-11-21".into(),
+                title: "Apple".into(),
+                event_context: event.into(),
+            };
+            assert_eq!(candidate.classify("Dokumente").1, expected, "{event}");
+        }
+    }
+
+    #[test]
+    fn an_instrument_name_cannot_route_a_purchase_to_the_cash_account() {
+        for title in ["Interest Rate Hedged Bond ETF", "Deka Zins Plus"] {
+            let candidate = DocumentCandidate::from_timeline_item(
+                &json!({"title": title, "subtitle": "Kauf", "eventType": "trade"}),
+                "evt-1".into(),
+                "2026-11-21".into(),
+            );
+            assert_eq!(candidate.title, title);
+            assert_eq!(candidate.classify("Dokumente"), ("abrechnung", DEPOT_REF));
+        }
+    }
+
+    #[test]
+    fn first_fetch_files_a_generic_trade_pdf_at_the_depot_without_a_portfolio() {
+        use super::super::store_fetch;
+        use crate::{models::ConnectorKind, vault::Vault};
+
+        let dir = crate::test_support::TempDir::new("girocrab-tr-document-import");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().into_owned(),
+            vec![3u8; 32],
+        )
+        .unwrap();
+        let kind = ConnectorKind::TradeRepublic;
+        let conn = v
+            .add_bank_connection(kind, String::new(), "login".into())
+            .unwrap();
+        let cash = RemoteAccount {
+            external_ref: "tr:cash".into(),
+            name: "Verrechnungskonto".into(),
+            kind: AccountKind::Checking,
+            currency: "EUR".into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: String::new(),
+            balance_cents: 0,
+            balance_date: "2025-12-04".into(),
+        };
+        let candidate = DocumentCandidate {
+            id: "trade-1".into(),
+            date: "2025-12-04".into(),
+            title: "Apple".into(),
+            event_context: "kauf trade".into(),
+        };
+        let (doc_type, account_ref) = candidate.classify("Dokumente");
+        assert_eq!((doc_type, account_ref), ("abrechnung", DEPOT_REF));
+        let transaction = RemoteTransaction {
+            account_ref: "tr:cash".into(),
+            external_id: "trade-1".into(),
+            booking_date: "2025-12-04".into(),
+            value_date: "2025-12-04".into(),
+            amount_cents: -100_00,
+            currency: "EUR".into(),
+            ..Default::default()
+        };
+        let mut fetched = FetchResult {
+            accounts: vec![cash],
+            transactions: vec![transaction],
+            documents: vec![crate::documents::RemoteDocument {
+                account_ref: account_ref.into(),
+                booking_external_id: Some(candidate.id),
+                doc_type: doc_type.into(),
+                title: "Dokumente – Apple".into(),
+                mime_type: "application/pdf".into(),
+                file_name: "beleg.pdf".into(),
+                source_url: "https://example.invalid/beleg.pdf".into(),
+                date: candidate.date,
+                bytes: crate::documents::simple_pdf(&["Wertpapierabrechnung".into()]),
+            }],
+            ..Default::default()
+        };
+        add_depot_account(&mut fetched, None, false);
+        assert_eq!(fetched.balances_unknown, [DEPOT_REF]);
+        assert!(fetched.holdings_fetched.is_empty());
+        store_fetch(&v, kind, conn, fetched).unwrap();
+        let refs: (String, String) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT depot.external_ref, cash.external_ref
+               FROM booking_documents d JOIN accounts depot ON depot.id = d.account_id
+               JOIN transactions t ON t.id = d.booking_id JOIN accounts cash ON cash.id = t.account_id",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(refs, ("tr:depot".into(), "tr:cash".into()));
+    }
 
     #[test]
     fn stored_session_keeps_its_json_shape() {
@@ -1762,6 +2020,18 @@ mod tests {
         assert_eq!(saved.doc_items.len(), MAX_DOC_ITEMS);
         assert_eq!(saved.doc_items.first().unwrap(), "1");
         assert_eq!(saved.doc_items.last().unwrap(), &MAX_DOC_ITEMS.to_string());
+    }
+
+    #[tokio::test]
+    async fn login_client_does_not_follow_redirects_to_another_origin() {
+        let client = TradeRepublicConnector::new().client().unwrap();
+        crate::connectors::tests::redirects::assert_no_cross_origin_replay(&client).await;
+    }
+
+    #[tokio::test]
+    async fn document_client_follows_redirects_to_another_origin() {
+        let client = TradeRepublicConnector::new().document_client().unwrap();
+        crate::connectors::tests::redirects::assert_follows_cross_origin_get(&client).await;
     }
 
     fn detail(extra_rows: serde_json::Value) -> Value {

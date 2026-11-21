@@ -11,18 +11,23 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `girocrab-core/src/connectors/` – `mod.rs` (submodule decls + shared HTTP helpers), `types.rs` (`BankConnector`
   trait + DTOs), `catalog.rs` (`descriptor`, `make_connector*`), `bank_directory.rs` (search routing + curated PSD2 catalog),
   `sync_session.rs` / `transfer_session.rs` (FFI state machines), `persist.rs` (`impl Vault`: `store_fetch`,
-  `begin_sync`/`begin_transfer`), tests in `connectors/tests/`; connector impls alongside: `fints/`, `comdirect.rs`,
+  `begin_sync`/`begin_transfer`), `html.rs` (helpers for connectors that read web pages), tests in `connectors/tests/`; connector impls alongside: `fints/`, `comdirect.rs`,
   `trade_republic.rs`, `enable_banking.rs` (`needs_lean_request` 90d cap for Revolut/Spuerkeess/N26), `paypal.rs`
 - `girocrab-core/src/importers/` – one-off file/web-capture importers: `moneymoney_db.rs` (encrypted SQLCipher database import),
   `moneymoney_import.rs` (CSV/XML/CAMT/MT940 exports), `portal_import.rs` (Amex/Amazon Visa web + CSV/PDF import),
   `amazon_orders.rs`
 - `girocrab-core/src/tags.rs` – booking tags (#228): schema step, `impl Vault` API, booking tag loading; `tags/merge.rs` (iCloud merge of tags and tag sets), `tags/tests.rs`
-- `girocrab-core/src/merchants.rs` – merchant matching
+- `girocrab-core/src/merchants.rs` – merchant matching (`MerchantRules`: the bundled table with the user's changes, per vault);
+  `merchants/custom.rs` – the user's merchant settings (#1373): master switch, switched-off bundled merchants, own merchants, iCloud merge
+- `girocrab-core/src/recipients.rs` – known recipients of the transfer form (one per IBAN, cached), hidden IBANs + merge (#978)
 - `girocrab-core/src/documents.rs` – booking documents / PDF text extraction
 - `girocrab-core/src/text.rs` – text helpers (mojibake repair etc.)
 - `girocrab-core/src/local_api.rs` + `local_api/server.rs` – read-only local interface for external analysis (#136): queries, scope/token, Unix socket server (`docs/local-api.md`)
 - `girocrab-mcp/` – MCP stdio adapter for that socket (own crate, no core dependency outside tests; architecture, bundling, local testing: `docs/local-api-entwicklung.md`)
+- [`docs/adr/`](docs/adr/README.md) – architecture decisions. Read the relevant ADR before changing architecture.
+  Follow accepted decisions and their successors. Revisit rejected or superseded options only with new evidence or arguments.
 - `girocrab-core/src/report_sanitizer.rs` – scrubs log/diagnostics text for public bug reports (`sanitize_report_text`)
+- `girocrab-core/src/sys.rs` – the only `unsafe` code (libc wrappers); exceptions to `scripts/lint-no-obfuscation.sh` (CI, #948) go in that script.
 - `GiroCrabApp/Sources/GiroCrabUI/PrivacyRedaction.swift` – `.sensitive()` modifier; `BugReport.swift` / `BugReportUI.swift` – Hilfe › Problem melden
 - `GiroCrabApp/Sources/GiroCrabUI/AppModel.swift` – app state (all stored instance properties; static members stay in their feature file), init, vault lifecycle,
   `vaultOffMain`/`pinVault`; features live in `AppModel+<Feature>.swift` extensions: `Loading` (reloads, booking
@@ -141,7 +146,8 @@ Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captur
   `.sensitive(.amounts)` on money and quantities: amounts, balances, sums, shares, chart axis values and readouts, loan
   figures; text mixing both gets `.sensitive([.personal, .amounts])` (a requested `.personal` redaction hides amounts too,
   `ReportRedaction.effective`). `.sensitive(.labels)` for category, group, budget and security names
-  (hidden only on request). Dates, bank/connector names, logos of known brands and error texts stay visible.
+  (hidden only on request). Dates, bank/connector names, logos of known brands and error texts stay visible;
+  a recipient's bank looked up from the IBAN is personal (it narrows down the IBAN).
 - The modifier does not draw the content (opacity 0) and puts a soft, fixed smudge in its place (gradients, no `.blur`),
   so it also covers AppKit/UIKit-backed views (TextEditor, PDFView). Never use `.redacted(reason:)`, `.blur` or a plain
   overlay for this. In a parameter string use `redaction.masking(text, .amounts)` for an amount.
@@ -243,10 +249,12 @@ whenever `README.md`, `docs/screenshots/**`, `docs/assets/**` or a release chang
 - Check the TestFlight version/build before running; a build number must be higher than any already uploaded for that version.
 
 ## Data tables
-`girocrab-core/data/*.tsv` are embedded at compile time and parsed by `src/data_tables.rs`: `bic_directory.tsv` (BIC),
+`girocrab-core/data/*.tsv` are embedded at compile time and parsed by `src/data_tables.rs`: `bic_directory.tsv` (BIC, bank name),
 `fints_directory.tsv` (FinTS endpoints), `merchants.tsv` (merchant dictionary). Never read them whole; `grep -n` a key instead.
 
 ## Bank-Konnektoren: End-to-End-Pflicht (kein reiner Core-Merge)
+- Bei neuen Konnektoren oder Änderungen an ihrem Aufbau den [Entwurf für ADR 0001](docs/adr/0001-connector-architecture.md) lesen.
+  Die Konnektor-Vorlage dient als Ausgangspunkt. Bestehende Konnektoren bilden auch Besonderheiten ihrer Bank ab.
 - Ein neuer Bank- oder Depot-Konnektor gilt **nicht** als fertig und darf sein Feature-Issue nicht schließen, solange er nur als Parser in `girocrab-core/src/connectors/` existiert.
 - Jeder Konnektor-PR muss zwingend alle vier Ebenen verdrahten:
   1. Core-Konnektor (`girocrab-core/src/connectors/`)

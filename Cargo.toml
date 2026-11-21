@@ -1,12 +1,17 @@
 [workspace]
 members = ["girocrab-core", "girocrab-mcp", "uniffi-bindgen", "tools/gen-bic-directory"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
-version = "0.8.5"
-edition = "2021"
+version = "0.8.7"
+edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/GiroCrab/GiroCrab"
+
+# No `unsafe` in any target of any member (#948). girocrab-core denies it instead,
+# so that its src/sys.rs can lift it; scripts/lint-no-obfuscation.sh checks both.
+[workspace.lints.rust]
+unsafe_code = "forbid"
 
 # The root package is a small macOS launcher. `cargo build` here also builds
 # the Rust core, generates the UniFFI Swift bindings (via build-xcframework.sh
@@ -20,6 +25,9 @@ license.workspace = true
 repository.workspace = true
 description = "Launcher for the GiroCrab SwiftUI app (builds core + Swift app)"
 build = "build.rs"
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "girocrab"

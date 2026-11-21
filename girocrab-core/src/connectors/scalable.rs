@@ -18,16 +18,16 @@
 //! Scalable web profile. See docs/scalable-capital-connector.md.
 
 use async_trait::async_trait;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::dpop::DpopKey;
 use super::{
-    http_client_same_host, BankConnector, Challenge, ChallengeKind, ChallengeResponse,
-    ConnectContext, FetchResult, Phase, RemoteAccount, RemoteHolding, RemoteSecurityTransaction,
-    RemoteTransaction,
+    BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, FetchResult, Phase,
+    RemoteAccount, RemoteHolding, RemoteSecurityTransaction, RemoteTransaction,
+    http_client_same_host,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -145,10 +145,10 @@ fn local_date(v: &Value) -> String {
         }
         return s.chars().take(10).collect();
     }
-    if let Some(secs) = v.as_i64() {
-        if let Ok(ts) = jiff::Timestamp::from_second(secs) {
-            return crate::dates::iso(crate::dates::local_date(ts));
-        }
+    if let Some(secs) = v.as_i64()
+        && let Ok(ts) = jiff::Timestamp::from_second(secs)
+    {
+        return crate::dates::iso(crate::dates::local_date(ts));
     }
     String::new()
 }
@@ -376,11 +376,7 @@ pub(crate) fn map_transaction(
         amount_cents: amount,
         currency: {
             let c = str_of(&item["currency"]);
-            if c.is_empty() {
-                "EUR".into()
-            } else {
-                c
-            }
+            if c.is_empty() { "EUR".into() } else { c }
         },
         counterparty,
         counterparty_iban: String::new(),
@@ -466,11 +462,7 @@ pub(crate) fn map_security_transaction(
     };
     let currency = {
         let c = str_of(&item["currency"]);
-        if c.is_empty() {
-            "EUR".to_string()
-        } else {
-            c
-        }
+        if c.is_empty() { "EUR".to_string() } else { c }
     };
     Some(RemoteSecurityTransaction {
         account_ref: depot_ref.to_string(),
@@ -633,6 +625,20 @@ const M_2FA_VALIDATE: &str = r#"mutation Validate2faOnLogin($input: Validate2faO
 
 // ------------------------------------------------------------------ connector
 
+/// Text of the browser-login sheet. Scalable shows "Aktivierung abgelehnt" on its own page when
+/// the "Agentic Investing" switch is off; the device-code request itself still succeeds, so the
+/// connector cannot detect that and tells the user up front (#787).
+fn login_message(uri: &str, user_code: &str) -> String {
+    trf(
+        "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe. Erscheint dort „Aktivierung abgelehnt – Wir können Ihr Gerät nicht aktivieren“, schalten Sie zuerst im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den Zugriff ein und starten Sie die Anmeldung neu.",
+        &[&uri, &user_code],
+    )
+}
+
+fn denied_message() -> String {
+    tr("Die Anmeldung wurde im Browser abgelehnt. Prüfen Sie, ob im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ der Zugriff eingeschaltet ist, und starten Sie die Anmeldung neu.").into()
+}
+
 impl ScalableConnector {
     pub fn new() -> Self {
         ScalableConnector {
@@ -782,7 +788,7 @@ impl ScalableConnector {
                                 "Scalable-Sitzung abgelaufen ({0}) – bitte erneut anmelden.",
                                 &[&e.error],
                             ),
-                        })
+                        });
                     }
                 }
             }
@@ -964,10 +970,7 @@ impl ScalableConnector {
         let challenge = Challenge {
             kind: ChallengeKind::DecoupledPush,
             title: tr("Bei Scalable Capital im Browser anmelden").into(),
-            message: trf(
-                "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe.",
-                &[&uri, &user_code],
-            ),
+            message: login_message(&uri, &user_code),
             method_name: tr("Browser-Anmeldung").into(),
             redirect_url: Some(if uri_complete.is_empty() {
                 uri
@@ -1047,7 +1050,7 @@ impl ScalableConnector {
                     Ok(Phase::Pending(c))
                 }
                 "access_denied" => Err(CoreError::Authentication {
-                    message: tr("Die Anmeldung wurde im Browser abgelehnt.").into(),
+                    message: denied_message(),
                 }),
                 "expired_token" => Err(CoreError::Authentication {
                     message: tr("Die Browser-Anmeldung ist abgelaufen – bitte erneut starten.")
@@ -1534,11 +1537,7 @@ impl BankConnector for ScalableConnector {
             .await?;
         let account_id = {
             let a = str_of(&ids["account"]["id"]);
-            if a.is_empty() {
-                person_id.clone()
-            } else {
-                a
-            }
+            if a.is_empty() { person_id.clone() } else { a }
         };
         let portfolios: Vec<String> = ids["account"]["brokerPortfolios"]
             .as_array()
@@ -1804,6 +1803,15 @@ mod tests {
         // No network in unit tests: a stale session must not be treated as valid.
         let c = ScalableConnector::new();
         assert!(!c.session_usable());
+    }
+
+    #[test]
+    fn login_texts_point_to_the_agentic_investing_switch() {
+        let m = login_message("https://secure.scalable.capital/activate", "ABCD-EFGH");
+        assert!(m.contains("https://secure.scalable.capital/activate"));
+        assert!(m.contains("ABCD-EFGH"));
+        assert!(m.contains("Agentic Investing"));
+        assert!(denied_message().contains("Agentic Investing"));
     }
 
     #[test]

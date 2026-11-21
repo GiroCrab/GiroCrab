@@ -22,7 +22,8 @@
 //!  1. same counterparty IBAN *and* merchant: tells two payees of the same
 //!     name apart. An IBAN never decides on its own, since payment services
 //!     collect for many merchants through one account;
-//!  2. same merchant (`MerchantResolver` key, any IBAN, also card payments),
+//!  2. same merchant (bundled merchant key, any IBAN, also card payments; the
+//!     user's merchant changes of #1373 only rename, they don't regroup),
 //!     unless an earlier booking to the same IBAN had another category;
 //!  3. only for a merchant without any history: the most similar bookings by
 //!     their words (`similar.rs`), with stricter limits.
@@ -31,19 +32,19 @@
 //! for a purchase) and fade with the distance in time, so a category the user
 //! switched to recently beats the one used years before.
 //!
-//! The history is read once and kept on the vault until a write changes the
-//! vault (`total_changes()`, like the list's `ListCache`), so moving through the
+//! The history is read once and kept on the vault until its data changes
+//! (`vault::cache`, like the list's `ListCache`), so moving through the
 //! list costs no scan. Only the raw rows are read under the vault lock;
 //! merchants are resolved after it is released.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rusqlite::Connection;
 
 use crate::error::{CoreError, CoreResult};
 use crate::iban::normalize_iban;
-use crate::merchants::{FlowKind, MerchantInfo, MerchantKind, MerchantResolver};
+use crate::merchants::{BundledMerchant, FlowKind, MerchantKind, MerchantRules};
 use crate::models::{CategorySource, MatchKind, Rule};
 use crate::vault::Vault;
 
@@ -149,7 +150,6 @@ struct Row {
 
 /// Everything suggestions need from one state of the database.
 pub(crate) struct History {
-    changes: u64,
     by_merchant: HashMap<(bool, String), Vec<Vote>>,
     by_iban: HashMap<(bool, String, String), Vec<Vote>>,
     text: similar::TextIndex,
@@ -157,31 +157,16 @@ pub(crate) struct History {
     rules: HashMap<i64, Rule>,
 }
 
-/// The last history read, until the database changes.
-#[derive(Default)]
-pub(crate) struct HistoryCache(Mutex<Option<Arc<History>>>);
-
-impl HistoryCache {
-    fn get(&self, changes: u64) -> Option<Arc<History>> {
-        let slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        slot.as_ref().filter(|h| h.changes == changes).cloned()
-    }
-
-    fn put(&self, history: Arc<History>) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(history);
-    }
-}
-
 /// Key a merchant can be matched by; `None` for a payment service with
 /// nothing behind it (it collects for any merchant) and for empty texts.
-fn merchant_key(m: &MerchantInfo) -> Option<String> {
+fn merchant_key(m: &BundledMerchant) -> Option<String> {
     let named = m
         .key
         .strip_prefix("x:")
         .unwrap_or(&m.key)
         .chars()
         .any(char::is_alphanumeric);
-    (named && m.kind != MerchantKind::PaymentService).then(|| m.key.clone())
+    (named && m.kind != MerchantKind::PaymentService).then(|| m.key.to_string())
 }
 
 fn day_number(date: &str) -> Option<i32> {
@@ -197,6 +182,7 @@ fn load_targets(vault: &Vault, conn: &Connection, ids: &[i64]) -> CoreResult<Vec
         conn.prepare("SELECT EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)")?;
     let mut out = Vec::new();
     let mut bookings = vault.bookings_by_ids(conn, &ids)?;
+    let merchants = vault.merchant_rules(conn)?;
     // in the order asked (the list's order is newest first)
     bookings.sort_by_key(|b| ids.iter().position(|id| *id == b.id));
     for b in bookings {
@@ -208,7 +194,7 @@ fn load_targets(vault: &Vault, conn: &Connection, ids: &[i64]) -> CoreResult<Vec
         {
             continue;
         }
-        if let Some(merchant) = merchant_key(&b.merchant) {
+        if let Some(merchant) = merchant_key(&merchants.bundled(&b.counterparty, &b.purpose)) {
             out.push(Target {
                 id: b.id,
                 account_id: b.account_id,
@@ -256,10 +242,10 @@ fn read_rows(conn: &Connection) -> CoreResult<Vec<Row>> {
 
 impl History {
     fn build(
-        changes: u64,
         rows: Vec<Row>,
         rules: HashMap<i64, Rule>,
         own_ibans: &HashSet<String>,
+        merchants: &MerchantRules,
     ) -> Self {
         let mut by_merchant: HashMap<(bool, String), Vec<Vote>> = HashMap::new();
         let mut by_iban: HashMap<(bool, String, String), Vec<Vote>> = HashMap::new();
@@ -278,8 +264,7 @@ impl History {
             };
             let words = similar::words(&[&row.counterparty, &row.purpose, &row.booking_text]);
             texts.push((vote, income, words));
-            let Some(merchant) =
-                merchant_key(&MerchantResolver::resolve(&row.counterparty, &row.purpose))
+            let Some(merchant) = merchant_key(&merchants.bundled(&row.counterparty, &row.purpose))
             else {
                 continue;
             };
@@ -295,7 +280,6 @@ impl History {
                 .push(vote);
         }
         History {
-            changes,
             by_merchant,
             by_iban,
             text: similar::TextIndex::build(texts),
@@ -406,9 +390,9 @@ fn decide<'a>(
     }
     // heaviest first; equal weight: more bookings, then the lower id (stable)
     let (category_id, (weight, support)) = tally.into_iter().max_by(|a, b| {
-        a.1 .0
-            .total_cmp(&b.1 .0)
-            .then(a.1 .1.cmp(&b.1 .1))
+        a.1.0
+            .total_cmp(&b.1.0)
+            .then(a.1.1.cmp(&b.1.1))
             .then(b.0.cmp(&a.0))
     })?;
     (support >= min_support && total > 0.0 && weight / total >= min_share).then_some(
@@ -427,8 +411,8 @@ impl Vault {
     /// a change (only the SQL part under the vault lock).
     fn suggestion_history(&self) -> CoreResult<Arc<History>> {
         let db = self.db()?;
-        let changes = db.total_changes();
-        if let Some(history) = self.suggestions.get(changes) {
+        let stamp = self.data_stamp(&db);
+        if let Some(history) = self.suggestions.get(stamp) {
             return Ok(history);
         }
         let rows = read_rows(&db)?;
@@ -438,12 +422,13 @@ impl Vault {
             .map(|r| (r.id, r))
             .collect();
         let own_ibans = Vault::own_ibans(&db)?;
+        let merchants = self.merchant_rules(&db)?;
         // inside an open transaction a rollback would not lower the count
         let keep = db.is_autocommit();
         drop(db);
-        let history = Arc::new(History::build(changes, rows, rules, &own_ibans));
+        let history = Arc::new(History::build(rows, rules, &own_ibans, &merchants));
         if keep {
-            self.suggestions.put(history.clone());
+            self.suggestions.put(stamp, history.clone());
         }
         Ok(history)
     }

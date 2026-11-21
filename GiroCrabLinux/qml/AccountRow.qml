@@ -2,8 +2,10 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// SidebarView.swift › AccountRow: signet with the unread count on its corner, the name over
-// the whole width (owner as tooltip), then bank / loan progress and the balance (#624, #667).
+// SidebarView.swift › AccountRow: signet, the name (owner as tooltip) with the unread count at the
+// end of its line, then bank / loan progress and the balance (#624, #667). Linux deviation: the Mac
+// pins a small count to the signet's corner; here it is a larger pill in the strong blue, readable
+// in both modes and with three digits.
 SidebarRow {
     id: row
     required property var modelData
@@ -15,9 +17,12 @@ SidebarRow {
     signal contextMenuRequested()
     readonly property var repaid: account.kind === "Loan" && account.initial_balance_cents > 0
         ? Math.max(0, Math.min(1, 1 - (-account.balance_cents) / account.initial_balance_cents)) : null
+    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
+    readonly property string baseSubtitle: [account.bank_name, (account.note || "").replace(/\n/g, " ")]
+        .filter(t => t !== "").join(" · ")
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
     readonly property string searchAwareSubtitle: {
-        if (!AppModel.isSidebarAccountSearching) return account.bank_name
+        if (!AppModel.isSidebarAccountSearching) return baseSubtitle
         const q = AppModel.sidebarAccountSearch.trim()
         const compact = q.replace(/\s/g, "").toLowerCase()
         const terms = q.split(/\s+/).filter(t => t)
@@ -25,7 +30,7 @@ SidebarRow {
             return account.owner
         if (compact.length >= 3 && AppModel.compactAccountIds(account).some(x => x.includes(compact)))
             return account.iban ? Fmt.iban(account.iban) : account.account_number
-        return account.bank_name
+        return baseSubtitle
     }
     readonly property bool ibanSubtitle: AppModel.isSidebarAccountSearching && account.iban !== "" && searchAwareSubtitle === Fmt.iban(account.iban)
     /// SidebarView.swift › dialogAccountID: the row a confirmation dialog is about stays marked (#668).
@@ -45,19 +50,6 @@ SidebarRow {
         // tinted like the account's marker in the booking list
         AccountSignet {
             account: row.account; size: 20; tintColor: AppModel.accountColor(row.account.id); onSelection: row.selected
-            // unread count pinned to the icon's corner, so the subtitle stays untruncated
-            Rectangle {
-                readonly property string label: row.account.new_count <= 0 ? "" : row.account.new_count > 999 ? "999+" : String(row.account.new_count)
-                visible: label !== ""
-                x: parent.width - width + 5; y: -4
-                width: Math.max(14, newText.implicitWidth + 8); height: 14
-                radius: height / 2
-                color: Theme.accent
-                border.width: 1.5; border.color: Theme.sidebar
-                Accessible.name: qsTr("%1 neue Buchungen").arg(row.account.new_count)
-                Text { id: newText; anchors.centerIn: parent; text: parent.label; color: "white"
-                       font.pixelSize: Theme.caption2; font.weight: Font.Bold; font.features: { "tnum": 1 } }
-            }
         }
         ColumnLayout {
             spacing: 1
@@ -71,15 +63,26 @@ SidebarRow {
                     elide: Text.ElideRight; Layout.maximumWidth: Math.ceil(implicitWidth); Layout.fillWidth: true
                     HoverHandler { id: nameHover }
                     ToolTip.visible: nameHover.hovered && (row.account.owner || "") !== ""; ToolTip.delay: 600
-                    ToolTip.text: row.account.owner || ""
+                    ToolTip.text: AppModel.masking(row.account.owner || "")
                     Sensitive {}
                 }
-                SFIcon { visible: row.account.access_revoked; symbol: "lock.slash"; size: 10; color: "orange"
+                SFIcon { visible: row.account.access_revoked; symbol: "lock.slash"; size: 10; color: Theme.warning
                          Accessible.name: qsTr("Zugriff entzogen")
                          HoverHandler { id: revokedHover }
                          ToolTip.visible: revokedHover.hovered; ToolTip.delay: 600
                          ToolTip.text: qsTr("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.") }
                 Item { Layout.fillWidth: true; Layout.preferredWidth: 0 }
+                // unread count at the end of the name line, readable at a glance
+                Rectangle {
+                    readonly property string label: row.account.new_count <= 0 ? "" : row.account.new_count > 999 ? "999+" : String(row.account.new_count)
+                    visible: label !== ""
+                    implicitWidth: Math.max(20, newText.implicitWidth + 12); implicitHeight: 18
+                    radius: height / 2
+                    color: Theme.dark ? "#2563EB" : Theme.accent
+                    Accessible.name: qsTr("%1 neue Buchungen").arg(row.account.new_count)
+                    Text { id: newText; anchors.centerIn: parent; text: parent.label; color: "white"
+                           font.pixelSize: Theme.caption + 1; font.weight: Font.Bold; font.features: { "tnum": 1 } }
+                }
                 BusyIndicator { visible: row.syncing; running: row.syncing; implicitWidth: 12; implicitHeight: 12; padding: 0
                                 Accessible.name: qsTr("Wird synchronisiert") }
             }
@@ -93,12 +96,13 @@ SidebarRow {
                     Layout.preferredWidth: 44; implicitHeight: 4
                     background: Rectangle { radius: 2; color: Theme.withAlpha(Theme.loan, 0.2) }
                     contentItem: Item { Rectangle { width: parent.width * (row.repaid || 0); height: parent.height; radius: 2; color: Theme.withAlpha(Theme.loan, 0.7) } }
+                    Sensitive { amounts: true }   // SidebarView.swift: the bar shows the share too
                 }
                 Text {
                     visible: row.repaid !== null
                     text: qsTr("%1 getilgt").arg(Fmt.percent(row.repaid || 0)); font.pixelSize: Theme.caption2; color: Theme.secondary
-                    elide: Text.ElideRight; Layout.fillWidth: true
-                    Sensitive {}
+                    elide: Text.ElideRight; Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 2   // lineLimit(2) (#650)
+                    Sensitive { amounts: true }
                 }
                 Text {
                     visible: row.repaid === null
@@ -116,7 +120,7 @@ SidebarRow {
                     text: Fmt.money(row.account.balance_cents, row.account.currency)
                     font.pixelSize: Theme.subheadline; font.features: { "tnum": 1 }
                     color: row.selected ? Theme.text : (row.account.kind === "Loan" ? Theme.loan : (row.account.balance_cents < 0 ? Theme.negative : Theme.text))
-                    Sensitive {}
+                    Sensitive { amounts: true }
                 }
             }
         }

@@ -18,7 +18,7 @@ Sheet {
             spacing: 10
             SymbolTile { symbol: sheet.request ? sheet.request.connection.sf_symbol : ""; size: 34; tint: Theme.accent }
             ColumnLayout { spacing: 2; Layout.fillWidth: true
-                Text { text: sheet.request ? qsTr("%1 einrichten").arg(sheet.request.connection.display_name) : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text }
+                Text { text: sheet.request ? qsTr("%1 einrichten").arg(AppModel.masking(sheet.request.connection.display_name)) : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text }
                 Text { text: qsTr("Diese Angaben fehlen noch, bevor Buchungen abgerufen werden können."); font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true } }
             SyncBatchProgressLabel {}
         }
@@ -38,7 +38,8 @@ Sheet {
         SyncPromptButtons {
             Layout.fillWidth: true
             defaultTitle: qsTr("Speichern & abrufen")
-            defaultEnabled: sheet.request !== null && sheet.request.keys.every(k => (sheet.values[k] || "").trim() !== "")
+            // The FinTS product ID is an optional override and never blocks the button (#842).
+            defaultEnabled: sheet.request !== null && sheet.request.keys.every(k => k === "fints.product_id" || (sheet.values[k] || "").trim() !== "")
             onCancel: AppModel.cancelSetupRequest()
             onAccept: AppModel.completeSetup(sheet.request, sheet.values)
         }

@@ -408,9 +408,11 @@ pub fn build(input: &SidebarInput, money: &dyn Fn(i64, &str) -> String) -> Vec<S
                 1
             };
             let is_folded = head.fold == 2;
+            // group figures are overall money sums (#337): only effectively
+            // included accounts count; every account row stays visible
             let eur: Vec<i64> = members
                 .iter()
-                .filter(|a| a.currency == "EUR")
+                .filter(|a| a.currency == "EUR" && a.in_total)
                 .map(|a| a.balance_cents)
                 .collect();
             if !eur.is_empty() {
@@ -434,11 +436,11 @@ pub fn build(input: &SidebarInput, money: &dyn Fn(i64, &str) -> String) -> Vec<S
                 if a.new_count > 0 {
                     r.badge = a.new_count.to_string();
                 }
-                if a.kind == AccountKind::Loan {
-                    if let Some(p) = loan_progress(a.initial_balance_cents, a.balance_cents) {
-                        r.progress = p;
-                        r.detail = progress_label(p);
-                    }
+                if a.kind == AccountKind::Loan
+                    && let Some(p) = loan_progress(a.initial_balance_cents, a.balance_cents)
+                {
+                    r.progress = p;
+                    r.detail = progress_label(p);
                 }
                 rows.push(r);
             }
@@ -468,7 +470,7 @@ pub fn build(input: &SidebarInput, money: &dyn Fn(i64, &str) -> String) -> Vec<S
     // ---- Dokumente
     rows.push(section("documents", "Dokumente"));
     if !folded("documents") {
-        let mut docs = SideRow::new(kind::ITEM, Target::Documents.key(), "Belege & PostBox");
+        let mut docs = SideRow::new(kind::ITEM, Target::Documents.key(), "Belege & Postbox");
         docs.depth = 1;
         docs.icon = "document".into();
         if input.document_count > 0 {
@@ -626,6 +628,7 @@ pub(crate) mod testing {
             new_count: 0,
             initial_balance_cents: None,
             user_group_uuid: None,
+            include_in_total: true,
             in_total: true,
             color_hex: String::new(),
             archived_unix: None,
@@ -633,6 +636,8 @@ pub(crate) mod testing {
             opening_balance_cents: None,
             opening_balance_date: String::new(),
             balance_derived: false,
+            note: String::new(),
+            bank_label: None,
         }
     }
 }

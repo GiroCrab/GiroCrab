@@ -11,6 +11,7 @@ struct TwoFactorSheet: View {
     /// The bank's consent page inside GiroCrab (PSD2 redirect).
     @State private var consent: ConsentBrowser?
     @State private var showManualRedirect = false
+    @FocusState private var codeFocused: Bool
 
     /// The sheet shows the bank's consent page (needs a browser-sized window).
     private var showsConsentPage: Bool {
@@ -19,6 +20,24 @@ struct TwoFactorSheet: View {
 
     var body: some View {
         if let active = model.activeChallenge {
+            #if os(iOS)
+            if showsConsentPage {
+                // the bank's page sizes itself; inside a scroll view it would collapse
+                challengeContent(active)
+            } else {
+                // small iPhones: with the keyboard up, the comparison card (#949) pushes the
+                // TAN field and the buttons below the fold; scrolling keeps them reachable
+                ScrollView { challengeContent(active) }
+                    .scrollDismissesKeyboard(.interactively)
+            }
+            #else
+            challengeContent(active)
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private func challengeContent(_ active: ActiveChallenge) -> some View {
             let c = active.challenge
             VStack(spacing: 18) {
                 HStack(spacing: 10) {
@@ -47,6 +66,7 @@ struct TwoFactorSheet: View {
                     Text(c.title).appFont(.title3, weight: .bold)
                     Text(c.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .sensitive() // a transfer TAN names payee and amount
+                    if let comparison = model.tanComparison { TanComparisonHint(comparison: comparison) }
                     if let s = c.redirectUrl, let url = URL(string: s) {
                         Button { openURL(url) } label: { Label("Im Browser anmelden", systemImage: "safari") }
                             .buttonStyle(.borderedProminent)
@@ -68,7 +88,7 @@ struct TwoFactorSheet: View {
                             .disabled(active.busy)
                     }
                 case .progress:
-                    // approval given, a longer download runs (comdirect PostBox, #838)
+                    // approval given, a longer download runs (comdirect Postbox, #838)
                     Image(systemName: "tray.and.arrow.down")
                         .font(.system(size: 56, weight: .light))
                         .foregroundStyle(.tint)
@@ -89,11 +109,14 @@ struct TwoFactorSheet: View {
                     }
                     Text(c.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .sensitive() // a transfer TAN names payee and amount
+                    if let comparison = model.tanComparison { TanComparisonHint(comparison: comparison) }
                     TextField("TAN / Code", text: $code)
                         .appFont(.title2, design: .monospaced)
                         .multilineTextAlignment(.center)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 220)
+                        .focused($codeFocused)
+                        .onAppear { codeFocused = true }
                         #if os(iOS)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
@@ -198,7 +221,6 @@ struct TwoFactorSheet: View {
             .fixedSize(horizontal: false, vertical: !showsConsentPage)
             // the bank's own page needs the room of a browser window
             .macFrame(minWidth: showsConsentPage ? 868 : 400, idealWidth: showsConsentPage ? 928 : 420)
-        }
     }
 
     /// Sends the code / pasted address – once: Return reaches both the field

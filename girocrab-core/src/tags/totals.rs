@@ -10,8 +10,8 @@ use rusqlite::params_from_iter;
 
 use crate::error::CoreError;
 use crate::models::BookingFilter;
-use crate::vault::bookings::filters_by_class;
 use crate::vault::Vault;
+use crate::vault::bookings::filters_by_class;
 
 /// Bookings and their sum for one tag (or for the untagged bookings).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -62,7 +62,7 @@ impl Vault {
         let kept = if filters_by_class(&filter) {
             self.kept_shares(&db, &filter)?
         } else {
-            let (cte, where_sql, args, share_sql) = Vault::filter_clauses(&db, &filter)?;
+            let (cte, where_sql, args, share_sql) = self.filter_clauses(&db, &filter)?;
             let mut stmt = db.prepare(&format!(
                 "{cte}SELECT t.id, {share_sql} {FROM_SQL} WHERE {where_sql}"
             ))?;
@@ -110,7 +110,7 @@ impl Vault {
                 tag_ids: vec![tag_id],
                 ..Default::default()
             };
-            let (cte, where_sql, mut args, _) = Vault::filter_clauses(&db, &filter)?;
+            let (cte, where_sql, mut args, _) = self.filter_clauses(&db, &filter)?;
             args.push(Box::new(loan));
             let not_own = args.len();
             args.push(Box::new(tag_id));

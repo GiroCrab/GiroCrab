@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{key_of_connection, twins};
 use crate::error::{CoreError, CoreResult};
@@ -129,11 +129,12 @@ pub(crate) fn merge_connections(conn: &Connection) -> CoreResult<HashMap<i64, i6
                     by_key.insert(key, (id, joined.0, joined.1));
                 }
                 if joined.1.is_some() {
-                    // a deleted connection keeps no bank session
+                    // a deleted connection keeps no bank session and no stored secrets
                     conn.execute(
                         "UPDATE bank_connections SET state_json = '{}' WHERE id = ?1 AND state_json <> '{}'",
                         [id],
                     )?;
+                    crate::vault::Vault::purge_connection_secrets(conn, id)?;
                 }
                 id
             }
@@ -304,10 +305,11 @@ pub(crate) fn merge_accounts(
                     conn.execute(
                         "INSERT INTO accounts(connection_id, group_id, external_ref, name, bank_name, owner,
                              iban, account_number, currency, kind, balance_cents, balance_date, sf_symbol,
-                             sort_order, initial_balance_cents, balance_derived, created_ms, deleted_ms)
+                             sort_order, initial_balance_cents, balance_derived, include_in_total, total_ms,
+                             created_ms, deleted_ms)
                          SELECT ?2, ?3, external_ref, name, bank_name, owner, iban, account_number, currency,
                              kind, balance_cents, balance_date, sf_symbol, sort_order, initial_balance_cents,
-                             balance_derived, created_ms, deleted_ms
+                             balance_derived, include_in_total, total_ms, created_ms, deleted_ms
                            FROM other.accounts WHERE id = ?1",
                         params![oid, con, grp],
                     )?;

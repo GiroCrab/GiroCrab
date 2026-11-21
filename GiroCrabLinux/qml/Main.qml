@@ -18,7 +18,10 @@ ApplicationWindow {
     // The booking list gives up width first (560 → 360) so the inspector never leaves the
     // window on small screens (e.g. 1920 px at 200 % scaling).
     minimumWidth: 240 * Theme.textScale + 360 + 280; minimumHeight: 480
-    title: AppModel.isUnlocked ? AppModel.title + " – GiroCrab" : "GiroCrab"
+    // BookingListView.swift › WindowTitle: an account or category name stays out of the title
+    // while privacy mode (or the report) hides personal data or labels
+    title: AppModel.isUnlocked && (AppModel.effectiveRedaction & (AppModel.redactPersonal | AppModel.redactLabels)) === 0
+           ? AppModel.title + " – GiroCrab" : "GiroCrab"
     color: Theme.canvas
 
     // LanguagePreference.startupQuestion (RootView on the Mac): decided once at start-up.
@@ -58,6 +61,7 @@ ApplicationWindow {
             Action { text: qsTr("Bank hinzufügen …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.showAddBank = true }
             Action { text: qsTr("Neues Darlehen …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.openLoanEditor("create") }
             Action { text: qsTr("Neues Sachwerte-Konto …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.createTangibleAccount() }
+            Action { text: qsTr("Neues Offline-Konto …"); enabled: AppModel.isUnlocked; onTriggered: OfflineAccounts.openNewAccount() }
             Action { text: qsTr("Neue Hauptkategorie …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.newCategoryRequest = { parent: null } }
             AppMenuSeparator {}
             Action { text: qsTr("Vorhandene Daten importieren …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.openMoneyMoneyImport() }
@@ -92,6 +96,21 @@ ApplicationWindow {
             Action { text: qsTr("Budgets anzeigen"); checkable: true; checked: AppModel.showBudgets; enabled: AppModel.isUnlocked; onToggled: AppModel.showBudgets = checked }
             // RootView.swift › Toggle("Kopfbereich minimieren") (#358)
             Action { text: qsTr("Kopfbereich minimieren"); checkable: true; checked: AppModel.compactHeader; enabled: AppModel.isUnlocked; onToggled: AppModel.compactHeader = checked }
+            // the header chart (#634): same switches as the row below it
+            Action { text: qsTr("Diagramm anzeigen"); checkable: true; checked: !BalanceChartPrefs.collapsed; enabled: AppModel.isUnlocked
+                     onToggled: { BalanceChartPrefs.setCollapsed(!checked); checked = Qt.binding(() => !BalanceChartPrefs.collapsed) } }
+            AppMenu {
+                title: qsTr("Diagramm")
+                enabled: AppModel.isUnlocked
+                Repeater {
+                    model: BalanceChartPrefs.styles
+                    AppMenuItem { required property var modelData; text: modelData.title; checkable: true
+                                  checked: BalanceChartPrefs.style === modelData.id
+                                  onTriggered: { checked = Qt.binding(() => BalanceChartPrefs.style === modelData.id); BalanceChartPrefs.setStyle(modelData.id) } }
+                }
+            }
+            // RootView.swift › Toggle("Privatmodus") ⇧⌘H (#719): hides amounts (or all personal data, Einstellungen › Allgemein)
+            Action { text: qsTr("Privatmodus"); shortcut: "Ctrl+Shift+H"; checkable: true; checked: PrivacyMode.enabled; onToggled: PrivacyMode.setEnabled(checked) }
             AppMenuSeparator {}
             // Like Mail/Notes: text size of the whole app (#343).
             Action { text: qsTr("Größer"); shortcut: "Ctrl++"; enabled: Theme.steppedTextSize(1) !== ""
@@ -129,6 +148,13 @@ ApplicationWindow {
         }
         AppMenu {
             title: qsTr("B&uchung")
+            // Offline accounts (#679, #81): typed bookings
+            Action { text: qsTr("Neue Buchung …"); shortcut: "Ctrl+Alt+N"; enabled: OfflineAccounts.canAddManualBooking; onTriggered: OfflineAccounts.openManualBooking() }
+            Action { text: qsTr("Buchung bearbeiten …"); enabled: OfflineAccounts.isManuallyEditable(AppModel.selectedBooking)
+                     onTriggered: OfflineAccounts.editManualBooking(AppModel.selectedBooking) }
+            Action { text: qsTr("Buchung löschen …"); enabled: OfflineAccounts.isManuallyEditable(AppModel.selectedBooking)
+                     onTriggered: OfflineAccounts.deleting = AppModel.selectedBooking }
+            AppMenuSeparator {}
             // In the list, the single keys C and R do the same (kept for speed).
             Action { text: qsTr("Kategorisieren …"); shortcut: "Ctrl+Meta+C"; enabled: AppModel.selectedBooking !== null
                      onTriggered: AppModel.showCategorizer = true }
@@ -196,7 +222,8 @@ ApplicationWindow {
             Action { text: qsTr("Mitteilungen …"); onTriggered: Announcements.showWindow = true }
             AppMenuSeparator {}
             // #301: redacted screenshot + scrubbed diagnostics, then a prefilled issue.
-            Action { text: qsTr("Problem melden …"); shortcut: "Ctrl+Alt+B"; onTriggered: AppModel.showBugReport = true }
+            // greyed out while the report is open: its „Neu aufnehmen“ refreshes the picture (#384)
+            Action { text: qsTr("Problem melden …"); shortcut: "Ctrl+Alt+B"; enabled: !AppModel.showBugReport; onTriggered: AppModel.showBugReport = true }
             AppMenuSeparator {}
             Action { text: qsTr("Webseite && Dokumentation (girocrab.de)"); onTriggered: Qt.openUrlExternally("https://girocrab.de") }
             Action { text: qsTr("Fehler melden / Issue erstellen (GitHub)"); onTriggered: Qt.openUrlExternally("https://github.com/GiroCrab/GiroCrab/issues") }
@@ -301,13 +328,15 @@ ApplicationWindow {
                 options: AppModel.wealthScopes
                 current: AppModel.wealthScope
                 onActivated: id => AppModel.wealthScope = id
+                Accessible.name: qsTr("Ansicht")
             }
-            // DocumentsScopePicker (DocumentsUI.swift, #526) in „Belege & PostBox“
+            // DocumentsScopePicker (DocumentsUI.swift, #526) in „Belege & Postbox“
             Segmented {
                 visible: AppModel.sidebarSelection === "documents"
                 options: DocumentsScope.options
                 current: DocumentsScope.current
                 onActivated: id => DocumentsScope.current = id
+                Accessible.name: qsTr("Dokumente")
                 HoverHandler { id: docScopeHover }
                 ToolTip.text: qsTr("Alle Dokumente, eigene Belege oder Bankdokumente anzeigen"); ToolTip.visible: docScopeHover.hovered; ToolTip.delay: 600
             }
@@ -317,9 +346,13 @@ ApplicationWindow {
                 current: AppModel.scope
                 enabled: AppModel.sidebarSelection !== "newBookings"
                 onActivated: id => AppModel.scope = id
+                Accessible.name: qsTr("Ansicht")
                 ToolTip.text: qsTr("Ansicht wählen (Strg+1, Strg+2, Strg+3)")
             }
             IconButton { symbol: "paperplane"; enabled: AppModel.canTransfer; onClicked: AppModel.openTransfer(); ToolTip.text: qsTr("Neue Überweisung (Strg+N)"); ToolTip.visible: hovered }
+            // MainToolbar › ToolbarItem(id: "newBooking") (#679)
+            IconButton { symbol: "plus"; enabled: OfflineAccounts.canAddManualBooking; onClicked: OfflineAccounts.openManualBooking()
+                         ToolTip.text: qsTr("Neue Buchung (Strg+Alt+N)"); ToolTip.visible: hovered; Accessible.name: qsTr("Neue Buchung") }
             // .disabled(bankingBlocksAll).help(gate message): the wrapper sees the hover of the disabled button
             Item {
                 implicitWidth: syncAllButton.implicitWidth; implicitHeight: syncAllButton.implicitHeight
@@ -339,6 +372,16 @@ ApplicationWindow {
                 checkable: true; checked: AppModel.showInspector
                 onToggled: AppModel.showInspector = checked
                 ToolTip.text: AppModel.showInspector ? qsTr("Informationen ausblenden (Strg+Alt+I)") : qsTr("Informationen einblenden (Strg+Alt+I)")
+                ToolTip.visible: hovered
+            }
+            // MainToolbar › ToolbarItem(id: "privacy") (BookingListView.swift, #719)
+            IconButton {
+                symbol: PrivacyMode.enabled ? "eye.slash" : "eye"
+                checkable: true; checked: PrivacyMode.enabled
+                onToggled: PrivacyMode.setEnabled(checked)
+                ToolTip.text: PrivacyMode.enabled ? qsTr("Privatmodus beenden (Strg+Umschalt+H)")
+                    : PrivacyMode.scope === "personal" ? qsTr("Privatmodus: Beträge und persönliche Angaben ausblenden (Strg+Umschalt+H)")
+                    : qsTr("Privatmodus: Beträge ausblenden (Strg+Umschalt+H)")
                 ToolTip.visible: hovered
             }
             TextField {
@@ -384,7 +427,7 @@ ApplicationWindow {
     CustomPeriodForm {}
     // Separate windows, created when opened (built eagerly they cost start-up time
     // and memory, the help window carries the whole help text).
-    Loader { active: AppModel.showSettings; sourceComponent: Component { SettingsWindow {} }
+    Loader { id: settingsLoader; active: AppModel.showSettings; sourceComponent: Component { SettingsWindow {} }
              onLoaded: { item.requestActivate(); item.raise() } }
     Loader { active: AppModel.showSyncLog; sourceComponent: Component { SyncLogWindow {} }
              onLoaded: { item.reload(); item.requestActivate(); item.raise() } }
@@ -393,7 +436,7 @@ ApplicationWindow {
     Loader { active: Announcements.showWindow; sourceComponent: Component { AnnouncementsWindow {} } }
     // BugReportView: its own window, so the main window stays free to be captured.
     Loader { active: AppModel.showBugReport
-             sourceComponent: Component { BugReportWindow { mainWindow: window; captureItem: rootLayout } }
+             sourceComponent: Component { BugReportWindow { mainWindow: window; captureItem: rootLayout; settingsWindow: settingsLoader.item } }
              onLoaded: { item.requestActivate(); item.raise() } }
     TwoFactorSheet {}
     BankSetupSheet {}
@@ -421,6 +464,7 @@ ApplicationWindow {
     // SystemLanguageChangedAlert: the system language moved away from the chosen app language.
     Sheet {
         id: systemLanguageChanged
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         readonly property string newCode: window.languageQuestion.startsWith("changed:") ? window.languageQuestion.slice(8) : ""
         readonly property string newName: ({ de: "Deutsch", en: "English" })[newCode] || newCode
         readonly property string currentName: ({ de: "Deutsch", en: "English" })[(AppModel.run(() => AppModel.core("language_state")) || { running: "de" }).running] || ""
@@ -536,6 +580,9 @@ ApplicationWindow {
     AssetActionSheet {}
     AssetClassificationSheet {}
     OpeningBalanceSheet {}
+    // Offline accounts (OfflineAccountsUI.swift › offlineAccountSheets)
+    Loader { active: OfflineAccounts.bookingRequest !== null; sourceComponent: Component { ManualBookingSheet {} } }
+    OfflineAccountSheets {}
 
     // MARK: account groups & command palette (AccountGroupsUI.swift, CommandPalette.swift)
     AccountGroupDialogs {}
@@ -567,6 +614,7 @@ ApplicationWindow {
     // .alert("Stornierung nicht bestätigt") (RootView.swift)
     Sheet {
         id: transferCancelDialog
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         sheetWidth: 460
         visible: AppModel.transferCancelNotice !== null
         onClosed: AppModel.transferCancelNotice = null
@@ -592,6 +640,7 @@ ApplicationWindow {
     // .alert("Status der Überweisung unklar")
     Sheet {
         id: transferUnknownDialog
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         sheetWidth: 440
         visible: AppModel.transferUnknown !== null
         onClosed: AppModel.transferUnknown = null
@@ -614,9 +663,41 @@ ApplicationWindow {
     // .alert(errorTitle, errorMessage) with "Erneut versuchen"
     Sheet {
         id: errorDialog
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         sheetWidth: 420
         visible: AppModel.errorMessage !== ""
-        onClosed: { AppModel.errorMessage = ""; AppModel.errorTitle = ""; AppModel.errorRetry = null; AppModel.errorAlternatives = [] }
+        // AppModel.swift › errorMessage didSet: closing runs `errorOnClose` ("Überspringen" in
+        // "Alle abrufen", #1041); retry and the alternatives clear it first.
+        // The state of this alert is cleared when it is answered, not when the closing animation
+        // ends: a retry that fails at once installs a new alert, which must neither be cleared
+        // nor have its continuation run by this one's late `closed`.
+        function clearError() {
+            AppModel.errorMessage = ""; AppModel.errorTitle = ""; AppModel.errorRetry = null; AppModel.errorAlternatives = []
+            AppModel.errorCloseTitle = ""; AppModel.errorOnClose = null
+        }
+        property bool answered: false
+        // reopened for a newer alert during the exit transition: `closed` never came for the old one
+        onOpened: answered = false
+        /// A button: clears this alert, closes it, then runs `action` (none: its `errorOnClose`).
+        function answer(action) {
+            const next = action || AppModel.errorOnClose
+            answered = true
+            clearError()
+            close()
+            if (next) next()
+        }
+        onClosed: {
+            if (answered) {
+                answered = false
+                // a newer alert arrived while this one was closing: show it
+                if (AppModel.errorMessage !== "") open()
+                return
+            }
+            // closed with Esc: like the close button
+            const onClose = AppModel.errorOnClose
+            clearError()
+            if (onClose) onClose()
+        }
         ColumnLayout {
             width: errorDialog.availableWidth
             spacing: 12
@@ -626,13 +707,13 @@ ApplicationWindow {
             Repeater {
                 model: AppModel.errorAlternatives
                 Button { required property var modelData; text: modelData.title; Layout.alignment: Qt.AlignRight
-                         onClicked: { const a = modelData.action; errorDialog.close(); a() } }
+                         onClicked: errorDialog.answer(modelData.action) }
             }
             RowLayout {
                 Item { Layout.fillWidth: true }
                 Button { visible: AppModel.errorRetry !== null; text: qsTr("Erneut versuchen")
-                         onClicked: { const r = AppModel.errorRetry; errorDialog.close(); if (r) r() } }
-                Button { text: qsTr("OK"); highlighted: true; onClicked: errorDialog.close() }
+                         onClicked: errorDialog.answer(AppModel.errorRetry || (() => {})) }
+                Button { text: AppModel.errorCloseTitle || qsTr("OK"); highlighted: true; onClicked: errorDialog.answer(null) }
             }
         }
     }
@@ -641,7 +722,8 @@ ApplicationWindow {
     Timer {
         running: AppModel.screenshotMode && AppModel.vaultState !== "starting" && AppModel.vaultState !== "unlocking"
         // `--demo-sync`: long enough for the simulated PIN / TAN sheet to appear
-        interval: AppModel.optionDemoSync ? 4000 : 1500
+        // `--demo-sheet report:…`: the report opens 1.2 s after the sheet and then captures
+        interval: AppModel.optionDemoSync ? 4000 : AppModel.demoSheetOpensReport ? 4500 : 1500
         onTriggered: { AppModel.core("grab_window", { path: AppModel.screenshotPath, title: AppModel.screenshotWindow }); Qt.quit() }
     }
 }

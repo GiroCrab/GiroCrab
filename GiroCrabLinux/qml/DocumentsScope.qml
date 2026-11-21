@@ -1,7 +1,7 @@
 pragma Singleton
 import QtQuick
 
-// AppModelTypes.swift › DocumentsScope (#526): „Belege & PostBox“ shows all documents, only
+// AppModelTypes.swift › DocumentsScope (#526): „Belege & Postbox“ shows all documents, only
 // the user's own receipts or only the bank's documents – independent of the booking link.
 // `current` is `AppModel.documentsScope` of the Mac (kept here so AppModel.qml stays small).
 QtObject {
@@ -11,9 +11,9 @@ QtObject {
     readonly property var options: [
         { id: "all", title: qsTr("Alle Dokumente") },
         { id: "receipts", title: qsTr("Belege") },
-        { id: "postbox", title: qsTr("PostBox") }
+        { id: "postbox", title: qsTr("Postbox") }
     ]
-    readonly property string heading: current === "all" ? qsTr("Belege & PostBox") : options.find(o => o.id === current).title
+    readonly property string heading: current === "all" ? qsTr("Belege & Postbox") : options.find(o => o.id === current).title
     readonly property string description: {
         switch (current) {
         case "receipts": return qsTr("Selbst hinzugefügte Rechnungen, Kassenbons und Fotos. PDF oder Foto hierher ziehen: GiroCrab sucht den passenden Umsatz.")
@@ -26,7 +26,7 @@ QtObject {
     /// user uploads leave it empty (old demo vaults used synthetic "demo-doc-" keys).
     function isBankDocument(d) { return !!d.source_url && !d.source_url.startsWith("demo-doc-") }
     /// DocumentInfo.originTitle
-    function originTitle(d) { return isBankDocument(d) ? qsTr("PostBox") : qsTr("Beleg") }
+    function originTitle(d) { return isBankDocument(d) ? qsTr("Postbox") : qsTr("Beleg") }
     /// DocumentsScope.includes
     function includes(d) {
         return current === "all" || (current === "postbox") === isBankDocument(d)

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::*;
 use crate::vault::Vault;
@@ -264,9 +264,10 @@ fn deleted_category_name_can_be_reused() {
     let db = v.db().unwrap();
     db.execute("INSERT INTO categories(name) VALUES ('Food')", [])
         .unwrap();
-    assert!(db
-        .execute("INSERT INTO categories(name) VALUES ('Food')", [])
-        .is_err());
+    assert!(
+        db.execute("INSERT INTO categories(name) VALUES ('Food')", [])
+            .is_err()
+    );
     db.execute(
         "UPDATE categories SET deleted_ms = 1 WHERE name = 'Food'",
         [],
@@ -799,7 +800,9 @@ fn deleting_connection_soft_deletes_it_accounts_and_bookings() {
     assert_eq!(
         n(
             &v,
-            &format!("SELECT count(*) FROM transactions WHERE account_id = {loose} AND deleted_ms IS NULL")
+            &format!(
+                "SELECT count(*) FROM transactions WHERE account_id = {loose} AND deleted_ms IS NULL"
+            )
         ),
         1
     );
@@ -1161,16 +1164,18 @@ fn twin_merge_soft_deletes_the_bank_copy() {
     )
     .unwrap();
     let bank_id = db.last_insert_rowid();
-    assert!(crate::importers::moneymoney_import::merge_synced_twin(
-        &db,
-        bank_id,
-        "2026-05-10",
-        -1250,
-        "",
-        "REWE",
-        "Einkauf"
-    )
-    .unwrap());
+    assert!(
+        crate::importers::moneymoney_import::merge_synced_twin(
+            &db,
+            bank_id,
+            "2026-05-10",
+            -1250,
+            "",
+            "REWE",
+            "Einkauf"
+        )
+        .unwrap()
+    );
     let deleted: Option<i64> = db
         .query_row(
             "SELECT deleted_ms FROM transactions WHERE id = ?1",
@@ -1452,7 +1457,8 @@ fn files_under(dir: &std::path::Path) -> Vec<String> {
 ///   account, unlinked, search), `get_document_bytes`, `export_all_documents`,
 ///   `mirror_new_documents`, `auto_match_document` (text that fits the deleted
 ///   booking best)
-/// - transfers / statements: `suggest_recipients`, `auto_statements_enabled`
+/// - transfers / statements: `suggest_recipients`, `list_known_recipients`,
+///   `auto_statements_enabled`
 /// - imports: `preview_moneymoney_import` (rows unrelated to the deleted
 ///   bookings; rows that hit a deleted booking are kept from resurrecting it on
 ///   purpose, see Task 4)
@@ -1575,12 +1581,14 @@ fn soft_deleted_rows_appear_in_no_public_api() {
         PeriodGranularity::Year,
     ] {
         both!(format!("cashflow_by_period({g:?})"), |v| v
-            .cashflow_by_period(g, 6, None));
+            .cashflow_by_period(g, 6, None, true));
     }
     both!("suggest_recipients", |v| v
         .suggest_recipients(String::new(), 20));
     both!("suggest_recipients(query)", |v| v
         .suggest_recipients("Autobank".into(), 20));
+    both!("list_known_recipients", |v| v
+        .list_known_recipients(String::new()));
 
     for &id in &accounts {
         both!(format!("list_holdings({id})"), |v| v.list_holdings(id));
@@ -2787,16 +2795,18 @@ fn twin_tombstone_is_not_revived_by_merge() {
             [acc],
         )
         .unwrap();
-        assert!(crate::importers::moneymoney_import::merge_synced_twin(
-            &db,
-            db.last_insert_rowid(),
-            "2026-05-10",
-            -1250,
-            "",
-            "REWE",
-            "Einkauf"
-        )
-        .unwrap());
+        assert!(
+            crate::importers::moneymoney_import::merge_synced_twin(
+                &db,
+                db.last_insert_rowid(),
+                "2026-05-10",
+                -1250,
+                "",
+                "REWE",
+                "Einkauf"
+            )
+            .unwrap()
+        );
     }
     // B knows the same account and only the bank's booking
     let ext = text(
@@ -2973,7 +2983,10 @@ fn identical_imported_bookings_stay_two() {
                 "two"
             );
             assert_eq!(
-                n(v, "SELECT count(*) FROM transactions WHERE external_id = 'mm-F-1' AND deleted_ms IS NULL"),
+                n(
+                    v,
+                    "SELECT count(*) FROM transactions WHERE external_id = 'mm-F-1' AND deleted_ms IS NULL"
+                ),
                 1
             );
         }
@@ -3190,7 +3203,10 @@ fn readded_connection_beats_older_deletion() {
         }
         for v in [&a, &b] {
             assert_eq!(
-                n(v, "SELECT count(*) FROM bank_connections WHERE deleted_ms IS NULL AND created_ms = 30"),
+                n(
+                    v,
+                    "SELECT count(*) FROM bank_connections WHERE deleted_ms IS NULL AND created_ms = 30"
+                ),
                 1
             );
             // the revived account keeps its cascade-deleted bookings back,
@@ -3347,7 +3363,10 @@ fn three_vaults_converge_in_any_merge_order() {
         for x in &v {
             let x: &Vault = x;
             assert_eq!(
-                text(x, "SELECT name || color_hex FROM categories WHERE deleted_ms IS NULL AND name != 'Travel'"),
+                text(
+                    x,
+                    "SELECT name || color_hex FROM categories WHERE deleted_ms IS NULL AND name != 'Travel'"
+                ),
                 "Essen#222222"
             );
             assert_eq!(
@@ -3517,7 +3536,10 @@ fn every_mutating_api_stamps_or_soft_deletes() {
                     "SELECT id FROM bank_connections WHERE connector = 'comdirect'",
                 );
                 v.delete_bank_connection(id).unwrap();
-                exec(v, "UPDATE bank_connections SET deleted_ms = 1, created_ms = 1 WHERE connector = 'comdirect'");
+                exec(
+                    v,
+                    "UPDATE bank_connections SET deleted_ms = 1, created_ms = 1 WHERE connector = 'comdirect'",
+                );
                 v.add_bank_connection(ConnectorKind::Comdirect, String::new(), "me".into())
                     .unwrap();
             }),
@@ -3533,7 +3555,7 @@ fn every_mutating_api_stamps_or_soft_deletes() {
         (
             "import_moneymoney_database",
             Box::new(|v| {
-                use crate::importers::moneymoney_db::tests::{fake_db, options_from, PW};
+                use crate::importers::moneymoney_db::tests::{PW, fake_db, options_from};
                 let path = fake_db();
                 let p = v
                     .preview_moneymoney_database(path.clone(), PW.into(), None)
@@ -3628,16 +3650,18 @@ fn twin_merge_leaves_a_tombstone_for_the_moneymoney_key() {
             &a,
             &format!("SELECT id FROM transactions WHERE account_id = {acc} AND external_id = 'f1'"),
         );
-        assert!(crate::importers::moneymoney_import::merge_synced_twin(
-            &a.db().unwrap(),
-            bank_id,
-            "2026-05-10",
-            -1250,
-            "",
-            "REWE",
-            "Einkauf"
-        )
-        .unwrap());
+        assert!(
+            crate::importers::moneymoney_import::merge_synced_twin(
+                &a.db().unwrap(),
+                bank_id,
+                "2026-05-10",
+                -1250,
+                "",
+                "REWE",
+                "Einkauf"
+            )
+            .unwrap()
+        );
         if a_first {
             both_ways(&a, &b);
         } else {
@@ -3763,6 +3787,39 @@ fn giro(v: &Vault, c: i64, ext: &str, bookings: &[&str]) -> i64 {
     id
 }
 
+/// #1463 review: a securities transaction paid from the twin's booking
+/// points at the bank account's copy once the settlement account is folded.
+#[test]
+fn folding_a_settlement_twin_moves_the_cash_links() {
+    let dir = temp_dir("twin-cash-link");
+    let v = open(&dir, "a.db");
+    let c = comdirect(&v);
+    let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2"]);
+    let bank = giro(&v, c, "API1", &["mm-1", "mm-2", "b1"]);
+    let paid = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id = {twin} AND external_id = 'mm-1'"),
+    );
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, currency, kind)
+             VALUES ({c}, 1, 'depot:1', 'Depot', 'EUR', 'brokerage');
+             INSERT INTO security_transactions(account_id, external_id, booking_date, cash_transaction_id)
+             VALUES (last_insert_rowid(), 'st-1', '2026-01-01', {paid})"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        n(
+            &v,
+            "SELECT t.account_id FROM security_transactions s JOIN transactions t ON t.id = s.cash_transaction_id"
+        ),
+        bank
+    );
+}
+
 fn comdirect(v: &Vault) -> i64 {
     v.add_bank_connection(ConnectorKind::Comdirect, String::new(), "login".into())
         .unwrap()
@@ -3798,17 +3855,30 @@ fn moneymoney_twin_of_a_bank_account_is_folded_on_open() {
     let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2", "mm-3"]);
     exec(
         &v,
-        &format!("UPDATE transactions SET checked = 1, checked_ms = 5 WHERE account_id = {bank} AND external_id = 'mm-1'"),
+        &format!(
+            "UPDATE transactions SET checked = 1, checked_ms = 5 WHERE account_id = {bank} AND external_id = 'mm-1'"
+        ),
     );
     exec(
         &v,
-        &format!("UPDATE transactions SET note = 'Miete', note_ms = 9 WHERE account_id = {twin} AND external_id = 'mm-2'"),
+        &format!(
+            "UPDATE transactions SET note = 'Miete', note_ms = 9 WHERE account_id = {twin} AND external_id = 'mm-2'"
+        ),
+    );
+    exec(
+        &v,
+        &format!("UPDATE accounts SET note = 'Haushalt', note_ms = 7 WHERE id = {twin}"),
     );
     drop(v);
     let v = open(&dir, "a.db");
     assert_eq!(
         n(&v, "SELECT count(*) FROM accounts WHERE deleted_ms IS NULL"),
         1
+    );
+    assert_eq!(
+        text(&v, &format!("SELECT note FROM accounts WHERE id = {bank}")),
+        "Haushalt",
+        "the account note goes with the twin's bookings"
     );
     assert_eq!(
         n(
@@ -3819,7 +3889,12 @@ fn moneymoney_twin_of_a_bank_account_is_folded_on_open() {
     );
     assert_eq!(live_bookings(&v), "b1::0 mm-1::1 mm-2:Miete:0 mm-3::0");
     assert_eq!(
-        n(&v, &format!("SELECT count(DISTINCT account_id) FROM transactions WHERE deleted_ms IS NULL AND account_id = {bank}")),
+        n(
+            &v,
+            &format!(
+                "SELECT count(DISTINCT account_id) FROM transactions WHERE deleted_ms IS NULL AND account_id = {bank}"
+            )
+        ),
         1
     );
 }
@@ -3867,6 +3942,100 @@ fn empty_depot_twin_is_folded() {
             "SELECT group_concat(external_ref) FROM accounts WHERE deleted_ms IS NULL"
         ),
         "depot:E5AA"
+    );
+}
+
+/// A depot „Abrufweg umstellen“ marked (REST, number without sub-account)
+/// next to the one the first FinTS fetch added (number + `00`).
+fn switched_depot_pair(v: &Vault, bank_number: &str) {
+    let c = comdirect(v);
+    exec(v, "INSERT INTO account_groups(id, name) VALUES (1, 'G')");
+    for (ext, number) in [
+        ("moneymoney-db:switch:E5AA", "1022110"),
+        ("102211000-Depot", bank_number),
+    ] {
+        v.db()
+            .unwrap()
+            .execute(
+                "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, kind)
+                 VALUES (?1, 1, ?2, 'Depot', ?3, 'EUR', 'brokerage')",
+                params![c, ext, number],
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn switched_depot_is_folded_into_the_fints_depot() {
+    let dir = temp_dir("twin-switched-depot");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211000");
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        text(
+            &v,
+            "SELECT group_concat(external_ref) FROM accounts WHERE deleted_ms IS NULL"
+        ),
+        "102211000-Depot"
+    );
+}
+
+/// The two ways may name the depot differently: with most bookings shared
+/// it is still folded.
+#[test]
+fn switched_depot_with_another_name_and_shared_bookings_is_folded() {
+    let dir = temp_dir("twin-switched-depot-name");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211000");
+    exec(
+        &v,
+        "UPDATE accounts SET name = 'Depot 102211000' WHERE external_ref = '102211000-Depot'",
+    );
+    exec(
+        &v,
+        "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose)
+         SELECT id, 'div-1', '2026-11-01', 1200, 'X', 'Dividende' FROM accounts",
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        text(
+            &v,
+            "SELECT group_concat(external_ref) FROM accounts WHERE deleted_ms IS NULL"
+        ),
+        "102211000-Depot"
+    );
+}
+
+/// Without bookings only the name tells: another name stays apart.
+#[test]
+fn empty_switched_depot_with_another_name_stays() {
+    let dir = temp_dir("twin-switched-depot-empty-name");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211000");
+    exec(
+        &v,
+        "UPDATE accounts SET name = 'Depot 102211000' WHERE external_ref = '102211000-Depot'",
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        n(&v, "SELECT count(*) FROM accounts WHERE deleted_ms IS NULL"),
+        2
+    );
+}
+
+#[test]
+fn switched_depot_with_another_number_stays() {
+    let dir = temp_dir("twin-switched-depot-other");
+    let v = open(&dir, "a.db");
+    switched_depot_pair(&v, "102211100");
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        n(&v, "SELECT count(*) FROM accounts WHERE deleted_ms IS NULL"),
+        2
     );
 }
 
@@ -4050,6 +4219,90 @@ fn folded_twin_tombstone_does_not_delete_the_other_devices_account() {
     for v in [&a, &b] {
         assert_eq!(live_bookings(v), "b1::0 mm-1::0 mm-2::0 mm-4::0");
     }
+}
+
+/// #980 review: a note edited on the twin by a device that hadn't folded it
+/// yet reaches the bank account the twin was folded into here.
+#[test]
+fn note_on_an_already_folded_twin_reaches_the_bank_account() {
+    let dir = temp_dir("twin-note");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let ca = comdirect(&a);
+    let cb = comdirect(&b);
+    giro(&a, ca, MM_GIRO, &["mm-1", "mm-2"]);
+    let bank = giro(&a, ca, "API1", &["mm-1", "mm-2", "b1"]);
+    let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+    for v in [&a, &b] {
+        exec(v, "UPDATE bank_connections SET created_ms = 1");
+        exec(v, "UPDATE accounts SET created_ms = 1");
+    }
+    drop(a);
+    let a = open(&dir, "a.db");
+    b.set_account_note(twin, "Haushalt".into()).unwrap();
+    merge(&a, &b);
+    assert_eq!(
+        text(&a, &format!("SELECT note FROM accounts WHERE id = {bank}")),
+        "Haushalt"
+    );
+}
+
+/// #1467 review: like the note, a bank label set on the twin by a device that
+/// hadn't folded it yet reaches the bank account the twin was folded into.
+#[test]
+fn bank_label_on_an_already_folded_twin_reaches_the_bank_account() {
+    let dir = temp_dir("twin-label");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let ca = comdirect(&a);
+    let cb = comdirect(&b);
+    giro(&a, ca, MM_GIRO, &["mm-1", "mm-2"]);
+    let bank = giro(&a, ca, "API1", &["mm-1", "mm-2", "b1"]);
+    let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+    for v in [&a, &b] {
+        exec(v, "UPDATE bank_connections SET created_ms = 1");
+        exec(v, "UPDATE accounts SET created_ms = 1");
+    }
+    drop(a);
+    let a = open(&dir, "a.db");
+    b.set_account_bank_label(twin, Some("Haushalt".into()))
+        .unwrap();
+    merge(&a, &b);
+    assert_eq!(
+        text(
+            &a,
+            &format!("SELECT bank_label FROM accounts WHERE id = {bank}")
+        ),
+        "Haushalt"
+    );
+}
+
+/// #1474 review: a label set on a twin that is still live goes with it when
+/// it is folded, like its note.
+#[test]
+fn bank_label_of_a_twin_goes_with_the_fold() {
+    let dir = temp_dir("twin-label-fold");
+    let a = open(&dir, "a.db");
+    let ca = comdirect(&a);
+    let twin = giro(&a, ca, MM_GIRO, &["mm-1", "mm-2"]);
+    let bank = giro(&a, ca, "API1", &["mm-1", "mm-2", "b1"]);
+    a.set_account_bank_label(twin, Some("Haushalt".into()))
+        .unwrap();
+    drop(a);
+    let a = open(&dir, "a.db");
+    assert_eq!(
+        n(
+            &a,
+            &format!("SELECT deleted_ms IS NOT NULL FROM accounts WHERE id = {twin}")
+        ),
+        1,
+        "the twin is folded"
+    );
+    assert_eq!(
+        text(
+            &a,
+            &format!("SELECT bank_label FROM accounts WHERE id = {bank}")
+        ),
+        "Haushalt"
+    );
 }
 
 /// Issue #94: a closed MoneyMoney account and its successor share the
@@ -4368,4 +4621,227 @@ fn category_role_merge_converges_in_every_order() {
             }
         }
     }
+}
+
+#[test]
+fn deleting_the_last_account_of_a_login_drops_its_portal_cookies() {
+    let v = open(&temp_dir("cookiedel"), "a.db");
+    let (c, a1, a2, _) = bank_fixture(&v);
+    let key = format!("web.secret_cookies.{c}");
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO settings(key, value, is_secret) VALUES (?1, '[]', 1)",
+            [&key],
+        )
+        .unwrap();
+    let cookies = format!("SELECT count(*) FROM settings WHERE key = '{key}'");
+    v.set_account_archived(a1, true).unwrap();
+    v.set_account_archived(a2, true).unwrap();
+    v.delete_account(a1).unwrap();
+    assert_eq!(n(&v, &cookies), 1, "login still has an account");
+    v.delete_account(a2).unwrap();
+    assert_eq!(n(&v, &cookies), 0);
+}
+
+fn connection_settings(v: &Vault, c: i64) -> i64 {
+    n(
+        v,
+        &format!(
+            "SELECT count(*) FROM settings WHERE key IN ('pin.conn.{c}', 'pin.conn.{c}.login',
+                 'fints.rah10.private.{c}', 'fints.rah10.counter.{c}', 'fints.rah10.bank_keys.{c}')"
+        ),
+    )
+}
+
+fn store_connection_secrets(v: &Vault, c: i64) {
+    v.set_connection_pin(c, Some("1234".into())).unwrap();
+    let db = v.db().unwrap();
+    for key in [
+        format!("pin.conn.{c}.login"),
+        format!("fints.rah10.private.{c}"),
+        format!("fints.rah10.counter.{c}"),
+        format!("fints.rah10.bank_keys.{c}"),
+    ] {
+        db.execute(
+            "INSERT INTO settings(key, value, is_secret) VALUES (?1, 'dummy', 1)",
+            [key],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn merged_connection_deletion_purges_the_stored_secrets() {
+    let dir = temp_dir("conndel-merge");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let (ca, ..) = bank_fixture(&a);
+    let (cb, ..) = bank_fixture(&b);
+    store_connection_secrets(&b, cb);
+    assert_eq!(connection_settings(&b, cb), 5);
+
+    a.delete_bank_connection(ca).unwrap();
+    merge(&b, &a);
+
+    assert_eq!(
+        n(
+            &b,
+            &format!("SELECT count(*) FROM bank_connections WHERE id = {cb} AND deleted_ms > 0")
+        ),
+        1
+    );
+    assert_eq!(connection_settings(&b, cb), 0);
+}
+
+#[test]
+fn opening_purges_secrets_of_connections_deleted_earlier() {
+    let dir = temp_dir("conndel-open");
+    let v = open(&dir, "a.db");
+    let (c, ..) = bank_fixture(&v);
+    store_connection_secrets(&v, c);
+    // a deletion merged by an older version: tombstone, secrets still there
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE bank_connections SET deleted_ms = 1 WHERE id = ?1",
+            [c],
+        )
+        .unwrap();
+    assert_eq!(connection_settings(&v, c), 5);
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(connection_settings(&v, c), 0);
+}
+
+/// A depot from the bank and its imported twin (same account number); the
+/// twin holds `positions` and one securities transaction. Returns (bank, twin).
+fn depot_pair(v: &Vault, positions: usize) -> (i64, i64) {
+    let c = comdirect(v);
+    exec(
+        v,
+        "INSERT OR IGNORE INTO account_groups(id, name) VALUES (1, 'G')",
+    );
+    let db = v.db().unwrap();
+    let add = |ext: &str| -> i64 {
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, kind)
+             VALUES (?1, 1, ?2, 'Depot', '9001', 'EUR', 'brokerage')",
+            params![c, ext],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let bank = add("depot:E5AA");
+    let twin = add("moneymoney-db:22:4de55d4e");
+    for i in 0..positions {
+        db.execute(
+            "INSERT INTO holdings(account_id, isin, name, quantity, value_cents) VALUES (?1, ?2, 'Fonds', 1, 100000)",
+            params![twin, format!("DE000000000{i}")],
+        )
+        .unwrap();
+    }
+    db.execute(
+        "INSERT INTO security_transactions(account_id, external_id, booking_date, isin, direction)
+         VALUES (?1, 'st-1', '2026-11-01', 'DE0000000000', 'buy')",
+        [twin],
+    )
+    .unwrap();
+    (bank, twin)
+}
+
+fn positions_of(v: &Vault, account: i64) -> i64 {
+    n(
+        v,
+        &format!("SELECT count(*) FROM holdings WHERE account_id = {account}"),
+    )
+}
+
+/// Folding a depot twin moves its positions and securities transactions to
+/// the bank depot – before, the bank depot showed 0 until its next fetch.
+#[test]
+fn folded_depot_twin_hands_over_positions() {
+    let dir = temp_dir("twin-depot-holdings");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert!(
+        n(
+            &v,
+            &format!("SELECT deleted_ms IS NOT NULL FROM accounts WHERE id = {twin}")
+        ) == 1
+    );
+    assert_eq!(positions_of(&v, bank), 2);
+    assert_eq!(positions_of(&v, twin), 0);
+    assert_eq!(
+        n(
+            &v,
+            &format!("SELECT count(*) FROM security_transactions WHERE account_id = {bank}")
+        ),
+        1
+    );
+}
+
+/// The bank depot already fetched its inventory, empty (all sold): the
+/// twin's older positions are dropped, not handed over, and do not come
+/// back on a later open.
+#[test]
+fn twin_positions_do_not_override_a_fetched_empty_depot() {
+    let dir = temp_dir("twin-depot-fetched-empty");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO depot_observations(account_id, kind, position, source, observed_ms, value_date, currency, value_cents, confirmed)
+             VALUES ({bank}, 'total', '', 'fetch', 1, '2026-11-10', 'EUR', 0, 1)"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 0);
+    assert_eq!(positions_of(&v, twin), 0);
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 0);
+}
+
+/// A fetch that brought only the balance (no inventory, unconfirmed) is no
+/// inventory of the bank's own: the twin's positions still move over.
+#[test]
+fn twin_positions_move_to_a_depot_that_only_fetched_its_balance() {
+    let dir = temp_dir("twin-depot-balance-only");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO depot_observations(account_id, kind, position, source, observed_ms, value_date, currency, value_cents, confirmed)
+             VALUES ({bank}, 'total', '', 'fetch', 1, '2026-11-10', 'EUR', 200000, 0)"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 2);
+    assert_eq!(positions_of(&v, twin), 0);
+}
+
+/// The bank depot's own positions (from a fetch) are newer: they stay, the
+/// twin's are dropped.
+#[test]
+fn bank_depot_with_positions_keeps_its_own() {
+    let dir = temp_dir("twin-depot-own");
+    let v = open(&dir, "a.db");
+    let (bank, twin) = depot_pair(&v, 2);
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO holdings(account_id, isin, name, quantity, value_cents) VALUES ({bank}, 'DE000BANK001', 'Aktie', 3, 50000)"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(positions_of(&v, bank), 1);
+    assert_eq!(positions_of(&v, twin), 0);
 }
