@@ -12,6 +12,7 @@ mod i18n;
 mod local_api;
 mod ocr;
 mod qr_scan;
+mod search_terms;
 mod sessions;
 mod vault_key;
 mod web_login;

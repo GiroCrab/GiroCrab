@@ -213,6 +213,12 @@ QtObject {
     property string directionFilter: "All"     // BookingDirection
     onDirectionFilterChanged: { listLimit = defaultListLimit; reloadBookings() }
     property string searchText: ""
+    /// AppModel+Selection.swift › coreSearchText: the typed text with German plurals cut back to
+    /// the stem („kredite“ → „kredit“), so the substring search also finds the singular. Always a
+    /// superset of the literal search; the field keeps showing what was typed.
+    function coreSearchText() {
+        try { return core("literal_search_term", { text: searchText }) } catch (e) { return searchText }
+    }
     property Timer searchTimer: Timer { interval: 250; onTriggered: model.reloadBookings() }
     onSearchTextChanged: searchTimer.restart()
     /// AccountSidebarMode (byGroup | byBank | byKind): the explicit choice, else "Nach Gruppe" once a group exists.
@@ -1205,7 +1211,7 @@ QtObject {
             category_id: sel.startsWith("category:") ? Number(sel.slice(9)) : null,
             include_subcategories: true,
             uncategorized_only: sel === "uncategorized",
-            search: searchText === "" ? null : searchText,
+            search: searchText === "" ? null : coreSearchText(),
             date_from: r[0], date_to: r[1],
             limit: listLimit, offset: 0,
             scope: scope,
@@ -1681,7 +1687,9 @@ QtObject {
     /// Returns true when a retry should follow.
     function recoverFromMissingProductID() {
         if (!fintsBuiltinAvailable || fintsProductIDMode === "builtin") return false
-        run(() => core("set_fints_product_id_mode", { mode: "builtin" }))
+        // only a stored switch is worth a retry; a failed write stays visible as the error (null)
+        try { core("set_fints_product_id_mode", { mode: "builtin" }) }
+        catch (e) { errorMessage = e.message; return null }
         reloadSettings()
         reloadProductIDState()
         return true
@@ -1912,9 +1920,16 @@ QtObject {
             quietSyncConnectionID = null
             const s = activeSession
             activeSession = null
-            syncingConnectionID = null
-            if (s !== null) coreAsync("session_cancel", { session: s }, null, () => {})
-            syncNextInQueue()   // never leave a queued login waiting behind a skipped automatic fetch
+            // The next login may be the same bank: go on only once this bank dialog has ended
+            // (as skipCurrentSync); a newer sync meanwhile owns the state.
+            const gen = ++syncGeneration
+            const next = () => {
+                if (gen !== syncGeneration) return
+                syncingConnectionID = null
+                syncNextInQueue()   // never leave a queued login waiting behind a skipped automatic fetch
+            }
+            if (s !== null) coreAsync("session_cancel", { session: s }, next, next)
+            else next()
             return
         }
         if (step.NeedsChallenge) {
@@ -2066,6 +2081,16 @@ QtObject {
     /// Extra actions of the error alert ([{ title, action }]) after the bank rejected the
     /// FinTS registration in use: replace the own one, or switch to the other one.
     property var errorAlternatives: []
+    /// AppModel.swift › errorCloseTitle: title of the closing button ("" = "OK").
+    property string errorCloseTitle: ""
+    /// AppModel.swift › errorOnClose: runs when the alert is closed with that button (not with
+    /// retry or an alternative): "Alle abrufen" goes on with the next login only once the
+    /// error was closed (#1041). Main.qml › errorDialog runs and clears it.
+    property var errorOnClose: null
+    /// AppModel+Sync.swift › errorOpensPrompt: errors answered with a prompt (setup form,
+    /// browser login, FinTS registration) instead of a failure: in "Alle abrufen" the batch
+    /// waits for the prompt, whose "Überspringen" goes on with the next login (#1041).
+    function errorOpensPrompt(e) { return isMissingProductID(e) || e.kind === "BrowserLoginRequired" || e.kind === "MissingSetting" }
     /// PIN of the sync that just failed (memory only, cleared in finishSync).
     property string failedSyncSecret: ""
     function finishSync(err, connection) {
@@ -2093,20 +2118,66 @@ QtObject {
         activeSession = null; activeChallenge = null; syncingConnectionID = null
         const missingID = isMissingProductID(e)
         // Fall back to GiroCrab's registration (once) and retry with the same login; the batch stays
-        if (missingID && recoverFromMissingProductID()) {
+        const recovered = missingID ? recoverFromMissingProductID() : false
+        if (recovered === true) {
             const c = connections.find(x => x.id === connection.id)
             if (c) { statementsAccountID = retryStatements; startSync(c, retrySecret) }
             else syncNextInQueue()
             return
         }
-        resetSyncBatch()
+        // the switch could not be stored: its error stays the message, no retry
+        if (recovered === null) {
+            resetSyncBatch()
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
+            return
+        }
+        // Kontist on its stored refresh token alone (no password given, none stored) whose
+        // token expired: ask for the password instead of showing an error. Like the Mac
+        // (AppModel+Sync.swift), before "Alle abrufen": the prompt keeps the batch.
+        if (e.kind === "Authentication" && retrySecret === "" && connection.connector === "Kontist") {
+            const st = connectionStatus(connection.id)
+            if (!(st && st.has_pin)) { toast = e.message; pendingLogin = connection; return }
+        }
+        // AppModel+Sync.swift › finishSync: in "Alle abrufen" (#1041) an error ends only this
+        // login. Its alert shows right away; the batch goes on once it is closed
+        // ("Überspringen"), retries this login, or ends.
+        if (syncBatchTotal > 1 && !errorOpensPrompt(e)) {
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
+            errorRetry = () => { const c = connections.find(x => x.id === connection.id); if (c) requestSync(c) }   // the batch goes on after it
+            const alternatives = productIDAlternatives(connection, e, retrySecret)
+            if (!syncQueue.length) {
+                errorAlternatives = alternatives
+            } else {
+                // At most three buttons: Überspringen, one retry, Alle abbrechen. A rejected
+                // FinTS registration is retried with the other one, not the same.
+                const alts = []
+                if (alternatives.length) { errorRetry = null; alts.push(alternatives[alternatives.length - 1]) }
+                alts.push({ title: qsTr("Alle abbrechen"), action: cancelAllSync })
+                errorAlternatives = alts
+                errorCloseTitle = qsTr("Überspringen")
+            }
+            errorOnClose = syncNextInQueue
+            errorMessage = e.message
+            return
+        }
+        // A prompt (browser login, setup form, retry with GiroCrab's registration) keeps the
+        // batch: done, it syncs this login and goes on; cancelled, it skips it.
         if (e.kind === "BrowserLoginRequired") { toast = e.message; webLoginConnection = connection; return }
         if (missingID) {
             // Never a setup form for the optional FinTS registration: it would be an empty,
-            // seemingly mandatory field. Offer the own ID instead.
+            // seemingly mandatory field. Offer the own ID instead; in "Alle abrufen" (#1041) the
+            // batch stays: "Überspringen" goes on, "Eigene Registrierung eintragen …" ends it.
             errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
             errorRetry = null
-            errorAlternatives = [{ title: qsTr("Eigene Registrierung eintragen …"), action: enterOwnProductID }]
+            const own = { title: qsTr("Eigene Registrierung eintragen …"), action: enterOwnProductID }
+            if (syncBatchTotal > 1 && syncQueue.length) {
+                errorAlternatives = [own, { title: qsTr("Alle abbrechen"), action: cancelAllSync }]
+                errorCloseTitle = qsTr("Überspringen")
+                errorOnClose = syncNextInQueue
+            } else {
+                resetSyncBatch()
+                errorAlternatives = [own]
+            }
             errorMessage = qsTr("Diese Version enthält keine FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein.")
             return
         }
@@ -2117,12 +2188,7 @@ QtObject {
             setupRequest = { connection: connection, keys: keys }
             return
         }
-        // Kontist on its stored refresh token alone (no password given, none stored) whose
-        // token expired: ask for the password instead of showing an error.
-        if (e.kind === "Authentication" && retrySecret === "" && connection.connector === "Kontist") {
-            const st = connectionStatus(connection.id)
-            if (!(st && st.has_pin)) { toast = e.message; pendingLogin = connection; return }
-        }
+        resetSyncBatch()
         errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
         errorRetry = () => { const c = connections.find(x => x.id === connection.id); if (c) requestSync(c) }
         errorAlternatives = productIDAlternatives(connection, e, retrySecret)
@@ -2159,6 +2225,9 @@ QtObject {
     /// After a rejected registration: switch to the own one, open Settings › Banken (FinTS
     /// registration) and put the cursor into its field (no extra field in the alert).
     function enterOwnProductID() {
+        // Off to Settings: a waiting "Alle abrufen" ends here instead of stalling (#1041);
+        // the login is fetched again by hand once the registration is in.
+        resetSyncBatch()
         // Mode `own` only once an ID is stored (OwnProductIDField.commit), or an existing one is replaced:
         // an empty field must not leave the user in a mode without a registration.
         const own = settingEntry("fints.product_id")
@@ -3819,20 +3888,19 @@ QtObject {
     property string fintsProductIDMode: ""
     property bool offerProductIDChoice: false
     onSettingsChanged: reloadProductIDState()
-    /// New users start with GiroCrab's registration; users who already entered their own are asked once.
+    /// AppModel+Connections.swift › reloadProductIDState (v0.8.6, #1092): with GiroCrab's
+    /// registration on board it is always used (no choice any more); the own ID stays stored.
     function reloadProductIDState() {
         if (!isUnlocked) return
         try {
             let mode = core("fints_product_id_mode")
-            const own = settingEntry("fints.product_id")
-            const hasOwn = !!(own && own.has_value)
-            if (fintsBuiltinAvailable && mode === "" && !hasOwn && !isDemo) {
+            if (fintsBuiltinAvailable && mode !== "builtin" && !isDemo) {
                 core("set_fints_product_id_mode", { mode: "builtin" })
                 mode = "builtin"
                 fintsProductIDSource = core("fints_product_id_source")
             }
             fintsProductIDMode = mode
-            offerProductIDChoice = fintsBuiltinAvailable && mode === "" && hasOwn && !isDemo
+            offerProductIDChoice = false
         } catch (e) { console.warn(e.message) }
     }
     /// Stores the choice. The user's own ID always stays in the vault.
@@ -4137,6 +4205,15 @@ QtObject {
             errorAlternatives = [{ title: qsTr("Eigene Registrierung ersetzen …"), action: enterOwnProductID },
                                  { title: qsTr("Mit GiroCrab-Registrierung erneut versuchen"), action: () => {} }]
             errorMessage = "Bank meldet 9078: Das Produkt ist nicht registriert."
+            break
+        case "error-batch":
+            // the error alert of "Alle abrufen" with logins still waiting (#1041)
+            if (!connections.length) break
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connections[0].display_name)
+            errorRetry = () => {}
+            errorAlternatives = [{ title: qsTr("Alle abbrechen"), action: () => {} }]
+            errorCloseTitle = qsTr("Überspringen")
+            errorMessage = "Die Verbindung zur Bank ist fehlgeschlagen."
             break
         case "payee-match": case "payee-close": case "payee-nomatch": {
             const connection = connections.length ? connections[0] : null
