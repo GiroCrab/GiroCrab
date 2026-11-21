@@ -389,6 +389,8 @@ pub(crate) mod tests {
             reference: String::new(),
             transfer: false,
             documents: 0,
+            refund_linked: false,
+            refund_part_cents: None,
         }
     }
 

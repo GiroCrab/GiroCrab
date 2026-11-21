@@ -1,0 +1,75 @@
+// Refund links (#714, docs/ERSTATTUNGEN_UI.md): the content of a `Dialog` in main.slint (which owns
+// the theme), so colours come in as properties. Linked bookings on top with their share, up to
+// three suggestions, then the searchable list. One click on a row links or removes that pair.
+import { Button, ListView, LineEdit } from "std-widgets.slint";
+
+// kind: 0 section header, 1 linked, 2 suggestion, 3 further booking
+export struct RefundRow { kind: int, id: int, title: string, detail: string, amount: string, share: string, share-empty: bool, reason: string, blocked: string }
+
+export component RefundsPanel inherits VerticalLayout {
+    in property <color> ink;
+    in property <color> muted;
+    in property <color> line;
+    in property <color> negative;
+    in property <color> accent;
+    in property <bool> from-refund;
+    in property <string> booking-title;
+    in property <string> booking-amount;
+    in property <string> sums;
+    in property <string> hint;
+    in property <string> status;
+    in property <[RefundRow]> rows;
+    callback search(string);
+    callback toggle(int);
+    callback close();
+    spacing: 10px;
+    Text { text: root.from-refund ? "Ursprüngliche Buchung zuordnen" : "Erstattung zuordnen"; color: root.ink; font-size: 18px; font-weight: 700; }
+    Text { text: root.booking-title + " · " + root.booking-amount; font-size: 12px; color: root.ink; overflow: elide; }
+    LineEdit { placeholder-text: "Name oder Verwendungszweck suchen"; edited(t) => { root.search(t); } }
+    if root.sums != "": Text { text: root.sums; color: root.muted; font-size: 12px; wrap: word-wrap; }
+    if root.hint != "": Text { text: root.hint; color: root.muted; font-size: 12px; wrap: word-wrap; }
+    Rectangle {
+        height: 340px;
+        border-width: 1px;
+        border-color: root.line;
+        border-radius: 8px;
+        clip: true;
+        if root.rows.length == 0: Text { text: "Keine passenden Buchungen"; color: root.muted; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+        ListView {
+            for r in root.rows: Rectangle {
+                height: r.kind == 0 ? 26px : 46px;
+                opacity: r.blocked == "" ? 1 : 0.45;
+                background: touch.has-hover && r.kind != 0 && r.blocked == "" ? root.line.with-alpha(0.35) : transparent;
+                // the circle is part of the row: one click selects
+                touch := TouchArea {
+                    enabled: r.kind != 0 && r.blocked == "";
+                    clicked => { root.toggle(r.id); }
+                }
+                if r.kind == 0: Text { x: 10px; text: r.title; color: root.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                if r.kind != 0: HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 10px;
+                    Text { text: r.kind == 1 ? "●" : "○"; color: r.kind == 1 ? root.accent : root.muted; font-size: 16px; vertical-alignment: center; }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        Text { text: r.title; color: root.ink; font-size: 13px; font-weight: 700; overflow: elide; }
+                        Text { text: r.blocked != "" ? r.blocked : r.detail; color: root.muted; font-size: 11px; overflow: elide; }
+                    }
+                    if r.reason != "": Text { text: r.reason; color: root.accent; font-size: 11px; vertical-alignment: center; }
+                    VerticalLayout {
+                        alignment: center;
+                        Text { text: r.amount; color: root.ink; font-size: 13px; font-weight: 700; horizontal-alignment: right; }
+                        if r.share != "": Text { text: r.share; color: r.share-empty ? root.negative : root.muted; font-size: 11px; horizontal-alignment: right; }
+                    }
+                }
+            }
+        }
+    }
+    if root.status != "": Text { text: root.status; color: root.negative; font-size: 12px; wrap: word-wrap; }
+    HorizontalLayout {
+        Rectangle { horizontal-stretch: 1; }
+        Button { text: "Fertig"; primary: true; clicked => { root.close(); } }
+    }
+}

@@ -1,5 +1,7 @@
 import { Button, ListView, LineEdit, Palette, ComboBox, CheckBox, TextEdit, Switch, ScrollView } from "std-widgets.slint";
 import { TagRow, SplitRow, BudgetRow, TemplateRow, TagsPanel, SplitsPanel, BudgetsPanel, TemplatesPanel } from "tags_dialog.slint";
+import { RefundRow, RefundsPanel } from "refunds_dialog.slint";
+export { RefundRow }
 export { TagRow, SplitRow, BudgetRow, TemplateRow }
 import { RecLine, RecurringPanel } from "recurring_dialog.slint";
 import { GroupsState, GroupsPanel } from "groups_dialog.slint";
@@ -14,7 +16,7 @@ export { RecLine }
 
 export struct AccountRow { id: int, name: string, bank: string, iban: string, header: string, monogram: string, dot: color, balance: string, currency: string, negative: bool, archived: bool }
 export struct CategoryRow { id: int, name: string, depth: int, color: color }
-export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string }
+export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string, refund: string }
 export struct DayGroup { title: string, sum: string, negative: bool, rows: [BookingRow], show-month: bool, month: string, month-income: string, month-expense: string }
 export struct BarGroup { label: string, income: float, expense: float }
 export struct BudgetLine { name: string, amount: string, progress: float, color: color, over: bool }
@@ -452,6 +454,7 @@ component BookingLine inherits Rectangle {
                 spacing: 6px;
                 Text { text: b.counterparty; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
                 if b.has-note: Text { text: "📎"; font-size: 11px; color: Theme.muted; }
+                if b.refund != "": Text { text: b.refund; font-size: 11px; color: Theme.muted; }
             }
             if !root.compact || root.active: HorizontalLayout {
                 spacing: 5px;
@@ -895,6 +898,18 @@ export component MainWindow inherits Window {
     callback tag-clear-booking();
     in property <string> inspector-tags;
     in-out property <bool> splits-open: false;
+    // ---- refund links (#714, refunds_ui.rs; panel in refunds_dialog.slint)
+    in-out property <bool> refunds-open: false;
+    in property <bool> rf-from-refund;
+    in property <string> rf-title;
+    in property <string> rf-amount;
+    in property <string> rf-sums;
+    in property <string> rf-hint;
+    in property <string> rf-status;
+    in property <[RefundRow]> rf-rows;
+    callback refunds-request();
+    callback refund-search(string);
+    callback refund-toggle(int);
     in property <string> sp-title;
     in property <string> sp-amount;
     in property <string> sp-remaining;
@@ -1788,6 +1803,7 @@ export component MainWindow inherits Window {
                                 Text { text: root.inspector-tags == "" ? "Keine Tags" : root.inspector-tags; font-size: 11px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide; }
                                 GhostButton { text: "Tags …"; enabled: !root.inspector.read-only; clicked => { root.tags-request(); } }
                                 GhostButton { text: "Aufteilen …"; enabled: !root.inspector.read-only; clicked => { root.splits-request(); } }
+                                GhostButton { text: "Erstattung …"; clicked => { root.refunds-request(); } }
                             }
                         }
                         // details
@@ -2253,6 +2269,17 @@ export component MainWindow inherits Window {
             save() => { root.split-save(); }
             remove-split() => { root.split-clear(); }
             close() => { root.splits-open = false; root.refocus(); }
+        }
+    }
+    if refunds-open: Dialog {
+        dialog-width: 640px;
+        RefundsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; negative: Theme.negative; accent: Theme.accent;
+            from-refund: root.rf-from-refund; booking-title: root.rf-title; booking-amount: root.rf-amount;
+            sums: root.rf-sums; hint: root.rf-hint; status: root.rf-status; rows: root.rf-rows;
+            search(t) => { root.refund-search(t); }
+            toggle(id) => { root.refund-toggle(id); }
+            close() => { root.refunds-open = false; root.refocus(); }
         }
     }
     if budgets-open: Dialog {

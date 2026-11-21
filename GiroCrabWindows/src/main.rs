@@ -23,6 +23,7 @@ mod policy;
 mod portfolio;
 mod recurring_ui;
 mod recurring_view;
+mod refunds_ui;
 mod settings_import;
 mod settings_import_ui;
 mod sync_flow;
@@ -368,6 +369,12 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
                 .into()
         },
         has_note: !b.note.is_empty() && !privacy,
+        // the same sign for a refund and its original; the amount only while covered in part (#714)
+        refund: match (b.refund_linked, b.refund_part_cents) {
+            (false, _) => "".into(),
+            (true, Some(part)) if !privacy => format!("↺ {}", money(part, &b.currency)).into(),
+            (true, _) => "↺".into(),
+        },
         expand_detail: if privacy {
             "".into()
         } else {

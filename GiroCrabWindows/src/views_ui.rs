@@ -680,6 +680,7 @@ pub fn on_lock(win: &MainWindow) {
     win.set_link_open(false);
     win.set_rules_open(false);
     crate::tags_ui::on_lock(win);
+    crate::refunds_ui::on_lock(win);
     crate::groups_ui::on_lock(win);
     crate::assets_loans_ui::on_lock(win);
     crate::recurring_ui::on_lock(win);
@@ -1283,6 +1284,7 @@ pub fn wire(win: &MainWindow, vault: VaultSlot) {
     wire_documents(win, &vault);
     wire_rules(win, &vault);
     crate::tags_ui::wire(win, vault.clone());
+    crate::refunds_ui::wire(win, vault.clone());
     crate::groups_ui::wire(win, vault.clone());
     crate::assets_loans_ui::wire(win, vault.clone());
     crate::recurring_ui::wire(win, vault.clone());

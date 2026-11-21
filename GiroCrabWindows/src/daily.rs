@@ -142,6 +142,10 @@ pub struct Row {
     pub transfer: bool,
     /// Attached documents (paperclip).
     pub documents: u32,
+    /// Linked as a refund or as a refunded booking (#714).
+    pub refund_linked: bool,
+    /// What is assigned or refunded so far, only while that is a part of the amount.
+    pub refund_part_cents: Option<i64>,
 }
 
 impl From<&Booking> for Row {
@@ -193,6 +197,8 @@ impl From<&Booking> for Row {
             .join("\n"),
             transfer: b.flow == girocrab_core::merchants::FlowKind::Transfer,
             documents: b.document_count,
+            refund_linked: b.refund_link != girocrab_core::refunds::RefundLinkKind::None,
+            refund_part_cents: b.refund_part_cents,
         }
     }
 }
@@ -477,6 +483,8 @@ mod tests {
             reference: String::new(),
             transfer: false,
             documents: 0,
+            refund_linked: false,
+            refund_part_cents: None,
         }
     }
 
