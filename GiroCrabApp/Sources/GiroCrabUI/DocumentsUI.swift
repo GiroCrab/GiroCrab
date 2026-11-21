@@ -232,8 +232,12 @@ struct DocumentsView: View {
     @State private var targeted = false
     @State private var docToDelete: DocumentInfo?
     @State private var previewDoc: DocumentInfo?
-    /// Measured widths of the filter labels (`filterLabel`), by row.
-    @State private var filterLabelWidths: [Int: CGFloat] = [:]
+    #if os(macOS)
+    /// The list has the focus: only then macOS draws its selection in the accent colour (`DocumentRow`).
+    @FocusState private var listFocused: Bool
+    #endif
+    /// (demo) `--pick` selects a document once per launch, not on every return to the view
+    @MainActor private static var pickedDemoDocument = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     private var isCompact: Bool { horizontalSizeClass == .compact }
@@ -245,6 +249,7 @@ struct DocumentsView: View {
         @Bindable var model = model
         let found = model.allDocuments(search: search, unlinkedOnly: unlinkedOnly, accountId: model.documentsAccountFilter, connectionId: model.documentsConnectionFilter, scope: model.documentsScope)
         let docs = DocumentFilters.apply(found, type: typeFilter, year: yearFilter, unseenOnly: unseenOnly, keeping: selected ?? previewDoc?.id)
+        let choices = typeAndYearChoices(found)
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -260,12 +265,17 @@ struct DocumentsView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             connectionPicker
                             accountPicker
-                            if found.count > 1 { typeAndYearPickers(found) }
+                            if choices.showsType || choices.showsYear {
+                                HStack(spacing: 12) {
+                                    if choices.showsType { typePicker(choices.types).fixedSize() }
+                                    if choices.showsYear { yearPicker(choices.years).fixedSize() }
+                                }
+                            }
                             unseenToggle
                             unlinkedToggle
                         }
                     } else {
-                        filterRows(found)
+                        filterRows(choices)
                     }
                     documentsOffHint
                     ViewThatFits(in: .horizontal) {
@@ -289,7 +299,8 @@ struct DocumentsView: View {
                 }
                 List(selection: $selected) {
                     ForEach(docs) { d in
-                        DocumentRow(doc: d, account: accountText(d), onSelection: selected == d.id)
+                        DocumentRow(doc: d, account: accountText(d), focusedSelection: selected == d.id && listHasFocus,
+                                    showsUnlinked: unlinkedOnly)
                             .tag(d.id)
                             .contentShape(Rectangle())
                             .contextMenu {
@@ -321,6 +332,9 @@ struct DocumentsView: View {
                     }
                 }
                 .listStyle(.inset)
+                #if os(macOS)
+                .focused($listFocused)
+                #endif
                 // Don't put a tap gesture on the rows: it swallows the click
                 // before List selection sees it, leaving only the row padding
                 // clickable (GitHub #174). On compact iOS, turn the selection
@@ -349,7 +363,8 @@ struct DocumentsView: View {
                 }
                 // (demo) `--pick <text>`: the document whose title contains it starts selected (screenshots)
                 .task {
-                    guard let q = model.options.pickBooking, selected == nil else { return }
+                    guard model.options.demoSeed, !Self.pickedDemoDocument, let q = model.options.pickBooking else { return }
+                    Self.pickedDemoDocument = true
                     selected = docs.first { $0.title.lowercased().contains(q) }?.id
                 }
                 .onChange(of: docs.map(\.id)) { _, ids in
@@ -457,6 +472,14 @@ struct DocumentsView: View {
         model.documentsAccountFilter.flatMap { model.accountsByID[$0]?.name }
     }
 
+    private var listHasFocus: Bool {
+        #if os(macOS)
+        listFocused
+        #else
+        false
+        #endif
+    }
+
     /// Any filter, scope or search narrows the list.
     private var isFiltered: Bool {
         model.documentsAccountFilter != nil || model.documentsConnectionFilter != nil || model.documentsScope != .all || !search.isEmpty
@@ -531,36 +554,27 @@ struct DocumentsView: View {
     /// Mac and iPad: a label column (trailing) next to the controls, as in a macOS form, so every pop-up
     /// starts at the same edge and fills the rest of the width; labels sit on the baseline of the pop-up's
     /// text, which keeps the system size while the labels scale with the text size (#1543).
-    private func filterRows(_ found: [DocumentInfo]) -> some View {
-        let types = DocumentFilters.types(of: found)
-        let years = DocumentFilters.years(of: found)
-        let showsType = found.count > 1 && (types.count > 1 || typeFilter != nil)
-        let showsYear = found.count > 1 && (years.count > 1 || yearFilter != nil)
+    private func filterRows(_ choices: TypeAndYearChoices) -> some View {
+        let labels: [LocalizedStringKey] = (showsConnectionPicker ? ["Bankzugang"] : []) + ["Konto"]
+            + (choices.showsType ? ["Typ"] : []) + (choices.showsYear ? ["Jahr"] : [])
         return VStack(alignment: .leading, spacing: 8) {
             if showsConnectionPicker {
-                filterRow("Bankzugang", slot: 0) { connectionPicker.labelsHidden() }
+                filterRow("Bankzugang", column: labels) { connectionPicker.labelsHidden() }
             }
-            filterRow("Konto", slot: 1) { accountPicker.labelsHidden() }
-            if showsType && showsYear {
-                // side by side while both fit, else one row each
-                ViewThatFits(in: .horizontal) {
-                    filterRow("Typ", slot: 2) {
-                        typePicker(types).labelsHidden().frame(maxWidth: .infinity)
-                        Text("Jahr").fixedSize().padding(.leading, 8)
-                        yearPicker(years).labelsHidden().frame(maxWidth: .infinity)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        filterRow("Typ", slot: 2) { typePicker(types).labelsHidden() }
-                        filterRow("Jahr", slot: 3) { yearPicker(years).labelsHidden() }
-                    }
+            filterRow("Konto", column: labels, enabled: model.documentsConnectionFilter != AppModel.documentsWithoutAccount) {
+                accountPicker.labelsHidden()
+            }
+            if choices.showsType {
+                filterRow("Typ", column: labels) {
+                    typePicker(choices.types).labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
                 }
-            } else if showsType {
-                filterRow("Typ", slot: 2) { typePicker(types).labelsHidden() }
-            } else if showsYear {
-                filterRow("Jahr", slot: 3) { yearPicker(years).labelsHidden() }
             }
-            HStack(alignment: .top, spacing: 8) {
-                Color.clear.frame(width: filterLabelColumn ?? 0, height: 0)
+            if choices.showsYear {
+                filterRow("Jahr", column: labels) {
+                    yearPicker(choices.years).labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            filterRow(nil, column: labels) {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 16) {
                         unseenToggle
@@ -575,22 +589,32 @@ struct DocumentsView: View {
         }
     }
 
-    /// Width of the label column: the widest label shown, measured (text size, language).
-    private var filterLabelColumn: CGFloat? { filterLabelWidths.values.max() }
-
-    private func filterRow(_ label: LocalizedStringKey, slot: Int, @ViewBuilder control: () -> some View) -> some View {
+    /// One filter row. The label cell holds every label of the column, hidden, so each cell is as wide as
+    /// the widest one (text size, language) without measuring. VoiceOver reads the picker's own label.
+    private func filterRow(_ label: LocalizedStringKey?, column: [LocalizedStringKey], enabled: Bool = true,
+                           @ViewBuilder control: () -> some View) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            filterLabel(label, slot: slot)
+            ZStack(alignment: .trailing) {
+                ForEach(column.indices, id: \.self) { Text(column[$0]).hidden() }
+                if let label {
+                    // dimmed like the label of a disabled control in a macOS form
+                    Text(label).foregroundStyle(enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                }
+            }
+            .fixedSize()
+            .accessibilityHidden(true)
             control()
         }
     }
 
-    private func filterLabel(_ key: LocalizedStringKey, slot: Int) -> some View {
-        Text(key)
-            .fixedSize()
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { filterLabelWidths[slot] = $0 }
-            .onDisappear { filterLabelWidths[slot] = nil }
-            .frame(width: filterLabelColumn, alignment: .trailing)
+    /// Type and year pickers: only with a choice, or while their filter is on, so an active filter
+    /// never loses its control.
+    private func typeAndYearChoices(_ found: [DocumentInfo]) -> TypeAndYearChoices {
+        let types = DocumentFilters.types(of: found)
+        let years = DocumentFilters.years(of: found)
+        return TypeAndYearChoices(types: types, years: years,
+                                  showsType: types.count > 1 || typeFilter != nil,
+                                  showsYear: years.count > 1 || yearFilter != nil)
     }
 
     /// Bank connection filter (#1042). Only with more than one connection (or while one is chosen).
@@ -642,17 +666,6 @@ struct DocumentsView: View {
         .help("Dokumente eines Kontos anzeigen")
     }
 
-    /// Type and year of the documents found so far (only what exists is offered), for a long list (iPhone).
-    @ViewBuilder
-    private func typeAndYearPickers(_ found: [DocumentInfo]) -> some View {
-        let types = DocumentFilters.types(of: found)
-        let years = DocumentFilters.years(of: found)
-        HStack(spacing: 12) {
-            if types.count > 1 || typeFilter != nil { typePicker(types).fixedSize() }
-            if years.count > 1 || yearFilter != nil { yearPicker(years).fixedSize() }
-        }
-    }
-
     private func typePicker(_ types: [String]) -> some View {
         Picker("Typ", selection: $typeFilter) {
             Text("Alle Typen").tag(String?.none)
@@ -693,22 +706,51 @@ private extension View {
     }
 }
 
-/// One row of the document list. On the selection it draws with the hierarchical styles, which the
-/// system lightens on the accent-coloured highlight; the theme colours would stay dark there and the
-/// accent-coloured symbol would vanish (#1543).
+/// Type and year pickers of the document list and what they offer (`DocumentsView.typeAndYearChoices`).
+private struct TypeAndYearChoices {
+    let types: [String]
+    let years: [Int]
+    let showsType: Bool
+    let showsYear: Bool
+}
+
+/// One row of the document list; rules in `docs/BELEGE_UND_POSTBOX_UI.md` (Zeile, Farben in der Zeile).
+/// On the accent-coloured highlight (selected row of the focused list) it draws with the hierarchical
+/// styles, which the system lightens there; the theme colours would stay dark and the accent-coloured
+/// symbol would vanish (#1543). The grey highlight of an unfocused list keeps the theme colours.
 private struct DocumentRow: View {
+    @Environment(\.backgroundProminence) private var prominence
+    #if os(macOS)
+    @Environment(\.controlActiveState) private var controlActiveState
+    #endif
     let doc: DocumentInfo
     let account: String
-    let onSelection: Bool
+    /// Selected in the list that has the focus (macOS).
+    let focusedSelection: Bool
+    /// "Nur ohne zugeordneten Umsatz" is on: bank documents say why they are listed, too.
+    let showsUnlinked: Bool
 
-    private var secondary: AnyShapeStyle { onSelection ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.secondary) }
+    /// macOS draws the selection in the accent colour while the list has the focus in the key window and
+    /// leaves `backgroundProminence` unset there; iOS marks the accent highlight with it.
+    private var onAccentHighlight: Bool {
+        #if os(macOS)
+        focusedSelection && controlActiveState == .key
+        #else
+        prominence == .increased
+        #endif
+    }
+
+    private func tint(_ normal: some ShapeStyle, highlighted: some ShapeStyle = .primary) -> AnyShapeStyle {
+        onAccentHighlight ? AnyShapeStyle(highlighted) : AnyShapeStyle(normal)
+    }
 
     var body: some View {
+        let secondary = tint(Theme.secondary, highlighted: .secondary)
         HStack(spacing: 10) {
-            Image(systemName: docSymbol(doc)).foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Theme.accent)).frame(width: 22)
+            Image(systemName: docSymbol(doc)).foregroundStyle(tint(Theme.accent)).frame(width: 22)
                 .overlay(alignment: .topLeading) {
                     if !doc.seen {
-                        Circle().fill(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Color.blue)).frame(width: 8, height: 8).offset(x: -4, y: -3)
+                        Circle().fill(tint(Color.blue)).frame(width: 8, height: 8).offset(x: -4, y: -3)
                             .accessibilityLabel(Text("Ungelesen"))
                     }
                 }
@@ -722,9 +764,12 @@ private struct DocumentRow: View {
                         .appFont(.caption).foregroundStyle(secondary).lineLimit(1)
                         .sensitive([.personal, .amounts]) // "merchant · amount"
                 } else if !doc.isBankDocument {
-                    // only an own receipt waits for its booking; most bank documents never get one
+                    // an own receipt waits for its booking; most bank documents never get one
                     Text("Ohne zugeordneten Umsatz")
-                        .appFont(.caption).foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Theme.warning)).lineLimit(1)
+                        .appFont(.caption).foregroundStyle(tint(Theme.warning)).lineLimit(1)
+                } else if showsUnlinked {
+                    Text("Ohne zugeordneten Umsatz")
+                        .appFont(.caption).foregroundStyle(secondary).lineLimit(1)
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)

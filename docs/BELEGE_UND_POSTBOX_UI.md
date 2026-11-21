@@ -28,17 +28,21 @@ zugeordneten Umsatz“ filtert. **Typ**, **Jahr** und **Nur ungelesene** filtern
 was es gibt. Über der Liste steht „N Dokumente“ oder „N von M Dokumenten“.
 
 **Aufbau der Filter (Mac, iPad):** wie ein macOS-Formular (#1543). Eine Spalte mit rechtsbündigen Beschriftungen
-(Bankzugang, Konto, Typ), daneben die Auswahlfelder, die alle an derselben Kante beginnen und die restliche Breite
-füllen; die Beschriftung steht auf der Grundlinie des Feldtexts. Die Spalte ist so breit wie die längste Beschriftung
-(gemessen, folgt Schriftgröße und Sprache). Typ und Jahr teilen sich eine Zeile, solange beide hineinpassen, sonst
-bekommt jedes eine. Darunter „Nur ungelesene“ und „Nur ohne zugeordneten Umsatz“ als Ankreuzfelder (Filter sind keine
+(Bankzugang, Konto, Typ, Jahr), daneben die Auswahlfelder, die alle an derselben Kante beginnen und die restliche
+Breite füllen; die Beschriftung steht auf der Grundlinie des Feldtexts und wird mit ihrem Feld abgeblendet (Konto bei
+Bankzugang „Ohne Konto“). Jede Beschriftungszelle enthält alle Beschriftungen der Spalte unsichtbar übereinander und ist
+damit so breit wie die längste (Schriftgröße, Sprache), ohne Messen und ohne Zustand. VoiceOver liest die Beschriftung
+des Pickers selbst, die sichtbare ist ausgeblendet. Typ und Jahr erscheinen, wenn es eine Wahl gibt oder ihr Filter
+gesetzt ist. Darunter „Nur ungelesene“ und „Nur ohne zugeordneten Umsatz“ als Ankreuzfelder (Filter sind keine
 Einstellungen: HIG › Toggles), dann „Beleg hinzufügen …“, der Export und das Menü „Aktionen“ (…) mit „Alle als gelesen
 markieren“ und „Alle Dokumente anzeigen“ (setzt alle Filter zurück).
 
 **Zeile:** Titel, „Herkunft · Konto“ und als dritte Zeile der zugeordnete Umsatz. „Ohne zugeordneten Umsatz“ (orange)
-steht nur an eigenen Belegen, die auf ihren Umsatz warten; Bankdokumente haben meist keinen und zeigen dann nichts. Die
-gewählte Zeile zeichnet mit den hierarchischen Stilen (`.primary`/`.secondary`), die macOS auf der Akzentfarbe hell
-macht; die festen Theme-Farben blieben dort dunkel (`DocumentRow`).
+steht an eigenen Belegen, die auf ihren Umsatz warten; Bankdokumente haben meist keinen und zeigen ihn nur, solange
+„Nur ohne zugeordneten Umsatz“ an ist (grau). Auf der blauen Auswahl (Liste mit Fokus im aktiven Fenster) zeichnet die
+Zeile mit den hierarchischen Stilen (`.primary`/`.secondary`), die macOS dort hell macht; die festen Theme-Farben blieben
+dunkel. Die graue Auswahl ohne Fokus behält die Theme-Farben. Eine macOS-Liste setzt `backgroundProminence` nicht, daher
+merkt sich `DocumentsView` den Fokus der Liste (`listFocused`); iOS setzt es.
 
 Die Liste liest nur den Index `booking_documents_info`, nie die PDF-Daten (diese sind Megabytes groß). Jede Spalte,
 die die Liste zeigt, muss deshalb im Index stehen (Schema-Schritt 30 hat `seen_at` dort ergänzt).
@@ -88,9 +92,10 @@ Auswahl wird danach zurückgesetzt, damit dasselbe Dokument erneut geöffnet wer
 - **Texte:** keine Marken fremder Software; alle Strings in `Localizable.xcstrings` (DE + EN), danach
   `scripts/xcstrings.py format`.
 - **Keine rechte Buchungsspalte** in dieser Ansicht, solange sie ihre eigene Vorschau hat.
-- **Neue Filter auf dem Mac** als weitere Zeile in `filterRows` (Beschriftung über `filterRow`), nicht mit eigener
-  Beschriftung im Picker: sonst beginnt das Feld an einer anderen Kante.
-- **Farben in der Zeile:** keine feste Farbe ohne Gegenstück für die gewählte Zeile (`DocumentRow.onSelection`).
+- **Neue Filter auf dem Mac** als weitere Zeile in `filterRows` (Beschriftung über `filterRow` und in der Liste
+  `labels`, die die Spaltenbreite bestimmt), nicht mit eigener Beschriftung im Picker: sonst beginnt das Feld an einer
+  anderen Kante.
+- **Farben in der Zeile:** jede Farbe über `DocumentRow.tint`, damit sie auf der blauen Auswahl hell wird.
 
 ## Prüfen
 
@@ -103,7 +108,8 @@ swift build -q && swift test -q --filter DocumentFiltersTests
 .build/debug/GiroCrabMac --demo-seed --view belege --pick hotel --light --screenshot /tmp/belege-auswahl.png
 ```
 
-Die Aufnahme zeigt die Auswahl ohne Fokus (grau); die blaue Auswahl mit Fokus nur in der laufenden App nach einem Klick.
+Die Aufnahme zeigt die Auswahl ohne Fokus (grau); die blaue Auswahl mit Fokus nur in der laufenden App nach einem Klick
+in die Liste. `--pick` wirkt nur mit `--demo-seed` und einmal pro Start.
 
 iPhone: App mit `--demo-seed --view belege` im Simulator starten. Die Demo hat zwölf Dokumente; die jüngeren sind
 ungelesen, drei ältere zeigen die Typ- und Jahresfilter.
