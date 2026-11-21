@@ -273,6 +273,10 @@ pub struct MoneyMoneyDbPreview {
     /// Transfer templates GiroCrab can take over (recipient and valid IBAN,
     /// euro).
     pub transfer_template_count: u32,
+    /// GiroCrab accounts an earlier import created and still owns. An account imported
+    /// into a new one or one of these links its login; one merged into a bank-synced
+    /// account brings its bookings only, and its login gets no connection for it (#1437).
+    pub owned_account_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -2643,6 +2647,11 @@ fn preview(
         date_range_end: last,
         replaces_starter_categories: replaces_starter_categories(conn, src)?,
         transfer_template_count: templates::usable_count(&src.templates),
+        // the rule of `import_account`; soft-deleted ones too, the import revives them
+        owned_account_ids: conn
+            .prepare("SELECT id FROM accounts WHERE external_ref LIKE 'moneymoney-db:%'")?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?,
     })
 }
 

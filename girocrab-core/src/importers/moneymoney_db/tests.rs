@@ -3776,6 +3776,41 @@ fn account_with_a_cancelled_refresh_is_imported_active() {
 }
 
 #[test]
+fn preview_names_the_accounts_the_import_owns() {
+    // #1437: only an account imported into one of these (or a new one) links its login,
+    // so the assistant plans the logins with them; a bank-synced account is not one
+    let v = vault();
+    let synced = {
+        let db = v.db().unwrap();
+        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name, iban, currency, kind, balance_cents)
+             VALUES (?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
+            [gid],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert!(p.owned_account_ids.is_empty());
+    v.import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false))
+        .unwrap();
+    let p = v
+        .preview_moneymoney_database(path, PW.into(), None)
+        .unwrap();
+    let giro = p.accounts.iter().find(|a| a.name == "Girokonto").unwrap();
+    assert_eq!(giro.existing_account_id, Some(synced));
+    assert!(!p.owned_account_ids.contains(&synced));
+    assert!(
+        p.owned_account_ids
+            .contains(&account_by_name(&v, "Visa-Karte").id)
+    );
+}
+
+#[test]
 fn account_closed_in_moneymoney_is_imported_archived() {
     let v = vault();
     import_with(&v, &fake_db_with(false, CARD_CLOSED), |_| {});

@@ -211,14 +211,23 @@ ColumnLayout {
     /// The bank's connection options (the core's catalogue; the live Enable
     /// Banking list of the Mac app is not loaded here).
     function connectionOptions(b) { return b.connection_options }
-    /// The accounts of login `b` chosen for import.
-    function selectedAccounts(b) { return preview ? preview.accounts.filter(a => a.mm_bank_id === b.mm_id && choice(a).selected) : [] }
-    /// Every account of the login chosen for import is closed in MoneyMoney (#1437).
-    function allClosed(b) { const a = selectedAccounts(b); return a.length > 0 && a.every(x => x.closed) }
-    /// Preselected: the best connection, none for a login whose imported
-    /// accounts are all closed; none at all without an imported account (#1437).
+    /// The accounts the import links to login `b`, the core's rule (#1437): chosen for import and
+    /// going into a new account or one an earlier import owns. One merged into a bank-synced
+    /// account still brings its bookings, but no connection for its login.
+    function linkedAccounts(b) {
+        if (!preview) return []
+        const owned = preview.owned_account_ids || []
+        return preview.accounts.filter(a => {
+            const c = choice(a)
+            return a.mm_bank_id === b.mm_id && c.selected && (c.target === null || c.target === undefined || owned.includes(c.target))
+        })
+    }
+    /// Every account linked to the login is closed in MoneyMoney (#1437).
+    function allClosed(b) { const a = linkedAccounts(b); return a.length > 0 && a.every(x => x.closed) }
+    /// Preselected: the best connection, none for a login whose linked
+    /// accounts are all closed; none at all without a linked account (#1437).
     function chosenKey(b) {
-        if (selectedAccounts(b).length === 0) return ""
+        if (linkedAccounts(b).length === 0) return ""
         const k = bankChoice[b.mm_id]
         if (k !== undefined) return k
         const o = connectionOptions(b)
@@ -243,12 +252,12 @@ ColumnLayout {
     }
     readonly property bool needsEnableBankingSetup: createConnections && chosenEnableBanking && !enableBankingReady
     readonly property string ebBankNames: preview ? andList(preview.banks.filter(b => { const o = chosenOption(b); return o !== null && o.via === "EnableBanking" }).map(b => b.name)) : ""
-    /// The Enable Banking banks of this import with their selected accounts.
+    /// The Enable Banking banks of this import with their linked accounts.
     readonly property var plannedPsd2Links: {
         if (!preview) return []
         return preview.banks.filter(b => { const o = chosenOption(b); return o !== null && o.via === "EnableBanking" }).map(b => ({
             connection_id: -b.mm_id, bank_name: b.name, created: true,
-            accounts: selectedAccounts(b)
+            accounts: linkedAccounts(b)
                 .map(a => ({ name: a.name, iban: a.iban, account_number: a.account_number }))
         }))
     }
@@ -615,7 +624,7 @@ ColumnLayout {
                             // "Nicht verbinden" for every login (#1437)
                             AppComboBox {
                                 visible: bankRow.options.length > 0
-                                enabled: v.selectedAccounts(bankRow.modelData).length > 0
+                                enabled: v.linkedAccounts(bankRow.modelData).length > 0
                                 Layout.preferredWidth: 240
                                 textRole: "text"
                                 model: bankRow.options.map((o, i) => ({ key: o.key, text: v.optionLabel(o) + (i === 0 && bankRow.modelData.existing_connection_id !== null ? " · " + qsTr("vorhanden") : "") })).concat([{ key: "", text: qsTr("Nicht verbinden") }])
