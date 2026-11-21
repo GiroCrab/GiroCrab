@@ -923,7 +923,7 @@ struct PortalWebSheet: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 guard !busy, !loadingStatements else { continue }
-                if connection.connector == .americanExpress, !loginFilled, browser.onLoginPage, browser.onPortal,
+                if AppModel.supportsStoredPortalLogin(connection.connector), !loginFilled, browser.onLoginPage, browser.onPortal,
                    !browser.loading {
                     loginFilled = await fillStoredLogin()
                 }
@@ -1079,7 +1079,11 @@ struct PortalWebSheet: View {
         let stored = try? await model.vaultOffMain {
             (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
         }
-        guard let (user, password) = stored, !user.isEmpty, !password.isEmpty else { return true }
+        guard let (storedUser, password) = stored, !password.isEmpty else { return true }
+        // Amazon Visa already stores the email as the connection login; copy it to
+        // the encrypted portal-login secret when the user opts into saving credentials.
+        let user = storedUser.isEmpty && connection.connector == .amazonVisa ? connection.loginName : storedUser
+        guard !user.isEmpty else { return true }
         let filled = await browser.fillLogin(user: user, password: password)
         if filled { AppModel.debugLog("portal: stored login filled in") }
         return filled
