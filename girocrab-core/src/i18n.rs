@@ -674,6 +674,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Verwendungszweck darf höchstens 140 Zeichen lang sein." => {
             "The payment reference can be at most 140 characters."
         }
+        "Die beiden Buchungen lassen sich nicht (mehr) zusammenführen." => {
+            "These two bookings can't be merged (any more)."
+        }
         "Dieses Konto hat keine Bankverbindung." => "This account has no bank connection.",
         "Dieses Konto ist archiviert oder vom Abruf ausgenommen." => {
             "This account is archived or excluded from syncing."

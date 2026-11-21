@@ -274,6 +274,10 @@ extension AppModel {
                 self.categoryHistory = loaded.categoryHistory
                 self.categoryOtherCurrencies = loaded.otherCurrencies
                 Perf.signposter.endInterval("publishSelection", publish)
+                // Same selection, changed data (sync, merge): the selected booking's
+                // merchant history and suggestion were loaded from the old rows. Restart
+                // them for the published page, as `reloadBookings()` does.
+                if keepingShown { self.refreshSelectedBookingHistory() }
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.failSelectionLoad(error, cycleLoaded: cycleLoaded)

@@ -66,6 +66,8 @@ struct FileCommands: Commands {
                 .disabled(!model.isUnlocked)
             Button("Wiederkehrende Buchungen …") { model.showRecurringSheet = true }
                 .disabled(!model.isUnlocked)
+            Button("Mögliche Doppel …") { model.openDuplicates() }
+                .disabled(!model.isUnlocked)
         }
     }
 }
