@@ -924,6 +924,49 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ connectors/finpension.rs
         "Datei-Import (CSV/JSON-Export)" => "File import (CSV/JSON export)",
         "Bezeichnung" => "Label",
+        "Das ist ein privater Schlüssel. Bitte nur den erweiterten öffentlichen Schlüssel (xpub, ypub oder zpub) eintragen." => {
+            "This is a private key. Please enter only the extended public key (xpub, ypub or zpub)."
+        }
+        "Dieses Schlüsselformat wird nicht unterstützt. Möglich sind xpub, ypub und zpub (Bitcoin-Mainnet, Einzelsignatur)." => {
+            "This key format is not supported. Possible are xpub, ypub and zpub (Bitcoin mainnet, single signature)."
+        }
+        "Der Schlüssel ist ungültig. Bitte den erweiterten öffentlichen Schlüssel (xpub, ypub oder zpub) vollständig eintragen." => {
+            "The key is invalid. Please enter the complete extended public key (xpub, ypub or zpub)."
+        }
+        "Die Adresse des Bitcoin-Servers ist ungültig. Erwartet wird z. B. https://mempool.space/api." => {
+            "The Bitcoin server address is invalid. Expected is e.g. https://mempool.space/api."
+        }
+        "Der Bitcoin-Server hat unerwartet geantwortet." => {
+            "The Bitcoin server sent an unexpected answer."
+        }
+        "Der Bitcoin-Server hat die Anfrage abgelehnt" => "The Bitcoin server refused the request",
+        "Der aktuelle Bitcoin-Kurs ist nicht verfügbar." => {
+            "The current Bitcoin price is not available."
+        }
+        "Für einzelne Bitcoin-Umsätze ist kein Tageskurs verfügbar; sie stehen ohne Euro-Wert in der Liste." => {
+            "No daily price is available for some Bitcoin transactions; they are listed without a euro value."
+        }
+        "Bitcoin-Wallet (nur lesen, xpub/ypub/zpub)" => {
+            "Bitcoin wallet (read-only, xpub/ypub/zpub)"
+        }
+        "Erweiterter öffentlicher Schlüssel (xpub, ypub oder zpub)" => {
+            "Extended public key (xpub, ypub or zpub)"
+        }
+        "(kein Passwort nötig)" => "(no password needed)",
+        "Nur lesen: Mit dem erweiterten öffentlichen Schlüssel des Wallet-Kontos (z. B. m/84'/0'/0') werden Empfangs- und Wechselgeld-Adressen abgeleitet; damit lässt sich nichts ausgeben. Die Umsätze kommen von mempool.space oder einem eigenen Esplora-Server (Einstellungen der Verbindung); dieser Server sieht alle Adressen des Wallets. Der Euro-Kurs kommt von mempool.space. Niemals den privaten Schlüssel (xprv) oder die Wiederherstellungswörter eingeben." => {
+            "Read-only: the extended public key of the wallet account (e.g. m/84'/0'/0') derives the receive and change addresses; it cannot spend anything. Transactions come from mempool.space or your own Esplora server (connection settings); that server sees all addresses of the wallet. The euro price comes from mempool.space. Never enter the private key (xprv) or the recovery words."
+        }
+        "Eingang" => "Incoming",
+        "Das ist der Schlüssel einer einzelnen Adresskette. Bitte den Schlüssel des Wallet-Kontos eintragen (z. B. m/84'/0'/0'), sonst fehlen die Wechselgeld-Adressen." => {
+            "This is the key of a single address chain. Please enter the key of the wallet account (e.g. m/84'/0'/0'), otherwise the change addresses are missing."
+        }
+        "Die Wallet-Historie ist unvollständig: Es wurde mehr ausgegeben als empfangen. Bitte den Schlüssel des Wallet-Kontos (z. B. m/84'/0'/0') prüfen." => {
+            "The wallet history is incomplete: more was spent than received. Please check the key of the wallet account (e.g. m/84'/0'/0')."
+        }
+        "Keine Umsätze gefunden. Der Schlüssel ist kein Konto-Schlüssel (z. B. m/84'/0'/0'); viele Wallets nutzen nur Adressen unterhalb eines solchen." => {
+            "No transactions found. The key is not an account key (e.g. m/84'/0'/0'); most wallets only use addresses below one."
+        }
+        "Ausgang" => "Outgoing",
         "Finpension (Schweiz): Säule 3a, Freizügigkeit und 1e. Die CSV- oder JSON-Exportdatei (Positionen und Cash-Buchungen) wird über „Datei importieren“ eingelesen; es gibt keine Anmeldung und keinen Netzwerkzugriff." => {
             "Finpension (Switzerland): pillar 3a, vested benefits and 1e. The CSV or JSON export (holdings and cash transactions) is read with “Import file”; there is no login and no network access."
         }
@@ -1674,6 +1717,11 @@ fn english(de: &str) -> Option<&'static str> {
             "Only needed if kontist.dev shows a secret for the client; otherwise leave empty."
         }
         "Kontist" => "Kontist",
+        "Bitcoin" => "Bitcoin",
+        "Eigener Bitcoin-Server (Esplora)" => "Own Bitcoin server (Esplora)",
+        "Optional: Adresse eines eigenen Esplora- oder mempool-Servers (z. B. https://node.local/api) für alle Bitcoin-Wallets. Leer = mempool.space. http ist nur im eigenen Netz erlaubt." => {
+            "Optional: address of your own Esplora or mempool server (e.g. https://node.local/api) for all Bitcoin wallets. Empty = mempool.space. http is only allowed on your own network."
+        }
         "comdirect Client-Secret" => "comdirect client secret",
         "Wird beim Freischalten des API-Zugangs einmalig angezeigt." => {
             "Shown once when API access is activated."

@@ -187,6 +187,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "opel direktbank opelbank opel-direktbank stellantis tagesgeld festgeld",
         ),
         (
+            ConnectorKind::Bitcoin,
+            "Bitcoin",
+            "bitcoin btc krypto crypto kryptowährung wallet xpub ypub zpub hardware wallet mempool",
+        ),
+        (
             ConnectorKind::Finpension,
             "Finpension",
             "finpension saeule 3a säule 3a freizuegigkeit freizügigkeit 1e schweiz vorsorge",

@@ -184,6 +184,7 @@ struct ConnectionEditSheet: View {
         case .finTsGeneric: return isRah10 ? ["fints.product_id", "fints.product_version"] : ["fints.url.\(connection.bankCode)", "fints.product_id", "fints.product_version"]
         case .comdirect: return ["comdirect.client_id", "comdirect.client_secret"]
         case .kontist: return ["kontist.client_id", "kontist.client_secret"]
+        case .bitcoin: return ["bitcoin.esplora_url"]
         case .payPal: return ["paypal.client_id", "paypal.client_secret", "paypal.environment"]
         case .tradeRepublic: return []
         case .americanExpress, .amazonVisa, .advanzia: return []
@@ -581,6 +582,7 @@ struct ConnectionEditSheet: View {
         case .comdirect: return "comdirect REST-API"
         case .payPal: return "PayPal REST-App"
         case .kontist: return "Kontist OAuth2-Client"
+        case .bitcoin: return "Bitcoin-Server (Esplora)"
         case .bunq: return "bunq API"
         case .ibkr: return "Interactive Brokers Flex Web Service"
         case .alteLeipziger: return "fin4u"

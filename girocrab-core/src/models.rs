@@ -73,6 +73,9 @@ pub enum ConnectorKind {
     /// Hanseatic Bank credit cards, savings products and Postbox PDFs via the online banking's
     /// JSON API (approval in the bank's app).
     HanseaticBank,
+    /// Bitcoin wallet, watch-only from an extended public key (xpub / ypub /
+    /// zpub) via an Esplora server (mempool.space or the user's own).
+    Bitcoin,
 }
 
 impl ConnectorKind {
@@ -106,6 +109,7 @@ impl ConnectorKind {
             ConnectorKind::Bhw => "bhw",
             ConnectorKind::Finpension => "finpension",
             ConnectorKind::Kontist => "kontist",
+            ConnectorKind::Bitcoin => "bitcoin",
             ConnectorKind::HanseaticBank => "hanseatic",
         }
     }
@@ -170,6 +174,7 @@ impl ConnectorKind {
             ConnectorKind::Bhw,
             ConnectorKind::Finpension,
             ConnectorKind::Kontist,
+            ConnectorKind::Bitcoin,
         ]
     }
 }
