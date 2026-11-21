@@ -2992,11 +2992,11 @@ QtObject {
     /// Bumped after every change of a refund link: the open RefundSheet reloads.
     property int refundLinksRevision: 0
     /// AppModel+Refunds.swift › linkRefund / unlinkRefund: one pair; the other links stay.
-    /// `part`: for a split original the part the refund pays back (from 1), else 0.
-    function setRefundLink(refundId, originalId, part, linked) {
-        const done = run(() => { core(linked ? "link_refund" : "unlink_refund", { refund_id: refundId, original_id: originalId, original_part: part }); return true })
+    /// Split positions from 1, or 0 for the whole booking, on each side of the link.
+    function setRefundLink(refundId, originalId, part, refundPart, linked) {
+        const done = run(() => { core(linked ? "link_refund_parts" : "unlink_refund_parts", { refund_id: refundId, refund_part: refundPart, original_id: originalId, original_part: part }); return true })
         if (done === undefined) return
-        UndoManager.register(linked ? qsTr("Erstattung zuordnen") : qsTr("Verknüpfung aufheben"), () => setRefundLink(refundId, originalId, part, !linked))
+        UndoManager.register(linked ? qsTr("Erstattung zuordnen") : qsTr("Verknüpfung aufheben"), () => setRefundLink(refundId, originalId, part, refundPart, !linked))
         refundLinksRevision++
         // the marker in the rows and the sums: a linked refund is no income as far as it is assigned
         reloadBookings(); reloadDashboard(); reloadPlanning()

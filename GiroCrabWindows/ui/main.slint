@@ -907,9 +907,12 @@ export component MainWindow inherits Window {
     in property <string> rf-hint;
     in property <string> rf-status;
     in property <[RefundRow]> rf-rows;
+    in property <[string]> rf-parts;
+    in-out property <int> rf-part-index;
+    callback refund-part-picked(int);
     callback refunds-request();
     callback refund-search(string);
-    callback refund-toggle(int, int);
+    callback refund-toggle(int, int, int);
     in property <string> sp-title;
     in property <string> sp-amount;
     in property <string> sp-remaining;
@@ -1531,7 +1534,7 @@ export component MainWindow inherits Window {
                     spacing: 6px;
                     Text { text: "Analysen"; color: Theme.text; font-size: 14px; font-weight: 700; }
                     Text { text: root.analytics-summary; color: Theme.muted; font-size: 11px; overflow: elide; }
-                    Text { text: "Ausgaben nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                    Text { text: "Ausgaben nach Kategorie · Konten und Zeitraum"; color: Theme.text; font-size: 12px; font-weight: 700; }
                     for l in root.analytics-expense-cats: BudgetBar { l: l; height: 30px; }
                     Text { text: "Einnahmen nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
                     for l in root.analytics-income-cats: BudgetBar { l: l; height: 30px; }
@@ -2277,8 +2280,10 @@ export component MainWindow inherits Window {
             ink: Theme.text; muted: Theme.muted; line: Theme.border; negative: Theme.negative; accent: Theme.accent;
             from-refund: root.rf-from-refund; booking-title: root.rf-title; booking-amount: root.rf-amount;
             sums: root.rf-sums; hint: root.rf-hint; status: root.rf-status; rows: root.rf-rows;
+            parts: root.rf-parts; part-index <=> root.rf-part-index;
+            part-picked(i) => { root.refund-part-picked(i); }
             search(t) => { root.refund-search(t); }
-            toggle(id, part) => { root.refund-toggle(id, part); }
+            toggle(id, part, refund-part) => { root.refund-toggle(id, part, refund-part); }
             close() => { root.refunds-open = false; root.refocus(); }
         }
     }

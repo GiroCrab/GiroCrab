@@ -1,10 +1,10 @@
 // Refund links (#714, docs/ERSTATTUNGEN_UI.md): the content of a `Dialog` in main.slint (which owns
 // the theme), so colours come in as properties. Linked bookings on top with their share, up to
 // three suggestions, then the searchable list. One click on a row links or removes that pair.
-import { Button, ListView, LineEdit } from "std-widgets.slint";
+import { Button, ListView, LineEdit, ComboBox } from "std-widgets.slint";
 
 // kind: 0 section header, 1 linked, 2 suggestion, 3 further booking
-export struct RefundRow { kind: int, id: int, part: int, title: string, detail: string, amount: string, share: string, share-empty: bool, reason: string, blocked: string }
+export struct RefundRow { kind: int, id: int, part: int, refund-part: int, title: string, detail: string, amount: string, share: string, share-empty: bool, reason: string, blocked: string }
 
 export component RefundsPanel inherits VerticalLayout {
     in property <color> ink;
@@ -20,12 +20,20 @@ export component RefundsPanel inherits VerticalLayout {
     in property <string> status;
     in property <[RefundRow]> rows;
     callback search(string);
-    callback toggle(int, int);
+    in property <[string]> parts;
+    in-out property <int> part-index;
+    callback part-picked(int);
+    callback toggle(int, int, int);
     callback close();
     spacing: 10px;
     Text { text: root.from-refund ? "Ursprüngliche Buchung zuordnen" : "Erstattung zuordnen"; color: root.ink; font-size: 18px; font-weight: 700; }
     Text { text: root.booking-title + " · " + root.booking-amount; font-size: 12px; color: root.ink; overflow: elide; }
     LineEdit { placeholder-text: "Name oder Verwendungszweck suchen"; edited(t) => { root.search(t); } }
+    Text { text: "Die Zuordnung ändert keine Beträge, Kategorien oder Kontostände."; color: root.muted; font-size: 12px; wrap: word-wrap; }
+    if root.parts.length > 0: HorizontalLayout {
+        Text { text: root.from-refund ? "Erstattung aus" : "Erstattung für"; color: root.ink; vertical-alignment: center; }
+        ComboBox { model: root.parts; current-index <=> root.part-index; selected => { root.part-picked(self.current-index); } }
+    }
     if root.sums != "": Text { text: root.sums; color: root.muted; font-size: 12px; wrap: word-wrap; }
     if root.hint != "": Text { text: root.hint; color: root.muted; font-size: 12px; wrap: word-wrap; }
     Rectangle {
@@ -43,7 +51,7 @@ export component RefundsPanel inherits VerticalLayout {
                 // the circle is part of the row: one click selects
                 touch := TouchArea {
                     enabled: r.kind != 0 && r.blocked == "";
-                    clicked => { root.toggle(r.id, r.part); }
+                    clicked => { root.toggle(r.id, r.part, r.refund-part); }
                 }
                 if r.kind == 0: Text { x: 10px; text: r.title; color: root.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                 if r.kind != 0: HorizontalLayout {

@@ -114,6 +114,35 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertTrue(ownLines[1].contains(money(refund.amountCents - assigned)))
     }
 
+    /// A refund larger than its first booking and used up by the second: the first booking's
+    /// lines no longer say that the rest can go to further bookings.
+    func testAUsedUpRefundIsNotOfferedForFurtherBookings() throws {
+        let vault = try XCTUnwrap(model.vault)
+        var found: (Booking, [Booking])?
+        for refund in model.bookings where refund.amountCents > 0 && refund.currency == "EUR" {
+            let all = try vault.refundCandidates(transactionId: refund.id, query: "", limit: 200)
+                .filter { $0.currency == "EUR" && $0.part == 0 }
+            guard let small = all.first(where: { -$0.amountCents < refund.amountCents }),
+                  let rest = all.first(where: { $0.id != small.id && -$0.amountCents >= refund.amountCents + small.amountCents }),
+                  let a = model.booking(withID: small.id), let b = model.booking(withID: rest.id) else { continue }
+            found = (refund, [a, b]); break
+        }
+        let (refund, originals) = try XCTUnwrap(found)
+        let further = "weiteren Buchungen"
+
+        model.linkRefund(refundID: refund.id, originalID: originals[0].id)
+        let open = RefundSum.lines(booking: originals[0], links: try vault.refundLinks(transactionId: originals[0].id))
+        XCTAssertEqual(open.count, 2)
+        XCTAssertTrue(open[1].contains(further), open[1])
+
+        model.linkRefund(refundID: refund.id, originalID: originals[1].id)
+        XCTAssertEqual(try vault.refundLinks(transactionId: refund.id).openCents, 0)
+        let usedUp = RefundSum.lines(booking: originals[0], links: try vault.refundLinks(transactionId: originals[0].id))
+        XCTAssertEqual(usedUp.count, 2)
+        XCTAssertFalse(usedUp[1].contains(further), usedUp[1])
+        XCTAssertEqual(RefundSum.lines(booking: refund, links: try vault.refundLinks(transactionId: refund.id)).count, 1)
+    }
+
     func testAnInvalidLinkShowsTheCoreErrorAndChangesNothing() throws {
         let (refund, originals) = try pair()
         // the wrong way round: an outgoing booking as the refund

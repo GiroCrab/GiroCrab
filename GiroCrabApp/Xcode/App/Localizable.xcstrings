@@ -11134,6 +11134,17 @@
         }
       }
     },
+    "Die Erstattungen betragen zusammen %@. Was über diese Buchung hinausgeht, zählt hier nicht und ist bereits anderen Buchungen zugeordnet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The refunds add up to %@. The part beyond this transaction does not count here and is already assigned to other transactions."
+          }
+        }
+      }
+    },
     "Die Erstattungen betragen zusammen %@. Was über diese Buchung hinausgeht, zählt hier nicht und kann weiteren Buchungen zugeordnet werden." : {
       "extractionState" : "manual",
       "localizations" : {

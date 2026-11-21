@@ -12,8 +12,7 @@ Sheet {
     property var links: null
     property var top: []
     property var candidates: []
-    /// The outgoing parts of a split booking the sheet was opened from ({ part, text }), and
-    /// the one the next refund is linked to (0: not split).
+    /// Eligible parts of the booking the sheet was opened from ({ part, text }).
     property var ownParts: []
     property int ownPart: 0
     property string search: ""
@@ -30,7 +29,7 @@ Sheet {
     /// Candidates below the suggestions; a linked or suggested booking is shown once only.
     readonly property var others: candidates.filter(c => !linked.some(l => same(l, c)) && !top.some(s => same(s.booking, c)))
     /// A split booking appears once per part.
-    function same(a, b) { return a.id === b.id && a.part === b.part }
+    function same(a, b) { return a.id === b.id && a.part === b.part && a.refund_part === b.refund_part }
 
     property Connections changes: Connections {
         target: AppModel
@@ -44,20 +43,34 @@ Sheet {
         if (b === null) return
         try {
             links = AppModel.core("refund_links", { transaction_id: b.id })
-            top = sheet.search.trim() === "" ? AppModel.core("refund_suggestions", { transaction_id: b.id }) : []
+            top = sheet.search.trim() === "" ? AppModel.core("refund_suggestions", { transaction_id: b.id }).filter(s => !linked.some(l => same(l, s.booking))) : []
             candidates = AppModel.core("refund_candidates", { transaction_id: b.id, query: sheet.search, limit: 200 })
-            const splits = fromRefund ? [] : AppModel.core("list_transaction_splits", { transaction_id: b.id })
+            const splits = AppModel.core("list_transaction_splits", { transaction_id: b.id })
             ownParts = splits.map((s, i) => {
                 const c = s.category_id ? AppModel.categoryByID(s.category_id) : null
                 return { part: i + 1, amount: s.amount_cents,
                          text: [qsTr("Teil %1").arg(i + 1), c ? c.path : "", s.note, Fmt.money(s.amount_cents, b.currency)].filter(t => t !== "").join(" · ") }
-            }).filter(p => p.amount < 0)
+            }).filter(p => fromRefund ? p.amount > 0 : p.amount < 0)
             if (!ownParts.some(p => p.part === ownPart)) ownPart = ownParts.length > 0 ? ownParts[0].part : 0
             error = ""
         } catch (e) { error = e.message }
     }
     function toggle(row, isLinked) {
-        AppModel.setRefundLink(fromRefund ? booking.id : row.id, fromRefund ? row.id : booking.id, fromRefund || isLinked ? row.part : ownPart, !isLinked)
+        AppModel.setRefundLink(fromRefund ? booking.id : row.id, fromRefund ? row.id : booking.id,
+                               fromRefund || isLinked ? row.part : ownPart,
+                               !fromRefund || isLinked ? row.refund_part : ownPart, !isLinked)
+    }
+    function partLabel(row) {
+        const text = (title, label) => [title, label].filter(t => t !== "").join(" · ")
+        const out = []
+        if (row.amount_cents > 0) {
+            if (row.refund_part > 0) out.push(text(qsTr("Teil %1").arg(row.refund_part), row.refund_part_label))
+            if (row.part > 0) out.push(text(qsTr("für Teil %1").arg(row.part), row.part_label))
+        } else {
+            if (row.part > 0) out.push(text(qsTr("Teil %1").arg(row.part), row.part_label))
+            if (row.refund_part > 0) out.push(text(qsTr("aus Teil %1").arg(row.refund_part), row.refund_part_label))
+        }
+        return out.join(" · ")
     }
     /// Why an unlinked row cannot be chosen, "" when it can.
     function blocked(row) {
@@ -104,7 +117,7 @@ Sheet {
                 Layout.fillWidth: true
                 spacing: 1
                 Text { text: rr.row.display_name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
-                Text { text: [Fmt.date(rr.row.booking_date), rr.row.account_name, rr.row.part > 0 ? qsTr("Teil %1").arg(rr.row.part) : "", rr.row.part_label].filter(t => t !== "").join(" · "); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                Text { text: [Fmt.medium(rr.row.booking_date), rr.row.account_name, sheet.partLabel(rr.row)].filter(t => t !== "").join(" · "); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                 Text { visible: text !== ""; text: rr.row.purpose; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
             }
             Text {
@@ -141,13 +154,19 @@ Sheet {
             font.pixelSize: Theme.body; color: Theme.secondary
             Sensitive { amounts: true }
         }
+        Text {
+            visible: sheet.ownParts.length > 0
+            text: sheet.fromRefund ? qsTr("Erstattung aus") : qsTr("Erstattung für")
+            font.pixelSize: Theme.caption; color: Theme.secondary
+        }
         AppComboBox {
             visible: sheet.ownParts.length > 0
             Layout.fillWidth: true
             model: sheet.ownParts.map(p => p.text)
             currentIndex: Math.max(0, sheet.ownParts.findIndex(p => p.part === sheet.ownPart))
             onActivated: index => sheet.ownPart = sheet.ownParts[index].part
-            Accessible.name: qsTr("Erstattung für")
+            Accessible.name: sheet.fromRefund ? qsTr("Erstattung aus") : qsTr("Erstattung für")
+            Sensitive { labels: true; amounts: true }
         }
         TextField {
             Layout.fillWidth: true

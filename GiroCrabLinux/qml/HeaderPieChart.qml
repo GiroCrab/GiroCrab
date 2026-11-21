@@ -62,7 +62,7 @@ Item {
 
     // AccountExpensePie: reloads when the accounts, the period or the category sums change.
     readonly property string loadKey: isCategory || !visible ? ""
-        : JSON.stringify([AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.categories.map(c => c.total_cents)])
+        : JSON.stringify([AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.categories.map(c => c.total_cents), AppModel.refundLinksRevision])
     onLoadKeyChanged: if (loadKey !== "") Qt.callLater(load)
     function load() {
         if (loadKey === "" || !AppModel.isUnlocked) return
@@ -70,8 +70,7 @@ Item {
         AppModel.loadOffMain("headerPie", () => {
             const r = AppModel.periodRange(), ids = AppModel.historyRequest().ids
             cover = JSON.stringify([ids, r])
-            return [["list_categories_filtered", { date_from: r[0], date_to: r[1], account_ids: ids,
-                                                   checked: null, direction: "Expense" }]]
+            return [["list_category_expenses", { date_from: r[0], date_to: r[1], account_ids: ids }]]
         }, r => { pie.loaded = { cover: cover, parts: pie.expenses(r[0]) } }, () => {})
     }
 

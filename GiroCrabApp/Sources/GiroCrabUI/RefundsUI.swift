@@ -149,7 +149,11 @@ enum RefundSum {
             var seen = Set<String>()
             let total = links.refunds.filter { seen.insert("\($0.id)-\($0.refundPart)").inserted }.reduce(Int64(0)) { $0 + $1.amountCents }
             if total > refunded {
-                out.append(String(localized: "Die Erstattungen betragen zusammen \(money(total)). Was über diese Buchung hinausgeht, zählt hier nicht und kann weiteren Buchungen zugeordnet werden."))
+                // what the refunds have left themselves: only then a further booking can take it
+                let open = links.refunds.reduce(Int64(0)) { $0 + $1.openCents }
+                out.append(open > 0
+                    ? String(localized: "Die Erstattungen betragen zusammen \(money(total)). Was über diese Buchung hinausgeht, zählt hier nicht und kann weiteren Buchungen zugeordnet werden.")
+                    : String(localized: "Die Erstattungen betragen zusammen \(money(total)). Was über diese Buchung hinausgeht, zählt hier nicht und ist bereits anderen Buchungen zugeordnet."))
             }
         }
         if let assigned = links.assignedCents {

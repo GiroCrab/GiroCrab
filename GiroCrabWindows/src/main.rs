@@ -271,6 +271,9 @@ fn load_rows(vault: &Vault, target: Target) -> Result<Vec<Row>, String> {
 /// UI-thread state behind the booking list, filter bar and inspector.
 #[derive(Default)]
 struct State {
+    analytics_vault: Option<Arc<Vault>>,
+    expense_scope: Option<(Target, String, u64)>,
+    expense_categories: Vec<Category>,
     rows: Vec<Row>,
     shown: Vec<usize>,
     categories: Vec<Category>,
@@ -407,13 +410,52 @@ fn tag_names(rows: &[Row]) -> Vec<String> {
 
 /// Fills the inline analytics (category breakdown, tag evaluation) from the filtered rows.
 fn render_analytics(win: &MainWindow, privacy: bool) {
+    let request = with_state(|st| {
+        let key = (st.target, st.filter.from_date.clone(), st.generation);
+        if st.expense_scope.as_ref() == Some(&key) {
+            return None;
+        }
+        st.expense_scope = Some(key.clone());
+        st.expense_categories.clear();
+        Some((st.analytics_vault.clone()?, key))
+    });
+    if let Some((vault, key)) = request {
+        let weak = win.as_weak();
+        std::thread::spawn(move || {
+            let from = (!key.1.is_empty()).then(|| key.1.clone());
+            let result = vault.list_accounts().and_then(|accounts| {
+                vault.list_category_expenses(
+                    from,
+                    None,
+                    analytics::expense_accounts(&accounts, key.0),
+                )
+            });
+            let _ = weak.upgrade_in_event_loop(move |win| {
+                if !is_current(&vault) || !with_state(|st| st.expense_scope.as_ref() == Some(&key))
+                {
+                    return;
+                }
+                match result {
+                    Ok(cats) => {
+                        with_state(|st| st.expense_categories = cats);
+                        render_analytics(&win, privacy_on(&win));
+                    }
+                    Err(e) => win.set_analytics_summary(
+                        format!("Ausgaben konnten nicht geladen werden: {e}").into(),
+                    ),
+                }
+            });
+        });
+    }
     let (inc, exp, exp_cats, inc_cats, tags) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
-        let (inc, exp, _) = analytics::totals(&shown);
+        let (inc, _, _) = analytics::totals(&shown);
+        let expense_cats = analytics::net_expenses(&st.expense_categories, 6);
+        let exp = expense_cats.iter().map(|c| c.cents).sum();
         (
             inc,
             exp,
-            analytics::categories(&shown, true, 6),
+            expense_cats,
             analytics::categories(&shown, false, 6),
             analytics::tags(&shown, 8),
         )
@@ -725,6 +767,7 @@ fn apply_filter(win: &MainWindow) {
 
 /// Loads the bookings of the current account scope on a worker thread, then redraws.
 fn reload(win: &MainWindow, vault: Arc<Vault>) {
+    with_state(|st| st.analytics_vault = Some(vault.clone()));
     let target = with_state(|st| st.target);
     let generation = with_state(|st| {
         st.generation += 1;

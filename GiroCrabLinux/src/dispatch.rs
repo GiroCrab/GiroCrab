@@ -1601,6 +1601,8 @@ vault_methods! {
     list_transaction_splits(transaction_id) set_transaction_splits(transaction_id, splits)
     // --- refunds (#714) ---
     link_refund(refund_id, original_id, original_part) unlink_refund(refund_id, original_id, original_part)
+    link_refund_parts(refund_id, refund_part, original_id, original_part)
+    unlink_refund_parts(refund_id, refund_part, original_id, original_part)
     refund_links(transaction_id) refund_suggestions(transaction_id)
     refund_candidates(transaction_id, query, limit)
     // --- import / export ---
@@ -1623,6 +1625,7 @@ vault_methods! {
     count_planned_payments() count_active_mandates()
     list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
+    list_category_expenses(date_from, date_to, account_ids)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
     // --- Offline-Konten und manuelle Buchungen (OfflineAccountsUI.swift, #679, #81) ---
     create_offline_account(name, kind, currency, opening_cents)
@@ -1683,6 +1686,79 @@ mod tests {
         let r: Value = serde_json::from_str(&call_json(method, &args.to_string())).unwrap();
         assert!(r.get("err").is_none(), "{method}: {r}");
         r["ok"].clone()
+    }
+
+    #[test]
+    fn refund_parts_and_expense_pie_roundtrip() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-refunds-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![7; 32]).unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let range = json!({ "date_from": null, "date_to": null, "account_ids": [] });
+        assert_eq!(call("list_category_expenses", range.clone()), json!([]));
+        let cat = call(
+            "create_category",
+            json!({ "name": "Shopping", "parent_id": null, "sf_symbol": "tag", "color_hex": "#2563EB" }),
+        );
+        let account = call(
+            "create_offline_account",
+            json!({ "name": "Cash", "kind": "Cash", "currency": "EUR", "opening_cents": 0 }),
+        );
+        let booking = |amount, date| {
+            call(
+                "save_manual_booking",
+                json!({ "account_id": account, "booking_id": null,
+            "setup": { "booking_date": date, "amount_cents": amount, "counterparty": "Shop", "purpose": "Order", "category_id": cat, "note": "" } }),
+            )
+        };
+        let original = booking(-10000, "2026-11-01");
+        let refund = booking(6000, "2026-11-02");
+        call(
+            "set_transaction_splits",
+            json!({ "transaction_id": refund, "splits": [
+            { "category_id": cat, "amount_cents": 2000, "note": "First" },
+            { "category_id": cat, "amount_cents": 4000, "note": "Second" }] }),
+        );
+        let total = |args| {
+            call("list_category_expenses", args)[0]["total_cents"]
+                .as_i64()
+                .unwrap()
+        };
+        assert_eq!(total(range.clone()), -10000);
+        let pair = json!({ "refund_id": refund, "refund_part": 2, "original_id": original, "original_part": 0 });
+        call("link_refund_parts", pair.clone());
+        let links = call("refund_links", json!({ "transaction_id": refund }));
+        assert_eq!(links["originals"][0]["refund_part"], json!(2));
+        assert_eq!(links["assigned_cents"], json!(4000));
+        assert_eq!(total(range.clone()), -6000);
+        assert_eq!(
+            total(
+                json!({ "date_from": "2026-11-01", "date_to": "2026-11-01", "account_ids": [account] })
+            ),
+            -10000
+        );
+        assert_eq!(
+            total(json!({ "date_from": null, "date_to": null, "account_ids": [-1] })),
+            0
+        );
+        let invalid = json!({ "refund_id": refund, "refund_part": 99, "original_id": original, "original_part": 0 });
+        assert!(
+            dispatch_vault(&v, "link_refund_parts", &invalid)
+                .unwrap()
+                .is_err()
+        );
+        call("unlink_refund_parts", pair);
+        assert_eq!(total(range), -10000);
+        assert_eq!(
+            call("refund_links", json!({ "transaction_id": refund }))["originals"],
+            json!([])
+        );
+        drop(v);
+        let _ = std::fs::remove_file(path);
     }
 
     /// Preview copies (`document_temp_file`): a shown document asked for again

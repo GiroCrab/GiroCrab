@@ -2,6 +2,59 @@
 
 use crate::daily::Row;
 
+pub fn expense_accounts(
+    accounts: &[girocrab_core::Account],
+    target: crate::nav::Target,
+) -> Vec<i64> {
+    if let crate::nav::Target::Account(id) = target {
+        return vec![id];
+    }
+    use girocrab_core::AccountKind;
+    let ids: Vec<_> = accounts
+        .iter()
+        .filter(|a| {
+            a.in_total
+                && matches!(
+                    a.kind,
+                    AccountKind::Checking
+                        | AccountKind::Savings
+                        | AccountKind::PaymentService
+                        | AccountKind::CreditCard
+                        | AccountKind::Cash
+                )
+        })
+        .map(|a| a.id)
+        .collect();
+    if ids.is_empty() { vec![-1] } else { ids }
+}
+
+/// Like the account expense pie on macOS: top-level net expenses, including children.
+pub fn net_expenses(categories: &[girocrab_core::Category], n: usize) -> Vec<Slice> {
+    let slices = categories
+        .iter()
+        .filter(|c| c.depth == 0 && c.total_cents < 0)
+        .map(|c| Slice {
+            name: c.name.clone(),
+            color_hex: c.color_hex.clone(),
+            cents: -c.total_cents,
+            count: c.transaction_count as usize,
+            share: 0.0,
+        })
+        .collect();
+    let mut slices = finish(slices, usize::MAX);
+    if n > 0 && slices.len() > n {
+        let rest = slices.split_off(n - 1);
+        slices.push(Slice {
+            name: "Sonstige".into(),
+            color_hex: "#8e8e93".into(),
+            cents: rest.iter().map(|s| s.cents).sum(),
+            count: rest.iter().map(|s| s.count).sum(),
+            share: rest.iter().map(|s| s.share).sum(),
+        });
+    }
+    slices
+}
+
 /// One bar of a breakdown: name, summed cents, booking count, share of the total (0..=1).
 pub struct Slice {
     pub name: String,
@@ -128,5 +181,38 @@ mod tests {
         assert_eq!(t[0].count, 2);
         assert_eq!(t[0].cents, -400);
         assert_eq!(totals(&refs), (500, 400, 100));
+    }
+
+    #[test]
+    fn net_expenses_excludes_children_income_and_empty_categories_and_folds_rest() {
+        let cat = |id, depth, cents| girocrab_core::Category {
+            id,
+            parent_id: None,
+            name: format!("Kategorie {id}"),
+            sf_symbol: String::new(),
+            color_hex: "#123456".into(),
+            sort_order: 0,
+            depth,
+            path: String::new(),
+            own_total_cents: cents,
+            total_cents: cents,
+            transaction_count: 1,
+            budget_cents: None,
+        };
+        let cats = [
+            cat(1, 0, -600),
+            cat(2, 1, -600),
+            cat(3, 0, -300),
+            cat(4, 0, -100),
+            cat(5, 0, 50),
+            cat(6, 0, 0),
+        ];
+        let slices = net_expenses(&cats, 2);
+        assert_eq!(slices.len(), 2);
+        assert_eq!(slices[0].cents, 600);
+        assert_eq!(slices[1].name, "Sonstige");
+        assert_eq!(slices[1].cents, 400);
+        assert!((slices.iter().map(|s| s.share).sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!(net_expenses(&[], 6).is_empty());
     }
 }

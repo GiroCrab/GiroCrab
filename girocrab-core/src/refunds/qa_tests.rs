@@ -178,13 +178,13 @@ fn qa_suggestions_ties_priority_duplicates_cap_and_search() {
     );
 }
 
+/// "The last two months" of the same-merchant suggestions are a fixed 62 days (Simon's call).
 #[test]
-#[ignore = "open: \"two months\" is a fixed 62 days, not calendar months"]
-fn qa_vendor_exact_two_calendar_months_boundary() {
+fn qa_vendor_window_is_62_days() {
     let (_d, v, a) = fixture();
     let r = add(&v, a, 10000, "2025-04-30", "QA vendor", "");
-    let boundary = add(&v, a, -3000, "2025-02-28", "QA vendor", "");
-    let too_old = add(&v, a, -2000, "2025-02-27", "QA vendor", "");
+    let boundary = add(&v, a, -3000, "2025-02-27", "QA vendor", "");
+    let too_old = add(&v, a, -2000, "2025-02-26", "QA vendor", "");
     let ids = v
         .refund_suggestions(r)
         .unwrap()
@@ -192,10 +192,7 @@ fn qa_vendor_exact_two_calendar_months_boundary() {
         .map(|s| s.booking.id)
         .collect::<Vec<_>>();
     assert!(ids.contains(&boundary));
-    assert!(
-        !ids.contains(&too_old),
-        "calendar two-month window must exclude Feb 27: {ids:?}"
-    );
+    assert!(!ids.contains(&too_old), "{ids:?}");
 }
 
 #[test]
@@ -975,6 +972,64 @@ fn booking_that_changes_its_side_loses_its_links() {
         .find(|t| t.id == r)
         .unwrap();
     assert_eq!(row.refund_link, RefundLinkKind::None);
+}
+
+/// A split refund with an odd amount: what stays income adds up to the same cents in the
+/// category views as in the unfiltered figures.
+#[test]
+fn odd_cent_split_refund_keeps_every_cent_in_category_views() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let r = booking(&v, a, 10001);
+    let o = booking(&v, a, -3000);
+    v.set_transaction_splits(
+        r,
+        vec![
+            TransactionSplitInput {
+                category_id: Some(ca),
+                amount_cents: 6000,
+                note: "A".into(),
+            },
+            TransactionSplitInput {
+                category_id: Some(cb),
+                amount_cents: 4001,
+                note: "B".into(),
+            },
+        ],
+    )
+    .unwrap();
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!(page(&v, None).income_cents, 7001);
+    assert_eq!(
+        page(&v, Some(ca)).income_cents + page(&v, Some(cb)).income_cents,
+        7001
+    );
+    let cats = v.list_categories(None, None).unwrap();
+    let own = |id: i64| cats.iter().find(|c| c.id == id).unwrap().own_total_cents;
+    assert_eq!(own(ca) + own(cb), 7001);
+}
+
+/// A search also finds bookings on the other side of the date: an expense after the refund,
+/// a refund before the expense. Without a search and in the suggestions they stay out.
+#[test]
+fn search_finds_bookings_on_either_side_of_the_date() {
+    let (_d, v, a) = fixture();
+    let r = add(&v, a, 5000, "2025-04-10", "QA vendor", "");
+    let later = add(&v, a, -5000, "2025-04-20", "QA vendor", "");
+    let ids = |id: i64, q: &str| -> Vec<i64> {
+        v.refund_candidates(id, q.into(), 100)
+            .unwrap()
+            .into_iter()
+            .map(|b| b.id)
+            .collect()
+    };
+    assert!(ids(r, "").is_empty());
+    assert!(v.refund_suggestions(r).unwrap().is_empty());
+    assert_eq!(ids(r, "qa vendor"), vec![later]);
+    assert!(ids(later, "").is_empty());
+    assert_eq!(ids(later, "qa vendor"), vec![r]);
+    v.link_refund(r, later, 0).unwrap();
+    assert_eq!(v.refund_links(later).unwrap().refunded_cents, Some(5000));
 }
 
 /// A split refund with a part of the other sign (a fee taken off the refund), linked as a
