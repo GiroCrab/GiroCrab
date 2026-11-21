@@ -25,22 +25,21 @@ fn p(id: &str, name: &str, blz: &str, url: &str, note: &str) -> FinTsPreset {
     }
 }
 
+/// A preset for one bank code; its endpoint comes from the directory.
+fn bank(id: &str, name: &str, blz: &str, note: &str) -> FinTsPreset {
+    let url = super::fints_directory::url_for_blz(blz).unwrap_or_default();
+    p(id, name, blz, url, note)
+}
+
 pub fn fints_presets() -> Vec<FinTsPreset> {
     vec![
-        p(
+        bank(
             "postbank",
             "Postbank",
             "10010010",
-            "https://hbci.postbank.de/banking/hbci.do",
             "BLZ vorbelegt (Berlin) – ändern Sie sie auf Ihre regionale Postbank-BLZ, z. B. 20010020, 37010050, 50010060 oder 70010080.",
         ),
-        p(
-            "sparda-berlin",
-            "Sparda-Bank Berlin eG",
-            "12096597",
-            ATRUVIA,
-            "",
-        ),
+        bank("sparda-berlin", "Sparda-Bank Berlin eG", "12096597", ""),
         p(
             "sparda",
             "Sparda-Banken (Atruvia) – andere BLZ",
@@ -55,28 +54,15 @@ pub fn fints_presets() -> Vec<FinTsPreset> {
             ATRUVIA,
             "BLZ Ihrer Volksbank/Raiffeisenbank eintragen.",
         ),
-        p(
-            "vb-kassel",
-            "Volksbank Kassel Göttingen",
-            "52090000",
-            ATRUVIA,
-            "",
-        ),
-        p(
-            "1822direkt",
-            "1822direkt",
-            "50050201",
-            "https://banking-hs6.s-fints-pt-hs.de/fints30",
-            "",
-        ),
-        p(
+        bank("vb-kassel", "Volksbank Kassel Göttingen", "52090000", ""),
+        bank("1822direkt", "1822direkt", "50050201", ""),
+        bank(
             "dkb",
             "DKB",
             "12030000",
-            "https://fints.dkb.de/fints",
             "URL ggf. laut DK-Institutsliste prüfen.",
         ),
-        p("ing", "ING", "50010517", "https://fints.ing.de/fints/", ""),
+        bank("ing", "ING", "50010517", ""),
         p(
             "comdirect",
             "comdirect",
@@ -84,21 +70,14 @@ pub fn fints_presets() -> Vec<FinTsPreset> {
             super::fints_directory::COMDIRECT_FINTS_URL,
             "BLZ aus Ihrer IBAN eintragen (Stellen 5–12, z. B. 20041155) oder die IBAN einfügen. Anmeldename: Ihre Zugangsnummer.",
         ),
-        p("gls", "GLS Gemeinschaftsbank", "43060967", ATRUVIA, ""),
-        p(
+        bank("gls", "GLS Gemeinschaftsbank", "43060967", ""),
+        bank(
             "consorsbank",
             "Consorsbank",
             "76030080",
-            "https://brokerage-hbci.consorsbank.de/hbci",
             "Anmeldename: 10-stellige Kontonummer des Verrechnungskontos (mit führenden Nullen) + 001, z. B. 0001234567001. TAN aus der Consorsbank App oder dem SecurePlus-Generator.",
         ),
-        p(
-            "norisbank",
-            "Norisbank",
-            "10077777",
-            "https://fints.norisbank.de/",
-            "",
-        ),
+        bank("norisbank", "Norisbank", "10077777", ""),
         p(
             "deutsche-bank",
             "Deutsche Bank",
@@ -106,22 +85,15 @@ pub fn fints_presets() -> Vec<FinTsPreset> {
             "https://fints.deutsche-bank.de/",
             "BLZ Ihrer Filiale eintragen (steht in Ihrer IBAN, Stellen 5–12).",
         ),
-        p(
-            "hvb",
-            "HypoVereinsbank (UniCredit)",
-            "70020270",
-            "https://hbci.hypovereinsbank.de/hbci/hbci.do",
-            "",
-        ),
-        p("bbbank", "BBBank", "66090800", ATRUVIA, ""),
-        p(
+        bank("hvb", "HypoVereinsbank (UniCredit)", "70020270", ""),
+        bank("bbbank", "BBBank", "66090800", ""),
+        bank(
             "apobank",
             "Deutsche Apotheker- und Ärztebank (apoBank)",
             "30060601",
-            "https://fints.apobank.de/FinTs30PinTanHttpGate",
             "",
         ),
-        p("ethikbank", "EthikBank", "83094495", ATRUVIA, ""),
+        bank("ethikbank", "EthikBank", "83094495", ""),
         p(
             "psd",
             "PSD Banken (Atruvia)",
@@ -173,11 +145,10 @@ pub fn is_valid_fints_url(url: &str) -> bool {
     }
 }
 
-/// Preset BLZs MoneyMoney imports map onto the generic connector.
+/// BLZs MoneyMoney imports map onto the generic connector (preset bank codes are
+/// in the directory, see `presets_are_valid`).
 pub fn known_fints_blz(blz: &str) -> bool {
-    is_postbank_blz(blz)
-        || fints_presets().iter().any(|p| p.blz == blz)
-        || super::fints_directory::lookup(blz).is_some()
+    is_postbank_blz(blz) || super::fints_directory::lookup(blz).is_some()
 }
 
 /// Postbank uses regional bank codes; all share the same FinTS server.
@@ -203,6 +174,11 @@ mod tests {
                 assert!(
                     ConnectorKind::fints_blz(&ConnectorKind::fints_key(&p.blz)).is_some(),
                     "{}",
+                    p.id
+                );
+                assert!(
+                    !p.url.is_empty(),
+                    "{}: bank code not in the directory",
                     p.id
                 );
             }
@@ -238,23 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn new_presets_match_the_directory() {
-        for id in [
-            "ing",
-            "gls",
-            "consorsbank",
-            "norisbank",
-            "hvb",
-            "bbbank",
-            "apobank",
-            "ethikbank",
-            "dkb",
-            "1822direkt",
-        ] {
-            let pr = fints_presets().into_iter().find(|p| p.id == id).unwrap();
-            let d = crate::connectors::fints_directory::lookup(&pr.blz).unwrap();
-            assert_eq!(d.url, pr.url, "{id}");
-        }
+    fn directory_and_comdirect_codes_are_known() {
         assert!(known_fints_blz("50010517") && known_fints_blz("10050000"));
         assert!(known_fints_blz("20041155")); // comdirect: FinTS next to its own API
         let comdirect = fints_presets()

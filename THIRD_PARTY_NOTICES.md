@@ -110,6 +110,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | **Simple Icons** (via `simpleicons-rs`) | CC0-1.0 (icon data); brand logos remain trademarks of their owners | Merchant/bank icons |
 | **GraphQL query texts in `girocrab-core/src/connectors/scalable.rs`** (4 of 10 identical up to whitespace, the others adapted) | Apache-2.0 | Taken from `ScalableCapital/scalable-cli` v1.3.0 ([https://github.com/ScalableCapital/scalable-cli](https://github.com/ScalableCapital/scalable-cli); LICENSE there: "Copyright 2025 OpenAI"). Used for the Scalable Capital connector; changed and extended by GiroCrab. |
 | **Bundesbank Bankleitzahlendatei** (`tools/gen-bic-directory`) | Public data of Deutsche Bundesbank | BLZ → BIC table |
+| **hbci4java `blz.properties`** (`tools/gen-fints-directory`) | LGPL-2.1 | BLZ → FinTS endpoint table (`girocrab-core/data/fints_directory.tsv`, commit named in its header); [https://github.com/hbci4j/hbci4java](https://github.com/hbci4j/hbci4java) |
 | **IANA Time Zone Database** (crate `jiff-tzdb`, Android builds only) | Public domain | Zone rules for the local date; Android's own copy lives where `jiff` does not look |
 
 ## Complete Transitive Dependency Tree
