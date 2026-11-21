@@ -48,8 +48,12 @@ extension AppModel {
         reloadTags()
         reloadSettings()
         reloadDashboard()
-        // the merchant history restarts once the selection load has published
-        // the new page: started now, it would read the selected booking's old row
+        // Cached merchant totals are stale whatever the load's outcome; a scan still
+        // running from before the change must not write back. The selected booking's
+        // history restarts once the selection load has published the new page:
+        // started now, it would read the booking's old row.
+        merchantStatsTask?.cancel()
+        merchantStatsCache = [:]
         startSelectionLoad(keepingShown: true)
     }
 
