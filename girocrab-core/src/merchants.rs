@@ -475,7 +475,8 @@ fn group_member(entry: &Entry, counterparty: &str) -> Option<MerchantInfo> {
 fn word_starts<'a>(text: &'a str, needle: &'a str) -> impl Iterator<Item = usize> + 'a {
     let open_start = needle.starts_with(|c: char| !c.is_alphanumeric());
     let open_end = needle.ends_with(|c: char| !c.is_alphanumeric());
-    let mut from = 0;
+    // an empty word would "match" everywhere (stored words never are, see `clean_needles`)
+    let mut from = if needle.is_empty() { text.len() + 1 } else { 0 };
     std::iter::from_fn(move || {
         while let Some(p) = text.get(from..)?.find(needle) {
             let i = from + p;
@@ -1042,7 +1043,8 @@ impl MerchantResolver {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MerchantSettings {
     /// Master switch. Off, every booking shows its cleaned counterparty (else the
-    /// start of its purpose) without a brand, colour or logo.
+    /// start of its purpose) without a brand or logo; its signet keeps the calm
+    /// fallback colour of every merchant the table does not know.
     pub(crate) enabled: bool,
     /// Keys of bundled merchants the user switched off.
     pub(crate) disabled: BTreeSet<String>,
@@ -2441,6 +2443,15 @@ mod tests {
         assert_ne!(r.resolve("Rueckback Muster", "").key, "u:b");
         // an edge that is no letter needs no boundary
         assert_eq!(r.resolve("Core MSCI World USD (Acc)", "").key, "u:c");
+        // a rejected hit does not hide a later overlapping one
+        let r = rules(&[("o", "Overlap", &["ab-ab"], "")], &[], true);
+        assert_eq!(r.resolve("xab-ab-ab", "").key, "u:o");
+        assert_eq!(word_starts(" xab-ab-ab ", "ab-ab").collect::<Vec<_>>(), [5]);
+        assert_eq!(
+            word_starts(" muster ", "").count(),
+            0,
+            "an empty word matches nothing"
+        );
     }
 
     #[test]
