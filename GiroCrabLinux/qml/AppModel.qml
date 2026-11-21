@@ -209,9 +209,12 @@ QtObject {
     property string customPeriodFrom: ""
     property string customPeriodTo: ""
     property string statusFilter: "all"        // all | new | checked
-    onStatusFilterChanged: { listLimit = defaultListLimit; reloadBookings() }
+    // the sidebar's category sums follow status and direction (#621); „Filter zurücksetzen“ reloads once (#840)
+    onStatusFilterChanged: if (!ListFilters.suspendsReloads) { listLimit = defaultListLimit; reloadAfterFilterChange() }
     property string directionFilter: "All"     // BookingDirection
-    onDirectionFilterChanged: { listLimit = defaultListLimit; reloadBookings() }
+    onDirectionFilterChanged: if (!ListFilters.suspendsReloads) { listLimit = defaultListLimit; reloadAfterFilterChange() }
+    /// AppModel.swift › reloadAfterFilterChange: the list and the sidebar sums (#621, #357).
+    function reloadAfterFilterChange() { reloadBookings(); reloadCategories() }
     property string searchText: ""
     /// AppModel+Selection.swift › coreSearchText: the typed text with German plurals cut back to
     /// the stem („kredite“ → „kredit“), so the substring search also finds the singular. Always a
@@ -531,8 +534,8 @@ QtObject {
         vaultLoaded = false
         hasOwnVault = false
         demoActive = false
-        groups = []; userGroups = []; accountsByID = ({}); accountMarkers = ({}); bookings = []; categories = []; categoryTree = []
-        connections = []; page = null; merchantStats = null; merchantAccountStats = null; streamItems = []; streamModel.clear(); dayGroups = []; history = []
+        groups = []; userGroups = []; accountsByID = ({}); accountMarkers = ({}); bookings = []; categories = []; categoryTree = []; uncategorizedFilteredCount = null
+        connections = []; page = null; ListBalances.clear(); merchantStats = null; merchantAccountStats = null; streamItems = []; streamModel.clear(); dayGroups = []; history = []
         rules = []; settings = []; dashboard = null; budgets = []; recurring = []; recurringMonth = null; recurringHidden = []
         selectedBookingID = null; stickyBooking = null; salaryCycle = null
         ++loanGeneration; loans = []; loanLinks = ({}); loanEditor = null; openingBalanceRequest = null
@@ -632,13 +635,39 @@ QtObject {
         if (!isUnlocked || selectionLoadTakes("categories")) return
         loadOffMain("categories", () => {
             const r = periodRange()
-            return [["list_categories", { date_from: r[0], date_to: r[1] }]]
-        }, r => applyCategories(r[0]))
+            const calls = [categoriesCall(r)]
+            const count = uncategorizedCountCall()
+            if (count) calls.push(count)
+            return { calls: calls, ctx: count !== null }
+        }, (r, counted) => applyCategories(r[0], counted ? r[1] : null))
     }
-    function applyCategories(list) {
+    /// AppModel+Loading.swift › listCategoriesFilteredAmount: the sidebar sums for the period `r`, narrowed
+    /// like the booking list (categorySumFilter, #621, #357); built when the load starts (current filters).
+    function categoriesCall(r) {
+        const f = categorySumFilter()
+        return ["list_categories_filtered_amount", { date_from: r[0], date_to: r[1], account_ids: f.accounts, checked: f.checked,
+                                                     direction: f.direction, amount_min_cents: f.amountMin, amount_max_cents: f.amountMax }]
+    }
+    /// uncategorizedCountFilter (#357): the query behind the filtered „Ohne Kategorie“ badge; null while
+    /// no filter narrows the sums (the accounts' own counts apply). Not tied to the period.
+    function uncategorizedCountCall() {
+        const f = categorySumFilter()
+        if (!f.accounts.length && f.checked === null && f.direction === "All" && f.amountMin === null && f.amountMax === null) return null
+        const accounts = f.accounts.length ? f.accounts : allAccounts.filter(a => a.kind !== "Loan").map(a => a.id)
+        return ["count_transactions", { filter: {
+            account_ids: accounts, category_id: null, include_subcategories: true, uncategorized_only: true,
+            search: null, date_from: null, date_to: null, limit: 1, offset: 0, scope: "All",
+            merchant_key: null, direction: f.direction, checked: f.checked, whole_days: false,
+            amount_min_cents: f.amountMin, amount_max_cents: f.amountMax } }]
+    }
+    /// `count`: the filtered „Ohne Kategorie“ badge, null = the accounts' own counts.
+    function applyCategories(list, count) {
         categories = list
+        uncategorizedFilteredCount = count === undefined ? null : count
         categoryTree = buildTree(list)
     }
+    /// AppModel.swift › uncategorizedFilteredCount: „Ohne Kategorie“ badge while list filters narrow the sums (#357).
+    property var uncategorizedFilteredCount: null
     /// Category tree from the flat list in one pass (grouped by parent first; the
     /// former per-node filter was quadratic and slow with large MoneyMoney imports).
     /// Order within a level stays the order of `flat`.
@@ -666,9 +695,9 @@ QtObject {
         reloadCategoryHistory()
         dropPendingPage()
         loadOffMain("bookings", () => {
-            const f = currentFilter()
+            const f = ListBalances.listFilter()
             const calls = [["list_transactions", { filter: f }]]
-            const flowInPage = listHasFlow(f)
+            const flowInPage = listHasFlow(f) || kpiFollowsList
             if (!flowInPage) calls.push(selectionFlowCall(f))
             return { calls: calls, ctx: { flowInPage: flowInPage } }
         }, (r, ctx) => {
@@ -699,7 +728,11 @@ QtObject {
     function listHasFlow(f) {
         return f.search === null && f.checked === null && f.direction === "All" && f.scope === "All"
             && f.category_id === null && !f.uncategorized_only && !(f.tag_ids || []).length && !f.untagged_only
+            && f.amount_min_cents === null && f.amount_max_cents === null
     }
+    /// AppModel+Loading.swift › kpiFollowsList (#357): the tiles of a category view count what the
+    /// list shows (category and every list filter); elsewhere they sum the whole selection and period.
+    readonly property bool kpiFollowsList: sidebarSelection.startsWith("category:") || sidebarSelection === "uncategorized"
     function selectionFlowCall(f) {
         const r = periodRange()
         return ["selection_flow", { account_ids: f.account_ids, date_from: r[0], date_to: r[1] }]
@@ -714,6 +747,7 @@ QtObject {
         listGeneration++
         isLoadingMoreBookings = false
         page = p
+        ListBalances.reset(p)   // running balances (#577)
         bookings = keepingLingeringRow(p.transactions)
         const sticky = stickyBooking !== null && stickyBooking.id === selectedBookingID
         if (selectedBookingID !== null && !sticky && !bookings.some(b => b.id === selectedBookingID))
@@ -821,7 +855,7 @@ QtObject {
     readonly property int remainingBookingCount: page ? Math.max(0, page.total_count - bookings.length) : 0
     function loadMoreBookings(count) {
         if (!isUnlocked || !hasMoreBookings || isLoadingMoreBookings || selectionLoadRunning) return
-        const f = currentFilter()
+        const f = ListBalances.listFilter()
         f.offset = bookings.length
         f.limit = count > 0 ? count : defaultListLimit
         const generation = listGeneration
@@ -830,6 +864,7 @@ QtObject {
             if (generation !== listGeneration) return
             isLoadingMoreBookings = false
             if (!next.transactions.length) return
+            ListBalances.merge(next)
             bookings = bookings.concat(next.transactions)
             listLimit = bookings.length
             rebuildStream()
@@ -855,7 +890,7 @@ QtObject {
         if (!sel.startsWith("category:")) return null
         const r = periodRange()
         return ["category_history_by_unit", { category_id: Number(sel.slice(9)), account_ids: categoryAccountIDs,
-                                              date_from: r[0], date_to: r[1], key_length: 7 }]
+                                              date_from: r[0], date_to: r[1], key_length: BalanceChartPrefs.categoryKeyLength }]
     }
     /// AppModel+Loading.swift › reloadCategoryHistory (cheap SQL aggregate, still off the GUI
     /// thread). Callers check `selectionLoadTakes` first: a running selection load brings it.
@@ -1031,20 +1066,22 @@ QtObject {
     }
     function loadSelectionData(withCycle) {
         loadOffMain("selectionData", () => {
-            const f = currentFilter(), r = periodRange(), h = historyRequest()
+            const f = ListBalances.listFilter(), r = periodRange(), h = historyRequest()
             const parts = { recurring: selectionNeeds.recurring, categories: selectionNeeds.categories }
             const calls = []
             if (withCycle) calls.push(["salary_cycle", { account_ids: selectionAccountIDs() }])
             calls.push(["list_transactions", { filter: f }])
-            const flowInPage = listHasFlow(f)
+            const flowInPage = listHasFlow(f) || kpiFollowsList
             if (!flowInPage) calls.push(selectionFlowCall(f))
             if (parts.recurring) calls.push(recurringCall())
-            if (parts.categories) calls.push(["list_categories", { date_from: r[0], date_to: r[1] }])
+            if (parts.categories) calls.push(categoriesCall(r))
+            const uncategorized = parts.categories ? uncategorizedCountCall() : null
+            if (uncategorized) calls.push(uncategorized)
             calls.push(["balance_history", { account_ids: h.ids, days: h.days }])
             const categoryChart = categoryHistoryCall()
             if (categoryChart) calls.push(categoryChart)
             return { calls: calls, ctx: { withCycle: withCycle, flowInPage: flowInPage, parts: parts, range: r,
-                                          categoryChart: categoryChart !== null } }
+                                          uncategorized: uncategorized !== null, categoryChart: categoryChart !== null } }
         }, (res, ctx) => {
             let i = 0
             if (ctx.withCycle) salaryCycle = res[i++]
@@ -1052,13 +1089,14 @@ QtObject {
             const flow = ctx.flowInPage ? null : res[i++]
             const rec = ctx.parts.recurring ? res[i++] : null
             const cats = ctx.parts.categories ? res[i++] : null
+            const uncategorized = ctx.uncategorized ? res[i++] : null
             const pts = res[i++]
             const categorySums = ctx.categoryChart ? res[i++] : []
             endSelectionLoad()
             publish(page)
             applySelectionFlow(page, flow)
             if (rec) { applyRecurring(rec); selectionNeeds.recurring = false }
-            if (cats) { applyCategories(cats); selectionNeeds.categories = false }
+            if (cats) { applyCategories(cats, uncategorized); selectionNeeds.categories = false }
             history = trimHistory(pts, ctx.range)
             categoryHistory = categorySums
             if (selectFirstBookingOnLoad) {
@@ -1080,6 +1118,7 @@ QtObject {
     /// them anew after the load would block the GUI thread far longer than the load.
     function showSelectionPlaceholder() {
         isLoadingSelection = true
+        ListBalances.clear()
         history = []
         categoryHistory = []
     }
@@ -1118,14 +1157,30 @@ QtObject {
         if (sel.startsWith("userGroup:")) return userGroupAccountIDs(sel.slice(10))
         return []
     }
-    // MARK: category views narrowed to accounts (AppModel+Loading.swift, #406)
-    /// AppModel.swift › categoryAccountFilter: accounts whose bookings the category views show
-    /// („Ohne Kategorie“ and a category) as `{ id: true }`; empty = all. Kept while the app runs.
+    // MARK: list narrowed to accounts (AppModel+Loading.swift, #406, #357)
+    /// AppModel.swift › categoryAccountFilter: accounts whose bookings the list shows in the category
+    /// views („Ohne Kategorie“ and a category, #406), in „Alle Konten“, account groups and „Neue Umsätze“
+    /// (#357) as `{ id: true }`; empty = all. Kept while the app runs.
     property var categoryAccountFilter: ({})
+    /// The category views narrow the sidebar's sums to the chosen accounts too (#406).
     readonly property bool showsCategoryAccountFilter: sidebarSelection.startsWith("category:") || sidebarSelection === "uncategorized"
-    /// The chosen accounts that still exist, in sidebar order; empty = all accounts.
+    /// showsAccountFilter (#357): the category views, „Alle Konten“, account groups and „Neue Umsätze“.
+    /// A single account has nothing to choose from.
+    readonly property bool showsAccountFilter: {
+        const s = sidebarSelection
+        return showsCategoryAccountFilter || s === "all" || s === "newBookings"
+            || s.startsWith("group:") || s.startsWith("bank:") || s.startsWith("userGroup:")
+    }
+    /// accountFilterCandidates: the accounts the filter chooses from – those of the selected group, otherwise all.
+    readonly property var accountFilterCandidates: {
+        const s = sidebarSelection
+        if (!(s.startsWith("group:") || s.startsWith("bank:") || s.startsWith("userGroup:"))) return allAccounts
+        const ids = selectionAccountIDs()
+        return allAccounts.filter(a => ids.indexOf(a.id) >= 0)
+    }
+    /// The chosen accounts that still exist and belong to the selection, in sidebar order; empty = all of them.
     readonly property var categoryAccountIDs: Object.keys(categoryAccountFilter).length
-        ? allAccounts.map(a => a.id).filter(id => categoryAccountFilter[id]) : []
+        ? accountFilterCandidates.map(a => a.id).filter(id => categoryAccountFilter[id]) : []
     function setCategoryAccountFilter(ids) {
         const next = {}
         for (const id of ids) next[id] = true
@@ -1133,20 +1188,42 @@ QtObject {
             && Object.keys(next).every(k => categoryAccountFilter[k])
         if (same) return
         categoryAccountFilter = next
-        if (!showsCategoryAccountFilter) return
+        if (!showsAccountFilter) return
         listLimit = defaultListLimit
-        requestSelectionLoad({})
+        requestSelectionLoad({ categories: true })   // also the sidebar sums (#621)
     }
     /// Adds or removes one account; choosing every account is the same as no filter.
     function toggleCategoryAccount(id) {
         const next = categoryAccountIDs.slice()
         const at = next.indexOf(id)
         if (at >= 0) next.splice(at, 1); else next.push(id)
-        setCategoryAccountFilter(next.length === allAccounts.length ? [] : next)
+        setCategoryAccountFilter(next.length === accountFilterCandidates.length ? [] : next)
     }
+    /// AppModel+Loading.swift › categorySumFilter: what the sidebar's category sums count besides the
+    /// period (#621): the same status, type and amount range as the booking list (#357), and its accounts
+    /// only in the category views (#406).
+    function categorySumFilter() {
+        return { accounts: showsCategoryAccountFilter ? categoryAccountIDs : [],
+                 checked: statusFilter === "all" ? null : statusFilter === "checked", direction: directionFilter,
+                 amountMin: ListFilters.amountMin, amountMax: ListFilters.amountMax }
+    }
+    /// AppModel+Loading.swift › categorySumNote: hint under the sidebar's „Kategorien“ heading while a
+    /// filter narrows the sums; "" = none. Names no account (the sidebar is part of bug report screenshots).
+    readonly property string categorySumNote: {
+        const parts = []
+        if (statusFilter !== "all") parts.push(qsTr("Status: %1").arg(titleOf(statusFilters, statusFilter)))
+        if (directionFilter !== "All") parts.push(directionFilter === "Income" ? qsTr("Einnahmen") : qsTr("Ausgaben"))
+        if (ListFilters.amountActive) parts.push(qsTr("Betrag"))
+        const chosen = showsCategoryAccountFilter ? categoryAccountIDs.length : 0
+        if (chosen > 0) parts.push(qsTr("Konten: %1 von %2").arg(chosen).arg(allAccounts.length))
+        return parts.length ? qsTr("Summen gefiltert – %1").arg(parts.join(" · ")) : ""
+    }
+    /// Linux only: leaving or entering a category view adds or drops the account part of the sums –
+    /// reload them so they match `categorySumNote` (the Mac keeps the older sums until the next change).
+    onShowsCategoryAccountFilterChanged: if (categoryAccountIDs.length) reloadCategories()
     /// Label of the account menu; never names an account (the header is part of bug report screenshots).
     readonly property string categoryAccountFilterTitle: categoryAccountIDs.length === 0
-        ? qsTr("Konten: Alle") : qsTr("Konten: %1 von %2").arg(categoryAccountIDs.length).arg(allAccounts.length)
+        ? qsTr("Konten: Alle") : qsTr("Konten: %1 von %2").arg(categoryAccountIDs.length).arg(accountFilterCandidates.length)
 
     // MARK: period per category (AppModel+Selection.swift, AppModelTypes.swift › Period.storageKey, #425)
     /// Relative, launch-independent form: "this year" stays "this year" next January. null for custom.
@@ -1190,19 +1267,23 @@ QtObject {
     function choosePeriod(p) {
         period = p
         if (sidebarSelection.startsWith("category:")) setCategoryPeriod(p, Number(sidebarSelection.slice(9)))
+        ListFilters.rememberPeriod()   // restored on the next launch (#840)
     }
 
     function currentFilter() {
         const r = periodRange()
         const sel = sidebarSelection
-        // „Neue Umsätze“: everything new, whatever the list filters say elsewhere.
+        // Chosen accounts (#357); within a group they narrow its accounts, empty = all of them.
+        const chosen = categoryAccountIDs
+        // „Neue Umsätze“: everything new, whatever the other list filters say; only the account and
+        // amount filters narrow it.
         if (sel === "newBookings")
-            return { account_ids: [], category_id: null, include_subcategories: true, uncategorized_only: false,
+            return ListFilters.applyTo({ account_ids: chosen, category_id: null, include_subcategories: true, uncategorized_only: false,
                      search: null, date_from: null, date_to: null, limit: listLimit, offset: 0, scope: "All",
-                     merchant_key: null, direction: "All", checked: false, whole_days: true }
-        return TagFilter.applyTo({   // + the tag filter (#228)
-            // AppModel+Loading.swift › currentFilter: the category views follow the account menu (#406)
-            account_ids: showsCategoryAccountFilter ? categoryAccountIDs : selectionAccountIDs(),
+                     merchant_key: null, direction: "All", checked: false, whole_days: true })
+        return ListFilters.applyTo(TagFilter.applyTo({   // + the tag filter (#228) and the amount range (#357)
+            // AppModel+Loading.swift › currentFilter: the account menu (#406, #357)
+            account_ids: showsAccountFilter && chosen.length ? chosen : selectionAccountIDs(),
             category_id: sel.startsWith("category:") ? Number(sel.slice(9)) : null,
             include_subcategories: true,
             uncategorized_only: sel === "uncategorized",
@@ -1214,7 +1295,7 @@ QtObject {
             direction: directionFilter,
             checked: statusFilter === "all" ? null : statusFilter === "checked",
             whole_days: true
-        })
+        }))
     }
 
     // MARK: user groups (AccountGroupsModel.swift)
@@ -1354,11 +1435,31 @@ QtObject {
         }
         return sections.filter(s => s.accounts.length > 0)
     }
+    /// AccountGroupsModel.swift (#954): the other accounts carrying the same name (two "Konto flex"
+    /// of different holders).
+    function namesakes(a) { return Object.values(accountsByID).filter(o => o.id !== a.id && o.name === a.name) }
+    function hasNamesake(a) { return namesakes(a).length > 0 }
+    /// What tells the account apart from its namesakes: its owner, or – when it has none or a
+    /// namesake has the same – the end of its IBAN / account number. Empty without a namesake.
+    function accountDistinction(a) {
+        const others = namesakes(a)
+        if (!others.length) return ""
+        const owner = a.owner || ""
+        if (owner !== "" && !others.some(o => (o.owner || "") === owner)) return owner
+        const number = (a.iban ? a.iban : (a.account_number || "")).replace(/\s/g, "")
+        return number === "" ? owner : "…" + number.slice(-4)
+    }
+    /// The account's name, with what tells it apart when another account has the same name.
+    function accountLabel(a) {
+        const d = accountDistinction(a)
+        return d === "" ? a.name : a.name + " · " + d
+    }
     /// Combo box entries: "Alle Konten", then each section title and its accounts (`label(a)`).
-    function accountMenuOptions(label, withoutAccount) {
+    /// `sections` defaults to `accountMenuSections` („Belege & PostBox“ passes the ones of a bank login, #1042).
+    function accountMenuOptions(label, withoutAccount, sections) {
         const out = [{ id: null, title: qsTr("Alle Konten") }]
         if (withoutAccount) out.push({ id: documentsWithoutAccount, title: qsTr("Ohne Konto") })
-        for (const s of accountMenuSections) {
+        for (const s of (sections || accountMenuSections)) {
             out.push({ id: undefined, title: s.title, header: true })
             for (const a of s.accounts) out.push({ id: a.id, title: label(a) })
         }
@@ -1398,7 +1499,10 @@ QtObject {
     readonly property var liquidAccounts: allAccounts.filter(a => a.in_total && ["Checking", "Savings", "PaymentService", "CreditCard", "Cash"].indexOf(a.kind) >= 0)
     readonly property int liquidBalance: liquidAccounts.reduce((s, a) => s + a.balance_cents, 0)
     readonly property int newCount: allAccounts.reduce((s, a) => s + a.new_count, 0)
-    readonly property int uncategorizedCount: allAccounts.filter(a => a.kind !== "Loan").reduce((s, a) => s + a.uncategorized_count, 0)
+    /// Bookings without a category (badge of „Ohne Kategorie“): all of them, or, while list filters
+    /// narrow the sums, those matching the filters (#357). Not tied to the period.
+    readonly property int uncategorizedCount: uncategorizedFilteredCount !== null ? uncategorizedFilteredCount
+        : allAccounts.filter(a => a.kind !== "Loan").reduce((s, a) => s + a.uncategorized_count, 0)
     readonly property real consumptionThisMonth: selectionFlow ? selectionFlow.consumption : 0
     readonly property real investedThisMonth: selectionFlow ? selectionFlow.invested : 0
     readonly property real incomeThisMonth: selectionFlow ? selectionFlow.income : 0
@@ -1425,8 +1529,38 @@ QtObject {
         if (sel.startsWith("category:")) { const c = categories.find(c => "category:" + c.id === sel); return c ? c.path : qsTr("Kategorie") }
         return ""
     }
-    readonly property var headerBalance: {
+    /// AppModel+Loading.swift › headerTotalAccounts: accounts behind the header total of the
+    /// current selection (null: single account / not a total).
+    readonly property var headerTotalAccounts: {
         const sel = sidebarSelection
+        if (sel === "all") return liquidAccounts
+        if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.accounts : null }
+        if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.accounts : null }
+        if (sel.startsWith("userGroup:")) { const ids = userGroupAccountIDs(sel.slice(10)); return allAccounts.filter(a => ids.indexOf(a.id) >= 0) }
+        return null
+    }
+    /// headerTotalSplit (#569, AllAccountsRoot.swift › HeaderTotal.split): the header total in the
+    /// base currency (EUR, or the single shared currency when no EUR account is there) plus every
+    /// further currency (alphabetical) – never mixed into one number. null: one currency only.
+    readonly property var headerTotalSplit: {
+        const accounts = headerTotalAccounts
+        if (!accounts) return null
+        const sums = {}
+        for (const a of accounts) { const c = a.currency ? a.currency.toUpperCase() : "EUR"; sums[c] = (sums[c] || 0) + a.balance_cents }
+        const codes = Object.keys(sums)
+        const primary = sums["EUR"] !== undefined || codes.length !== 1 ? "EUR" : codes[0]
+        const others = codes.filter(c => c !== primary).sort().map(c => ({ currency: c, cents: sums[c] }))
+        return others.length ? { currency: primary, cents: sums[primary] || 0, others: others } : null
+    }
+    readonly property var headerBalance: {
+        const hb = headerBalanceUnsplit, split = headerTotalSplit
+        return hb && split ? { label: hb.label, cents: split.cents } : hb
+    }
+    readonly property var headerBalanceUnsplit: {
+        const sel = sidebarSelection
+        // A group's or all accounts' total covers every account: no figure while accounts are filtered (#357).
+        if ((sel === "all" || sel.startsWith("group:") || sel.startsWith("bank:") || sel.startsWith("userGroup:"))
+                && categoryAccountIDs.length) return null
         if (sel === "all") return { label: qsTr("Verfügbar (Giro, Tagesgeld, Karten)"), cents: liquidBalance }
         if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : qsTr("Kontostand"), cents: a.balance_cents } : null }
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
@@ -1661,7 +1795,18 @@ QtObject {
         if (isMagicDemoLogin(c.login_name)) return []
         const d = descriptor(c.connector)
         if (!d) return []
+        if (c.connector === "PayPal" && payPalUsesSignature()) return missingPayPalSignatureKeys()
         return userRequiredKeys(d.required_settings).filter(key => { const e = settingEntry(key); return !(e && e.has_value) })
+    }
+    /// PayPal via API signature (classic NVP API, #752): all three are required.
+    readonly property var payPalSignatureKeys: ["paypal.api_username", "paypal.api_password", "paypal.api_signature"]
+    /// One of the API signature fields is filled in: PayPal is set up that way, not via a REST app.
+    function payPalUsesSignature() { return payPalSignatureKeys.some(k => { const e = settingEntry(k); return !!e && e.has_value }) }
+    /// The API signature fields still empty (none: complete).
+    function missingPayPalSignatureKeys() { return payPalSignatureKeys.filter(k => { const e = settingEntry(k); return !(e && e.has_value) }) }
+    /// A setting to enter masked: the core's flag, else guessed from the key (not loaded yet).
+    function isSecretSetting(key, entry) {
+        return entry ? entry.is_secret : (key.indexOf("secret") >= 0 || key.endsWith("password") || key.endsWith("signature"))
     }
     /// Settings the core lists as required that are only an optional override for the user.
     /// A custom FinTS product ID is one: GiroCrab ships its own, and a value entered once is a
@@ -1795,6 +1940,12 @@ QtObject {
         })
     }
     function requestSyncChecked(connection) {
+        // Finpension: no sync, the export file is imported from the connection's sheet.
+        if (usesFileImport(connection)) {
+            resetSyncBatch()
+            toast = qsTr("%1: Bitte den Export in den Einstellungen der Verbindung importieren.").arg(connection.display_name)
+            return
+        }
         if (usesPortal(connection)) { webLoginConnection = connection; return }
         const magicDemo = isMagicDemoLogin(connection.login_name)
         if (!isDemo && !magicDemo && connection.connector === "TradeRepublic") {
@@ -1815,7 +1966,7 @@ QtObject {
         else pendingLogin = connection
     }
     function requestSyncAll() {
-        requestSyncBatch(connections.filter(c => !usesPortal(c) && !c.all_accounts_archived))
+        requestSyncBatch(connections.filter(c => !usesPortal(c) && !usesFileImport(c) && !c.all_accounts_archived))
     }
     function requestSyncBatch(batch) {
         if (syncingConnectionID !== null || !batch.length) return
@@ -1952,12 +2103,12 @@ QtObject {
             } else if (postboxConnectionID === connection.id) {
                 postboxConnectionID = null
                 documentsVersion++
-                toast = syncNotice(connection, s) + " · " + postboxNote(s)
+                toast = syncNotice(connection, s) + " · " + postboxNote(s, connection)
             } else {
                 // scheduled syncs only speak up when something changed
                 if (quietSyncConnectionID !== connection.id || s.transactions_imported > 0 || s.new_accounts.length || s.revoked_accounts.length) {
                     toast = syncNotice(connection, s)
-                    if (s.postbox_documents > 0) toast += " · " + postboxNote(s)
+                    if (s.postbox_documents > 0) toast += " · " + postboxNote(s, connection)
                 }
                 if (s.postbox_documents > 0) documentsVersion++
             }
@@ -2001,6 +2152,12 @@ QtObject {
         if (id === null) return
         coreAsync("session_poll", { session: id }, step => { if (activeSession === id) handleStep(step, connection) },
                   err => { if (activeSession === id) finishSync(err, connection) })
+    }
+    /// Consorsbank Online-Archiv (#1024): the approval dialog's link switches between the
+    /// app approval and a typed TAN ("TAN" / "APP", handled in `consorsbank_archive.rs`).
+    function switchApproval(word) {
+        pollTimer.stop()
+        submitCode(word)
     }
     function submitCode(code) {
         if (activeTransfer !== null && activeChallenge) { submitTransferCode(code); return }
@@ -2508,12 +2665,39 @@ QtObject {
         if (!b || !isUnlocked || b.document_count === 0) return []
         return run(() => core("list_documents_for_booking", { booking_id: b.id })) || []
     }
-    function allDocuments(search, unlinkedOnly, accountId) {
+    function allDocuments(search, unlinkedOnly, accountId, connectionId) {
         void documentsVersion
         if (!isUnlocked) return []
-        const withoutAccount = accountId === documentsWithoutAccount
-        const docs = run(() => core("list_all_documents", { filter: { account_id: withoutAccount ? null : accountId, doc_type: null, search: search || null, unlinked_only: unlinkedOnly } })) || []
+        const noConnection = connectionId === undefined || connectionId === null || connectionId === documentsWithoutAccount
+        const withoutAccount = accountId === documentsWithoutAccount || connectionId === documentsWithoutAccount
+        const docs = run(() => core("list_all_documents", { filter: { account_id: accountId === documentsWithoutAccount ? null : accountId, doc_type: null, search: search || null,
+                                                                      unlinked_only: unlinkedOnly, connection_id: noConnection ? null : connectionId } })) || []
         return withoutAccount ? docs.filter(d => d.account_id === null || d.account_id === undefined) : docs
+    }
+    /// „Belege & PostBox“ filtered to one bank login (#1042); null = all, `documentsWithoutAccount` =
+    /// documents without an account (they have no bank login). Set it with `selectDocumentsConnection`.
+    property var documentsConnectionFilter: null
+    /// Bank logins to offer in that filter: those with at least one account.
+    readonly property var documentsFilterConnections: {
+        const used = {}
+        for (const a of allAccounts) if (a.connection_id !== null) used[a.connection_id] = true
+        return connections.filter(c => used[c.id])
+    }
+    /// The account menu of „Belege & PostBox“, narrowed to the chosen bank login (#1042).
+    readonly property var documentsAccountSections: {
+        const cid = documentsConnectionFilter
+        if (cid === null || cid === documentsWithoutAccount) return accountMenuSections
+        return accountMenuSections.map(s => ({ id: s.id, title: s.title, accounts: s.accounts.filter(a => a.connection_id === cid) }))
+                                  .filter(s => s.accounts.length > 0)
+    }
+    /// Picks the bank login of the document list. An account filter that does not belong to it
+    /// (or „Ohne Konto“) is reset, otherwise the list would be empty.
+    function selectDocumentsConnection(id) {
+        documentsConnectionFilter = id
+        const account = documentsAccountFilter
+        if (id === null || account === null) return
+        if (id === documentsWithoutAccount || !accountsByID[account] || accountsByID[account].connection_id !== id)
+            documentsAccountFilter = null
     }
     function accountDocuments(accountID) { return allDocuments("", false, accountID) }
     function documentsChanged() { documentsVersion++; reloadBookings() }
@@ -2562,9 +2746,32 @@ QtObject {
         if (linked && bookingID === null) toast = qsTr("Zuordnung aufgehoben")
     }
     function deleteDocument(d) { run(() => core("delete_document", { doc_id: d.id })); documentsChanged() }
-    function exportAllDocuments(folderPath) {
-        const n = run(() => core("export_all_documents", { dest_dir: folderPath }))
-        if (n !== undefined) toast = qsTr("%1 Belege nach „%2/GiroCrab-Belege“ exportiert").arg(n).arg(folderPath.split("/").pop())
+    /// Exports the whole collection, or only the documents with `ids` (the list the user filtered).
+    /// The year folders go straight into `folderPath`, or into `subfolder` inside it (the account).
+    function exportAllDocuments(folderPath, ids, subfolder) {
+        const n = run(() => core("export_documents", { dest_dir: folderPath, doc_ids: ids || [], subfolder: subfolder || "" }))
+        const folder = folderPath.split("/").pop()
+        if (n !== undefined) toast = qsTr("%1 Belege nach „%2“ exportiert").arg(n).arg(subfolder ? folder + "/" + subfolder : folder)
+    }
+    /// Marks documents read or unread (opened in the list, or by hand, #934).
+    function markDocumentsSeen(ids, seen) {
+        if (!isUnlocked || !ids.length) return
+        run(() => core("mark_documents_seen", { doc_ids: ids, seen: seen }))
+        documentsVersion++   // → SidebarModel.refreshCounts()
+    }
+    /// Marks every unread document read (sidebar: „Belege & PostBox“).
+    function markAllDocumentsSeen() {
+        if (!isUnlocked) return
+        run(() => core("mark_all_documents_seen", { account_id: null }))
+        documentsVersion++   // → SidebarModel.refreshCounts()
+    }
+    /// Writes the document to the temp directory and copies the file path to the clipboard
+    /// (without opening the file manager or the document). The copy is deleted on lock and quit.
+    function copyDocumentPath(d) {
+        const path = run(() => core("document_temp_file", { doc_id: d.id, mime_type: d.mime_type }))
+        if (!path) return
+        copyToClipboard(path)
+        toast = qsTr("Pfad kopiert")
     }
     function localPath(url) { return decodeURIComponent(String(url).replace(/^file:\/\//, "")) }
     function attach(urls, b) {
@@ -2598,7 +2805,11 @@ QtObject {
         next(0)
     }
     function canFetchStatements(a) {
-        return a && a.connector && (a.kind !== "Loan" || a.connector === "Bhw") && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Bhw"].indexOf(a.connector) >= 0
+        // BHW: the Bausparvertrag (a loan) has statements too
+        if (!a || !a.connector || (a.kind === "Loan" && a.connector !== "Bhw")) return false
+        // switched off per connection (bank connection dialog, #954): the core would refuse it
+        if (a.connection_id !== null && documentsOffConnectionIDs.indexOf(a.connection_id) >= 0) return false
+        return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Ffb", "Bhw"].indexOf(a.connector) >= 0
     }
     function fetchStatements(a) {
         if (syncingConnectionID !== null) return
@@ -2613,14 +2824,52 @@ QtObject {
     /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
     function comdirectPostbox(id) { return run(() => core("comdirect_postbox_enabled", { connection_id: id })) || false }
     function setComdirectPostbox(id, on) { run(() => core("set_comdirect_postbox", { connection_id: id, enabled: on })) }
+    /// AppModel+Connections.swift (#954): the connection's bank delivers documents (the switch
+    /// „Dokumente abrufen“ is offered only then) and whether its syncs fetch them (default on).
+    function documentsFetchSupported(id) { return coreOrNull("documents_fetch_supported", { connection_id: id }) === true }
+    function documentsFetchEnabled(id) { return coreOrNull("documents_fetch_enabled", { connection_id: id }) !== false }
+    function setDocumentsFetch(id, on) {
+        run(() => core("set_documents_fetch", { connection_id: id, enabled: on }))
+        refreshDocumentsOff()
+    }
+    /// Connections whose bank delivers documents but whose retrieval is switched off. Read once on
+    /// a change of the connections and of the switch, so views never ask the core while they render.
+    property var documentsOffConnectionIDs: []
+    onConnectionsChanged: refreshDocumentsOff()
+    function refreshDocumentsOff() {
+        documentsOffConnectionIDs = isUnlocked
+            ? connections.filter(c => documentsFetchSupported(c.id) && !documentsFetchEnabled(c.id)).map(c => c.id) : []
+    }
+    /// AppModel+Documents.swift › connectionsWithDocumentsOff: for the whole list, the one account
+    /// on screen (`accountFilter`) or the chosen bank login (`connectionFilter`, #1042).
+    function connectionsWithDocumentsOff(accountFilter, connectionFilter) {
+        let ids = null
+        if (accountFilter !== null && accountFilter !== undefined) {
+            if (accountFilter === documentsWithoutAccount) return []
+            const a = accountsByID[accountFilter]
+            if (!a || a.connection_id === null) return []
+            ids = [a.connection_id]
+        } else if (connectionFilter !== null && connectionFilter !== undefined) {
+            if (connectionFilter === documentsWithoutAccount) return []
+            ids = [connectionFilter]
+        }
+        return connections.filter(c => (ids === null || ids.indexOf(c.id) >= 0) && documentsOffConnectionIDs.indexOf(c.id) >= 0)
+    }
     /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
     function fetchComdirectPostbox(c) {
         if (syncingConnectionID !== null) return
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect PostBox.
-    function postboxNote(s) {
+    /// Toast suffix of a sync with the comdirect PostBox (#838) or the Consorsbank Online-Archiv (#1024).
+    function postboxNote(s, c) {
+        const n = s.postbox_documents
+        if (c && c.connector === "FinTsGeneric" && c.bank_code === "76030080") {
+            if (n === null || n === undefined)
+                return qsTr("Online-Archiv nicht abgerufen. Bitte PIN und Freigabe in der Consorsbank App prüfen.")
+            return n === 0 ? qsTr("keine neuen Dokumente aus dem Online-Archiv")
+                : qsTr("%1 neue Dokumente aus dem Online-Archiv").arg(n)
+        }
         if (s.postbox_documents === null || s.postbox_documents === undefined)
             return qsTr("PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
         return s.postbox_documents === 0 ? qsTr("keine neuen PostBox-Dokumente")
@@ -2836,7 +3085,7 @@ QtObject {
         const ids = {}
         for (const x of userGroupSubtree(g.uuid))
             for (const a of x.accounts) if (a.archived_unix === null && a.connection_id !== null) ids[a.connection_id] = true
-        return connections.filter(c => ids[c.id] && !usesPortal(c))
+        return connections.filter(c => ids[c.id] && !usesPortal(c) && !usesFileImport(c))
     }
     function requestSyncGroup(g) { requestSyncBatch(groupSyncConnections(g)) }
     /// "Ohne Gruppe" for the group manager: always there, also when every account is in a group.
@@ -3162,14 +3411,15 @@ QtObject {
     /// accounts to link to the user's application.
     property var psd2LinkHints: []
     property bool showPrintSheet: false
-    property bool showCSVExporter: false
     // Umsatz-Export (PDF / CSV / CAMT.053): ExportSheet.qml, logic in BookingExport.qml.
     property bool showExportSheet: false
     /// When set, the export sheet defaults to these booking ids (context menu).
     property var exportBookingIDs: null
     property bool exportPreferSelection: false
-    /// A built export file waiting for the save dialog („Unter …“, Main.qml).
+    /// A built export file waiting for the save dialog (Main.qml).
     property var exportSaveRequest: null
+    /// Built export files (one per account) waiting for the folder dialog (Main.qml).
+    property var exportFolderRequest: null
     /// Opens the export dialog; `selection`: use the current multi-/single selection (context menu).
     function openBookingExport(selection) {
         if (!isUnlocked) return
@@ -3204,18 +3454,6 @@ QtObject {
         if (r.psd2_connections.length) psd2LinkHints = r.psd2_connections
         toast = qsTr("Import: %1 Buchungen in %2 Konten importiert").arg(r.bookings_new).arg(r.accounts_created + r.accounts_merged)
             + (r.bookings_duplicates > 0 ? qsTr(", %1 bereits vorhanden").arg(r.bookings_duplicates) : "")
-    }
-
-    /// Exports every booking matching the current list filter as Excel-friendly
-    /// CSV: the save dialog (Main.qml) calls `writeFilteredBookingsCSV`.
-    function exportFilteredBookingsCSV() { if (isUnlocked) showCSVExporter = true }
-    function writeFilteredBookingsCSV(path) {
-        try {
-            core("export_bookings_csv_file", { filter: currentFilter(), path: path })
-        } catch (e) {
-            errorTitle = qsTr("Export fehlgeschlagen")
-            errorMessage = e.message
-        }
     }
 
     // Printing (GitHub #53)
@@ -3394,7 +3632,10 @@ QtObject {
     /// TransferDraft (AppModel.swift). Replaced as a whole (`setDraft`) so bindings update.
     function newTransferDraft(accountID) {
         const t = new Date(); t.setDate(t.getDate() + 1)
-        return { account_id: accountID === undefined ? null : accountID, name: "", iban: "", bic: "", amountText: "",
+        return { account_id: accountID === undefined ? null : accountID,
+                 // Umbuchung: name and IBAN come from an own account (#881); kept in the draft so the
+                 // batch sheet's switch can open the form in this mode.
+                 ownTransfer: false, name: "", iban: "", bic: "", amountText: "",
                  purpose: "", pin: "",
                  // SEPA Instant: off by default; if the bank declines, nothing is sent automatically.
                  instant: false,
@@ -3426,15 +3667,32 @@ QtObject {
     /// ConnectorKind.offersInstantChoice: FinTS banks; bunq decides on its own.
     function offersInstantChoice(connector) { return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(connector) >= 0 }
     /// Checking accounts that are connected via FinTS (HKCCS-capable banks) or bunq.
-    readonly property var transferAccounts: allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null
-        && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Bunq"].indexOf(a.connector) >= 0)
+    readonly property var transferAccounts: sendableAccounts("Checking")
+    /// Savings accounts (Tagesgeld) the bank lets us book from, but only as an internal transfer
+    /// (Umbuchung) to an own account (#582). Kept apart from `transferAccounts` so standing orders,
+    /// batches and direct debits do not offer them.
+    readonly property var savingsTransferSources: sendableAccounts("Savings")
+    /// AppModel+Transfer.swift › sendableAccounts(of:): accounts of `kind` with an IBAN that a
+    /// connected, write-capable bank can send from.
+    function sendableAccounts(kind) {
+        return allAccounts.filter(a => a.kind === kind && a.iban !== "" && a.archived_unix === null
+            && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Bunq"].indexOf(a.connector) >= 0)
+    }
+    /// AppModel+Transfer.swift › internalTransferTargets(from:): own accounts a savings account may
+    /// transfer to – checking accounts only, the bank's own reference account (same login) first.
+    function internalTransferTargets(source) {
+        const all = allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null && a.id !== source.id)
+        const same = a => a.connection_id !== null && a.connection_id === source.connection_id
+        return all.filter(same).concat(all.filter(a => !same(a)))
+    }
     /// Checking accounts GiroCrab cannot send from (e.g. C24 via Enable Banking):
     /// the form ends with a GiroCode to scan in the bank's app instead of a TAN.
     readonly property var giroCodeAccounts: allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null
         && !transferAccounts.some(t => t.id === a.id))
     /// Accounts offered in the transfer form: sending ones first.
-    readonly property var transferFormAccounts: transferAccounts.concat(giroCodeAccounts)
-    function canSendTransfer(accountID) { void bankingPolicy; return transferAccounts.some(a => a.id === accountID) && bankingGateForAccount(accountID) === null }
+    readonly property var transferFormAccounts: transferAccounts.concat(savingsTransferSources, giroCodeAccounts)
+    function canSendTransfer(accountID) { void bankingPolicy
+        return transferAccounts.concat(savingsTransferSources).some(a => a.id === accountID) && bankingGateForAccount(accountID) === null }
     readonly property bool canTransfer: isUnlocked && transferFormAccounts.length > 0 && syncingConnectionID === null && activeTransfer === null
 
     /// TransferSheetView.groupedIBAN: upper-case, only A–Z/0–9, groups of four.
@@ -3452,8 +3710,16 @@ QtObject {
     function clipboardConcealed() { try { return core("clipboard_concealed") !== false } catch (e) { return true } }
     function clipboardText() { clipboardHelper.text = ""; clipboardHelper.paste(); const t = clipboardHelper.text; clipboardHelper.text = ""; return t }
 
-    /// Pre-selects the sidebar account if it is offered in the form, else the first one.
+    /// "Neue Überweisung": an empty form, only the account is kept (#881). The sheet's own
+    /// reopenings (bank error, declined instant, name check) keep the draft; they set
+    /// `showTransferSheet` directly.
     function openTransfer() {
+        if (!canTransfer) return
+        transferDraft = newTransferDraft(transferDraft.account_id)
+        presentTransfer()
+    }
+    /// Pre-selects the sidebar account if it is offered in the form, else the first one.
+    function presentTransfer() {
         if (!canTransfer) return
         const offered = transferFormAccounts
         const has = id => offered.some(a => a.id === id)
@@ -3476,9 +3742,41 @@ QtObject {
     /// Context menu: new transfer pre-filled from a booking.
     function openTransferFrom(b) {
         if (!canTransfer) return
+        transferDraft = newTransferDraft(transferDraft.account_id)
         setDraft({ name: b.counterparty === "" ? b.merchant_name : b.counterparty, iban: groupedIBAN(b.counterparty_iban), bic: "",
                    amountText: Fmt.plain(Math.abs(b.amount_cents)), purpose: (b.purpose || "").slice(0, 140) })
-        openTransfer()
+        presentTransfer()
+    }
+    /// A template, a paste or an invoice names a recipient: that is a transfer to someone else, so
+    /// it leaves Umbuchung first (#881); the form would otherwise show an own account while the
+    /// order goes to this IBAN. A savings account may only book to own accounts: from there only
+    /// amount and purpose are taken. `patch`: draft fields (PaymentParser.patch).
+    function fillTransferDraft(patch, onlyEmpty) {
+        const p = Object.assign({}, patch)
+        if (onlyEmpty) for (const k of Object.keys(p)) if (String(transferDraft[k]).trim() !== "") delete p[k]
+        const source = account(transferDraft.account_id)
+        if (source && source.kind === "Savings") {
+            const kept = {}
+            if (p.amountText !== undefined) kept.amountText = p.amountText
+            if (p.purpose !== undefined) kept.purpose = String(p.purpose).slice(0, 140)
+            setDraft(kept)
+            return
+        }
+        p.ownTransfer = false
+        setDraft(p)
+    }
+    /// AppModel+Batch.swift: any own account other than a sender can receive an Umbuchung.
+    readonly property bool hasOwnTransferTargets: allAccounts.filter(a => a.iban !== "" && a.archived_unix === null).length > 1
+    /// The kind switch of both transfer sheets: "single" | "own" | "batch".
+    function switchTransferKind(kind, fromBatch) {
+        if (kind === "batch") {
+            if (!fromBatch) Payments.switchToBatchTransfer()
+            return
+        }
+        // back from Umbuchung: the own account is not this recipient
+        if (transferDraft.ownTransfer && kind === "single") setDraft({ name: "", iban: "", bic: "" })
+        setDraft({ ownTransfer: kind === "own" })
+        if (fromBatch) Payments.switchToSingleTransfer()
     }
     /// Sammelüberweisung / Dauerauftrag (Payments.qml): the TransferSession `session` of the
     /// core runs through the same steps as a single transfer. `kind` = "batch" | "standing".
@@ -3730,7 +4028,8 @@ QtObject {
         if (t !== null) activeChallenge = null
         activeTransfer = null; payeeCheck = null; transferBusy = false; showTransferSheet = false
         activeTransferIsBatch = false; activeTransferIsStanding = false; activeTransferIsDebit = false
-        setDraft({ pin: "" })
+        // the whole draft: name, IBAN and amount are personal too (#881)
+        transferDraft = newTransferDraft(null)
         Payments.endForLock()
         DirectDebits.endForLock()
         if (t !== null) coreAsync("session_cancel", { session: t }, null, () => {})
@@ -3764,9 +4063,9 @@ QtObject {
         try { core("save_transfer_template", { template: t }) } catch (e) { transferError = e.message }
     }
     function applyTransferTemplate(t) {
-        setDraft({ name: t.recipient_name, iban: groupedIBAN(t.recipient_iban), bic: t.recipient_bic,
-                   amountText: t.default_amount_cents !== null ? Fmt.plain(t.default_amount_cents) : "",
-                   purpose: t.default_purpose.slice(0, 140) })
+        fillTransferDraft({ name: t.recipient_name, iban: groupedIBAN(t.recipient_iban), bic: t.recipient_bic,
+                            amountText: t.default_amount_cents !== null ? Fmt.plain(t.default_amount_cents) : "",
+                            purpose: t.default_purpose.slice(0, 140) })
     }
     function deleteTransferTemplate(id) { try { core("delete_transfer_template", { id: id }) } catch (e) {} }
 
@@ -3866,6 +4165,9 @@ QtObject {
         const d = periodRange(previousMonthPeriod())
         customPeriodFrom = String(defaults.value("period/customFrom", "")) || d[0]
         customPeriodTo = String(defaults.value("period/customTo", "")) || d[1]
+        // The last chosen period (#840); no vault yet, so its reload is a no-op. Demo starts keep
+        // „Gesamter Zeitraum“ for reproducible screenshots.
+        if (!optionDemoSeed) { const saved = ListFilters.storedPeriod(); if (saved !== null) period = saved }
     }
     /// Switches to the user-defined period; swaps the dates if needed (ISO strings).
     function applyCustomPeriod(from, to) {
@@ -3875,6 +4177,7 @@ QtObject {
         defaults.setValue("period/customFrom", a)
         defaults.setValue("period/customTo", b)
         if (period === "custom") { listLimit = defaultListLimit; reloadSelection(true) } else period = "custom"
+        ListFilters.rememberPeriod()
     }
 
     // FinTS product registration (GiroCrab's own vs. the user's).
@@ -4152,12 +4455,17 @@ QtObject {
             if (TagsModel.tags.length) TagFilter.set([TagsModel.tags[0].id], false)
             TagFilter.shown = true
             break
+        case "export":
+            // Export dialog on the current view's demo bookings.
+            period = previousMonthPeriod()
+            openBookingExport(false)
+            break
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = previousMonthPeriod()
             showPrintSheet = true
             break
-        case "transfer": case "transfer-confirm": case "transfer-clipboard":
+        case "transfer": case "transfer-confirm": case "transfer-girocode": case "transfer-clipboard":
             if (transferAccounts.length) sidebarSelection = "account:" + transferAccounts[0].id
             openTransfer()
             // transfer-clipboard: empty form, the sheet offers the payment in its clipboard banner (#663)
@@ -4385,6 +4693,30 @@ QtObject {
                 errorMessage = e.message
             }
         }
+    }
+    /// PortalUI.swift › usesFileImport (#975): connections fed by an export file the user picks (no login, no sync).
+    function usesFileImport(c) { return c.connector === "Finpension" && !isDemo && !isMagicDemoLogin(c.login_name) }
+    /// PortalUI.swift › importFinpension (#975): the Finpension export (CSV or JSON) of this connection.
+    function importFinpension(c, fileUrl) {
+        const path = localPath(fileUrl)
+        const name = path.split("/").pop()
+        const gen = vaultGeneration
+        coreAsync("import_finpension_file", { connection_id: c.id, path: path }, s => {
+            if (gen !== vaultGeneration) return
+            toast = qsTr("%1: %2 neue Buchungen aus %3").arg(c.display_name).arg(s.transactions_imported).arg(name)
+            reloadAll()
+        }, e => {
+            // locked or switched vault meanwhile: no error over another vault
+            if (gen !== vaultGeneration) return
+            const err = parseCoreError(e)
+            if (err.kind === "InvalidInput") {
+                errorTitle = qsTr("Nichts erkannt")
+                errorMessage = qsTr("In %1 wurden keine Finpension-Positionen oder -Buchungen erkannt. Erwartet: CSV oder JSON-Export mit ISIN, Anzahl, Kurs, Marktwert bzw. Datum, Beschreibung, Betrag.").arg(name)
+            } else {
+                errorTitle = qsTr("Finpension-Import fehlgeschlagen")
+                errorMessage = err.message
+            }
+        })
     }
     /// AmazonUI.swift › importAmazonOrders. Returns true when orders were recognised.
     function importAmazonOrders(c, json) {

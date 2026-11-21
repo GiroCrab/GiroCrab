@@ -7,44 +7,117 @@ import QtCore
 // DocumentsUI.swift › DocumentsView: "Belege & PostBox" – list left, preview right.
 // The scope (Alle Dokumente / Belege / PostBox, #526) sits in the toolbar like on the Mac
 // (Main.qml › DocumentsScope). Linux keeps its search field above the list.
+// Read status, type and year filter, export of the filtered list (#934): docs/BELEGE_UND_POSTBOX_UI.md.
 Rectangle {
     id: view
     color: Theme.canvas
     property string search: ""
     property bool unlinkedOnly: false
+    property bool unseenOnly: false
+    /// Document type (`types`) and calendar year of the document date; null = all.
+    property var typeFilter: null
+    property var yearFilter: null
     /// List selection by id; the shown document is looked up in `docs`, so one that is
     /// filtered out or deleted leaves the preview (Swift: `docs.first { $0.id == selected }`).
     property var selectedID: null
     readonly property var selected: selectedID === null ? null : (docs.find(d => d.id === selectedID) || null)
     property var docToDelete: null
-    /// model.allDocuments(search:unlinkedOnly:accountId:scope:)
-    readonly property var docs: {
+    /// model.allDocuments(search:unlinkedOnly:accountId:connectionId:scope:)
+    readonly property var found: {
         void DocumentsScope.current
         return AppModel.sidebarSelection !== "documents" ? []
-            : AppModel.allDocuments(search, unlinkedOnly, AppModel.documentsAccountFilter).filter(d => DocumentsScope.includes(d))
+            : AppModel.allDocuments(search, unlinkedOnly, AppModel.documentsAccountFilter, AppModel.documentsConnectionFilter).filter(d => DocumentsScope.includes(d))
     }
+    /// DocumentFilters.apply: type, year and „Nur ungelesene“ on the list already in memory; the open
+    /// document stays (it must not vanish from the list the moment it is read).
+    readonly property var docs: found.filter(d => (typeFilter === null || d.doc_type === typeFilter)
+        && (yearFilter === null || String(d.doc_date || "").startsWith(yearFilter + "-"))
+        && (!unseenOnly || !d.seen || d.id === selectedID))
     /// Nothing filtered: the general empty state instead of „Keine passenden Dokumente“.
-    readonly property bool unfiltered: DocumentsScope.current === "all" && AppModel.documentsAccountFilter === null && !unlinkedOnly && search === ""
+    readonly property bool unfiltered: DocumentsScope.current === "all" && AppModel.documentsAccountFilter === null
+        && AppModel.documentsConnectionFilter === null && !unlinkedOnly
+        && !unseenOnly && search === "" && typeFilter === null && yearFilter === null
+    /// Any filter (bank login, account, scope, search, „ohne Umsatz“, unread, type, year): the export takes the list on screen.
+    readonly property bool filtered: !unfiltered
+    readonly property var unreadIDs: docs.filter(d => !d.seen).map(d => d.id)
+
+    // MARK: DocumentFilters (DocumentsUI.swift)
+    /// Known types in reading order; others follow alphabetically.
+    readonly property var typeOrder: ["abrechnung", "steuer", "kontoauszug", "postbox", "beleg"]
+    readonly property var types: {
+        const present = {}
+        for (const d of found) if (d.doc_type) present[d.doc_type] = true
+        return typeOrder.filter(t => present[t]).concat(Object.keys(present).filter(t => typeOrder.indexOf(t) < 0).sort())
+    }
+    readonly property var years: {
+        const ys = {}
+        for (const d of found) { const y = parseInt(String(d.doc_date || "").slice(0, 4)); if (!isNaN(y)) ys[y] = true }
+        return Object.keys(ys).map(Number).sort((a, b) => b - a)
+    }
+    function typeTitle(t) {
+        switch (t) {
+        case "abrechnung": return qsTr("Abrechnung")
+        case "steuer": return qsTr("Steuer")
+        case "kontoauszug": return qsTr("Kontoauszug")
+        case "postbox": return qsTr("PostBox")
+        case "beleg": return qsTr("Beleg")
+        }
+        return t
+    }
+    /// The account's name while the list is narrowed to one account: the export puts its files there.
+    readonly property string exportSubfolder: {
+        const id = AppModel.documentsAccountFilter
+        const a = id === null || id === AppModel.documentsWithoutAccount ? null : AppModel.account(id)
+        return a ? a.name : ""
+    }
+    /// The account of a document; with its owner when another account has the same name (#954).
+    function accountText(d) {
+        const a = d.account_id === null || d.account_id === undefined ? null : AppModel.account(d.account_id)
+        if (a) return AppModel.accountLabel(a)
+        return d.account_name || qsTr("Ohne Konto")
+    }
+    /// The documents the export was started for (null: all).
+    property var exportIDs: null
+    /// A dropped or added receipt is stored as read, with today's type and year: no filter may hide it.
+    function clearReadFilters() {
+        unseenOnly = false
+        typeFilter = null
+        yearFilter = null
+    }
+    // opened = read
+    onSelectedIDChanged: {
+        const d = selectedID === null ? null : docs.find(x => x.id === selectedID)
+        if (d && !d.seen) AppModel.markDocumentsSeen([d.id], true)
+    }
 
     function showAll() {
         DocumentsScope.current = "all"
         AppModel.documentsAccountFilter = null
+        AppModel.documentsConnectionFilter = null
         unlinkedOnly = false
+        clearReadFilters()
         searchField.text = ""
     }
     // The account filter is only set on purpose ("Belege anzeigen" on an account); opening
     // the section later starts at "Alle Konten" again (#670, `.onDisappear`).
     Connections {
         target: AppModel
-        function onSidebarSelectionChanged() { if (AppModel.sidebarSelection !== "documents") AppModel.documentsAccountFilter = null }
+        function onSidebarSelectionChanged() {
+            if (AppModel.sidebarSelection === "documents") return
+            AppModel.documentsAccountFilter = null
+            AppModel.documentsConnectionFilter = null
+        }
     }
 
     // One context menu for all documents (built once, not per row).
     property var menuDoc: null
     AppMenu { id: docMenu
         AppMenuItem { text: qsTr("Vorschau"); onTriggered: AppModel.quickLook(view.menuDoc) }
+        AppMenuItem { text: view.menuDoc && view.menuDoc.seen ? qsTr("Als ungelesen markieren") : qsTr("Als gelesen markieren")
+                      onTriggered: AppModel.markDocumentsSeen([view.menuDoc.id], !view.menuDoc.seen) }
         // „Im Finder anzeigen“ (#622)
         AppMenuItem { text: qsTr("Im Dateimanager anzeigen"); onTriggered: AppModel.showInFileManager(view.menuDoc) }
+        AppMenuItem { text: qsTr("Pfad kopieren"); onTriggered: AppModel.copyDocumentPath(view.menuDoc) }
         AppMenuItem { text: qsTr("Zuordnung aufheben")
                       enabled: !!view.menuDoc && view.menuDoc.booking_id !== null && view.menuDoc.booking_id !== undefined
                       onTriggered: AppModel.linkDocument(view.menuDoc, null) }
@@ -96,14 +169,36 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 8
-                // ViewThatFits: account picker and switch in one row, else stacked
+                // ViewThatFits: bank login and account picker and switch in one row, else stacked
                 GridLayout {
+                    id: filterGrid
+                    /// what the row needs: the pickers at their minimum width, the switch, the gaps
+                    readonly property bool fits: width >= (connectionPicker.visible ? 162 : 0) + 162 + unlinkedSwitch.implicitWidth + 24
                     Layout.fillWidth: true
-                    columns: view.width < 980 ? 1 : 3
+                    columns: fits ? 4 : 1
                     columnSpacing: 12; rowSpacing: 8
-                    // same order and groups as the sidebar (#412)
+                    // connectionPicker (#1042): only with more than one bank login (or while one is chosen).
+                    // „Ohne Konto“: documents without an account have no bank login.
                     AppComboBox {
-                        readonly property var options: AppModel.accountMenuOptions(a => a.name, true)
+                        id: connectionPicker
+                        readonly property var options: [{ id: null, title: qsTr("Alle Bankzugänge") },
+                                                        { id: AppModel.documentsWithoutAccount, title: qsTr("Ohne Konto") }]
+                            .concat(AppModel.documentsFilterConnections.map(c => ({ id: c.id, title: c.display_name })))
+                        visible: AppModel.documentsFilterConnections.length > 1 || AppModel.documentsConnectionFilter !== null
+                        Layout.minimumWidth: 150; Layout.maximumWidth: 270; Layout.fillWidth: true
+                        model: options
+                        textRole: "title"
+                        currentIndex: Math.max(0, options.findIndex(o => o.id === AppModel.documentsConnectionFilter))
+                        onActivated: i => AppModel.selectDocumentsConnection(options[i].id)
+                        Accessible.name: qsTr("Bankzugang")
+                        ToolTip.text: qsTr("Dokumente eines Bankzugangs anzeigen"); ToolTip.visible: hovered; ToolTip.delay: 600
+                        Sensitive { when: AppModel.documentsConnectionFilter !== null && AppModel.documentsConnectionFilter !== AppModel.documentsWithoutAccount }   // the login's name
+                    }
+                    // same order and groups as the sidebar (#412), narrowed to the chosen bank login
+                    AppComboBox {
+                        readonly property var options: AppModel.accountMenuOptions(a => AppModel.accountLabel(a), AppModel.documentsConnectionFilter === null,
+                                                                                    AppModel.documentsAccountSections)
+                        enabled: AppModel.documentsConnectionFilter !== AppModel.documentsWithoutAccount
                         Layout.minimumWidth: 150; Layout.maximumWidth: 270; Layout.fillWidth: true
                         model: options
                         textRole: "title"
@@ -112,10 +207,68 @@ Rectangle {
                         ToolTip.text: qsTr("Dokumente eines Kontos anzeigen"); ToolTip.visible: hovered; ToolTip.delay: 600
                         Sensitive { when: AppModel.documentsAccountFilter !== null && AppModel.documentsAccountFilter !== AppModel.documentsWithoutAccount }   // the selected account's name
                     }
-                    Item { visible: view.width >= 980; Layout.fillWidth: true }
-                    Switch { text: qsTr("Nur ohne zugeordneten Umsatz"); checked: view.unlinkedOnly; onToggled: view.unlinkedOnly = checked }
+                    Item { visible: filterGrid.fits; Layout.fillWidth: true }
+                    Switch { id: unlinkedSwitch; text: qsTr("Nur ohne zugeordneten Umsatz"); checked: view.unlinkedOnly; onToggled: view.unlinkedOnly = checked }
                 }
-                Text { text: qsTr("%1 Dokumente").arg(view.docs.length); font.pixelSize: Theme.caption; color: Theme.secondary }
+                // unseenRow: „Nur ungelesene“ and, next to it, mark what the list shows as read
+                RowLayout {
+                    Layout.fillWidth: true
+                    Switch { text: qsTr("Nur ungelesene"); checked: view.unseenOnly; onToggled: view.unseenOnly = checked }
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        flat: true; text: qsTr("Alle als gelesen markieren"); font.pixelSize: Theme.callout
+                        enabled: view.unreadIDs.length > 0
+                        onClicked: AppModel.markDocumentsSeen(view.unreadIDs, true)
+                        ToolTip.text: qsTr("Markiert die Dokumente, die gerade in der Liste stehen, als gelesen"); ToolTip.visible: hovered; ToolTip.delay: 600
+                    }
+                }
+                // typeAndYearPickers: only what exists is offered, for a long list
+                RowLayout {
+                    visible: view.found.length > 1
+                    spacing: 12
+                    AppComboBox {
+                        readonly property var options: [{ id: null, title: qsTr("Alle Typen") }].concat(view.types.map(t => ({ id: t, title: view.typeTitle(t) })))
+                        visible: view.types.length > 1 || view.typeFilter !== null
+                        model: options; textRole: "title"
+                        currentIndex: Math.max(0, options.findIndex(o => o.id === view.typeFilter))
+                        onActivated: i => view.typeFilter = options[i].id
+                        ToolTip.text: qsTr("Nur Dokumente dieses Typs"); ToolTip.visible: hovered; ToolTip.delay: 600
+                    }
+                    AppComboBox {
+                        readonly property var options: [{ id: null, title: qsTr("Alle Jahre") }].concat(view.years.map(y => ({ id: y, title: String(y) })))
+                        visible: view.years.length > 1 || view.yearFilter !== null
+                        model: options; textRole: "title"
+                        currentIndex: Math.max(0, options.findIndex(o => o.id === view.yearFilter))
+                        onActivated: i => view.yearFilter = options[i].id
+                        ToolTip.text: qsTr("Nur Dokumente dieses Kalenderjahres"); ToolTip.visible: hovered; ToolTip.delay: 600
+                    }
+                }
+                Text { text: view.docs.length === view.found.length ? qsTr("%1 Dokumente").arg(view.docs.length)
+                                                                    : qsTr("%1 von %2 Dokumenten").arg(view.docs.length).arg(view.found.length)
+                       font.pixelSize: Theme.caption; color: Theme.secondary }
+                // documentsOffHint (#954): retrieval switched off for a login in view, otherwise
+                // nobody knows why nothing new arrives
+                ColumnLayout {
+                    id: offHint
+                    readonly property var off: AppModel.connectionsWithDocumentsOff(AppModel.documentsAccountFilter, AppModel.documentsConnectionFilter)
+                    visible: off.length > 0
+                    Layout.fillWidth: true
+                    spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        SFIcon { symbol: "info.circle"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop }
+                        Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                               text: qsTr("Dokumentenabruf ausgeschaltet für: %1. Neue Dokumente kommen erst wieder, wenn er eingeschaltet ist.")
+                                     .arg(offHint.off.map(c => c.display_name).join(", "))
+                               Sensitive {} }
+                    }
+                    Button {
+                        flat: true; text: qsTr("Einstellungen › Banken öffnen"); font.pixelSize: Theme.caption
+                        onClicked: AppModel.openSettings("banks")
+                        ToolTip.text: qsTr("Beim Zugang „Dokumente abrufen“ einschalten"); ToolTip.visible: hovered; ToolTip.delay: 600
+                    }
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 12
@@ -125,9 +278,15 @@ Rectangle {
                         ToolTip.text: qsTr("PDFs oder Fotos auswählen und einem passenden Umsatz zuordnen"); ToolTip.visible: hovered; ToolTip.delay: 600
                     }
                     Item { Layout.fillWidth: true }
+                    // Without a filter: the whole collection. With one: exactly the documents on screen.
                     Button {
-                        text: qsTr("Alle exportieren …"); icon.name: SF.icon("square.and.arrow.up"); onClicked: folderDialog.open()
-                        ToolTip.text: qsTr("Die gesamte Dokumentensammlung exportieren, unabhängig von den Filtern"); ToolTip.visible: hovered; ToolTip.delay: 600
+                        text: view.filtered ? qsTr("%1 exportieren …").arg(view.docs.length) : qsTr("Alle exportieren …")
+                        icon.name: SF.icon("square.and.arrow.up")
+                        enabled: !view.filtered || view.docs.length > 0
+                        onClicked: { view.exportIDs = view.filtered ? view.docs.map(d => d.id) : null; folderDialog.open() }
+                        ToolTip.text: view.filtered ? qsTr("Nur die Dokumente exportieren, die gerade in der Liste stehen")
+                                                    : qsTr("Die gesamte Dokumentensammlung exportieren")
+                        ToolTip.visible: hovered; ToolTip.delay: 600
                     }
                 }
             }
@@ -148,12 +307,17 @@ Rectangle {
                     color: view.selectedID === modelData.id ? Theme.selection : "transparent"
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 10
-                        SFIcon { symbol: AppModel.docSymbol(modelData); size: 18; color: Theme.accent; Layout.preferredWidth: 22 }
+                        SFIcon {
+                            symbol: AppModel.docSymbol(modelData); size: 18; color: Theme.accent; Layout.preferredWidth: 22
+                            // unread: a dot at the symbol's top left
+                            Rectangle { visible: !docRow.modelData.seen; width: 8; height: 8; radius: 4; color: "#0a84ff"; x: -4; y: -3
+                                        Accessible.name: qsTr("Ungelesen") }
+                        }
                         ColumnLayout { id: rowCol; spacing: 2; Layout.fillWidth: true
-                            Text { text: modelData.title; font.pixelSize: Theme.body + 1; font.weight: Font.Medium; color: Theme.text
+                            Text { text: modelData.title; font.pixelSize: Theme.body + 1; font.weight: modelData.seen ? Font.Medium : Font.Bold; color: Theme.text
                                    wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true
                                    Sensitive { amounts: true } }   // DocumentsUI.swift: [.personal, .amounts]
-                            Text { text: DocumentsScope.originTitle(modelData) + " · " + (modelData.account_name || qsTr("Ohne Konto"))
+                            Text { text: DocumentsScope.originTitle(modelData) + " · " + view.accountText(modelData)
                                    font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                             Text { text: modelData.booking_label || qsTr("Ohne zugeordneten Umsatz"); font.pixelSize: Theme.caption
                                    color: !modelData.booking_label && !docRow.bank ? Theme.warning : Theme.secondary
@@ -162,8 +326,9 @@ Rectangle {
                     }
                     MouseArea {
                         anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton
-                        onClicked: m => { view.selectedID = modelData.id
-                                          if (m.button === Qt.RightButton) { view.menuDoc = modelData; docMenu.popup() } }
+                        // .contextMenu leaves the selection alone: opening selects (and reads) a document, the menu does not (#934)
+                        onClicked: m => { if (m.button === Qt.RightButton) { view.menuDoc = modelData; docMenu.popup() }
+                                          else view.selectedID = modelData.id }
                         onDoubleClicked: AppModel.quickLook(modelData)
                     }
                 }
@@ -196,7 +361,7 @@ Rectangle {
     DropArea {
         id: drop
         anchors.fill: parent
-        onDropped: d => { if (d.hasUrls) AppModel.dropAnywhere(d.urls) }
+        onDropped: d => { if (d.hasUrls) { view.clearReadFilters(); AppModel.dropAnywhere(d.urls) } }
     }
     Rectangle { anchors.fill: parent; anchors.margins: 8; visible: drop.containsDrag; color: "transparent"; radius: 14; border.color: Theme.accent; border.width: 2 }
 
@@ -213,13 +378,15 @@ Rectangle {
             // was opened from PostBox or a filtered account.
             DocumentsScope.current = "receipts"
             AppModel.documentsAccountFilter = null
+            AppModel.documentsConnectionFilter = null
             searchField.text = ""
             view.unlinkedOnly = false
+            view.clearReadFilters()
             AppModel.dropAnywhere(selectedFiles)
         }
     }
     FolderDialog { id: folderDialog; title: qsTr("Ordner für die exportierten Belege wählen"); acceptLabel: qsTr("Exportieren")
-                   onAccepted: AppModel.exportAllDocuments(AppModel.localPath(selectedFolder)) }
+                   onAccepted: AppModel.exportAllDocuments(AppModel.localPath(selectedFolder), view.exportIDs, view.exportSubfolder) }
     Sheet {
         visible: view.docToDelete !== null
         onClosed: view.docToDelete = null

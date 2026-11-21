@@ -128,6 +128,22 @@ ScrollView {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Wer keine Monatsbudgets nutzt, blendet die Budget-Karte und „Monatsbudget festlegen …“ ganz aus. Auch im Menü Ansicht umschaltbar.") }
+            // SettingsView.swift › ViewLayout.runningBalanceKey (#577)
+            CheckBox {
+                text: qsTr("Saldo in der Buchungsliste anzeigen")
+                checked: ListBalances.shown
+                onToggled: ListBalances.setShown(checked)
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Zeigt den Kontostand nach jeder Buchung und am Ende jedes Tages, zum Abgleich mit dem Kontoauszug. Bei mehreren Konten die Summe der Euro-Konten ohne Depots und Darlehen. Innerhalb eines Tages kann die Reihenfolge von der Bank abweichen, der Tagessaldo stimmt immer. Auch im Menü Ansicht umschaltbar.") }
+            // SettingsView.swift › ViewLayout.lastFetchKey (#815)
+            CheckBox {
+                text: qsTr("Letzten Abruf anzeigen")
+                checked: LastFetch.shown
+                onToggled: LastFetch.setShown(checked)
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Zeigt unter dem Kontostand, wann die Bankverbindung des Kontos zuletzt abgerufen wurde. Der Zeitpunkt gilt je Bankverbindung, Konten derselben Bank zeigen also denselben Wert. Nur in der Ansicht eines einzelnen Kontos und bei ausgeklapptem Kopfbereich. Auch im Menü Ansicht umschaltbar.") }
             // NegativeAmountStyle.swift (#218, #571)
             SettingsFormRow {
                 label: qsTr("Negative Beträge")
@@ -170,21 +186,11 @@ ScrollView {
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Nur bei leerem Formular. Der Inhalt wird nur auf diesem Gerät gelesen, nie gespeichert oder protokolliert. Felder werden erst nach Bestätigung im Hinweis ausgefüllt.") }
         }
-        // SettingsView.swift › BalanceChartSettingsSection (GitHub #203)
+        // SettingsView.swift › BalanceChartSettingsSection (GitHub #203): the bar width; the chart
+        // type itself is chosen below the chart (#634)
         SettingsFormSection {
             title: qsTr("Saldoverlauf")
             SettingsFormRow {
-                label: qsTr("Darstellung")
-                AppComboBox {
-                    Layout.preferredWidth: 200 * Theme.textScale
-                    model: BalanceChartPrefs.styles
-                    textRole: "title"; valueRole: "id"
-                    currentIndex: BalanceChartPrefs.styles.findIndex(s => s.id === BalanceChartPrefs.style)
-                    onActivated: BalanceChartPrefs.setStyle(currentValue)
-                }
-            }
-            SettingsFormRow {
-                visible: BalanceChartPrefs.style === "bars"
                 label: qsTr("Balken je")
                 AppComboBox {
                     Layout.preferredWidth: 200 * Theme.textScale
@@ -195,7 +201,7 @@ ScrollView {
                 }
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
-                   text: qsTr("Balken zeigen den durchschnittlichen Saldo je Monat (bei kurzen Zeiträumen je Tag, ab sechs Jahren je Jahr) und machen Trends und Jahre vergleichbar. Gestrichelte Linien markieren den Jahreswechsel. Auch per Rechtsklick auf den Saldoverlauf umschaltbar.") }
+                   text: qsTr("Diagrammart (Linie, Balken, Kreis) und Balkenbreite wählen Sie auch direkt unter dem Diagramm. Balken zeigen den durchschnittlichen Saldo je Monat (bei kurzen Zeiträumen je Tag, ab sechs Jahren je Jahr) und machen Trends und Jahre vergleichbar. Gestrichelte Linien markieren den Jahreswechsel.") }
         }
         // SettingsView.swift › MerchantLogoSettingsSection (GitHub #33); needs an open vault
         SettingsFormSection {

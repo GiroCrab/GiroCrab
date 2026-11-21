@@ -65,8 +65,9 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: false // a nested layout fills by default (all children hidden: empty vault)
-            Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.topMargin: 18; Layout.bottomMargin: 10
-            spacing: 14
+            // ViewLayout.cardGap (4): one gap between the stacked cards above the list (#603)
+            Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.topMargin: 18; Layout.bottomMargin: 4
+            spacing: 4
             DemoBanner { visible: AppModel.demoActive && !AppModel.screenshotMode; Layout.fillWidth: true }
             StreamHeaderCard { visible: !stream.emptyVault; Layout.fillWidth: true }
             RowLayout {
@@ -108,11 +109,25 @@ Rectangle {
             HoverHandler { id: listHover }
             readonly property bool userScrolling: moving || vbar.pressed || listHover.hovered
 
+            // BookingListView.swift › StreamDayTracker (#593): the day of the element that crosses
+            // a line 24 px below the top edge; the balance chart moves its marker there. Reported
+            // only when it changes, so a selected booking's day stays until the list moves on.
+            property string topDay: ""
+            function trackTopDay() {
+                const i = indexAt(40, contentY + 24)
+                const item = i >= 0 ? AppModel.streamItems[i] : null
+                const day = !item ? "" : item.type === "header" ? item.day.date : item.type === "row" ? item.booking.booking_date : ""
+                if (day === topDay) return
+                topDay = day
+                StreamFollow.scrollFocusDay = day
+            }
+            readonly property int firstDayIndex: AppModel.streamItems.findIndex(x => x.type === "header")
+
             header: ColumnLayout {
                 width: list.width
                 onImplicitHeightChanged: if (list.pinnedTop) Qt.callLater(list.positionViewAtBeginning)
-                spacing: 14
-                Item { implicitHeight: 4 }
+                spacing: 4   // ViewLayout.cardGap (#603)
+                Item { implicitHeight: 0 }   // topGap: the spacing above the first card
                 EmptyVaultCard {
                     visible: stream.emptyVault
                     Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -212,7 +227,7 @@ Rectangle {
                 AppModel.loadMoreBookings(Math.min(3000, Math.max(AppModel.defaultListLimit,
                                                                   Math.ceil(missing / perBooking) + 100)))
             }
-            onContentYChanged: { Qt.callLater(loadVisible); if (userScrolling) scrollDate.show() }
+            onContentYChanged: { Qt.callLater(loadVisible); if (userScrolling) scrollDate.show(); trackTopDay() }
             onHeightChanged: Qt.callLater(loadVisible)
             Connections {
                 target: AppModel
@@ -266,14 +281,16 @@ Rectangle {
                 opacity: AppModel.isLoadingSelection ? 0 : 1
                 enabled: !AppModel.isLoadingSelection
                 // „Kompakt“ (#542): no day headers, the date stands in each row
-                height: modelData.type === "header" ? (BookingPrefs.density === "compact" ? 0 : 14 + dayHeader.height)
+                height: modelData.type === "header" ? (BookingPrefs.density === "compact" ? 0 : dayGap + dayHeader.height)
                       : modelData.type === "account" ? 14 + accountHeader.height : row.height
+                /// The first day sits one card gap below the cards (ViewLayout.cardGap, #603).
+                readonly property int dayGap: index === list.firstDayIndex ? 4 : 14
 
                 DayHeader {
                     id: dayHeader
                     visible: item.modelData.type === "header" && BookingPrefs.density !== "compact"
                     day: item.modelData.type === "header" ? item.modelData.day : null
-                    x: 20; y: 14; width: item.width - 40
+                    x: 20; y: item.dayGap; width: item.width - 40
                 }
                 NewBookingsCardHeader {
                     id: accountHeader
@@ -340,6 +357,11 @@ Rectangle {
                 Timer { id: hideTimer; interval: 700 }
             }
 
+            /// SelectionScroller (#593): the chart marker follows the selected booking.
+            function followSelection() {
+                const b = AppModel.selectedBooking
+                if (b && StreamFollow.scrollFocusDay !== b.booking_date) StreamFollow.scrollFocusDay = b.booking_date
+            }
             function revealSelection() {
                 const i = AppModel.streamItems.findIndex(x => x.type === "row" && x.booking.id === AppModel.selectedBookingID)
                 if (i >= 0) list.positionViewAtIndex(i, ListView.Contain)
@@ -352,7 +374,10 @@ Rectangle {
                 // SelectionScroller: keep the selected booking visible.
                 function onSelectedBookingIDChanged() {
                     if (AppModel.scrollOnSelect) Qt.callLater(list.revealSelection)
+                    Qt.callLater(list.followSelection)
                 }
+                // a new list: the element at the top edge changes without a scroll
+                function onStreamItemsChanged() { Qt.callLater(list.trackTopDay) }
                 // click in the balance chart: that day's card to the top, its first booking selected
                 function onScrollToDay(day) {
                     const i = AppModel.streamItems.findIndex(x => x.type === "header" && x.day.date === day)
@@ -364,6 +389,8 @@ Rectangle {
                 }
             }
         }
+        // .safeAreaInset(edge: .bottom) { SelectionSummaryBar() }: count and sum of the selection (#878)
+        SelectionSummaryBar { Layout.fillWidth: true }
     }
 
     // The drag image of bookings dragged onto a sidebar category (#366): the merchant (or the
@@ -453,19 +480,35 @@ Rectangle {
     }
 
     component DayHeader: Rectangle {
+        id: dh
         property var day
+        /// The day the balance chart's marker points to (#593): accent dot, accent text, tinted.
+        readonly property bool marked: day !== null && day !== undefined && StreamFollow.highlightDay === day.date
+        readonly property color fill: marked ? Qt.tint(Theme.card, Theme.withAlpha(Theme.accent, 0.12)) : Theme.card
         height: 40
-        color: Theme.card
+        color: fill
         radius: 12
         border.color: Theme.border
-        Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: parent.height / 2; color: Theme.card
+        Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: parent.height / 2; color: dh.fill
                     Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.border }
                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border } }
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
         RowLayout {
             anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
-            Text { text: day ? Fmt.dayHeader(day.date) : ""; font.pixelSize: Theme.subheadline + 1; font.weight: Font.DemiBold; color: Theme.text; Layout.fillWidth: true }
+            spacing: 8
+            Rectangle { visible: dh.marked; width: 7; height: 7; radius: 3.5; color: Theme.accent }
+            Text { text: day ? Fmt.dayHeader(day.date) : ""; font.pixelSize: Theme.subheadline + 1; font.weight: Font.DemiBold; color: dh.marked ? Theme.accent : Theme.text; Layout.fillWidth: true }
             Text { text: day ? Fmt.signed(day.sum) : ""; font.pixelSize: Theme.subheadline + 1; font.features: { "tnum": 1 }; color: day && day.sum > 0 ? Theme.inflow : Theme.secondary; Sensitive { amounts: true } }
+            // end-of-day balance (#577): exact, whatever the order within the day
+            Text {
+                readonly property string balance: day ? ListBalances.days[day.date] || "" : ""
+                visible: balance !== ""
+                text: qsTr("Saldo %1").arg(balance)
+                font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.secondary
+                HoverHandler { id: dayBalanceHover }
+                ToolTip.visible: dayBalanceHover.hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Kontostand am Ende des Tages")
+                Sensitive { amounts: true }
+            }
         }
     }
 
@@ -702,8 +745,14 @@ Rectangle {
         /// Width the name line gets in a single line: the row minus date, signet, marks and amount.
         readonly property real nameLineWidth: width - 28 - (compact ? 80 * Theme.textScale + 8 : 0) - Theme.scaled(signetSize) - 8
             - (checkIcon.visible ? checkIcon.width + 8 : 0) - (pendingIcon.visible ? pendingIcon.width + 8 : 0)
-            - (amountLabel.visible ? amountLabel.implicitWidth : orderAmount.implicitWidth + 16) - 8
+            - amountColumn.implicitWidth - 8
         implicitHeight: Math.max((effectiveDensity === "compact" ? 28 : 44) * Theme.textScale, column.implicitHeight) + 2 * verticalPadding
+        // DayCard: .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton) (ff91866);
+        // name, amount and date follow the redaction like the planned rows.
+        Accessible.role: Accessible.Button
+        Accessible.name: booking ? AppModel.masking(booking.merchant.name || booking.booking_text) + ", "
+            + AppModel.masking(Fmt.money(booking.amount_cents), AppModel.redactAmounts) + ", " + Fmt.medium(booking.booking_date) : ""
+        Accessible.selected: booking !== null && AppModel.selectedBookingID === booking.id
 
         ColumnLayout {
             id: column
@@ -866,27 +915,46 @@ Rectangle {
                          Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop; Layout.topMargin: br.isSingleLine ? 0 : 4 }
                 SFIcon { id: pendingIcon; visible: br.booking && br.booking.is_pending; symbol: "clock"; size: 11; color: Theme.tertiary
                          Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop; Layout.topMargin: br.isSingleLine ? 0 : 4 }
-                AmountLabel { id: amountLabel; visible: br.amazonRef === null; cents: br.booking ? br.booking.amount_cents : 0
-                              Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop }
-                // Order account: the direction is never colour alone — charges get a
-                // minus, refunds a plus (#571); both are badged symmetrically.
-                Rectangle {
-                    visible: br.amazonRef !== null
+                // compact rows stay one line: the balance goes next to the amount (#577)
+                GridLayout {
+                    id: amountColumn
+                    columns: br.isSingleLine ? 3 : 1
+                    columnSpacing: 8; rowSpacing: 1
                     Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop
-                    implicitWidth: orderAmount.implicitWidth + 16; implicitHeight: orderAmount.implicitHeight + 6
-                    radius: height / 2
-                    color: br.amazonRef !== null && br.amazonRef.isRefund ? Theme.inflowBadge : Theme.outflowBadge
+                    AmountLabel { id: amountLabel; visible: br.amazonRef === null; cents: br.booking ? br.booking.amount_cents : 0
+                                  Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
+                    // Order account: the direction is never colour alone — charges get a
+                    // minus, refunds a plus (#571); both are badged symmetrically.
+                    Rectangle {
+                        visible: br.amazonRef !== null
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                        implicitWidth: orderAmount.implicitWidth + 16; implicitHeight: orderAmount.implicitHeight + 6
+                        radius: height / 2
+                        color: br.amazonRef !== null && br.amazonRef.isRefund ? Theme.inflowBadge : Theme.outflowBadge
+                        Text {
+                            id: orderAmount
+                            anchors.centerIn: parent
+                            text: br.amazonRef === null ? "" : br.amazonRef.isRefund ? Fmt.signed(br.booking.amount_cents) : Fmt.money(-Math.abs(br.booking.amount_cents))
+                            font.pixelSize: Theme.body; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
+                            color: br.amazonRef !== null && br.amazonRef.isRefund ? Theme.inflow : Theme.charge
+                            Sensitive { amounts: true }
+                        }
+                        HoverHandler { id: orderAmountHover }
+                        ToolTip.visible: orderAmountHover.hovered; ToolTip.delay: 600
+                        ToolTip.text: br.amazonRef !== null && br.amazonRef.isRefund ? qsTr("Gutschrift (Erstattung)") : qsTr("Bestellung")
+                    }
+                    // balance after this booking (#577); pending ones have none
                     Text {
-                        id: orderAmount
-                        anchors.centerIn: parent
-                        text: br.amazonRef === null ? "" : br.amazonRef.isRefund ? Fmt.signed(br.booking.amount_cents) : Fmt.money(-Math.abs(br.booking.amount_cents))
-                        font.pixelSize: Theme.body; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
-                        color: br.amazonRef !== null && br.amazonRef.isRefund ? Theme.inflow : Theme.charge
+                        readonly property string balance: br.booking ? ListBalances.bookings[br.booking.id] || "" : ""
+                        visible: balance !== ""
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                        text: balance
+                        font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.tertiary
+                        HoverHandler { id: balanceHover }
+                        ToolTip.visible: balanceHover.hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Saldo nach dieser Buchung")
+                        Accessible.name: qsTr("Saldo") + ": " + AppModel.masking(balance, AppModel.redactAmounts)
                         Sensitive { amounts: true }
                     }
-                    HoverHandler { id: orderAmountHover }
-                    ToolTip.visible: orderAmountHover.hovered; ToolTip.delay: 600
-                    ToolTip.text: br.amazonRef !== null && br.amazonRef.isRefund ? qsTr("Gutschrift (Erstattung)") : qsTr("Bestellung")
                 }
             }
             // „Standard“: one line of purpose below the name; opened rows: all of it

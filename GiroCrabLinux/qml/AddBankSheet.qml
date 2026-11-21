@@ -12,6 +12,9 @@ Sheet {
     property var selected: null           // BankSearchResult
     property var ways: []
     property var setupValues: ({})
+    /// PayPal: set up the classic API signature (personal accounts) instead of a REST app.
+    property bool payPalSignature: true
+    readonly property bool isPayPal: selected !== null && selected.connector === "PayPal"
     /// BankSetupSheet.enableBankingKeys: shown together in EnableBankingSetupSection
     readonly property var ebKeys: ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
     property var popular: []
@@ -65,6 +68,8 @@ Sheet {
         const kind = selected.connector || (selected.mode === "FinTs" ? "FinTsGeneric" : "EnableBanking")
         const d = AppModel.descriptor(kind)
         if (!d) return []
+        // PayPal via API signature (classic NVP API) needs all three fields and no REST app.
+        if (kind === "PayPal" && (payPalSignature || AppModel.payPalUsesSignature())) return AppModel.missingPayPalSignatureKeys()
         // AddBankAssistant.swift › missingSettings: the FinTS product ID is never asked for (#842/#865)
         return AppModel.userRequiredKeys(d.required_settings).filter(k => { const e = AppModel.settingEntry(k); return !(e && e.has_value) })
     }
@@ -89,7 +94,7 @@ Sheet {
     function commit() { const f = formLoader.item; f.commit(); if (!f.commitsAsync) close() }
     function back() { step = step === "setup" ? (isRah10 ? "bank" : "access") : "bank" }
 
-    onAboutToShow: { step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); loadPopular(); searchField.forceActiveFocus() }
+    onAboutToShow: { step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); payPalSignature = true; loadPopular(); searchField.forceActiveFocus() }
 
     ColumnLayout {
         width: sheet.availableWidth
@@ -240,6 +245,28 @@ Sheet {
                 ColumnLayout {
                     width: parent.width
                     spacing: 14
+                    // PayPal (#945): API signature (classic NVP API) or REST app
+                    ColumnLayout {
+                        visible: sheet.step === "setup" && sheet.isPayPal
+                        Layout.fillWidth: true
+                        spacing: 6
+                        RowLayout {
+                            spacing: 10
+                            Text { text: qsTr("Zugang über"); font.pixelSize: Theme.body; color: Theme.text }
+                            Segmented {
+                                Accessible.name: qsTr("Zugang über")
+                                options: [{ id: "signature", title: qsTr("API-Signatur") }, { id: "rest", title: qsTr("REST-App") }]
+                                current: sheet.payPalSignature ? "signature" : "rest"
+                                onActivated: id => sheet.payPalSignature = id === "signature"
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                            text: sheet.payPalSignature
+                                ? qsTr("API-Benutzername, API-Passwort und Signatur finden Sie bei PayPal unter Kontoeinstellungen › API-Zugriff (klassische NVP-API). Geeignet für Privatkonten mit bestehenden API-Zugangsdaten.")
+                                : qsTr("Eine REST-App mit der Berechtigung „Transaction Search“ legen Sie auf developer.paypal.com an. PayPal gibt diese Berechtigung nur für Geschäftskonten frei.")
+                        }
+                    }
                     // the Enable Banking keys: guide, key file (.pem) and check, like BankSetupSheet
                     EnableBankingSetupSection {
                         visible: sheet.step === "setup" && sheet.missingSettings.some(k => sheet.ebKeys.indexOf(k) >= 0)
@@ -344,7 +371,6 @@ Sheet {
                     : ff.blzValid && ff.found === null ? qsTr("Diese Bankleitzahl steht nicht im Verzeichnis. Tragen Sie die FinTS-Adresse Ihrer Bank selbst ein.") : ""
             }
             Text { text: qsTr("Anmeldung"); font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.secondary; Layout.topMargin: 6 }
-            DemoHintBanner { visible: AppModel.demoActive || ff.blz === "99999999"; Layout.fillWidth: true; onFill: login.text = "demo" }
             GridLayout {
                 columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
                 Text { text: qsTr("Anmeldename"); color: Theme.text }
@@ -352,6 +378,8 @@ Sheet {
                 Text { text: qsTr("TAN-Medium"); color: Theme.text }
                 TextField { id: tanMedium; Layout.fillWidth: true; placeholderText: qsTr("Optional") }
             }
+            // in the footer, not above the fields: no box in a box (HIG, #881)
+            DemoHintBanner { visible: AppModel.demoActive || ff.blz === "99999999"; Layout.fillWidth: true; onFill: login.text = "demo" }
             AddFormFooter {
                 lines: [ff.isPostbank ? qsTr("Postbank: Als Anmeldename die Postbank ID verwenden, nicht die Kontonummer.") : "",
                         ff.needsMediumHint ? qsTr("Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein, z. B. SO:Gerätename.")
@@ -374,7 +402,6 @@ Sheet {
                 AppModel.addConnection(kind, kind === "TradeRepublic" ? AppModel.core("normalize_phone_number", { input: login.text }) : login.text)
             }
             Text { text: qsTr("Zugang"); font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.secondary }
-            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: login.text = "demo" }
             GridLayout {
                 columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
                 Text { text: kf.d ? kf.d.login_label : ""; color: Theme.text }
@@ -384,6 +411,8 @@ Sheet {
                 Text { visible: kf.d && kf.d.bank_code !== ""; text: qsTr("Bankleitzahl"); color: Theme.text }
                 Text { visible: kf.d && kf.d.bank_code !== ""; text: kf.d ? kf.d.bank_code : ""; color: Theme.secondary }
             }
+            // in the footer, not above the fields: no box in a box (HIG, #881)
+            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: login.text = "demo" }
             AddFormFooter { lines: [kf.d ? kf.d.note : ""] }
         }
     }
@@ -403,12 +432,13 @@ Sheet {
                 Text { text: qsTr("Verfahren"); color: Theme.text }
                 Text { text: qsTr("PSD2 über Enable Banking"); color: Theme.secondary }
             }
-            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: label.text = "demo" }
             GridLayout {
                 columns: 2; columnSpacing: 12; Layout.fillWidth: true
                 Text { text: qsTr("Bezeichnung"); color: Theme.text }
                 TextField { id: label; Layout.fillWidth: true; placeholderText: qsTr("Optional") }
             }
+            // in the footer, not above the fields: no box in a box (HIG, #881)
+            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: label.text = "demo" }
             AddFormFooter { lines: [sheet.selected.tested, qsTr("Sie melden sich in einem GiroCrab-Fenster direkt bei Ihrer Bank an. Dafür brauchen Sie eine kostenlose eigene Anwendung auf enablebanking.com – die Einrichtung führt Sie Schritt für Schritt hindurch.")] }
         }
     }

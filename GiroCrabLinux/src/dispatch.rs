@@ -256,6 +256,33 @@ fn set_connection_account_choices(v: &Arc<Vault>, a: &Value) -> R {
     ok(())
 }
 
+/// Largest Finpension export read (a CSV/JSON of holdings and cash bookings is far smaller).
+const MAX_FINPENSION_FILE: u64 = 32 * 1024 * 1024;
+
+/// PortalUI.swift › importFinpension (#975): the export file the user picked, read here so
+/// its bytes never travel through QML. Takes `self: Arc<Vault>`, so not part of `vault_methods!`.
+/// An `InvalidInput` (nothing recognised) comes back as `{kind, message}` for
+/// `AppModel.parseCoreError`, the sheet then shows its own hint (`catch CoreError.InvalidInput`).
+fn import_finpension_file(v: &Arc<Vault>, a: &Value) -> R {
+    let path: String = arg(a, "path")?;
+    let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+    if size > MAX_FINPENSION_FILE {
+        return Err(crate::i18n::tr("Die Datei ist zu groß."));
+    }
+    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+    ok(v.clone()
+        .import_finpension_export(arg(a, "connection_id")?, data)
+        .map_err(|e| {
+            let v = match e {
+                girocrab_core::CoreError::InvalidInput { message } => {
+                    json!({ "kind": "InvalidInput", "message": message })
+                }
+                other => json!({ "kind": "Other", "message": other.to_string() }),
+            };
+            format!("\u{1}{v}")
+        })?)
+}
+
 /// Sammelüberweisung / Dauerauftrag / Lastschrift: `self: Arc<Self>`, each returns
 /// an `Arc<TransferSession>` that goes into the session registry like "begin_transfer".
 fn begin_payment_session(v: &Arc<Vault>, method: &str, a: &Value) -> R {
@@ -619,6 +646,8 @@ fn call(method: &str, a: &Value) -> R {
             a, "text",
         )?)),
         "set_connection_account_choices" => set_connection_account_choices(&vault()?, a),
+        // Finpension export (#975), a local file: no login, no network
+        "import_finpension_file" => import_finpension_file(&vault()?, a),
         // catalog / directory (free functions of the core)
         "bank_catalog" => ok(girocrab_core::bank_catalog()),
         "fints_presets" => ok(girocrab_core::connectors::fints_presets::fints_presets()),
@@ -1519,6 +1548,9 @@ vault_methods! {
     list_connection_enable_banking_apps()
     set_connection_enable_banking_app(connection_id, application_id, private_key_pem)
     set_comdirect_postbox(connection_id, enabled) comdirect_postbox_enabled(connection_id)
+    // Dokumentenabruf je Bankzugang (ConnectionsUI.swift › „Dokumente abrufen“, #954)
+    documents_fetch_supported(connection_id) documents_fetch_enabled(connection_id)
+    set_documents_fetch(connection_id, enabled)
     set_document_account(doc_id, account_id)
     fints_product_id_mode() set_fints_product_id_mode(mode) fints_product_id_source()
     list_holdings(account_id) balance_history(account_ids, days)
@@ -1545,6 +1577,9 @@ vault_methods! {
     list_documents_for_booking(booking_id) list_all_documents(filter)
     link_document(doc_id, booking_id) delete_document(doc_id)
     export_document(doc_id, dest_path) export_all_documents(dest_dir)
+    // read status and export of the filtered list (#934)
+    mark_documents_seen(doc_ids, seen) mark_all_documents_seen(account_id) unseen_document_count()
+    export_documents(dest_dir, doc_ids, subfolder)
     auto_statements_enabled(account_id) set_auto_statements(account_id, enabled)
     // user groups
     list_user_groups()
@@ -1605,6 +1640,8 @@ vault_methods! {
     count_planned_payments() count_active_mandates()
     list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
+    // Buchungsliste: Betragsfilter (#357, ListFilters.qml)
+    list_categories_filtered_amount(date_from, date_to, account_ids, checked, direction, amount_min_cents, amount_max_cents)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
     // --- Offline-Konten und manuelle Buchungen (OfflineAccountsUI.swift, #679, #81) ---
     create_offline_account(name, kind, currency, opening_cents)
@@ -1751,6 +1788,158 @@ mod tests {
             missing.get("err").is_some(),
             "unknown connection is refused"
         );
+    }
+
+    /// Finpension (#975, ConnectionEditSheet.qml › „Finpension-Export importieren …“): the export
+    /// file is read here and imported once; an unrecognised file is an `InvalidInput` the sheet
+    /// tells apart from other errors (synthetic CSV as in girocrab-core's finpension tests).
+    #[test]
+    fn finpension_export_file_round_trip() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let id = call_ok(
+            "add_bank_connection",
+            json!({ "connector": "Finpension", "display_name": "Finpension", "login_name": "3a" }),
+        );
+        let dir = std::env::temp_dir().join(format!("girocrab-finpension-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("export.csv");
+        std::fs::write(
+            &file,
+            "Datum,Beschreibung,Betrag,Währung,Referenz\n\
+             15.03.2026,Einzahlung,100.00,CHF,R-1\n\
+             2026-03-31,Verwaltungsgebühr,-12.34,CHF,R-2\n",
+        )
+        .unwrap();
+        let args = json!({ "connection_id": id, "path": file.display().to_string() });
+        let s = call_ok("import_finpension_file", args.clone());
+        assert_eq!(s["transactions_imported"], json!(2));
+        let again = call_ok("import_finpension_file", args);
+        assert_eq!(again["transactions_imported"], json!(0), "no duplicates");
+        let junk = dir.join("junk.txt");
+        std::fs::write(&junk, "x").unwrap();
+        let r: Value = serde_json::from_str(&call_json(
+            "import_finpension_file",
+            &json!({ "connection_id": id, "path": junk.display().to_string() }).to_string(),
+        ))
+        .unwrap();
+        let e = r["err"].as_str().expect("refused");
+        let e: Value = serde_json::from_str(e.strip_prefix('\u{1}').unwrap()).unwrap();
+        assert_eq!(e["kind"], json!("InvalidInput"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Dokumentenabruf je Bankzugang (#954, ConnectionEditSheet.qml): offered only where the bank
+    /// delivers documents, on by default, switched off and on again; „Belege & PostBox“ filters by
+    /// bank login (#1042, `DocumentFilter.connection_id`).
+    #[test]
+    fn documents_fetch_per_connection_round_trip() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let conns = call_ok("list_bank_connections", json!({}));
+        let conns = conns.as_array().unwrap();
+        let supported: Vec<&Value> = conns
+            .iter()
+            .filter(|c| {
+                call_ok(
+                    "documents_fetch_supported",
+                    json!({ "connection_id": c["id"] }),
+                ) == json!(true)
+            })
+            .collect();
+        let conn = supported
+            .first()
+            .expect("a demo bank that delivers documents");
+        let id = conn["id"].clone();
+        let enabled = || call_ok("documents_fetch_enabled", json!({ "connection_id": id }));
+        assert_eq!(enabled(), json!(true), "on by default");
+        call_ok(
+            "set_documents_fetch",
+            json!({ "connection_id": id, "enabled": false }),
+        );
+        assert_eq!(enabled(), json!(false));
+        call_ok(
+            "set_documents_fetch",
+            json!({ "connection_id": id, "enabled": true }),
+        );
+        assert_eq!(enabled(), json!(true));
+        let unknown: Value = serde_json::from_str(&call_json(
+            "documents_fetch_supported",
+            &json!({ "connection_id": -1 }).to_string(),
+        ))
+        .unwrap();
+        assert!(
+            unknown.get("err").is_some(),
+            "unknown connection is refused"
+        );
+        // #1042: only documents of accounts of that login; the field may be left out
+        let accounts = call_ok("list_accounts", json!({}));
+        let of_conn: Vec<Value> = accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["connection_id"] == id)
+            .map(|a| a["id"].clone())
+            .collect();
+        let docs = call_ok(
+            "list_all_documents",
+            json!({ "filter": { "account_id": null, "doc_type": null, "search": null,
+                    "unlinked_only": false, "connection_id": id } }),
+        );
+        assert!(
+            docs.as_array()
+                .unwrap()
+                .iter()
+                .all(|d| of_conn.contains(&d["account_id"]))
+        );
+    }
+
+    /// Belege & PostBox (#934): read status, the sidebar's unread count and the export of
+    /// the filtered list into a subfolder, as DocumentsView.qml / AppModel.qml call them.
+    #[test]
+    fn documents_read_status_and_filtered_export() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let list = || {
+            call_ok(
+                "list_all_documents",
+                json!({ "filter": { "account_id": null, "doc_type": null, "search": null,
+                        "unlinked_only": false } }),
+            )
+            .as_array()
+            .unwrap()
+            .clone()
+        };
+        let docs = list();
+        assert!(docs.len() >= 2 && docs.iter().all(|d| d["seen"].is_boolean()));
+        let ids: Vec<i64> = docs.iter().map(|d| d["id"].as_i64().unwrap()).collect();
+        call_ok(
+            "mark_documents_seen",
+            json!({ "doc_ids": ids, "seen": true }),
+        );
+        assert_eq!(call_ok("unseen_document_count", json!({})), json!(0));
+        call_ok(
+            "mark_documents_seen",
+            json!({ "doc_ids": [ids[0], ids[1]], "seen": false }),
+        );
+        assert_eq!(call_ok("unseen_document_count", json!({})), json!(2));
+        assert!(
+            list()
+                .iter()
+                .any(|d| d["id"] == ids[0] && d["seen"] == false)
+        );
+        call_ok("mark_all_documents_seen", json!({ "account_id": null }));
+        assert_eq!(call_ok("unseen_document_count", json!({})), json!(0));
+        let dir = std::env::temp_dir().join(format!("girocrab-docexp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let n = call_ok(
+            "export_documents",
+            json!({ "dest_dir": dir, "doc_ids": [ids[0]], "subfolder": "Girokonto" }),
+        );
+        assert_eq!(n, json!(1));
+        assert!(dir.join("Girokonto").is_dir(), "the account's subfolder");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Own vault lifecycle with the keychain bypass: create, use, lock, reopen,
@@ -2705,6 +2894,21 @@ mod tests {
             "\u{FEFF}Datum;Konto;Name;Verwendungszweck;Kategorie;Betrag;Währung;Tagessaldo\r\n"
         ));
         assert!(csv.contains(";'=SUMME(A1);\"Miete; März\";Wohnen;-1234,56;EUR;0,50\r\n"));
+        // Optional „IBAN der Gegenseite“ and „Tags“ columns (#831), as BookingExport.qml › csv sends them
+        let rows = json!([{ "date": "2026-03-02", "account_name": "Giro", "counterparty": "Markt",
+            "counterparty_iban": "DE02120300000000202051", "purpose": "Einkauf", "category": "",
+            "note": "", "tags": "Urlaub, Bar", "amount_cents": -4599, "currency": "EUR",
+            "day_balance_cents": null, "balance_cents": null }]);
+        let csv = call_ok(
+            "export_csv",
+            json!({ "rows": rows, "columns": { "category": false, "note": false, "daily_balance": false,
+                    "running_balance": false, "iban": true, "tags": true }, "balance_lines": [] }),
+        );
+        let csv = csv.as_str().unwrap();
+        assert!(csv.contains("Datum;Konto;Name;IBAN;Verwendungszweck;Tags;Betrag;Währung\r\n"));
+        assert!(csv.contains(
+            "2026-03-02;Giro;Markt;DE02120300000000202051;Einkauf;Urlaub, Bar;-45,99;EUR\r\n"
+        ));
         // CAMT.053 straight from the vault: account and period only (#483)
         let camt = call(
             "camt053_export",
@@ -3307,6 +3511,83 @@ mod tests {
             .sum();
         assert_eq!(json!(own), first["booking_count"]);
         assert!(accounts[0]["account_id"].is_i64());
+        drop(v);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Buchungsliste (#357, #577, ListFilters.qml / ListBalances.qml): the amount range narrows the
+    /// list (absolute amounts), the category sums and the „Ohne Kategorie“ count alike;
+    /// `with_balances` brings the running and end-of-day balances; offline account ids (#815).
+    #[test]
+    fn booking_list_filter_calls() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-listfilter-{}.girocrab",
+            std::process::id()
+        ));
+        let v = Vault::open(path.display().to_string(), vec![4; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let filter = |accounts: Value, min: Value, max: Value, balances: bool| {
+            json!({
+            "account_ids": accounts, "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 0, "offset": 0, "scope": "All", "merchant_key": null, "direction": "All",
+            "checked": null, "whole_days": true, "amount_min_cents": min,
+            "amount_max_cents": max, "with_balances": balances })
+        };
+        let page = |f: Value| call("list_transactions", json!({ "filter": f }));
+        let all = page(filter(json!([]), Value::Null, Value::Null, false));
+        let total = all["transactions"].as_array().unwrap().len();
+        let ranged = page(filter(json!([]), json!(1000), json!(5000), false));
+        let rows = ranged["transactions"].as_array().unwrap();
+        assert!(!rows.is_empty() && rows.len() < total);
+        assert!(rows.iter().all(|b| {
+            let c = b["amount_cents"].as_i64().unwrap().abs();
+            (1000..=5000).contains(&c)
+        }));
+        assert_eq!(
+            call(
+                "count_transactions",
+                json!({ "filter": filter(json!([]), json!(1000), json!(5000), false) })
+            ),
+            json!(rows.len())
+        );
+        // category sums follow the amount range
+        let cats = |min: Value, max: Value| {
+            call(
+                "list_categories_filtered_amount",
+                json!({ "date_from": null, "date_to": null, "account_ids": [], "checked": null,
+                        "direction": "All", "amount_min_cents": min, "amount_max_cents": max }),
+            )
+        };
+        let open = cats(Value::Null, Value::Null);
+        assert_eq!(
+            open,
+            call(
+                "list_categories_filtered",
+                json!({ "date_from": null, "date_to": null, "account_ids": [], "checked": null,
+                        "direction": "All" }),
+            )
+        );
+        let narrow = cats(json!(1000), json!(5000));
+        assert_eq!(
+            narrow.as_array().unwrap().len(),
+            open.as_array().unwrap().len()
+        );
+        assert_ne!(narrow, open);
+        // running balances of one account: one per booked row, plus end-of-day balances
+        let acc = all["transactions"][0]["account_id"].clone();
+        let with = page(filter(json!([acc]), Value::Null, Value::Null, true));
+        assert!(!with["running_balances"].as_array().unwrap().is_empty());
+        assert!(with["running_balances"][0]["balance_cents"].is_i64());
+        assert!(with["day_balances"][0]["date"].is_string());
+        let without = page(filter(json!([acc]), Value::Null, Value::Null, false));
+        assert!(without["running_balances"].as_array().unwrap().is_empty());
+        assert!(call("list_offline_account_ids", json!({})).is_array());
         drop(v);
         let _ = std::fs::remove_file(&path);
     }

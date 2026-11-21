@@ -41,13 +41,16 @@ QtObject {
     // MARK: badge counts (AppModel+Loading.swift › refreshSidebarCounts)
     property int plannedCount: 0
     property int mandateCount: 0
+    /// Unread documents (badge of „Belege & PostBox“, #934), a partial-index COUNT.
+    property int unseenDocumentCount: 0
     property int countGeneration: 0
-    /// Two `COUNT(*)`s off the GUI thread. Call after planned payments or mandates changed.
+    /// `COUNT(*)`s off the GUI thread. Call after planned payments, mandates or documents changed.
     function refreshCounts() {
-        if (!AppModel.isUnlocked) { plannedCount = 0; mandateCount = 0; return }
+        if (!AppModel.isUnlocked) { plannedCount = 0; mandateCount = 0; unseenDocumentCount = 0; return }
         const gen = ++countGeneration
         AppModel.coreAsync("count_planned_payments", {}, n => { if (gen === sm.countGeneration) sm.plannedCount = n }, () => {})
         AppModel.coreAsync("count_active_mandates", {}, n => { if (gen === sm.countGeneration) sm.mandateCount = n }, () => {})
+        AppModel.coreAsync("unseen_document_count", {}, n => { if (gen === sm.countGeneration) sm.unseenDocumentCount = n }, () => {})
     }
 
     // MARK: „Ohne Kategorie“ (#597): vault setting `ui.uncategorized_name`, empty = default
@@ -101,6 +104,8 @@ QtObject {
         function onVaultReplaced() { sm.reloadVaultState() }
         // accounts reload after a sync, an import or an edit: the counts may have changed too
         function onGroupsChanged() { sm.refreshCounts() }
+        // documents fetched, added, read (#934): the unread badge
+        function onDocumentsVersionChanged() { sm.refreshCounts() }
     }
 
     // MARK: AppModel+CategoryDuplicate.swift › duplicateCategory (#510)
