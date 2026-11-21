@@ -52,7 +52,7 @@ Sheet {
         }
         ColumnLayout { spacing: 4; Layout.fillWidth: true
             Text { text: sheet.d ? sheet.d.login_label : qsTr("Anmeldung"); font.pixelSize: Theme.caption; color: Theme.secondary }
-            TextField { id: login; Layout.fillWidth: true; placeholderText: sheet.d ? sheet.d.login_label : ""; enabled: !sheet.isRah10 }
+            TextField { id: login; Layout.fillWidth: true; placeholderText: sheet.d ? sheet.d.login_label : ""; enabled: !sheet.isRah10; Sensitive {} }
             Text { visible: sheet.isTR && login.text !== ""; font.pixelSize: Theme.caption2; color: Theme.secondary
                    text: { const n = sheet.isTR ? AppModel.core("normalize_phone_number", { input: login.text }) : ""; return n === login.text ? qsTr("Format korrekt (E.164)") : qsTr("Wird gesendet als %1").arg(AppModel.masking(n)) } }
         }
