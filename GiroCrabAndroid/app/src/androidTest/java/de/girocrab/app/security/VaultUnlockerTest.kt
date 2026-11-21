@@ -6,6 +6,7 @@ import java.io.File
 import java.security.KeyStore
 import javax.crypto.Cipher
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -156,13 +157,20 @@ class VaultUnlockerTest {
         filesDir = context.filesDir,
     )
 
+    /**
+     * Stores a key and proves the plain round-trip first. If the unlocker test fails afterwards,
+     * the defect is in the unlocker, not in the store — otherwise both look identical in the log.
+     */
     private fun storeWrappedKey() {
+        val key = ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { (it + 11).toByte() }
         val store = keyStore()
-        store.storeWrapped(
-            ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { (it + 11).toByte() },
-            store.setupCipher(),
-        )
+        store.storeWrapped(key, store.setupCipher())
         assertEquals(VaultKeyStore.State.Ready, store.state())
+        assertArrayEquals(
+            "wrapped key must read back before the unlocker is involved",
+            key,
+            store.readWrapped(store.unlockCipher()),
+        )
     }
 
     private fun deleteAlias() {
