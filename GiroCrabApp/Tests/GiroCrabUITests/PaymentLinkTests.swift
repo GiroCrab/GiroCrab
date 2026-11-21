@@ -113,6 +113,20 @@ final class PaymentLinkTests: XCTestCase {
         XCTAssertTrue(model.showTransferSheet)
     }
 
+    /// The lock-screen preview keeps the demo vault and its accounts loaded: the link still waits for `.open`.
+    func testLinkWaitsForTheOpenVault() async throws {
+        let model = demoModel()
+        try XCTSkipUnless(model.canTransfer, "demo vault without transfer accounts")
+        model.vaultState = .locked
+        model.openLink(link)
+        XCTAssertFalse(model.showTransferSheet)
+        XCTAssertNotNil(model.pendingPaymentLink)
+        model.vaultState = .open
+        for _ in 0..<20 where !model.showTransferSheet { await Task.yield() }
+        XCTAssertTrue(model.showTransferSheet)
+        XCTAssertTrue(model.transferDraft.fromLink)
+    }
+
     func testNewerLinkReplacesAWaitingOne() async throws {
         let model = demoModel()
         try XCTSkipUnless(model.canTransfer, "demo vault without transfer accounts")

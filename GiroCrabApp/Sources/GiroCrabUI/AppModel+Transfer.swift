@@ -146,7 +146,8 @@ extension AppModel {
     /// no sync or bank order is running and no form is open (also not one on its result step:
     /// the link waits until it is closed, never replaces it). Later events retry (`resumePaymentLink`).
     func presentPendingPaymentLink() {
-        guard let payment = pendingPaymentLink, vault != nil, accountsLoaded,
+        // `vaultState`, not only `vault`: the lock-screen preview keeps the demo vault loaded.
+        guard let payment = pendingPaymentLink, vault != nil, vaultState == .open, accountsLoaded,
               syncingConnectionID == nil, activeTransfer == nil,
               !showTransferSheet, !showBatchSheet, !showStandingSheet else { return }
         pendingPaymentLink = nil

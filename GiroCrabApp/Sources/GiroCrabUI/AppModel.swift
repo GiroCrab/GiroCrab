@@ -39,7 +39,12 @@ public final class AppModel {
     @ObservationIgnored let offlineStore = OfflineStore()
     var vaultState: VaultState = .locked {
         // The external analysis serves only while the own vault is shown (#136).
-        didSet { if oldValue != vaultState { reconcileLocalApiServer() } }
+        didSet {
+            guard oldValue != vaultState else { return }
+            reconcileLocalApiServer()
+            // A link held on the lock screen or while unlocking (docs/payment-link.md).
+            if vaultState == .open { resumePaymentLink() }
+        }
     }
     /// The vault is open and the lock screen shows the crab's unlock hop for a moment.
     var unlockCelebrating = false
