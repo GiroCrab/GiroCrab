@@ -101,7 +101,7 @@ fun BiometricLockScreen(
             Spacer(Modifier.height(8.dp))
             Text(
                 if (previewMode) "Vorschau des Sperrbildschirms – in der Demo bleiben alle Daten unberührt."
-                else "Entsperre mit Fingerabdruck, Gesicht oder Geräte-PIN.",
+                else "Entsperre mit Fingerabdruck oder Gesicht.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
