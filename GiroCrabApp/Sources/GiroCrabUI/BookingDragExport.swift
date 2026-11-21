@@ -96,25 +96,33 @@ struct BookingDragExport: Codable, Equatable {
 
 #if os(macOS)
 /// What a dragged booking row carries (macOS): the bookings as JSON for other apps and the
-/// `BookingDrag` string for the sidebar's categories (#366). Built when the drag starts; the
-/// documents are read only when another app asks for the JSON, never for the sidebar.
+/// `BookingDrag` string for the sidebar's categories (#366). A row makes one on every render,
+/// so it only keeps the bookings: the JSON is built when another app asks for it, and the
+/// documents are read then, never for the sidebar.
 struct BookingDragItem: Transferable, @unchecked Sendable {
-    let ids: [Int64]
-    let export: BookingDragExport
-    /// Reads the bookings' documents (`AppModel.dragDocuments`); nil = without documents.
-    let documents: (@MainActor () async -> [Int64: [BookingDragExport.Document]])?
+    typealias DocumentReader = @MainActor ([Int64]) async -> [Int64: [BookingDragExport.Document]]
 
-    init(bookings: [Booking], accounts: [Int64: Account],
-         documents: (@MainActor () async -> [Int64: [BookingDragExport.Document]])? = nil) {
-        ids = bookings.map(\.id)
-        export = BookingDragExport(bookings: bookings, accounts: accounts)
-        self.documents = bookings.contains { $0.documentCount > 0 } ? documents : nil
+    let bookings: [Booking]
+    let accounts: [Int64: Account]
+    /// Reads the documents of the given bookings (`AppModel.dragDocuments`); nil = without documents.
+    let documents: DocumentReader?
+
+    init(bookings: [Booking], accounts: [Int64: Account], documents: DocumentReader? = nil) {
+        self.bookings = bookings
+        self.accounts = accounts
+        self.documents = documents
     }
+
+    var ids: [Int64] { bookings.map(\.id) }
+
+    /// The JSON model, without documents.
+    var export: BookingDragExport { BookingDragExport(bookings: bookings, accounts: accounts) }
 
     static var transferRepresentation: some TransferRepresentation {
         DataRepresentation(exportedContentType: .girocrabTransactions) { item in
             var export = item.export
-            if let load = item.documents { export.attach(await load()) }
+            let withDocuments = item.bookings.filter { $0.documentCount > 0 }.map(\.id)
+            if let load = item.documents, !withDocuments.isEmpty { export.attach(await load(withDocuments)) }
             return try export.json()
         }
         ProxyRepresentation(exporting: { (item: BookingDragItem) in BookingDrag.payload(item.ids) })

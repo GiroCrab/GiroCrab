@@ -66,9 +66,28 @@ final class BookingDragExportTests: XCTestCase {
         try pdf.write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
         XCTAssertTrue(model.attach([file], to: booking))
-        let docs = await model.dragDocuments(for: [booking.id])
+        let docs = await model.dragDocuments(for: [booking.id], from: model.pinVault())
         XCTAssertEqual(docs[booking.id]?.first?.data, pdf)
         XCTAssertEqual(docs[booking.id]?.first?.fileName, file.lastPathComponent)
+    }
+
+    /// Booking ids are per vault: a drag that outlives its vault must not read another one's documents.
+    func testDragDocumentsNeedTheVaultTheDragStartedIn() async throws {
+        let booking = try XCTUnwrap(model.bookings.first)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("drag-\(UUID().uuidString).pdf")
+        try Data("%PDF-1.4 drag".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertTrue(model.attach([file], to: booking))
+        let pin = model.pinVault()
+        // Another vault open (a second demo vault stands in for the switch): same ids, other data.
+        let other = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let fromOther = await other.dragDocuments(for: [booking.id], from: pin)
+        XCTAssertTrue(fromOther.isEmpty)
+        let withoutPin = await model.dragDocuments(for: [booking.id], from: nil)
+        XCTAssertTrue(withoutPin.isEmpty)
+        model.releaseVaultState()
+        let afterLock = await model.dragDocuments(for: [booking.id], from: pin)
+        XCTAssertTrue(afterLock.isEmpty)
     }
 
     #if os(macOS)

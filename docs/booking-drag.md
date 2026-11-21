@@ -44,7 +44,7 @@ Der Zug enthält zwei Darstellungen:
 }
 ```
 
-- Die Feldnamen entsprechen der Methode `transactions` der [lokalen Schnittstelle](local-api.md), ergänzt um `account_name`, `account_iban`, `end_to_end_id`, `mandate_id` und `creditor_id`. Eine App kann beides mit demselben Code lesen.
+- Die Feldnamen entsprechen der Methode `transactions` der [lokalen Schnittstelle](local-api.md) (`ApiTransaction` in `girocrab-core/src/local_api.rs`), ergänzt um `account_name`, `account_iban`, `end_to_end_id`, `mandate_id`, `creditor_id` und `documents`. Nicht enthalten sind `category_id`, `flow` und `payment_method`; `category_path` und `merchant` fehlen hier, wenn sie leer sind, statt als leerer Text zu kommen. Eine App kann beides mit demselben Code lesen.
 - Beträge in Cent, negativ = Ausgang. Daten als `YYYY-MM-DD`; fehlt das Valutadatum, steht dort das Buchungsdatum.
 - Leere Texte fehlen im JSON. Unbekannte Felder sind zu ignorieren; eine inkompatible Änderung erhöht `version`.
 - `id` ist die Buchungs-ID dieses Tresors auf diesem Mac. Sie bleibt für die Lebensdauer der Buchung gleich und taugt als Verweis (z. B. `GiroCrab-4711`), ein anderes Gerät vergibt aber eigene IDs.
