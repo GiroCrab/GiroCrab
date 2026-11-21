@@ -487,6 +487,7 @@ pub enum CategorySource {
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Booking {
+    pub refund_link: crate::refunds::RefundLinkKind,
     pub id: i64,
     pub account_id: i64,
     pub account_name: String,

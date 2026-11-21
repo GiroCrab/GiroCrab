@@ -54,6 +54,7 @@
 //!   switched-off bundled merchants) and `custom_merchants` (own merchants), both merged.
 //! - 36: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
 //!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
+//! - 37: explicit refund links (#714): table `refund_links`.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -106,6 +107,7 @@ const STEPS: &[Step] = &[
     Step::Hook(account_total_flag),                            // 34 (#337)
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
+    Step::Sql(crate::refunds::SCHEMA),                         // 37: refund links (#714)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -1082,7 +1084,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 36);
+        assert_eq!(SCHEMA_VERSION, 37);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

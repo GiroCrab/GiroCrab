@@ -167,6 +167,7 @@ fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Booking)> {
             creditor_id: r.get(26)?,
             external_id: r.get(27)?,
             tags: Vec::new(),
+            refund_link: crate::refunds::RefundLinkKind::None,
         },
     ))
 }
@@ -181,8 +182,13 @@ pub(crate) fn attach_tags(
     }
     let ids: Vec<i64> = bookings.iter().map(|b| b.id).collect();
     let mut tags = crate::tags::tags_for_bookings(db, &ids)?;
+    let links = crate::refunds::markers(db)?;
     for b in bookings {
         b.tags = tags.remove(&b.id).unwrap_or_default();
+        b.refund_link = links
+            .get(&b.id)
+            .cloned()
+            .unwrap_or(crate::refunds::RefundLinkKind::None);
     }
     Ok(())
 }

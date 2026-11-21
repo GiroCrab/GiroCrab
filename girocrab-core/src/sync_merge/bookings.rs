@@ -367,6 +367,7 @@ pub(crate) fn merge_bookings(
     let individual = |d: Option<i64>, account: Option<i64>| d.filter(|_| d != account);
 
     let mut cleared: HashSet<i64> = HashSet::new();
+    let mut refund_ids = HashMap::new();
     for mut o in others {
         let Some(&acc) = acc_map.get(&o.account_id) else {
             continue;
@@ -400,6 +401,7 @@ pub(crate) fn merge_bookings(
         };
         match existing {
             Some((id, renamed)) => {
+                refund_ids.insert(o.id, id);
                 let old = local[&id].clone();
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
@@ -463,6 +465,7 @@ pub(crate) fn merge_bookings(
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
+                refund_ids.insert(o.id, id);
                 insert_splits(conn, id, &f.splits, &cat_id)?;
                 if !f.tags.is_empty() {
                     tag_ids.write(conn, id, &f.tags)?;
@@ -475,6 +478,8 @@ pub(crate) fn merge_bookings(
             }
         }
     }
+
+    crate::refunds::merge(conn, &refund_ids)?;
 
     // nothing points at a deleted category (derived, no stamps)
     conn.execute(

@@ -261,6 +261,7 @@ mod tests {
             creditor_id: String::new(),
             external_id: String::new(),
             tags: Vec::new(),
+            refund_link: crate::refunds::RefundLinkKind::None,
         }
     }
 
