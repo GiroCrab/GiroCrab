@@ -354,6 +354,45 @@ struct StreamHeaderCard: View {
         .help("Nur Buchungen ausgewählter Konten anzeigen")
     }
 
+    /// Left of the period menu (#1469): in the category views the pin that binds the filters to this category (without
+    /// it they are the global ones of all categories); in „Alle Konten“, groups, banks and accounts the switch that
+    /// applies the account's filters to the sidebar's sums.
+    @ViewBuilder
+    private var categorySumsControl: some View {
+        if model.showsCategorySumsPin {
+            sumsToggle(isOn: model.shownCategoryPinned, symbol: "pin", filledSymbol: "pin.fill",
+                       label: "Filter an diese Kategorie binden",
+                       help: model.shownCategoryPinned
+                           ? "Die Filter gehören nur zu dieser Kategorie und bleiben erhalten. Zum Lösen klicken: Dann gelten wieder die Filter aller Kategorien."
+                           : "Filter an diese Kategorie binden: Sie gelten nur hier und für ihre Summe in der Seitenleiste. Ohne Stecknadel gelten die Filter für alle Kategorien.") {
+                model.toggleCategoryPin()
+            }
+        } else if model.showsCategorySumsSwitch {
+            sumsToggle(isOn: model.categorySumsFollowAccountFilter, symbol: "sidebar.left", filledSymbol: "sidebar.left",
+                       label: "Filter auch in den Kategorien anwenden",
+                       help: "Status, Buchungsart, Betrag, Tags, Konten und Zeitraum gelten auch für die Summen in der Seitenleiste") {
+                model.categorySumsFollowAccountFilter.toggle()
+            }
+        }
+    }
+
+    /// The button at the size of the filter labels, set off from the filters by a straight line.
+    private func sumsToggle(isOn: Bool, symbol: String, filledSymbol: String, label: LocalizedStringKey,
+                            help: LocalizedStringKey, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Button(action: action) {
+                Image(systemName: isOn ? filledSymbol : symbol)
+                    .appFont(.body)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(isOn ? Color.accentColor : Theme.secondary)
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(isOn ? .isSelected : [])
+            .help(help)
+            Divider().frame(height: 20)
+        }
+    }
+
     /// Amount range (#357): the pill opens the popover and shows the range while one is set;
     /// the cross next to it resets it with one click.
     @ViewBuilder
@@ -425,6 +464,7 @@ struct StreamHeaderCard: View {
         @Bindable var model = model
         let account = self.account
         HStack(spacing: 12) {
+                categorySumsControl
                 periodMenu
                 // One filter menu keeps the row narrow.
                 Menu {

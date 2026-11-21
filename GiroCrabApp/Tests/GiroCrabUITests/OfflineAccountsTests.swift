@@ -156,6 +156,8 @@ final class OfflineAccountsTests: XCTestCase {
         XCTAssertEqual(model.balanceCurrency, "USD")
         XCTAssertEqual(model.categorySumCurrency, "EUR") // the sidebar sums ignore the filter outside the category views
         model.sidebarSelection = .uncategorized
+        XCTAssertEqual(model.categorySumCurrency, "EUR") // the category views have their own account filter
+        model.categoryAccountFilter = [id]
         XCTAssertEqual(model.categorySumCurrency, "USD")
         model.categoryAccountFilter = []
         XCTAssertEqual(model.balanceCurrency, "EUR")

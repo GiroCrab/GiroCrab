@@ -226,7 +226,7 @@ extension AppModel {
                 let (from, to) = self.periodRange
                 let chart = self.historyRequest
                 let categoryChart = self.categoryHistoryRequest
-                let sums = self.categorySumFilter
+                let sums = self.categorySumsRequest
                 let uncategorizedQuery = self.uncategorizedCountFilter(sums)
                 let listHasFlow = filter.listHasFlow || self.kpiFollowsList
                 let loaded = try await Self.offMain {
@@ -243,7 +243,7 @@ extension AppModel {
                     }
                     try Task.checkCancellation()
                     let recurring = try vault.recurringSnapshot(accountIds: ids, year: Int32(month.year ?? 2026), month: UInt32(month.month ?? 1))
-                    let categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
+                    let categories = try vault.categorySums(sums)
                     let uncategorized = Int(try vault.countTransactions(filter: uncategorizedQuery))
                     try Task.checkCancellation()
                     let history = try vault.balanceHistory(accountIds: chart.ids, days: chart.days)

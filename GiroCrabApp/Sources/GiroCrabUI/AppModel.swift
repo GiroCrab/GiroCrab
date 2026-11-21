@@ -153,6 +153,10 @@ public final class AppModel {
 
     // UI state
     var sidebarSelection: SidebarItem? = .allAccounts {
+        willSet {
+            // The account views and the category views each have their own list filters (#1469).
+            switchFilterSet(to: newValue)
+        }
         didSet {
             // Without a background load the column follows at once; otherwise when the load publishes.
             defer { if selectionLoadTask == nil { showSelection() } }
@@ -164,12 +168,6 @@ public final class AppModel {
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
             listLimit = Self.defaultListLimit
-            // A category with its own default period switches to it; that load covers the selection too (#425).
-            if !keepsPeriodOnCategorySelection, case .category(let id)? = sidebarSelection,
-               let saved = categoryPeriod(id), saved != period {
-                period = saved
-                return
-            }
             guard !resetsSelectionBeforeReloadAll else { return }
             // Geplant, Lastschriften, Belege and Vermögen show no booking list: loading it for
             // all accounts only replaced the list the column shows next (#1396).
@@ -184,6 +182,8 @@ public final class AppModel {
                 return
             }
             reloadSelection(periodChanged: false)
+            // the filters of another category or of the account views change what the sums count (#1469)
+            if selectionLoadTask == nil { reloadCategorySums() }
         }
     }
     /// The selection the booking column shows: `sidebarSelection` once its data is in, so a new
@@ -267,6 +267,8 @@ public final class AppModel {
     var period: Period = .all {
         didSet {
             if oldValue != period { requestStreamTop() }
+            guard !suspendsPeriodReload else { return }
+            persistCategorySet()
             periodDidChange()
         }
     }
@@ -342,6 +344,7 @@ public final class AppModel {
     var statusFilter: StatusFilter = .all {
         didSet {
             guard statusFilter != oldValue, !suspendsFilterReloads else { return }
+            persistCategorySet()
             listLimit = Self.defaultListLimit
             reloadAfterFilterChange() // the sidebar sums follow the status (#621)
         }
@@ -387,10 +390,13 @@ public final class AppModel {
             searchTask?.cancel()
         }
         listLimit = Self.defaultListLimit
+        persistCategorySet()
         if inBackground { loadingFilterInBackground(reloadAfterFilterChange) } else { reloadAfterFilterChange() }
     }
     /// Set while `resetListFilters` changes several filters: their own reloads are skipped.
     @ObservationIgnored var suspendsFilterReloads = false
+    /// Set while a filter set swap changes `period`: the selection change that follows reloads.
+    @ObservationIgnored var suspendsPeriodReload = false
 
     /// Label of the header filter menu: "Status: Alle" or the active filters.
     var filterTitle: String {
@@ -408,6 +414,7 @@ public final class AppModel {
     var directionFilter: BookingDirection = .all {
         didSet {
             guard directionFilter != oldValue, !suspendsFilterReloads else { return }
+            persistCategorySet()
             listLimit = Self.defaultListLimit
             reloadAfterFilterChange() // the sidebar sums follow the direction (#621)
         }
@@ -417,8 +424,10 @@ public final class AppModel {
     var tagFilter = BookingTagFilter() {
         didSet {
             guard tagFilter != oldValue, !suspendsFilterReloads else { return }
+            persistCategorySet()
             listLimit = Self.defaultListLimit
             reloadBookings()
+            reloadCategorySums() // the sums follow the tags when the filter applies to them (#1469)
         }
     }
     /// Only bookings within this absolute amount range (#357); filtered in the core, so the
@@ -426,6 +435,7 @@ public final class AppModel {
     var amountFilter = AmountFilter() {
         didSet {
             guard amountFilter != oldValue, !suspendsFilterReloads else { return }
+            persistCategorySet()
             listLimit = Self.defaultListLimit
             reloadAfterFilterChange()
         }
@@ -436,6 +446,7 @@ public final class AppModel {
     var categoryAccountFilter: Set<Int64> = [] {
         didSet {
             guard categoryAccountFilter != oldValue, Self.offersAccountFilter(sidebarSelection), !suspendsFilterReloads else { return }
+            persistCategorySet()
             listLimit = Self.defaultListLimit
             reloadSelection(periodChanged: true) // also the sidebar sums (#621)
         }
@@ -516,6 +527,28 @@ public final class AppModel {
     var allAccountsCollapsed: Bool = AppDefaults.store.bool(forKey: AppModel.allAccountsCollapsedKey) {
         didSet { AppDefaults.store.set(allAccountsCollapsed, forKey: AppModel.allAccountsCollapsedKey) }
     }
+    /// „Filter auch in den Kategorien anwenden“ (#1469): in „Alle Konten“, groups, banks and single accounts the
+    /// list filters (status, type, amount, tags, accounts) also narrow the sidebar's category sums, except those of
+    /// pinned categories (they count by their own). Off by default.
+    var categorySumsFollowAccountFilter: Bool = AppDefaults.store.bool(forKey: AppModel.categorySumsFollowAccountFilterKey) {
+        didSet {
+            guard categorySumsFollowAccountFilter != oldValue else { return }
+            AppDefaults.store.set(categorySumsFollowAccountFilter, forKey: AppModel.categorySumsFollowAccountFilterKey)
+            reloadCategorySums()
+        }
+    }
+    /// Categories whose filters are pinned to them (#1469, keys as `categoryFilterKey`): they keep individual filters;
+    /// every other category shares the global ones.
+    var pinnedCategoryKeys: Set<String> = Set(AppDefaults.store.stringArray(forKey: AppModel.pinnedCategoryKeysKey) ?? []) {
+        didSet { AppDefaults.store.set(pinnedCategoryKeys.sorted(), forKey: AppModel.pinnedCategoryKeysKey) }
+    }
+    /// The filters all unpinned categories share, while the category views are shown; reset when an account view is
+    /// chosen (#1469). The shown category's live ones are in `currentFilterSet`.
+    @ObservationIgnored var globalCategoryFilters = ListFilterSet()
+    /// While a category view is shown: the filters of the account views, which come back when one is chosen again.
+    var parkedAccountFilters = ListFilterSet()
+    /// The individual filters of the pinned categories, saved (#1469).
+    @ObservationIgnored var categorySets: [String: ListFilterSet] = AppModel.loadCategorySets()
     /// The sidebar's category tree, „Ohne Kategorie“ included, folded away under its header.
     var categoriesCollapsed: Bool = AppDefaults.store.bool(forKey: "sidebar.categoriesCollapsed") {
         didSet { AppDefaults.store.set(categoriesCollapsed, forKey: "sidebar.categoriesCollapsed") }
