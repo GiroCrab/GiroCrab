@@ -7,8 +7,14 @@ Kontextmenü der Buchungsliste, das Blatt zum Zuordnen (`RefundPickerSheet`), da
 ## Grundprinzip
 
 Die Verknüpfung dokumentiert nur, was zusammengehört. **Beträge, Kategorien, Splits und Kontostände ändern sich
-nicht**; die Verrechnung in den Kategorien bleibt Sache der Kategorisierung. Der Core (`refunds.rs`) hält je
-Erstattung genau eine ursprüngliche Buchung; eine ursprüngliche Buchung kann mehrere (Teil-)Erstattungen haben.
+nicht**; die Verrechnung in den Kategorien bleibt Sache der Kategorisierung. Der Core (`refunds.rs`) hält Paare aus
+Erstattung und ursprünglicher Buchung: Eine ursprüngliche Buchung kann mehrere (Teil-)Erstattungen haben, eine
+Erstattung kann mehrere Buchungen zurückzahlen (eine Sammelerstattung).
+
+**Was zählt:** Eine Buchung gilt höchstens bis zu ihrem Betrag als erstattet, und jede Erstattung zählt nur einmal.
+Der Core verteilt dazu jede Erstattung (älteste zuerst) auf ihre ursprünglichen Buchungen (älteste zuerst); was eine
+Buchung nicht mehr aufnimmt, bleibt für die nächste. `RefundLinks.refunded_cents` (für die ursprüngliche Buchung) und
+`assigned_cents` (für die Erstattung) tragen das Ergebnis; bei verschiedenen Währungen fehlen sie (#569).
 
 - Eine Erstattung ist ein Eingang (Betrag > 0), die ursprüngliche Buchung ein Ausgang (Betrag < 0). Buchungen mit
   Betrag 0 haben keine Einträge.
@@ -26,7 +32,7 @@ Unter „Umsatz aufteilen (Splitbuchung) …“:
 | Buchung | Eintrag |
 | --- | --- |
 | Eingang ohne Verknüpfung | „Ursprüngliche Buchung zuordnen …“ |
-| Eingang mit Verknüpfung | „Ursprüngliche Buchung ändern …“ und „Verknüpfung zur ursprünglichen Buchung aufheben“ |
+| Eingang mit Verknüpfung | „Ursprüngliche Buchungen bearbeiten …“ und „Verknüpfung zur ursprünglichen Buchung aufheben“ |
 | Ausgang ohne Erstattung | „Erstattung zuordnen …“ |
 | Ausgang mit Erstattungen | „Erstattungen bearbeiten …“ |
 
@@ -35,20 +41,25 @@ Unter „Umsatz aufteilen (Splitbuchung) …“:
 Oben die Buchung, von der aus geöffnet wurde (Name, Datum, Konto, Betrag), ein Satz zur Auswahl, der Hinweis, dass
 sich nichts an Beträgen und Kategorien ändert, und die Suche (Name oder Verwendungszweck, gefiltert im Core).
 
-Darunter zuerst die **verknüpften** Buchungen (✓, „Aufheben“), bei einer ursprünglichen Buchung mit der Summe
-„Erstattet: … von …“, wenn alle Erstattungen ihre Währung haben (verschiedene Währungen werden nie summiert, #569).
+Darunter zuerst die **verknüpften** Buchungen (✓) mit der Summe, wenn alle Beteiligten dieselbe Währung haben
+(verschiedene Währungen werden nie summiert, #569):
+
+- ursprüngliche Buchung: „Erstattet: … von …“, nie mehr als ihr Betrag. Sind die Erstattungen zusammen höher, sagt
+  eine zweite Zeile, wie viel sie betragen und dass der Rest weiteren Buchungen zugeordnet werden kann.
+- Erstattung: „Zugeordnet: … von …“ und, solange etwas übrig ist, „Noch offen: …“.
+
 Dann bis zu drei **Vorschläge** des Core (`refund_suggestions`), jeder mit seinem Grund, aufgefüllt in dieser
 Reihenfolge und darin nach Nähe zum Datum: gleicher Betrag in der Gegenrichtung (gleiche Währung), gleiche Gegenpartei
 oder gleicher Händler innerhalb von zwei Monaten, gleiche Referenz (Bestell- oder Rechnungsnummer im Verwendungszweck,
 End-to-End-Referenz).
 
 Darunter die **weiteren Buchungen** der Gegenrichtung aus allen Konten, nächstes Datum zuerst: für eine Erstattung
-aus den 365 Tagen davor, für eine ursprüngliche Buchung aus den 365 Tagen danach und nur Eingänge, die noch keiner
-anderen Buchung zugeordnet sind. Mit einem Suchbegriff entfällt die Grenze von 365 Tagen, die Liste zeigt dann alle
+aus den 365 Tagen davor, für eine ursprüngliche Buchung aus den 365 Tagen danach. Mit einem Suchbegriff entfällt die Grenze von 365 Tagen, die Liste zeigt dann alle
 Treffer.
 
-„Zuordnen“ (oder Doppelklick) verknüpft sofort, das Blatt bleibt offen: So lassen sich mehrere Teilerstattungen
-nacheinander zuordnen. Bei einer Erstattung ersetzt eine neue Wahl die bisherige. „Fertig“ oder Esc schließt.
+Jede Zeile ist als Ganzes eine Schaltfläche, der Kreis davor eingeschlossen: Ein Klick verknüpft sofort, ein Klick
+auf eine verknüpfte Zeile (✓) hebt genau diese Verknüpfung auf. Das Blatt bleibt offen: So lassen sich mehrere
+Teilerstattungen oder mehrere ursprüngliche Buchungen nacheinander zuordnen. „Fertig“ oder Esc schließt.
 
 Die Vorschläge werden abseits des Hauptthreads gelesen (`vaultOffMain`): Der Core bestimmt für jede Buchung des
 Zeitraums den Händler. Nur das Ergebnis der jüngsten Suche wird gezeigt.
@@ -62,9 +73,9 @@ Verknüpfen ändert die App nur die betroffenen Zeilen, die Liste wird nicht neu
 ## Karte „Erstattung“ im Inspector
 
 Nur bei verknüpften Buchungen sichtbar, in der Standardreihenfolge nach „Tags“ (im Bearbeitungsmodus als Platzhalter).
-Eine Erstattung zeigt die ursprüngliche Buchung, eine ursprüngliche Buchung ihre Erstattungen und die Summe wie im
+Eine Erstattung zeigt ihre ursprünglichen Buchungen, eine ursprüngliche Buchung ihre Erstattungen und die Summe wie im
 Blatt. Ein Klick auf eine Zeile wählt diese Buchung in der Liste aus (`revealBooking`: weitet Zeitraum und Filter,
-wenn sie dort nicht steht), ✕ hebt die Verknüpfung auf, „Ändern …“ / „Bearbeiten …“ öffnet das Blatt.
+wenn sie dort nicht steht), ✕ hebt die Verknüpfung auf, „Bearbeiten …“ öffnet das Blatt.
 
 ## Persönliche Daten
 

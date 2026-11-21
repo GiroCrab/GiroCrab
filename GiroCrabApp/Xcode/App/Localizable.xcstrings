@@ -11079,6 +11079,17 @@
         }
       }
     },
+    "Die Erstattungen betragen zusammen %@. Was über diese Buchung hinausgeht, zählt hier nicht und kann weiteren Buchungen zugeordnet werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The refunds add up to %@. The part beyond this transaction does not count here and can be assigned to further transactions."
+          }
+        }
+      }
+    },
     "Die Gruppe ist leer." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17880,13 +17891,13 @@
         }
       }
     },
-    "In den zwölf Monaten nach dieser Buchung gibt es keinen Eingang, der noch keiner anderen Buchung zugeordnet ist." : {
+    "In den zwölf Monaten nach dieser Buchung gibt es keinen Eingang." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "In the twelve months after this transaction there is no incoming transaction that is not yet linked to another one."
+            "value" : "There is no incoming transaction in the twelve months after this one."
           }
         }
       }
@@ -24377,6 +24388,17 @@
         }
       }
     },
+    "Noch offen: %@. Sie können weitere Buchungen zuordnen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still open: %@. You can assign further transactions."
+          }
+        }
+      }
+    },
     "Noch zu tun: Freigabe über Enable Banking" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28896,17 +28918,6 @@
         }
       }
     },
-    "Statt der bisherigen Buchung zuordnen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Link instead of the current transaction"
-          }
-        }
-      }
-    },
     "Stattdessen diesen Tag behalten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31184,13 +31195,24 @@
         }
       }
     },
-    "Ursprüngliche Buchung ändern …" : {
+    "Ursprüngliche Buchungen (%lld)" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Change original transaction…"
+            "value" : "Original transactions (%lld)"
+          }
+        }
+      }
+    },
+    "Ursprüngliche Buchungen bearbeiten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit original transactions…"
           }
         }
       }
@@ -31498,13 +31520,13 @@
         }
       }
     },
-    "Verknüpfte ursprüngliche Buchung" : {
+    "Verknüpfte ursprüngliche Buchungen (%lld)" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Linked original transaction"
+            "value" : "Linked original transactions (%lld)"
           }
         }
       }
@@ -33357,13 +33379,13 @@
         }
       }
     },
-    "Wählen Sie die Buchung, die mit dieser Erstattung zurückgezahlt wurde. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere." : {
+    "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose the transaction this refund pays back. Expenses of all accounts from the twelve months before it are offered, older ones via the search."
+            "value" : "Choose the transactions this refund paid back, several if needed. You can pick from expenses of all accounts in the twelve months before it; a search also finds older ones."
           }
         }
       }
@@ -33890,6 +33912,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Create Access Key"
+          }
+        }
+      }
+    },
+    "Zugeordnet: %@ von %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Zugeordnet: %1$@ von %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assigned: %1$@ of %2$@"
           }
         }
       }

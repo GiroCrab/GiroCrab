@@ -55,6 +55,7 @@
 //! - 36: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
 //!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
 //! - 37: explicit refund links (#714): table `refund_links`.
+//! - 38: `refund_links` keyed by the pair (refund, original): a refund can pay back several bookings.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -108,6 +109,7 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Sql(crate::refunds::SCHEMA),                         // 37: refund links (#714)
+    Step::Sql(crate::refunds::SCHEMA_PAIRS),                   // 38: a refund for several bookings
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -1084,7 +1086,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 37);
+        assert_eq!(SCHEMA_VERSION, 38);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

@@ -51,18 +51,56 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(listed.first { $0.id == original.id }?.refundLink, .original)
     }
 
-    func testRelinkingMovesTheMarkerAndUnlinkingClearsIt() throws {
+    func testARefundTakesSeveralOriginalsAndEachLinkIsRemovedOnItsOwn() throws {
         let (refund, originals) = try pair()
+        let vault = try XCTUnwrap(model.vault)
         model.linkRefund(refundID: refund.id, originalID: originals[0].id)
         model.linkRefund(refundID: refund.id, originalID: originals[1].id)
-        XCTAssertEqual(kind(originals[0].id), RefundLinkKind.none)
+        XCTAssertEqual(kind(originals[0].id), .original)
         XCTAssertEqual(kind(originals[1].id), .original)
-        XCTAssertEqual(try XCTUnwrap(model.vault).refundLinks(transactionId: refund.id).original?.id, originals[1].id)
+        XCTAssertEqual(Set(try vault.refundLinks(transactionId: refund.id).originals.map(\.id)), Set(originals.map(\.id)))
 
-        model.unlinkRefund(refundID: refund.id)
+        model.unlinkRefund(refundID: refund.id, originalID: originals[0].id)
+        XCTAssertEqual(kind(originals[0].id), RefundLinkKind.none)
+        XCTAssertEqual(kind(refund.id), .refund)
+        XCTAssertEqual(try vault.refundLinks(transactionId: refund.id).originals.map(\.id), [originals[1].id])
+
+        model.linkRefund(refundID: refund.id, originalID: originals[0].id)
+        model.unlinkRefundOriginals(refundID: refund.id)
         XCTAssertEqual(kind(refund.id), RefundLinkKind.none)
         XCTAssertEqual(kind(originals[1].id), RefundLinkKind.none)
-        XCTAssertNil(try XCTUnwrap(model.vault).refundLinks(transactionId: refund.id).original)
+        XCTAssertTrue(try vault.refundLinks(transactionId: refund.id).originals.isEmpty)
+    }
+
+    /// A refund larger than its booking: the booking is never refunded beyond its amount, the
+    /// rest of the refund is shown as open and goes to the next booking.
+    func testARefundLargerThanItsBookingShowsTheRestAsOpen() throws {
+        let vault = try XCTUnwrap(model.vault)
+        var found: (Booking, [Booking])?
+        for refund in model.bookings where refund.amountCents > 0 && refund.currency == "EUR" {
+            let smaller = try vault.refundCandidates(transactionId: refund.id, query: "", limit: 200)
+                .filter { $0.currency == "EUR" && -$0.amountCents < refund.amountCents / 2 }
+                .compactMap { model.booking(withID: $0.id) }
+            if smaller.count >= 2 { found = (refund, Array(smaller.prefix(2))); break }
+        }
+        let (refund, originals) = try XCTUnwrap(found)
+        let money = { Money.format($0, currency: "EUR") }
+
+        model.linkRefund(refundID: refund.id, originalID: originals[0].id)
+        let first = try vault.refundLinks(transactionId: originals[0].id)
+        XCTAssertEqual(first.refundedCents, -originals[0].amountCents)
+        let firstLines = RefundSum.lines(booking: originals[0], links: first)
+        XCTAssertEqual(firstLines.count, 2)
+        XCTAssertTrue(firstLines[0].contains(money(-originals[0].amountCents)))
+        XCTAssertFalse(firstLines[0].contains(money(refund.amountCents)))
+
+        model.linkRefund(refundID: refund.id, originalID: originals[1].id)
+        let own = try vault.refundLinks(transactionId: refund.id)
+        let assigned = -(originals[0].amountCents + originals[1].amountCents)
+        XCTAssertEqual(own.assignedCents, assigned)
+        let ownLines = RefundSum.lines(booking: refund, links: own)
+        XCTAssertEqual(ownLines.count, 2)
+        XCTAssertTrue(ownLines[1].contains(money(refund.amountCents - assigned)))
     }
 
     func testAnInvalidLinkShowsTheCoreErrorAndChangesNothing() throws {
@@ -115,7 +153,7 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(try vault.listTransactionSplits(transactionId: original.id).map(\.amountCents), parts.map(\.amountCents))
         XCTAssertEqual(try vault.refundLinks(transactionId: original.id).refunds.map(\.id), [refund.id])
 
-        model.unlinkRefund(refundID: refund.id)
+        model.unlinkRefundOriginals(refundID: refund.id)
         XCTAssertEqual(try flow().incomeCents, before.incomeCents)
     }
 

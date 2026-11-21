@@ -1,6 +1,6 @@
 //! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
-//! (outgoing). One original can have several refunds, a refund has one original, and links do not
-//! chain. The link only documents what belongs together: amounts, categories and balances remain
+//! (outgoing). One original can have several refunds and one refund can pay back several originals
+//! (step 37); links do not chain. The link only documents what belongs together: amounts, categories and balances remain
 //! unchanged. Removing a link keeps the row as a tombstone (`deleted_ms`), so the removal reaches
 //! the other devices; the newest change wins on merge.
 use crate::{
@@ -10,6 +10,22 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
+
+/// Step 37: a refund may pay back several bookings, so the key is the pair.
+pub(crate) const SCHEMA_PAIRS: &str = "
+CREATE TABLE refund_links_pairs (
+ refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+ original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+ created_ms INTEGER NOT NULL,
+ changed_ms INTEGER NOT NULL,
+ deleted_ms INTEGER,
+ PRIMARY KEY (refund_id, original_id)
+);
+INSERT INTO refund_links_pairs SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms FROM refund_links;
+DROP TABLE refund_links;
+ALTER TABLE refund_links_pairs RENAME TO refund_links;
+CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
+";
 
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS refund_links (
@@ -73,12 +89,58 @@ const SUGGESTION_DAYS: i64 = 62;
 /// How far the suggestions and the unfiltered list look back or ahead.
 const WINDOW_DAYS: u32 = 365;
 
-/// The links of one booking: its original when it is a refund, its refunds when it is an original.
+/// The links of one booking: its originals when it is a refund, its refunds when it is an original.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RefundLinks {
-    pub original: Option<RefundBooking>,
+    pub originals: Vec<RefundBooking>,
     pub refunds: Vec<RefundBooking>,
+    /// For an original: how much of it its refunds pay back, never more than its amount. A
+    /// refund counts once: what it pays back of one booking is not available for the next.
+    /// `None` without refunds or when a linked booking has another currency (#569).
+    pub refunded_cents: Option<i64>,
+    /// For a refund: how much of it its originals take up, never more than its amount; the rest
+    /// belongs to no linked booking. `None` without originals or with mixed currencies.
+    pub assigned_cents: Option<i64>,
+}
+
+/// What every live link pays back: each refund (oldest first) is spread over its originals
+/// (oldest first), each taking at most what earlier refunds left open. Links between different
+/// currencies get nothing and are returned in the second set.
+fn shares(
+    conn: &Connection,
+) -> CoreResult<(
+    HashMap<(i64, i64), i64>,
+    std::collections::HashSet<(i64, i64)>,
+)> {
+    type Link = (i64, i64, i64, i64, String, String);
+    let links: Vec<Link> = conn
+        .prepare(
+            "SELECT l.refund_id,l.original_id,r.amount_cents,o.amount_cents,r.currency,o.currency
+             FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id
+             WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL
+             ORDER BY r.booking_date,r.id,o.booking_date,o.id",
+        )?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut left: HashMap<i64, i64> = HashMap::new();
+    let mut out = HashMap::new();
+    let mut mixed = std::collections::HashSet::new();
+    for (r, o, r_amount, o_amount, r_cur, o_cur) in links {
+        if currency_code(&r_cur) != currency_code(&o_cur) {
+            mixed.insert((r, o));
+            continue;
+        }
+        let from = *left.entry(r).or_insert(r_amount.max(0));
+        let open = *left.entry(o).or_insert(o_amount.saturating_abs());
+        let share = from.min(open);
+        left.insert(r, from - share);
+        left.insert(o, open - share);
+        out.insert((r, o), share);
+    }
+    Ok((out, mixed))
 }
 
 fn live(conn: &Connection, id: i64) -> CoreResult<i64> {
@@ -190,8 +252,7 @@ struct Pool {
 }
 
 /// `days`: how far back (refund) or ahead (outgoing booking) the pool reaches; `None` = no bound.
-/// Leaves out what cannot be linked: refunds of another original, and everything when the
-/// booking itself is the other end of a link (no chains).
+/// Empty when the booking itself is the other end of a link (no chains).
 fn pool(vault: &Vault, db: &Connection, id: i64, days: Option<u32>) -> CoreResult<Pool> {
     let rules = vault.merchant_rules(db)?;
     let (amount, currency, date, counterparty, purpose, e2e): (
@@ -229,9 +290,9 @@ fn pool(vault: &Vault, db: &Connection, id: i64, days: Option<u32>) -> CoreResul
     }
     let days = days.map_or(f64::MAX, f64::from);
     let direction = if amount > 0 {
-        "t.amount_cents<0 AND julianday(?1)-julianday(t.booking_date) BETWEEN 0 AND ?3 AND NOT EXISTS(SELECT 1 FROM refund_links WHERE refund_id=t.id AND deleted_ms IS NULL)"
+        "t.amount_cents<0 AND julianday(?1)-julianday(t.booking_date) BETWEEN 0 AND ?3"
     } else {
-        "t.amount_cents>0 AND julianday(t.booking_date)-julianday(?1) BETWEEN 0 AND ?3 AND NOT EXISTS(SELECT 1 FROM refund_links WHERE refund_id=t.id AND original_id<>?2 AND deleted_ms IS NULL)"
+        "t.amount_cents>0 AND julianday(t.booking_date)-julianday(?1) BETWEEN 0 AND ?3"
     };
     out.rows = rows(
         db,
@@ -328,8 +389,8 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
         }
         let incoming = (r, o, created, changed, deleted);
         let local: Option<LinkRow> = conn.query_row(
-            "SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms FROM refund_links WHERE refund_id=?1",
-            [r], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
+            "SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms FROM refund_links WHERE refund_id=?1 AND original_id=?2",
+            [r, o], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
         ).optional()?;
         if let Some(local) = local
             && rank(conn, &incoming)? <= rank(conn, &local)?
@@ -345,18 +406,18 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
         }
         conn.execute(
             "INSERT INTO refund_links(refund_id,original_id,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?4,?5)
-             ON CONFLICT(refund_id) DO UPDATE SET original_id=excluded.original_id,created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=excluded.deleted_ms",
+             ON CONFLICT(refund_id,original_id) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=excluded.deleted_ms",
             params![r,o,created,changed,deleted],
         )?;
     }
     Ok(())
 }
 
-fn next_change(conn: &Connection, refund_id: i64) -> CoreResult<i64> {
+fn next_change(conn: &Connection, refund_id: i64, original_id: i64) -> CoreResult<i64> {
     let previous: Option<i64> = conn
         .query_row(
-            "SELECT changed_ms FROM refund_links WHERE refund_id=?1",
-            [refund_id],
+            "SELECT changed_ms FROM refund_links WHERE refund_id=?1 AND original_id=?2",
+            [refund_id, original_id],
             |r| r.get(0),
         )
         .optional()?;
@@ -365,23 +426,24 @@ fn next_change(conn: &Connection, refund_id: i64) -> CoreResult<i64> {
 
 #[uniffi::export]
 impl Vault {
-    /// Links the incoming booking `refund_id` to the outgoing booking `original_id`; an existing
-    /// link of the refund is replaced. Fails for wrong signs, deleted bookings and chains.
+    /// Links the incoming booking `refund_id` to the outgoing booking `original_id`; its other
+    /// links stay (a refund can pay back several bookings, a booking can have several refunds).
+    /// Fails for wrong signs, deleted bookings and chains.
     pub fn link_refund(&self, refund_id: i64, original_id: i64) -> CoreResult<()> {
         let db = self.db()?;
         validate(&db, refund_id, original_id)?;
-        let changed = next_change(&db, refund_id)?;
-        db.execute("INSERT INTO refund_links(refund_id,original_id,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?3,NULL) ON CONFLICT(refund_id) DO UPDATE SET original_id=excluded.original_id,changed_ms=excluded.changed_ms,deleted_ms=NULL",params![refund_id,original_id,changed])?;
+        let changed = next_change(&db, refund_id, original_id)?;
+        db.execute("INSERT INTO refund_links(refund_id,original_id,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?3,NULL) ON CONFLICT(refund_id,original_id) DO UPDATE SET changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",params![refund_id,original_id,changed])?;
         Ok(())
     }
-    /// Removes the link of `refund_id` to its original (no-op without one).
-    pub fn unlink_refund(&self, refund_id: i64) -> CoreResult<()> {
+    /// Removes the link of `refund_id` to `original_id` (no-op without one).
+    pub fn unlink_refund(&self, refund_id: i64, original_id: i64) -> CoreResult<()> {
         let db = self.db()?;
-        let changed = next_change(&db, refund_id)?;
+        let changed = next_change(&db, refund_id, original_id)?;
         db.execute(
             // an already removed link keeps its stamp: a second removal must not outrank a newer re-link
-            "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE refund_id=?1 AND deleted_ms IS NULL",
-            params![refund_id, changed],
+            "UPDATE refund_links SET deleted_ms=?3,changed_ms=?3 WHERE refund_id=?1 AND original_id=?2 AND deleted_ms IS NULL",
+            params![refund_id, original_id, changed],
         )?;
         Ok(())
     }
@@ -390,20 +452,33 @@ impl Vault {
         let db = self.db()?;
         live(&db, transaction_id)?;
         let rules = self.merchant_rules(&db)?;
-        let original=entries(&db,&format!("{ROWS} WHERE t.deleted_ms IS NULL AND t.id IN (SELECT original_id FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL)"),[transaction_id],&rules)?.pop();
-        let refunds = entries(
-            &db,
-            &format!(
-                "{ROWS} WHERE t.deleted_ms IS NULL AND t.id IN (SELECT refund_id FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL) ORDER BY t.booking_date,t.id"
-            ),
-            [transaction_id],
-            &rules,
-        )?;
-        Ok(RefundLinks { original, refunds })
+        let side = |own: &str, other: &str| {
+            entries(
+                &db,
+                &format!(
+                    "{ROWS} WHERE t.deleted_ms IS NULL AND t.id IN (SELECT {other} FROM refund_links WHERE {own}=?1 AND deleted_ms IS NULL) ORDER BY t.booking_date,t.id"
+                ),
+                [transaction_id],
+                &rules,
+            )
+        };
+        let originals = side("refund_id", "original_id")?;
+        let refunds = side("original_id", "refund_id")?;
+        let (shares, mixed) = shares(&db)?;
+        let sum = |pairs: Vec<(i64, i64)>| -> Option<i64> {
+            (!pairs.is_empty() && !pairs.iter().any(|p| mixed.contains(p)))
+                .then(|| pairs.iter().filter_map(|p| shares.get(p)).sum())
+        };
+        Ok(RefundLinks {
+            refunded_cents: sum(refunds.iter().map(|r| (r.id, transaction_id)).collect()),
+            assigned_cents: sum(originals.iter().map(|o| (transaction_id, o.id)).collect()),
+            originals,
+            refunds,
+        })
     }
     /// The bookings `transaction_id` could be linked to, nearest date first: for a refund the
-    /// outgoing bookings before it, for an outgoing booking the incoming ones after it that are
-    /// not linked elsewhere; all accounts and currencies. Without `query` the last / next 365
+    /// outgoing bookings before it, for an outgoing booking the incoming ones after it; all
+    /// accounts and currencies. Without `query` the last / next 365
     /// days, with one (name or purpose) every such booking. Resolves the merchant of every
     /// booking it reads, so call it off the main thread.
     pub fn refund_candidates(

@@ -12,38 +12,44 @@ extension AppModel {
         refundPickerBooking = booking
     }
 
-    /// Links `refundID` to `originalID`; a refund has one original, so an earlier link is replaced.
+    /// Links `refundID` to `originalID`; its other links stay (a refund can pay back several bookings).
     func linkRefund(refundID: Int64, originalID: Int64) {
         guard let vault else { return }
-        let previous = try? vault.refundLinks(transactionId: refundID).original?.id
-        guard previous != originalID else { return }
+        let linked = (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID }) ?? false
+        guard !linked else { return }
         do { try vault.linkRefund(refundId: refundID, originalId: originalID) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in
-                if let previous { m.linkRefund(refundID: refundID, originalID: previous) } else { m.unlinkRefund(refundID: refundID) }
-            }
+            um.registerUndo(withTarget: self) { m in m.unlinkRefund(refundID: refundID, originalID: originalID) }
             um.setActionName(String(localized: "Erstattung zuordnen"))
         }
-        refundLinksChanged([refundID, originalID] + (previous.map { [$0] } ?? []))
+        refundLinksChanged([refundID, originalID])
     }
 
-    /// Removes the link of `refundID` to its original; both bookings stay.
-    func unlinkRefund(refundID: Int64) {
-        guard let vault, let original = try? vault.refundLinks(transactionId: refundID).original?.id else { return }
-        do { try vault.unlinkRefund(refundId: refundID) } catch { errorMessage = describe(error); return }
+    /// Removes the link of `refundID` to `originalID`; both bookings and their other links stay.
+    func unlinkRefund(refundID: Int64, originalID: Int64) {
+        guard let vault,
+              (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID }) == true else { return }
+        do { try vault.unlinkRefund(refundId: refundID, originalId: originalID) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.linkRefund(refundID: refundID, originalID: original) }
+            um.registerUndo(withTarget: self) { m in m.linkRefund(refundID: refundID, originalID: originalID) }
             um.setActionName(String(localized: "Verknüpfung aufheben"))
         }
-        refundLinksChanged([refundID, original])
+        refundLinksChanged([refundID, originalID])
     }
 
-    /// The loaded rows show the new marker at once; sums, analysis and open link views read again.
+    /// Removes every link of the refund `refundID` (context menu of a refund), as one undo step.
+    func unlinkRefundOriginals(refundID: Int64) {
+        guard let vault, let originals = try? vault.refundLinks(transactionId: refundID).originals else { return }
+        windowUndoManager?.beginUndoGrouping()
+        for original in originals { unlinkRefund(refundID: refundID, originalID: original.id) }
+        windowUndoManager?.endUndoGrouping()
+    }
+
     private func refundLinksChanged(_ ids: [Int64]) {
         guard let vault else { return }
         for id in Set(ids) {
             guard let links = try? vault.refundLinks(transactionId: id) else { continue }
-            let kind: RefundLinkKind = links.original != nil ? .refund : (links.refunds.isEmpty ? .none : .original)
+            let kind: RefundLinkKind = !links.originals.isEmpty ? .refund : (links.refunds.isEmpty ? .none : .original)
             patchLoadedRows([id]) { $0.refundLink = kind }
             if refundPickerBooking?.id == id { refundPickerBooking?.refundLink = kind }
         }

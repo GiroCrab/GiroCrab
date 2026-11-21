@@ -26,11 +26,11 @@ struct RefundLinkMenu: View {
 
     var body: some View {
         if booking.amountCents > 0 {
-            Button(booking.refundLink == .refund ? "Ursprüngliche Buchung ändern …" : "Ursprüngliche Buchung zuordnen …",
+            Button(booking.refundLink == .refund ? "Ursprüngliche Buchungen bearbeiten …" : "Ursprüngliche Buchung zuordnen …",
                    systemImage: "arrow.uturn.backward") { model.openRefundPicker(for: booking) }
             if booking.refundLink == .refund {
                 Button("Verknüpfung zur ursprünglichen Buchung aufheben", systemImage: "xmark") {
-                    model.unlinkRefund(refundID: booking.id)
+                    model.unlinkRefundOriginals(refundID: booking.id)
                 }
             }
         } else if booking.amountCents < 0 {
@@ -79,14 +79,28 @@ private struct RefundBookingLine: View {
     }
 }
 
-/// "Refunded so far" of an original, only when every refund has the original's currency
-/// (amounts of different currencies are never summed, #569).
-private enum RefundSum {
-    static func text(originalCents: Int64, currency: String, refunds: [RefundBooking]) -> String? {
-        let code = { (c: String) in c.isEmpty ? "EUR" : c.uppercased() }
-        guard !refunds.isEmpty, refunds.allSatisfy({ code($0.currency) == code(currency) }) else { return nil }
-        let sum = refunds.reduce(Int64(0)) { $0 + $1.amountCents }
-        return String(localized: "Erstattet: \(Money.format(sum, currency: code(currency))) von \(Money.format(abs(originalCents), currency: code(currency)))")
+/// What the links of a booking add up to, from the core's figures (`RefundLinks`): an original
+/// is never refunded beyond its amount and a refund counts once, so a refund that is larger than
+/// its booking leaves a rest for further bookings. Nothing when currencies differ (#569).
+enum RefundSum {
+    static func lines(booking: Booking, links: RefundLinks) -> [String] {
+        let currency = booking.currency.isEmpty ? "EUR" : booking.currency.uppercased()
+        let money = { (cents: Int64) in Money.format(cents, currency: currency) }
+        var out: [String] = []
+        if let refunded = links.refundedCents {
+            out.append(String(localized: "Erstattet: \(money(refunded)) von \(money(abs(booking.amountCents)))"))
+            let total = links.refunds.reduce(Int64(0)) { $0 + $1.amountCents }
+            if total > refunded {
+                out.append(String(localized: "Die Erstattungen betragen zusammen \(money(total)). Was über diese Buchung hinausgeht, zählt hier nicht und kann weiteren Buchungen zugeordnet werden."))
+            }
+        }
+        if let assigned = links.assignedCents {
+            out.append(String(localized: "Zugeordnet: \(money(assigned)) von \(money(booking.amountCents))"))
+            if assigned < booking.amountCents {
+                out.append(String(localized: "Noch offen: \(money(booking.amountCents - assigned)). Sie können weitere Buchungen zuordnen."))
+            }
+        }
+        return out
     }
 }
 
@@ -94,12 +108,12 @@ private enum RefundSum {
 /// top, then up to three suggestions of the core (same amount, same merchant within two months,
 /// same reference), below them the searchable list of the other bookings (other direction, all
 /// accounts; without a search term twelve months). A click links or unlinks at once; the sheet stays open so
-/// that an original can take several partial refunds. Layout and rules: `docs/ERSTATTUNGEN_UI.md`.
+/// that an original can take several partial refunds and a refund several originals. Layout and rules: `docs/ERSTATTUNGEN_UI.md`.
 struct RefundPickerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let booking: Booking
-    @State private var linked: [RefundBooking] = []
+    @State private var links: RefundLinks?
     @State private var candidates: [RefundBooking] = []
     @State private var top: [RefundSuggestion] = []
     @State private var loaded = false
@@ -108,8 +122,9 @@ struct RefundPickerSheet: View {
     /// Counts the loads: only the newest one may show its result.
     @State private var loads = 0
 
-    /// The sheet was opened from a refund: one original is chosen. Otherwise refunds are collected.
+    /// The sheet was opened from a refund: its originals are chosen. Otherwise refunds are collected.
     private var fromRefund: Bool { booking.amountCents > 0 }
+    private var linked: [RefundBooking] { (fromRefund ? links?.originals : links?.refunds) ?? [] }
     private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The list below the suggestions; a search shows every hit, also a suggested one.
     private var others: [RefundBooking] {
@@ -144,7 +159,7 @@ struct RefundPickerSheet: View {
                     AmountLabel(cents: booking.amountCents, currency: booking.currency).fixedSize()
                 }
                 Text(fromRefund
-                     ? "Wählen Sie die Buchung, die mit dieser Erstattung zurückgezahlt wurde. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere."
+                     ? "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere."
                      : "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Zur Auswahl stehen Eingänge aller Konten aus den zwölf Monaten danach, mit der Suche auch spätere.")
                     .appFont(.callout)
                     .foregroundStyle(Theme.secondary)
@@ -171,7 +186,7 @@ struct RefundPickerSheet: View {
                         } description: {
                             Text(fromRefund
                                  ? "In den zwölf Monaten vor dieser Erstattung gibt es keine Ausgabe."
-                                 : "In den zwölf Monaten nach dieser Buchung gibt es keinen Eingang, der noch keiner anderen Buchung zugeordnet ist.")
+                                 : "In den zwölf Monaten nach dieser Buchung gibt es keinen Eingang.")
                         }
                     } else {
                         ContentUnavailableView.search
@@ -196,9 +211,11 @@ struct RefundPickerSheet: View {
                     ForEach(linked, id: \.id) { row($0, isLinked: true) }
                 } header: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(fromRefund ? "Verknüpfte ursprüngliche Buchung" : "Verknüpfte Erstattungen (\(linked.count))")
-                        if !fromRefund, let sum = RefundSum.text(originalCents: booking.amountCents, currency: booking.currency, refunds: linked) {
-                            Text(sum).sensitive(.amounts)
+                        Text(fromRefund ? "Verknüpfte ursprüngliche Buchungen (\(linked.count))" : "Verknüpfte Erstattungen (\(linked.count))")
+                        if let links {
+                            ForEach(RefundSum.lines(booking: booking, links: links), id: \.self) {
+                                Text($0).sensitive(.amounts).fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                 }
@@ -228,34 +245,38 @@ struct RefundPickerSheet: View {
         }
     }
 
+    /// The whole row is one button, the circle in front included.
     private func row(_ r: RefundBooking, isLinked: Bool, reason: RefundMatch? = nil) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: isLinked ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(isLinked ? Theme.accent : Theme.tertiary)
-                .accessibilityHidden(true)
-            RefundBookingLine(row: r, showsPurpose: true)
-            if let reason {
-                Text(Self.label(reason))
-                    .appFont(.caption2, weight: .medium)
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Theme.accent.opacity(0.12), in: Capsule())
-                    .fixedSize()
+        Button { toggle(r, isLinked: isLinked) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isLinked ? "checkmark.circle.fill" : "circle")
+                    .appFont(.title3)
+                    .foregroundStyle(isLinked ? Theme.accent : Theme.tertiary)
+                    .accessibilityHidden(true)
+                RefundBookingLine(row: r, showsPurpose: true)
+                if let reason {
+                    Text(Self.label(reason))
+                        .appFont(.caption2, weight: .medium)
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Theme.accent.opacity(0.12), in: Capsule())
+                        .fixedSize()
+                }
             }
-            Button(isLinked ? "Aufheben" : "Zuordnen") { toggle(r, isLinked: isLinked) }
-                .buttonStyle(.borderless)
-                .help(isLinked ? "Verknüpfung aufheben" : (fromRefund && !linked.isEmpty ? "Statt der bisherigen Buchung zuordnen" : "Mit dieser Buchung verknüpfen"))
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { toggle(r, isLinked: isLinked) }
+        .buttonStyle(.plain)
+        .help(isLinked ? "Verknüpfung aufheben" : "Mit dieser Buchung verknüpfen")
+        .accessibilityAddTraits(isLinked ? .isSelected : [])
     }
 
     private func toggle(_ r: RefundBooking, isLinked: Bool) {
         let refundID = fromRefund ? booking.id : r.id
+        let originalID = fromRefund ? r.id : booking.id
         if isLinked {
-            model.unlinkRefund(refundID: refundID)
+            model.unlinkRefund(refundID: refundID, originalID: originalID)
         } else {
-            model.linkRefund(refundID: refundID, originalID: fromRefund ? r.id : booking.id)
+            model.linkRefund(refundID: refundID, originalID: originalID)
         }
     }
 
@@ -264,15 +285,17 @@ struct RefundPickerSheet: View {
         let run = loads
         let id = booking.id
         let query = search
-        let refund = fromRefund
         do {
-            let result = try await model.vaultOffMain { vault -> ([RefundBooking], [RefundSuggestion], [RefundBooking]) in
-                let links = try vault.refundLinks(transactionId: id)
-                let linked = refund ? (links.original.map { [$0] } ?? []) : links.refunds
-                return (linked, try vault.refundSuggestions(transactionId: id), try vault.refundCandidates(transactionId: id, query: query, limit: 200))
+            let result = try await model.vaultOffMain { vault -> (RefundLinks, [RefundSuggestion], [RefundBooking]) in
+                (try vault.refundLinks(transactionId: id), try vault.refundSuggestions(transactionId: id),
+                 try vault.refundCandidates(transactionId: id, query: query, limit: 200))
             }
             guard run == loads, let result else { return }
-            (linked, top, candidates) = result
+            links = result.0
+            // a linked booking is shown on top only
+            let linkedIDs = Set(linked.map(\.id))
+            top = result.1.filter { !linkedIDs.contains($0.booking.id) }
+            candidates = result.2
             loadError = nil
         } catch {
             guard run == loads else { return }
@@ -282,7 +305,7 @@ struct RefundPickerSheet: View {
     }
 }
 
-/// Inspector card of a linked booking (#714): a refund shows its original, an original its
+/// Inspector card of a linked booking (#714): a refund shows its originals, an original its
 /// refunds. A click on a line selects that booking in the list; ✕ removes the link.
 struct RefundLinksCard: View {
     @Environment(AppModel.self) private var model
@@ -295,23 +318,27 @@ struct RefundLinksCard: View {
                 Label("Erstattung", systemImage: "arrow.uturn.backward")
                     .appFont(.subheadline, weight: .semibold).foregroundStyle(Theme.text)
                 Spacer()
-                Button(booking.amountCents > 0 ? "Ändern …" : "Bearbeiten …") { model.openRefundPicker(for: booking) }
+                Button("Bearbeiten …") { model.openRefundPicker(for: booking) }
                     .buttonStyle(.borderless)
                     .appFont(.caption)
             }
-            if let original = links?.original {
-                Text("Ursprüngliche Buchung").appFont(.caption).foregroundStyle(Theme.secondary)
-                line(original, refundID: booking.id)
+            if let originals = links?.originals, !originals.isEmpty {
+                Text(originals.count == 1 ? "Ursprüngliche Buchung" : "Ursprüngliche Buchungen (\(originals.count))")
+                    .appFont(.caption).foregroundStyle(Theme.secondary)
+                ForEach(originals, id: \.id) { line($0, refundID: booking.id, originalID: $0.id) }
             }
             if let refunds = links?.refunds, !refunds.isEmpty {
                 Text(refunds.count == 1 ? "Erstattung dieser Buchung" : "Erstattungen dieser Buchung (\(refunds.count))")
                     .appFont(.caption).foregroundStyle(Theme.secondary)
-                ForEach(refunds, id: \.id) { line($0, refundID: $0.id) }
-                if let sum = RefundSum.text(originalCents: booking.amountCents, currency: booking.currency, refunds: refunds) {
-                    Text(sum)
+                ForEach(refunds, id: \.id) { line($0, refundID: $0.id, originalID: booking.id) }
+            }
+            if let links {
+                ForEach(RefundSum.lines(booking: booking, links: links), id: \.self) {
+                    Text($0)
                         .sensitive(.amounts)
                         .appFont(.caption)
                         .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -326,7 +353,7 @@ struct RefundLinksCard: View {
         }
     }
 
-    private func line(_ r: RefundBooking, refundID: Int64) -> some View {
+    private func line(_ r: RefundBooking, refundID: Int64, originalID: Int64) -> some View {
         HStack(spacing: 6) {
             Button { model.revealBooking(r.id) } label: {
                 HStack(spacing: 6) {
@@ -339,7 +366,7 @@ struct RefundLinksCard: View {
             }
             .buttonStyle(.plain)
             .help("Diese Buchung in der Liste anzeigen")
-            Button { model.unlinkRefund(refundID: refundID) } label: {
+            Button { model.unlinkRefund(refundID: refundID, originalID: originalID) } label: {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.tertiary)
             }
             .buttonStyle(.borderless)
