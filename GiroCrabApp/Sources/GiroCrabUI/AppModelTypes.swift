@@ -779,6 +779,30 @@ enum TagEntryIntent: Equatable {
 enum KeyAdoptionState: Equatable {
     case idle, working, done
     case failed(String)
+    /// No vault where this device looked (#1503): the sheet names the place and
+    /// offers „Ordner wählen …“, since a Mac without the app's iCloud container
+    /// syncs via the folder „GiroCrab“ in iCloud Drive.
+    case notFound(String)
+
+    /// Why nothing was found where the device looked; the sheet shows the place
+    /// itself (`CloudSyncManager.folderName`, redacted like in Settings).
+    static func notFoundMessage(location: CloudSyncManager.Location) -> String {
+        if location == .container {
+            return String(localized: "Im iCloud-Speicher der App liegt noch kein Tresor. Synchronisiert Ihr anderes Gerät (etwa die Mac-App) über den Ordner „GiroCrab“ in iCloud Drive, wählen Sie diesen Ordner aus. Sonst aktivieren Sie iCloud Sync auf dem anderen Gerät, warten auf den ersten Upload und versuchen es erneut.")
+        }
+        return String(localized: "Im gewählten Ordner liegt noch kein Tresor. Wählen Sie den Ordner, den Ihr anderes Gerät nutzt, oder aktivieren Sie dort iCloud Sync, warten auf den ersten Upload und versuchen es erneut.")
+    }
+
+    /// The picked folder holds no vault (#1503); nothing is created there.
+    static func pickedFolderMessage(_ picked: ICloudFolderMigration.PickedFolder) -> String? {
+        switch picked {
+        case .found: return nil
+        case .subfolder(let name):
+            return String(localized: "Der gewählte Ordner enthält einen Unterordner „\(name)“ mit Ihrem Tresor. Wählen Sie bitte genau diesen Unterordner aus.")
+        case .empty:
+            return String(localized: "Der gewählte Ordner enthält keinen GiroCrab-Tresor. Wählen Sie den Ordner, den Ihr anderes Gerät nutzt (meist „GiroCrab“ in iCloud Drive).")
+        }
+    }
 }
 
 /// What the tag sheet changed but has not stored yet (#228): names, colours,

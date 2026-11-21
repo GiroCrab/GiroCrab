@@ -10360,6 +10360,28 @@
         }
       }
     },
+    "Der gewählte Ordner enthält einen Unterordner „%@“ mit Ihrem Tresor. Wählen Sie bitte genau diesen Unterordner aus." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The folder you chose contains a subfolder “%@” with your vault. Please pick exactly that subfolder."
+          }
+        }
+      }
+    },
+    "Der gewählte Ordner enthält keinen GiroCrab-Tresor. Wählen Sie den Ordner, den Ihr anderes Gerät nutzt (meist „GiroCrab“ in iCloud Drive)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The folder you chose contains no GiroCrab vault. Choose the folder your other device uses (usually “GiroCrab” in iCloud Drive)."
+          }
+        }
+      }
+    },
     "Der gewählte Ordner enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15075,6 +15097,17 @@
         }
       }
     },
+    "Gesucht in" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Searched in"
+          }
+        }
+      }
+    },
     "Gesundheit" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16844,6 +16877,17 @@
         }
       }
     },
+    "Im gewählten Ordner liegt noch kein Tresor. Wählen Sie den Ordner, den Ihr anderes Gerät nutzt, oder aktivieren Sie dort iCloud Sync, warten auf den ersten Upload und versuchen es erneut." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is no vault in the chosen folder yet. Choose the folder your other device uses, or turn on iCloud Sync there, wait for the first upload and try again."
+          }
+        }
+      }
+    },
     "Im gewählten Zeitraum und Filter gibt es nichts zu drucken." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16862,6 +16906,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "There are no stored activities for the selected period and filter. This is no proof that none took place."
+          }
+        }
+      }
+    },
+    "Im iCloud-Speicher der App liegt noch kein Tresor. Synchronisiert Ihr anderes Gerät (etwa die Mac-App) über den Ordner „GiroCrab“ in iCloud Drive, wählen Sie diesen Ordner aus. Sonst aktivieren Sie iCloud Sync auf dem anderen Gerät, warten auf den ersten Upload und versuchen es erneut." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is no vault in the app’s iCloud storage yet. If your other device (such as the Mac app) syncs via the folder “GiroCrab” in iCloud Drive, choose that folder. Otherwise turn on iCloud Sync on the other device, wait for the first upload and try again."
           }
         }
       }
