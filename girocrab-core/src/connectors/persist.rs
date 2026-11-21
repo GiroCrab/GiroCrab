@@ -2550,7 +2550,8 @@ fn adopt_past_deleted_twin(
 
 /// Links an unconnected stored account to `connection_id` when it matches the
 /// remote one by account number / IBAN (ignoring spaces and leading zeros) or is
-/// the single unlinked depot of the same bank. Sets `connection_id`, `external_ref`, `kind`.
+/// the single unlinked depot of the same bank. Sets `connection_id`, `external_ref`, `kind`
+/// (a stored Festgeld stays one when the bank reports Savings, #1002).
 fn adopt_unlinked(
     tx: &rusqlite::Connection,
     connection_id: i64,
@@ -2608,7 +2609,11 @@ fn adopt_unlinked(
             return Ok(found);
         }
         tx.execute(
-            "UPDATE accounts SET connection_id = ?1, external_ref = ?2, kind = ?3 WHERE id = ?4",
+            // a stored Festgeld stays one when the bank reports Savings (#1002),
+            // like in the update of linked accounts in `store_fetch`
+            "UPDATE accounts SET connection_id = ?1, external_ref = ?2,
+                    kind = CASE WHEN ?3 = 'savings' AND kind = 'time_deposit' THEN kind ELSE ?3 END
+             WHERE id = ?4",
             params![connection_id, acc.external_ref, acc.kind.as_str(), id],
         )?;
     }

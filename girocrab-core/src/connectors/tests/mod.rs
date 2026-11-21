@@ -944,6 +944,80 @@ fn stored_time_deposit_is_not_turned_back_into_savings() {
     std::fs::remove_file(path).ok();
 }
 
+/// #1002: an unlinked Festgeld that a Savings fetch adopts by IBAN is linked,
+/// but keeps its kind, symbol and group.
+#[test]
+fn unlinked_time_deposit_adopted_by_savings_fetch_keeps_kind() {
+    let (v, path) = demo_vault();
+    let iban = "DE02120300000000202051";
+    let id = v
+        .create_offline_account("Festgeld".into(), AccountKind::TimeDeposit, "EUR".into(), 0)
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET iban = ?1 WHERE id = ?2",
+            rusqlite::params![iban, id],
+        )
+        .unwrap();
+    let state = || -> (Option<i64>, String, Option<String>, Option<i64>) {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT connection_id, kind, sf_symbol, group_id FROM accounts WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+    };
+    let (linked, kind, symbol, group) = state();
+    assert_eq!(linked, None);
+    assert_eq!(kind, "time_deposit");
+
+    let conn = v
+        .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "Bank".into())
+        .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::EnableBanking,
+        conn,
+        FetchResult {
+            accounts: vec![RemoteAccount {
+                external_ref: "FG-1".into(),
+                name: "Festgeld".into(),
+                owner: String::new(),
+                iban: iban.into(),
+                account_number: String::new(),
+                currency: "EUR".into(),
+                kind: AccountKind::Savings,
+                balance_cents: 0,
+                balance_date: "2026-11-11".into(),
+            }],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let live: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE iban = ?1 AND deleted_ms IS NULL",
+            [iban],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        live, 1,
+        "the stored account is adopted, no second one created"
+    );
+    assert_eq!(
+        state(),
+        (Some(conn), "time_deposit".to_string(), symbol, group)
+    );
+    std::fs::remove_file(path).ok();
+}
+
 #[test]
 fn complete_account_list_marks_the_missing_ones() {
     let (v, path) = demo_vault();
