@@ -4204,7 +4204,11 @@ fn a_known_card_with_an_iban_wins_over_a_reactivated_one_without() {
         "UPDATE accounts SET external_ref = 'moneymoney-db:32:bbbb' WHERE external_ref = 'visa:1';",
     )
     .unwrap();
-    forget_archive_unknown(&db, old).unwrap();
+    db.execute(
+        "UPDATE accounts SET archive_unknown = 0 WHERE id = ?1",
+        [old],
+    )
+    .unwrap();
     db.execute("UPDATE accounts SET currency = 'USD' WHERE id = ?1", [old])
         .unwrap();
     assert_eq!(adopt(), Some(active));
@@ -4465,6 +4469,53 @@ fn a_noted_account_taken_over_by_iban_takes_its_sources_state() {
     );
     assert!(archived_unix(&v, giro).is_some());
     assert!(archive_unknown(&v.db().unwrap()).unwrap().is_empty());
+}
+
+#[test]
+fn a_device_that_gets_a_repaired_account_by_sync_takes_its_sources_state() {
+    // #1591: the repair ran on A only, B gets the account through the vault merge with its mark;
+    // B's import gives it MoneyMoney's state, and the merge carries that back to A (found open:
+    // same stamp as the repair, the known state wins)
+    for closed in [true, false] {
+        let (a, b) = (vault(), vault());
+        import_with(&a, &fake_db(), |_| {});
+        let giro_of = |v: &Vault| -> i64 {
+            v.db()
+                .unwrap()
+                .query_row(
+                    "SELECT id FROM accounts WHERE external_ref LIKE 'moneymoney-db:1:%'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let giro = giro_of(&a);
+        // what step 37 leaves
+        a.db()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET archived_ms = 1790001000124, archive_unknown = 1 WHERE id = ?1",
+                [giro],
+            )
+            .unwrap();
+        b.merge_other_vault(a.file_path(), vec![7u8; 32]).unwrap();
+        let giro_b = giro_of(&b);
+        assert_eq!(archive_unknown(&b.db().unwrap()).unwrap(), vec![giro_b]);
+        let extra = if closed {
+            "UPDATE accounts SET refresh = 16 WHERE rowid = 1;"
+        } else {
+            ""
+        };
+        import_with(&b, &fake_db_with(false, extra), |_| {});
+        a.merge_other_vault(b.file_path(), vec![7u8; 32]).unwrap();
+        for (v, id) in [(&a, giro), (&b, giro_b)] {
+            assert_eq!(archived_unix(v, id).is_some(), closed, "closed: {closed}");
+            assert!(
+                archive_unknown(&v.db().unwrap()).unwrap().is_empty(),
+                "closed: {closed}"
+            );
+        }
+    }
 }
 
 #[test]

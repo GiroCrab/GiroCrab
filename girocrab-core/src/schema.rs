@@ -55,7 +55,8 @@
 //! - 36: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
 //!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
 //! - 37: repair (#998): accounts the MoneyMoney import archived because their last refresh there
-//!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]).
+//!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]), marked
+//!   in `accounts.archive_unknown` until an import or the user settles their state.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -154,25 +155,27 @@ pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
 /// The reactivation is stamped one millisecond after that wrong archive: the merge carries it to
 /// devices that still hold the archive, an edit made after it (on any device) still wins, and two
 /// devices that repair the same account stamp it alike, so neither takes the other's. Some of these
-/// accounts are closed in MoneyMoney after all, which the vault cannot tell: they are noted
-/// ([`moneymoney_db::ARCHIVE_UNKNOWN_KEY`]) so the next import gives them MoneyMoney's state.
-///
-/// [`moneymoney_db::ARCHIVE_UNKNOWN_KEY`]: crate::importers::moneymoney_db::ARCHIVE_UNKNOWN_KEY
+/// accounts are closed in MoneyMoney after all, which the vault cannot tell: `archive_unknown`
+/// marks them, so the next import gives them MoneyMoney's state. The mark is part of the archive
+/// state: it syncs with it (a device that gets such an account by merge gets the mark, #1591),
+/// and any later archive choice ends it.
 fn unarchive_cancelled_refreshes(conn: &Connection) -> CoreResult<()> {
-    let ids: Vec<i64> = conn
-        .prepare(
-            "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1
-              WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?1
-                AND deleted_ms IS NULL
-                AND (external_ref LIKE 'moneymoney-db:%'
-                     OR EXISTS (SELECT 1 FROM transactions t
-                                 WHERE t.account_id = accounts.id AND t.external_id LIKE 'mm-%'
-                                   AND t.external_id NOT LIKE 'mm-switch-%'))
-              RETURNING id",
-        )?
-        .query_map([ARCHIVE_STAMP_GAP_MS], |r| r.get(0))?
-        .collect::<Result<_, _>>()?;
-    crate::importers::moneymoney_db::note_archive_unknown(conn, &ids)
+    if !has_column(conn, "main", "accounts", "archive_unknown")? {
+        conn.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN archive_unknown INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    conn.execute(
+        "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1, archive_unknown = 1
+          WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?1
+            AND deleted_ms IS NULL
+            AND (external_ref LIKE 'moneymoney-db:%'
+                 OR EXISTS (SELECT 1 FROM transactions t
+                             WHERE t.account_id = accounts.id AND t.external_id LIKE 'mm-%'
+                               AND t.external_id NOT LIKE 'mm-switch-%'))",
+        [ARCHIVE_STAMP_GAP_MS],
+    )?;
+    Ok(())
 }
 
 /// Step 31: `booking_documents.seen_at` (NULL = unread). The documents a vault has already count
@@ -1132,8 +1135,7 @@ mod tests {
     /// without imported bookings stay as they are.
     #[test]
     fn accounts_archived_for_a_cancelled_refresh_are_reactivated() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate(&mut conn).unwrap();
+        let mut conn = schema_at(36);
         conn.execute_batch(
             "INSERT INTO account_groups(name,sf_symbol,sort_order) VALUES ('Konten','building.columns',1);
              INSERT INTO accounts(group_id,external_ref,name,archived_unix,archived_ms,deleted_ms) VALUES
@@ -1147,8 +1149,7 @@ mod tests {
              INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
                  SELECT id, 'mm-abc-1', '2026-01-01', -5 FROM accounts WHERE name = 'Übernommen';
              INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
-                 SELECT id, 'mm-switch-pending-hold-1', '2026-01-01', -5 FROM accounts WHERE name = 'Umgestellt';
-             PRAGMA user_version = 36;",
+                 SELECT id, 'mm-switch-pending-hold-1', '2026-01-01', -5 FROM accounts WHERE name = 'Umgestellt';",
         )
         .unwrap();
         migrate(&mut conn).unwrap();
@@ -1180,9 +1181,10 @@ mod tests {
         // taken over by a fetch: the import's reference is gone, its bookings show it
         let (adopted, archived, _) = row("Übernommen");
         assert_eq!(archived, None);
-        let mut noted = crate::importers::moneymoney_db::archive_unknown(&conn).unwrap();
-        noted.sort_unstable();
-        assert_eq!(noted, vec![giro, adopted]);
+        assert_eq!(
+            crate::importers::moneymoney_db::archive_unknown(&conn).unwrap(),
+            vec![giro, adopted]
+        );
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

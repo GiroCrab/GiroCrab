@@ -72,46 +72,27 @@ const EXT_PREFIX: &str = "moneymoney-db:";
 /// (found with a real database: ticking and unticking the checkbox flips only it).
 const MM_CLOSED: i64 = 16;
 
-/// Vault setting (this device only, not merged): ids of imported accounts whose
-/// archive state nobody chose, so the next import gives them MoneyMoney's. The
-/// #998 repair (schema step 37) reactivates accounts the import of v0.8.5
-/// archived wrongly, and some of them are closed in MoneyMoney after all. Until
-/// then a sync's takeover prefers the other accounts (#816).
-pub(crate) const ARCHIVE_UNKNOWN_KEY: &str = "moneymoney_db.archive_unknown";
-
-/// The accounts in [`ARCHIVE_UNKNOWN_KEY`].
+/// Imported accounts whose archive state nobody chose (`accounts.archive_unknown`, ordered by
+/// id): the next import gives them MoneyMoney's. The #998 repair (schema step 37) reactivates
+/// accounts the import of v0.8.5 archived wrongly, and some of them are closed in MoneyMoney
+/// after all. Until then a sync's takeover prefers the other accounts (#816). The mark belongs
+/// to the archive state: the vault merge carries it with `archived_ms`, and every archive
+/// choice ends it ([`crate::user_groups::set_archived_inner`]).
 pub(crate) fn archive_unknown(conn: &Connection) -> CoreResult<Vec<i64>> {
-    Ok(Vault::setting_inner(conn, ARCHIVE_UNKNOWN_KEY)?
-        .unwrap_or_default()
-        .split(',')
-        .filter_map(|id| id.trim().parse().ok())
-        .collect())
+    Ok(conn
+        .prepare("SELECT id FROM accounts WHERE archive_unknown != 0 ORDER BY id")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?)
 }
 
-/// Stores [`ARCHIVE_UNKNOWN_KEY`] (none left: the setting goes).
-fn store_archive_unknown(conn: &Connection, ids: &[i64]) -> CoreResult<()> {
-    let value = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-    Vault::set_setting_inner(conn, ARCHIVE_UNKNOWN_KEY, &value)
-}
-
-/// Adds `ids` to [`ARCHIVE_UNKNOWN_KEY`].
+/// Marks `ids` as step 37 does (tests set the state up with it).
+#[cfg(test)]
 pub(crate) fn note_archive_unknown(conn: &Connection, ids: &[i64]) -> CoreResult<()> {
-    let mut all = archive_unknown(conn)?;
     for id in ids {
-        if !all.contains(id) {
-            all.push(*id);
-        }
-    }
-    store_archive_unknown(conn, &all)
-}
-
-/// Takes `id` out of [`ARCHIVE_UNKNOWN_KEY`]: the user chose its state (#890).
-pub(crate) fn forget_archive_unknown(conn: &Connection, id: i64) -> CoreResult<()> {
-    let mut ids = archive_unknown(conn)?;
-    let before = ids.len();
-    ids.retain(|x| *x != id);
-    if ids.len() != before {
-        store_archive_unknown(conn, &ids)?;
+        conn.execute(
+            "UPDATE accounts SET archive_unknown = 1 WHERE id = ?1",
+            [id],
+        )?;
     }
     Ok(())
 }
@@ -3085,21 +3066,16 @@ fn import(
         cat_cache: HashMap::new(),
         res: MoneyMoneyDbImportResult::default(),
         to_link: Vec::new(),
-        archive_unknown: archive_unknown(conn)?,
         created_groups: Vec::new(),
     };
     if options.import_categories {
         cx.import_categories()?;
     }
-    let unknown_before = cx.archive_unknown.len();
     for (choice, a, r) in plan {
         cx.report.state.account_index += 1;
         cx.report.state.account_name = src.account_name(a);
         cx.report.emit()?;
         cx.import_account(choice, a, &r)?;
-    }
-    if cx.archive_unknown.len() != unknown_before {
-        store_archive_unknown(conn, &cx.archive_unknown)?;
     }
     cx.order_created_groups()?;
 
@@ -3132,8 +3108,6 @@ struct ImportCtx<'a> {
     /// (account id, MoneyMoney bank rowid, closed there) of the importer's own
     /// accounts, linked to the bank's login once the connections exist
     to_link: Vec<(i64, i64, bool)>,
-    /// [`ARCHIVE_UNKNOWN_KEY`], stored again after the accounts
-    archive_unknown: Vec<i64>,
     /// (MoneyMoney group rowid, uuid) of the groups this import creates
     created_groups: Vec<(i64, String)>,
 }
@@ -3271,18 +3245,15 @@ impl ImportCtx<'_> {
             } else {
                 ""
             };
-            let (own, wrongly_archived): (bool, bool) = conn.query_row(
+            let (own, wrongly_archived, unknown): (bool, bool, bool) = conn.query_row(
                 "SELECT external_ref = ?2 OR (?3 <> '' AND upper(replace(IFNULL(iban, ''), ' ', '')) = ?3),
-                        archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?4
+                        archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?4,
+                        archive_unknown != 0
                    FROM accounts WHERE id = ?1",
                 params![id, ext, iban_source, crate::schema::ARCHIVE_STAMP_GAP_MS],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
-            let before = self.archive_unknown.len();
-            if own {
-                self.archive_unknown.retain(|x| *x != id);
-            }
-            let unknown = self.archive_unknown.len() != before;
+            let unknown = own && unknown;
             if a.closed && (revived || unknown) {
                 archive_closed(conn, id)?;
             } else if own && wrongly_archived && !a.closed {
@@ -3290,7 +3261,16 @@ impl ImportCtx<'_> {
                 // without imported bookings, so step 37 could not tell: its own
                 // MoneyMoney account says it is in use (stamped like step 37)
                 conn.execute(
-                    "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1 WHERE id = ?1",
+                    "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1, archive_unknown = 0
+                      WHERE id = ?1",
+                    [id],
+                )?;
+            } else if unknown {
+                // in use according to its own MoneyMoney account: known from now on. The stamp
+                // stays, so a choice made since on another device still wins; with equal stamps
+                // the merge takes the known state
+                conn.execute(
+                    "UPDATE accounts SET archive_unknown = 0 WHERE id = ?1",
                     [id],
                 )?;
             }

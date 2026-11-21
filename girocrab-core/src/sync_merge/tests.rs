@@ -3713,30 +3713,33 @@ fn loan_links_skip_deleted_bookings_and_match_by_key() {
     }
 }
 
-/// #998: the repair noted an imported account on A (state unknown). The user then decides on B;
-/// once A takes that newer choice over, A's next import must not give the account
-/// MoneyMoney's state again. Without a newer choice the note stays.
+/// #1591: the #998 mark "state unknown" goes with the archive state. A device that gets a
+/// repaired account by merge gets the mark too (its next import gives the account MoneyMoney's
+/// state); a choice made there later ends the mark on every device.
 #[test]
-fn a_newer_archive_choice_from_another_device_ends_the_repair_note() {
-    use crate::importers::moneymoney_db::{archive_unknown, note_archive_unknown};
+fn the_repair_mark_travels_with_the_archive_state() {
+    use crate::importers::moneymoney_db::archive_unknown;
     let dir = temp_dir("archive-note");
     let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    // what step 37 leaves on A: active, stamped just after the import's archive, marked;
+    // B has never seen the account
+    exec(
+        &a,
+        "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+         INSERT INTO accounts(id, group_id, external_ref, name, archived_ms, archive_unknown)
+             VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124, 1);",
+    );
+    fill_missing_uuids(&a.db().unwrap()).unwrap();
+    both_ways(&a, &b);
+    let karte = n(&b, "SELECT id FROM accounts WHERE name = 'Karte'");
+    assert_eq!(archive_unknown(&b.db().unwrap()).unwrap(), vec![karte]);
+    // archived and reactivated on B: stays active, A's mark ends too
+    b.set_account_archived(karte, true).unwrap();
+    b.set_account_archived(karte, false).unwrap();
+    both_ways(&a, &b);
     for v in [&a, &b] {
-        exec(
-            v,
-            "INSERT INTO account_groups(id, name) VALUES (1, 'G');
-             INSERT INTO accounts(id, group_id, external_ref, name) VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte');",
-        );
-        fill_missing_uuids(&v.db().unwrap()).unwrap();
+        assert!(archive_unknown(&v.db().unwrap()).unwrap().is_empty());
     }
-    note_archive_unknown(&a.db().unwrap(), &[1]).unwrap();
-    both_ways(&a, &b);
-    assert_eq!(archive_unknown(&a.db().unwrap()).unwrap(), vec![1]);
-    // archived and reactivated on B: stays active, A forgets the note
-    b.set_account_archived(1, true).unwrap();
-    b.set_account_archived(1, false).unwrap();
-    both_ways(&a, &b);
-    assert!(archive_unknown(&a.db().unwrap()).unwrap().is_empty());
     assert_eq!(
         n(
             &a,
@@ -3747,29 +3750,28 @@ fn a_newer_archive_choice_from_another_device_ends_the_repair_note() {
 }
 
 /// #998: step 37 stamps its reactivation one millisecond after the wrong archive, so two devices
-/// that repaired the same account carry the same stamp and keep their notes, while a choice made
+/// that repaired the same account carry the same stamp and keep their marks, while a choice made
 /// later on another device still wins over the repair.
 #[test]
 fn repairs_of_one_account_agree_and_a_later_choice_wins() {
-    use crate::importers::moneymoney_db::{archive_unknown, note_archive_unknown};
+    use crate::importers::moneymoney_db::archive_unknown;
     let dir = temp_dir("archive-repair");
     let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
     for v in [&a, &b] {
-        // what step 37 leaves: active, stamped just after the import's archive
+        // what step 37 leaves: active, stamped just after the import's archive, marked
         exec(
             v,
             "INSERT INTO account_groups(id, name) VALUES (1, 'G');
-             INSERT INTO accounts(id, group_id, external_ref, name, archived_ms)
-                 VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124);",
+             INSERT INTO accounts(id, group_id, external_ref, name, archived_ms, archive_unknown)
+                 VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124, 1);",
         );
         fill_missing_uuids(&v.db().unwrap()).unwrap();
-        note_archive_unknown(&v.db().unwrap(), &[1]).unwrap();
     }
     both_ways(&a, &b);
     for v in [&a, &b] {
         assert_eq!(archive_unknown(&v.db().unwrap()).unwrap(), vec![1]);
     }
-    // archived on B later: A takes it over and forgets its note
+    // archived on B later: A takes it over, mark included
     b.set_account_archived(1, true).unwrap();
     both_ways(&a, &b);
     assert!(archive_unknown(&a.db().unwrap()).unwrap().is_empty());

@@ -577,27 +577,27 @@ pub(crate) fn merge_attached(
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
         (Option<i64>, i64, String, i64, String, i64),
-        (bool, i64, Option<String>, i64),
+        (bool, i64, Option<String>, i64, bool),
     )> = tx
         .prepare(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
                     archived_unix, archived_ms, sf_symbol, symbol_ms, note, note_ms,
-                    include_in_total != 0, total_ms, bank_label, bank_label_ms
+                    include_in_total != 0, total_ms, bank_label, bank_label_ms, archive_unknown != 0
              FROM other.accounts",
         )?
         .query_map([], |r| {
             Ok((
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
                 (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?),
-                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?),
+                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?),
             ))
         })?
         .collect::<Result<_, _>>()?;
     for (
         (oid, uuid, order, placed, name, named, color, colored),
         (archived, archived_ms, symbol, symbol_ms, note, noted),
-        (in_total, total_ms, label, label_ms),
+        (in_total, total_ms, label, label_ms, unknown),
     ) in rows
     {
         let Some(&id) = acc_map.get(&oid) else {
@@ -618,16 +618,14 @@ pub(crate) fn merge_attached(
             "UPDATE accounts SET color_hex = ?2, color_ms = ?3 WHERE id = ?1 AND (?4 OR color_ms < ?3)",
             params![id, color, colored, fresh],
         )? as u32;
-        let archive_taken = tx.execute(
-            "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3 WHERE id = ?1 AND (?4 OR archived_ms < ?3)",
-            params![id, archived, archived_ms, fresh],
+        // the #998 mark "state unknown" (`archive_unknown`) is part of the archive state and
+        // goes with it; with equal stamps (the same repair, then an import here or there that
+        // found the account open) the known state wins
+        changed += tx.execute(
+            "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3, archive_unknown = ?5
+              WHERE id = ?1 AND (?4 OR archived_ms < ?3 OR (archived_ms = ?3 AND archive_unknown > ?5))",
+            params![id, archived, archived_ms, fresh, unknown],
         )? as u32;
-        // a newer state from another device was chosen there: the next import here no longer
-        // gives this account MoneyMoney's state (the #998 note is local to each device)
-        if archive_taken > 0 && !fresh {
-            crate::importers::moneymoney_db::forget_archive_unknown(tx, id)?;
-        }
-        changed += archive_taken;
         // total switch (#337): the one field merge of value and stamp — newer
         // stamp wins, an equal stamp breaks the tie towards `true` (like the
         // group flag), inserted accounts take both unconditionally
@@ -1294,17 +1292,11 @@ impl Vault {
     /// rule runs skip their bookings and they leave the overall total. The
     /// state syncs like the account's name (newest change wins).
     pub fn set_account_archived(&self, account_id: i64, archived: bool) -> Result<(), CoreError> {
-        let db = self.db()?;
-        // the edit and the note go together: a note left behind would let an import undo it
-        let tx = db.unchecked_transaction()?;
-        if set_archived_inner(&tx, account_id, archived)? == 0 {
+        if set_archived_inner(&*self.db()?, account_id, archived)? == 0 {
             return Err(CoreError::NotFound {
                 what: trf("Konto {0}", &[&account_id]),
             });
         }
-        // the user's choice: a MoneyMoney import keeps it from now on (#890)
-        crate::importers::moneymoney_db::forget_archive_unknown(&tx, account_id)?;
-        tx.commit()?;
         Ok(())
     }
 
@@ -1449,6 +1441,8 @@ fn renumber(tx: &Connection, ids: &[i64]) -> CoreResult<()> {
 /// archiving an archived account keeps both: the #998 repair (schema step 37)
 /// tells the old MoneyMoney import's archives by a gap between them. Confirming
 /// such an archive renews both, so neither the repair nor an import undoes it.
+/// The state is chosen now: a MoneyMoney import keeps it from now on (#890,
+/// `archive_unknown` ends).
 pub(crate) fn set_archived_inner(
     conn: &Connection,
     account_id: i64,
@@ -1459,7 +1453,8 @@ pub(crate) fn set_archived_inner(
         "UPDATE accounts SET archived_unix = CASE WHEN ?2 THEN CASE WHEN archived_unix IS NOT NULL
                                  AND archived_unix * 1000 >= archived_ms - ?5 THEN archived_unix ELSE ?3 END END,
                              archived_ms = CASE WHEN ?2 AND archived_unix IS NOT NULL
-                                 AND archived_unix * 1000 >= archived_ms - ?5 THEN archived_ms ELSE ?4 END
+                                 AND archived_unix * 1000 >= archived_ms - ?5 THEN archived_ms ELSE ?4 END,
+                             archive_unknown = 0
          WHERE id = ?1",
         params![account_id, archived, now / 1000, now, crate::schema::ARCHIVE_STAMP_GAP_MS],
     )?)
