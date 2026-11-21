@@ -295,3 +295,39 @@ fn cross_account_currency_and_inclusive_window() {
             .any(|r| r.id == b[3])
     );
 }
+
+#[test]
+fn repeated_unlink_keeps_the_stamp_and_rows_carry_texts() {
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    let b = seed(&v);
+    v.link_refund(b[2], b[1]).unwrap();
+    let original = v.refund_links(b[2]).unwrap().original.unwrap();
+    assert_eq!(original.counterparty, "Anderer");
+    assert_eq!(original.purpose, "Suche");
+    v.unlink_refund(b[2]).unwrap();
+    let stamp = |v: &Vault| -> i64 {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT changed_ms FROM refund_links WHERE refund_id=?1",
+                [b[2]],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let first = stamp(&v);
+    v.unlink_refund(b[2]).unwrap();
+    assert_eq!(stamp(&v), first);
+}
+
+#[test]
+fn error_texts_have_english() {
+    for de in [
+        "Die Buchung existiert nicht oder wurde gelöscht.",
+        "Eine Erstattung muss positiv und die ursprüngliche Buchung negativ sein.",
+        "Erstattungen dürfen nicht miteinander verkettet werden.",
+    ] {
+        assert_ne!(crate::i18n::tr_in(crate::i18n::Lang::En, de), de);
+    }
+}

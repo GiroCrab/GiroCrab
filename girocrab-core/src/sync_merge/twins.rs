@@ -354,13 +354,16 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
          DROP TABLE IF EXISTS other.transaction_splits;
          DROP TABLE IF EXISTS other.tags;
          DROP TABLE IF EXISTS other.transaction_tags;
+         DROP TABLE IF EXISTS other.refund_links;
          CREATE TABLE other.accounts AS SELECT * FROM main.accounts WHERE id = {twin};
          CREATE TABLE other.transactions AS SELECT * FROM main.transactions WHERE account_id = {twin};
          CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits
              WHERE transaction_id IN (SELECT id FROM other.transactions);
          CREATE TABLE other.tags AS SELECT * FROM main.tags;
          CREATE TABLE other.transaction_tags AS SELECT * FROM main.transaction_tags
-             WHERE transaction_id IN (SELECT id FROM other.transactions);"
+             WHERE transaction_id IN (SELECT id FROM other.transactions);
+         -- empty: the links are in this vault already and follow the bookings below
+         CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links WHERE 0;"
     ))?;
     // same vault: categories and rules map onto themselves
     let identity = |table: &str| -> CoreResult<HashMap<i64, i64>> {
@@ -417,6 +420,19 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
         ),
         params![twin, bank],
     )?;
+    // refund links (#714) follow both of their bookings the same way; a link the bank
+    // account's copy already has stays
+    for col in ["refund_id", "original_id"] {
+        let copy = counterpart.replace("{col}", &format!("refund_links.{col}"));
+        conn.execute(
+            &format!(
+                "UPDATE OR IGNORE refund_links SET {col} = {copy}
+                  WHERE {col} IN (SELECT id FROM transactions WHERE account_id = ?1)
+                    AND {copy} IS NOT NULL"
+            ),
+            params![twin, bank],
+        )?;
+    }
     // so do securities transactions paid from one of its bookings (#1463 review)
     conn.execute(
         &format!(

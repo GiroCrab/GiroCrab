@@ -4391,6 +4391,50 @@ fn rule_account_set_merges_across_vaults() {
     assert_eq!(a.list_rules().unwrap()[0].account_ids, vec![ids[0], ids[2]]);
 }
 
+/// Refund links (#714) of a folded twin point at the bank account's copies afterwards,
+/// whether the other booking of the link is in the twin too or in another account.
+#[test]
+fn folded_twin_hands_over_refund_links() {
+    let dir = temp_dir("twin-refunds");
+    let v = open(&dir, "a.db");
+    let c = comdirect(&v);
+    let bank = giro(&v, c, "API1", &["mm-1", "mm-2", "mm-3"]);
+    let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2", "mm-3"]);
+    exec(
+        &v,
+        &format!(
+            "INSERT INTO accounts(group_id, external_ref, name) VALUES (1, 'CARD', 'Karte');
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 SELECT id, 'card-1', '2026-01-01', -500 FROM accounts WHERE external_ref = 'CARD';
+             UPDATE transactions SET amount_cents = -100 WHERE external_id = 'mm-1';
+             UPDATE transactions SET amount_cents = 50 WHERE external_id IN ('mm-2', 'mm-3');
+             INSERT INTO refund_links(refund_id, original_id, created_ms, changed_ms)
+                 SELECT r.id, o.id, 1, 1 FROM transactions r, transactions o
+                  WHERE r.account_id = {twin} AND r.external_id = 'mm-2'
+                    AND o.account_id = {twin} AND o.external_id = 'mm-1';
+             INSERT INTO refund_links(refund_id, original_id, created_ms, changed_ms)
+                 SELECT r.id, o.id, 1, 1 FROM transactions r, transactions o
+                  WHERE r.account_id = {twin} AND r.external_id = 'mm-3' AND o.external_id = 'card-1';"
+        ),
+    );
+    drop(v);
+    let v = open(&dir, "a.db");
+    assert_eq!(
+        text(
+            &v,
+            &format!(
+                "SELECT group_concat(r.external_id || '>' || o.external_id || ':' ||
+                            (r.account_id = {bank}) || (o.account_id IN ({bank}, {twin}) = (o.account_id = {bank})), ',')
+                   FROM (SELECT * FROM refund_links ORDER BY refund_id) l
+                   JOIN transactions r ON r.id = l.refund_id
+                   JOIN transactions o ON o.id = l.original_id
+                  WHERE l.deleted_ms IS NULL"
+            )
+        ),
+        "mm-2>mm-1:11,mm-3>card-1:11"
+    );
+}
+
 #[test]
 fn folded_twin_hands_over_rules_documents_and_loan_links() {
     let dir = temp_dir("twin-extras");

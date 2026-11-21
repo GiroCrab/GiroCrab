@@ -1,4 +1,8 @@
-//! Explicit refund references; amounts and categorisation remain unchanged.
+//! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
+//! (outgoing). One original can have several refunds, a refund has one original, and links do not
+//! chain. The link only documents what belongs together: amounts, categories and balances remain
+//! unchanged. Removing a link keeps the row as a tombstone (`deleted_ms`), so the removal reaches
+//! the other devices; the newest change wins on merge.
 use crate::{
     error::{CoreError, CoreResult},
     i18n::tr,
@@ -18,6 +22,7 @@ CREATE TABLE IF NOT EXISTS refund_links (
 CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
 ";
 
+/// What a booking is in a refund link, for the marker in the booking list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RefundLinkKind {
@@ -26,6 +31,7 @@ pub enum RefundLinkKind {
     Original,
 }
 
+/// One booking of a refund link or a candidate for one.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RefundBooking {
@@ -35,9 +41,14 @@ pub struct RefundBooking {
     pub booking_date: String,
     pub amount_cents: i64,
     pub currency: String,
+    /// Merchant name, or the counterparty when no merchant is recognised.
     pub display_name: String,
+    /// Raw counterparty and purpose, for the second line of a row and for searching.
+    pub counterparty: String,
+    pub purpose: String,
 }
 
+/// The links of one booking: its original when it is a refund, its refunds when it is an original.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RefundLinks {
@@ -97,10 +108,12 @@ fn entries(
                 amount_cents: r.get(4)?,
                 currency: r.get(5)?,
                 display_name: if merchant.name.is_empty() {
-                    cp
+                    cp.clone()
                 } else {
                     merchant.name
                 },
+                counterparty: cp,
+                purpose,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -197,6 +210,8 @@ fn next_change(conn: &Connection, refund_id: i64) -> CoreResult<i64> {
 
 #[uniffi::export]
 impl Vault {
+    /// Links the incoming booking `refund_id` to the outgoing booking `original_id`; an existing
+    /// link of the refund is replaced. Fails for wrong signs, deleted bookings and chains.
     pub fn link_refund(&self, refund_id: i64, original_id: i64) -> CoreResult<()> {
         let db = self.db()?;
         validate(&db, refund_id, original_id)?;
@@ -204,15 +219,18 @@ impl Vault {
         db.execute("INSERT INTO refund_links(refund_id,original_id,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?3,NULL) ON CONFLICT(refund_id) DO UPDATE SET original_id=excluded.original_id,changed_ms=excluded.changed_ms,deleted_ms=NULL",params![refund_id,original_id,changed])?;
         Ok(())
     }
+    /// Removes the link of `refund_id` to its original (no-op without one).
     pub fn unlink_refund(&self, refund_id: i64) -> CoreResult<()> {
         let db = self.db()?;
         let changed = next_change(&db, refund_id)?;
         db.execute(
-            "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE refund_id=?1",
+            // an already removed link keeps its stamp: a second removal must not outrank a newer re-link
+            "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE refund_id=?1 AND deleted_ms IS NULL",
             params![refund_id, changed],
         )?;
         Ok(())
     }
+    /// The live links of one booking; deleted bookings are left out.
     pub fn refund_links(&self, transaction_id: i64) -> CoreResult<RefundLinks> {
         let db = self.db()?;
         live(&db, transaction_id)?;
@@ -228,6 +246,11 @@ impl Vault {
         )?;
         Ok(RefundLinks { original, refunds })
     }
+    /// Bookings `transaction_id` could be linked to: for a refund the outgoing bookings of the 365
+    /// days before it, for an outgoing booking the incoming ones of the 365 days after it that are
+    /// not linked elsewhere; all accounts and currencies. Same counterparty or merchant first, then
+    /// the nearest date. `query` filters by name and purpose. Resolves the merchant of every booking
+    /// in the window, so call it off the main thread.
     pub fn refund_candidates(
         &self,
         transaction_id: i64,
@@ -264,20 +287,15 @@ impl Vault {
             &rules,
         )?;
         let query = query.trim().to_lowercase();
-        let texts: HashMap<i64, (String, String)> = db
-            .prepare(&format!("SELECT t.id,t.counterparty,t.purpose FROM transactions t WHERE t.deleted_ms IS NULL AND t.id<>?2 AND {direction}"))?
-            .query_map(params![date,transaction_id], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
-            .collect::<Result<_, _>>()?;
         candidates.retain(|b| {
-            let (c, p) = &texts[&b.id];
             query.is_empty()
-                || c.to_lowercase().contains(&query)
-                || p.to_lowercase().contains(&query)
+                || b.counterparty.to_lowercase().contains(&query)
+                || b.purpose.to_lowercase().contains(&query)
                 || b.display_name.to_lowercase().contains(&query)
         });
+        // same counterparty or merchant first; the sort is stable, so the nearest date leads each group
         candidates.sort_by_key(|b| {
-            let c = &texts[&b.id].0;
-            !(!cp.trim().is_empty() && c.to_lowercase() == cp.to_lowercase()
+            !(!cp.trim().is_empty() && b.counterparty.to_lowercase() == cp.to_lowercase()
                 || !source_merchant.is_empty() && b.display_name == source_merchant)
         });
         candidates.truncate(limit as usize);

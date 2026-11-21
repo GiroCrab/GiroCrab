@@ -1618,6 +1618,13 @@ fn english(de: &str) -> Option<&'static str> {
             "A category can’t be moved into itself."
         }
         "Die Zielkategorie existiert nicht mehr." => "The target category no longer exists.",
+        "Die Buchung existiert nicht oder wurde gelöscht." => {
+            "The transaction does not exist or was deleted."
+        }
+        "Eine Erstattung muss positiv und die ursprüngliche Buchung negativ sein." => {
+            "A refund must be an incoming amount and the original transaction an outgoing one."
+        }
+        "Erstattungen dürfen nicht miteinander verkettet werden." => "Refunds cannot be chained.",
         "Das Suchmuster ist leer." => "The pattern is empty.",
         "Die Regel braucht eine Kategorie oder mindestens einen Tag." => {
             "The rule needs a category or at least one tag."
