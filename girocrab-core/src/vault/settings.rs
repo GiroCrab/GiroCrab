@@ -218,6 +218,14 @@ pub const KNOWN_SETTINGS: &[(&str, &str, &str, &str, bool, &str)] = &[
         "off",
     ),
     (
+        "bitcoin.esplora_url",
+        "Eigener Bitcoin-Server (Esplora)",
+        "Optional: Adresse eines eigenen Esplora- oder mempool-Servers (z. B. https://node.local/api) für alle Bitcoin-Wallets. Leer = mempool.space. http ist nur im eigenen Netz erlaubt.",
+        "Bitcoin",
+        false,
+        "",
+    ),
+    (
         "sync.psd2_auto_hours",
         "Automatischer PSD2-Abruf (Stunden)",
         "Solange GiroCrab läuft, werden PSD2-Bankzugänge (Enable Banking) alle N Stunden ohne TAN abgerufen, solange die Zustimmung gilt. Banken erlauben meist nur 4 Abrufe pro Tag. 0 = aus.",
