@@ -519,6 +519,7 @@ struct MainSplitView: View {
                             ideal: showInspector && model.mainColumn != .documents ? 700 + InspectorWidth.standard * textScale : 700)
         }
         .navigationSplitViewStyle(.balanced)
+        .sidebarDividerToTop()
     }
 
     /// Draggable grip between the booking column and the inspector; the system

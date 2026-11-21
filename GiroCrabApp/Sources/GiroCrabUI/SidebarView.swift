@@ -186,10 +186,6 @@ struct SidebarView: View {
         .refreshable { await model.refreshCurrentView() }
         .background(Theme.sidebar)
         .navigationTitle("GiroCrab")
-        #if os(macOS)
-        // Keep traffic lights / sidebar toggle clear of the first row.
-        .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 28) }
-        #endif
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 6) {
                 // Marketing screenshots (`--screenshot`) look like a real vault: no demo banner.
@@ -645,7 +641,18 @@ private struct SidebarSelectionList<Content: View>: View {
 
     var body: some View {
         #if os(macOS)
-        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) { content }
+        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) {
+            // Keeps traffic lights / sidebar toggle clear of the first row. A row, not a top inset:
+            // the list ignores `contentMargins`, and with a safe-area inset its scroll view started
+            // 28 pt below the toolbar, so the line AppKit shows there once the list is scrolled sat
+            // lower than the toolbar line, with a toolbar-like band above it. Untagged, so it
+            // cannot be selected.
+            Color.clear
+                .frame(height: 28)
+                .listRowInsets(EdgeInsets())
+                .accessibilityHidden(true)
+            content
+        }
         #else
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) { content }
