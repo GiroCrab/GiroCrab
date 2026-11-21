@@ -3737,6 +3737,15 @@ fn a_known_card_with_an_iban_wins_over_a_reactivated_one_without() {
     .unwrap();
     note_archive_unknown(&db, &[old]).unwrap();
     assert_eq!(adopt(), Some(active));
+    // a card without an IBAN in another currency is never taken, known or not
+    db.execute_batch(
+        "UPDATE accounts SET external_ref = 'moneymoney-db:32:bbbb' WHERE external_ref = 'visa:1';",
+    )
+    .unwrap();
+    forget_archive_unknown(&db, old).unwrap();
+    db.execute("UPDATE accounts SET currency = 'USD' WHERE id = ?1", [old])
+        .unwrap();
+    assert_eq!(adopt(), Some(active));
 }
 
 #[test]

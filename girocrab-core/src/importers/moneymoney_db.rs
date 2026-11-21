@@ -2366,15 +2366,15 @@ pub(crate) fn adopt_account(
         // be closed cards, too)
         let unknown = archive_unknown(conn)?;
         let currency = currency.trim().to_uppercase();
-        // imported accounts of this kind on the login; `currency` "" = any
-        let candidates = |filter: &str, currency: &str| -> CoreResult<Vec<i64>> {
+        // imported accounts of this kind on the login, in the fetched currency ("" = any)
+        let candidates = |filter: &str| -> CoreResult<Vec<i64>> {
             let mut st = conn.prepare(&format!(
                 "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
                    AND kind = ?2 AND archived_unix IS NULL
                    AND (?3 = '' OR upper(IFNULL(currency, '')) IN ('', ?3)) {filter}"
             ))?;
             let ids = st
-                .query_map(params![connection_id, kind.as_str(), currency], |r| {
+                .query_map(params![connection_id, kind.as_str(), &currency], |r| {
                     r.get(0)
                 })?
                 .collect::<Result<_, _>>()?;
@@ -2408,14 +2408,14 @@ pub(crate) fn adopt_account(
         match marked {
             Some(id) => Some(id),
             None => {
-                let no_iban = candidates("AND replace(IFNULL(iban, ''), ' ', '') = ''", "")?;
+                let no_iban = candidates("AND replace(IFNULL(iban, ''), ' ', '') = ''")?;
                 // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade Republic
                 // clearing account) may still adopt a single imported account of the same kind
                 // and currency on this login (#1114).
                 let same_currency = if kind == AccountKind::CreditCard
                     || (kind == AccountKind::Checking && external_ref == "tr:cash")
                 {
-                    candidates("", &currency)?
+                    candidates("")?
                 } else {
                     Vec::new()
                 };
