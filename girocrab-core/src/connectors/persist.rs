@@ -205,6 +205,9 @@ pub(crate) fn store_fetch(
         if kind == ConnectorKind::Advanzia {
             super::advanzia::prepare_import(&tx, connection_id, &mut data)?;
         }
+        if kind == ConnectorKind::EquatePlus {
+            super::equateplus::prepare_import(&tx, connection_id, &mut data)?;
+        }
         let generic_bank_name = descriptor(kind).name;
         // No name from the bank: the connection's display name (the bank picked
         // when adding it, or renamed later) beats the generic "FinTS-Bank".
@@ -285,6 +288,12 @@ pub(crate) fn store_fetch(
             |r| r.get(0),
         )?;
         let mut new_accounts: Vec<String> = Vec::new();
+        let fetched_cards: Vec<&str> = data
+            .accounts
+            .iter()
+            .filter(|a| a.kind == AccountKind::CreditCard && !a.account_number.is_empty())
+            .map(|a| a.account_number.as_str())
+            .collect();
         for acc in &data.accounts {
             if blocked_refs.contains(&acc.external_ref) {
                 continue;
@@ -307,8 +316,10 @@ pub(crate) fn store_fetch(
                     connection_id,
                     &acc.external_ref,
                     &acc.iban,
+                    &acc.account_number,
                     &acc.currency,
                     acc.kind,
+                    &fetched_cards,
                 )?,
             };
             // Sub-accounts known from an earlier import/sync without a connection
@@ -1020,6 +1031,13 @@ pub(crate) fn store_fetch(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(connection_id, (kind, data));
+        } else if kind == ConnectorKind::EquatePlus {
+            // A fresh snapshot supersedes any previously deferred program selection.
+            vault
+                .pending_account_fetches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&connection_id);
         }
         // The catch-up after switching retrieval on again is done once a sync brings no new document
         // and left none out (a failed request, a limit).
