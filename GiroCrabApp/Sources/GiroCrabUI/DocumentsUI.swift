@@ -232,6 +232,8 @@ struct DocumentsView: View {
     @State private var targeted = false
     @State private var docToDelete: DocumentInfo?
     @State private var previewDoc: DocumentInfo?
+    /// Measured widths of the filter labels (`filterLabel`), by row.
+    @State private var filterLabelWidths: [Int: CGFloat] = [:]
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     private var isCompact: Bool { horizontalSizeClass == .compact }
@@ -253,98 +255,69 @@ struct DocumentsView: View {
                 #if os(iOS)
                 DocumentsScopePicker(compact: isCompact)
                 #endif
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     if isCompact {
                         VStack(alignment: .leading, spacing: 8) {
                             connectionPicker
-                                accountPicker
+                            accountPicker
+                            if found.count > 1 { typeAndYearPickers(found) }
+                            unseenToggle
                             unlinkedToggle
-                            unseenRow(docs)
                         }
                     } else {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 12) {
-                                connectionPicker
-                                accountPicker
-                                Spacer(minLength: 0)
-                                unlinkedToggle
-                            }
-                            VStack(alignment: .leading, spacing: 8) {
-                                connectionPicker
-                                accountPicker
-                                unlinkedToggle
-                            }
-                        }
-                        unseenRow(docs)
+                        filterRows(found)
                     }
-                    if found.count > 1 { typeAndYearPickers(found) }
-                    Text(docs.count == found.count ? String(localized: "\(docs.count) Dokumente")
-                         : String(localized: "\(docs.count) von \(found.count) Dokumenten"))
-                        .appFont(.caption).foregroundStyle(Theme.secondary)
                     documentsOffHint
                     ViewThatFits(in: .horizontal) {
-                        HStack {
+                        HStack(spacing: 8) {
                             importButton
                             Spacer(minLength: 12)
                             exportButton(docs)
+                            moreMenu(docs)
                         }
                         VStack(alignment: .leading, spacing: 8) {
                             importButton
-                            exportButton(docs)
+                            HStack(spacing: 8) {
+                                exportButton(docs)
+                                moreMenu(docs)
+                            }
                         }
                     }
+                    Text(docs.count == found.count ? String(localized: "\(docs.count) Dokumente")
+                         : String(localized: "\(docs.count) von \(found.count) Dokumenten"))
+                        .appFont(.caption).foregroundStyle(Theme.secondary)
                 }
                 List(selection: $selected) {
                     ForEach(docs) { d in
-                        HStack(spacing: 10) {
-                            Image(systemName: docSymbol(d)).foregroundStyle(Theme.accent).frame(width: 22)
-                                .overlay(alignment: .topLeading) {
-                                    if !d.seen {
-                                        Circle().fill(Color.blue).frame(width: 8, height: 8).offset(x: -4, y: -3)
-                                            .accessibilityLabel(Text("Ungelesen"))
-                                    }
+                        DocumentRow(doc: d, account: accountText(d), onSelection: selected == d.id)
+                            .tag(d.id)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button("Vorschau") { model.quickLook(d) }
+                                Button(d.seen ? "Als ungelesen markieren" : "Als gelesen markieren") {
+                                    model.markDocumentsSeen([d.id], seen: !d.seen)
                                 }
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(d.title).fontWeight(d.seen ? .medium : .bold).lineLimit(2)
-                                    .frame(maxWidth: .infinity, alignment: .leading).sensitive()
-                                Text("\(d.originTitle) · \(accountText(d))")
-                                    .appFont(.caption).foregroundStyle(Theme.secondary).lineLimit(1).sensitive()
-                                Text(d.bookingLabel.isEmpty ? String(localized: "Ohne zugeordneten Umsatz") : d.bookingLabel)
-                                    .appFont(.caption).foregroundStyle(d.bookingLabel.isEmpty && !d.isBankDocument ? Theme.warning : Theme.secondary).lineLimit(1)
-                                    .sensitive([.personal, .amounts]) // "merchant · amount"
-                            }
-                            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                            .multilineTextAlignment(.leading)
-                            Text(DateText.medium(d.docDate)).appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
-                        }
-                        .tag(d.id)
-                        .contentShape(Rectangle())
-                        .contextMenu {
-                            Button("Vorschau") { model.quickLook(d) }
-                            Button(d.seen ? "Als ungelesen markieren" : "Als gelesen markieren") {
-                                model.markDocumentsSeen([d.id], seen: !d.seen)
-                            }
-                            #if os(macOS)
-                            Button("Im Finder anzeigen") { model.showInFinder(d) }
-                            Button("Pfad kopieren") { model.copyDocumentPath(d) }
-                            #endif
-                            Button("Zuordnung aufheben") { model.linkDocument(d, to: nil) }
-                            .disabled(d.bookingId == nil)
-                            Menu("Konto zuordnen") {
-                                Button("Ohne Konto") { model.setDocumentAccount(d, nil) }
-                                    .disabled(d.accountId == nil)
-                                ForEach(model.accountMenuSections) { section in
-                                    Section(section.title) {
-                                        ForEach(section.accounts) { a in
-                                            Button(a.name) { model.setDocumentAccount(d, a.id) }
-                                                .disabled(d.accountId == a.id)
+                                #if os(macOS)
+                                Button("Im Finder anzeigen") { model.showInFinder(d) }
+                                Button("Pfad kopieren") { model.copyDocumentPath(d) }
+                                #endif
+                                Button("Zuordnung aufheben") { model.linkDocument(d, to: nil) }
+                                .disabled(d.bookingId == nil)
+                                Menu("Konto zuordnen") {
+                                    Button("Ohne Konto") { model.setDocumentAccount(d, nil) }
+                                        .disabled(d.accountId == nil)
+                                    ForEach(model.accountMenuSections) { section in
+                                        Section(section.title) {
+                                            ForEach(section.accounts) { a in
+                                                Button(a.name) { model.setDocumentAccount(d, a.id) }
+                                                    .disabled(d.accountId == a.id)
+                                            }
                                         }
                                     }
                                 }
+                                Divider()
+                                Button("Beleg löschen …", role: .destructive) { docToDelete = d }
                             }
-                            Divider()
-                            Button("Beleg löschen …", role: .destructive) { docToDelete = d }
-                        }
                     }
                 }
                 .listStyle(.inset)
@@ -362,8 +335,7 @@ struct DocumentsView: View {
                     selected = nil
                 }
                 .overlay {
-                    if docs.isEmpty && model.documentsScope == .all && model.documentsAccountFilter == nil && model.documentsConnectionFilter == nil && !unlinkedOnly && !unseenOnly && search.isEmpty
-                        && typeFilter == nil && yearFilter == nil {
+                    if docs.isEmpty && !isFiltered {
                         ContentUnavailableView("Keine Belege", systemImage: "doc.on.doc", description: Text("Belege kommen beim Abruf (Trade Republic, comdirect-Postbox, FinTS-Kontoauszug) oder per Drag & Drop."))
                     } else if docs.isEmpty {
                         ContentUnavailableView {
@@ -371,18 +343,14 @@ struct DocumentsView: View {
                         } description: {
                             Text("Für diese Auswahl wurden keine Dokumente gefunden.")
                         } actions: {
-                            Button("Alle Dokumente anzeigen") {
-                                model.documentsScope = .all
-                                model.documentsAccountFilter = nil
-                                model.documentsConnectionFilter = nil
-                                unlinkedOnly = false
-                                unseenOnly = false
-                                typeFilter = nil
-                                yearFilter = nil
-                                search = ""
-                            }
+                            Button("Alle Dokumente anzeigen") { showAllDocuments() }
                         }
                     }
+                }
+                // (demo) `--pick <text>`: the document whose title contains it starts selected (screenshots)
+                .task {
+                    guard let q = model.options.pickBooking, selected == nil else { return }
+                    selected = docs.first { $0.title.lowercased().contains(q) }?.id
                 }
                 .onChange(of: docs.map(\.id)) { _, ids in
                     if let selected, !ids.contains(selected) { self.selected = nil }
@@ -489,9 +457,25 @@ struct DocumentsView: View {
         model.documentsAccountFilter.flatMap { model.accountsByID[$0]?.name }
     }
 
-    private func exportButton(_ docs: [DocumentInfo]) -> some View {
-        let filtered = model.documentsAccountFilter != nil || model.documentsConnectionFilter != nil || model.documentsScope != .all || !search.isEmpty
+    /// Any filter, scope or search narrows the list.
+    private var isFiltered: Bool {
+        model.documentsAccountFilter != nil || model.documentsConnectionFilter != nil || model.documentsScope != .all || !search.isEmpty
             || unlinkedOnly || unseenOnly || typeFilter != nil || yearFilter != nil
+    }
+
+    private func showAllDocuments() {
+        model.documentsScope = .all
+        model.documentsAccountFilter = nil
+        model.documentsConnectionFilter = nil
+        unlinkedOnly = false
+        unseenOnly = false
+        typeFilter = nil
+        yearFilter = nil
+        search = ""
+    }
+
+    private func exportButton(_ docs: [DocumentInfo]) -> some View {
+        let filtered = isFiltered
         return Button {
             exportIDs = filtered ? docs.map(\.id) : nil
             chooseExportFolder(model: model, fallback: $exporting, ids: exportIDs, subfolder: exportSubfolder)
@@ -503,6 +487,20 @@ struct DocumentsView: View {
         .disabled(filtered && docs.isEmpty)
         .help(filtered ? String(localized: "Nur die Dokumente exportieren, die gerade in der Liste stehen")
                        : String(localized: "Die gesamte Dokumentensammlung exportieren"))
+    }
+
+    /// Less frequent list actions, next to the export (#1543).
+    private func moreMenu(_ docs: [DocumentInfo]) -> some View {
+        let unread = docs.filter { !$0.seen }.map(\.id)
+        return Menu {
+            Button("Alle als gelesen markieren") { model.markDocumentsSeen(unread, seen: true) }
+                .disabled(unread.isEmpty)
+                .help("Markiert die Dokumente, die gerade in der Liste stehen, als gelesen")
+            Button("Alle Dokumente anzeigen") { showAllDocuments() }
+                .disabled(!isFiltered)
+        } label: { Label("Aktionen", systemImage: "ellipsis.circle").labelStyle(.iconOnly) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help("Aktionen")
     }
 
     /// The account of a document; with its owner when another account has the same name.
@@ -530,11 +528,79 @@ struct DocumentsView: View {
         }
     }
 
+    /// Mac and iPad: a label column (trailing) next to the controls, as in a macOS form, so every pop-up
+    /// starts at the same edge and fills the rest of the width; labels sit on the baseline of the pop-up's
+    /// text, which keeps the system size while the labels scale with the text size (#1543).
+    private func filterRows(_ found: [DocumentInfo]) -> some View {
+        let types = DocumentFilters.types(of: found)
+        let years = DocumentFilters.years(of: found)
+        let showsType = found.count > 1 && (types.count > 1 || typeFilter != nil)
+        let showsYear = found.count > 1 && (years.count > 1 || yearFilter != nil)
+        return VStack(alignment: .leading, spacing: 8) {
+            if showsConnectionPicker {
+                filterRow("Bankzugang", slot: 0) { connectionPicker.labelsHidden() }
+            }
+            filterRow("Konto", slot: 1) { accountPicker.labelsHidden() }
+            if showsType && showsYear {
+                // side by side while both fit, else one row each
+                ViewThatFits(in: .horizontal) {
+                    filterRow("Typ", slot: 2) {
+                        typePicker(types).labelsHidden().frame(maxWidth: .infinity)
+                        Text("Jahr").fixedSize().padding(.leading, 8)
+                        yearPicker(years).labelsHidden().frame(maxWidth: .infinity)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        filterRow("Typ", slot: 2) { typePicker(types).labelsHidden() }
+                        filterRow("Jahr", slot: 3) { yearPicker(years).labelsHidden() }
+                    }
+                }
+            } else if showsType {
+                filterRow("Typ", slot: 2) { typePicker(types).labelsHidden() }
+            } else if showsYear {
+                filterRow("Jahr", slot: 3) { yearPicker(years).labelsHidden() }
+            }
+            HStack(alignment: .top, spacing: 8) {
+                Color.clear.frame(width: filterLabelColumn ?? 0, height: 0)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 16) {
+                        unseenToggle
+                        unlinkedToggle
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        unseenToggle
+                        unlinkedToggle
+                    }
+                }
+            }
+        }
+    }
+
+    /// Width of the label column: the widest label shown, measured (text size, language).
+    private var filterLabelColumn: CGFloat? { filterLabelWidths.values.max() }
+
+    private func filterRow(_ label: LocalizedStringKey, slot: Int, @ViewBuilder control: () -> some View) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            filterLabel(label, slot: slot)
+            control()
+        }
+    }
+
+    private func filterLabel(_ key: LocalizedStringKey, slot: Int) -> some View {
+        Text(key)
+            .fixedSize()
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { filterLabelWidths[slot] = $0 }
+            .onDisappear { filterLabelWidths[slot] = nil }
+            .frame(width: filterLabelColumn, alignment: .trailing)
+    }
+
     /// Bank connection filter (#1042). Only with more than one connection (or while one is chosen).
+    private var showsConnectionPicker: Bool {
+        model.documentsFilterConnections.count > 1 || model.documentsConnectionFilter != nil
+    }
+
     /// "Ohne Konto": documents without an account have no connection and fall out of every other choice.
     @ViewBuilder private var connectionPicker: some View {
-        let connections = model.documentsFilterConnections
-        if connections.count > 1 || model.documentsConnectionFilter != nil {
+        if showsConnectionPicker {
             let selection = Binding<Int64?>(
                 get: { model.documentsConnectionFilter },
                 set: { model.selectDocumentsConnection($0) })
@@ -542,13 +608,13 @@ struct DocumentsView: View {
                 Text("Alle Bankzugänge").tag(Int64?.none)
                 Text("Ohne Konto").tag(Int64?.some(AppModel.documentsWithoutAccount))
                 Divider()
-                ForEach(connections) { c in
+                ForEach(model.documentsFilterConnections) { c in
                     Text(c.displayName).tag(Int64?.some(c.id))
                 }
             }
             .pickerStyle(.menu)
             .sensitive(model.documentsConnectionFilter == nil || model.documentsConnectionFilter == AppModel.documentsWithoutAccount ? [] : .personal)
-            .frame(minWidth: isCompact ? 0 : 150, maxWidth: isCompact ? .infinity : 270)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .help("Dokumente eines Bankzugangs anzeigen")
         }
     }
@@ -572,54 +638,100 @@ struct DocumentsView: View {
         .pickerStyle(.menu)
         .disabled(model.documentsConnectionFilter == AppModel.documentsWithoutAccount)
         .sensitive(model.documentsAccountFilter == nil || model.documentsAccountFilter == AppModel.documentsWithoutAccount ? [] : .personal)
-        .frame(minWidth: isCompact ? 0 : 150, maxWidth: isCompact ? .infinity : 270)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .help("Dokumente eines Kontos anzeigen")
     }
 
-    /// Type and year of the documents found so far (only what exists is offered), for a long list.
+    /// Type and year of the documents found so far (only what exists is offered), for a long list (iPhone).
     @ViewBuilder
     private func typeAndYearPickers(_ found: [DocumentInfo]) -> some View {
         let types = DocumentFilters.types(of: found)
         let years = DocumentFilters.years(of: found)
         HStack(spacing: 12) {
-            if types.count > 1 || typeFilter != nil {
-                Picker("Typ", selection: $typeFilter) {
-                    Text("Alle Typen").tag(String?.none)
-                    ForEach(types, id: \.self) { Text(DocumentFilters.typeTitle($0)).tag(String?.some($0)) }
-                }
-                .pickerStyle(.menu).fixedSize().help("Nur Dokumente dieses Typs")
-            }
-            if years.count > 1 || yearFilter != nil {
-                Picker("Jahr", selection: $yearFilter) {
-                    Text("Alle Jahre").tag(Int?.none)
-                    ForEach(years, id: \.self) { Text(String($0)).tag(Int?.some($0)) }
-                }
-                .pickerStyle(.menu).fixedSize().help("Nur Dokumente dieses Kalenderjahres")
-            }
+            if types.count > 1 || typeFilter != nil { typePicker(types).fixedSize() }
+            if years.count > 1 || yearFilter != nil { yearPicker(years).fixedSize() }
         }
     }
 
-    /// „Nur ungelesene“ and, next to it, mark what the list shows as read.
-    private func unseenRow(_ docs: [DocumentInfo]) -> some View {
-        let unread = docs.filter { !$0.seen }.map(\.id)
-        return HStack {
-            Toggle("Nur ungelesene", isOn: $unseenOnly)
-                .toggleStyle(.switch).controlSize(.small)
-                .lineLimit(isCompact ? nil : 1).fixedSize(horizontal: !isCompact, vertical: true)
-            Spacer(minLength: 8)
-            Button("Alle als gelesen markieren") { model.markDocumentsSeen(unread, seen: true) }
-                .buttonStyle(.borderless).controlSize(.small)
-                .disabled(unread.isEmpty)
-                .help("Markiert die Dokumente, die gerade in der Liste stehen, als gelesen")
+    private func typePicker(_ types: [String]) -> some View {
+        Picker("Typ", selection: $typeFilter) {
+            Text("Alle Typen").tag(String?.none)
+            ForEach(types, id: \.self) { Text(DocumentFilters.typeTitle($0)).tag(String?.some($0)) }
         }
+        .pickerStyle(.menu).help("Nur Dokumente dieses Typs")
+    }
+
+    private func yearPicker(_ years: [Int]) -> some View {
+        Picker("Jahr", selection: $yearFilter) {
+            Text("Alle Jahre").tag(Int?.none)
+            ForEach(years, id: \.self) { Text(String($0)).tag(Int?.some($0)) }
+        }
+        .pickerStyle(.menu).help("Nur Dokumente dieses Kalenderjahres")
+    }
+
+    private var unseenToggle: some View {
+        Toggle("Nur ungelesene", isOn: $unseenOnly).documentFilterToggle(compact: isCompact)
     }
 
     private var unlinkedToggle: some View {
-        Toggle("Nur ohne zugeordneten Umsatz", isOn: $unlinkedOnly)
-            .toggleStyle(.switch).controlSize(.small)
-            .lineLimit(isCompact ? nil : 1).fixedSize(horizontal: !isCompact, vertical: true)
+        Toggle("Nur ohne zugeordneten Umsatz", isOn: $unlinkedOnly).documentFilterToggle(compact: isCompact)
     }
 
+}
+
+private extension View {
+    /// A list filter, not a setting: a checkbox on the Mac (HIG › Toggles: switches are for settings that
+    /// need emphasis), a switch on iOS, which has no checkbox.
+    func documentFilterToggle(compact: Bool) -> some View {
+        #if os(macOS)
+        toggleStyle(.checkbox)
+            .fixedSize(horizontal: false, vertical: true)
+        #else
+        toggleStyle(.switch).controlSize(.small)
+            .lineLimit(compact ? nil : 1).fixedSize(horizontal: !compact, vertical: true)
+        #endif
+    }
+}
+
+/// One row of the document list. On the selection it draws with the hierarchical styles, which the
+/// system lightens on the accent-coloured highlight; the theme colours would stay dark there and the
+/// accent-coloured symbol would vanish (#1543).
+private struct DocumentRow: View {
+    let doc: DocumentInfo
+    let account: String
+    let onSelection: Bool
+
+    private var secondary: AnyShapeStyle { onSelection ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.secondary) }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: docSymbol(doc)).foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Theme.accent)).frame(width: 22)
+                .overlay(alignment: .topLeading) {
+                    if !doc.seen {
+                        Circle().fill(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Color.blue)).frame(width: 8, height: 8).offset(x: -4, y: -3)
+                            .accessibilityLabel(Text("Ungelesen"))
+                    }
+                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(doc.title).fontWeight(doc.seen ? .medium : .bold).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading).sensitive()
+                Text("\(doc.originTitle) · \(account)")
+                    .appFont(.caption).foregroundStyle(secondary).lineLimit(1).sensitive()
+                if !doc.bookingLabel.isEmpty {
+                    Text(doc.bookingLabel)
+                        .appFont(.caption).foregroundStyle(secondary).lineLimit(1)
+                        .sensitive([.personal, .amounts]) // "merchant · amount"
+                } else if !doc.isBankDocument {
+                    // only an own receipt waits for its booking; most bank documents never get one
+                    Text("Ohne zugeordneten Umsatz")
+                        .appFont(.caption).foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(Theme.warning)).lineLimit(1)
+                }
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .multilineTextAlignment(.leading)
+            Text(DateText.medium(doc.docDate)).appFont(.caption, monospacedDigit: true).foregroundStyle(secondary)
+        }
+    }
 }
 
 extension View {

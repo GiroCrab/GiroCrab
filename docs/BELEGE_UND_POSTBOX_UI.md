@@ -25,7 +25,20 @@ außer über den Import („Beleg hinzufügen …“, Ablegen).
 Die Liste kommt aus einem Core-Aufruf (`allDocuments`, `list_all_documents`), der nach Konto, Suche und „Nur ohne
 zugeordneten Umsatz“ filtert. **Typ**, **Jahr** und **Nur ungelesene** filtern danach im Speicher
 (`DocumentFilters.apply`): Die Liste ist ohnehin geladen, und die Auswahl der Typen und Jahre richtet sich nach dem,
-was es gibt. Der Kopf nennt „N Dokumente“ oder „N von M Dokumenten“.
+was es gibt. Über der Liste steht „N Dokumente“ oder „N von M Dokumenten“.
+
+**Aufbau der Filter (Mac, iPad):** wie ein macOS-Formular (#1543). Eine Spalte mit rechtsbündigen Beschriftungen
+(Bankzugang, Konto, Typ), daneben die Auswahlfelder, die alle an derselben Kante beginnen und die restliche Breite
+füllen; die Beschriftung steht auf der Grundlinie des Feldtexts. Die Spalte ist so breit wie die längste Beschriftung
+(gemessen, folgt Schriftgröße und Sprache). Typ und Jahr teilen sich eine Zeile, solange beide hineinpassen, sonst
+bekommt jedes eine. Darunter „Nur ungelesene“ und „Nur ohne zugeordneten Umsatz“ als Ankreuzfelder (Filter sind keine
+Einstellungen: HIG › Toggles), dann „Beleg hinzufügen …“, der Export und das Menü „Aktionen“ (…) mit „Alle als gelesen
+markieren“ und „Alle Dokumente anzeigen“ (setzt alle Filter zurück).
+
+**Zeile:** Titel, „Herkunft · Konto“ und als dritte Zeile der zugeordnete Umsatz. „Ohne zugeordneten Umsatz“ (orange)
+steht nur an eigenen Belegen, die auf ihren Umsatz warten; Bankdokumente haben meist keinen und zeigen dann nichts. Die
+gewählte Zeile zeichnet mit den hierarchischen Stilen (`.primary`/`.secondary`), die macOS auf der Akzentfarbe hell
+macht; die festen Theme-Farben blieben dort dunkel (`DocumentRow`).
 
 Die Liste liest nur den Index `booking_documents_info`, nie die PDF-Daten (diese sind Megabytes groß). Jede Spalte,
 die die Liste zeigt, muss deshalb im Index stehen (Schema-Schritt 30 hat `seen_at` dort ergänzt).
@@ -39,7 +52,8 @@ ungelesen).
   an: Nachgeladene Historie und Archive dürfen den Zähler nicht fluten. Von Hand hinzugefügte (Ablegen, „Beleg
   hinzufügen …“) sind sofort gelesen. Bestehende Dokumente zählen nach dem Update auf Schema 30 als gelesen.
 - **Gelesen** wird ein Dokument, sobald es in der Liste gewählt wird. Von Hand: „Als gelesen / ungelesen markieren“
-  (Kontextmenü), „Alle als gelesen markieren“ (für die sichtbare Liste, also mit Filtern) und im Kontextmenü von
+  (Kontextmenü), „Alle als gelesen markieren“ (Menü „Aktionen“ neben dem Export; für die sichtbare Liste, also mit
+  Filtern) und im Kontextmenü von
   „Belege & Postbox“ in der Seitenleiste (für alle).
 - **Anzeige:** Zähler an „Belege & Postbox“ in der Seitenleiste (`unseenDocumentCount`, `COUNT(*)` über einen
   Teilindex), blauer Punkt und fetter Titel an ungelesenen Zeilen, Filter „Nur ungelesene“. Das gerade gewählte Dokument
@@ -57,7 +71,8 @@ eine leere ID-Liste hieße im Core „alle“).
 
 ## Mobile Ansicht (iPhone, kompakte Breite)
 
-Die Filter stehen untereinander (die waagerechte Zeile wäre breiter als das Display), die Titel sind linksbündig und
+Die Filter stehen untereinander ohne Beschriftungsspalte (die Auswahlfelder zeigen auf dem iPhone nur ihren Wert), die
+Filter „Nur …“ sind Schalter (iOS hat keine Ankreuzfelder), die Titel sind linksbündig und
 dürfen umbrechen. Ein Tipp auf eine Zeile öffnet die Vorschau als Blatt und markiert das Dokument als gelesen; die
 Auswahl wird danach zurückgesetzt, damit dasselbe Dokument erneut geöffnet werden kann.
 
@@ -73,6 +88,9 @@ Auswahl wird danach zurückgesetzt, damit dasselbe Dokument erneut geöffnet wer
 - **Texte:** keine Marken fremder Software; alle Strings in `Localizable.xcstrings` (DE + EN), danach
   `scripts/xcstrings.py format`.
 - **Keine rechte Buchungsspalte** in dieser Ansicht, solange sie ihre eigene Vorschau hat.
+- **Neue Filter auf dem Mac** als weitere Zeile in `filterRows` (Beschriftung über `filterRow`), nicht mit eigener
+  Beschriftung im Picker: sonst beginnt das Feld an einer anderen Kante.
+- **Farben in der Zeile:** keine feste Farbe ohne Gegenstück für die gewählte Zeile (`DocumentRow.onSelection`).
 
 ## Prüfen
 
@@ -81,7 +99,11 @@ cd GiroCrabApp
 swift build -q && swift test -q --filter DocumentFiltersTests
 .build/debug/GiroCrabMac --demo-seed --view belege --screenshot /tmp/belege.png
 .build/debug/GiroCrabMac --demo-seed --view belege --window-width 760 --text-size larger --screenshot /tmp/belege-schmal.png
+# gewählte Zeile: --pick wählt das Dokument, dessen Titel den Text enthält
+.build/debug/GiroCrabMac --demo-seed --view belege --pick hotel --light --screenshot /tmp/belege-auswahl.png
 ```
+
+Die Aufnahme zeigt die Auswahl ohne Fokus (grau); die blaue Auswahl mit Fokus nur in der laufenden App nach einem Klick.
 
 iPhone: App mit `--demo-seed --view belege` im Simulator starten. Die Demo hat zwölf Dokumente; die jüngeren sind
 ungelesen, drei ältere zeigen die Typ- und Jahresfilter.
