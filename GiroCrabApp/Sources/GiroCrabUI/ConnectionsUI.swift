@@ -742,7 +742,8 @@ struct ConnectionEditSheet: View {
         if savesPortalLogin {
             let storedUser = model.revealSetting(AppModel.portalLoginKey(connection.id))
             portalUser = connection.connector == .amazonVisa ? login : storedUser
-            storePortalLogin = status?.hasPin == true || !storedUser.isEmpty
+            storePortalLogin = !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(connection.id))
+                && (status?.hasPin == true || !storedUser.isEmpty)
             initialPortalUser = portalUser
             initialStorePortalLogin = storePortalLogin
         }
@@ -775,6 +776,16 @@ struct ConnectionEditSheet: View {
         }
     }
 
+    /// Detects `runCore` failures while preserving any earlier alert on success.
+    private func savePortalPin(_ value: String?) -> Bool {
+        let previousError = model.errorMessage
+        model.errorMessage = nil
+        model.setConnectionPin(connection.id, value)
+        let succeeded = model.errorMessage == nil
+        if succeeded, let previousError { model.errorMessage = previousError }
+        return succeeded
+    }
+
     private func save() {
         if documentsSupported, documentsFetch != initialDocumentsFetch {
             model.setDocumentsFetch(connection.id, documentsFetch)
@@ -793,12 +804,24 @@ struct ConnectionEditSheet: View {
             let key = AppModel.portalLoginKey(connection.id)
             let user = connection.connector == .amazonVisa
                 ? l : portalUser.trimmingCharacters(in: .whitespaces)
+            let disabledKey = AppModel.portalLoginAutofillDisabledKey(connection.id)
             if !storePortalLogin {
-                model.setConnectionPin(connection.id, nil)
-                model.saveSetting(key, "")
+                if savePortalPin(nil) {
+                    model.saveSetting(key, "")
+                    AppDefaults.store.removeObject(forKey: disabledKey)
+                } else {
+                    // The old vault password may still exist: suppress autofill even
+                    // though the username secret must remain until the clear succeeds.
+                    AppDefaults.store.set(true, forKey: disabledKey)
+                }
             } else {
-                if user != model.revealSetting(key) { model.saveSetting(key, user) }
-                if !pin.isEmpty { model.setConnectionPin(connection.id, pin) }
+                let passwordReady = pin.isEmpty || savePortalPin(pin)
+                if passwordReady {
+                    AppDefaults.store.removeObject(forKey: disabledKey)
+                    if user != model.revealSetting(key) { model.saveSetting(key, user) }
+                } else {
+                    AppDefaults.store.set(true, forKey: disabledKey)
+                }
             }
         }
         saveSettings(keys + advancedKeys + postboxKeys)
