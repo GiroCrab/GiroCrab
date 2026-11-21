@@ -144,7 +144,8 @@ Other windows (Hilfe, Abruf-Protokoll), alerts and print output are never captur
   `.sensitive(.amounts)` on money and quantities: amounts, balances, sums, shares, chart axis values and readouts, loan
   figures; text mixing both gets `.sensitive([.personal, .amounts])` (a requested `.personal` redaction hides amounts too,
   `ReportRedaction.effective`). `.sensitive(.labels)` for category, group, budget and security names
-  (hidden only on request). Dates, bank/connector names, logos of known brands and error texts stay visible.
+  (hidden only on request). Dates, bank/connector names, logos of known brands and error texts stay visible;
+  a recipient's bank looked up from the IBAN is personal (it narrows down the IBAN).
 - The modifier does not draw the content (opacity 0) and puts a soft, fixed smudge in its place (gradients, no `.blur`),
   so it also covers AppKit/UIKit-backed views (TextEditor, PDFView). Never use `.redacted(reason:)`, `.blur` or a plain
   overlay for this. In a parameter string use `redaction.masking(text, .amounts)` for an amount.
@@ -246,7 +247,7 @@ whenever `README.md`, `docs/screenshots/**`, `docs/assets/**` or a release chang
 - Check the TestFlight version/build before running; a build number must be higher than any already uploaded for that version.
 
 ## Data tables
-`girocrab-core/data/*.tsv` are embedded at compile time and parsed by `src/data_tables.rs`: `bic_directory.tsv` (BIC),
+`girocrab-core/data/*.tsv` are embedded at compile time and parsed by `src/data_tables.rs`: `bic_directory.tsv` (BIC, bank name),
 `fints_directory.tsv` (FinTS endpoints), `merchants.tsv` (merchant dictionary). Never read them whole; `grep -n` a key instead.
 
 ## Bank-Konnektoren: End-to-End-Pflicht (kein reiner Core-Merge)
