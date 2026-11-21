@@ -1625,6 +1625,12 @@ fn english(de: &str) -> Option<&'static str> {
             "A refund must be an incoming amount and the original transaction an outgoing one."
         }
         "Erstattungen dürfen nicht miteinander verkettet werden." => "Refunds cannot be chained.",
+        "Die Erstattung ist bereits vollständig zugeordnet." => {
+            "The refund is already fully assigned."
+        }
+        "Die Buchung ist bereits vollständig erstattet." => {
+            "The transaction is already fully refunded."
+        }
         "Das Suchmuster ist leer." => "The pattern is empty.",
         "Die Regel braucht eine Kategorie oder mindestens einen Tag." => {
             "The rule needs a category or at least one tag."

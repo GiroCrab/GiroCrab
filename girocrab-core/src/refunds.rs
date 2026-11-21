@@ -66,6 +66,9 @@ pub struct RefundBooking {
     /// amount and at most what the refund has left after its earlier originals. `None` for a
     /// candidate and for a link between different currencies.
     pub share_cents: Option<i64>,
+    /// What the booking has left for a further link: its amount less what its links cover. With
+    /// 0 it is used up and cannot be linked again.
+    pub open_cents: i64,
 }
 
 /// Why a booking is suggested for a link.
@@ -106,10 +109,12 @@ pub struct RefundLinks {
     /// For a refund: how much of it its originals take up, never more than its amount; the rest
     /// belongs to no linked booking. `None` without originals or with mixed currencies.
     pub assigned_cents: Option<i64>,
+    /// What the booking itself has left for a further link ([`RefundBooking::open_cents`]).
+    pub open_cents: i64,
 }
 
-/// What every live link pays back: each refund (oldest first) is spread over its originals
-/// (oldest first), each taking at most what earlier refunds left open. Links between different
+/// What every live link pays back, filled in the order the links were made: a link takes at
+/// most what the earlier links left of its refund and of its original. Links between different
 /// currencies get nothing and are returned in the second set.
 fn shares(
     conn: &Connection,
@@ -123,7 +128,7 @@ fn shares(
             "SELECT l.refund_id,l.original_id,r.amount_cents,o.amount_cents,r.currency,o.currency
              FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id
              WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL
-             ORDER BY r.booking_date,r.id,o.booking_date,o.id",
+             ORDER BY l.changed_ms,r.booking_date,o.booking_date,l.refund_id,l.original_id",
         )?
         .query_map([], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
@@ -178,6 +183,38 @@ fn validate(conn: &Connection, refund: i64, original: i64) -> CoreResult<()> {
     Ok(())
 }
 
+/// [`validate`] for a link the user makes here: a booking that is used up takes no further one.
+/// Links arriving from another device are not held to this; they get a share of 0.
+fn validate_new(conn: &Connection, refund: i64, original: i64) -> CoreResult<()> {
+    validate(conn, refund, original)?;
+    let (r, o) = (live(conn, refund)?, live(conn, original)?);
+    let linked: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND refund_id=?1 AND original_id=?2)",
+        params![refund, original],
+        |r| r.get(0),
+    )?;
+    if !linked {
+        // a link that could take nothing would only mislead: the booking is used up
+        let taken = taken(conn)?;
+        let used_up = |id: i64, amount: i64| {
+            taken
+                .get(&id)
+                .is_some_and(|t| *t >= amount.saturating_abs())
+        };
+        if used_up(refund, r) {
+            return Err(CoreError::invalid(tr(
+                "Die Erstattung ist bereits vollständig zugeordnet.",
+            )));
+        }
+        if used_up(original, o) {
+            return Err(CoreError::invalid(tr(
+                "Die Buchung ist bereits vollständig erstattet.",
+            )));
+        }
+    }
+    Ok(())
+}
+
 const ROWS: &str = "SELECT t.id,t.account_id,a.name,t.booking_date,t.amount_cents,t.currency,t.counterparty,t.purpose,t.end_to_end_id FROM transactions t JOIN accounts a ON a.id=t.account_id";
 
 /// A row of [`ROWS`] with what only the ranking needs.
@@ -192,7 +229,7 @@ fn rows(
     args: impl rusqlite::Params,
     rules: &crate::merchants::MerchantRules,
 ) -> CoreResult<Vec<Row>> {
-    let rows = conn
+    let mut rows: Vec<Row> = conn
         .prepare(sql)?
         .query_map(args, |r| {
             let cp: String = r.get(6)?;
@@ -214,12 +251,29 @@ fn rows(
                     counterparty: cp,
                     purpose,
                     share_cents: None,
+                    open_cents: 0,
                 },
                 end_to_end_id: r.get(8)?,
             })
         })?
         .collect::<Result<_, _>>()?;
+    let taken = taken(conn)?;
+    for row in &mut rows {
+        let b = &mut row.booking;
+        b.open_cents =
+            (b.amount_cents.saturating_abs() - taken.get(&b.id).copied().unwrap_or(0)).max(0);
+    }
     Ok(rows)
+}
+
+/// What every linked booking's links cover of it, links between different currencies aside.
+fn taken(conn: &Connection) -> CoreResult<HashMap<i64, i64>> {
+    let mut out: HashMap<i64, i64> = HashMap::new();
+    for ((refund, original), share) in shares(conn)?.0 {
+        *out.entry(refund).or_default() += share;
+        *out.entry(original).or_default() += share;
+    }
+    Ok(out)
 }
 
 fn entries(
@@ -435,14 +489,10 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
     Ok(())
 }
 
-fn next_change(conn: &Connection, refund_id: i64, original_id: i64) -> CoreResult<i64> {
-    let previous: Option<i64> = conn
-        .query_row(
-            "SELECT changed_ms FROM refund_links WHERE refund_id=?1 AND original_id=?2",
-            [refund_id, original_id],
-            |r| r.get(0),
-        )
-        .optional()?;
+fn next_change(conn: &Connection) -> CoreResult<i64> {
+    // later than every other link too: the shares are filled in the order the links were made
+    let previous: Option<i64> =
+        conn.query_row("SELECT MAX(changed_ms) FROM refund_links", [], |r| r.get(0))?;
     Ok(crate::dates::now_ms().max(previous.unwrap_or(0).saturating_add(1)))
 }
 
@@ -453,15 +503,15 @@ impl Vault {
     /// Fails for wrong signs, deleted bookings and chains.
     pub fn link_refund(&self, refund_id: i64, original_id: i64) -> CoreResult<()> {
         let db = self.db()?;
-        validate(&db, refund_id, original_id)?;
-        let changed = next_change(&db, refund_id, original_id)?;
+        validate_new(&db, refund_id, original_id)?;
+        let changed = next_change(&db)?;
         db.execute("INSERT INTO refund_links(refund_id,original_id,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?3,NULL) ON CONFLICT(refund_id,original_id) DO UPDATE SET changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",params![refund_id,original_id,changed])?;
         Ok(())
     }
     /// Removes the link of `refund_id` to `original_id` (no-op without one).
     pub fn unlink_refund(&self, refund_id: i64, original_id: i64) -> CoreResult<()> {
         let db = self.db()?;
-        let changed = next_change(&db, refund_id, original_id)?;
+        let changed = next_change(&db)?;
         db.execute(
             // an already removed link keeps its stamp: a second removal must not outrank a newer re-link
             "UPDATE refund_links SET deleted_ms=?3,changed_ms=?3 WHERE refund_id=?1 AND original_id=?2 AND deleted_ms IS NULL",
@@ -478,7 +528,7 @@ impl Vault {
             entries(
                 &db,
                 &format!(
-                    "{ROWS} WHERE t.deleted_ms IS NULL AND t.id IN (SELECT {other} FROM refund_links WHERE {own}=?1 AND deleted_ms IS NULL) ORDER BY t.booking_date,t.id"
+                    "{ROWS} JOIN refund_links l ON l.{other}=t.id AND l.{own}=?1 AND l.deleted_ms IS NULL WHERE t.deleted_ms IS NULL ORDER BY l.changed_ms,t.id"
                 ),
                 [transaction_id],
                 &rules,
@@ -487,6 +537,16 @@ impl Vault {
         let mut originals = side("refund_id", "original_id")?;
         let mut refunds = side("original_id", "refund_id")?;
         let (shares, mixed) = shares(&db)?;
+        let own_amount: i64 = db.query_row(
+            "SELECT amount_cents FROM transactions WHERE id=?1",
+            [transaction_id],
+            |r| r.get(0),
+        )?;
+        let own_taken: i64 = shares
+            .iter()
+            .filter(|((r, o), _)| *r == transaction_id || *o == transaction_id)
+            .map(|(_, share)| *share)
+            .sum();
         for o in &mut originals {
             o.share_cents = shares.get(&(transaction_id, o.id)).copied();
         }
@@ -500,6 +560,7 @@ impl Vault {
         Ok(RefundLinks {
             refunded_cents: sum(refunds.iter().map(|r| (r.id, transaction_id)).collect()),
             assigned_cents: sum(originals.iter().map(|o| (transaction_id, o.id)).collect()),
+            open_cents: (own_amount.saturating_abs() - own_taken).max(0),
             originals,
             refunds,
         })
@@ -588,7 +649,11 @@ impl Vault {
                     return Ok(out);
                 }
                 let id = row.booking.id;
-                if linked.contains(&id) || out.iter().any(|s| s.booking.id == id) {
+                // a booking that is used up cannot be linked: no suggestion
+                if linked.contains(&id)
+                    || row.booking.open_cents == 0
+                    || out.iter().any(|s| s.booking.id == id)
+                {
                     continue;
                 }
                 if matches(row, reason) {

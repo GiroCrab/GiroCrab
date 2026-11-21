@@ -141,6 +141,36 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertTrue(InspectorLayout(storageValue: "note,receipt").visible.contains(.refunds))
     }
 
+    /// A refund that is used up takes no further booking, and the shares follow the order of linking.
+    func testUsedUpRefundTakesNoFurtherBookingAndFillsInLinkOrder() throws {
+        let vault = try XCTUnwrap(model.vault)
+        var found: (Booking, RefundBooking, RefundBooking)?
+        for refund in model.bookings where refund.amountCents > 1 && refund.currency == "EUR" && refund.refundLink == .none {
+            let all = try vault.refundCandidates(transactionId: refund.id, query: "", limit: 200)
+                .filter { $0.currency == "EUR" && $0.openCents == -$0.amountCents }
+            if let small = all.first(where: { -$0.amountCents < refund.amountCents }),
+               let large = all.first(where: { -$0.amountCents >= refund.amountCents && $0.bookingDate < small.bookingDate }) {
+                found = (refund, small, large); break
+            }
+        }
+        let (refund, small, large) = try XCTUnwrap(found)
+        // the later booking is linked first: it is filled first, the earlier one gets the rest
+        model.linkRefund(refundID: refund.id, originalID: small.id)
+        model.linkRefund(refundID: refund.id, originalID: large.id)
+        var links = try vault.refundLinks(transactionId: refund.id)
+        XCTAssertEqual(links.originals.map(\.id), [small.id, large.id])
+        XCTAssertEqual(links.originals.map(\.shareCents), [-small.amountCents, refund.amountCents + small.amountCents])
+        XCTAssertEqual(links.openCents, 0)
+        XCTAssertNil(model.errorMessage)
+
+        let third = try XCTUnwrap(try vault.refundCandidates(transactionId: refund.id, query: "", limit: 200)
+            .first { $0.id != small.id && $0.id != large.id })
+        model.linkRefund(refundID: refund.id, originalID: third.id)
+        XCTAssertNotNil(model.errorMessage)
+        links = try vault.refundLinks(transactionId: refund.id)
+        XCTAssertEqual(links.originals.map(\.id), [small.id, large.id])
+    }
+
     /// A linked refund is no income as far as it is assigned: the core returns that part as a reduced expense, for a split
     /// original too, and the split stays as it is.
     func testLinkedRefundOfSplitOriginalLeavesIncomeAndKeepsSplit() throws {

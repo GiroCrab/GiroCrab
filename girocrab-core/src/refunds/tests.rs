@@ -59,6 +59,25 @@ fn validation_replace_unlink_and_markers() {
         list.iter().find(|t| t.id == b[1]).unwrap().refund_link,
         RefundLinkKind::None
     );
+    // a refund that is used up takes no further original
+    assert_eq!(
+        v.link_refund(b[2], b[1]).unwrap_err().to_string(),
+        "Ungültige Eingabe: Die Erstattung ist bereits vollständig zugeordnet."
+    );
+    assert_eq!(v.refund_links(b[2]).unwrap().open_cents, 0);
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET amount_cents=-20 WHERE id=?1",
+            [b[0]],
+        )
+        .unwrap();
+    // nor does an original that is paid back in full take a further refund
+    assert_eq!(
+        v.link_refund(b[3], b[0]).unwrap_err().to_string(),
+        "Ungültige Eingabe: Die Buchung ist bereits vollständig erstattet."
+    );
+    assert_eq!(v.refund_links(b[2]).unwrap().open_cents, 30);
     // a second original is added, the first link stays
     v.link_refund(b[2], b[1]).unwrap();
     assert_eq!(originals(&v, b[2]), vec![b[0], b[1]]);
@@ -588,6 +607,42 @@ fn refund_larger_than_its_original_is_spread_over_several() {
         v.refund_links(second).unwrap().refunds[0].share_cents,
         Some(3_000)
     );
+    // filled in the order the links were made, not by date: linked first, the later booking
+    // gets its full amount and the earlier one the rest
+    v.unlink_refund(refund, first).unwrap();
+    v.unlink_refund(refund, second).unwrap();
+    v.link_refund(refund, second).unwrap();
+    v.link_refund(refund, first).unwrap();
+    let own = v.refund_links(refund).unwrap();
+    assert_eq!(
+        own.originals
+            .iter()
+            .map(|o| (o.id, o.share_cents))
+            .collect::<Vec<_>>(),
+        vec![(second, Some(4_000)), (first, Some(1_000))]
+    );
+    assert_eq!(own.open_cents, 0);
+    // used up: no suggestion or link for it any more, and the candidates say so
+    let third = add(&v, -700, "2025-06-03", "Versandhaus", "c");
+    assert!(v.link_refund(refund, third).is_err());
+    assert!(
+        v.refund_suggestions(third)
+            .unwrap()
+            .iter()
+            .all(|s| s.booking.id != refund)
+    );
+    let candidates = v.refund_candidates(third, String::new(), 50).unwrap();
+    assert_eq!(
+        candidates
+            .iter()
+            .find(|c| c.id == refund)
+            .map(|c| c.open_cents),
+        Some(0)
+    );
+    v.unlink_refund(refund, first).unwrap();
+    v.unlink_refund(refund, second).unwrap();
+    v.link_refund(refund, first).unwrap();
+    v.link_refund(refund, second).unwrap();
     // a later refund only fills what is still open
     v.link_refund(later, second).unwrap();
     assert_eq!(v.refund_links(second).unwrap().refunded_cents, Some(4_000));

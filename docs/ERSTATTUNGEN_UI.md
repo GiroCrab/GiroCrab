@@ -50,7 +50,7 @@ Darunter zuerst die **verknüpften** Buchungen (✓) mit der Summe, wenn alle Be
 
 Jede verknüpfte Zeile zeigt unter ihrem Betrag „Zugeordnet: …“ (`RefundBooking.share_cents`): den Teil der Erstattung,
 der auf diese Verknüpfung entfällt – höchstens der Betrag der Buchung und höchstens der Rest der Erstattung. Ist die
-Erstattung schon aufgebraucht, steht dort 0 in der Warnfarbe. Dasselbe zeigt die Karte im Inspektor.
+Erstattung schon aufgebraucht, steht dort 0 in der Warnfarbe (nur noch bei Verknüpfungen von einem anderen Gerät). Dasselbe zeigt die Karte im Inspektor.
 
 Dann bis zu drei **Vorschläge** des Core (`refund_suggestions`), jeder mit seinem Grund, aufgefüllt in dieser
 Reihenfolge und darin nach Nähe zum Datum: gleicher Betrag in der Gegenrichtung (gleiche Währung), gleiche Gegenpartei
@@ -107,3 +107,11 @@ den Auswertungen, die auf derselben Einordnung beruhen. Der noch nicht zugeordne
 In der Buchungszeile steht neben dem Erstattungssymbol nur dann ein Betrag (`Booking.refund_part_cents`), wenn die
 Buchung erst zum Teil erstattet bzw. zugeordnet ist; ganz erstattete oder zugeordnete Buchungen zeigen nur das Symbol. Nach dem Aufheben der Verknüpfung gilt wieder die Einordnung des Core. Beträge, Kategorien und
 Kontostände ändern sich dadurch nicht.
+
+## Reihenfolge und Grenze
+
+Die Anteile werden in der Reihenfolge gefüllt, in der die Verknüpfungen angelegt wurden (`refund_links.changed_ms`):
+Die zuerst verknüpfte Buchung bekommt ihren Anteil zuerst, die nächste höchstens den Rest. So stehen die verknüpften
+Zeilen auch in der Auswahl und im Inspektor. Ist eine Erstattung vollständig zugeordnet oder eine Buchung vollständig
+erstattet (`open_cents == 0`), nimmt sie keine weitere Verknüpfung an: Der Core lehnt sie ab, die Auswahl zeigt die
+übrigen Zeilen abgeblendet mit Hinweis, und Vorschläge lassen solche Buchungen aus.

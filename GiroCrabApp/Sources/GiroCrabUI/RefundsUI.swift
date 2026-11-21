@@ -14,7 +14,7 @@ struct RefundLinkMarker: View {
     var body: some View {
         if kind != .none {
             HStack(spacing: 3) {
-                Image(systemName: kind == .refund ? "arrow.uturn.backward" : "arrow.uturn.backward.circle")
+                Image(systemName: "arrow.uturn.backward")
                     .appFont(.caption, weight: .semibold)
                     .help(kind == .refund ? "Erstattung – mit der ursprünglichen Buchung verknüpft" : "Mit einer Erstattung verknüpft")
                     .accessibilityLabel(kind == .refund ? "Verknüpfte Erstattung" : "Hat verknüpfte Erstattung")
@@ -250,6 +250,13 @@ struct RefundPickerSheet: View {
                     }
                 }
             }
+            if links?.openCents == 0, !(top.isEmpty && others.isEmpty) {
+                Label(fromRefund ? "Die Erstattung ist vollständig zugeordnet. Heben Sie eine Verknüpfung auf, um eine andere Buchung zu wählen."
+                          : "Die Buchung ist vollständig erstattet. Heben Sie eine Verknüpfung auf, um eine andere Erstattung zu wählen.",
+                      systemImage: "checkmark.circle")
+                    .appFont(.caption)
+                    .foregroundStyle(Theme.secondary)
+            }
             if !top.isEmpty {
                 Section {
                     ForEach(top, id: \.booking.id) { row($0.booking, isLinked: false, reason: $0.reason) }
@@ -276,8 +283,20 @@ struct RefundPickerSheet: View {
     }
 
     /// The whole row is one button, the circle in front included.
+    /// Why an unlinked row cannot be chosen: this booking or that one has nothing left to link.
+    private func blocked(_ r: RefundBooking) -> LocalizedStringKey? {
+        if links?.openCents == 0 {
+            return fromRefund ? "Die Erstattung ist bereits vollständig zugeordnet." : "Die Buchung ist bereits vollständig erstattet."
+        }
+        if r.openCents == 0 {
+            return fromRefund ? "Diese Buchung ist bereits vollständig erstattet." : "Diese Erstattung ist bereits vollständig zugeordnet."
+        }
+        return nil
+    }
+
     private func row(_ r: RefundBooking, isLinked: Bool, reason: RefundMatch? = nil) -> some View {
-        Button { toggle(r, isLinked: isLinked) } label: {
+        let blocked = isLinked ? nil : blocked(r)
+        return Button { toggle(r, isLinked: isLinked) } label: {
             HStack(spacing: 10) {
                 Image(systemName: isLinked ? "checkmark.circle.fill" : "circle")
                     .appFont(.title3)
@@ -296,7 +315,9 @@ struct RefundPickerSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isLinked ? "Verknüpfung aufheben" : "Mit dieser Buchung verknüpfen")
+        .disabled(blocked != nil)
+        .opacity(blocked == nil ? 1 : 0.45)
+        .help(blocked ?? (isLinked ? "Verknüpfung aufheben" : "Mit dieser Buchung verknüpfen"))
         .accessibilityAddTraits(isLinked ? .isSelected : [])
     }
 
