@@ -1488,8 +1488,8 @@ public final class AppModel {
                 if pasted != current {
                     let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
                     if !cloud.lastMergeFoundSnapshot && !hasData {
-                        let msg = String(localized: "Noch kein iCloud-Tresor gefunden. Aktivieren Sie iCloud Sync auf dem anderen Gerät, warten Sie auf den ersten Upload und versuchen Sie es erneut.")
-                        self.keyAdoption = .failed(msg); self.toast = msg
+                        // Name the place and offer another folder (#1503): the sheet stays open.
+                        self.keyAdoption = .notFound(KeyAdoptionState.notFoundMessage(location: cloud.location))
                         return
                     }
                     try v.rekey(newKey: pasted)
@@ -1509,6 +1509,25 @@ public final class AppModel {
             } catch {
                 self.keyAdoption = .failed(describe(error)); self.toast = describe(error)
             }
+        }
+    }
+
+    /// „Ordner wählen …“ in the paste sheet after no vault was found (#1503):
+    /// syncs via the picked folder from now on and adopts the pasted key there.
+    /// A folder without a vault is refused, so adopting never starts a new vault.
+    func adoptSyncKey(_ text: String, folder url: URL, wait: TimeInterval = 6) {
+        guard keyAdoption != .working else { return }
+        keyAdoption = .working
+        Task {
+            let picked = await ICloudFolderMigration.inspectPicked(url, wait: wait)
+            if let message = KeyAdoptionState.pickedFolderMessage(picked) {
+                self.keyAdoption = .notFound(message); return
+            }
+            do { try CloudSyncManager.shared.setFolder(url, chosen: true) } catch {
+                self.keyAdoption = .failed(describe(error)); return
+            }
+            self.keyAdoption = .idle
+            self.adoptSyncKey(text)
         }
     }
 
