@@ -54,6 +54,9 @@ pub fn handles(method: &str) -> bool {
             | "import_quirion_snapshot"
             | "pending_quirion_documents"
             | "import_quirion_document"
+            | "import_unioninvestment_snapshot"
+            | "pending_unioninvestment_documents"
+            | "import_unioninvestment_document"
             | "import_schwaebisch_hall_snapshot"
             | "pending_schwaebisch_hall_documents"
             | "import_schwaebisch_hall_document"
@@ -199,6 +202,15 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
             .map_err(err)?),
         "import_quirion_document" => ok(vault()?
             .import_quirion_document(id()?, arg(a, "document_json")?, bytes(a)?)
+            .map_err(err)?),
+        "import_unioninvestment_snapshot" => ok(vault()?
+            .import_unioninvestment_snapshot(id()?, arg(a, "snapshot_json")?)
+            .map_err(err)?),
+        "pending_unioninvestment_documents" => ok(vault()?
+            .pending_unioninvestment_documents(id()?, arg(a, "documents_json")?)
+            .map_err(err)?),
+        "import_unioninvestment_document" => ok(vault()?
+            .import_unioninvestment_document(id()?, arg(a, "document_json")?, bytes(a)?)
             .map_err(err)?),
         "import_schwaebisch_hall_snapshot" => ok(vault()?
             .import_schwaebisch_hall_snapshot(id()?, arg(a, "snapshot_json")?)

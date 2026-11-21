@@ -217,6 +217,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "quirion quirin privatbank depot",
         ),
         (
+            ConnectorKind::UnionInvestment,
+            "Union Investment",
+            "union investment unioninvest uniondepot union depot fonds meindepot genossenschaftliche",
+        ),
+        (
             ConnectorKind::SchwaebischHall,
             "Schwäbisch Hall",
             "schwaebisch bsh bausparvertrag bauspar",

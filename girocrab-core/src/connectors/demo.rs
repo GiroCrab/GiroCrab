@@ -128,6 +128,7 @@ impl BankConnector for DemoConnector {
             | ConnectorKind::AmazonOrders
             | ConnectorKind::EquatePlus
             | ConnectorKind::Quirion
+            | ConnectorKind::UnionInvestment
             | ConnectorKind::SchwaebischHall
             | ConnectorKind::Fnz
             | ConnectorKind::EnableBanking => Challenge {

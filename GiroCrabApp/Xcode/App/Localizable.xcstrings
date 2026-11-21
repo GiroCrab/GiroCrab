@@ -429,6 +429,17 @@
         }
       }
     },
+    "%@ – Union Investment" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ – Union Investment"
+          }
+        }
+      }
+    },
     "%@ – quirion" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4660,6 +4671,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Signed in – taking over the session…"
+          }
+        }
+      }
+    },
+    "Angemeldet – das Depot kann abgerufen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signed in – the depot can be fetched."
           }
         }
       }
@@ -9836,6 +9858,17 @@
         }
       }
     },
+    "Depot abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch depot"
+          }
+        }
+      }
+    },
     "Depot konnte nicht geladen werden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9854,6 +9887,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fetch portfolio and accounts"
+          }
+        }
+      }
+    },
+    "Depot und Positionen abrufen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetching depot and positions …"
           }
         }
       }
@@ -21180,6 +21224,17 @@
         }
       }
     },
+    "Melden Sie sich bei Union Investment an und bestätigen Sie den SMS-Code." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in to Union Investment and confirm the SMS code."
+          }
+        }
+      }
+    },
     "Melden Sie sich bei quirion an und bestätigen Sie gegebenenfalls die Anmeldung." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24520,6 +24575,17 @@
         }
       }
     },
+    "PDF-Postbox abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch PDF mailbox"
+          }
+        }
+      }
+    },
     "PDF-Postbox inkl. Archiv" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25237,6 +25303,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Postbank: use the Postbank ID as user name, not the account number."
+          }
+        }
+      }
+    },
+    "Postbox auflisten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listing mailbox …"
           }
         }
       }
@@ -29964,6 +30041,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Invalid key (expected 32 bytes, Base64 or hex)."
+          }
+        }
+      }
+    },
+    "Union Investment: %u Depots aktualisiert, %lld neue PDFs." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Union Investment: %u depots updated, %lld new PDFs."
+          }
+        }
+      }
+    },
+    "Union Investment: Die Portalantwort konnte nicht gelesen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Union Investment: The portal response could not be read."
           }
         }
       }
