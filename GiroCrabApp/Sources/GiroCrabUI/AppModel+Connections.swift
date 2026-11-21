@@ -336,8 +336,13 @@ extension AppModel {
         reloadAll()
     }
 
-    /// Vault setting with the portal user name of a login (Amex); the password is
-    /// the login's PIN (`setConnectionPin`). `pin.` keys are stored as secrets.
+    /// Whether a portal supports storing its username and password in the vault.
+    nonisolated static func supportsStoredPortalLogin(_ connector: ConnectorKind) -> Bool {
+        connector == .americanExpress || connector == .amazonVisa
+    }
+
+    /// Vault setting with the portal user name; the password is the login's PIN
+    /// (`setConnectionPin`). `pin.` keys are stored as secrets.
     static func portalLoginKey(_ id: Int64) -> String { "pin.conn.\(id).login" }
 
     func setConnectionPin(_ id: Int64, _ pin: String?) {
