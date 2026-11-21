@@ -43,6 +43,8 @@ pub struct DuplicateSide {
 pub struct PossibleDuplicate {
     pub account_id: i64,
     pub account_name: String,
+    /// The account's currency (ISO code), for formatting `amount_cents`.
+    pub currency: String,
     pub amount_cents: i64,
     pub bank: DuplicateSide,
     pub imported: DuplicateSide,
@@ -51,7 +53,7 @@ pub struct PossibleDuplicate {
 /// Bank rows with what a merge could not carry over (splits, documents, loan
 /// links) are left out: merging would lose them. Tags carry over.
 const PAIRS_SQL: &str = "
-    SELECT a.id, a.name, b.amount_cents,
+    SELECT a.id, a.name, a.currency, b.amount_cents,
            b.id, b.booking_date, b.counterparty, b.purpose, IFNULL(bc.name, ''),
            b.category_id IS NOT NULL AND b.category_source = 'manual', b.note,
            (SELECT group_concat(g.name, char(31)) FROM transaction_tags x
@@ -70,7 +72,10 @@ const PAIRS_SQL: &str = "
                          AND m.deleted_ms IS NULL
                          AND m.external_id LIKE 'mm-%'
                          AND m.external_id NOT LIKE 'mm-switch-pending-%'
-                         AND abs(julianday(m.booking_date) - julianday(b.booking_date)) <= ?1
+                         -- a range on the date, not abs(julianday(…)): the
+                         -- (account, amount, date) lookup can use the index
+                         AND m.booking_date BETWEEN date(b.booking_date, '-' || ?1 || ' days')
+                                                AND date(b.booking_date, '+' || ?1 || ' days')
       LEFT JOIN categories bc ON bc.id = b.category_id
       LEFT JOIN categories mc ON mc.id = m.category_id
      WHERE b.deleted_ms IS NULL
@@ -90,7 +95,14 @@ fn dismissed(conn: &Connection) -> CoreResult<Vec<String>> {
         .unwrap_or_default())
 }
 
-fn pair_key(bank_ext: &str, mm_ext: &str) -> String {
+/// Bank ids are unique only per account (`UNIQUE (account_id, external_id)`),
+/// so the key names the account too.
+fn pair_key(account_id: i64, bank_ext: &str, mm_ext: &str) -> String {
+    format!("{account_id}\t{bank_ext}\t{mm_ext}")
+}
+
+/// The key the first version stored, without the account – still honoured.
+fn legacy_pair_key(bank_ext: &str, mm_ext: &str) -> String {
     format!("{bank_ext}\t{mm_ext}")
 }
 
@@ -116,17 +128,22 @@ fn possible_duplicates(conn: &Connection) -> CoreResult<Vec<PossibleDuplicate>> 
         let pair = PossibleDuplicate {
             account_id: r.get(0)?,
             account_name: r.get(1)?,
-            amount_cents: r.get(2)?,
-            bank: side(3)?,
-            imported: side(12)?,
+            currency: r.get(2)?,
+            amount_cents: r.get(3)?,
+            bank: side(4)?,
+            imported: side(13)?,
         };
-        let key = pair_key(&r.get::<_, String>(11)?, &r.get::<_, String>(20)?);
-        Ok((pair, key))
+        let (bank_ext, mm_ext): (String, String) = (r.get(12)?, r.get(21)?);
+        let keys = [
+            pair_key(pair.account_id, &bank_ext, &mm_ext),
+            legacy_pair_key(&bank_ext, &mm_ext),
+        ];
+        Ok((pair, keys))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (pair, key) = row?;
-        if !dismissed.contains(&key) {
+        let (pair, keys) = row?;
+        if !keys.iter().any(|k| dismissed.contains(k)) {
             out.push(pair);
         }
     }
@@ -207,52 +224,55 @@ fn merge(conn: &Connection, bank_id: i64, imported_id: i64, keep_bank: bool) -> 
         "UPDATE transactions SET external_id = external_id || '#merged-' || id WHERE id = ?1",
         [bank_id],
     )?;
-    // texts: the bank's (the next fetch reports them anyway, and MoneyMoney's
-    // may be a raw format like "Akto:… ABZR: …") or MoneyMoney's, filled in
+    // Each text field: the kept entry's when it has one, else the other's
+    // (the bank's wording is what the next fetch reports, MoneyMoney's may be
+    // a raw format like "Akto:… ABZR: …"). The salary override likewise.
+    let pick = |f: &str| {
+        format!(
+            "{f} = CASE WHEN ?4 THEN (CASE WHEN b.{f} != '' THEN b.{f} ELSE transactions.{f} END)
+                        ELSE (CASE WHEN transactions.{f} != '' THEN transactions.{f} ELSE b.{f} END) END"
+        )
+    };
     tx.execute(
-        "UPDATE transactions SET external_id = ?2,
-                counterparty = CASE WHEN ?4 THEN b.counterparty ELSE transactions.counterparty END,
-                purpose = CASE WHEN ?4 THEN b.purpose ELSE transactions.purpose END,
-                counterparty_iban = CASE WHEN b.counterparty_iban != '' AND (?4 OR transactions.counterparty_iban = '')
-                                         THEN b.counterparty_iban ELSE transactions.counterparty_iban END,
-                booking_text = CASE WHEN b.booking_text != '' AND (?4 OR transactions.booking_text = '')
-                                    THEN b.booking_text ELSE transactions.booking_text END
-           FROM (SELECT counterparty, purpose, counterparty_iban, booking_text
-                   FROM transactions WHERE id = ?3) AS b
-          WHERE transactions.id = ?1",
+        &format!(
+            "UPDATE transactions SET external_id = ?2, {}, {}, {}, {},
+                    salary_flag = CASE WHEN ?4 THEN COALESCE(b.salary_flag, transactions.salary_flag)
+                                       ELSE COALESCE(transactions.salary_flag, b.salary_flag) END
+               FROM (SELECT counterparty, purpose, counterparty_iban, booking_text, salary_flag
+                       FROM transactions WHERE id = ?3) AS b
+              WHERE transactions.id = ?1",
+            pick("counterparty"),
+            pick("purpose"),
+            pick("counterparty_iban"),
+            pick("booking_text"),
+        ),
         params![imported_id, bank.ext, bank_id, keep_bank],
     )?;
-    if cat_from.cat != mm.cat || cat_from.src != mm.src {
-        tx.execute(
-            "UPDATE transactions SET category_id = ?2, category_source = ?3, rule_id = ?4, category_ms = ?5
-              WHERE id = ?1",
-            params![imported_id, cat_from.cat, cat_from.src, cat_from.rule, now],
-        )?;
-    }
-    if note != mm.note {
-        tx.execute(
-            "UPDATE transactions SET note = ?2, note_ms = ?3 WHERE id = ?1",
-            params![imported_id, note, now],
-        )?;
-    }
     // tags of both: the kept booking gets the union
-    let added = tx.execute(
+    tx.execute(
         "INSERT OR IGNORE INTO transaction_tags(transaction_id, tag_id)
          SELECT ?1, tag_id FROM transaction_tags WHERE transaction_id = ?2",
         params![imported_id, bank_id],
     )?;
-    if added > 0 {
-        tx.execute(
-            "UPDATE transactions SET tags_ms = ?2 WHERE id = ?1",
-            params![imported_id, now],
-        )?;
-    }
-    if mm.checked == 0 && bank.checked != 0 {
-        tx.execute(
-            "UPDATE transactions SET checked = 1, checked_ms = ?2 WHERE id = ?1",
-            params![imported_id, now],
-        )?;
-    }
+    // Every merged field gets the merge time as its stamp, also where the value
+    // stayed the imported one: sync keeps the newer stamp per field, and a
+    // device still holding the bank row must not win back its own value.
+    tx.execute(
+        "UPDATE transactions
+            SET category_id = ?2, category_source = ?3, rule_id = ?4, note = ?5,
+                checked = MAX(checked, ?6),
+                category_ms = ?7, note_ms = ?7, checked_ms = ?7, tags_ms = ?7, text_ms = ?7
+          WHERE id = ?1",
+        params![
+            imported_id,
+            cat_from.cat,
+            cat_from.src,
+            cat_from.rule,
+            note,
+            bank.checked,
+            now
+        ],
+    )?;
     // the removed copy keeps the imported row's old id as a tombstone, so
     // another device still holding that row drops it on merge
     tx.execute(
@@ -301,20 +321,21 @@ impl Vault {
         imported_booking_id: i64,
     ) -> Result<(), CoreError> {
         let db = self.db()?;
-        let ext = |id: i64| -> CoreResult<Option<String>> {
+        let ext = |id: i64| -> CoreResult<Option<(i64, String)>> {
             Ok(db
                 .query_row(
-                    "SELECT external_id FROM transactions WHERE id = ?1",
+                    "SELECT account_id, external_id FROM transactions WHERE id = ?1",
                     [id],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?)
         };
-        let (Some(b), Some(m)) = (ext(bank_booking_id)?, ext(imported_booking_id)?) else {
+        let (Some((account, b)), Some((_, m))) = (ext(bank_booking_id)?, ext(imported_booking_id)?)
+        else {
             return Ok(());
         };
         let mut list = dismissed(&db)?;
-        let key = pair_key(&b, &m);
+        let key = pair_key(account, &b, &m);
         if !list.contains(&key) {
             list.push(key);
             Vault::set_setting_inner(&db, DISMISSED_KEY, &list.join("\n"))?;

@@ -67,7 +67,7 @@ struct DuplicatesSheet: View {
                     .foregroundStyle(Theme.secondary)
                     .sensitive()
                 Spacer()
-                Text(Money.format(pair.amountCents))
+                Text(Money.format(pair.amountCents, currency: pair.currency))
                     .sensitive(.amounts)
                     .monospacedDigit()
                     .foregroundStyle(pair.amountCents < 0 ? Theme.outflow : Theme.inflow)
@@ -135,7 +135,7 @@ struct DuplicatesSheet: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Image(systemName: "folder").accessibilityHidden(true)
-                Text(s.categoryName.isEmpty ? String(localized: "Ohne Kategorie") : s.categoryName).sensitive()
+                Text(s.categoryName.isEmpty ? String(localized: "Ohne Kategorie") : s.categoryName).sensitive(.labels)
                 if !s.categoryName.isEmpty {
                     Text(s.categoryByHand ? LocalizedStringKey("(von Hand)") : LocalizedStringKey("(Regel)"))
                         .foregroundStyle(Theme.tertiary)
@@ -152,7 +152,7 @@ struct DuplicatesSheet: View {
             if !s.tags.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "tag").accessibilityHidden(true)
-                    Text(s.tags.joined(separator: ", ")).lineLimit(1).sensitive()
+                    Text(s.tags.joined(separator: ", ")).lineLimit(1).sensitive(.labels)
                     mark(carried: marks.tagsCarried)
                 }
             }

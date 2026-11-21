@@ -20,7 +20,7 @@ fn account(v: &Vault) -> i64 {
     .unwrap();
     db.execute(
         "INSERT INTO accounts(group_id, external_ref, name)
-         VALUES ((SELECT MIN(id) FROM account_groups), 'acc-1', 'Girokonto')",
+         VALUES ((SELECT MIN(id) FROM account_groups), 'acc-' || (SELECT count(*) FROM accounts), 'Girokonto')",
         [],
     )
     .unwrap();
@@ -425,4 +425,110 @@ fn dismissed_pairs_stay_hidden_and_bank_rows_with_extras_are_left_out() {
         )
         .unwrap();
     assert!(v.possible_duplicates().unwrap().is_empty());
+}
+
+#[test]
+fn dismissing_is_per_account_and_old_keys_still_count() {
+    let (_d, v) = vault();
+    let a = account(&v);
+    let b = account(&v);
+    // the same pair of ids in two accounts
+    let ba = row(&v, a, "fints-1", "2026-04-01", -500, "A", "");
+    let ma = row(&v, a, "mm-1", "2026-04-01", -500, "A", "");
+    row(&v, b, "fints-1", "2026-04-01", -500, "A", "");
+    row(&v, b, "mm-1", "2026-04-01", -500, "A", "");
+    v.dismiss_possible_duplicate(ba, ma).unwrap();
+    let left = v.possible_duplicates().unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].account_id, b);
+    // a key stored by the first version (without the account) hides both
+    let db = v.db().unwrap();
+    Vault::set_setting_inner(&db, super::DISMISSED_KEY, "fints-1\tmm-1").unwrap();
+    drop(db);
+    assert!(v.possible_duplicates().unwrap().is_empty());
+}
+
+#[test]
+fn texts_fill_gaps_from_the_other_entry_and_the_salary_override_stays() {
+    let (_d, v) = vault();
+    let acc = account(&v);
+    // the bank sends no counterparty, MoneyMoney has one
+    let bank = row(
+        &v,
+        acc,
+        "fints-1",
+        "2026-09-30",
+        4567,
+        "",
+        "Abschluss Zinsen",
+    );
+    let mm = row(
+        &v,
+        acc,
+        "mm-1",
+        "2026-09-30",
+        4567,
+        "Abschluss Zinsen Kto",
+        "",
+    );
+    v.set_booking_salary_flag(bank, Some(false)).unwrap();
+    v.merge_possible_duplicate(bank, mm, true).unwrap();
+    let (name, purpose, salary): (String, String, Option<i64>) = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT counterparty, purpose, salary_flag FROM transactions WHERE id = ?1",
+            [mm],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        name, "Abschluss Zinsen Kto",
+        "empty bank name must not erase MoneyMoney's"
+    );
+    assert_eq!(
+        purpose, "Abschluss Zinsen",
+        "empty imported purpose gets the bank's"
+    );
+    assert_eq!(salary, Some(0));
+}
+
+#[test]
+fn every_merged_field_gets_the_merge_stamp() {
+    let (_d, v) = vault();
+    let acc = account(&v);
+    let bank = row(&v, acc, "fints-1", "2026-04-01", -500, "A", "x");
+    let mm = row(&v, acc, "mm-1", "2026-04-01", -500, "A", "x");
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET category_ms = 10, note_ms = 10, checked_ms = 10, tags_ms = 10, text_ms = 10
+              WHERE id = ?1",
+            [mm],
+        )
+        .unwrap();
+    v.merge_possible_duplicate(bank, mm, false).unwrap();
+    let stamps: Vec<i64> = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT category_ms, note_ms, checked_ms, tags_ms, text_ms FROM transactions WHERE id = ?1",
+            [mm],
+            |r| Ok(vec![r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?]),
+        )
+        .unwrap();
+    assert!(stamps.iter().all(|&s| s > 10), "{stamps:?}");
+}
+
+#[test]
+fn pairs_carry_the_account_currency() {
+    let (_d, v) = vault();
+    let acc = account(&v);
+    v.db()
+        .unwrap()
+        .execute("UPDATE accounts SET currency = 'CHF' WHERE id = ?1", [acc])
+        .unwrap();
+    row(&v, acc, "fints-1", "2026-04-01", -500, "A", "");
+    row(&v, acc, "mm-1", "2026-04-01", -500, "A", "");
+    assert_eq!(v.possible_duplicates().unwrap()[0].currency, "CHF");
 }
