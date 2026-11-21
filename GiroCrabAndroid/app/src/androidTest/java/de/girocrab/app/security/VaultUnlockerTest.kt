@@ -123,7 +123,7 @@ class VaultUnlockerTest {
      */
     @Test
     fun missingVaultFileIsReportedWithoutPrompt() {
-        storeWrappedKey()
+        storeWrappedKey(createVault = false)
         var prompted = false
         val unlocker = unlocker { cipher, _, _, onResult ->
             prompted = true
@@ -140,9 +140,7 @@ class VaultUnlockerTest {
 
     @Test
     fun authenticatedPromptOpensTheVault() {
-        val key = storeWrappedKey()
-        // The import created the file on a real device; here it is created directly.
-        handleOrFail(opener.open(vaultFile.path, key)).close()
+        storeWrappedKey()
         val unlocker = unlocker { cipher, _, _, onResult ->
             onResult(PromptResult.Succeeded(cipher))
         }
@@ -190,7 +188,7 @@ class VaultUnlockerTest {
      * Stores a key and proves the plain round-trip first. If the unlocker test fails afterwards,
      * the defect is in the unlocker, not in the store — otherwise both look identical in the log.
      */
-    private fun storeWrappedKey(): ByteArray {
+    private fun storeWrappedKey(createVault: Boolean = true): ByteArray {
         val key = ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { (it + 11).toByte() }
         val store = keyStore()
         store.storeWrapped(key, store.setupCipher())
@@ -200,6 +198,8 @@ class VaultUnlockerTest {
             key,
             store.readWrapped(store.unlockCipher()),
         )
+        // On a device the import created the file; without it the unlocker reports VaultMissing.
+        if (createVault) handleOrFail(opener.open(vaultFile.path, key)).close()
         return key
     }
 
