@@ -38,9 +38,9 @@ fn validation_replace_unlink_and_markers() {
         (999, b[0]),
         (b[2], 999),
     ] {
-        assert!(v.link_refund(r, o).is_err());
+        assert!(v.link_refund(r, o, 0).is_err());
     }
-    v.link_refund(b[2], b[0]).unwrap();
+    v.link_refund(b[2], b[0], 0).unwrap();
     assert_eq!(originals(&v, b[2]), vec![b[0]]);
     assert_eq!(v.refund_links(b[0]).unwrap().refunds[0].id, b[2]);
     let list = v
@@ -61,7 +61,7 @@ fn validation_replace_unlink_and_markers() {
     );
     // a refund that is used up takes no further original
     assert_eq!(
-        v.link_refund(b[2], b[1]).unwrap_err().to_string(),
+        v.link_refund(b[2], b[1], 0).unwrap_err().to_string(),
         "Ungültige Eingabe: Die Erstattung ist bereits vollständig zugeordnet."
     );
     assert_eq!(v.refund_links(b[2]).unwrap().open_cents, 0);
@@ -74,24 +74,24 @@ fn validation_replace_unlink_and_markers() {
         .unwrap();
     // nor does an original that is paid back in full take a further refund
     assert_eq!(
-        v.link_refund(b[3], b[0]).unwrap_err().to_string(),
+        v.link_refund(b[3], b[0], 0).unwrap_err().to_string(),
         "Ungültige Eingabe: Die Buchung ist bereits vollständig erstattet."
     );
     assert_eq!(v.refund_links(b[2]).unwrap().open_cents, 30);
     // a second original is added, the first link stays
-    v.link_refund(b[2], b[1]).unwrap();
+    v.link_refund(b[2], b[1], 0).unwrap();
     assert_eq!(originals(&v, b[2]), vec![b[0], b[1]]);
-    v.unlink_refund(b[2], b[0]).unwrap();
+    v.unlink_refund(b[2], b[0], 0).unwrap();
     assert!(v.refund_links(b[0]).unwrap().refunds.is_empty());
     assert_eq!(originals(&v, b[2]), vec![b[1]]);
-    v.unlink_refund(b[2], b[1]).unwrap();
-    v.unlink_refund(999, b[1]).unwrap();
+    v.unlink_refund(b[2], b[1], 0).unwrap();
+    v.unlink_refund(999, b[1], 0).unwrap();
     assert!(originals(&v, b[2]).is_empty());
     v.db()
         .unwrap()
         .execute("UPDATE transactions SET deleted_ms=1 WHERE id=?1", [b[0]])
         .unwrap();
-    assert!(v.link_refund(b[2], b[0]).is_err());
+    assert!(v.link_refund(b[2], b[0], 0).is_err());
     assert!(v.refund_links(b[0]).is_err());
 }
 
@@ -100,7 +100,7 @@ fn cascade_and_no_chains() {
     let d = TempDir::new("refunds");
     let v = open(&d, "v");
     let b = seed(&v);
-    v.link_refund(b[2], b[0]).unwrap();
+    v.link_refund(b[2], b[0], 0).unwrap();
     v.db()
         .unwrap()
         .execute(
@@ -108,7 +108,7 @@ fn cascade_and_no_chains() {
             [b[2]],
         )
         .unwrap();
-    assert!(v.link_refund(b[3], b[2]).is_err());
+    assert!(v.link_refund(b[3], b[2], 0).is_err());
     v.db()
         .unwrap()
         .execute(
@@ -123,13 +123,13 @@ fn cascade_and_no_chains() {
             [b[0]],
         )
         .unwrap();
-    assert!(v.link_refund(b[0], b[1]).is_err());
+    assert!(v.link_refund(b[0], b[1], 0).is_err());
     v.db()
         .unwrap()
         .execute("DELETE FROM transactions WHERE id=?1", [b[0]])
         .unwrap();
     assert!(originals(&v, b[2]).is_empty());
-    v.link_refund(b[2], b[1]).unwrap();
+    v.link_refund(b[2], b[1], 0).unwrap();
     v.db()
         .unwrap()
         .execute("DELETE FROM transactions WHERE id=?1", [b[2]])
@@ -176,7 +176,7 @@ fn candidates_sign_window_order_filter_conflicts() {
         vec![b[2], b[3]]
     );
     // a refund of another booking can also pay back this one
-    v.link_refund(b[2], b[1]).unwrap();
+    v.link_refund(b[2], b[1], 0).unwrap();
     assert_eq!(
         ids(v.refund_candidates(b[0], String::new(), 20).unwrap()),
         vec![b[2], b[3]]
@@ -199,11 +199,11 @@ fn merge_maps_links_and_newer_relink_wins() {
     let b = open(&d, "b");
     let aa = seed(&a);
     let bb = seed(&b);
-    b.link_refund(bb[2], bb[0]).unwrap();
+    b.link_refund(bb[2], bb[0], 0).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     assert_eq!(originals(&a, aa[2]), vec![aa[0]]);
-    a.unlink_refund(aa[2], aa[0]).unwrap();
-    a.link_refund(aa[2], aa[1]).unwrap();
+    a.unlink_refund(aa[2], aa[0], 0).unwrap();
+    a.link_refund(aa[2], aa[1], 0).unwrap();
     a.db()
         .unwrap()
         .execute(
@@ -222,9 +222,9 @@ fn unlink_survives_older_peer_and_relink_revives() {
     let b = open(&d, "b");
     let aa = seed(&a);
     let bb = seed(&b);
-    a.link_refund(aa[2], aa[0]).unwrap();
+    a.link_refund(aa[2], aa[0], 0).unwrap();
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
-    a.unlink_refund(aa[2], aa[0]).unwrap();
+    a.unlink_refund(aa[2], aa[0], 0).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     assert!(originals(&a, aa[2]).is_empty());
     assert!(a.refund_links(aa[0]).unwrap().refunds.is_empty());
@@ -237,7 +237,7 @@ fn unlink_survives_older_peer_and_relink_revives() {
     );
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
     assert!(originals(&b, bb[2]).is_empty());
-    b.link_refund(bb[2], bb[1]).unwrap();
+    b.link_refund(bb[2], bb[1], 0).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     assert_eq!(originals(&a, aa[2]), vec![aa[1]]);
 }
@@ -258,10 +258,10 @@ fn equal_stamp_merges_agree_in_both_orders() {
             for id in &mut bb {
                 *id += 100;
             }
-            a.link_refund(aa[2], aa[0]).unwrap();
-            b.link_refund(bb[2], bb[1]).unwrap();
+            a.link_refund(aa[2], aa[0], 0).unwrap();
+            b.link_refund(bb[2], bb[1], 0).unwrap();
             if deleted {
-                a.unlink_refund(aa[2], aa[0]).unwrap();
+                a.unlink_refund(aa[2], aa[0], 0).unwrap();
             }
             for v in [&a, &b] {
                 v.db().unwrap().execute("UPDATE refund_links SET created_ms=100,changed_ms=200,deleted_ms=CASE WHEN deleted_ms IS NULL THEN NULL ELSE 200 END",[]).unwrap();
@@ -312,8 +312,8 @@ fn cross_account_currency_and_inclusive_window() {
             .iter()
             .any(|r| r.id == b[3])
     );
-    v.link_refund(b[2], b[0]).unwrap();
-    v.link_refund(b[3], b[0]).unwrap();
+    v.link_refund(b[2], b[0], 0).unwrap();
+    v.link_refund(b[3], b[0], 0).unwrap();
     let links = v.refund_links(b[0]).unwrap();
     assert_eq!(links.refunds.len(), 2);
     let usd = links.refunds.iter().find(|r| r.id == b[3]).unwrap();
@@ -340,11 +340,11 @@ fn repeated_unlink_keeps_the_stamp_and_rows_carry_texts() {
     let d = TempDir::new("refunds");
     let v = open(&d, "v");
     let b = seed(&v);
-    v.link_refund(b[2], b[1]).unwrap();
+    v.link_refund(b[2], b[1], 0).unwrap();
     let original = v.refund_links(b[2]).unwrap().originals.remove(0);
     assert_eq!(original.counterparty, "Anderer");
     assert_eq!(original.purpose, "Suche");
-    v.unlink_refund(b[2], b[1]).unwrap();
+    v.unlink_refund(b[2], b[1], 0).unwrap();
     let stamp = |v: &Vault| -> i64 {
         v.db()
             .unwrap()
@@ -356,7 +356,7 @@ fn repeated_unlink_keeps_the_stamp_and_rows_carry_texts() {
             .unwrap()
     };
     let first = stamp(&v);
-    v.unlink_refund(b[2], b[1]).unwrap();
+    v.unlink_refund(b[2], b[1], 0).unwrap();
     assert_eq!(stamp(&v), first);
 }
 
@@ -438,7 +438,7 @@ fn suggestions_fill_amount_then_merchant_then_reference() {
     assert!(!got(refund).iter().any(|(id, _)| *id == vendor_old));
     // from the outgoing side: the refund is suggested for its original; linked ones are not
     assert_eq!(got(reference), vec![(refund, RefundMatch::SameReference)]);
-    v.link_refund(refund, reference).unwrap();
+    v.link_refund(refund, reference, 0).unwrap();
     assert!(got(reference).is_empty());
     // the refund is used up by that link: it takes no further booking, so none is suggested
     assert!(got(refund).is_empty());
@@ -478,30 +478,73 @@ fn split_original_keeps_its_parts_and_takes_partial_refunds() {
     // split first, link afterwards
     v.set_transaction_splits(original, parts(-7_000, -3_000))
         .unwrap();
+    // the picker offers the parts, not the split booking itself
+    let offered: Vec<(u32, i64, String)> = v
+        .refund_candidates(first, String::new(), 20)
+        .unwrap()
+        .into_iter()
+        .filter(|b| b.id == original)
+        .map(|b| (b.part, b.amount_cents, b.part_label))
+        .collect();
+    assert_eq!(
+        offered,
+        vec![(1, -7_000, "a".to_string()), (2, -3_000, "b".to_string())]
+    );
+    assert!(v.link_refund(first, original, 0).is_err());
+    assert!(v.link_refund(first, original, 3).is_err());
+    // the refund pays back the chosen part only: at most that part's amount
+    v.link_refund(first, original, 2).unwrap();
+    assert!(v.link_refund(second, original, 2).is_err());
     assert!(
-        v.refund_candidates(first, String::new(), 20)
+        v.refund_candidates(second, String::new(), 20)
             .unwrap()
             .iter()
-            .any(|b| b.id == original && b.amount_cents == -10_000)
+            .any(|b| b.id == original && b.part == 2 && b.open_cents == 0)
     );
-    v.link_refund(first, original).unwrap();
-    v.link_refund(second, original).unwrap();
+    v.link_refund(second, original, 1).unwrap();
     assert_eq!(split(&v), vec![-7_000, -3_000]);
     let links = v.refund_links(original).unwrap();
     assert_eq!(
-        links.refunds.iter().map(|r| r.amount_cents).sum::<i64>(),
-        5_000
+        links
+            .refunds
+            .iter()
+            .map(|r| (r.id, r.part, r.part_label.as_str(), r.share_cents))
+            .collect::<Vec<_>>(),
+        vec![(first, 2, "b", Some(3_000)), (second, 1, "a", Some(2_000))]
     );
     assert_eq!(
-        v.refund_links(first).unwrap().originals[0].amount_cents,
-        -10_000
+        (links.refunded_cents, links.open_cents),
+        (Some(5_000), 5_000)
     );
+    let own = &v.refund_links(first).unwrap().originals[0];
+    assert_eq!(
+        (own.amount_cents, own.part, own.share_cents, own.open_cents),
+        (-3_000, 2, Some(3_000), 0)
+    );
+    // one refund for two parts of the same booking, removed again part by part
+    let third = add(&v, 6_000, "2025-06-14", "Versandhaus", "");
+    v.link_refund(third, original, 1).unwrap();
+    assert_eq!(
+        v.refund_links(third).unwrap().originals[0].share_cents,
+        Some(5_000)
+    );
+    v.unlink_refund(third, original, 1).unwrap();
+    assert!(v.refund_links(third).unwrap().originals.is_empty());
     // split again while linked, then remove the split: the links stay
     v.set_transaction_splits(original, parts(-5_000, -5_000))
         .unwrap();
     assert_eq!(v.refund_links(original).unwrap().refunds.len(), 2);
     v.set_transaction_splits(original, Vec::new()).unwrap();
     assert_eq!(v.refund_links(original).unwrap().refunds.len(), 2);
+    // without the parts the links count for the whole booking
+    assert_eq!(
+        v.refund_links(original).unwrap().refunded_cents,
+        Some(5_000)
+    );
+    assert_eq!(
+        v.refund_links(first).unwrap().originals[0].amount_cents,
+        -10_000
+    );
     let row = v
         .list_transactions(BookingFilter::default())
         .unwrap()
@@ -522,7 +565,7 @@ fn linked_refund_is_no_income_in_the_analysis() {
     let refund = add(&v, 3_000, "2025-06-10", "Versandhaus", "");
     let page = |v: &Vault| v.list_transactions(BookingFilter::default()).unwrap();
     let before = page(&v);
-    v.link_refund(refund, original).unwrap();
+    v.link_refund(refund, original, 0).unwrap();
     let after = page(&v);
     assert_eq!(after.income_cents, before.income_cents - 3_000);
     assert_eq!(after.expense_cents, before.expense_cents + 3_000);
@@ -531,7 +574,7 @@ fn linked_refund_is_no_income_in_the_analysis() {
         format!("{:?}", v.selection_flow(vec![], None, None).unwrap()),
         format!("{:?}", after.flow)
     );
-    v.unlink_refund(refund, original).unwrap();
+    v.unlink_refund(refund, original, 0).unwrap();
     assert_eq!(format!("{:?}", page(&v).flow), format!("{:?}", before.flow));
 }
 
@@ -550,7 +593,7 @@ fn only_the_assigned_part_of_a_refund_reduces_the_expenses() {
             .unwrap()
     };
     let before = page(&v);
-    v.link_refund(refund, small).unwrap();
+    v.link_refund(refund, small, 0).unwrap();
     // 20 of the 50 are assigned: they reduce the expenses, 30 stay income
     let part = page(&v);
     assert_eq!(part.income_cents, before.income_cents - 2_000);
@@ -567,7 +610,7 @@ fn only_the_assigned_part_of_a_refund_reduces_the_expenses() {
     assert_eq!(row(&v, refund), (Some(2_000), 3_000));
     // the original is paid back in full: just the marker
     assert_eq!(row(&v, small), (None, 0));
-    v.link_refund(refund, other).unwrap();
+    v.link_refund(refund, other, 0).unwrap();
     let full = page(&v);
     assert_eq!(full.income_cents, before.income_cents - 5_000);
     assert_eq!(full.expense_cents, before.expense_cents + 5_000);
@@ -584,12 +627,12 @@ fn refund_larger_than_its_original_is_spread_over_several() {
     let second = add(&v, -4_000, "2025-06-02", "Versandhaus", "b");
     let refund = add(&v, 5_000, "2025-06-10", "Versandhaus", "");
     let later = add(&v, 3_000, "2025-06-12", "Versandhaus", "");
-    v.link_refund(refund, first).unwrap();
+    v.link_refund(refund, first, 0).unwrap();
     // never more than the booking's amount; the rest of the refund is open
     assert_eq!(v.refund_links(first).unwrap().refunded_cents, Some(2_000));
     assert_eq!(v.refund_links(refund).unwrap().assigned_cents, Some(2_000));
     // the rest goes to the second original
-    v.link_refund(refund, second).unwrap();
+    v.link_refund(refund, second, 0).unwrap();
     let own = v.refund_links(refund).unwrap();
     assert_eq!(own.assigned_cents, Some(5_000));
     // each booking takes at most its amount, the next one at most the rest
@@ -607,10 +650,10 @@ fn refund_larger_than_its_original_is_spread_over_several() {
     );
     // filled in the order the links were made, not by date: linked first, the later booking
     // gets its full amount and the earlier one the rest
-    v.unlink_refund(refund, first).unwrap();
-    v.unlink_refund(refund, second).unwrap();
-    v.link_refund(refund, second).unwrap();
-    v.link_refund(refund, first).unwrap();
+    v.unlink_refund(refund, first, 0).unwrap();
+    v.unlink_refund(refund, second, 0).unwrap();
+    v.link_refund(refund, second, 0).unwrap();
+    v.link_refund(refund, first, 0).unwrap();
     let own = v.refund_links(refund).unwrap();
     assert_eq!(
         own.originals
@@ -622,7 +665,7 @@ fn refund_larger_than_its_original_is_spread_over_several() {
     assert_eq!(own.open_cents, 0);
     // used up: no suggestion or link for it any more, and the candidates say so
     let third = add(&v, -700, "2025-06-03", "Versandhaus", "c");
-    assert!(v.link_refund(refund, third).is_err());
+    assert!(v.link_refund(refund, third, 0).is_err());
     assert!(
         v.refund_suggestions(third)
             .unwrap()
@@ -637,12 +680,12 @@ fn refund_larger_than_its_original_is_spread_over_several() {
             .map(|c| c.open_cents),
         Some(0)
     );
-    v.unlink_refund(refund, first).unwrap();
-    v.unlink_refund(refund, second).unwrap();
-    v.link_refund(refund, first).unwrap();
-    v.link_refund(refund, second).unwrap();
+    v.unlink_refund(refund, first, 0).unwrap();
+    v.unlink_refund(refund, second, 0).unwrap();
+    v.link_refund(refund, first, 0).unwrap();
+    v.link_refund(refund, second, 0).unwrap();
     // a later refund only fills what is still open
-    v.link_refund(later, second).unwrap();
+    v.link_refund(later, second, 0).unwrap();
     assert_eq!(v.refund_links(second).unwrap().refunded_cents, Some(4_000));
     assert_eq!(v.refund_links(later).unwrap().assigned_cents, Some(1_000));
     assert_eq!(
@@ -656,7 +699,7 @@ fn refund_larger_than_its_original_is_spread_over_several() {
             .iter()
             .any(|b| b.id == later)
     );
-    v.link_refund(refund, second).unwrap();
+    v.link_refund(refund, second, 0).unwrap();
     assert_eq!(v.refund_links(second).unwrap().refunds.len(), 2);
     // another currency is never added up (#569)
     v.db()
@@ -669,4 +712,63 @@ fn refund_larger_than_its_original_is_spread_over_several() {
     assert_eq!(v.refund_links(second).unwrap().refunded_cents, None);
     assert_eq!(v.refund_links(first).unwrap().refunded_cents, Some(2_000));
     assert_eq!(v.refund_links(later).unwrap().assigned_cents, None);
+}
+
+#[test]
+fn links_work_with_own_categories_from_both_sides() {
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    seed(&v);
+    let own = |name: &str| {
+        v.create_category(name.into(), None, "tag".into(), "#abcdef".into())
+            .unwrap()
+    };
+    let (garden, tools) = (own("Garten"), own("Werkzeug"));
+    let original = add(&v, -10_000, "2025-06-01", "Baumarkt", "");
+    let plain = add(&v, -2_000, "2025-06-02", "Baumarkt", "");
+    let refund = add(&v, 5_000, "2025-06-10", "Baumarkt", "");
+    v.set_transaction_category(plain, Some(garden)).unwrap();
+    v.set_transaction_category(refund, Some(tools)).unwrap();
+    let part = |category: i64, amount: i64| crate::models::TransactionSplitInput {
+        category_id: Some(category),
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(original, vec![part(garden, -6_000), part(tools, -4_000)])
+        .unwrap();
+    // from the refund: the parts carry the names of the own categories
+    let offered: Vec<(i64, u32, String)> = v
+        .refund_candidates(refund, String::new(), 20)
+        .unwrap()
+        .into_iter()
+        .filter(|b| b.id == original || b.id == plain)
+        .map(|b| (b.id, b.part, b.part_label))
+        .collect();
+    assert_eq!(
+        offered,
+        vec![
+            (plain, 0, String::new()),
+            (original, 1, "Garten".to_string()),
+            (original, 2, "Werkzeug".to_string()),
+        ]
+    );
+    v.link_refund(refund, plain, 0).unwrap();
+    // from the outgoing booking: the refund is offered and linked to the chosen part
+    assert!(
+        v.refund_candidates(original, String::new(), 20)
+            .unwrap()
+            .iter()
+            .any(|b| b.id == refund && b.open_cents == 3_000)
+    );
+    v.link_refund(refund, original, 2).unwrap();
+    let links = v.refund_links(refund).unwrap();
+    assert_eq!(
+        links
+            .originals
+            .iter()
+            .map(|o| (o.id, o.part, o.share_cents))
+            .collect::<Vec<_>>(),
+        vec![(plain, 0, Some(2_000)), (original, 2, Some(3_000))]
+    );
+    assert_eq!(links.assigned_cents, Some(5_000));
 }

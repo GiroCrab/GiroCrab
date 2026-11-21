@@ -77,21 +77,21 @@ fn qa_three_fill_middle_unlink_relink_and_exhaustion() {
     let y = booking(&v, a, -3000);
     let z = booking(&v, a, -8000);
     for o in [x, y, z] {
-        v.link_refund(r, o).unwrap();
+        v.link_refund(r, o, 0).unwrap();
     }
     assert_eq!(
         allocations(&v, r),
         vec![(x, Some(2000)), (y, Some(3000)), (z, Some(5000))]
     );
     let fourth = booking(&v, a, -1000);
-    assert!(v.link_refund(r, fourth).is_err());
-    v.link_refund(r, z).unwrap();
-    v.unlink_refund(r, y).unwrap();
+    assert!(v.link_refund(r, fourth, 0).is_err());
+    v.link_refund(r, z, 0).unwrap();
+    v.unlink_refund(r, y, 0).unwrap();
     assert_eq!(allocations(&v, r), vec![(x, Some(2000)), (z, Some(8000))]);
-    assert!(v.link_refund(r, y).is_err());
-    v.unlink_refund(r, z).unwrap();
-    v.link_refund(r, y).unwrap();
-    v.link_refund(r, z).unwrap();
+    assert!(v.link_refund(r, y, 0).is_err());
+    v.unlink_refund(r, z, 0).unwrap();
+    v.link_refund(r, y, 0).unwrap();
+    v.link_refund(r, z, 0).unwrap();
     assert_eq!(
         allocations(&v, r),
         vec![(x, Some(2000)), (y, Some(3000)), (z, Some(5000))]
@@ -104,7 +104,7 @@ fn qa_larger_refund_only_assigned_part_in_totals_and_insights() {
     let r = booking(&v, a, 10000);
     for n in [1000, 2000, 3000] {
         let o = booking(&v, a, -n);
-        v.link_refund(r, o).unwrap();
+        v.link_refund(r, o, 0).unwrap();
     }
     assert_eq!(v.refund_links(r).unwrap().open_cents, 4000);
     assert_eq!(
@@ -121,16 +121,16 @@ fn qa_invalid_sign_self_other_refund_and_deleted() {
     let r = booking(&v, a, 5000);
     let income = booking(&v, a, 2000);
     let o = booking(&v, a, -10000);
-    assert!(v.link_refund(r, r).is_err());
-    assert!(v.link_refund(r, income).is_err());
-    v.link_refund(income, o).unwrap();
-    assert!(v.link_refund(r, income).is_err());
-    v.link_refund(r, o).unwrap();
+    assert!(v.link_refund(r, r, 0).is_err());
+    assert!(v.link_refund(r, income, 0).is_err());
+    v.link_refund(income, o, 0).unwrap();
+    assert!(v.link_refund(r, income, 0).is_err());
+    v.link_refund(r, o, 0).unwrap();
     v.delete_manual_booking(o).unwrap();
     assert_eq!(v.refund_links(r).unwrap().open_cents, 5000);
     assert!(v.refund_links(r).unwrap().originals.is_empty());
     assert_eq!(page(&v, None).income_cents, 7000);
-    assert!(v.link_refund(r, o).is_err());
+    assert!(v.link_refund(r, o, 0).is_err());
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn qa_cross_currency_never_consumes_eur_capacity() {
         .unwrap();
     let r = booking(&v, usd, 10000);
     let o = booking(&v, a, -3000);
-    v.link_refund(r, o).unwrap();
+    v.link_refund(r, o, 0).unwrap();
     assert_eq!(allocations(&v, r), vec![(o, None)]);
     assert_eq!(v.refund_links(r).unwrap().open_cents, 10000);
     assert_eq!(v.refund_links(o).unwrap().open_cents, 3000);
@@ -205,7 +205,7 @@ fn qa_split_refund_category_views_conserve_partial_income() {
     let r = booking(&v, a, 10000);
     let o = booking(&v, a, -3000);
     split(&v, r, ca, cb, 1);
-    v.link_refund(r, o).unwrap();
+    v.link_refund(r, o, 0).unwrap();
     assert_eq!(page(&v, None).income_cents, 7000);
     let pa = page(&v, Some(ca));
     let pb = page(&v, Some(cb));
@@ -231,7 +231,7 @@ fn qa_split_original_parts_unchanged_and_category_expenses() {
     let o = booking(&v, a, -10000);
     let r = booking(&v, a, 3000);
     split(&v, o, ca, cb, -1);
-    v.link_refund(r, o).unwrap();
+    v.link_refund(r, o, 0).unwrap();
     assert_eq!(
         v.list_transaction_splits(o)
             .unwrap()
@@ -264,11 +264,13 @@ fn qa_split_part_ids_are_a_separate_namespace_not_supported_targets() {
         .into_iter()
         .find(|s| s.id != o && s.id != r)
         .unwrap();
-    v.link_refund(r, part.id).unwrap();
+    v.link_refund(r, part.id, 0).unwrap();
     assert_eq!(v.refund_links(o).unwrap().refunded_cents, None);
     assert_eq!(v.refund_links(part.id).unwrap().refunded_cents, Some(1));
-    v.unlink_refund(r, part.id).unwrap();
-    v.link_refund(r, o).unwrap();
+    v.unlink_refund(r, part.id, 0).unwrap();
+    // a split booking is linked by one of its parts
+    assert!(v.link_refund(r, o, 0).is_err());
+    v.link_refund(r, o, 1).unwrap();
     assert_eq!(v.refund_links(o).unwrap().refunded_cents, Some(3000));
 }
 
@@ -288,7 +290,7 @@ fn qa_split_refund_insights_cashflow_api_and_category_sums() {
     let r = booking(&v, a, 10000);
     let o = booking(&v, a, -3000);
     split(&v, r, ca, cb, 1);
-    v.link_refund(r, o).unwrap();
+    v.link_refund(r, o, 0).unwrap();
     let f = v.selection_flow(vec![a], None, None).unwrap();
     assert_eq!((f.income_cents, f.consumption_cents), (7000, 0));
     let c = v
@@ -338,8 +340,8 @@ fn qa_merge_conflicting_order_preserves_capacity_and_converges() {
     let y = booking(&a, account, -6000);
     let b = Vault::open(d.join("peer").to_string_lossy().into(), vec![7; 32]).unwrap();
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
-    a.link_refund(r, x).unwrap();
-    a.link_refund(r, y).unwrap();
+    a.link_refund(r, x, 0).unwrap();
+    a.link_refund(r, y, 0).unwrap();
     let list = page(&b, None).transactions;
     let br = list.iter().find(|t| t.amount_cents == 10000).unwrap().id;
     let mut originals = list
@@ -348,8 +350,8 @@ fn qa_merge_conflicting_order_preserves_capacity_and_converges() {
         .map(|t| t.id)
         .collect::<Vec<_>>();
     originals.sort_unstable();
-    b.link_refund(br, originals[1]).unwrap();
-    b.link_refund(br, originals[0]).unwrap();
+    b.link_refund(br, originals[1], 0).unwrap();
+    b.link_refund(br, originals[0], 0).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
     let amounts = |v: &Vault, id| {
@@ -362,7 +364,7 @@ fn qa_merge_conflicting_order_preserves_capacity_and_converges() {
     assert_eq!(amounts(&a, r), amounts(&b, br));
     assert_eq!(a.refund_links(r).unwrap().open_cents, 0);
     let extra = booking(&a, account, -1000);
-    assert!(a.link_refund(r, extra).is_err());
+    assert!(a.link_refund(r, extra, 0).is_err());
 }
 
 #[test]
@@ -384,7 +386,7 @@ fn qa_wording_consumption_partial_refund_remainder_is_income() {
         .unwrap();
     println!("wording flow before linking: {:?}", before.flow);
     assert_eq!(before.flow, crate::merchants::FlowKind::Income);
-    v.link_refund(r, o).unwrap();
+    v.link_refund(r, o, 0).unwrap();
     let after = page(&v, None);
     assert_eq!((after.income_cents, after.expense_cents), (7000, 0));
 }
@@ -395,8 +397,8 @@ fn qa_exhausted_source_has_no_unlinkable_suggestions() {
     let r = booking(&v, a, 10000);
     let o = booking(&v, a, -10000);
     let extra = booking(&v, a, -10000);
-    v.link_refund(r, o).unwrap();
-    assert!(v.link_refund(r, extra).is_err());
+    v.link_refund(r, o, 0).unwrap();
+    assert!(v.link_refund(r, extra, 0).is_err());
     assert!(
         v.refund_suggestions(r).unwrap().is_empty(),
         "exhausted refund should not suggest another booking"

@@ -1631,6 +1631,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Buchung ist bereits vollständig erstattet." => {
             "The transaction is already fully refunded."
         }
+        "Bei einer geteilten Buchung wird ein Teil verknüpft." => {
+            "A split transaction is linked by one of its parts."
+        }
         "Das Suchmuster ist leer." => "The pattern is empty.",
         "Die Regel braucht eine Kategorie oder mindestens einen Tag." => {
             "The rule needs a category or at least one tag."

@@ -1,6 +1,7 @@
 //! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
 //! (outgoing). One original can have several refunds and one refund can pay back several originals
-//! (step 37); links do not chain. The link only documents what belongs together: amounts, categories and balances remain
+//! (step 37); links do not chain. A link to a split booking names one of its parts (step 38,
+//! `original_part`): the refund pays back that part only. The link only documents what belongs together: amounts, categories and balances remain
 //! unchanged. Removing a link keeps the row as a tombstone (`deleted_ms`), so the removal reaches
 //! the other devices; the newest change wins on merge.
 use crate::{
@@ -24,6 +25,24 @@ CREATE TABLE refund_links_pairs (
 INSERT INTO refund_links_pairs SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms FROM refund_links;
 DROP TABLE refund_links;
 ALTER TABLE refund_links_pairs RENAME TO refund_links;
+CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
+";
+
+/// Step 38: a link to a split booking names the part it pays back: `original_part` is the
+/// part's position among the booking's parts (from 1), 0 is the whole booking.
+pub(crate) const SCHEMA_PARTS: &str = "
+CREATE TABLE refund_links_parts (
+ refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+ original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+ original_part INTEGER NOT NULL DEFAULT 0,
+ created_ms INTEGER NOT NULL,
+ changed_ms INTEGER NOT NULL,
+ deleted_ms INTEGER,
+ PRIMARY KEY (refund_id, original_id, original_part)
+);
+INSERT INTO refund_links_parts SELECT refund_id,original_id,0,created_ms,changed_ms,deleted_ms FROM refund_links;
+DROP TABLE refund_links;
+ALTER TABLE refund_links_parts RENAME TO refund_links;
 CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
 ";
 
@@ -69,6 +88,13 @@ pub struct RefundBooking {
     /// What the booking has left for a further link: its amount less what its links cover. With
     /// 0 it is used up and cannot be linked again.
     pub open_cents: i64,
+    /// The part of a split booking this row stands for (its position from 1, see
+    /// `list_transaction_splits`); `amount_cents` is then the part's amount. 0 = the whole
+    /// booking. On a refund in the links of a split original: the part of that original it
+    /// pays back. Pass it to `link_refund` / `unlink_refund`.
+    pub part: u32,
+    /// Category name and note of that part, for the row; empty without a part.
+    pub part_label: String,
 }
 
 /// Why a booking is suggested for a link.
@@ -113,43 +139,112 @@ pub struct RefundLinks {
     pub open_cents: i64,
 }
 
+/// One part of a split booking: amount and label (category name, note).
+#[derive(Clone)]
+struct Part {
+    amount: i64,
+    label: String,
+}
+
+/// The parts of every split booking in their order (`original_part` counts from 1).
+fn split_parts(conn: &Connection) -> CoreResult<HashMap<i64, Vec<Part>>> {
+    let mut out: HashMap<i64, Vec<Part>> = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT s.transaction_id,s.amount_cents,COALESCE(c.name,''),s.note FROM transaction_splits s
+         LEFT JOIN categories c ON c.id=s.category_id ORDER BY s.id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, amount, category, note) = row?;
+        let label = [category.trim(), note.trim()]
+            .into_iter()
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        out.entry(id).or_default().push(Part { amount, label });
+    }
+    Ok(out)
+}
+
+/// The part a link's `original_part` stands for now; `None` for the whole booking, also when
+/// the booking has no such part any more (the split was changed or removed).
+fn part_of(parts: &HashMap<i64, Vec<Part>>, original: i64, part: i64) -> Option<&Part> {
+    let index = usize::try_from(part).ok()?.checked_sub(1)?;
+    parts.get(&original)?.get(index)
+}
+
+/// What the live links pay back.
+#[derive(Default)]
+struct Shares {
+    /// Per link (refund, original, `original_part`).
+    links: HashMap<(i64, i64, i64), i64>,
+    /// Links between different currencies: they get nothing.
+    mixed: std::collections::HashSet<(i64, i64, i64)>,
+    /// Per booking, and per part (booking, part from 1) of a split original.
+    taken: HashMap<(i64, i64), i64>,
+}
+
+impl Shares {
+    /// What a booking (`part` 0) or one part of it has left for a further link.
+    fn open(&self, parts: &HashMap<i64, Vec<Part>>, id: i64, amount: i64, part: i64) -> i64 {
+        let taken = |part: i64| self.taken.get(&(id, part)).copied().unwrap_or(0);
+        let whole = amount.saturating_abs() - taken(0);
+        match part_of(parts, id, part) {
+            Some(p) => whole.min(p.amount.saturating_abs() - taken(part)),
+            None => whole,
+        }
+        .max(0)
+    }
+}
+
 /// What every live link pays back, filled in the order the links were made: a link takes at
-/// most what the earlier links left of its refund and of its original. Links between different
-/// currencies get nothing and are returned in the second set.
-fn shares(
-    conn: &Connection,
-) -> CoreResult<(
-    HashMap<(i64, i64), i64>,
-    std::collections::HashSet<(i64, i64)>,
-)> {
-    type Link = (i64, i64, i64, i64, String, String);
+/// most what the earlier links left of its refund and of its original (of the part it names).
+/// Links between different currencies get nothing.
+fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shares> {
+    type Link = (i64, i64, i64, i64, i64, String, String);
     let links: Vec<Link> = conn
         .prepare(
-            "SELECT l.refund_id,l.original_id,r.amount_cents,o.amount_cents,r.currency,o.currency
+            "SELECT l.refund_id,l.original_id,l.original_part,r.amount_cents,o.amount_cents,r.currency,o.currency
              FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id
              WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL
-             ORDER BY l.changed_ms,r.booking_date,o.booking_date,l.refund_id,l.original_id",
+             ORDER BY l.changed_ms,r.booking_date,o.booking_date,l.refund_id,l.original_id,l.original_part",
         )?
         .query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
         })?
         .collect::<Result<_, _>>()?;
-    let mut left: HashMap<i64, i64> = HashMap::new();
-    let mut out = HashMap::new();
-    let mut mixed = std::collections::HashSet::new();
-    for (r, o, r_amount, o_amount, r_cur, o_cur) in links {
+    let mut out = Shares::default();
+    for (r, o, part, r_amount, o_amount, r_cur, o_cur) in links {
         if currency_code(&r_cur) != currency_code(&o_cur) {
-            mixed.insert((r, o));
+            out.mixed.insert((r, o, part));
             continue;
         }
-        let from = *left.entry(r).or_insert(r_amount.max(0));
-        let open = *left.entry(o).or_insert(o_amount.saturating_abs());
-        let share = from.min(open);
-        left.insert(r, from - share);
-        left.insert(o, open - share);
-        out.insert((r, o), share);
+        let share = out
+            .open(parts, r, r_amount.max(0), 0)
+            .min(out.open(parts, o, o_amount, part));
+        *out.taken.entry((r, 0)).or_default() += share;
+        *out.taken.entry((o, 0)).or_default() += share;
+        if part_of(parts, o, part).is_some() {
+            *out.taken.entry((o, part)).or_default() += share;
+        }
+        out.links.insert((r, o, part), share);
     }
-    Ok((out, mixed))
+    Ok(out)
 }
 
 fn live(conn: &Connection, id: i64) -> CoreResult<i64> {
@@ -183,30 +278,36 @@ fn validate(conn: &Connection, refund: i64, original: i64) -> CoreResult<()> {
     Ok(())
 }
 
-/// [`validate`] for a link the user makes here: a booking that is used up takes no further one.
-/// Links arriving from another device are not held to this; they get a share of 0.
-fn validate_new(conn: &Connection, refund: i64, original: i64) -> CoreResult<()> {
+/// [`validate`] for a link the user makes here: a split booking is linked by one of its
+/// outgoing parts, and a booking (or part) that is used up takes no further link. Links
+/// arriving from another device are not held to this; they get a share of 0.
+fn validate_new(conn: &Connection, refund: i64, original: i64, part: i64) -> CoreResult<()> {
     validate(conn, refund, original)?;
     let (r, o) = (live(conn, refund)?, live(conn, original)?);
+    let parts = split_parts(conn)?;
+    let fits = match parts.get(&original) {
+        Some(_) => part_of(&parts, original, part).is_some_and(|p| p.amount < 0),
+        None => part == 0,
+    };
+    if !fits {
+        return Err(CoreError::invalid(tr(
+            "Bei einer geteilten Buchung wird ein Teil verknüpft.",
+        )));
+    }
     let linked: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND refund_id=?1 AND original_id=?2)",
-        params![refund, original],
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND refund_id=?1 AND original_id=?2 AND original_part=?3)",
+        params![refund, original, part],
         |r| r.get(0),
     )?;
     if !linked {
         // a link that could take nothing would only mislead: the booking is used up
-        let taken = taken(conn)?;
-        let used_up = |id: i64, amount: i64| {
-            taken
-                .get(&id)
-                .is_some_and(|t| *t >= amount.saturating_abs())
-        };
-        if used_up(refund, r) {
+        let shares = shares(conn, &parts)?;
+        if shares.open(&parts, refund, r, 0) == 0 {
             return Err(CoreError::invalid(tr(
                 "Die Erstattung ist bereits vollständig zugeordnet.",
             )));
         }
-        if used_up(original, o) {
+        if shares.open(&parts, original, o, part) == 0 {
             return Err(CoreError::invalid(tr(
                 "Die Buchung ist bereits vollständig erstattet.",
             )));
@@ -215,7 +316,8 @@ fn validate_new(conn: &Connection, refund: i64, original: i64) -> CoreResult<()>
     Ok(())
 }
 
-const ROWS: &str = "SELECT t.id,t.account_id,a.name,t.booking_date,t.amount_cents,t.currency,t.counterparty,t.purpose,t.end_to_end_id FROM transactions t JOIN accounts a ON a.id=t.account_id";
+/// `{part}`: the SQL of the part a row stands for (`0`, or the link's `l.original_part`).
+const ROWS: &str = "SELECT t.id,t.account_id,a.name,t.booking_date,t.amount_cents,t.currency,t.counterparty,t.purpose,t.end_to_end_id,{part} FROM transactions t JOIN accounts a ON a.id=t.account_id";
 
 /// A row of [`ROWS`] with what only the ranking needs.
 struct Row {
@@ -223,13 +325,16 @@ struct Row {
     end_to_end_id: String,
 }
 
+/// `expand`: an outgoing split booking is returned as its outgoing parts, one row each,
+/// instead of as a whole (the bookings a refund can be linked to).
 fn rows(
     conn: &Connection,
     sql: &str,
     args: impl rusqlite::Params,
     rules: &crate::merchants::MerchantRules,
+    expand: bool,
 ) -> CoreResult<Vec<Row>> {
-    let mut rows: Vec<Row> = conn
+    let read: Vec<Row> = conn
         .prepare(sql)?
         .query_map(args, |r| {
             let cp: String = r.get(6)?;
@@ -252,40 +357,48 @@ fn rows(
                     purpose,
                     share_cents: None,
                     open_cents: 0,
+                    part: r.get(9)?,
+                    part_label: String::new(),
                 },
                 end_to_end_id: r.get(8)?,
             })
         })?
         .collect::<Result<_, _>>()?;
-    let taken = taken(conn)?;
-    for row in &mut rows {
-        let b = &mut row.booking;
-        b.open_cents =
-            (b.amount_cents.saturating_abs() - taken.get(&b.id).copied().unwrap_or(0)).max(0);
+    let parts = split_parts(conn)?;
+    let shares = shares(conn, &parts)?;
+    let mut rows = Vec::with_capacity(read.len());
+    for row in read {
+        let id = row.booking.id;
+        let whole = row.booking.amount_cents;
+        let own: Vec<u32> = match parts.get(&id) {
+            Some(own) if expand && whole < 0 => (1..=own.len() as u32).collect(),
+            _ => vec![row.booking.part],
+        };
+        for part in own {
+            let split = part_of(&parts, id, i64::from(part));
+            if expand && split.is_some_and(|p| p.amount >= 0) {
+                continue;
+            }
+            let mut b = row.booking.clone();
+            b.part = part;
+            // of a refund the part belongs to the original it pays back: its amount stays
+            if let Some(p) = split.filter(|_| whole < 0) {
+                b.amount_cents = p.amount;
+                b.part_label = p.label.clone();
+            }
+            b.open_cents = shares.open(
+                &parts,
+                id,
+                whole,
+                if whole < 0 { i64::from(part) } else { 0 },
+            );
+            rows.push(Row {
+                booking: b,
+                end_to_end_id: row.end_to_end_id.clone(),
+            });
+        }
     }
     Ok(rows)
-}
-
-/// What every linked booking's links cover of it, links between different currencies aside.
-fn taken(conn: &Connection) -> CoreResult<HashMap<i64, i64>> {
-    let mut out: HashMap<i64, i64> = HashMap::new();
-    for ((refund, original), share) in shares(conn)?.0 {
-        *out.entry(refund).or_default() += share;
-        *out.entry(original).or_default() += share;
-    }
-    Ok(out)
-}
-
-fn entries(
-    conn: &Connection,
-    sql: &str,
-    args: impl rusqlite::Params,
-    rules: &crate::merchants::MerchantRules,
-) -> CoreResult<Vec<RefundBooking>> {
-    Ok(rows(conn, sql, args, rules)?
-        .into_iter()
-        .map(|r| r.booking)
-        .collect())
 }
 
 /// Ids of the refunds with a live link. The booking list reads them as refunds, not as income
@@ -294,15 +407,16 @@ fn entries(
 /// an original what its refunds pay back. A booking with a link between different currencies is
 /// left out (nothing is added up there, #569).
 pub(crate) fn covered(conn: &Connection) -> CoreResult<HashMap<i64, i64>> {
-    let (shares, mixed) = shares(conn)?;
-    let mut out: HashMap<i64, i64> = HashMap::new();
-    for ((refund, original), share) in shares {
-        *out.entry(refund).or_default() += share;
-        *out.entry(original).or_default() += share;
-    }
-    for (refund, original) in mixed {
-        out.remove(&refund);
-        out.remove(&original);
+    let shares = shares(conn, &split_parts(conn)?)?;
+    let mut out: HashMap<i64, i64> = shares
+        .taken
+        .iter()
+        .filter(|((_, part), _)| *part == 0)
+        .map(|((id, _), taken)| (*id, *taken))
+        .collect();
+    for (refund, original, _) in &shares.mixed {
+        out.remove(refund);
+        out.remove(original);
     }
     Ok(out)
 }
@@ -373,10 +487,12 @@ fn pool(vault: &Vault, db: &Connection, id: i64, days: Option<u32>) -> CoreResul
     out.rows = rows(
         db,
         &format!(
-            "{ROWS} WHERE t.deleted_ms IS NULL AND t.id<>?2 AND {direction} ORDER BY abs(julianday(t.booking_date)-julianday(?1)),t.id"
+            "{} WHERE t.deleted_ms IS NULL AND t.id<>?2 AND {direction} ORDER BY abs(julianday(t.booking_date)-julianday(?1)),t.id",
+            ROWS.replace("{part}", "0")
         ),
         params![out.date, id, days],
         &rules,
+        true,
     )?;
     Ok(out)
 }
@@ -423,7 +539,7 @@ pub(crate) fn markers(conn: &Connection) -> CoreResult<HashMap<i64, RefundLinkKi
     Ok(out)
 }
 
-type LinkRow = (i64, i64, i64, i64, Option<i64>);
+type LinkRow = (i64, i64, i64, i64, Option<i64>, i64);
 type LinkRank = (i64, Option<i64>, Vec<String>, i64);
 
 fn original_key(conn: &Connection, id: i64) -> CoreResult<Vec<String>> {
@@ -440,7 +556,7 @@ fn rank(conn: &Connection, row: &LinkRow) -> CoreResult<LinkRank> {
 pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()> {
     let links = conn
         .prepare(
-            "SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms FROM other.refund_links",
+            "SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms,original_part FROM other.refund_links",
         )?
         .query_map([], |r| {
             Ok((
@@ -449,10 +565,11 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
                 r.get::<_, Option<i64>>(4)?,
+                r.get::<_, i64>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    'links: for (r, o, created, changed, deleted) in links {
+    'links: for (r, o, created, changed, deleted, part) in links {
         let (Some(&r), Some(&o)) = (ids.get(&r), ids.get(&o)) else {
             continue;
         };
@@ -463,10 +580,10 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
                 Err(error) => return Err(error),
             }
         }
-        let incoming = (r, o, created, changed, deleted);
+        let incoming = (r, o, created, changed, deleted, part);
         let local: Option<LinkRow> = conn.query_row(
-            "SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms FROM refund_links WHERE refund_id=?1 AND original_id=?2",
-            [r, o], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
+            "SELECT refund_id,original_id,created_ms,changed_ms,deleted_ms,original_part FROM refund_links WHERE refund_id=?1 AND original_id=?2 AND original_part=?3",
+            [r, o, part], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
         ).optional()?;
         if let Some(local) = local
             && rank(conn, &incoming)? <= rank(conn, &local)?
@@ -481,9 +598,9 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
             }
         }
         conn.execute(
-            "INSERT INTO refund_links(refund_id,original_id,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?4,?5)
-             ON CONFLICT(refund_id,original_id) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=excluded.deleted_ms",
-            params![r,o,created,changed,deleted],
+            "INSERT INTO refund_links(refund_id,original_id,original_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?6,?3,?4,?5)
+             ON CONFLICT(refund_id,original_id,original_part) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=excluded.deleted_ms",
+            params![r,o,created,changed,deleted,part],
         )?;
     }
     Ok(())
@@ -500,22 +617,35 @@ fn next_change(conn: &Connection) -> CoreResult<i64> {
 impl Vault {
     /// Links the incoming booking `refund_id` to the outgoing booking `original_id`; its other
     /// links stay (a refund can pay back several bookings, a booking can have several refunds).
-    /// Fails for wrong signs, deleted bookings and chains.
-    pub fn link_refund(&self, refund_id: i64, original_id: i64) -> CoreResult<()> {
+    /// `original_part`: for a split booking the part the refund pays back (its position from 1
+    /// in `list_transaction_splits`), else 0. Fails for wrong signs, deleted bookings, chains,
+    /// a split booking without a part and bookings that are used up.
+    pub fn link_refund(
+        &self,
+        refund_id: i64,
+        original_id: i64,
+        original_part: u32,
+    ) -> CoreResult<()> {
         let db = self.db()?;
-        validate_new(&db, refund_id, original_id)?;
+        validate_new(&db, refund_id, original_id, i64::from(original_part))?;
         let changed = next_change(&db)?;
-        db.execute("INSERT INTO refund_links(refund_id,original_id,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?3,NULL) ON CONFLICT(refund_id,original_id) DO UPDATE SET changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",params![refund_id,original_id,changed])?;
+        db.execute("INSERT INTO refund_links(refund_id,original_id,original_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?4,?3,?3,NULL) ON CONFLICT(refund_id,original_id,original_part) DO UPDATE SET changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",params![refund_id,original_id,changed,original_part])?;
         Ok(())
     }
-    /// Removes the link of `refund_id` to `original_id` (no-op without one).
-    pub fn unlink_refund(&self, refund_id: i64, original_id: i64) -> CoreResult<()> {
+    /// Removes the link of `refund_id` to `original_id` (its part `original_part`); no-op
+    /// without one.
+    pub fn unlink_refund(
+        &self,
+        refund_id: i64,
+        original_id: i64,
+        original_part: u32,
+    ) -> CoreResult<()> {
         let db = self.db()?;
         let changed = next_change(&db)?;
         db.execute(
             // an already removed link keeps its stamp: a second removal must not outrank a newer re-link
-            "UPDATE refund_links SET deleted_ms=?3,changed_ms=?3 WHERE refund_id=?1 AND original_id=?2 AND deleted_ms IS NULL",
-            params![refund_id, original_id, changed],
+            "UPDATE refund_links SET deleted_ms=?3,changed_ms=?3 WHERE refund_id=?1 AND original_id=?2 AND original_part=?4 AND deleted_ms IS NULL",
+            params![refund_id, original_id, changed, original_part],
         )?;
         Ok(())
     }
@@ -525,42 +655,56 @@ impl Vault {
         live(&db, transaction_id)?;
         let rules = self.merchant_rules(&db)?;
         let side = |own: &str, other: &str| {
-            entries(
+            rows(
                 &db,
                 &format!(
-                    "{ROWS} JOIN refund_links l ON l.{other}=t.id AND l.{own}=?1 AND l.deleted_ms IS NULL WHERE t.deleted_ms IS NULL ORDER BY l.changed_ms,t.id"
+                    "{} JOIN refund_links l ON l.{other}=t.id AND l.{own}=?1 AND l.deleted_ms IS NULL WHERE t.deleted_ms IS NULL ORDER BY l.changed_ms,t.id,l.original_part",
+                    ROWS.replace("{part}", "l.original_part")
                 ),
                 [transaction_id],
                 &rules,
+                false,
             )
+            .map(|rows| rows.into_iter().map(|r| r.booking).collect::<Vec<_>>())
         };
         let mut originals = side("refund_id", "original_id")?;
         let mut refunds = side("original_id", "refund_id")?;
-        let (shares, mixed) = shares(&db)?;
+        let parts = split_parts(&db)?;
+        let shares = shares(&db, &parts)?;
         let own_amount: i64 = db.query_row(
             "SELECT amount_cents FROM transactions WHERE id=?1",
             [transaction_id],
             |r| r.get(0),
         )?;
-        let own_taken: i64 = shares
-            .iter()
-            .filter(|((r, o), _)| *r == transaction_id || *o == transaction_id)
-            .map(|(_, share)| *share)
-            .sum();
         for o in &mut originals {
-            o.share_cents = shares.get(&(transaction_id, o.id)).copied();
+            o.share_cents = shares
+                .links
+                .get(&(transaction_id, o.id, i64::from(o.part)))
+                .copied();
         }
         for r in &mut refunds {
-            r.share_cents = shares.get(&(r.id, transaction_id)).copied();
+            r.share_cents = shares
+                .links
+                .get(&(r.id, transaction_id, i64::from(r.part)))
+                .copied();
+            if let Some(p) = part_of(&parts, transaction_id, i64::from(r.part)) {
+                r.part_label = p.label.clone();
+            }
         }
-        let sum = |pairs: Vec<(i64, i64)>| -> Option<i64> {
-            (!pairs.is_empty() && !pairs.iter().any(|p| mixed.contains(p)))
-                .then(|| pairs.iter().filter_map(|p| shares.get(p)).sum())
+        let sum = |links: Vec<(i64, i64, i64)>| -> Option<i64> {
+            (!links.is_empty() && !links.iter().any(|l| shares.mixed.contains(l)))
+                .then(|| links.iter().filter_map(|l| shares.links.get(l)).sum())
         };
         Ok(RefundLinks {
-            refunded_cents: sum(refunds.iter().map(|r| (r.id, transaction_id)).collect()),
-            assigned_cents: sum(originals.iter().map(|o| (transaction_id, o.id)).collect()),
-            open_cents: (own_amount.saturating_abs() - own_taken).max(0),
+            refunded_cents: sum(refunds
+                .iter()
+                .map(|r| (r.id, transaction_id, i64::from(r.part)))
+                .collect()),
+            assigned_cents: sum(originals
+                .iter()
+                .map(|o| (transaction_id, o.id, i64::from(o.part)))
+                .collect()),
+            open_cents: shares.open(&parts, transaction_id, own_amount, 0),
             originals,
             refunds,
         })
@@ -593,6 +737,7 @@ impl Vault {
                     || b.counterparty.to_lowercase().contains(&query)
                     || b.purpose.to_lowercase().contains(&query)
                     || b.display_name.to_lowercase().contains(&query)
+                    || b.part_label.to_lowercase().contains(&query)
             })
             .take(limit as usize)
             .collect())
@@ -607,18 +752,16 @@ impl Vault {
         let db = self.db()?;
         let pool = pool(self, &db, transaction_id, Some(WINDOW_DAYS))?;
         // a booking that is used up itself takes no further link: nothing to suggest
-        if taken(&db)?
-            .get(&transaction_id)
-            .is_some_and(|t| *t >= pool.amount.saturating_abs())
-        {
+        let parts = split_parts(&db)?;
+        if shares(&db, &parts)?.open(&parts, transaction_id, pool.amount, 0) == 0 {
             return Ok(Vec::new());
         }
-        let linked: std::collections::HashSet<i64> = db
+        let linked: std::collections::HashSet<(i64, u32)> = db
             .prepare(
-                "SELECT original_id FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL
-                 UNION SELECT refund_id FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",
+                "SELECT original_id,original_part FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL
+                 UNION SELECT refund_id,0 FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",
             )?
-            .query_map([transaction_id], |r| r.get(0))?
+            .query_map([transaction_id], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<_, _>>()?;
         let source_refs = reference_tokens(&pool.reference);
         let counterparty = pool.counterparty.trim().to_lowercase();
@@ -655,11 +798,11 @@ impl Vault {
                 if out.len() == MAX {
                     return Ok(out);
                 }
-                let id = row.booking.id;
+                let id = (row.booking.id, row.booking.part);
                 // a booking that is used up cannot be linked: no suggestion
                 if linked.contains(&id)
                     || row.booking.open_cents == 0
-                    || out.iter().any(|s| s.booking.id == id)
+                    || out.iter().any(|s| (s.booking.id, s.booking.part) == id)
                 {
                     continue;
                 }
