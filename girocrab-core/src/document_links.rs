@@ -499,8 +499,14 @@ fn fold_doubles(state: &mut BTreeMap<String, Row>) {
         }
     }
     for (uuid, first) in doubles {
-        let stamp = state[&first].updated_ms.max(state[&uuid].updated_ms) + 1;
-        let r = state.get_mut(&uuid).expect("just seen");
+        // both were just seen in `state`
+        let Some(kept_ms) = state.get(&first).map(|r| r.updated_ms) else {
+            continue;
+        };
+        let Some(r) = state.get_mut(&uuid) else {
+            continue;
+        };
+        let stamp = kept_ms.max(r.updated_ms) + 1;
         r.deleted_ms = Some(stamp);
         r.updated_ms = stamp;
         r.rev = format!("=> {first}");
@@ -510,6 +516,38 @@ fn fold_doubles(state: &mut BTreeMap<String, Row>) {
         r.title.clear();
         r.doc_date.clear();
     }
+}
+
+/// [`fold_doubles`] for one booking, straight in the table: after a move
+/// outside a device merge (duplicate bank logins, a folded twin) that may
+/// have put a second reference to the same address on `booking`. Same rule
+/// and same stamps, so a device that folds here and one that folds in its
+/// next merge write the same deletion.
+pub(crate) fn fold_on_booking(conn: &Connection, booking: i64) -> CoreResult<()> {
+    let rows: Vec<(String, String, i64)> = conn
+        .prepare(
+            "SELECT uuid, url, updated_ms FROM document_links
+              WHERE booking_id = ?1 AND deleted_ms IS NULL ORDER BY uuid",
+        )?
+        .query_map([booking], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    // address -> (kept uuid, its stamp)
+    let mut kept: HashMap<String, (String, i64)> = HashMap::new();
+    for (uuid, url, updated_ms) in rows {
+        let Some((first, first_ms)) = kept.get(&url) else {
+            kept.insert(url, (uuid, updated_ms));
+            continue;
+        };
+        let stamp = (*first_ms).max(updated_ms) + 1;
+        conn.execute(
+            "UPDATE document_links
+                SET deleted_ms = ?2, updated_ms = ?2, rev = ?3,
+                    booking_id = NULL, account_id = NULL, url = '', title = '', doc_date = ''
+              WHERE uuid = ?1",
+            params![uuid, stamp, format!("=> {first}")],
+        )?;
+    }
+    Ok(())
 }
 
 /// Whether `booking` names a live booking.
@@ -595,6 +633,11 @@ pub(crate) fn merge_attached(
         if o.deleted_ms.is_some() {
             o.booking = None;
             o.account = None;
+        } else if parse_link(&o.url).is_err() {
+            // What `attach_document_link` would refuse is not taken from
+            // another vault either: whatever opens a reference relies on
+            // an `http(s)` address without credentials.
+            continue;
         }
         if let Some(other_booking) = o.booking {
             match booking_map.get(&other_booking) {

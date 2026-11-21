@@ -169,7 +169,7 @@ fn canonical_external_id<'a>(a: &'a str, b: &'a str) -> &'a str {
 /// payment, and pairing it with the posted booking would delete the booking
 /// (#1134). Transfer bookings of the app (`pending-<e2e>`, marked
 /// `mm-switch-pending-<e2e>`) pair as before, both forms of one transfer alike.
-fn is_hold_id(ext: &str) -> bool {
+pub(super) fn is_hold_id(ext: &str) -> bool {
     ext.starts_with("pending-hold-")
         || ext.starts_with("mm-switch-pending-hold-")
         || (ext.starts_with("switch-stale-") && ext.contains(":pending-hold-"))

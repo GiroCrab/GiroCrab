@@ -1188,7 +1188,11 @@ pub(crate) fn resolve_holds(
                 "SELECT c.id, h.id FROM transactions c JOIN transactions h
                     ON h.account_id = c.account_id AND h.deleted_ms IS NULL
                    AND h.external_id = 'pending-hold-portal-' || c.external_id
-                 WHERE c.account_id = ?1 AND c.deleted_ms IS NULL AND c.external_id LIKE 'id:P%'",
+                 WHERE c.account_id = ?1 AND c.deleted_ms IS NULL AND c.external_id LIKE 'id:P%'
+                   -- a copy with a linked receipt (#590) stays: the hand-over
+                   -- deletes the copy and would leave the receipt on it
+                   AND NOT EXISTS (SELECT 1 FROM document_links l
+                                    WHERE l.booking_id = c.id AND l.deleted_ms IS NULL)",
             )?;
             let rows = q.query_map([account_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect::<Result<_, _>>()?
@@ -2698,6 +2702,49 @@ mod hold_tests {
                 && ids.contains(&format!("{HOLD_PREFIX}id:P1")),
             "imported row and hold side by side: {ids:?}"
         );
+    }
+
+    /// A pre-#629 copy that carries a linked receipt (#590) is not handed
+    /// over to the hold of its charge: the hand-over deletes the copy, and
+    /// the receipt would be left on a deleted booking.
+    #[test]
+    fn a_pre_629_copy_with_a_linked_receipt_keeps_it() {
+        let (v, conn, _dir) = vault();
+        let old = posted("R1", "2026-01-02", "10,00", "SHOP A");
+        sync(&v, conn, &body(std::slice::from_ref(&old), Some(&[]))).unwrap();
+        sql(
+            &v,
+            "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents,
+                    currency, counterparty, counterparty_iban, purpose, booking_text)
+             SELECT id, 'id:P3', '2026-01-07', '2026-01-07', -500, 'EUR', 'SHOP', '', '', 'Kartenumsatz'
+               FROM accounts;",
+        );
+        let copy: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE external_id = 'id:P3'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        v.attach_document_link(copy, "https://archiv.example/3".into(), "Bon".into())
+            .unwrap();
+        // P3 is still pending: its hold arrives next to the copy
+        let b = body(&[old], Some(&[pending("P3", "2026-01-07", "5,00", "SHOP")]));
+        sync(&v, conn, &b).unwrap();
+        let on_live_booking: bool = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT t.deleted_ms IS NULL FROM document_links l
+                   JOIN transactions t ON t.id = l.booking_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(on_live_booking);
+        assert_eq!(v.list_documents_for_booking(copy).unwrap().len(), 1);
     }
 
     #[test]

@@ -227,6 +227,8 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
                 crate::document_links::new_rev()
             ],
         )?;
+        // both bookings may have carried the same link
+        crate::document_links::fold_on_booking(conn, k)?;
     }
     // bookings only in `dup` move over unchanged (with splits / links / documents)
     conn.execute(
@@ -2436,5 +2438,53 @@ mod tests {
         assert_ne!(after.2, before.2, "with a mark of its own");
         assert_eq!(v.list_documents_for_booking(keep_booking).unwrap().len(), 1);
         let _ = keep_acc;
+    }
+
+    /// Both bookings carry the same link when the duplicate bank logins are
+    /// merged: the kept booking shows it once right away, without waiting for
+    /// a device merge (#590).
+    #[test]
+    fn dedup_folds_the_same_link_on_both_bookings() {
+        let dir = crate::test_support::TempDir::new("girocrab-dedup-links-double");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![4u8; 32],
+        )
+        .unwrap();
+        let mut bookings = Vec::new();
+        {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            for n in [1, 2] {
+                db.execute(
+                    "INSERT INTO bank_connections(connector, display_name, login_name)
+                     VALUES ('fints:52090000', 'VB', '1234567890')",
+                    [],
+                )
+                .unwrap();
+                let c = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, 'DE1', ?3)",
+                    params![c, g, format!("Giro {n}")],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES (?1, 'B1', '2026-11-07', -23800)",
+                    [db.last_insert_rowid()],
+                )
+                .unwrap();
+                bookings.push(db.last_insert_rowid());
+            }
+        }
+        for booking in &bookings {
+            v.attach_document_link(*booking, "https://dms.example/doc/1".into(), "Beleg".into())
+                .unwrap();
+        }
+
+        assert_eq!(v.deduplicate_bank_connections().unwrap(), 1);
+        assert_eq!(v.list_documents_for_booking(bookings[0]).unwrap().len(), 1);
     }
 }
