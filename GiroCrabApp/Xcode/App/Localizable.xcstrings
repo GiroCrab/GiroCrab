@@ -7943,6 +7943,17 @@
         }
       }
     },
+    "Bitcoin Core nicht hinzugefügt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitcoin Core not added"
+          }
+        }
+      }
+    },
     "Bitcoin-Core-Datenverzeichnis" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29986,6 +29997,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Vault is in a subfolder"
+          }
+        }
+      }
+    },
+    "Tresor oder Einstellungen haben sich während der Prüfung geändert. Bitte füge Bitcoin Core noch einmal hinzu." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The vault or settings changed during the check. Please add Bitcoin Core again."
           }
         }
       }

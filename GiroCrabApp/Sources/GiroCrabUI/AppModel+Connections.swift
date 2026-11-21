@@ -95,11 +95,14 @@ extension AppModel {
         runInOwnVault { [self] in checkAndAddBitcoinCore(login: login) }
     }
 
+    /// Adds only when, after the check, the same vault is open and the datadir and RPC URL are
+    /// still the checked ones; otherwise nothing is written and the user adds it again.
     private func checkAndAddBitcoinCore(login: String) {
-        let set = settingEntry(BitcoinCoreDatadir.key).map(\.value).flatMap { $0.isEmpty ? nil : $0 }
-        let detected = set == nil ? BitcoinCoreDatadir.detected() : nil
-        let datadir = set ?? detected ?? ""
+        guard let pin = pinVault() else { return }
+        let storedDatadir = settingEntry(BitcoinCoreDatadir.key)?.value ?? ""
         let rpcURL = settingEntry("bitcoin_core.rpc_url")?.value ?? ""
+        let detected = storedDatadir.isEmpty ? BitcoinCoreDatadir.detected() : nil
+        let datadir = storedDatadir.isEmpty ? detected ?? "" : storedDatadir
         Task { @MainActor [weak self] in
             do {
                 _ = try await checkBitcoinCore(datadir: datadir, rpcUrl: rpcURL, wallet: login)
@@ -108,6 +111,13 @@ extension AppModel {
                 return
             }
             guard let self else { return }
+            guard isCurrent(pin),
+                  (settingEntry(BitcoinCoreDatadir.key)?.value ?? "") == storedDatadir,
+                  (settingEntry("bitcoin_core.rpc_url")?.value ?? "") == rpcURL else {
+                showError(String(localized: "Bitcoin Core nicht hinzugefügt"),
+                          String(localized: "Tresor oder Einstellungen haben sich während der Prüfung geändert. Bitte füge Bitcoin Core noch einmal hinzu."))
+                return
+            }
             if let detected { saveSetting(BitcoinCoreDatadir.key, detected) }
             addConnectionStored(.bitcoinCore, login: login)
         }
