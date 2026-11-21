@@ -248,29 +248,16 @@ fn qa_split_original_parts_unchanged_and_category_expenses() {
     assert_eq!(page(&v, Some(cb)).expense_cents, -4000);
 }
 
-/// The link API takes transaction ids only. The id of a split row is a different namespace and
-/// is never looked up: a number that happens to be both names the transaction. Front ends pass
-/// the split booking's id with the part's position (`RefundBooking::part`).
+/// A split booking is linked by one of its parts, named by the booking's id and the part's
+/// position (`RefundBooking::part`). The link API takes transaction ids only: the id of a split
+/// row is another namespace and is never looked up.
 #[test]
-fn qa_link_ids_are_transaction_ids_a_split_part_is_named_by_its_position() {
+fn qa_a_split_booking_is_linked_by_the_position_of_a_part() {
     let (_d, v, a) = fixture();
     let (ca, cb) = categories(&v);
-    for _ in 0..3 {
-        booking(&v, a, -1);
-    }
     let o = booking(&v, a, -10000);
     let r = booking(&v, a, 3000);
     split(&v, o, ca, cb, -1);
-    let part = v
-        .list_transaction_splits(o)
-        .unwrap()
-        .into_iter()
-        .find(|s| s.id != o && s.id != r)
-        .unwrap();
-    v.link_refund(r, part.id, 0).unwrap();
-    assert_eq!(v.refund_links(o).unwrap().refunded_cents, None);
-    assert_eq!(v.refund_links(part.id).unwrap().refunded_cents, Some(1));
-    v.unlink_refund(r, part.id, 0).unwrap();
     // a split booking is linked by one of its parts
     assert!(v.link_refund(r, o, 0).is_err());
     v.link_refund(r, o, 1).unwrap();

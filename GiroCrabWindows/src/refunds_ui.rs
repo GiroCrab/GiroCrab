@@ -117,6 +117,7 @@ fn header(title: String) -> RefundRow {
     }
 }
 
+/// What the booking the dialog was opened from has left on the side it is linked on.
 fn own_open(links: &RefundLinks, from_refund: bool) -> i64 {
     if from_refund {
         links.refund_open_cents
@@ -127,7 +128,6 @@ fn own_open(links: &RefundLinks, from_refund: bool) -> i64 {
 
 /// The rows of the list: linked bookings in the order they were linked (with their share), up to
 /// three suggestions, then the other candidates. A row that takes no further link says why.
-/// What the booking the dialog was opened from has left on the side it is linked on.
 fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<RefundRow> {
     let linked = if from_refund {
         &l.links.originals
