@@ -24575,6 +24575,17 @@
         }
       }
     },
+    "Noch offen: %@, in den anderen Teilen dieser Buchung." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still open: %@, in the other parts of this transaction."
+          }
+        }
+      }
+    },
     "Noch offen: %@. Sie können weitere Buchungen zuordnen." : {
       "extractionState" : "manual",
       "localizations" : {

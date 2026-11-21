@@ -139,7 +139,9 @@ enum RefundSum {
         String(localized: "Zugeordnet: \(Money.format(cents, currency: currency.isEmpty ? "EUR" : currency.uppercased()))")
     }
 
-    static func lines(booking: Booking, links: RefundLinks) -> [String] {
+    /// `partUsedUp`: the picker links one part of a split booking and that part has nothing left;
+    /// what is still open belongs to the other parts.
+    static func lines(booking: Booking, links: RefundLinks, partUsedUp: Bool = false) -> [String] {
         let currency = booking.currency.isEmpty ? "EUR" : booking.currency.uppercased()
         let money = { (cents: Int64) in Money.format(cents, currency: currency) }
         var out: [String] = []
@@ -159,7 +161,9 @@ enum RefundSum {
         if let assigned = links.assignedCents {
             out.append(String(localized: "Zugeordnet: \(money(assigned)) von \(money(links.refundTotalCents))"))
             if links.refundOpenCents > 0 {
-                out.append(String(localized: "Noch offen: \(money(links.refundOpenCents)). Sie können weitere Buchungen zuordnen."))
+                out.append(partUsedUp
+                    ? String(localized: "Noch offen: \(money(links.refundOpenCents)), in den anderen Teilen dieser Buchung.")
+                    : String(localized: "Noch offen: \(money(links.refundOpenCents)). Sie können weitere Buchungen zuordnen."))
             }
         }
         return out
@@ -296,7 +300,7 @@ struct RefundPickerSheet: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(fromRefund ? "Verknüpfte ursprüngliche Buchungen (\(linked.count))" : "Verknüpfte Erstattungen (\(linked.count))")
                         if let links {
-                            ForEach(RefundSum.lines(booking: booking, links: links), id: \.self) {
+                            ForEach(RefundSum.lines(booking: booking, links: links, partUsedUp: partUsedUp), id: \.self) {
                                 Text($0).sensitive(.amounts).fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -338,6 +342,8 @@ struct RefundPickerSheet: View {
     /// What this booking has left for a further link, in the role the sheet shows.
     /// Of the selected part when the booking is split: another part may still have something left.
     @State private var ownOpen: Int64?
+
+    private var partUsedUp: Bool { ownOpen == 0 && ownParts.count > 1 && ownPart > 0 }
 
     private var usedUpNote: LocalizedStringKey {
         if ownParts.count > 1, ownPart > 0 {

@@ -109,7 +109,8 @@ Sheet {
         if (!fromRefund && links.refunded_cents !== null) out.push(qsTr("Erstattet: %1 von %2").arg(money(links.refunded_cents)).arg(money(total)))
         if (fromRefund && links.assigned_cents !== null) {
             out.push(qsTr("Zugeordnet: %1 von %2").arg(money(links.assigned_cents)).arg(money(total)))
-            if (links.assigned_cents < total) out.push(qsTr("Noch offen: %1. Sie können weitere Buchungen zuordnen.").arg(money(total - links.assigned_cents)))
+            // the selected part has nothing left: what is open belongs to the other parts
+            if (links.assigned_cents < total) out.push((partUsedUp ? qsTr("Noch offen: %1, in den anderen Teilen dieser Buchung.") : qsTr("Noch offen: %1. Sie können weitere Buchungen zuordnen.")).arg(money(total - links.assigned_cents)))
         }
         return out
     }
