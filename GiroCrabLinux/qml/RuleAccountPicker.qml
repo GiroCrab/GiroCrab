@@ -13,7 +13,7 @@ ColumnLayout {
     /// RuleAccountSelection.adding / removing: added once, kept in the order they were added.
     function adding(id) { return accountIds.indexOf(id) >= 0 ? accountIds : accountIds.concat([id]) }
     function removing(id) { return accountIds.filter(x => x !== id) }
-    function label(a) { return a.bank_name + " – " + a.name }
+    function label(a) { return a.bank_name + " – " + AppModel.accountLabel(a) }
     /// the add menu: section titles (disabled) and the accounts not chosen yet, like the sidebar (#412)
     readonly property var menuEntries: {
         const out = []
@@ -60,7 +60,7 @@ ColumnLayout {
                     anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: 8; anchors.rightMargin: 8
                     spacing: 4
-                    Text { text: chip.account ? picker.label(chip.account) : "?"; font.pixelSize: Theme.caption; color: Theme.text
+                    Text { text: chip.account ? chip.account.bank_name + " – " + chip.account.name : "?"; font.pixelSize: Theme.caption; color: Theme.text
                            elide: Text.ElideRight; Layout.fillWidth: true; Layout.maximumWidth: Math.ceil(implicitWidth)
                            Sensitive {} }
                     IconButton {
