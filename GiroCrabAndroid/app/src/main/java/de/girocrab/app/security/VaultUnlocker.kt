@@ -78,6 +78,11 @@ class VaultUnlocker(
             VaultKeyStore.State.Invalidated -> return onResult(UnlockResult.KeyInvalidated)
             VaultKeyStore.State.Ready -> Unit
         }
+        // Android never creates a vault on its own (#1459, Import-only): without a file there is
+        // nothing to open, and the only way back is a backup from the desktop.
+        if (!File(opener.defaultVaultPath(filesDir)).isFile) {
+            return onResult(UnlockResult.VaultMissing)
+        }
         val cipher = try {
             keyStore.unlockCipher()
         } catch (_: Exception) {
