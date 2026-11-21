@@ -184,6 +184,8 @@ pub enum AccountKind {
     Cash,
     /// Planned loan / mortgage (Darlehen) – shown neutral, not alarming.
     Loan,
+    /// Order evidence account; not a bank balance.
+    Order,
 }
 
 impl AccountKind {
@@ -196,6 +198,7 @@ impl AccountKind {
             AccountKind::Brokerage => "brokerage",
             AccountKind::Cash => "cash",
             AccountKind::Loan => "loan",
+            AccountKind::Order => "order",
         }
     }
     pub fn from_str(s: &str) -> Self {
@@ -206,6 +209,7 @@ impl AccountKind {
             "brokerage" => AccountKind::Brokerage,
             "cash" => AccountKind::Cash,
             "loan" => AccountKind::Loan,
+            "order" => AccountKind::Order,
             _ => AccountKind::Checking,
         }
     }
@@ -219,6 +223,7 @@ impl AccountKind {
             AccountKind::Brokerage => "chart.line.uptrend.xyaxis",
             AccountKind::Cash => "eurosign.circle",
             AccountKind::Loan => "house",
+            AccountKind::Order => "shippingbox",
         }
     }
 }
@@ -1197,4 +1202,29 @@ pub struct TransferTemplate {
     pub recipient_bic: String,
     pub default_amount_cents: Option<i64>,
     pub default_purpose: String,
+}
+
+/// Order evidence for an account and inclusive date range; independent of paging and total switches.
+#[derive(Debug, Clone, Default, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OrderAccountSummary {
+    pub order_count: u64,
+    pub credit_count: u64,
+    pub order_value_cents: i64,
+    pub credit_value_cents: i64,
+}
+
+/// Order evidence of a selection (one or several order accounts) in ONE
+/// booking currency, for an inclusive date range. `order_selection_summary`
+/// returns one entry per currency: different currencies are never added up.
+/// Primary display currency: EUR when present, else the entry with the
+/// largest order value (the app shows the rest as a separate note).
+#[derive(Debug, Clone, Default, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OrderCurrencySummary {
+    pub currency: String,
+    pub order_count: u64,
+    pub credit_count: u64,
+    pub order_value_cents: i64,
+    pub credit_value_cents: i64,
 }

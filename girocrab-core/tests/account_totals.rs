@@ -813,72 +813,6 @@ fn amazon_capture_with_credit(credit: &str) -> String {
     )
 }
 
-// ---------------------------------- amazon default vs. the bank (no double counting)
-
-#[test]
-fn amazon_default_and_opt_in_match_the_bank_double_counting_contract() {
-    use girocrab_core::models::ConnectorKind;
-    let (v, tmp) = vault("amazon-bank-contract");
-    let c = tmp.conn("v.girocrab");
-    let bank = add_account(&c, "Bank Test", "checking", None, 10000);
-    add_booking(&c, bank, "bank-debit", "2026-11-17", -4598, "Amazon");
-    add_booking(&c, bank, "bank-credit", "2026-11-17", 1000, "Amazon");
-    let cid = v
-        .add_bank_connection(
-            ConnectorKind::AmazonOrders,
-            "Amazon Test".into(),
-            "demo".into(),
-        )
-        .unwrap();
-    v.clone()
-        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
-        .unwrap();
-    let order = v
-        .list_accounts()
-        .unwrap()
-        .into_iter()
-        .find(|a| a.connection_id == Some(cid))
-        .unwrap();
-    assert_eq!(order.kind.as_str(), "payment_service");
-    assert!(!order.include_in_total && !order.in_total);
-    let baseline = v.list_transactions(totals_filter()).unwrap();
-    assert_eq!(
-        (baseline.flow.consumption_cents, baseline.flow.income_cents),
-        (4598, 1000)
-    );
-    assert_eq!(baseline.total_count, 4);
-    let available = || {
-        v.list_accounts()
-            .unwrap()
-            .into_iter()
-            .filter(|a| a.in_total)
-            .map(|a| a.balance_cents)
-            .sum::<i64>()
-    };
-    assert_eq!(available(), 10000);
-    v.set_account_include_in_total(order.id, true).unwrap();
-    let opt_in = v.list_transactions(totals_filter()).unwrap();
-    assert_eq!(
-        (opt_in.flow.consumption_cents, opt_in.flow.income_cents),
-        (9196, 2000)
-    );
-    assert_eq!(opt_in.total_count, 4);
-    assert_eq!(available(), 6402);
-    v.set_account_include_in_total(order.id, false).unwrap();
-    let off = v.list_transactions(totals_filter()).unwrap();
-    assert_eq!(
-        (off.flow.consumption_cents, off.flow.income_cents),
-        (4598, 1000)
-    );
-    assert_eq!(available(), 10000);
-    assert_eq!(
-        v.list_transactions(BookingFilter::default())
-            .unwrap()
-            .total_count,
-        4
-    );
-}
-
 /// Review point 2 on #1100: an older partner snapshot (schema 24 — the step-34
 /// columns are missing) is migrated by step 34 inside merge_other_vault BEFORE
 /// the merge SQL touches include_in_total/total_ms. The merge succeeds and the
@@ -926,4 +860,917 @@ fn merge_migrates_older_snapshot_before_the_column_merge() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert!(version >= 34, "snapshot migrated to at least schema 34");
+}
+
+#[test]
+fn order_kind_is_a_distinct_persisted_account_kind() {
+    use girocrab_core::models::AccountKind;
+    assert_eq!(AccountKind::from_str("order").as_str(), "order");
+}
+
+#[test]
+fn order_summary_separates_orders_and_credits_and_respects_period() {
+    let (v, tmp) = vault("order-summary");
+    let c = tmp.conn("v.girocrab");
+    let id = add_account(&c, "Bestellkonto", "order", None, 0);
+    add_booking(&c, id, "o1", "2026-11-01", -4598, "Amazon");
+    add_booking(&c, id, "r1", "2026-11-02", 1000, "Amazon");
+    add_booking(&c, id, "o2", "2026-10-31", -2000, "Amazon");
+    add_booking(&c, id, "deleted", "2026-11-03", -9000, "Amazon");
+    c.execute(
+        "UPDATE transactions SET deleted_ms = 1 WHERE external_id = 'deleted'",
+        [],
+    )
+    .unwrap();
+    v.set_account_include_in_total(id, false).unwrap();
+    let s = v
+        .order_account_summary(id, Some("2026-11-01".into()), Some("2026-11-30".into()))
+        .unwrap();
+    assert_eq!(
+        (
+            s.order_count,
+            s.credit_count,
+            s.order_value_cents,
+            s.credit_value_cents
+        ),
+        (1, 1, 4598, 1000)
+    );
+    let all = v.order_account_summary(id, None, None).unwrap();
+    assert_eq!(
+        (all.order_count, all.credit_count, all.order_value_cents),
+        (2, 1, 6598)
+    );
+    let credit_only = v
+        .order_account_summary(id, Some("2026-11-02".into()), Some("2026-11-02".into()))
+        .unwrap();
+    assert_eq!(
+        (
+            credit_only.order_count,
+            credit_only.credit_count,
+            credit_only.order_value_cents - credit_only.credit_value_cents
+        ),
+        (0, 1, -1000)
+    );
+    let empty = v
+        .order_account_summary(id, Some("2030-01-01".into()), None)
+        .unwrap();
+    assert_eq!(
+        (
+            empty.order_count,
+            empty.credit_count,
+            empty.order_value_cents,
+            empty.credit_value_cents
+        ),
+        (0, 0, 0, 0)
+    );
+}
+
+#[test]
+fn migration_assigns_order_kind_only_to_amazon_and_preserves_switch() {
+    let tmp = Tmp::new("order-migration");
+    let path = tmp.path("v.girocrab");
+    let v = Vault::open(path.clone(), KEY.to_vec()).unwrap();
+    let c = tmp.conn("v.girocrab");
+    let id = add_account(&c, "Amazon", "payment_service", Some("amazon-orders"), 0);
+    let other = add_account(&c, "PayPal Test", "payment_service", Some("paypal"), 0);
+    v.set_account_include_in_total(id, false).unwrap();
+    v.set_account_include_in_total(id, true).unwrap();
+    let stamp = col(&c, "SELECT total_ms FROM accounts WHERE id=?1", id);
+    c.execute(
+        "UPDATE accounts SET sf_symbol='envelope.circle', symbol_ms=123 WHERE id=?1",
+        [id],
+    )
+    .unwrap();
+    c.execute_batch("PRAGMA user_version=25").unwrap();
+    drop(c);
+    drop(v);
+    let v = Vault::open(path.clone(), KEY.to_vec()).unwrap();
+    let accounts = v.list_accounts().unwrap();
+    let amazon = accounts.iter().find(|a| a.id == id).unwrap();
+    assert_eq!(amazon.kind.as_str(), "order");
+    assert!(amazon.include_in_total);
+    assert_eq!(
+        amazon.sf_symbol, "envelope.circle",
+        "explicit symbol survives migration"
+    );
+    assert_eq!(
+        accounts
+            .iter()
+            .find(|a| a.id == other)
+            .unwrap()
+            .kind
+            .as_str(),
+        "payment_service"
+    );
+    assert_eq!(
+        col(
+            &tmp.conn("v.girocrab"),
+            "SELECT total_ms FROM accounts WHERE id=?1",
+            id
+        ),
+        stamp
+    );
+}
+
+#[test]
+fn zero_value_order_still_counts_as_an_order() {
+    let (v, tmp) = vault("order-free");
+    let c = tmp.conn("v.girocrab");
+    let id = add_account(&c, "Gratis-Bestellung", "order", None, 0);
+    add_booking(
+        &c,
+        id,
+        "amazon:028-0000337-0000000",
+        "2026-11-17",
+        0,
+        "Amazon",
+    );
+    let s = v.order_account_summary(id, None, None).unwrap();
+    assert_eq!(
+        s.order_count, 1,
+        "a fully voucher-paid order is still an order"
+    );
+    assert_eq!(
+        (s.credit_count, s.order_value_cents, s.credit_value_cents),
+        (0, 0, 0)
+    );
+}
+
+#[test]
+fn changing_cumulative_amazon_refund_does_not_add_a_second_credit() {
+    use girocrab_core::models::ConnectorKind;
+    let (v, tmp) = vault("order-refund-evolves");
+    let cid = v
+        .add_bank_connection(
+            ConnectorKind::AmazonOrders,
+            "Amazon Test".into(),
+            "demo".into(),
+        )
+        .unwrap();
+    let capture = |amount: &str| {
+        format!(
+            r#"{{"orders":[{{"code":"028-0000337-0000001","date":"17. November 2026","rows":[{{"label":"Gesamtsumme","value":"45,98 €","bold":true}},{{"label":"Erstattung gesamt","value":"{amount} €"}}]}}]}}"#
+        )
+    };
+    v.clone()
+        .import_amazon_orders(cid, capture("10,00"))
+        .unwrap();
+    let id = v
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.connection_id == Some(cid))
+        .unwrap()
+        .id;
+    let c = tmp.conn("v.girocrab");
+    let original_key: String = c
+        .query_row(
+            "SELECT external_id FROM transactions WHERE account_id=?1 AND amount_cents>0",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    c.execute(
+        "UPDATE transactions SET note='Erstattungsnotiz' WHERE account_id=?1 AND amount_cents>0",
+        [id],
+    )
+    .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, capture("20,00"))
+        .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, capture("20,00"))
+        .unwrap();
+    let s = v.order_account_summary(id, None, None).unwrap();
+    assert_eq!(
+        (s.order_count, s.credit_count, s.credit_value_cents),
+        (1, 1, 2000)
+    );
+    assert_eq!(
+        v.list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == id)
+            .unwrap()
+            .balance_cents,
+        -2598
+    );
+    let note: String = c
+        .query_row(
+            "SELECT note FROM transactions WHERE account_id=?1 AND amount_cents>0",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(note, "Erstattungsnotiz");
+    let final_key: String = c
+        .query_row(
+            "SELECT external_id FROM transactions WHERE account_id=?1 AND amount_cents>0",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        final_key, original_key,
+        "sync and attachments keep the same booking identity"
+    );
+    v.set_account_archived(id, true).unwrap();
+    v.clone()
+        .import_amazon_orders(cid, capture("30,00"))
+        .unwrap();
+    assert_eq!(
+        v.order_account_summary(id, None, None)
+            .unwrap()
+            .credit_value_cents,
+        2000,
+        "archived accounts must not be updated by import"
+    );
+    v.set_account_archived(id, false).unwrap();
+    v.clone()
+        .import_amazon_orders(cid, capture("45,98"))
+        .unwrap();
+    let s = v.order_account_summary(id, None, None).unwrap();
+    assert_eq!(s.order_value_cents - s.credit_value_cents, 0);
+    assert_eq!(s.credit_count, 1);
+}
+
+#[test]
+fn regular_demo_contains_an_excluded_order_account_with_credits() {
+    let (v, _tmp) = vault("regular-demo-orders");
+    v.seed_demo_data().unwrap();
+    let a = v
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.kind.as_str() == "order")
+        .expect("a visible order account in the standard demo");
+    assert!(!a.include_in_total && !a.in_total);
+    let s = v.order_account_summary(a.id, None, None).unwrap();
+    assert_eq!(
+        (
+            s.order_count,
+            s.credit_count,
+            s.order_value_cents,
+            s.credit_value_cents
+        ),
+        (3, 1, 12638, 1000)
+    );
+    assert_eq!(
+        v.seed_demo_data().unwrap(),
+        0,
+        "seeding again must not duplicate demo orders"
+    );
+}
+
+#[test]
+fn amended_amazon_credit_syncs_in_both_directions() {
+    use girocrab_core::models::ConnectorKind;
+    let (a, _ta) = vault("refund-sync-a");
+    let (b, tb) = vault("refund-sync-b");
+    let cid = a
+        .add_bank_connection(
+            ConnectorKind::AmazonOrders,
+            "Amazon Test".into(),
+            "demo".into(),
+        )
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    let aa = a
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|x| x.connection_id == Some(cid))
+        .unwrap()
+        .id;
+    let bb = b
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|x| x.kind.as_str() == "order")
+        .unwrap();
+    let bc = bb.connection_id.unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    assert_eq!(
+        b.order_account_summary(bb.id, None, None)
+            .unwrap()
+            .credit_value_cents,
+        2000
+    );
+    // the receiving side's derived balance follows the corrected amount
+    // (order 45,98 + credit 20,00 = -25,98), never the stale pre-merge figure
+    assert_eq!(
+        b.list_accounts()
+            .unwrap()
+            .iter()
+            .find(|x| x.id == bb.id)
+            .unwrap()
+            .balance_cents,
+        -2598,
+        "derived balance recomputed with the merged amount"
+    );
+    a.merge_other_vault(b.file_path(), KEY.to_vec()).unwrap();
+    assert_eq!(
+        a.order_account_summary(aa, None, None)
+            .unwrap()
+            .credit_value_cents,
+        2000
+    );
+    b.clone()
+        .import_amazon_orders(bc, amazon_capture_with_credit("15,00"))
+        .unwrap();
+    a.merge_other_vault(b.file_path(), KEY.to_vec()).unwrap();
+    assert_eq!(
+        a.order_account_summary(aa, None, None)
+            .unwrap()
+            .credit_value_cents,
+        1500,
+        "newer correction wins even when smaller"
+    );
+    let count: i64 = tb
+        .conn("v.girocrab")
+        .query_row(
+            "SELECT count(*) FROM transactions WHERE account_id=?1",
+            [bb.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2);
+}
+
+#[test]
+fn deleted_amazon_credit_is_not_recreated_when_amount_changes() {
+    use girocrab_core::models::ConnectorKind;
+    let (v, tmp) = vault("refund-deleted");
+    let cid = v
+        .add_bank_connection(
+            ConnectorKind::AmazonOrders,
+            "Amazon Test".into(),
+            "demo".into(),
+        )
+        .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    let id = v.list_accounts().unwrap()[0].id;
+    let c = tmp.conn("v.girocrab");
+    c.execute(
+        "UPDATE transactions SET deleted_ms=123 WHERE account_id=?1 AND amount_cents>0",
+        [id],
+    )
+    .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    assert_eq!(
+        v.order_account_summary(id, None, None)
+            .unwrap()
+            .credit_count,
+        0
+    );
+    let count: i64 = c
+        .query_row(
+            "SELECT count(*) FROM transactions WHERE account_id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2, "a tombstone keeps its booking identity");
+}
+
+#[test]
+fn switching_to_order_kind_starts_excluded_but_keeps_later_opt_in() {
+    use girocrab_core::models::AccountKind;
+    let (v, tmp) = vault("order-kind-default");
+    let id = add_account(&tmp.conn("v.girocrab"), "Manuell", "checking", None, 100);
+    v.set_account_kind(id, AccountKind::Order).unwrap();
+    assert!(!v.list_accounts().unwrap()[0].include_in_total);
+    v.set_account_include_in_total(id, true).unwrap();
+    v.set_account_kind(id, AccountKind::Order).unwrap();
+    assert!(
+        v.list_accounts().unwrap()[0].include_in_total,
+        "same-kind update must keep explicit opt-in"
+    );
+    // round trip through another kind: the explicit opt-in survives the way
+    // back into the order kind (only never-touched accounts default excluded)
+    v.set_account_kind(id, AccountKind::Checking).unwrap();
+    assert!(v.list_accounts().unwrap()[0].include_in_total);
+    v.set_account_kind(id, AccountKind::Order).unwrap();
+    assert!(
+        v.list_accounts().unwrap()[0].include_in_total,
+        "an explicit opt-in survives the round trip through another kind"
+    );
+}
+
+#[test]
+fn amazon_default_and_opt_in_match_the_bank_double_counting_contract() {
+    use girocrab_core::models::ConnectorKind;
+    let (v, tmp) = vault("amazon-bank-contract");
+    let c = tmp.conn("v.girocrab");
+    let bank = add_account(&c, "Bank Test", "checking", None, 10000);
+    add_booking(&c, bank, "bank-debit", "2026-11-17", -4598, "Amazon");
+    add_booking(&c, bank, "bank-credit", "2026-11-17", 1000, "Amazon");
+    let cid = v
+        .add_bank_connection(
+            ConnectorKind::AmazonOrders,
+            "Amazon Test".into(),
+            "demo".into(),
+        )
+        .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    let order = v
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.connection_id == Some(cid))
+        .unwrap();
+    assert_eq!(order.kind.as_str(), "order");
+    assert!(!order.include_in_total && !order.in_total);
+    let baseline = v.list_transactions(totals_filter()).unwrap();
+    assert_eq!(
+        (baseline.flow.consumption_cents, baseline.flow.income_cents),
+        (4598, 1000)
+    );
+    assert_eq!(baseline.total_count, 4);
+    let available = || {
+        v.list_accounts()
+            .unwrap()
+            .into_iter()
+            .filter(|a| a.in_total)
+            .map(|a| a.balance_cents)
+            .sum::<i64>()
+    };
+    assert_eq!(available(), 10000);
+    v.set_account_include_in_total(order.id, true).unwrap();
+    let opt_in = v.list_transactions(totals_filter()).unwrap();
+    assert_eq!(
+        (opt_in.flow.consumption_cents, opt_in.flow.income_cents),
+        (9196, 2000)
+    );
+    assert_eq!(opt_in.total_count, 4);
+    assert_eq!(available(), 6402);
+    v.set_account_include_in_total(order.id, false).unwrap();
+    let off = v.list_transactions(totals_filter()).unwrap();
+    assert_eq!(
+        (off.flow.consumption_cents, off.flow.income_cents),
+        (4598, 1000)
+    );
+    assert_eq!(available(), 10000);
+    assert_eq!(
+        v.list_transactions(BookingFilter::default())
+            .unwrap()
+            .total_count,
+        4
+    );
+}
+
+// ------------------------------------------------- order overview (group level)
+
+/// The sidebar sums of order accounts show their evidence value although the
+/// overall money totals keep them out; mixed groups add the evidence value to
+/// the included balances; no double counting anywhere (#337).
+#[test]
+fn order_group_sum_shows_the_evidence_value() {
+    let (v, tmp) = vault("totals-order-group");
+    let c = tmp.conn("v.girocrab");
+    let bank = add_account(&c, "Giro Test", "checking", Some("fints:52090000"), 100_000);
+    let order = add_account(&c, "Amazon Test", "order", Some("amazon-orders"), -11638);
+    // like the connector default: a new order account starts out of the totals
+    v.set_account_include_in_total(order, false).unwrap();
+    add_booking(&c, bank, "b1", "2026-01-05", -4_000, "Testmarkt Filiale");
+    add_booking(&c, order, "o1", "2026-01-06", -50_00, "Amazon");
+    add_booking(&c, order, "o2", "2026-01-07", -66_38, "Amazon");
+    add_booking(&c, order, "g1", "2026-01-08", 10_00, "Amazon");
+
+    // group of only order accounts: the evidence value, not 0
+    let uuid = in_new_group(&v, &c, order, "Bestellungen");
+    let groups = v.list_user_groups().unwrap();
+    let g = groups.iter().find(|g| g.uuid == uuid).unwrap();
+    assert_eq!(g.accounts.len(), 1);
+    assert_eq!(
+        g.balance_cents, -11638,
+        "sidebar sum shows the evidence value"
+    );
+
+    // mixed group: included bank balance plus the evidence value
+    let mixed = v
+        .create_user_group("Alles".into(), "folder".into())
+        .unwrap();
+    c.execute(
+        "UPDATE accounts SET user_group_uuid = ?1 WHERE id IN (?2, ?3)",
+        params![mixed, bank, order],
+    )
+    .unwrap();
+    let groups = v.list_user_groups().unwrap();
+    let m = groups.iter().find(|g| g.uuid == mixed).unwrap();
+    assert_eq!(m.balance_cents, 100_000 - 11638);
+
+    // no double counting: overall flows and available stay without the orders
+    let totals = v.list_transactions(totals_filter()).unwrap();
+    assert_eq!(totals.total_count, 4, "proof list keeps every booking");
+    assert_eq!(totals.flow.consumption_cents, 4_000, "only the bank counts");
+    assert_eq!(totals.flow.income_cents, 0);
+    let available: i64 = v
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.in_total)
+        .map(|a| a.balance_cents)
+        .sum();
+    assert_eq!(available, 100_000);
+
+    // the kind section of the order account sums the same way
+    c.execute(
+        "INSERT OR IGNORE INTO account_groups(name) VALUES ('Bestellkonten')",
+        [],
+    )
+    .unwrap();
+    c.execute(
+        "UPDATE accounts SET group_id = (SELECT id FROM account_groups WHERE name = 'Bestellkonten') WHERE id = ?1",
+        [order],
+    )
+    .unwrap();
+    let kind = v
+        .list_account_groups()
+        .unwrap()
+        .into_iter()
+        .find(|g| g.accounts.iter().any(|x| x.id == order))
+        .unwrap();
+    assert_eq!(kind.accounts.len(), 1);
+    assert_eq!(
+        kind.balance_cents, -11638,
+        "kind section shows the evidence value"
+    );
+}
+
+/// The selection summary aggregates per booking currency (never added up),
+/// counts 0-Euro orders as orders and follows the inclusive date range.
+#[test]
+fn order_selection_summary_groups_by_currency() {
+    let (v, tmp) = vault("totals-order-summary");
+    let c = tmp.conn("v.girocrab");
+    let eur = add_account(&c, "Amazon EUR", "order", Some("amazon-orders"), 0);
+    let usd = add_account(&c, "Amazon US", "order", Some("amazon-orders"), 0);
+    add_booking(&c, eur, "e1", "2026-01-06", -50_00, "Amazon");
+    add_booking(&c, eur, "e2", "2026-01-07", 10_00, "Amazon");
+    add_booking(&c, eur, "e3", "2026-01-08", 0, "Amazon"); // voucher order
+    c.execute(
+        "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, currency, counterparty)
+         VALUES (?1, 'u1', '2026-01-09', -20_00, 'USD', 'Amazon')",
+        [usd],
+    )
+    .unwrap();
+
+    let sums = v
+        .order_selection_summary(vec![eur, usd], None, None)
+        .unwrap();
+    assert_eq!(sums.len(), 2, "one entry per currency");
+    assert_eq!(sums[0].currency, "EUR", "EUR is the primary currency");
+    assert_eq!(
+        (
+            sums[0].order_count,
+            sums[0].credit_count,
+            sums[0].order_value_cents,
+            sums[0].credit_value_cents
+        ),
+        (2, 1, 50_00, 10_00),
+        "the 0-Euro order counts as an order"
+    );
+    assert_eq!(sums[1].currency, "USD");
+    assert_eq!(
+        (
+            sums[1].order_count,
+            sums[1].credit_count,
+            sums[1].order_value_cents
+        ),
+        (1, 0, 20_00)
+    );
+
+    // inclusive date range narrows both entries
+    let sums = v
+        .order_selection_summary(
+            vec![eur, usd],
+            Some("2026-01-07".into()),
+            Some("2026-01-07".into()),
+        )
+        .unwrap();
+    assert_eq!(sums.len(), 1);
+    assert_eq!(
+        (
+            sums[0].currency.as_str(),
+            sums[0].credit_count,
+            sums[0].credit_value_cents
+        ),
+        ("EUR", 1, 10_00)
+    );
+
+    // a selection without order accounts returns nothing, not "all"
+    assert!(
+        v.order_selection_summary(Vec::new(), None, None)
+            .unwrap()
+            .is_empty()
+    );
+    // an empty range shows zeros in the selection's own currency (like the
+    // single-account summary), never a missing header value
+    let empty = v
+        .order_selection_summary(vec![eur], Some("2030-01-01".into()), None)
+        .unwrap();
+    assert_eq!(empty.len(), 1);
+    assert_eq!(
+        (
+            empty[0].currency.as_str(),
+            empty[0].order_count,
+            empty[0].order_value_cents
+        ),
+        ("EUR", 0, 0)
+    );
+}
+
+/// A corrected amount invalidates the booking's split allocation (#1471):
+/// the heal drops the splits in the same transaction, so the invariant
+/// (splits sum to the booking amount) holds again.
+#[test]
+fn heal_drops_splits_of_a_corrected_amount() {
+    use girocrab_core::models::{ConnectorKind, TransactionSplitInput};
+    let (v, tmp) = vault("order-heal-splits");
+    let _ = tmp;
+    let cid = v
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    let refund = v
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .iter()
+        .find(|t| t.amount_cents > 0)
+        .unwrap()
+        .id;
+    v.set_transaction_splits(
+        refund,
+        vec![
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 600,
+                note: String::new(),
+            },
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 400,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    v.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    let c = tmp.conn("v.girocrab");
+    let splits: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM transaction_splits WHERE transaction_id = ?1",
+            [refund],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(splits, 0, "the stale allocation went with the old amount");
+}
+
+/// A deleted booking contributes nothing to a derived balance (#1471):
+/// correcting its amount in a merge must not shift the balance by a share
+/// the balance never had.
+#[test]
+fn amount_merge_on_a_deleted_booking_keeps_the_derived_balance() {
+    use girocrab_core::models::ConnectorKind;
+    let (a, _ta) = vault("refund-sync-deleted-a");
+    let (b, tb) = vault("refund-sync-deleted-b");
+    let cid = a
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    let order = b
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|x| x.kind.as_str() == "order")
+        .unwrap();
+    let cb = tb.conn("v.girocrab");
+    let before: i64 = cb
+        .query_row(
+            "SELECT balance_cents FROM accounts WHERE id = ?1",
+            [order.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    cb.execute(
+        "UPDATE transactions SET deleted_ms = 1 WHERE account_id = ?1 AND amount_cents > 0",
+        [order.id],
+    )
+    .unwrap();
+    drop(cb);
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    let cb = tb.conn("v.girocrab");
+    let after: i64 = cb
+        .query_row(
+            "SELECT balance_cents FROM accounts WHERE id = ?1",
+            [order.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(before, after, "a deleted booking never shifts the balance");
+}
+
+/// A bidirectional split correction (#1471): both sides hold the split
+/// 1000-refund; A's heal corrects to 2000, stamps the clear newer and drops
+/// the allocation. Merging in both directions leaves 2000 with NO stale
+/// allocation restored — the empty state wins the field merge.
+#[test]
+fn corrected_amount_clears_splits_in_both_merge_directions() {
+    use girocrab_core::models::{ConnectorKind, TransactionSplitInput};
+    let (a, ta) = vault("splits-bidir-a");
+    let (b, tb) = vault("splits-bidir-b");
+    let cid = a
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    for v in [&a, &b] {
+        let refund = v
+            .list_transactions(BookingFilter::default())
+            .unwrap()
+            .transactions
+            .iter()
+            .find(|t| t.amount_cents > 0)
+            .unwrap()
+            .id;
+        v.set_transaction_splits(
+            refund,
+            vec![
+                TransactionSplitInput {
+                    category_id: None,
+                    amount_cents: 600,
+                    note: String::new(),
+                },
+                TransactionSplitInput {
+                    category_id: None,
+                    amount_cents: 400,
+                    note: String::new(),
+                },
+            ],
+        )
+        .unwrap();
+    }
+    // healing stamps its split clear (#1471): the refund's splits_ms must
+    // rise together with the delete, before either merge sees the state
+    let refund_a = a
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .iter()
+        .find(|t| t.amount_cents > 0)
+        .unwrap()
+        .id;
+    let refund_splits_ms = |tmp: &Tmp| -> i64 {
+        tmp.conn("v.girocrab")
+            .query_row(
+                "SELECT splits_ms FROM transactions WHERE id = ?1",
+                [refund_a],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let splits_ms_before = refund_splits_ms(&ta);
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    let splits_ms_healed = refund_splits_ms(&ta);
+    assert!(
+        splits_ms_healed > splits_ms_before,
+        "healing advances the split-clear stamp ({splits_ms_healed} > {splits_ms_before})"
+    );
+    a.merge_other_vault(b.file_path(), KEY.to_vec()).unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    for (v, t) in [(&a, &ta), (&b, &tb)] {
+        let c = t.conn("v.girocrab");
+        let (amount, splits): (i64, i64) = c
+            .query_row(
+                "SELECT (SELECT amount_cents FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL),
+                        (SELECT COUNT(*) FROM transaction_splits sp JOIN transactions t ON t.id = sp.transaction_id
+                          WHERE t.amount_cents > 0 AND t.deleted_ms IS NULL)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(amount, 2000, "the correction won");
+        assert_eq!(
+            splits,
+            0,
+            "no stale allocation restored ({:?})",
+            v.account_count()
+        );
+    }
+}
+
+/// A newer amount stamp with IDENTICAL cents must not delete valid splits
+/// (#1471): A corrects 1000 -> 2000 -> back to 1000, B splits its unchanged
+/// 1000; the merge takes A's stamp, keeps B's allocation.
+#[test]
+fn stamp_only_amount_change_keeps_fitting_splits() {
+    use girocrab_core::models::{ConnectorKind, TransactionSplitInput};
+    let (a, ta) = vault("splits-stamp-a");
+    let (b, tb) = vault("splits-stamp-b");
+    let cid = a
+        .add_bank_connection(ConnectorKind::AmazonOrders, "Amazon".into(), "demo".into())
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    // A: 1000 -> 2000 -> back to 1000 (stamp rises, value returns)
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("20,00"))
+        .unwrap();
+    a.clone()
+        .import_amazon_orders(cid, amazon_capture_with_credit("10,00"))
+        .unwrap();
+    // B splits its unchanged 1000-cent refund
+    let refund = b
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .iter()
+        .find(|t| t.amount_cents > 0)
+        .unwrap()
+        .id;
+    b.set_transaction_splits(
+        refund,
+        vec![
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 600,
+                note: String::new(),
+            },
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: 400,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    // A's amount stamp is newer though the cents match B's (#337): the
+    // merge must store A's stamp too, not silently keep B's older one
+    let amount_ms_of = |tmp: &Tmp| -> i64 {
+        tmp.conn("v.girocrab")
+            .query_row(
+                "SELECT amount_ms FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let a_amount_ms = amount_ms_of(&ta);
+    let b_amount_ms = amount_ms_of(&tb);
+    assert!(
+        a_amount_ms > b_amount_ms,
+        "A's amount stamp is newer before the merge ({a_amount_ms} > {b_amount_ms})"
+    );
+    b.merge_other_vault(a.file_path(), KEY.to_vec()).unwrap();
+    let c = tb.conn("v.girocrab");
+    let (amount, splits, amount_ms): (i64, i64, i64) = c
+        .query_row(
+            "SELECT (SELECT amount_cents FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL),
+                    (SELECT COUNT(*) FROM transaction_splits sp JOIN transactions t ON t.id = sp.transaction_id
+                      WHERE t.amount_cents > 0 AND t.deleted_ms IS NULL),
+                    (SELECT amount_ms FROM transactions WHERE amount_cents > 0 AND deleted_ms IS NULL)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(amount, 1000);
+    assert_eq!(
+        splits, 2,
+        "the fitting allocation survives the stamp-only change"
+    );
+    assert_eq!(
+        amount_ms, a_amount_ms,
+        "B stores A's newer amount stamp though the cents are unchanged"
+    );
 }

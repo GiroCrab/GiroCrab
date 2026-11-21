@@ -7304,6 +7304,17 @@
         }
       }
     },
+    "Bestellkonto" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Order account"
+          }
+        }
+      }
+    },
     "Bestellliste %@ …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7398,6 +7409,17 @@
         }
       }
     },
+    "Bestellungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Orders"
+          }
+        }
+      }
+    },
     "Bestellungen abrufen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7416,6 +7438,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fetching orders"
+          }
+        }
+      }
+    },
+    "Bestellwert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Order value"
           }
         }
       }
@@ -16207,6 +16240,17 @@
         }
       }
     },
+    "Gutschriften" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Credits"
+          }
+        }
+      }
+    },
     "Gültig noch etwa %u Min." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21814,6 +21858,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "By Group"
+          }
+        }
+      }
+    },
+    "Nach Gutschriften" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After credits"
           }
         }
       }
@@ -30806,6 +30861,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose from–to"
+          }
+        }
+      }
+    },
+    "Vor Gutschriften" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Before credits"
           }
         }
       }

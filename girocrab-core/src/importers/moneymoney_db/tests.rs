@@ -3672,6 +3672,52 @@ INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, curre
 }
 
 #[test]
+fn order_import_defaults_off_and_keeps_explicit_opt_in_on_reimport() {
+    for initial in [AccountKind::Checking, AccountKind::Order] {
+        let v = vault();
+        let path = fake_db();
+        let preview = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        let mut options = options_from(&preview, false);
+        for c in &mut options.accounts {
+            c.import = c.mm_id == 2;
+            c.kind = initial;
+        }
+        v.import_moneymoney_database(path.clone(), PW.into(), options.clone())
+            .unwrap();
+        for c in &mut options.accounts {
+            c.kind = AccountKind::Order;
+        }
+        v.import_moneymoney_database(path.clone(), PW.into(), options.clone())
+            .unwrap();
+        let account = account_by_name(&v, "Visa-Karte");
+        assert_eq!(account.kind, AccountKind::Order);
+        assert!(!account.include_in_total);
+        v.set_account_include_in_total(account.id, true).unwrap();
+        v.import_moneymoney_database(path.clone(), PW.into(), options.clone())
+            .unwrap();
+        assert!(account_by_name(&v, "Visa-Karte").include_in_total);
+        // round trip through another kind: the explicit opt-in survives the
+        // way back into the order kind (only never-touched accounts default
+        // excluded, review point on #1471)
+        let mut switched = options.clone();
+        for c in &mut switched.accounts {
+            c.kind = AccountKind::Checking;
+        }
+        v.import_moneymoney_database(path.clone(), PW.into(), switched)
+            .unwrap();
+        assert!(account_by_name(&v, "Visa-Karte").include_in_total);
+        v.import_moneymoney_database(path, PW.into(), options)
+            .unwrap();
+        assert!(
+            account_by_name(&v, "Visa-Karte").include_in_total,
+            "the explicit opt-in survives the way back into the order kind"
+        );
+    }
+}
+
+#[test]
 fn external_refs_never_change() {
     // Imported accounts are matched again by this ref on the next import.
     assert_eq!(fnv("12345678|0532013000"), "663cb359");

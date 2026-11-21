@@ -436,12 +436,13 @@ pub(crate) fn store_fetch(
                 None => {
                     let (group, sym, order) = group_for(acc.kind);
                     let gid = Vault::ensure_group(&tx, group, sym, order)?;
-                    // Amazon's order account is a proof account: it starts
+                    // Order accounts (Amazon) are proof accounts: they start
                     // outside the overall money totals (#337); the user can
-                    // switch it back on. Stamp 0, so any explicit choice wins
-                    // on sync. Only on creation — a re-fetch never resets a
-                    // stored decision.
-                    let include_in_total = kind != ConnectorKind::AmazonOrders;
+                    // switch each one back on. Stamp 0, so any explicit choice
+                    // wins on sync. Only on creation — a re-fetch never resets
+                    // a stored decision.
+                    let include_in_total =
+                        kind != ConnectorKind::AmazonOrders && acc.kind != AccountKind::Order;
                     tx.execute(
                         "INSERT INTO accounts(connection_id, group_id, external_ref, name, bank_name, owner, iban, account_number, currency, kind,
                                               balance_cents, balance_date, sf_symbol, sort_order, created_ms, include_in_total, total_ms)
@@ -1056,6 +1057,7 @@ pub(crate) fn group_for(kind: AccountKind) -> (&'static str, &'static str, i32) 
         AccountKind::CreditCard => ("Kreditkarten", "creditcard", 2),
         AccountKind::Brokerage => ("Depots & ETFs", "chart.pie", 3),
         AccountKind::Loan => ("Darlehen & Kredite", "house", 4),
+        AccountKind::Order => ("Bestellkonten", "shippingbox", 5),
     }
 }
 

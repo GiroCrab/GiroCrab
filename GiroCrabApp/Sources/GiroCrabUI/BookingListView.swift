@@ -56,10 +56,10 @@ struct BookingStreamView: View {
                         if emptyVault {
                             EmptyVaultCard()
                         }
-                        if !emptyVault && model.scope != .investments {
+                        if !emptyVault && !(model.scope == .investments && model.isOrderSelection) {
                             MerchantLogoTipView()
                         }
-                        StreamAnalysisCards(isOverview: isOverview, isNewBookings: isNewBookings, hasAccounts: !model.allAccounts.isEmpty)
+                        StreamAnalysisCards(isOverview: isOverview, isNewBookings: isNewBookings, hasAccounts: !model.allAccounts.isEmpty && !model.isOrderSelection)
                         if model.isLoadingSelection {
                             ProgressView().controlSize(.small)
                                 .frame(maxWidth: .infinity)
@@ -1026,8 +1026,7 @@ struct BookingRow: View {
                         .overlay {
                             if booking.isPending {
                                 Capsule().strokeBorder(Theme.secondary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                            }
-                        }
+                            }                        }
                 }
                 // balance after this booking (#577); pending ones have none
                 if let balance {

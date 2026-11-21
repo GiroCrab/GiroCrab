@@ -101,6 +101,10 @@ public final class AppModel {
     var listBalances = ListBalances()
     /// Watches Ansicht › Saldo anzeigen, which the settings window can change too.
     @ObservationIgnored private var runningBalanceObserver: NSKeyValueObservation?
+    /// Order evidence of the current selection, one entry per booking currency
+    /// (never added up), primary currency first (#337); the tiles and the
+    /// header read `orderAccountSummary` / `orderSelectionCurrency` from it.
+    var orderCurrencySummaries: [OrderCurrencySummary] = []
     /// Bumped whenever the effective total set changes (#337: account / group
     /// switch, group move). The overall money figures (cashflow card) follow
     /// it — the booking list count alone does not move, it is a proof view.
@@ -935,11 +939,20 @@ public final class AppModel {
             case "vermoegen-sachwerte": sidebarSelection = .wealth; wealthScope = .tangibles
             default: break
             }
-            if let q = options.selectAccount, let a = allAccounts.first(where: { $0.name.lowercased().contains(q) }) {
-                sidebarSelection = .account(a.id)
-                if options.depotTab == "activities" { depotTab = .activities }
-                if options.depotTab == "plans" { depotTab = .plans }
-                selectedBookingID = bookings.first?.id
+            if let q = options.selectAccount {
+                // an exact group name selects the group (e.g. the order
+                // overview `--select Bestellungen`); otherwise the account whose
+                // name contains the text, else a group containing it
+                if let g = userGroups.first(where: { $0.name.lowercased() == q && !$0.isUngrouped }) {
+                    sidebarSelection = .userGroup(g.uuid)
+                } else if let a = allAccounts.first(where: { $0.name.lowercased().contains(q) }) {
+                    sidebarSelection = .account(a.id)
+                    if options.depotTab == "activities" { depotTab = .activities }
+                    if options.depotTab == "plans" { depotTab = .plans }
+                    selectedBookingID = bookings.first?.id
+                } else if let g = userGroups.first(where: { $0.name.lowercased().contains(q) && !$0.isUngrouped }) {
+                    sidebarSelection = .userGroup(g.uuid)
+                }
             }
             switch options.demoFilter {
             case "income": directionFilter = .income

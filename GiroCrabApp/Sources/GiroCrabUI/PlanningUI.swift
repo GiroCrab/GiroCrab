@@ -409,8 +409,7 @@ struct CashflowCard: View {
             if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6, accountIds: accountIds,
                                                  respectInTotal: model.sidebarSelection?.usesTotalsContext ?? true) {
                 rows = loaded
-            }
-        }
+            }        }
     }
 
     /// Accounts of the sidebar selection; a category view keeps its account filter.

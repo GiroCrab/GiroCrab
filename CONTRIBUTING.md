@@ -99,7 +99,7 @@ automatically get a monogram, never a logo.
 ## Testing with demo data
 
 `GIROCRAB_DEMO_SEED=1 cargo run` (or `cargo run -- --demo-seed`) opens a throw-away vault with
-fictional accounts, invented bookings and demo depot positions (`girocrab-core/src/demo.rs`). Change the data
+15 fictional accounts, 79 invented bookings (including Amazon orders and credits) and demo depot positions
 there only with invented names and amounts.
 
 ## Mit KI-Unterstützung beitragen (In 4 Schritten zum PR) / Contributing with AI Agents

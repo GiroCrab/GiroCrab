@@ -14,7 +14,17 @@ extension Account {
     /// Whether the sidebar row marks the account as outside the overall money
     /// totals (eye.slash + dimming, #337) — its own switch is off, an above
     /// group is excluded or it is archived; `inTotal` is the effective flag.
-    var showsTotalExclusionIndicator: Bool { !inTotal }
+    /// Not for order accounts: being outside is their normal state — the
+    /// context-menu switch shows it.
+    var showsTotalExclusionIndicator: Bool { !inTotal && kind != .order }
+
+    /// What the sidebar row shows as the account's figure. An order account
+    /// outside the money totals shows its evidence value (order sum after
+    /// credits) as a positive number — a minus would read like debt (#337).
+    /// Counted into the totals (or any money account), the signed balance stays.
+    var displayBalanceCents: Int64 {
+        (kind == .order && !inTotal) ? abs(balanceCents) : balanceCents
+    }
 
     /// IBAN and account number without spaces, for sidebar / list search.
     var compactAccountIds: [String] {
@@ -548,8 +558,7 @@ extension AppModel {
         guard let vault else { return }
         do {
             try vault.setAccountKind(accountId: accountId, kind: kind)
-            reloadAccounts()
-            dashboardStale = true
+            afterGroupChange()
         } catch {
             errorMessage = describe(error)
         }
@@ -569,8 +578,13 @@ extension AppModel {
         } catch {
             errorMessage = describe(error)
         }
-        reloadAccounts()
-        if kindChanged { dashboardStale = true }
+        // a kind change moves the account and can change the effective total
+        // set (#337 order default): the same full refresh as the context menu
+        if kindChanged {
+            afterGroupChange()
+        } else {
+            reloadAccounts()
+        }
     }
 
     func renameAccount(_ accountId: Int64, to name: String) {

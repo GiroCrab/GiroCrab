@@ -595,10 +595,17 @@ impl Vault {
                     .collect();
                 // Archived and switched-out accounts stay listed but don't
                 // count (GiroCrab/GiroCrab#208, #337); `in_total` is the
-                // effective flag (own switch, group, archiving).
+                // effective flag (own switch, group, archiving). Order
+                // accounts (Bestellkonten) are evidence accounts: their
+                // balance is the evidence value, so the kind section sums it
+                // even while the overall money totals keep them out (#337).
                 let balance = accs
                     .iter()
-                    .filter(|a| a.currency == "EUR" && a.in_total)
+                    .filter(|a| {
+                        a.currency == "EUR"
+                            && (a.in_total
+                                || (a.kind == AccountKind::Order && a.archived_unix.is_none()))
+                    })
                     .map(|a| a.balance_cents)
                     .sum();
                 AccountGroup {
@@ -786,6 +793,110 @@ impl Vault {
         Ok(())
     }
 
+    /// Order counts and gross order/credit values for the inclusive period, in
+    /// the account's own booking currency (never a mix across currencies).
+    /// Uses SQL over the full evidence, regardless of list pagination or inclusion in totals.
+    pub fn order_account_summary(
+        &self,
+        account_id: i64,
+        date_from: Option<String>,
+        date_to: Option<String>,
+    ) -> Result<crate::models::OrderAccountSummary, CoreError> {
+        let db = self.db()?;
+        db.query_row(
+            "SELECT COUNT(CASE WHEN amount_cents<=0 THEN 1 END),
+                    COUNT(CASE WHEN amount_cents>0 THEN 1 END),
+                    COALESCE(SUM(CASE WHEN amount_cents<0 THEN -amount_cents ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN amount_cents>0 THEN amount_cents ELSE 0 END),0)
+             FROM transactions WHERE account_id=?1 AND deleted_ms IS NULL
+               AND currency = (SELECT currency FROM accounts WHERE id = ?1)
+               AND (?2 IS NULL OR booking_date>=?2) AND (?3 IS NULL OR booking_date<=?3)",
+            params![account_id, date_from, date_to],
+            |r| {
+                Ok(crate::models::OrderAccountSummary {
+                    order_count: r.get::<_, i64>(0)? as u64,
+                    credit_count: r.get::<_, i64>(1)? as u64,
+                    order_value_cents: r.get(2)?,
+                    credit_value_cents: r.get(3)?,
+                })
+            },
+        )
+        .map_err(Into::into)
+    }
+
+    /// The same evidence for a selection of order accounts (a single account,
+    /// a user group, a kind section, a bank), one entry per booking currency —
+    /// different currencies are never added up (#337: the order overview is an
+    /// evidence context even while the overall money totals keep these
+    /// accounts out). Empty `account_ids` returns no entry.
+    pub fn order_selection_summary(
+        &self,
+        account_ids: Vec<i64>,
+        date_from: Option<String>,
+        date_to: Option<String>,
+    ) -> Result<Vec<crate::models::OrderCurrencySummary>, CoreError> {
+        if account_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let db = self.db()?;
+        let list = account_ids
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut stmt = db.prepare(&format!(
+            "SELECT t.currency,
+                    COUNT(CASE WHEN t.amount_cents<=0 THEN 1 END),
+                    COUNT(CASE WHEN t.amount_cents>0 THEN 1 END),
+                    COALESCE(SUM(CASE WHEN t.amount_cents<0 THEN -t.amount_cents ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN t.amount_cents>0 THEN t.amount_cents ELSE 0 END),0)
+             FROM transactions t
+             WHERE t.deleted_ms IS NULL AND t.account_id IN ({list})
+               AND (?1 IS NULL OR t.booking_date>=?1) AND (?2 IS NULL OR t.booking_date<=?2)
+             GROUP BY t.currency",
+        ))?;
+        let rows = stmt.query_map(params![date_from, date_to], |r| {
+            Ok(crate::models::OrderCurrencySummary {
+                currency: r.get(0)?,
+                order_count: r.get::<_, i64>(1)? as u64,
+                credit_count: r.get::<_, i64>(2)? as u64,
+                order_value_cents: r.get(3)?,
+                credit_value_cents: r.get(4)?,
+            })
+        })?;
+        let mut out: Vec<crate::models::OrderCurrencySummary> = rows.collect::<Result<_, _>>()?;
+        if out.is_empty() {
+            // no booking in the range: zeros in the selection's own currency
+            // (like the single-account summary), never a missing header value
+            let currency: String = db
+                .query_row(
+                    &format!(
+                        "SELECT COALESCE(NULLIF(currency, ''), 'EUR') FROM accounts
+                          WHERE id IN ({list}) AND deleted_ms IS NULL ORDER BY id LIMIT 1"
+                    ),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or_else(|_| "EUR".into());
+            out.push(crate::models::OrderCurrencySummary {
+                currency,
+                ..Default::default()
+            });
+        }
+        // primary currency first: EUR, then the largest order value, then name
+        out.sort_by(|a, b| {
+            let key = |s: &crate::models::OrderCurrencySummary| {
+                (
+                    s.currency != "EUR",
+                    std::cmp::Reverse(s.order_value_cents),
+                    s.currency.clone(),
+                )
+            };
+            key(a).cmp(&key(b))
+        });
+        Ok(out)
+    }
+
     /// Changes the account type (Kontoart), e.g. a checking account that is really a card.
     pub fn set_account_kind(&self, account_id: i64, kind: AccountKind) -> Result<(), CoreError> {
         let db = self.db()?;
@@ -798,9 +909,11 @@ impl Vault {
         let (group, sym, order) = crate::connectors::group_for(kind);
         let gid = Self::ensure_group(&tx, group, sym, order)?;
         let n = tx.execute(
-            "UPDATE accounts SET kind = ?1, group_id = ?2 WHERE id = ?3",
-            params![kind.as_str(), gid, account_id],
-        )?;
+            "UPDATE accounts SET kind = ?1, group_id = ?2,
+                include_in_total=CASE WHEN ?1='order' AND kind<>'order' AND total_ms=0 THEN 0 ELSE include_in_total END,
+                total_ms=CASE WHEN ?1='order' AND kind<>'order' AND total_ms=0 AND include_in_total<>0 THEN MAX(?4,total_ms+1) ELSE total_ms END
+             WHERE id = ?3",
+            params![kind.as_str(), gid, account_id, crate::dates::now_ms()],        )?;
         if n == 0 {
             return Err(CoreError::NotFound {
                 what: trf("Konto {0}", &[&account_id]),

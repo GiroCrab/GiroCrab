@@ -679,10 +679,19 @@ extension AppModel {
     }
 
     /// KPI tiles: same flow rules as the dashboard, but for the selected
-    /// period and account/group (no account selected = all accounts).
+    /// period and account/group (no account selected = all accounts). A pure
+    /// order selection shows order evidence instead (#337): no money KPIs.
     func reloadSelectionKPIs() {
-        guard let vault else { selectionFlow = nil; return }
+        guard let vault else { selectionFlow = nil; orderCurrencySummaries = []; return }
         let (from, to) = periodRange
+        if let ids = orderSelectionAccountIDs {
+            runCore {
+                orderCurrencySummaries = try vault.orderSelectionSummary(accountIds: ids, dateFrom: from, dateTo: to)
+                selectionFlow = nil // evidence tiles, not money KPIs
+            }
+            return
+        }
+        orderCurrencySummaries = []
         let filter = currentFilter
         // The list query already summed the same bookings unless it is narrowed further.
         if let page, filter.listHasFlow || kpiFollowsList {
@@ -862,7 +871,61 @@ extension AppModel {
     var allAccounts: [Account] { groups.flatMap(\.accounts) }
     var hasArchivedAccounts: Bool { allAccounts.contains(where: \.isArchived) }
     /// Everyday accounts counted in "Verfügbar" (skips groups excluded from the total).
-    var liquidAccounts: [Account] { allAccounts.filter { $0.inTotal && [.checking, .savings, .paymentService, .creditCard, .cash].contains($0.kind) } }
+    var liquidAccounts: [Account] { allAccounts.filter { $0.inTotal && [.checking, .savings, .paymentService, .creditCard, .cash, .order].contains($0.kind) } }
+    var selectedOrderAccountID: Int64? {
+        guard case .account(let id) = sidebarSelection, account(for: id)?.kind == .order else { return nil }
+        return id
+    }
+
+    /// Accounts of a pure order selection: a single Bestellkonto, or a user
+    /// group / kind section / bank made up solely of order accounts. Such a
+    /// view is an evidence context (#337): order tiles instead of money KPIs
+    /// and no balance chart — although the overall money totals keep these
+    /// accounts out. Mixed selections stay money contexts.
+    var orderSelectionAccountIDs: [Int64]? { orderSelectionAccountIDs(of: sidebarSelection) }
+
+    /// The same test for an explicit selection: the loading path passes the
+    /// requested selection, the display flag the shown one (an interactive
+    /// switch changes the request before the data publishes, #1471).
+    func orderSelectionAccountIDs(of selection: SidebarItem?) -> [Int64]? {
+        let accounts: [Account]?
+        switch selection {
+        case .account(let id):
+            accounts = account(for: id).map { [$0] }
+        case .group(let gid):
+            accounts = groups.first(where: { $0.id == gid })?.accounts
+        case .bank(let key):
+            accounts = bankGroup(for: key)?.accounts
+        case .userGroup(let uuid):
+            accounts = userGroupSubtree(uuid).flatMap(\.accounts)
+        default:
+            return nil
+        }
+        guard let accs = accounts, !accs.isEmpty, accs.allSatisfy({ $0.kind == .order }) else { return nil }
+        return accs.map(\.id)
+    }
+
+    /// The shown selection displays order evidence instead of money KPIs —
+    /// the displayed data, not the requested one, decides (review #1471).
+    var isOrderSelection: Bool { orderSelectionAccountIDs(of: shownSelection) != nil }
+
+    /// Primary-currency evidence of the selection (EUR first, else the entry
+    /// with the largest order value) — what the tiles and the header show.
+    var orderAccountSummary: OrderAccountSummary? {
+        guard let s = orderCurrencySummaries.first else { return nil }
+        return OrderAccountSummary(
+            orderCount: s.orderCount, creditCount: s.creditCount,
+            orderValueCents: s.orderValueCents, creditValueCents: s.creditValueCents)
+    }
+
+    /// Currency of `orderAccountSummary`.
+    var orderSelectionCurrency: String? { orderCurrencySummaries.first?.currency }
+
+    /// Further currencies of the selection (after Gutschriften): shown as a
+    /// note, never added into the primary figures.
+    var orderSelectionExtraCurrencies: [(currency: String, cents: Int64)] {
+        orderCurrencySummaries.dropFirst().map { ($0.currency, $0.orderValueCents - $0.creditValueCents) }
+    }
     var liquidBalance: Int64 { liquidAccounts.reduce(0) { $0 + $1.balanceCents } }
     var newCount: Int { allAccounts.reduce(0) { $0 + Int($1.newCount) } }
     /// Bookings without a category (badge of „Ohne Kategorie“): all of them, or, while list filters

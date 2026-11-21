@@ -59,10 +59,11 @@ final class OpeningBalanceTests: XCTestCase {
         XCTAssertTrue(card.balanceDerived)
         XCTAssertNotNil(card.openingBalanceCents)
         XCTAssertEqual(card.balanceCents, -642_80)
-        // besides the card, only the offline cash account (#679) is computed from its bookings
+        // besides the card, the offline cash account (#679) and the demo order
+        // account (#337) are computed from their bookings
         let cash = try XCTUnwrap(accounts.first { $0.kind == .cash })
-        XCTAssertEqual(Set(accounts.filter(\.balanceDerived).map(\.id)), [card.id, cash.id])
-    }
+        let order = try XCTUnwrap(accounts.first { $0.kind == .order })
+        XCTAssertEqual(Set(accounts.filter(\.balanceDerived).map(\.id)), Set([card.id, cash.id, order.id]))    }
 
     func testBankBalancesAreNotOverridden() throws {
         let giro = try XCTUnwrap(model.groups.flatMap(\.accounts).first { $0.kind == .checking })

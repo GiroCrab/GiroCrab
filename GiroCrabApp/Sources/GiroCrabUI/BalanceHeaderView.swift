@@ -132,8 +132,7 @@ struct StreamHeaderCard: View {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(Money.format(hb.cents, currency: model.balanceCurrency))
                             .sensitive(.amounts)
-                            .appFont(compactHeader ? .subheadline : .largeTitle, weight: .semibold, monospacedDigit: true)
-                            .foregroundStyle(account?.kind == .loan ? Theme.loan : Theme.text)
+                            .appFont(compactHeader ? .subheadline : .largeTitle, weight: .semibold, monospacedDigit: true)                            .foregroundStyle(account?.kind == .loan ? Theme.loan : Theme.text)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                         if !compactHeader {
@@ -162,6 +161,14 @@ struct StreamHeaderCard: View {
                                 .foregroundStyle(Theme.secondary)
                                 .lineLimit(1)
                                 .help("Weitere Währungen werden nicht umgerechnet und nicht in die Summe einbezogen.")
+                        } else if model.isOrderSelection, !model.orderSelectionExtraCurrencies.isEmpty {
+                            // order evidence in further currencies: a note, never summed (#337)
+                            Text("Zusätzlich: \(model.orderSelectionExtraCurrencies.map { Money.format($0.cents, currency: $0.currency) }.joined(separator: " · "))")
+                                .sensitive()
+                                .appFont(.caption, monospacedDigit: true)
+                                .foregroundStyle(Theme.secondary)
+                                .lineLimit(1)
+                                .help("Weitere Währungen werden nicht umgerechnet und nicht in die Summe einbezogen.")
                         }
                     }
                     .contextMenu {
@@ -174,7 +181,13 @@ struct StreamHeaderCard: View {
                 LoanProgressCard(account: a, compact: true)
             }
 
-            if !compactHeader && showStatistics && model.scope != .investments {
+            if model.isOrderSelection {
+                // pure order selection (single account, group of order accounts):
+                // evidence tiles instead of chart and money KPIs (#337)
+                if !compactHeader {
+                    OrderAccountKPIView(summary: model.orderAccountSummary, currency: model.orderSelectionCurrency ?? account?.currency ?? "EUR", period: model.periodSubtitle)
+                }
+            } else if !compactHeader && showStatistics && model.scope != .investments {
                 VStack(alignment: .leading, spacing: 4) {
                     if !chartCollapsed {
                         // iOS: 44 pt = HIG minimum hit region (the chart is tappable);
@@ -190,7 +203,7 @@ struct StreamHeaderCard: View {
                 }
             }
 
-            if !compactHeader {
+            if !compactHeader, !model.isOrderSelection {
             #if os(iOS)
             HStack(spacing: 10) {
                 Text("Konsum \(kpiValue(-model.consumptionThisMonth))").foregroundStyle(Theme.outflow).sensitive(.amounts)
@@ -495,7 +508,7 @@ struct StreamHeaderCard: View {
                     .buttonStyle(.borderless)
                     .capturableSheet(isPresented: $showDocuments) { AccountDocumentsSheet(account: a) }
                 }
-                if showStatistics, !model.showsOverview, model.scope != .investments, !model.allAccounts.isEmpty {
+                if showStatistics, !model.showsOverview, !model.isOrderSelection, model.scope != .investments, !model.allAccounts.isEmpty {
                     Button {
                         withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { showAnalytics.toggle() }
                     } label: {
@@ -576,6 +589,7 @@ struct KPI: View {
     let tint: Color
     /// Tile opens a detail view: shows a chevron next to the title.
     var disclosure = false
+    var subtitleIsSensitive = false
     /// Amounts in currencies other than EUR, which `value` leaves out (#1049).
     var extra: String?
 
@@ -606,6 +620,7 @@ struct KPI: View {
             Spacer(minLength: 2)
             Text(subtitle).appFont(.caption2).foregroundStyle(Theme.tertiary)
                 .lineLimit(2)
+                .sensitive(subtitleIsSensitive ? [.personal, .amounts] : [])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, 10)

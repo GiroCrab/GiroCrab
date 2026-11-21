@@ -60,6 +60,7 @@ use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::fnv::Fnv1a64;
 use crate::i18n::{tr, trf};
+use crate::models::AccountKind;
 use crate::models::{Account, UserGroup};
 use crate::schema::has_column;
 use crate::vault::Vault;
@@ -982,15 +983,27 @@ impl Vault {
         // (own switch, group, archiving). Review point on #1100: an excluded
         // group's header keeps showing its own balance — the exclusion only
         // pulls it out of the overview figures, never zeroes its own sum.
+        // Order accounts (Bestellkonten) are evidence accounts: their balance
+        // is the evidence value, so a group of order accounts sums it even
+        // while the overall money totals keep them out — no double counting:
+        // Verfügbar / wealth / dashboard filter exactly as before (#337).
         let sum = |v: &[Account]| {
             v.iter()
-                .filter(|a| a.currency == "EUR" && a.in_total)
+                .filter(|a| {
+                    a.currency == "EUR"
+                        && (a.in_total
+                            || (a.kind == AccountKind::Order && a.archived_unix.is_none()))
+                })
                 .map(|a| a.balance_cents)
                 .sum()
         };
         let sum_own = |v: &[Account]| {
             v.iter()
-                .filter(|a| a.currency == "EUR" && a.include_in_total && a.archived_unix.is_none())
+                .filter(|a| {
+                    a.currency == "EUR"
+                        && (a.include_in_total || a.kind == AccountKind::Order)
+                        && a.archived_unix.is_none()
+                })
                 .map(|a| a.balance_cents)
                 .sum()
         };

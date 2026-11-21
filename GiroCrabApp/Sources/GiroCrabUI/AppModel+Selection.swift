@@ -170,6 +170,7 @@ extension AppModel {
     private func showSelectionWithoutData() {
         showSelection()
         page = nil
+        orderCurrencySummaries = []
         bookings = []
         listBalances = ListBalances()
         history = []
@@ -183,6 +184,9 @@ extension AppModel {
     /// `keepingShown`: the data changed under the same selection (sync, merge), so the old
     /// list stays until the new one arrives instead of showing the placeholder.
     func startSelectionLoad(keepingShown: Bool = false) {
+        // `keepingShown` keeps the shown order summaries too: a failed
+        // background refresh must not blank the tiles (review #1471); the
+        // placeholder path above clears them
         selectionPlaceholderTask?.cancel()
         selectionPlaceholderTask = nil
         selectionLoadTask?.cancel()
@@ -228,6 +232,10 @@ extension AppModel {
                 let categoryChart = self.categoryHistoryRequest
                 let sums = self.categorySumFilter
                 let uncategorizedQuery = self.uncategorizedCountFilter(sums)
+                // order evidence for a pure order selection (single account or
+                // a group of only order accounts, #337): per currency, and no
+                // money KPIs for such a view
+                let orderIDs = self.orderSelectionAccountIDs
                 let listHasFlow = filter.listHasFlow || self.kpiFollowsList
                 let loaded = try await Self.offMain {
                     let page = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
@@ -250,10 +258,11 @@ extension AppModel {
                     let categoryHistory = try categoryChart.map {
                         try vault.categoryHistoryByUnit(categoryId: $0.id, accountIds: $0.accounts, dateFrom: $0.from, dateTo: $0.to, keyLength: $0.keyLength)
                     } ?? []
+                    let orders = try orderIDs.map { try vault.orderSelectionSummary(accountIds: $0, dateFrom: from, dateTo: to) } ?? []
                     let otherCurrencies = try categoryChart.map {
                         try vault.categoryOtherCurrencies(categoryId: $0.id, accountIds: $0.accounts, dateFrom: $0.from, dateTo: $0.to)
                     } ?? []
-                    return (page: page, flow: flow, recurring: recurring, categories: categories, uncategorized: uncategorized, history: history, categoryHistory: categoryHistory, otherCurrencies: otherCurrencies)
+                    return (orders: orders, page: page, flow: flow, recurring: recurring, categories: categories, uncategorized: uncategorized, history: history, categoryHistory: categoryHistory, otherCurrencies: otherCurrencies)
                 }
                 // A newer selection or a synchronous reload cancelled this request.
                 guard !Task.isCancelled else { return }
@@ -262,8 +271,15 @@ extension AppModel {
                 self.showSelection()
                 if self.streamTopPending { self.scrollStreamTop() }
                 let publish = Perf.signposter.beginInterval("publishSelection")
+                // the summaries first: running and day balances read their
+                // currency while the page publishes (review #1471)
+                self.orderCurrencySummaries = loaded.orders
                 self.publish(loaded.page)
-                self.selectionFlow = (loaded.flow.consumptionCents, loaded.flow.investedCents, loaded.flow.incomeCents)
+                if orderIDs == nil {
+                    self.selectionFlow = (loaded.flow.consumptionCents, loaded.flow.investedCents, loaded.flow.incomeCents)
+                } else {
+                    self.selectionFlow = nil // evidence tiles, not money KPIs
+                }
                 self.recurring = loaded.recurring.series
                 self.recurringHidden = loaded.recurring.ignored
                 self.recurringMonth = loaded.recurring.month

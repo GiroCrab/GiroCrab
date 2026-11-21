@@ -1,4 +1,5 @@
-//! Booking merge: per-field newest edit wins, splits and tags included.
+//! Booking merge: per-field newest edit wins, tags included; splits are
+//! resolved against the winning amount (#1471).
 
 use std::collections::{HashMap, HashSet};
 
@@ -44,7 +45,10 @@ fn take_ranked<T: Clone, K: Ord>(
 }
 
 impl BookingFields {
-    /// Joins `o` into `self`; the same result in either order.
+    /// Joins `o` into `self`; the same result in either order. Splits are
+    /// left alone: whether an allocation fits the winning amount decides
+    /// its candidacy, so the caller resolves them against that amount
+    /// (#1471) instead of ranking the two stamps only.
     fn merge(&mut self, o: &BookingFields) {
         // manual beats none; two manual categories: the lower uuid
         take_ranked(
@@ -74,13 +78,6 @@ impl BookingFields {
                 t.clone(),
             )
         });
-        take_ranked(
-            &mut self.splits,
-            &mut self.splits_ms,
-            &o.splits,
-            o.splits_ms,
-            Clone::clone,
-        );
         // the tag set as a whole; equal stamps: the larger set by value
         take_ranked(
             &mut self.tags,
@@ -131,6 +128,9 @@ struct OtherBooking {
     category_source: String,
     rule_id: Option<i64>,
     fields: BookingFields,
+    /// (amount_cents, amount_ms): corrected imported order/refund amounts
+    /// carry a stamp; ordinary bank amounts keep 0 (#337).
+    amount: (i64, i64),
 }
 
 // includes soft-deleted rows: deleted bookings travel as tombstones
@@ -139,7 +139,7 @@ const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
         imported_unix, purpose_code, gvc, salary_flag,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms
+        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms, amount_ms
      FROM other.transactions ORDER BY account_id, external_id";
 
 /// The id both sides keep for one booking known under two ids: the bank's
@@ -229,13 +229,17 @@ pub(crate) fn merge_bookings(
     // (account, import_fp) -> (external_id, id) of local fingerprinted rows
     let mut fp_rows: Vec<((i64, String, bool), (String, i64))> = Vec::new();
     let mut local: HashMap<i64, BookingFields> = HashMap::new();
+    let mut local_amounts: HashMap<i64, (i64, i64)> = HashMap::new();
+    // refund ids carry the amount as their last segment (#337): the same
+    // captured row under a rising cumulative value — match by the prefix
+    let mut refund_keys: HashMap<(i64, String), i64> = HashMap::new();
     {
         let mut st = conn.prepare(
             // includes soft-deleted rows
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms
+                    tags_ms, amount_ms
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
@@ -244,6 +248,11 @@ pub(crate) fn merge_bookings(
             let acc: i64 = r.get(1)?;
             let ext: String = r.get(2)?;
             by_key.insert((acc, ext.clone()), id);
+            if ext.starts_with("amazon-refund:")
+                && let Some((prefix, _)) = ext.rsplit_once(':')
+            {
+                refund_keys.insert((acc, format!("{prefix}:")), id);
+            }
             let fp = match_fingerprint(
                 r.get(3)?,
                 &r.get::<_, String>(16)?,
@@ -253,6 +262,7 @@ pub(crate) fn merge_bookings(
                 &r.get::<_, String>(12)?,
             );
             fp_rows.push(((acc, fp, is_hold_id(&ext)), (ext, id)));
+            local_amounts.insert(id, (r.get(17)?, r.get(20)?));
             let source: String = r.get(5)?;
             let manual = if source == "manual" { r.get(4)? } else { None };
             local.insert(
@@ -320,6 +330,7 @@ pub(crate) fn merge_bookings(
                     deleted_ms: r.get(26)?,
                 },
                 category_source: source,
+                amount: (r.get(6)?, r.get(32)?),
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -378,35 +389,138 @@ pub(crate) fn merge_bookings(
         );
         o.fields.splits = other_splits.remove(&o.id).unwrap_or_default();
         o.fields.tags = other_tags.remove(&o.id).unwrap_or_default();
+        let refund_prefix = || {
+            o.external_id
+                .starts_with("amazon-refund:")
+                .then(|| o.external_id.rsplit_once(':').map(|(p, _)| format!("{p}:")))
+                .flatten()
+        };
         let existing = match by_key.get(&(acc, o.external_id.clone())) {
             Some(&id) => Some((id, false)),
-            None => match by_fp.get_mut(&(acc, o.match_fp.clone(), is_hold_id(&o.external_id))) {
-                Some(bucket) if !bucket.is_empty() => {
-                    let (ext, id) = bucket.remove(0);
-                    let key = canonical_external_id(&ext, &o.external_id).to_string();
-                    let renamed = key != ext;
-                    if renamed {
-                        conn.execute(
-                            "UPDATE transactions SET external_id = ?2 WHERE id = ?1",
-                            params![id, key],
-                        )?;
-                        by_key.remove(&(acc, ext));
-                        by_key.insert((acc, key), id);
+            None => match refund_prefix().and_then(|p| refund_keys.get(&(acc, p))) {
+                // the amount-free identity of the same cumulative refund
+                Some(&id) => Some((id, true)),
+                None => match by_fp.get_mut(&(acc, o.match_fp.clone(), is_hold_id(&o.external_id)))
+                {
+                    Some(bucket) if !bucket.is_empty() => {
+                        let (ext, id) = bucket.remove(0);
+                        let key = canonical_external_id(&ext, &o.external_id).to_string();
+                        let renamed = key != ext;
+                        if renamed {
+                            conn.execute(
+                                "UPDATE transactions SET external_id = ?2 WHERE id = ?1",
+                                params![id, key],
+                            )?;
+                            by_key.remove(&(acc, ext));
+                            by_key.insert((acc, key), id);
+                        }
+                        Some((id, renamed))
                     }
-                    Some((id, renamed))
-                }
-                _ => None,
+                    _ => None,
+                },
             },
         };
         match existing {
             Some((id, renamed)) => {
+                // Only explicitly corrected amounts carry a stamp (#337): the
+                // newer (amount_ms, amount) wins; unstamped bank amounts keep
+                // the existing immutable contract.
+                let previous = local_amounts[&id];
+                let amount_changed =
+                    o.amount.1 > 0 && (o.amount.1, o.amount.0) > (previous.1, previous.0);
+                if amount_changed {
+                    conn.execute(
+                        "UPDATE transactions SET amount_cents=?2, amount_ms=?3 WHERE id=?1",
+                        params![id, o.amount.0, o.amount.1],
+                    )?;
+                    local_amounts.insert(id, o.amount);
+                }
                 let old = local[&id].clone();
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
+                // An allocation must sum to the amount STORED on its own
+                // row (#1471): one that does not is no candidate — it
+                // neither outranks a fitting allocation of the other side
+                // nor acts as an explicit clear, and its stamp must not
+                // become a synthetic clear outranking a later fitting
+                // allocation. Fitting allocations and explicit clears rank
+                // by stamp as before; a clear born from a rejection
+                // carries no clock at all — only a real clear or a real
+                // edit stamps one.
+                let amount = local_amounts[&id].0;
+                let fits = |s: &[SplitLine]| {
+                    s.is_empty() || s.iter().map(|sp| sp.1).sum::<i64>() == amount
+                };
+                if previous.1 == 0 && o.amount.1 == 0 && previous.0 != o.amount.0 {
+                    // Unstamped amounts differ: each row keeps its own
+                    // amount (immutable contract), so no allocation can
+                    // sum to both rows — both merge orders select the
+                    // same state by clearing. A real clear keeps its
+                    // stamp; a rejection alone carries no clock.
+                    m.splits.clear();
+                    m.splits_ms = 0;
+                    if old.splits.is_empty() {
+                        m.splits_ms = m.splits_ms.max(old.splits_ms);
+                    }
+                    if o.fields.splits.is_empty() {
+                        m.splits_ms = m.splits_ms.max(o.fields.splits_ms);
+                    }
+                } else {
+                    match (fits(&m.splits), fits(&o.fields.splits)) {
+                        (true, true) => take_ranked(
+                            &mut m.splits,
+                            &mut m.splits_ms,
+                            &o.fields.splits,
+                            o.fields.splits_ms,
+                            Clone::clone,
+                        ),
+                        // the other side's allocation is obsolete: the local
+                        // state stays, stamp included
+                        (true, false) => {}
+                        // the local allocation is obsolete: the other
+                        // side's state wins with its own stamp — a fitting
+                        // allocation, or the explicit clear as it was made
+                        (false, true) => {
+                            m.splits = o.fields.splits.clone();
+                            m.splits_ms = o.fields.splits_ms;
+                        }
+                        // nothing fits the stored amount: clear without a
+                        // clock of its own (0) — a rejection must not
+                        // outrank a fitting allocation that an offline
+                        // peer stamped before the correction
+                        (false, false) => {
+                            m.splits.clear();
+                            m.splits_ms = 0;
+                        }
+                    }
+                }
+                // derived balances count live bookings only (#1471): apply
+                // the booking's live contribution after the merge minus its
+                // live contribution before — a deleted booking contributes
+                // nothing, whatever its amount says
+                if amount_changed {
+                    let before = if old.deleted_ms.is_none() {
+                        previous.0
+                    } else {
+                        0
+                    };
+                    let after = if m.deleted_ms.is_none() {
+                        o.amount.0
+                    } else {
+                        0
+                    };
+                    if after != before {
+                        conn.execute(
+                            "UPDATE accounts SET balance_cents = balance_cents + ?2
+                              WHERE id = ?1 AND balance_derived = 1",
+                            params![acc, after - before],
+                        )?;
+                    }
+                }
                 if m == old {
-                    if renamed {
+                    if renamed || amount_changed {
                         stats.bookings_updated += 1;
                     }
                     continue;
@@ -452,14 +566,15 @@ pub(crate) fn merge_bookings(
                 ]);
                 p.extend(o.sepa_refs.iter().cloned());
                 p.push(f.tags_ms.into());
+                p.push(o.amount.1.into());
                 conn.execute(
                     "INSERT INTO transactions(account_id, external_id, import_fp,
                         booking_date, value_date, amount_cents, currency, counterparty_iban, booking_text,
                         imported_unix, purpose_code, gvc, salary_flag,
                         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
                         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31)",
+                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms, amount_ms)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32)",
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
@@ -468,6 +583,7 @@ pub(crate) fn merge_bookings(
                     tag_ids.write(conn, id, &f.tags)?;
                 }
                 by_key.insert((acc, o.external_id), id);
+                local_amounts.insert(id, o.amount);
                 local.insert(id, o.fields);
                 if local[&id].deleted_ms.is_none() {
                     stats.bookings_added += 1;

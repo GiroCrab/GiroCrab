@@ -2739,6 +2739,179 @@ fn newer_split_set_replaces_older() {
 }
 
 #[test]
+fn unstamped_amount_conflict_clears_both_allocations() {
+    // Unstamped amounts may differ on both sides (each import keeps its
+    // own contract); no allocation can sum to both rows, so both merge
+    // orders select the same state by clearing — and each row keeps its
+    // own amount with the sum invariant intact (#1471)
+    each_order(
+        "bk-splits-amt",
+        |a, b| {
+            exec(
+                b,
+                "UPDATE transactions SET amount_cents = -400 WHERE id = 1",
+            );
+            b.set_transaction_splits(1, vec![split(None, -300), split(None, -100)])
+                .unwrap();
+            exec(b, "UPDATE transactions SET splits_ms = 100 WHERE id = 1");
+            a.set_transaction_splits(1, vec![split(None, -350), split(None, -150)])
+                .unwrap();
+            exec(a, "UPDATE transactions SET splits_ms = 200 WHERE id = 1");
+        },
+        |v| {
+            assert_eq!(
+                splits_of(v, 1),
+                Vec::<String>::new(),
+                "no allocation persists across the conflict"
+            );
+            let (amount, sum): (i64, i64) = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT amount_cents,
+                            (SELECT IFNULL(SUM(amount_cents), 0) FROM transaction_splits
+                              WHERE transaction_id = 1)
+                     FROM transactions WHERE id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert!(
+                amount == -500 || amount == -400,
+                "each row keeps its own unstamped amount ({amount})"
+            );
+            assert_eq!(sum, 0, "the stored allocation sums to the row's own amount");
+        },
+    );
+}
+
+#[test]
+fn rejected_allocation_does_not_become_a_higher_clear() {
+    // Three peers (#1471): A corrected the amount to -2000 (stamp 200)
+    // and holds the explicit clear at 200, B still has the unstamped old
+    // -1000 amount with its fitting allocation at 300, C re-allocated to
+    // the corrected amount at 250. Whatever the delivery order, C's
+    // fitting allocation must survive — B's rejected allocation must not
+    // turn into a synthetic clear above it.
+    for order in [0, 1] {
+        let dir = temp_dir("bk-splits-3p");
+        let (a, b, c) = (open(&dir, "a.db"), open(&dir, "b.db"), open(&dir, "c.db"));
+        for v in [&a, &b, &c] {
+            shared_account(v);
+            exec(
+                v,
+                "INSERT INTO transactions(id, account_id, external_id, booking_date,
+                     amount_cents, counterparty)
+                 VALUES (1, 1, 'e1', '2026-01-01', -2000, 'Shop')",
+            );
+        }
+        // A: corrected amount + explicit clear
+        exec(&a, "UPDATE transactions SET amount_ms = 200 WHERE id = 1");
+        a.set_transaction_splits(1, vec![]).unwrap();
+        exec(&a, "UPDATE transactions SET splits_ms = 200 WHERE id = 1");
+        // B: unstamped old amount with its fitting allocation
+        exec(
+            &b,
+            "UPDATE transactions SET amount_cents = -1000 WHERE id = 1",
+        );
+        b.set_transaction_splits(1, vec![split(None, -600), split(None, -400)])
+            .unwrap();
+        exec(&b, "UPDATE transactions SET splits_ms = 300 WHERE id = 1");
+        // C: re-allocated to the corrected amount
+        c.set_transaction_splits(1, vec![split(None, -1200), split(None, -800)])
+            .unwrap();
+        exec(
+            &c,
+            "UPDATE transactions SET amount_ms = 200, splits_ms = 250 WHERE id = 1",
+        );
+
+        if order == 0 {
+            merge(&a, &b);
+        } else {
+            merge(&b, &a);
+        }
+        both_ways(&a, &c);
+        both_ways(&a, &b);
+        for v in [&a, &b, &c] {
+            assert_eq!(
+                splits_of(v, 1),
+                ["-:-1200", "-:-800"],
+                "C's fitting allocation survives (order {order})"
+            );
+        }
+        // an ordinary newer explicit clear still wins
+        b.set_transaction_splits(1, vec![]).unwrap();
+        exec(&b, "UPDATE transactions SET splits_ms = 400 WHERE id = 1");
+        both_ways(&a, &b);
+        both_ways(&a, &c);
+        for v in [&a, &b, &c] {
+            assert!(
+                splits_of(v, 1).is_empty(),
+                "the newer clear wins (order {order})"
+            );
+        }
+    }
+}
+
+#[test]
+fn double_rejection_keeps_a_fitting_allocation() {
+    // Two peers hold allocations of a superseded amount while a third
+    // re-allocated to the final one with a stamp older than the
+    // correction (#1471): a rejection carries no clock, so its clear
+    // must not outrank that fitting allocation — whatever the delivery
+    // order.
+    for order in [0, 1] {
+        let dir = temp_dir("bk-splits-2rej");
+        let (a, b, c) = (open(&dir, "a.db"), open(&dir, "b.db"), open(&dir, "c.db"));
+        for v in [&a, &b, &c] {
+            shared_account(v);
+            exec(
+                v,
+                "INSERT INTO transactions(id, account_id, external_id, booking_date,
+                     amount_cents, counterparty)
+                 VALUES (1, 1, 'e1', '2026-01-01', -1000, 'Shop')",
+            );
+        }
+        // A and B allocate the original -1000 amount…
+        a.set_transaction_splits(1, vec![split(None, -600), split(None, -400)])
+            .unwrap();
+        b.set_transaction_splits(1, vec![split(None, -550), split(None, -450)])
+            .unwrap();
+        // …then a correction to -2000 supersedes it on every peer
+        for v in [&a, &b, &c] {
+            exec(
+                v,
+                "UPDATE transactions SET amount_cents = -2000, amount_ms = 500 WHERE id = 1",
+            );
+        }
+        exec(&a, "UPDATE transactions SET splits_ms = 400 WHERE id = 1");
+        exec(&b, "UPDATE transactions SET splits_ms = 300 WHERE id = 1");
+        // C re-allocates the corrected amount, stamped before the
+        // correction's own stamp
+        c.set_transaction_splits(1, vec![split(None, -1200), split(None, -800)])
+            .unwrap();
+        exec(&c, "UPDATE transactions SET splits_ms = 450 WHERE id = 1");
+
+        if order == 0 {
+            // the rejected pair meets first: their clear must stay below
+            // C's older fitting allocation
+            merge(&a, &b);
+            both_ways(&a, &c);
+        } else {
+            both_ways(&a, &c);
+        }
+        both_ways(&a, &b);
+        for v in [&a, &b, &c] {
+            assert_eq!(
+                splits_of(v, 1),
+                ["-:-1200", "-:-800"],
+                "the fitting allocation survives (order {order})"
+            );
+        }
+    }
+}
+
+#[test]
 fn deleted_booking_stays_deleted() {
     each_order(
         "bk-deleted",

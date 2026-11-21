@@ -50,6 +50,11 @@
 //! - 34: per-account total switch (#337): `accounts.include_in_total` and its
 //!   sync stamp `accounts.total_ms`; existing amazon-orders accounts start
 //!   excluded (stamp 0, so any explicit user choice wins on sync).
+//! - 35: eigene Kontoart „Bestellkonto" (#337): existing amazon-orders accounts
+//!   become `kind = 'order'` (their own sidebar section), keeping symbol and
+//!   total switch choices.
+//! - 36: field stamp for corrected imported order/refund amounts (#337):
+//!   `transactions.amount_ms`.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -100,6 +105,8 @@ const STEPS: &[Step] = &[
     Step::Hook(account_notes),                                 // 32: account notes sync (#980)
     Step::Sql(crate::recipients::SCHEMA),                      // 33: hidden recipients (#978)
     Step::Hook(account_total_flag),                            // 34 (#337)
+    Step::Hook(order_accounts),                                // 35 (#337)
+    Step::Hook(booking_amount_stamp),                          // 36 (#337)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -873,7 +880,29 @@ CREATE TABLE loan_links (
 CREATE INDEX loan_links_loan ON loan_links(loan_account_id);
 "#;
 
-/// Step 34 (#337): per-account switch for the overall money totals, with its
+/// Step 36: field stamp for corrected imported order/refund amounts.
+fn booking_amount_stamp(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "transactions", "amount_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE transactions ADD COLUMN amount_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
+/// Step 35: classify existing Amazon evidence accounts without touching user total choices.
+fn order_accounts(conn: &Connection) -> CoreResult<()> {
+    let has_orders: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM accounts a JOIN bank_connections c ON c.id=a.connection_id WHERE c.connector='amazon-orders')", [], |r| r.get(0))?;
+    if !has_orders {
+        return Ok(());
+    }
+    let (name, symbol, order) = crate::connectors::group_for(crate::models::AccountKind::Order);
+    let group = crate::vault::Vault::ensure_group(conn, name, symbol, order)?;
+    conn.execute("UPDATE accounts SET kind='order', group_id=?1, sf_symbol=CASE WHEN sf_symbol='envelope.circle' AND symbol_ms=0 THEN 'shippingbox' ELSE sf_symbol END
+        WHERE connection_id IN (SELECT id FROM bank_connections WHERE connector='amazon-orders')", [group])?;
+    Ok(())
+}
+
 /// sync stamp. The one-time refill puts the order connector's existing
 /// accounts out of the totals (a Bestellkonto is a proof account, not a money
 /// account); it runs only when this step introduces the column, so a vault a
@@ -1062,7 +1091,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 34);
+        assert_eq!(SCHEMA_VERSION, 36);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
