@@ -1,0 +1,172 @@
+package de.girocrab.app.security
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.security.KeyStore
+import javax.crypto.Cipher
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Covers the rule this step is about: a biometric prompt that does not authenticate yields no
+ * cipher, and therefore no vault. The prompt is replaced by a fake — an emulator has no enrolled
+ * biometric to hand a real `CryptoObject` to — but the Keystore, the wrapped key and the core are
+ * the real thing.
+ */
+@RunWith(AndroidJUnit4::class)
+class VaultUnlockerTest {
+
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private val alias = "girocrab.test.unlock"
+    private val wrappedFile = File(File(context.filesDir, "test-unlock"), "device-key.bin")
+    private val vaultFile = File(File(context.filesDir, "vaults"), "girocrab.sqlcipher")
+    private val opener = NativeVaultOpener()
+
+    private fun keyStore() = VaultKeyStore(wrappedFile, alias, requireUserAuthentication = false)
+
+    @Before
+    fun clean() {
+        deleteAlias()
+        File(context.filesDir, "test-unlock").deleteRecursively()
+        vaultFile.parentFile?.deleteRecursively()
+    }
+
+    @After
+    fun tearDown() {
+        File(context.filesDir, "test-unlock").deleteRecursively()
+        vaultFile.parentFile?.deleteRecursively()
+        deleteAlias()
+    }
+
+    @Test
+    fun nothingStoredMeansNoVaultOnDevice() {
+        var prompted = false
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            prompted = true
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.NoVaultOnDevice, result)
+        assertFalse("no prompt without a wrapped key", prompted)
+        assertFalse("no vault may be created", vaultFile.exists())
+    }
+
+    @Test
+    fun cancelledPromptUnlocksNothing() {
+        storeWrappedKey()
+        var prompted = false
+        val unlocker = unlocker { _, _, _, onResult ->
+            prompted = true
+            onResult(PromptResult.Cancelled)
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertTrue("the prompt has to be shown", prompted)
+        assertTrue("cancellation must not open anything, was $result", result is UnlockResult.Refused)
+        assertFalse("no vault may be created after a cancelled prompt", vaultFile.exists())
+    }
+
+    @Test
+    fun failedPromptUnlocksNothing() {
+        storeWrappedKey()
+        val unlocker = unlocker { _, _, _, onResult ->
+            onResult(PromptResult.Failed("zu viele Versuche"))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.Refused("zu viele Versuche"), result)
+        assertFalse(vaultFile.exists())
+    }
+
+    /**
+     * A cipher that was not handed to the prompt must never be able to unwrap the key — otherwise
+     * a caller could pass an unauthenticated cipher through the prompt result.
+     */
+    @Test
+    fun foreignCipherIsRefused() {
+        storeWrappedKey()
+        val foreign = Cipher.getInstance("AES/GCM/NoPadding")
+        val unlocker = unlocker { _, _, _, onResult ->
+            onResult(PromptResult.Succeeded(foreign))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertTrue("a foreign cipher must be refused, was $result", result is UnlockResult.Refused)
+        assertFalse(vaultFile.exists())
+    }
+
+    @Test
+    fun authenticatedPromptOpensTheVault() {
+        storeWrappedKey()
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        val opened = result as? UnlockResult.Opened
+        assertTrue("expected an opened vault, was $result", opened != null)
+        try {
+            assertEquals(0, opened!!.vault.accountCount)
+        } finally {
+            opened!!.vault.close()
+        }
+        assertTrue("the vault file has to exist now", vaultFile.length() > 0)
+    }
+
+    @Test
+    fun invalidatedKeystoreKeyIsReportedWithoutPrompt() {
+        storeWrappedKey()
+        deleteAlias()
+        var prompted = false
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            prompted = true
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.KeyInvalidated, result)
+        assertFalse("an invalidated key must not prompt", prompted)
+    }
+
+    // --- helpers ---------------------------------------------------------------------------
+
+    private fun unlocker(prompt: CipherPrompt) = VaultUnlocker(
+        keyStore = keyStore(),
+        opener = opener,
+        prompt = prompt,
+        filesDir = context.filesDir,
+    )
+
+    private fun storeWrappedKey() {
+        val store = keyStore()
+        store.storeWrapped(
+            ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { (it + 11).toByte() },
+            store.setupCipher(),
+        )
+        assertEquals(VaultKeyStore.State.Ready, store.state())
+    }
+
+    private fun deleteAlias() {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
+    }
+}
