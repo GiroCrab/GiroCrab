@@ -5,13 +5,12 @@
 //! `upgrade_in_event_loop`.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use girocrab_core::export::{
-    Camt053Request, CamtVersion, ExportCsvBalanceLine, ExportCsvColumns, export_csv,
-};
+use girocrab_core::export::{Camt053Request, CamtVersion, ExportCsvBalanceLine, export_csv};
 use girocrab_core::importers::moneymoney_db::{
     MoneyMoneyDbAccountChoice, MoneyMoneyDbImportOptions, MoneyMoneyDbImportProgress,
     MoneyMoneyImportObserver,
@@ -571,15 +570,67 @@ fn wire_import(win: &MainWindow) {
 
 type Period = (Option<String>, Option<String>);
 
+fn export_period(win: &MainWindow) -> Result<Period, String> {
+    let gs = win.global::<SettingsImportState>();
+    let from = view::parse_day(&gs.get_date_from())?;
+    let to = view::parse_day(&gs.get_date_to())?;
+    Ok((from, to))
+}
+
 fn export_account(win: &MainWindow) -> Result<(i64, Period), String> {
     let gs = win.global::<SettingsImportState>();
     let (id, _) = usize::try_from(gs.get_acc())
         .ok()
         .and_then(|i| with_ui(|u| u.accounts.get(i).cloned()))
         .ok_or("Kein Konto vorhanden.".to_string())?;
-    let from = view::parse_day(&gs.get_date_from())?;
-    let to = view::parse_day(&gs.get_date_to())?;
-    Ok((id, (from, to)))
+    Ok((id, export_period(win)?))
+}
+
+/// One account's bookings in the period as CSV text (built by the core) and their count.
+fn account_csv(
+    v: &Vault,
+    id: i64,
+    (from, to): &Period,
+    opts: view::CsvOptions,
+    with_balance: bool,
+) -> Result<(String, usize), String> {
+    let page = v
+        .list_transactions(BookingFilter {
+            account_ids: vec![id],
+            date_from: from.clone(),
+            date_to: to.clone(),
+            limit: 0,
+            with_balances: opts.running_balance,
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?;
+    let balances: HashMap<i64, i64> = page
+        .running_balances
+        .iter()
+        .map(|b| (b.booking_id, b.balance_cents))
+        .collect();
+    let mut list = page.transactions;
+    list.sort_by(|a, b| a.booking_date.cmp(&b.booking_date).then(a.id.cmp(&b.id)));
+    let balance_lines = if with_balance {
+        v.list_accounts()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|a| a.id == id)
+            .map(|a| ExportCsvBalanceLine {
+                name: a.name,
+                balance_cents: a.balance_cents,
+                currency: a.currency,
+                date: a.balance_date,
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    let rows = view::export_rows(&list, &balances);
+    Ok((
+        export_csv(rows, view::csv_columns(opts), balance_lines),
+        list.len(),
+    ))
 }
 
 fn wire_export(win: &MainWindow) {
@@ -590,56 +641,56 @@ fn wire_export(win: &MainWindow) {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_now()) else {
             return;
         };
-        let (id, (from, to)) = match export_account(&win) {
+        let gs = win.global::<SettingsImportState>();
+        // `None` = one file per account in a chosen folder.
+        let target = if gs.get_per_account() {
+            export_period(&win).map(|p| (None, p))
+        } else {
+            export_account(&win).map(|(id, p)| (Some(id), p))
+        };
+        let (id, period) = match target {
             Ok(x) => x,
             Err(e) => return set_status(&win, e),
         };
-        let gs = win.global::<SettingsImportState>();
-        let columns = ExportCsvColumns {
+        let opts = view::CsvOptions {
             category: gs.get_col_category(),
             note: gs.get_col_note(),
-            daily_balance: false,
-            running_balance: false,
-            iban: false,
-            tags: false,
+            iban: gs.get_col_iban(),
+            running_balance: gs.get_col_running_balance(),
         };
         let with_balance = gs.get_col_balance();
+        let accounts = with_ui(|u| u.accounts.clone());
         spawn(
             &win,
             "Wird exportiert …",
             move || {
-                let page = v
-                    .list_transactions(BookingFilter {
-                        account_ids: vec![id],
-                        date_from: from,
-                        date_to: to,
-                        limit: 0,
-                        ..Default::default()
-                    })
-                    .map_err(|e| e.to_string())?;
-                let mut list = page.transactions;
-                list.sort_by(|a, b| a.booking_date.cmp(&b.booking_date).then(a.id.cmp(&b.id)));
-                let balance_lines = if with_balance {
-                    v.list_accounts()
-                        .map_err(|e| e.to_string())?
-                        .into_iter()
-                        .filter(|a| a.id == id)
-                        .map(|a| ExportCsvBalanceLine {
-                            name: a.name,
-                            balance_cents: a.balance_cents,
-                            currency: a.currency,
-                            date: a.balance_date,
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
-                let csv = export_csv(view::export_rows(&list), columns, balance_lines);
-                let name = view::export_file_name("csv", &view::today(now_secs()));
-                let path = save_file("Umsätze exportieren", &name)
+                let today = view::today(now_secs());
+                if let Some(id) = id {
+                    let (csv, n) = account_csv(&v, id, &period, opts, with_balance)?;
+                    let name = view::export_file_name("csv", &today);
+                    let path = save_file("Umsätze exportieren", &name)
+                        .ok_or("Export abgebrochen.".to_string())?;
+                    write_bytes(&path, csv.as_bytes())?;
+                    return Ok(format!("{n} Umsätze exportiert."));
+                }
+                if accounts.is_empty() {
+                    return Err("Kein Konto vorhanden.".to_string());
+                }
+                let dir = pick_dir("Ordner für die CSV-Dateien wählen")
                     .ok_or("Export abgebrochen.".to_string())?;
-                write_bytes(&path, csv.as_bytes())?;
-                Ok(format!("{} Umsätze exportiert.", list.len()))
+                let names: Vec<String> = accounts.iter().map(|(_, n)| n.clone()).collect();
+                let files = view::per_account_file_names(&names, &today, |f| dir.join(f).exists());
+                let mut total = 0;
+                for ((id, _), name) in accounts.iter().zip(&files) {
+                    let (csv, n) = account_csv(&v, *id, &period, opts, with_balance)?;
+                    write_bytes(&dir.join(name), csv.as_bytes())?;
+                    total += n;
+                }
+                // Counts only: no account names or paths in the status line (privacy mode).
+                Ok(match files.len() {
+                    1 => format!("1 Datei mit {total} Umsätzen gespeichert."),
+                    k => format!("{k} Dateien mit {total} Umsätzen gespeichert."),
+                })
             },
             set_status,
         );
