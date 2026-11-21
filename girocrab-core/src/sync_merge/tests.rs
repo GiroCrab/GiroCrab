@@ -4519,6 +4519,48 @@ fn a_late_reference_on_one_of_two_identical_twin_bookings_finds_its_copy() {
     assert_eq!(link_target(&b), "API1:bank-2:1");
 }
 
+/// A hold and the posted booking of one payment can share a fingerprint. The
+/// fold pairs the twin's booking with the posted one (a hold pairs only with
+/// a hold, #1134), and a reference another device makes afterwards on the
+/// twin's booking reaches that posted booking, not the hold (#590).
+#[test]
+fn a_late_reference_on_a_twin_booking_never_lands_on_a_hold() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    let dir = temp_dir("twin-link-hold");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    giro(&a, c, "API1", &["pending-hold-0", "z-final"]);
+    giro(&a, c, MM_GIRO, &["mm-1"]);
+    exec(&a, identical);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin: mm-1 -> z-final
+    assert_eq!(
+        n(
+            &a,
+            "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL"
+        ),
+        2
+    );
+
+    let b = open(&dir, "b.db");
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-1"]);
+    exec(&b, identical);
+    let booking = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-1'"
+        ),
+    );
+    b.attach_document_link(booking, "https://archiv.example/2".into(), "Bon".into())
+        .unwrap();
+
+    merge(&a, &b);
+    assert_eq!(link_target(&a), "API1:z-final:1");
+    both_ways(&a, &b);
+    assert_eq!(link_target(&b), "API1:z-final:1");
+}
+
 /// Both devices hold a reference on the second of two identical twin
 /// bookings. One folds the twin (the reference moves to the second bank
 /// copy); the other imports a third identical booking whose id sorts in

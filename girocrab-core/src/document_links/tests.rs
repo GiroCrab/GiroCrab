@@ -906,6 +906,85 @@ fn the_same_reference_made_on_two_devices_is_one() {
     }
 }
 
+/// Two references to one address on one booking, as a move outside a device
+/// merge can leave them (duplicate bank logins, a folded twin): one stays,
+/// with the deletion a device merge would write for the other.
+#[test]
+fn doubles_on_one_booking_are_folded_outside_a_merge_too() {
+    let dir = TempDir::new("links-fold-local");
+    let v = open(&dir, "v.db");
+    seed(&v, &["T1", "T2"]);
+    let (t1, t2) = (id_of(&v, "T1"), id_of(&v, "T2"));
+    v.attach_document_link(t1, URL.into(), "A".into()).unwrap();
+    v.attach_document_link(t2, URL.into(), "B".into()).unwrap();
+    v.attach_document_link(t2, "https://archiv.example/other".into(), "C".into())
+        .unwrap();
+    // what merging a duplicate booking into the kept one does
+    exec(&v, &format!("UPDATE document_links SET booking_id = {t1}"));
+    assert_eq!(document_count(&v, "T1"), 3);
+
+    fold_on_booking(&v.db().unwrap(), t1).unwrap();
+    assert_eq!(document_count(&v, "T1"), 2, "one per address");
+    assert_eq!(
+        text(
+            &v,
+            &format!("SELECT uuid FROM document_links WHERE deleted_ms IS NULL AND url = '{URL}'")
+        ),
+        text(
+            &v,
+            "SELECT min(uuid) FROM document_links WHERE title IN ('A', 'B') OR rev LIKE '=> %'"
+        ),
+        "the smallest uuid stays"
+    );
+    assert_eq!(
+        n(
+            &v,
+            "SELECT count(*) FROM document_links
+              WHERE deleted_ms IS NOT NULL AND url = '' AND title = '' AND booking_id IS NULL
+                AND rev LIKE '=> %'"
+        ),
+        1
+    );
+    // nothing left to fold
+    fold_on_booking(&v.db().unwrap(), t1).unwrap();
+    assert_eq!(document_count(&v, "T1"), 2);
+}
+
+/// A reference from another vault whose address `attach_document_link`
+/// would refuse (another scheme, credentials in it) is not taken over:
+/// whatever opens a reference relies on a plain `http(s)` address.
+#[test]
+fn a_merge_takes_no_address_that_could_not_be_attached() {
+    let dir = TempDir::new("links-merge-url");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    seed(&a, &["T1"]);
+    seed(&b, &["T1"]);
+    b.attach_document_link(id_of(&b, "T1"), URL.into(), "Bon".into())
+        .unwrap();
+    for (uuid, url) in [
+        ("x1", "file:///etc/hosts"),
+        ("x2", "javascript:alert(1)"),
+        ("x3", "https://user:pw@archiv.example/1"),
+        ("x4", ""),
+    ] {
+        exec(
+            &b,
+            &format!(
+                "INSERT INTO document_links(uuid, booking_id, account_id, url, updated_ms, rev)
+                 SELECT '{uuid}', id, account_id, '{url}', 5, 'r' FROM transactions WHERE external_id = 'T1'"
+            ),
+        );
+    }
+    assert_eq!(merge(&a, &b).documents_updated, 1);
+    assert_eq!(
+        text(&a, "SELECT group_concat(url) FROM document_links"),
+        URL
+    );
+    // and it stays that way
+    assert_eq!(merge(&a, &b).documents_updated, 0);
+}
+
 /// The same address linked on two devices to different bookings and taken
 /// off them again: two receipts without a booking, each with its own title.
 /// They are not one reference, in either merge order.

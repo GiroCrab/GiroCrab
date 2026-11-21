@@ -319,7 +319,8 @@ pub(crate) fn folded_account(
 /// (deleted, its bank account live): the bank account's copy with the same
 /// external id, else its partner by fingerprint. Identical bookings share a
 /// fingerprint; like `merge_bookings`, the ones without a key match on the
-/// other side are paired in external-id order, the i-th with the i-th.
+/// other side are paired in external-id order, the i-th with the i-th, a
+/// hold only with a hold and a posted booking only with a posted one (#1134).
 /// `None`: `booking` stands for itself (no folded twin, or no copy). Linked
 /// receipts (#590) follow it, so a reference made on a device that had not
 /// folded yet still reaches the live booking. The answer only depends on
@@ -372,13 +373,15 @@ pub(crate) fn folded_booking(
         return Ok(by_key);
     }
     let wanted = fingerprint(&own);
-    // bookings of `of` with this fingerprint that `other` does not hold under
-    // the same external id, in external-id order
+    let hold = super::bookings::is_hold_id(&ext);
+    // bookings of `of` with this fingerprint (and of the same kind, hold or
+    // posted) that `other` does not hold under the same external id, in
+    // external-id order
     let unpaired = |of: i64, other: i64| -> CoreResult<Vec<i64>> {
         Ok(conn
             .prepare(&format!(
                 // includes soft-deleted rows
-                "SELECT t.id, {TEXT} FROM transactions t
+                "SELECT t.id, t.external_id, {TEXT} FROM transactions t
                   WHERE t.account_id = ?1
                     AND (t.import_fp = ?3 OR (t.booking_date = ?4 AND t.amount_cents = ?5))
                     AND NOT EXISTS (SELECT 1 FROM transactions x
@@ -386,12 +389,12 @@ pub(crate) fn folded_booking(
                   ORDER BY t.external_id, t.id"
             ))?
             .query_map(params![of, other, wanted, own.1, own.2], |r| {
-                Ok((r.get::<_, i64>(0)?, text(r, 1)?))
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, text(r, 2)?))
             })?
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
-            .filter(|(_, t)| fingerprint(t) == wanted)
-            .map(|(id, _)| id)
+            .filter(|(_, e, t)| fingerprint(t) == wanted && super::bookings::is_hold_id(e) == hold)
+            .map(|(id, _, _)| id)
             .collect())
     };
     let Some(rank) = unpaired(account, bank)?
@@ -531,6 +534,7 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
                   WHERE booking_id = ?1",
                 params![old, copy, now, rev],
             )?;
+            crate::document_links::fold_on_booking(conn, *copy)?;
         }
     }
     conn.execute(

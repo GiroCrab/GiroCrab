@@ -219,6 +219,8 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
                 crate::document_links::new_rev()
             ],
         )?;
+        // both bookings may have carried the same link
+        crate::document_links::fold_on_booking(conn, k)?;
     }
     // bookings only in `dup` move over unchanged (with splits / links / documents)
     conn.execute(
