@@ -71,6 +71,7 @@ Sheet {
         case "Kontist": return "Kontist OAuth2-Client"
         case "Bunq": return "bunq API"
         case "Ibkr": return "Interactive Brokers Flex Web Service"
+        case "BitcoinCore": return "Bitcoin Core"
         default: return "Enable Banking (PSD2)"
         }
     }

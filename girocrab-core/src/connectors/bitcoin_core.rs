@@ -145,7 +145,15 @@ pub(crate) fn default_datadir() -> std::path::PathBuf {
 pub(crate) fn pick_wallet(named: &str, loaded: &[String]) -> CoreResult<String> {
     let named = named.trim();
     if !named.is_empty() {
-        return Ok(named.to_string());
+        // `listwallets` lists the loaded ones: a wallet not among them can't be read
+        return if loaded.iter().any(|w| w == named) {
+            Ok(named.to_string())
+        } else {
+            Err(CoreError::invalid(trf(
+                "Bitcoin Core: Die Wallet „{0}“ ist im Knoten nicht geladen.",
+                &[&named],
+            )))
+        };
     }
     match loaded {
         [only] => Ok(only.clone()),
@@ -158,17 +166,28 @@ pub(crate) fn pick_wallet(named: &str, loaded: &[String]) -> CoreResult<String> 
     }
 }
 
-/// Satoshis the wallet owns from `getbalances`: confirmed, pending and immature.
+/// Satoshis the wallet holds from `getbalances`: confirmed, pending and immature,
+/// its own (`mine`) and, in a legacy wallet with imported keys, the watch-only ones.
+/// A balance the node must report but doesn't is an error, never zero.
 pub(crate) fn wallet_sats(getbalances: &Value) -> CoreResult<i64> {
-    let mine = getbalances
-        .get("mine")
-        .ok_or_else(|| CoreError::protocol(tr("Bitcoin Core: unerwartete Antwort des Knotens.")))?;
-    let sats = ["trusted", "untrusted_pending", "immature"]
-        .iter()
-        .filter_map(|k| mine.get(*k).and_then(Value::as_f64))
-        .map(|btc| (btc * SATS_PER_BTC).round() as i64)
-        .sum();
-    Ok(sats)
+    let unexpected = || CoreError::protocol(tr("Bitcoin Core: unerwartete Antwort des Knotens."));
+    let sum = |part: &Value| -> CoreResult<i64> {
+        ["trusted", "untrusted_pending", "immature"]
+            .iter()
+            .map(|k| {
+                part.get(*k)
+                    .and_then(Value::as_f64)
+                    .map(|btc| (btc * SATS_PER_BTC).round() as i64)
+                    .ok_or_else(unexpected)
+            })
+            .sum()
+    };
+    let mine = getbalances.get("mine").ok_or_else(unexpected)?;
+    let watch_only = match getbalances.get("watchonly") {
+        Some(w) if !w.is_null() => sum(w)?,
+        _ => 0,
+    };
+    Ok(sum(mine)? + watch_only)
 }
 
 /// Last trade price in euro cents from the ticker answer.
@@ -280,8 +299,13 @@ impl BitcoinCoreConnector {
                 })?
             }
         };
-        // no redirects: the credentials go to the node and nowhere else
-        self.http = Some(super::http_client_no_redirect()?);
+        // no proxy and no redirects: the credentials go to the node and nowhere else
+        self.http = Some(
+            super::client_builder(std::time::Duration::from_secs(60))
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()?,
+        );
         let loaded: Vec<String> = self
             .rpc(None, "listwallets")
             .await?
@@ -393,7 +417,10 @@ mod tests {
     fn the_only_loaded_wallet_is_taken_unless_one_is_named() {
         let one = vec!["haushalt".to_string()];
         assert_eq!(pick_wallet("", &one).unwrap(), "haushalt");
-        assert_eq!(pick_wallet(" spar ", &one).unwrap(), "spar");
+        // a named wallet must be one the node has loaded
+        let two = vec!["haushalt".to_string(), "spar".to_string()];
+        assert_eq!(pick_wallet(" spar ", &two).unwrap(), "spar");
+        assert!(pick_wallet("spar", &one).is_err());
         assert!(pick_wallet("", &[]).is_err());
         assert!(pick_wallet("", &["a".into(), "b".into()]).is_err());
     }
@@ -404,6 +431,27 @@ mod tests {
             json!({"mine": {"trusted": 0.5, "untrusted_pending": 0.0012, "immature": 0.00000001}});
         assert_eq!(wallet_sats(&v).unwrap(), 50_120_001);
         assert!(wallet_sats(&json!({})).is_err());
+        // amounts the node must report are never read as zero
+        assert!(wallet_sats(&json!({"mine": {}})).is_err());
+        assert!(wallet_sats(&json!({"mine": null})).is_err());
+        assert!(wallet_sats(&json!({"mine": {"trusted": 0.5, "immature": 0.0}})).is_err());
+        let zero = json!({"mine": {"trusted": 0.0, "untrusted_pending": 0.0, "immature": 0.0}});
+        assert_eq!(wallet_sats(&zero).unwrap(), 0);
+    }
+
+    /// A watch-only wallet (e.g. a hardware wallet's keys imported): its funds count too.
+    #[test]
+    fn watch_only_funds_count() {
+        let v = json!({
+            "mine": {"trusted": 0.0, "untrusted_pending": 0.0, "immature": 0.0},
+            "watchonly": {"trusted": 0.25, "untrusted_pending": 0.0, "immature": 0.0}
+        });
+        assert_eq!(wallet_sats(&v).unwrap(), 25_000_000);
+        let broken = json!({
+            "mine": {"trusted": 0.0, "untrusted_pending": 0.0, "immature": 0.0},
+            "watchonly": {"trusted": 0.25}
+        });
+        assert!(wallet_sats(&broken).is_err());
     }
 
     #[test]

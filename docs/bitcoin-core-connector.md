@@ -8,9 +8,11 @@
 Status: **Tests erwünscht** – `ConnectorKind::BitcoinCore` (Schlüssel `bitcoincore`),
 lokale JSON-RPC-Abfrage in `girocrab-core/src/connectors/bitcoin_core.rs`, keine TAN.
 
-Der Connector liest den Bestand einer Wallet im **eigenen** Bitcoin-Core-Knoten. Über Adressen
-und Bestand verlässt nichts den Rechner: Abgefragt wird nur der eigene Knoten auf diesem Rechner.
+Der Connector liest den Bestand einer Wallet im **eigenen** Bitcoin-Core-Knoten. Der Abruf bleibt
+auf diesem Rechner: Abgefragt wird nur der eigene Knoten, ohne Proxy und ohne Weiterleitungen.
 Von außen kommt allein der Euro-Kurs (öffentlicher Ticker, ohne Konto, ohne Angaben zur Wallet).
+Unabhängig davon gelangt der abgerufene Bestand wie jedes andere Konto in den Tresor und damit,
+wenn der iCloud-Sync eingeschaltet ist, verschlüsselt auf die anderen Geräte (siehe unten).
 
 ## Voraussetzungen
 
@@ -22,7 +24,8 @@ Von außen kommt allein der Euro-Kurs (öffentlicher Ticker, ohne Konto, ohne An
 
 ## Zugang
 
-* **Login:** Wallet-Name. Leer = die einzige Wallet, die der Knoten geladen hat.
+* **Login:** Wallet-Name. Leer = die einzige Wallet, die der Knoten geladen hat; ein Name muss
+  zu einer geladenen Wallet gehören.
 * **Anmeldung:** über die `.cookie`-Datei; GiroCrab fragt nach keinem Passwort.
 * **Einstellungen:** `bitcoin_core.datadir` (Datenverzeichnis, leer = Standardordner, z. B. auf
   dem Mac `~/Library/Application Support/Bitcoin`) und `bitcoin_core.rpc_url`
@@ -47,7 +50,7 @@ Zugang nur, wenn der Knoten antwortet.
 | Schritt | Anfrage | Auswertung |
 |---|---|---|
 | 1 | `listwallets` | geladene Wallets; ohne Wallet-Namen muss es genau eine sein |
-| 2 | `getbalances` an `/wallet/<Name>` | `mine.trusted` + `untrusted_pending` + `immature` |
+| 2 | `getbalances` an `/wallet/<Name>` | `trusted` + `untrusted_pending` + `immature` aus `mine`, bei einer Legacy-Wallet mit importierten Schlüsseln zusätzlich aus `watchonly`; fehlt ein Betrag, bricht der Abruf ab |
 | 3 | `GET https://api.kraken.com/0/public/Ticker?pair=XBTEUR` | letzter Handelskurs `c[0]` |
 
 ## Regeln

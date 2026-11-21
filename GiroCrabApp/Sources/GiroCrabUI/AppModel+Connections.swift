@@ -78,7 +78,9 @@ extension AppModel {
     }
 
     private func addConnectionChecked(_ kind: ConnectorKind, login: String) {
-        if kind == .bitcoinCore, !isDemo, !Self.isMagicDemoLogin(login) {
+        // also while demo data is shown: the login goes into the personal vault (only a magic
+        // demo login is a demo connection)
+        if kind == .bitcoinCore, !Self.isMagicDemoLogin(login) {
             addBitcoinCore(login: login)
             return
         }

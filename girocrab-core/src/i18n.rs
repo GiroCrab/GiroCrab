@@ -1218,6 +1218,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Bitcoin Core: Die RPC-Adresse muss auf diesem Rechner liegen (127.0.0.1 oder localhost)." => {
             "Bitcoin Core: The RPC address must be on this computer (127.0.0.1 or localhost)."
         }
+        "Bitcoin Core: Die Wallet „{0}“ ist im Knoten nicht geladen." => {
+            "Bitcoin Core: The wallet “{0}” is not loaded in the node."
+        }
         "Bitcoin Core: Im Knoten ist keine Wallet geladen." => {
             "Bitcoin Core: The node has no wallet loaded."
         }
