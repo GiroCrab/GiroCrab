@@ -14,6 +14,12 @@ struct InspectorSectionCard: View {
         case .receipt: ReceiptCard(booking: booking)
         case .note: NoteCard(booking: booking, scrollToNote: scrollToNote)
         case .tags: TagsCard(booking: booking)
+        case .refunds:
+            if booking.refundLink != .none {
+                RefundLinksCard(booking: booking)
+            } else if placeholderWhenEmpty {
+                InspectorPlaceholderCard(section: section, hint: "Nur bei verknüpften Erstattungen sichtbar")
+            }
         case .salary:
             if booking.amountCents > 0 {
                 SalaryCard(booking: booking)

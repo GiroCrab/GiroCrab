@@ -802,6 +802,10 @@ public final class AppModel {
     /// The user cancelled, but the bank did not confirm it (re-check or retry).
     var transferCancelNotice: UnconfirmedTransferCancel?
     var splitBooking: Booking?
+    /// The booking whose refund link is being edited in `RefundPickerSheet` (#714).
+    var refundPickerBooking: Booking?
+    /// Counts the refund link changes, so open views of the links read them again.
+    var refundLinksRevision = 0
     var transferBusy = false
     var syncQueue: [BankConnection] = []
     /// "Alle abrufen": number of logins in the running batch (0 = single sync).
@@ -1104,6 +1108,17 @@ public final class AppModel {
             showMoneyMoneyImport = true
         case "recurring":
             showRecurringSheet = true
+        case "refund", "refund-linked":
+            // "Ursprüngliche Buchung zuordnen …" (#714) for the first incoming booking;
+            // `refund-linked`: already linked to the nearest candidate
+            if let refund = bookings.first(where: { $0.amountCents > 0 }) {
+                if name == "refund-linked",
+                   let original = try? vault?.refundCandidates(transactionId: refund.id, query: "", limit: 1).first {
+                    linkRefund(refundID: refund.id, originalID: original.id)
+                }
+                selectedBookingID = refund.id
+                refundPickerBooking = booking(withID: refund.id) ?? refund
+            }
         case "find":
             #if os(macOS)
             ToolbarSearch.focus() // Bearbeiten › Suchen … (⌘F)

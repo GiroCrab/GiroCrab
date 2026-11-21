@@ -99,9 +99,9 @@ final class InspectorLayoutTests: XCTestCase {
         let old = InspectorLayout(storageValue: "receipt,note,salary,recurring,categories,documents,merchantHistory,rawData")
         XCTAssertTrue(old.isStandard)
         XCTAssertEqual(Array(old.visible.prefix(3)), [.receipt, .note, .tags])
-        // a layout the user changed keeps its order; the new card goes to the bottom
+        // a layout the user changed keeps its order; the new cards go to the bottom
         let own = InspectorLayout(storageValue: "note,receipt,salary,recurring,categories,documents,merchantHistory,rawData")
         XCTAssertEqual(own.visible.first, .note)
-        XCTAssertEqual(own.visible.last, .tags)
+        XCTAssertEqual(Array(own.visible.suffix(2)), [.tags, .refunds])
     }
 }

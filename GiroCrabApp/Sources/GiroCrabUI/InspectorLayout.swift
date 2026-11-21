@@ -4,7 +4,7 @@ import SwiftUI
 /// The case order is the standard layout: the merchant history, whose stats load asynchronously
 /// and grow the card, comes after the interactive category and document cards (#492).
 enum InspectorSection: String, CaseIterable, Identifiable, Sendable {
-    case receipt, note, tags, salary, recurring, categories, documents, merchantHistory, rawData
+    case receipt, note, tags, refunds, salary, recurring, categories, documents, merchantHistory, rawData
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum InspectorSection: String, CaseIterable, Identifiable, Sendable {
         case .receipt: "Buchung"
         case .note: "Notiz"
         case .tags: "Tags"
+        case .refunds: "Erstattung"
         case .salary: "Gehalt / Rente"
         case .recurring: "Wiederkehrend"
         case .merchantHistory: "Händler-Historie"
@@ -28,6 +29,7 @@ enum InspectorSection: String, CaseIterable, Identifiable, Sendable {
         case .receipt: "doc.text"
         case .note: "note.text"
         case .tags: "number"
+        case .refunds: "arrow.uturn.backward"
         case .salary: "briefcase"
         case .recurring: "repeat"
         case .merchantHistory: "clock.arrow.circlepath"

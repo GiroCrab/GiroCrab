@@ -34,6 +34,7 @@ merchantFocusReturn appliesMerchantFocus invalidateTotals keepsPeriodOnCategoryS
 activeTransferIsDebit debitRun failDebitRun debitOutcomeUnknown finishDebitGroup
 activeTransferComparison visibleTanComparison
 merchantWriteCount leaveStaleMerchantFocus
+patchLoadedRows
 "
 READ_ONLY="
 accountMarkers accountsByID autoReviewTask customPeriodFrom customPeriodTo dayGroups

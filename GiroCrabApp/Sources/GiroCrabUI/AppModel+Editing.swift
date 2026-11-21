@@ -68,7 +68,7 @@ extension AppModel {
 
     /// Shows an edit on the loaded rows (and a sticky inspector booking) before the background
     /// refresh brings the real data; derived fields (merchant, flow) follow from the refresh.
-    private func patchLoadedRows(_ ids: Set<Booking.ID>, _ change: (inout Booking) -> Void) {
+    func patchLoadedRows(_ ids: Set<Booking.ID>, _ change: (inout Booking) -> Void) {
         var rows = bookings
         var touched = false
         for i in rows.indices where ids.contains(rows[i].id) { change(&rows[i]); touched = true }

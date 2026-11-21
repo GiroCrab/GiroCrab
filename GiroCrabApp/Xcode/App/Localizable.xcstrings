@@ -5451,6 +5451,17 @@
         }
       }
     },
+    "Aufheben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlink"
+          }
+        }
+      }
+    },
     "Aufklappen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8579,6 +8590,17 @@
         }
       }
     },
+    "Buchungen konnten nicht geladen werden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transactions could not be loaded"
+          }
+        }
+      }
+    },
     "Buchungen nach Konten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11363,6 +11385,17 @@
         }
       }
     },
+    "Die Verknüpfung dient nur der Zuordnung: Beträge, Kategorien und Kontostände ändern sich nicht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The link only records what belongs together: amounts, categories and balances do not change."
+          }
+        }
+      }
+    },
     "Die Vormerkung konnte nicht verworfen werden. Buchungen mit Belegen oder Aufteilungen bleiben geschützt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11568,6 +11601,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This bank code isn’t in the directory. Enter your bank’s FinTS address yourself."
+          }
+        }
+      }
+    },
+    "Diese Buchung in der Liste anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show this transaction in the list"
           }
         }
       }
@@ -13815,6 +13859,23 @@
         }
       }
     },
+    "Erstattet: %@ von %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Erstattet: %1$@ von %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunded: %1$@ of %2$@"
+          }
+        }
+      }
+    },
     "Erstattung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13822,6 +13883,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Refund"
+          }
+        }
+      }
+    },
+    "Erstattung dieser Buchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refund of this transaction"
           }
         }
       }
@@ -13844,6 +13916,61 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Refund for: %@"
+          }
+        }
+      }
+    },
+    "Erstattung zuordnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link refund"
+          }
+        }
+      }
+    },
+    "Erstattung zuordnen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link refund…"
+          }
+        }
+      }
+    },
+    "Erstattung – mit der ursprünglichen Buchung verknüpft" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refund – linked to the original transaction"
+          }
+        }
+      }
+    },
+    "Erstattungen bearbeiten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit refunds…"
+          }
+        }
+      }
+    },
+    "Erstattungen dieser Buchung (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunds of this transaction (%lld)"
           }
         }
       }
@@ -16713,6 +16840,17 @@
         }
       }
     },
+    "Hat verknüpfte Erstattung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Has a linked refund"
+          }
+        }
+      }
+    },
     "Hauptschlüssel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17705,6 +17843,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Change in Settings"
+          }
+        }
+      }
+    },
+    "In den zwölf Monaten nach dieser Buchung gibt es keinen Eingang, der noch keiner anderen Buchung zugeordnet ist." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In the twelve months after this transaction there is no incoming transaction that is not yet linked to another one."
+          }
+        }
+      }
+    },
+    "In den zwölf Monaten vor dieser Erstattung gibt es keine Ausgabe." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is no expense in the twelve months before this refund."
           }
         }
       }
@@ -19498,6 +19658,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No new bookings"
+          }
+        }
+      }
+    },
+    "Keine passenden Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching transactions"
           }
         }
       }
@@ -22137,6 +22308,28 @@
         }
       }
     },
+    "Mit dieser Buchung verknüpfen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link to this transaction"
+          }
+        }
+      }
+    },
+    "Mit einer Erstattung verknüpft" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked to a refund"
+          }
+        }
+      }
+    },
     "Mit „%@“ zusammenführen?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22706,6 +22899,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search name or IBAN"
+          }
+        }
+      }
+    },
+    "Name oder Verwendungszweck suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search name or purpose"
           }
         }
       }
@@ -24448,6 +24652,17 @@
         }
       }
     },
+    "Nur bei verknüpften Erstattungen sichtbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only shown for linked refunds"
+          }
+        }
+      }
+    },
     "Nur die Dokumente exportieren, die gerade in der Liste stehen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24835,6 +25050,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Account"
+          }
+        }
+      }
+    },
+    "Ohne Namen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No name"
           }
         }
       }
@@ -28637,6 +28863,17 @@
         }
       }
     },
+    "Statt der bisherigen Buchung zuordnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link instead of the current transaction"
+          }
+        }
+      }
+    },
     "Stattdessen diesen Tag behalten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30870,6 +31107,50 @@
         }
       }
     },
+    "Ursprüngliche Buchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original transaction"
+          }
+        }
+      }
+    },
+    "Ursprüngliche Buchung zuordnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link original transaction"
+          }
+        }
+      }
+    },
+    "Ursprüngliche Buchung zuordnen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link original transaction…"
+          }
+        }
+      }
+    },
+    "Ursprüngliche Buchung ändern …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change original transaction…"
+          }
+        }
+      }
+    },
     "Ursprünglicher Kreditbetrag" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31151,6 +31432,50 @@
         }
       }
     },
+    "Verknüpfte Erstattung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked refund"
+          }
+        }
+      }
+    },
+    "Verknüpfte Erstattungen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked refunds (%lld)"
+          }
+        }
+      }
+    },
+    "Verknüpfte ursprüngliche Buchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked original transaction"
+          }
+        }
+      }
+    },
+    "Verknüpfung aufheben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove link"
+          }
+        }
+      }
+    },
     "Verknüpfung lösen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31158,6 +31483,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unlink"
+          }
+        }
+      }
+    },
+    "Verknüpfung zur ursprünglichen Buchung aufheben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove link to the original transaction"
           }
         }
       }
@@ -31939,6 +32275,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Suggestion: %@"
+          }
+        }
+      }
+    },
+    "Vorschläge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suggestions"
           }
         }
       }
@@ -32955,6 +33302,28 @@
         }
       }
     },
+    "Wählen Sie die Buchung, die mit dieser Erstattung zurückgezahlt wurde. Vorgeschlagen werden Ausgaben aller Konten aus den zwölf Monaten davor." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the transaction this refund pays back. Suggested are expenses of all accounts from the twelve months before it."
+          }
+        }
+      }
+    },
+    "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Vorgeschlagen werden Eingänge aller Konten aus den zwölf Monaten danach." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the refunds for this transaction, including several partial refunds. Suggested are incoming transactions of all accounts from the twelve months after it."
+          }
+        }
+      }
+    },
     "Wählen Sie eine Buchung, um Beleg, Händler-Historie und Kategorie zu sehen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33565,6 +33934,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Drag to move"
+          }
+        }
+      }
+    },
+    "Zuordnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link"
           }
         }
       }

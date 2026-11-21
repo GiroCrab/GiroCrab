@@ -683,6 +683,9 @@ struct MainSplitView: View {
         .capturableSheet(isPresented: Binding(get: { model.splitBooking != nil }, set: { if !$0 { model.splitBooking = nil } })) {
             if let b = model.splitBooking { SplitSheet(booking: b).environment(model) }
         }
+        .capturableSheet(isPresented: Binding(get: { model.refundPickerBooking != nil }, set: { if !$0 { model.refundPickerBooking = nil } })) {
+            if let b = model.refundPickerBooking { RefundPickerSheet(booking: b).environment(model) }
+        }
         .capturableSheet(item: $model.payeeCheck) { _ in
             PayeeCheckSheet()
                 .environment(model)
