@@ -555,12 +555,23 @@ pub(crate) fn cashflow_for(
 }
 
 /// Replaces the splits of booking `id` with `lines` (category, amount, note)
-/// and stamps `splits_ms`. The amounts are the caller's to check.
+/// and stamps `splits_ms`. The amounts are the caller's to check. Other amounts or another
+/// number of parts are another split: the refund links to the old parts follow
+/// (`refunds::split_changed`).
 pub(crate) fn store_splits(
     conn: &rusqlite::Connection,
     id: i64,
     lines: &[(Option<i64>, i64, impl AsRef<str>)],
 ) -> Result<(), CoreError> {
+    let old: Vec<i64> = conn
+        .prepare_cached(
+            "SELECT amount_cents FROM transaction_splits WHERE transaction_id = ?1 ORDER BY id",
+        )?
+        .query_map([id], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    if !old.iter().eq(lines.iter().map(|(_, cents, _)| cents)) {
+        crate::refunds::split_changed(conn, id)?;
+    }
     conn.execute(
         "DELETE FROM transaction_splits WHERE transaction_id = ?1",
         [id],

@@ -772,3 +772,82 @@ fn links_work_with_own_categories_from_both_sides() {
     );
     assert_eq!(links.assigned_cents, Some(5_000));
 }
+
+fn part_links(v: &Vault, refund: i64) -> Vec<(i64, u32, Option<i64>)> {
+    v.refund_links(refund)
+        .unwrap()
+        .originals
+        .iter()
+        .map(|o| (o.id, o.part, o.share_cents))
+        .collect()
+}
+
+/// A link that names a part the booking does not have (the other device split it differently)
+/// counts for the whole booking, spread from its last part to its first.
+#[test]
+fn link_to_a_part_that_is_gone_is_spread_over_the_booking() {
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    seed(&v);
+    let own = |name: &str| {
+        v.create_category(name.into(), None, "tag".into(), "#abcdef".into())
+            .unwrap()
+    };
+    let (garden, tools) = (own("Garten"), own("Werkzeug"));
+    let original = add(&v, -10_000, "2025-06-01", "Baumarkt", "");
+    let refund = add(&v, 5_000, "2025-06-10", "Baumarkt", "");
+    let part = |category: i64, amount: i64| crate::models::TransactionSplitInput {
+        category_id: Some(category),
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(original, vec![part(garden, -6_000), part(tools, -4_000)])
+        .unwrap();
+    v.link_refund(refund, original, 2).unwrap();
+    assert_eq!(part_links(&v, refund), vec![(original, 2, Some(4_000))]);
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE refund_links SET original_part=3 WHERE refund_id=?1",
+            [refund],
+        )
+        .unwrap();
+    assert_eq!(part_links(&v, refund), vec![(original, 3, Some(5_000))]);
+    let expenses = |category: i64| {
+        v.list_category_expenses(None, None, Vec::new())
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == category)
+            .unwrap()
+            .own_total_cents
+    };
+    assert_eq!((expenses(garden), expenses(tools)), (-5_000, 0));
+}
+
+/// Removing a split on one device reaches the other as a link to the whole booking, and
+/// the link to the part does not come back from there.
+#[test]
+fn removed_split_reaches_the_other_device_as_a_link_to_the_whole_booking() {
+    let d = TempDir::new("refunds-split-sync");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    let part = |amount: i64| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    a.set_transaction_splits(aa[1], vec![part(-150), part(-50)])
+        .unwrap();
+    a.link_refund(aa[2], aa[1], 2).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(part_links(&b, bb[2]), vec![(bb[1], 2, Some(50))]);
+
+    a.set_transaction_splits(aa[1], Vec::new()).unwrap();
+    assert_eq!(part_links(&a, aa[2]), vec![(aa[1], 0, Some(50))]);
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(part_links(&b, bb[2]), vec![(bb[1], 0, Some(50))]);
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(part_links(&a, aa[2]), vec![(aa[1], 0, Some(50))]);
+}

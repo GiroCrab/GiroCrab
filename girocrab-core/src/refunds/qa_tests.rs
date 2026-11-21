@@ -602,3 +602,127 @@ fn category_sums_under_a_direction_follow_the_list() {
         );
     }
 }
+
+fn part(category: i64, amount: i64) -> TransactionSplitInput {
+    TransactionSplitInput {
+        category_id: Some(category),
+        amount_cents: amount,
+        note: String::new(),
+    }
+}
+fn refunds_of(v: &Vault, original: i64) -> Vec<(i64, u32, Option<i64>)> {
+    v.refund_links(original)
+        .unwrap()
+        .refunds
+        .into_iter()
+        .map(|r| (r.id, r.part, r.share_cents))
+        .collect()
+}
+fn all_expenses<const N: usize>(v: &Vault, categories: [i64; N]) -> [i64; N] {
+    categories.map(|c| expenses(v, vec![], None, None, c))
+}
+
+/// Removing the split of a booking turns the links to its parts into links to the whole
+/// booking: each refund is filled up to what the booking has left, not to its old part.
+#[test]
+fn removing_the_split_links_its_refunds_to_the_whole_booking() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let o = booking(&v, a, -10000);
+    let first = booking(&v, a, 3000);
+    let second = booking(&v, a, 5000);
+    split(&v, o, ca, cb, -1);
+    v.link_refund(first, o, 2).unwrap();
+    v.link_refund(second, o, 2).unwrap();
+    // the part of 40,00 takes 30,00 and then 10,00
+    assert_eq!(
+        refunds_of(&v, o),
+        vec![(first, 2, Some(3000)), (second, 2, Some(1000))]
+    );
+
+    v.set_transaction_splits(o, Vec::new()).unwrap();
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    assert_eq!(
+        refunds_of(&v, o),
+        vec![(first, 0, Some(3000)), (second, 0, Some(5000))]
+    );
+    assert_eq!(allocations(&v, second), vec![(o, Some(5000))]);
+    assert_eq!(v.refund_links(o).unwrap().refunded_cents, Some(8000));
+    assert_eq!(all_expenses(&v, [ca, cb]), [-2000, 0]);
+    // the link is one to the whole booking now: it is removed as such
+    v.unlink_refund(second, o, 0).unwrap();
+    assert_eq!(refunds_of(&v, o), vec![(first, 0, Some(3000))]);
+}
+
+/// A booking that is split differently spreads what its refunds pay back from its last part
+/// to its first, each part filled until the refund runs out.
+#[test]
+fn changed_split_spreads_its_refunds_from_the_last_part_to_the_first() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let cc = v
+        .create_category("QA C".into(), None, "tag".into(), "#abcdef".into())
+        .unwrap();
+    let o = booking(&v, a, -10000);
+    let r = booking(&v, a, 6000);
+    let later = booking(&v, a, 2000);
+    split(&v, o, ca, cb, -1);
+    v.link_refund(r, o, 1).unwrap();
+    assert_eq!(all_expenses(&v, [ca, cb, cc]), [0, -4000, 0]);
+
+    v.set_transaction_splits(o, vec![part(ca, -5000), part(cb, -3000), part(cc, -2000)])
+        .unwrap();
+    assert_eq!(refunds_of(&v, o), vec![(r, 0, Some(6000))]);
+    // 20,00 for the third part, 30,00 for the second, the last 10,00 for the first
+    assert_eq!(all_expenses(&v, [ca, cb, cc]), [-4000, 0, 0]);
+    // the parts the refund fills are used up for a further one
+    let open: Vec<(u32, i64)> = v
+        .refund_candidates(later, String::new(), 20)
+        .unwrap()
+        .into_iter()
+        .filter(|b| b.id == o)
+        .map(|b| (b.part, b.open_cents))
+        .collect();
+    assert_eq!(open, vec![(1, 4000), (2, 0), (3, 0)]);
+    v.link_refund(later, o, 1).unwrap();
+    assert_eq!(all_expenses(&v, [ca, cb, cc]), [-2000, 0, 0]);
+    assert_eq!(page(&v, None).expense_cents, -2000);
+}
+
+/// A booking linked as a whole and split afterwards spreads the refund the same way.
+#[test]
+fn splitting_a_linked_booking_spreads_its_refund_from_the_last_part() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let o = booking(&v, a, -10000);
+    let r = booking(&v, a, 7000);
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!(all_expenses(&v, [ca, cb]), [-3000, 0]);
+
+    split(&v, o, ca, cb, -1);
+    assert_eq!(refunds_of(&v, o), vec![(r, 0, Some(7000))]);
+    // 40,00 for the second part, 30,00 for the first
+    assert_eq!(all_expenses(&v, [ca, cb]), [-3000, 0]);
+    assert_eq!(page(&v, Some(cb)).expense_cents, 0);
+    assert_eq!(page(&v, Some(ca)).expense_cents, -3000);
+}
+
+/// Another category or note for a part is no other split: the refund stays with its part.
+#[test]
+fn new_category_of_a_part_keeps_its_refund() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let cc = v
+        .create_category("QA C".into(), None, "tag".into(), "#abcdef".into())
+        .unwrap();
+    let o = booking(&v, a, -10000);
+    let r = booking(&v, a, 1000);
+    split(&v, o, ca, cb, -1);
+    v.link_refund(r, o, 1).unwrap();
+
+    v.set_transaction_splits(o, vec![part(cc, -6000), part(cb, -4000)])
+        .unwrap();
+    assert_eq!(refunds_of(&v, o), vec![(r, 1, Some(1000))]);
+    assert_eq!(all_expenses(&v, [ca, cb, cc]), [0, -4000, -5000]);
+}

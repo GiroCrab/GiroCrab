@@ -22,7 +22,8 @@ Buchung nicht mehr aufnimmt, bleibt für die nächste. `RefundLinks.refunded_cen
   Betrag 0 haben keine Einträge.
 - Keine Ketten: Eine Erstattung ist nie zugleich ursprüngliche Buchung einer anderen.
 - Konten und Währungen dürfen sich unterscheiden (Kauf mit der Karte, Erstattung aufs Girokonto).
-- Eine Splitbuchung wird als ganze Buchung verknüpft; ihre Teile bleiben, wie sie sind.
+- Bei einer Splitbuchung gilt die Verknüpfung einem ihrer Teile (siehe „Geteilte Buchungen“); ihre Teile bleiben, wie
+  sie sind.
 - Wird eine der beiden Buchungen gelöscht, verschwindet die Verknüpfung aus der Anzeige.
 - Verknüpfen und Aufheben erreichen über iCloud die anderen Geräte (neueste Änderung gewinnt) und lassen sich mit
   Bearbeiten › Widerrufen zurücknehmen.
@@ -98,9 +99,23 @@ geteilten Buchung ihre Teile („Teil 1 · Garten“), die Verknüpfung gilt dem
 
 ## Geteilte Buchungen
 
-Die Verknüpfung gilt der ganzen Buchung, nicht einem Teil: Eine geteilte ursprüngliche Buchung behält ihre Teile und
-Kategorien, „Erstattet: … von …“ rechnet mit ihrem Gesamtbetrag. Teilen, neu teilen oder die Teilung aufheben lässt
-die Verknüpfungen bestehen.
+Eine geteilte ursprüngliche Buchung behält ihre Teile und Kategorien. Die Verknüpfung nennt den Teil, den die
+Erstattung zurückzahlt (`refund_links.original_part`, ab 1), und nimmt höchstens dessen Betrag auf; „Erstattet: … von …“
+rechnet mit dem Gesamtbetrag der Buchung.
+
+Wird die Aufteilung geändert, folgen die Verknüpfungen (`refunds::split_changed`, aus `planning::store_splits`):
+
+- **Aufteilung aufgehoben:** Die Verknüpfungen gelten der ganzen Buchung. Jede Erstattung wird bis zu dem aufgefüllt,
+  was die Buchung noch offen hat, nicht mehr nur bis zum Betrag ihres früheren Teils.
+- **Anders aufgeteilt** (andere Beträge oder andere Anzahl der Teile): Die Verknüpfungen gelten ebenfalls der ganzen
+  Buchung. Ihr Anteil wird vom letzten Teil zum ersten verteilt, jeder Teil wird gefüllt, bis der Anteil aufgebraucht
+  ist; so zählt er in den Kategorien dieser Teile. Dasselbe gilt für eine als Ganzes verknüpfte Buchung, die erst
+  danach geteilt wird, und für eine Verknüpfung von einem anderen Gerät, deren Teil es hier nicht gibt.
+- **Nur Kategorie oder Notiz eines Teils geändert:** Die Verknüpfung bleibt bei ihrem Teil.
+
+Die umgestellten Verknüpfungen reihen sich hinter den übrigen ein (neuer Stempel, damit die Änderung die anderen
+Geräte erreicht); untereinander behalten sie ihre Reihenfolge. Eine neue Verknüpfung zu einer geteilten Buchung nennt
+weiterhin einen Teil.
 
 ## Auswertung
 

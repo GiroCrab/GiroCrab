@@ -233,6 +233,30 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(try expenses(), before)
     }
 
+    /// Removing the split of a linked booking leaves a link to the whole booking, and the open
+    /// views of the links read them again.
+    func testRemovingTheSplitLinksTheRefundToTheWholeBooking() throws {
+        let (refund, originals) = try pair()
+        let original = try XCTUnwrap(originals.first { $0.amountCents < -1 })
+        let vault = try XCTUnwrap(model.vault)
+        try vault.setTransactionSplits(transactionId: original.id, splits: [
+            TransactionSplitInput(categoryId: nil, amountCents: -1, note: ""),
+            TransactionSplitInput(categoryId: nil, amountCents: original.amountCents + 1, note: "")
+        ])
+        model.linkRefund(refundID: refund.id, originalID: original.id, part: 2)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(try vault.refundLinks(transactionId: refund.id).originals.map(\.part), [2])
+        let revision = model.refundLinksRevision
+
+        XCTAssertNil(model.saveSplits([], for: try XCTUnwrap(model.booking(withID: original.id))))
+
+        XCTAssertGreaterThan(model.refundLinksRevision, revision)
+        let links = try vault.refundLinks(transactionId: refund.id).originals
+        XCTAssertEqual(links.map(\.part), [0])
+        XCTAssertEqual(links.first?.shareCents, min(refund.amountCents, -original.amountCents))
+        XCTAssertEqual(kind(original.id), .original)
+    }
+
     /// The suggestions are candidates too, at most three, and never an already linked booking.
     func testSuggestionsAreAtMostThreeCandidates() throws {
         let vault = try XCTUnwrap(model.vault)

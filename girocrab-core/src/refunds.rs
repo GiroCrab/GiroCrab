@@ -1,7 +1,9 @@
 //! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
 //! (outgoing). One original can have several refunds and one refund can pay back several originals
 //! (step 38); links do not chain. A link to a split booking names one of its parts (step 39,
-//! `original_part`): the refund pays back that part only. The link only documents what belongs together: amounts, categories and balances remain
+//! `original_part`): the refund pays back that part only. A booking that is split differently
+//! or not at all any more keeps its refunds as links to the whole booking (`split_changed`);
+//! such a link to a split booking fills its parts from the last to the first. The link only documents what belongs together: amounts, categories and balances remain
 //! unchanged. Removing a link keeps the row as a tombstone (`deleted_ms`), so the removal reaches
 //! the other devices; the newest change wins on merge.
 use crate::{
@@ -195,6 +197,8 @@ struct Shares {
     mixed: std::collections::HashSet<(i64, i64, i64)>,
     /// Per booking, and per part (booking, part from 1) of a split original.
     taken: HashMap<(i64, i64), i64>,
+    /// Per link to the whole of a split original: what it pays back of which part (from 1).
+    spread: HashMap<(i64, i64, i64), Vec<(i64, i64)>>,
 }
 
 impl Shares {
@@ -212,6 +216,8 @@ impl Shares {
 
 /// What every live link pays back, filled in the order the links were made: a link takes at
 /// most what the earlier links left of its refund and of its original (of the part it names).
+/// A link to the whole of a split original (it names no part, or one the booking does not
+/// have) fills the outgoing parts from the last to the first, each until the share runs out.
 /// Links between different currencies get nothing.
 fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shares> {
     type Link = (i64, i64, i64, i64, i64, String, String);
@@ -247,6 +253,20 @@ fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shar
         *out.taken.entry((o, 0)).or_default() += share;
         if part_of(parts, o, part).is_some() {
             *out.taken.entry((o, part)).or_default() += share;
+        } else if let Some(own) = parts.get(&o) {
+            let mut left = share;
+            let mut spread = Vec::new();
+            for (n, p) in own.iter().enumerate().rev() {
+                let n = n as i64 + 1;
+                let taken = out.taken.entry((o, n)).or_default();
+                let take = left.min(p.amount.saturating_neg() - *taken);
+                if take > 0 {
+                    *taken += take;
+                    left -= take;
+                    spread.push((n, take));
+                }
+            }
+            out.spread.insert((r, o, part), spread);
         }
         out.links.insert((r, o, part), share);
     }
@@ -430,7 +450,7 @@ pub(crate) fn covered(conn: &Connection) -> CoreResult<HashMap<i64, i64>> {
 /// What the links move between categories (refund, category it counts in, cents): the part of
 /// a refund that pays back a booking counts in that booking's category, or in the category of
 /// the split part the link names. What is left of the refund stays in its own category. A link
-/// to a whole booking that has been split since moves nothing.
+/// to the whole of a split booking counts in the categories of the parts it fills (`shares`).
 pub(crate) fn moves(conn: &Connection) -> CoreResult<Vec<(i64, Option<i64>, i64)>> {
     let has_links: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL)",
@@ -453,13 +473,24 @@ pub(crate) fn moves(conn: &Connection) -> CoreResult<Vec<(i64, Option<i64>, i64)
         .links
         .iter()
         .filter(|(_, share)| **share > 0)
-        .filter_map(|((refund, original, part), share)| {
-            let category = match part_of(&parts, *original, *part) {
-                Some(p) => p.category,
-                None if parts.contains_key(original) => return None,
-                None => *own.get(original)?,
+        .flat_map(|(link, share)| {
+            let (refund, original, part) = *link;
+            let in_parts = |spread: &Vec<(i64, i64)>| -> Vec<(i64, Option<i64>, i64)> {
+                spread
+                    .iter()
+                    .filter_map(|(n, cents)| {
+                        Some((refund, part_of(&parts, original, *n)?.category, *cents))
+                    })
+                    .collect()
             };
-            Some((*refund, category, *share))
+            match (part_of(&parts, original, part), shares.spread.get(link)) {
+                (Some(p), _) => vec![(refund, p.category, *share)],
+                (None, Some(spread)) => in_parts(spread),
+                (None, None) => own
+                    .get(&original)
+                    .map(|category| vec![(refund, *category, *share)])
+                    .unwrap_or_default(),
+            }
         })
         .collect();
     out.sort_unstable();
@@ -737,6 +768,35 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
             "INSERT INTO refund_links(refund_id,original_id,original_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?6,?3,?4,?5)
              ON CONFLICT(refund_id,original_id,original_part) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=excluded.deleted_ms",
             params![r,o,created,changed,deleted,part],
+        )?;
+    }
+    Ok(())
+}
+
+/// The booking `original` is split differently or not at all any more: the parts its links
+/// name are gone, so every such link becomes a link to the whole booking. The old row stays as
+/// a tombstone and the new one gets a new stamp (both reach the other devices); the links keep
+/// their order among themselves.
+pub(crate) fn split_changed(conn: &Connection, original: i64) -> CoreResult<()> {
+    let links: Vec<(i64, i64, i64)> = conn
+        .prepare(
+            "SELECT refund_id,original_part,created_ms FROM refund_links
+             WHERE original_id=?1 AND original_part>0 AND deleted_ms IS NULL
+             ORDER BY changed_ms,refund_id,original_part",
+        )?
+        .query_map([original], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    for (refund, part, created) in links {
+        let changed = next_change(conn)?;
+        conn.execute(
+            "UPDATE refund_links SET deleted_ms=?4,changed_ms=?4 WHERE refund_id=?1 AND original_id=?2 AND original_part=?3",
+            params![refund, original, part, changed],
+        )?;
+        // a refund of several parts keeps one link to the booking
+        conn.execute(
+            "INSERT INTO refund_links(refund_id,original_id,original_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,0,?3,?4,NULL)
+             ON CONFLICT(refund_id,original_id,original_part) DO UPDATE SET changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",
+            params![refund, original, created, changed + 1],
         )?;
     }
     Ok(())
