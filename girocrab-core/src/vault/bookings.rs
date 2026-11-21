@@ -10,7 +10,9 @@ use super::cache::DataStamp;
 use crate::error::CoreError;
 use crate::i18n::trf;
 use crate::iban::normalize_iban;
-use crate::merchants::{FlowKind, MerchantResolver, classify, clean_purpose, payment_method};
+use crate::merchants::{
+    FlowKind, MerchantResolver, MerchantRules, classify_by_kind, clean_purpose, payment_method,
+};
 use crate::models::*;
 use crate::money::parse_cents;
 
@@ -61,9 +63,12 @@ fn category_match_sql(cat_match: &str) -> String {
 }
 
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
-/// `paypal`: its account is a PayPal account (see `BookingFinisher`).
-pub(crate) fn enrich(t: &mut Booking, paypal: bool, top_role: &str) {
-    t.merchant = MerchantResolver::resolve(&t.counterparty, &t.purpose);
+/// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
+/// PayPal account (see `BookingFinisher`).
+pub(crate) fn enrich(t: &mut Booking, rules: &MerchantRules, paypal: bool, top_role: &str) {
+    // flow and recurring series read the bundled merchant: the user's changes only rename
+    let (merchant, bundled) = rules.resolve_with_bundled(&t.counterparty, &t.purpose);
+    t.merchant = merchant;
     t.merchant_name = t.merchant.name.clone();
     t.merchant_domain = Some(t.merchant.domain.clone()).filter(|d| !d.is_empty());
     t.merchant_svg_path = Some(t.merchant.svg_path.clone()).filter(|d| !d.is_empty());
@@ -71,12 +76,12 @@ pub(crate) fn enrich(t: &mut Booking, paypal: bool, top_role: &str) {
     // Only the category role classifies: a custom category named like a built-in has no role
     // and must not be treated as an investment by its name.
     let role = top_role;
-    t.flow = classify(
+    t.flow = classify_by_kind(
         t.amount_cents,
         &t.counterparty,
         &t.purpose,
         &t.booking_text,
-        &t.merchant,
+        bundled.kind,
         role,
         t.account_kind,
     );
@@ -88,7 +93,7 @@ pub(crate) fn enrich(t: &mut Booking, paypal: bool, top_role: &str) {
         paypal,
     );
     t.clean_purpose = clean_purpose(&t.purpose);
-    t.recurrence_key = crate::recurring::series_key(t);
+    t.recurrence_key = crate::recurring::series_key_with(t, &bundled.key);
 }
 
 /// Tables behind a booking row; a deleted category or rule reads as none
@@ -252,10 +257,12 @@ pub(super) struct BookingFinisher {
     pair_transfers: HashSet<i64>,
     loan_links: HashMap<i64, i64>,
     paypal_accounts: HashSet<i64>,
+    /// Merchant recognition with the user's changes (#1373).
+    merchants: Arc<MerchantRules>,
 }
 
 impl BookingFinisher {
-    fn load(db: &rusqlite::Connection) -> Result<Self, CoreError> {
+    fn load(db: &rusqlite::Connection, merchants: Arc<MerchantRules>) -> Result<Self, CoreError> {
         let paths = Vault::category_paths(db)?;
         let category_flows = Vault::category_flows(db)?;
         let loan_links = crate::loans::link_map(db)?;
@@ -290,6 +297,7 @@ impl BookingFinisher {
             pair_transfers,
             loan_links,
             paypal_accounts,
+            merchants,
         })
     }
 
@@ -305,7 +313,12 @@ impl BookingFinisher {
         let category_flow = t.category_id.and_then(|c| self.category_flows.get(&c));
         let top_role = category_flow.map(|c| c.top_role.as_str()).unwrap_or("");
         let transfer_category = category_flow.is_some_and(|c| c.is_transfer);
-        enrich(t, self.paypal_accounts.contains(&t.account_id), top_role);
+        enrich(
+            t,
+            &self.merchants,
+            self.paypal_accounts.contains(&t.account_id),
+            top_role,
+        );
         t.is_salary = crate::salary::is_salary(t, &self.salary_ibans);
         // A salary stays income although its booking text names a transfer
         // (comdirect: "Übertrag / Überweisung"); a transfer category still wins.
@@ -331,7 +344,12 @@ impl BookingFinisher {
         {
             t.flow = FlowKind::Transfer;
         }
-        if let Some(d) = self.overrides.get(&t.merchant.key) {
+        // a logo domain set by hand, unless the recognition (and with it every logo) is off
+        if let Some(d) = self
+            .overrides
+            .get(&t.merchant.key)
+            .filter(|_| self.merchants.enabled())
+        {
             t.merchant.domain = d.clone();
             t.merchant.domain_candidates = vec![d.clone()];
             t.merchant.domain_source = "override".into();
@@ -1034,7 +1052,7 @@ impl Vault {
         {
             return Ok(finisher);
         }
-        let finisher = Arc::new(BookingFinisher::load(db)?);
+        let finisher = Arc::new(BookingFinisher::load(db, self.merchant_rules(db)?)?);
         self.list_cache
             .keep(db, stamp, |s| s.finisher = Some(finisher.clone()));
         Ok(finisher)

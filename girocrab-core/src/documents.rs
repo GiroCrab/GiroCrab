@@ -417,13 +417,17 @@ fn label(b: &Booking) -> String {
     )
 }
 
-fn row_to_info(r: &rusqlite::Row) -> rusqlite::Result<DocumentInfo> {
+/// `merchants`: the vault's merchant recognition, so the booking reads as in the list (#1373).
+fn row_to_info(
+    r: &rusqlite::Row,
+    merchants: &crate::merchants::MerchantRules,
+) -> rusqlite::Result<DocumentInfo> {
     let cp: Option<String> = r.get(12)?;
     let amount: Option<i64> = r.get(13)?;
     let date: Option<String> = r.get(14)?;
     let booking_label = match (cp, amount, date) {
         (Some(cp), Some(a), Some(d)) => {
-            let m = crate::merchants::MerchantResolver::resolve(&cp, "");
+            let m = merchants.resolve(&cp, "");
             format!("{} · {} · {}", m.name, format_cents(a, "EUR".into()), d)
         }
         _ => String::new(),
@@ -545,11 +549,12 @@ impl Vault {
         booking_id: i64,
     ) -> Result<Vec<DocumentInfo>, CoreError> {
         let db = self.db()?;
+        let merchants = self.merchant_rules(&db)?;
         let mut st = db.prepare(&format!(
             "{SELECT_INFO} WHERE d.booking_id = ?1 AND t.id IS NOT NULL ORDER BY d.doc_date DESC, d.id DESC"
         ))?;
         let rows = st
-            .query_map([booking_id], row_to_info)?
+            .query_map([booking_id], |r| row_to_info(r, &merchants))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
@@ -559,6 +564,7 @@ impl Vault {
         filter: DocumentFilter,
     ) -> Result<Vec<DocumentInfo>, CoreError> {
         let db = self.db()?;
+        let merchants = self.merchant_rules(&db)?;
         let mut st = db.prepare(&list_all_documents_sql())?;
         let search = filter
             .search
@@ -573,7 +579,7 @@ impl Vault {
                     filter.unlinked_only as i64,
                     filter.connection_id
                 ],
-                row_to_info,
+                |r| row_to_info(r, &merchants),
             )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
