@@ -516,6 +516,7 @@ ApplicationWindow {
     Loader { active: AppModel.showRuleEditor; sourceComponent: Component { RuleEditorView {} } }
     Loader { active: AppModel.showCategorizer; sourceComponent: Component { CategorizerSheet {} } }
     Loader { active: AppModel.splitBooking !== null; sourceComponent: Component { SplitSheet {} } }
+    Loader { active: AppModel.refundBooking !== null; sourceComponent: Component { RefundSheet {} } }
     Loader { active: AppModel.newCategoryRequest !== null; sourceComponent: Component { NewCategoryDialog {} } }
     Loader { active: AppModel.budgetCategoryID !== null; sourceComponent: Component { BudgetEditorSheet {} } }
     CategoryDialogs {}

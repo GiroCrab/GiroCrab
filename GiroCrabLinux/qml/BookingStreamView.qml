@@ -631,6 +631,17 @@ Rectangle {
         // TagsMenu (#228)
         TagsMenu { booking: stream.menuBooking }
         AppMenuItem { text: qsTr("Umsatz aufteilen (Splitbuchung) …"); icon.name: SF.icon("arrow.triangle.branch"); onTriggered: AppModel.splitBooking = stream.menuBooking }
+        // RefundsUI.swift › RefundLinkMenu (#714): incoming bookings get their originals, outgoing ones their refunds
+        AppMenuItem {
+            readonly property var b: stream.menuBooking
+            visible: b !== null && b.amount_cents !== 0
+            height: visible ? implicitHeight : 0
+            text: !b ? "" : b.amount_cents > 0
+                ? (b.refund_link === "Refund" ? qsTr("Ursprüngliche Buchungen bearbeiten …") : qsTr("Ursprüngliche Buchung zuordnen …"))
+                : (b.refund_link === "Original" ? qsTr("Erstattungen bearbeiten …") : qsTr("Erstattung zuordnen …"))
+            icon.name: SF.icon("arrow.uturn.backward")
+            onTriggered: AppModel.refundBooking = stream.menuBooking
+        }
         // LoanAssignMenu(hidesWhenUnavailable: true): left out for loan bookings and unlinked inflows
         Instantiator {
             model: AppModel.loanAssignable(stream.menuBooking) ? 1 : 0
@@ -788,6 +799,19 @@ Rectangle {
                                  ToolTip.visible: docHover.hovered && docIcon.visible; ToolTip.delay: 500
                                  ToolTip.text: br.booking ? qsTr("%1 Beleg(e) – Leertaste für Vorschau").arg(br.booking.document_count) : "" }
                         SFIcon { id: repeatIcon; visible: br.booking !== null && AppModel.recurringSeries(br.booking) !== null; symbol: "repeat"; size: 11 }
+                        // RefundLinkMarker (#714): the same sign for a refund and its original; the amount only while covered in part
+                        SFIcon {
+                            visible: br.booking !== null && br.booking.refund_link !== undefined && br.booking.refund_link !== "None"
+                            symbol: "arrow.uturn.backward"; size: 11
+                            Accessible.name: br.booking && br.booking.refund_link === "Refund" ? qsTr("Verknüpfte Erstattung") : qsTr("Hat verknüpfte Erstattung")
+                        }
+                        Text {
+                            readonly property var part: br.booking && br.booking.refund_link !== "None" ? br.booking.refund_part_cents : null
+                            visible: part !== null && part !== undefined
+                            text: visible ? Fmt.money(part, br.booking.currency) : ""
+                            font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.secondary
+                            Sensitive { amounts: true }
+                        }
                         // Keep the name and amount first. Show the category only when its
                         // complete label fits (ViewThatFits); the purpose yields first.
                         BookingCategoryLabel {

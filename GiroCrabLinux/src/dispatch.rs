@@ -1599,6 +1599,10 @@ vault_methods! {
     update_category(id, name, parent_id, sf_symbol, color_hex) delete_category(id)
     set_category_budget(category_id, budget_cents)
     list_transaction_splits(transaction_id) set_transaction_splits(transaction_id, splits)
+    // --- refunds (#714) ---
+    link_refund(refund_id, original_id) unlink_refund(refund_id, original_id)
+    refund_links(transaction_id) refund_suggestions(transaction_id)
+    refund_candidates(transaction_id, query, limit)
     // --- import / export ---
     export_bookings_csv(filter)
     // --- transfer ---

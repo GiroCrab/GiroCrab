@@ -2987,6 +2987,19 @@ QtObject {
     property var iconColorCategoryID: null
     /// The booking whose SplitSheet is open.
     property var splitBooking: null
+    /// The booking whose RefundSheet is open (#714).
+    property var refundBooking: null
+    /// Bumped after every change of a refund link: the open RefundSheet reloads.
+    property int refundLinksRevision: 0
+    /// AppModel+Refunds.swift › linkRefund / unlinkRefund: one pair; the other links stay.
+    function setRefundLink(refundId, originalId, linked) {
+        const done = run(() => { core(linked ? "link_refund" : "unlink_refund", { refund_id: refundId, original_id: originalId }); return true })
+        if (done === undefined) return
+        UndoManager.register(linked ? qsTr("Erstattung zuordnen") : qsTr("Verknüpfung aufheben"), () => setRefundLink(refundId, originalId, !linked))
+        refundLinksRevision++
+        // the marker in the rows and the sums: a linked refund is no income as far as it is assigned
+        reloadBookings(); reloadDashboard(); reloadPlanning()
+    }
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
     readonly property var colorNames: ({
