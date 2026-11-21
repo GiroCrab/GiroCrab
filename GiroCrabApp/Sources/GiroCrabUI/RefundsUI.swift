@@ -91,8 +91,9 @@ private enum RefundSum {
 }
 
 /// "Ursprüngliche Buchung zuordnen …" / "Erstattung zuordnen …" (#714): the linked bookings on
-/// top, below them the candidates the core suggests (other direction, within twelve months, all
-/// accounts; same counterparty first). A click links or unlinks at once; the sheet stays open so
+/// top, then up to three suggestions of the core (same amount, same merchant within two months,
+/// same reference), below them the searchable list of the other bookings (other direction, all
+/// accounts; without a search term twelve months). A click links or unlinks at once; the sheet stays open so
 /// that an original can take several partial refunds. Layout and rules: `docs/ERSTATTUNGEN_UI.md`.
 struct RefundPickerSheet: View {
     @Environment(AppModel.self) private var model
@@ -100,6 +101,7 @@ struct RefundPickerSheet: View {
     let booking: Booking
     @State private var linked: [RefundBooking] = []
     @State private var candidates: [RefundBooking] = []
+    @State private var top: [RefundSuggestion] = []
     @State private var loaded = false
     @State private var search = ""
     @State private var loadError: String?
@@ -108,8 +110,11 @@ struct RefundPickerSheet: View {
 
     /// The sheet was opened from a refund: one original is chosen. Otherwise refunds are collected.
     private var fromRefund: Bool { booking.amountCents > 0 }
-    private var suggestions: [RefundBooking] {
-        let ids = Set(linked.map(\.id))
+    private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
+    /// The list below the suggestions; a search shows every hit, also a suggested one.
+    private var others: [RefundBooking] {
+        var ids = Set(linked.map(\.id))
+        if !isSearching { ids.formUnion(top.map(\.booking.id)) }
         return candidates.filter { !ids.contains($0.id) }
     }
 
@@ -139,8 +144,8 @@ struct RefundPickerSheet: View {
                     AmountLabel(cents: booking.amountCents, currency: booking.currency).fixedSize()
                 }
                 Text(fromRefund
-                     ? "Wählen Sie die Buchung, die mit dieser Erstattung zurückgezahlt wurde. Vorgeschlagen werden Ausgaben aller Konten aus den zwölf Monaten davor."
-                     : "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Vorgeschlagen werden Eingänge aller Konten aus den zwölf Monaten danach.")
+                     ? "Wählen Sie die Buchung, die mit dieser Erstattung zurückgezahlt wurde. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere."
+                     : "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Zur Auswahl stehen Eingänge aller Konten aus den zwölf Monaten danach, mit der Suche auch spätere.")
                     .appFont(.callout)
                     .foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -158,9 +163,9 @@ struct RefundPickerSheet: View {
                 }
             }
             .padding(16)
-            if loaded && linked.isEmpty && suggestions.isEmpty && loadError == nil {
+            if loaded && linked.isEmpty && top.isEmpty && others.isEmpty && loadError == nil {
                 Group {
-                    if search.trimmingCharacters(in: .whitespaces).isEmpty {
+                    if !isSearching {
                         ContentUnavailableView {
                             Label("Keine passenden Buchungen", systemImage: "arrow.uturn.backward")
                         } description: {
@@ -198,22 +203,45 @@ struct RefundPickerSheet: View {
                     }
                 }
             }
-            if !suggestions.isEmpty {
+            if !top.isEmpty {
                 Section {
-                    ForEach(suggestions, id: \.id) { row($0, isLinked: false) }
+                    ForEach(top, id: \.booking.id) { row($0.booking, isLinked: false, reason: $0.reason) }
                 } header: {
                     Text("Vorschläge")
+                }
+            }
+            if !others.isEmpty {
+                Section {
+                    ForEach(others, id: \.id) { row($0, isLinked: false) }
+                } header: {
+                    Text(isSearching ? "Suchergebnisse" : "Weitere Buchungen")
                 }
             }
         }
     }
 
-    private func row(_ r: RefundBooking, isLinked: Bool) -> some View {
+    private static func label(_ reason: RefundMatch) -> LocalizedStringKey {
+        switch reason {
+        case .sameAmount: "Gleicher Betrag"
+        case .sameMerchant: "Gleicher Händler"
+        case .sameReference: "Gleiche Referenz"
+        }
+    }
+
+    private func row(_ r: RefundBooking, isLinked: Bool, reason: RefundMatch? = nil) -> some View {
         HStack(spacing: 10) {
             Image(systemName: isLinked ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(isLinked ? Theme.accent : Theme.tertiary)
                 .accessibilityHidden(true)
             RefundBookingLine(row: r, showsPurpose: true)
+            if let reason {
+                Text(Self.label(reason))
+                    .appFont(.caption2, weight: .medium)
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Theme.accent.opacity(0.12), in: Capsule())
+                    .fixedSize()
+            }
             Button(isLinked ? "Aufheben" : "Zuordnen") { toggle(r, isLinked: isLinked) }
                 .buttonStyle(.borderless)
                 .help(isLinked ? "Verknüpfung aufheben" : (fromRefund && !linked.isEmpty ? "Statt der bisherigen Buchung zuordnen" : "Mit dieser Buchung verknüpfen"))
@@ -238,13 +266,13 @@ struct RefundPickerSheet: View {
         let query = search
         let refund = fromRefund
         do {
-            let result = try await model.vaultOffMain { vault -> ([RefundBooking], [RefundBooking]) in
+            let result = try await model.vaultOffMain { vault -> ([RefundBooking], [RefundSuggestion], [RefundBooking]) in
                 let links = try vault.refundLinks(transactionId: id)
                 let linked = refund ? (links.original.map { [$0] } ?? []) : links.refunds
-                return (linked, try vault.refundCandidates(transactionId: id, query: query, limit: 200))
+                return (linked, try vault.refundSuggestions(transactionId: id), try vault.refundCandidates(transactionId: id, query: query, limit: 200))
             }
             guard run == loads, let result else { return }
-            (linked, candidates) = result
+            (linked, top, candidates) = result
             loadError = nil
         } catch {
             guard run == loads else { return }

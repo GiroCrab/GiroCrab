@@ -262,6 +262,8 @@ pub(super) struct BookingFinisher {
     /// Both legs of detected bank ↔ payment-service transfers (#302).
     pair_transfers: HashSet<i64>,
     loan_links: HashMap<i64, i64>,
+    /// Refunds linked to their original booking (#714): never income.
+    linked_refunds: HashSet<i64>,
     paypal_accounts: HashSet<i64>,
     /// Merchant recognition with the user's changes (#1373).
     merchants: Arc<MerchantRules>,
@@ -272,6 +274,7 @@ impl BookingFinisher {
         let paths = Vault::category_paths(db)?;
         let category_flows = Vault::category_flows(db)?;
         let loan_links = crate::loans::link_map(db)?;
+        let linked_refunds = crate::refunds::linked_refund_ids(db)?;
         let salary_ibans = crate::salary::marked_salary_ibans(db)?;
         let overrides = crate::insights::load_overrides(db)?;
         // Own IBANs: uncategorised bookings to / from them are transfers (Issue #94).
@@ -302,6 +305,7 @@ impl BookingFinisher {
             own_ibans,
             pair_transfers,
             loan_links,
+            linked_refunds,
             paypal_accounts,
             merchants,
         })
@@ -360,6 +364,11 @@ impl BookingFinisher {
             t.merchant.domain_candidates = vec![d.clone()];
             t.merchant.domain_source = "override".into();
             t.merchant_domain = Some(d.clone());
+        }
+        // A refund the user linked to its original booking (#714) is no income: like a refund
+        // the wording gives away, it reduces the expenses of the analysis instead.
+        if t.flow == FlowKind::Income && self.linked_refunds.contains(&t.id) {
+            t.flow = FlowKind::Consumption;
         }
         if let Some(loan) = self.loan_links.get(&t.id) {
             t.flow = match visible {

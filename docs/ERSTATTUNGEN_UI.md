@@ -37,9 +37,15 @@ sich nichts an Beträgen und Kategorien ändert, und die Suche (Name oder Verwen
 
 Darunter zuerst die **verknüpften** Buchungen (✓, „Aufheben“), bei einer ursprünglichen Buchung mit der Summe
 „Erstattet: … von …“, wenn alle Erstattungen ihre Währung haben (verschiedene Währungen werden nie summiert, #569).
-Dann die **Vorschläge** des Core: Buchungen der Gegenrichtung aus allen Konten, für eine Erstattung aus den 365 Tagen
-davor, für eine ursprüngliche Buchung aus den 365 Tagen danach und nur Eingänge, die noch keiner anderen Buchung
-zugeordnet sind. Gleiche Gegenpartei oder gleicher Händler stehen vorn, danach entscheidet die Nähe zum Datum.
+Dann bis zu drei **Vorschläge** des Core (`refund_suggestions`), jeder mit seinem Grund, aufgefüllt in dieser
+Reihenfolge und darin nach Nähe zum Datum: gleicher Betrag in der Gegenrichtung (gleiche Währung), gleiche Gegenpartei
+oder gleicher Händler innerhalb von zwei Monaten, gleiche Referenz (Bestell- oder Rechnungsnummer im Verwendungszweck,
+End-to-End-Referenz).
+
+Darunter die **weiteren Buchungen** der Gegenrichtung aus allen Konten, nächstes Datum zuerst: für eine Erstattung
+aus den 365 Tagen davor, für eine ursprüngliche Buchung aus den 365 Tagen danach und nur Eingänge, die noch keiner
+anderen Buchung zugeordnet sind. Mit einem Suchbegriff entfällt die Grenze von 365 Tagen, die Liste zeigt dann alle
+Treffer.
 
 „Zuordnen“ (oder Doppelklick) verknüpft sofort, das Blatt bleibt offen: So lassen sich mehrere Teilerstattungen
 nacheinander zuordnen. Bei einer Erstattung ersetzt eine neue Wahl die bisherige. „Fertig“ oder Esc schließt.
@@ -69,3 +75,16 @@ Namen, Konto und Verwendungszweck tragen `.sensitive()`, Beträge und die Summe 
 
 `swift run GiroCrabMac --demo-seed --demo-sheet refund` öffnet das Blatt für den ersten Eingang der Demo-Daten,
 `--demo-sheet refund-linked` mit bereits verknüpfter Buchung (zeigt auch Zeichen und Karte).
+
+## Geteilte Buchungen
+
+Die Verknüpfung gilt der ganzen Buchung, nicht einem Teil: Eine geteilte ursprüngliche Buchung behält ihre Teile und
+Kategorien, „Erstattet: … von …“ rechnet mit ihrem Gesamtbetrag. Teilen, neu teilen oder die Teilung aufheben lässt
+die Verknüpfungen bestehen.
+
+## Auswertung
+
+Eine verknüpfte Erstattung zählt nicht als Einnahme. Wie eine Erstattung, die der Core am Buchungstext erkennt,
+mindert sie die Ausgaben: in den Kennzahlen der Buchungsliste, im Cashflow und in den Auswertungen, die auf derselben
+Einordnung beruhen. Nach dem Aufheben der Verknüpfung gilt wieder die Einordnung des Core. Beträge, Kategorien und
+Kontostände ändern sich dadurch nicht.

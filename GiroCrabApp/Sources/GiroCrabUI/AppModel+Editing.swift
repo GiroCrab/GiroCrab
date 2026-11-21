@@ -89,7 +89,7 @@ extension AppModel {
     /// - KPIs and category totals, published if the accounts / period are unchanged,
     /// - the account counters ("ohne Kategorie"), published always.
     /// Quick successive assignments only publish the last result.
-    private func refreshAfterEdit() {
+    func refreshAfterEdit() {
         // A selection still loading publishes everything itself.
         if selectionLoadTask != nil { settlePendingSelectionLoad(); reloadAccounts(); return }
         categoryRefreshTask?.cancel()

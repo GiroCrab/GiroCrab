@@ -48,6 +48,31 @@ pub struct RefundBooking {
     pub purpose: String,
 }
 
+/// Why a booking is suggested for a link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum RefundMatch {
+    /// The same amount in the other direction (and the same currency).
+    SameAmount,
+    /// The same counterparty or merchant within [`SUGGESTION_DAYS`] days.
+    SameMerchant,
+    /// Both texts name the same reference (order or invoice number, end-to-end id).
+    SameReference,
+}
+
+/// A booking suggested for a link, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RefundSuggestion {
+    pub booking: RefundBooking,
+    pub reason: RefundMatch,
+}
+
+/// "The last two months" of the same-merchant suggestions.
+const SUGGESTION_DAYS: i64 = 62;
+/// How far the suggestions and the unfiltered list look back or ahead.
+const WINDOW_DAYS: u32 = 365;
+
 /// The links of one booking: its original when it is a refund, its refunds when it is an original.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -87,37 +112,167 @@ fn validate(conn: &Connection, refund: i64, original: i64) -> CoreResult<()> {
     Ok(())
 }
 
-const ROWS: &str = "SELECT t.id,t.account_id,a.name,t.booking_date,t.amount_cents,t.currency,t.counterparty,t.purpose FROM transactions t JOIN accounts a ON a.id=t.account_id";
-fn entries(
+const ROWS: &str = "SELECT t.id,t.account_id,a.name,t.booking_date,t.amount_cents,t.currency,t.counterparty,t.purpose,t.end_to_end_id FROM transactions t JOIN accounts a ON a.id=t.account_id";
+
+/// A row of [`ROWS`] with what only the ranking needs.
+struct Row {
+    booking: RefundBooking,
+    end_to_end_id: String,
+}
+
+fn rows(
     conn: &Connection,
     sql: &str,
     args: impl rusqlite::Params,
     rules: &crate::merchants::MerchantRules,
-) -> CoreResult<Vec<RefundBooking>> {
+) -> CoreResult<Vec<Row>> {
     let rows = conn
         .prepare(sql)?
         .query_map(args, |r| {
             let cp: String = r.get(6)?;
             let purpose: String = r.get(7)?;
             let merchant = rules.resolve_with_bundled(&cp, &purpose).0;
-            Ok(RefundBooking {
-                id: r.get(0)?,
-                account_id: r.get(1)?,
-                account_name: r.get(2)?,
-                booking_date: r.get(3)?,
-                amount_cents: r.get(4)?,
-                currency: r.get(5)?,
-                display_name: if merchant.name.is_empty() {
-                    cp.clone()
-                } else {
-                    merchant.name
+            Ok(Row {
+                booking: RefundBooking {
+                    id: r.get(0)?,
+                    account_id: r.get(1)?,
+                    account_name: r.get(2)?,
+                    booking_date: r.get(3)?,
+                    amount_cents: r.get(4)?,
+                    currency: r.get(5)?,
+                    display_name: if merchant.name.is_empty() {
+                        cp.clone()
+                    } else {
+                        merchant.name
+                    },
+                    counterparty: cp,
+                    purpose,
                 },
-                counterparty: cp,
-                purpose,
+                end_to_end_id: r.get(8)?,
             })
         })?
         .collect::<Result<_, _>>()?;
     Ok(rows)
+}
+
+fn entries(
+    conn: &Connection,
+    sql: &str,
+    args: impl rusqlite::Params,
+    rules: &crate::merchants::MerchantRules,
+) -> CoreResult<Vec<RefundBooking>> {
+    Ok(rows(conn, sql, args, rules)?
+        .into_iter()
+        .map(|r| r.booking)
+        .collect())
+}
+
+/// Ids of the refunds with a live link. The booking list reads them as refunds, not as income
+/// (`BookingFinisher`): a linked refund reduces the expenses instead of raising the income.
+pub(crate) fn linked_refund_ids(conn: &Connection) -> CoreResult<std::collections::HashSet<i64>> {
+    Ok(markers(conn)?
+        .into_iter()
+        .filter(|(_, kind)| *kind == RefundLinkKind::Refund)
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// The booking a link is looked for, and the bookings of the other direction around it.
+struct Pool {
+    amount: i64,
+    currency: String,
+    date: String,
+    counterparty: String,
+    merchant: String,
+    reference: String,
+    /// Nearest booking date first.
+    rows: Vec<Row>,
+}
+
+/// `days`: how far back (refund) or ahead (outgoing booking) the pool reaches; `None` = no bound.
+/// Leaves out what cannot be linked: refunds of another original, and everything when the
+/// booking itself is the other end of a link (no chains).
+fn pool(vault: &Vault, db: &Connection, id: i64, days: Option<u32>) -> CoreResult<Pool> {
+    let rules = vault.merchant_rules(db)?;
+    let (amount, currency, date, counterparty, purpose, e2e): (
+        i64,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = db
+        .query_row(
+            "SELECT amount_cents,currency,booking_date,counterparty,purpose,end_to_end_id FROM transactions WHERE id=?1 AND deleted_ms IS NULL",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .optional()?
+        .ok_or_else(|| CoreError::invalid(tr("Die Buchung existiert nicht oder wurde gelöscht.")))?;
+    let merchant = rules.resolve_with_bundled(&counterparty, &purpose).0.name;
+    let mut out = Pool {
+        amount,
+        currency,
+        date,
+        counterparty,
+        merchant,
+        reference: format!("{purpose} {e2e}"),
+        rows: Vec::new(),
+    };
+    let conflict: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND ((?2>0 AND original_id=?1) OR (?2<0 AND refund_id=?1)))",
+        params![id, amount],
+        |r| r.get(0),
+    )?;
+    if amount == 0 || conflict {
+        return Ok(out);
+    }
+    let days = days.map_or(f64::MAX, f64::from);
+    let direction = if amount > 0 {
+        "t.amount_cents<0 AND julianday(?1)-julianday(t.booking_date) BETWEEN 0 AND ?3 AND NOT EXISTS(SELECT 1 FROM refund_links WHERE refund_id=t.id AND deleted_ms IS NULL)"
+    } else {
+        "t.amount_cents>0 AND julianday(t.booking_date)-julianday(?1) BETWEEN 0 AND ?3 AND NOT EXISTS(SELECT 1 FROM refund_links WHERE refund_id=t.id AND original_id<>?2 AND deleted_ms IS NULL)"
+    };
+    out.rows = rows(
+        db,
+        &format!(
+            "{ROWS} WHERE t.deleted_ms IS NULL AND t.id<>?2 AND {direction} ORDER BY abs(julianday(t.booking_date)-julianday(?1)),t.id"
+        ),
+        params![out.date, id, days],
+        &rules,
+    )?;
+    Ok(out)
+}
+
+fn currency_code(c: &str) -> String {
+    if c.trim().is_empty() {
+        "EUR".into()
+    } else {
+        c.trim().to_uppercase()
+    }
+}
+
+/// Order numbers, invoice numbers and the like: words of at least six letters and digits with a
+/// digit among them, read without their separators (`RE-2025/7781` = `RE20257781`). Dates and
+/// amounts (digits and dots only) are no reference.
+fn reference_tokens(text: &str) -> std::collections::HashSet<String> {
+    text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')' | '+'))
+        .filter(|w| !w.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_uppercase)
+                .collect::<String>()
+        })
+        .filter(|w| {
+            w.chars().count() >= 6 && w.chars().any(|c| c.is_ascii_digit()) && w != "NOTPROVIDED"
+        })
+        .collect()
+}
+
+fn days_between(a: &str, b: &str) -> Option<i64> {
+    let day = |s: &str| crate::dates::parse_iso(s.get(..10)?);
+    Some(crate::dates::days_between(day(a)?, day(b)?).abs())
 }
 
 pub(crate) fn markers(conn: &Connection) -> CoreResult<HashMap<i64, RefundLinkKind>> {
@@ -246,11 +401,11 @@ impl Vault {
         )?;
         Ok(RefundLinks { original, refunds })
     }
-    /// Bookings `transaction_id` could be linked to: for a refund the outgoing bookings of the 365
-    /// days before it, for an outgoing booking the incoming ones of the 365 days after it that are
-    /// not linked elsewhere; all accounts and currencies. Same counterparty or merchant first, then
-    /// the nearest date. `query` filters by name and purpose. Resolves the merchant of every booking
-    /// in the window, so call it off the main thread.
+    /// The bookings `transaction_id` could be linked to, nearest date first: for a refund the
+    /// outgoing bookings before it, for an outgoing booking the incoming ones after it that are
+    /// not linked elsewhere; all accounts and currencies. Without `query` the last / next 365
+    /// days, with one (name or purpose) every such booking. Resolves the merchant of every
+    /// booking it reads, so call it off the main thread.
     pub fn refund_candidates(
         &self,
         transaction_id: i64,
@@ -258,48 +413,90 @@ impl Vault {
         limit: u32,
     ) -> CoreResult<Vec<RefundBooking>> {
         let db = self.db()?;
-        let amount = live(&db, transaction_id)?;
-        if amount == 0 || limit == 0 {
-            return Ok(Vec::new());
-        }
-        let rules = self.merchant_rules(&db)?;
-        let (date, cp, purpose): (String, String, String) = db.query_row(
-            "SELECT booking_date,counterparty,purpose FROM transactions WHERE id=?1",
-            [transaction_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )?;
-        let source_merchant = rules.resolve_with_bundled(&cp, &purpose).0.name;
-        let conflict:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND ((?2>0 AND original_id=?1) OR (?2<0 AND refund_id=?1)))",params![transaction_id,amount],|r|r.get(0))?;
-        if conflict {
-            return Ok(Vec::new());
-        }
-        let direction = if amount > 0 {
-            "t.amount_cents<0 AND julianday(t.booking_date) BETWEEN julianday(?1)-365 AND julianday(?1) AND NOT EXISTS(SELECT 1 FROM refund_links WHERE refund_id=t.id AND deleted_ms IS NULL)"
-        } else {
-            "t.amount_cents>0 AND julianday(t.booking_date) BETWEEN julianday(?1) AND julianday(?1)+365 AND NOT EXISTS(SELECT 1 FROM refund_links WHERE refund_id=t.id AND original_id<>?2 AND deleted_ms IS NULL)"
-        };
-        let mut candidates = entries(
-            &db,
-            &format!(
-                "{ROWS} WHERE t.deleted_ms IS NULL AND t.id<>?2 AND {direction} ORDER BY abs(julianday(t.booking_date)-julianday(?1)),t.id"
-            ),
-            params![date, transaction_id],
-            &rules,
-        )?;
         let query = query.trim().to_lowercase();
-        candidates.retain(|b| {
-            query.is_empty()
-                || b.counterparty.to_lowercase().contains(&query)
-                || b.purpose.to_lowercase().contains(&query)
-                || b.display_name.to_lowercase().contains(&query)
-        });
-        // same counterparty or merchant first; the sort is stable, so the nearest date leads each group
-        candidates.sort_by_key(|b| {
-            !(!cp.trim().is_empty() && b.counterparty.to_lowercase() == cp.to_lowercase()
-                || !source_merchant.is_empty() && b.display_name == source_merchant)
-        });
-        candidates.truncate(limit as usize);
-        Ok(candidates)
+        if limit == 0 {
+            live(&db, transaction_id)?;
+            return Ok(Vec::new());
+        }
+        let days = query.is_empty().then_some(WINDOW_DAYS);
+        let pool = pool(self, &db, transaction_id, days)?;
+        Ok(pool
+            .rows
+            .into_iter()
+            .map(|r| r.booking)
+            .filter(|b| {
+                query.is_empty()
+                    || b.counterparty.to_lowercase().contains(&query)
+                    || b.purpose.to_lowercase().contains(&query)
+                    || b.display_name.to_lowercase().contains(&query)
+            })
+            .take(limit as usize)
+            .collect())
+    }
+
+    /// Up to three bookings of [`refund_candidates`](Self::refund_candidates) (365 days) that most
+    /// likely belong to `transaction_id`, filled in this order, the nearest date first within
+    /// each: the same amount in the other direction, the same counterparty or merchant within
+    /// two months, a shared reference in the texts. Bookings already linked to it are left out.
+    pub fn refund_suggestions(&self, transaction_id: i64) -> CoreResult<Vec<RefundSuggestion>> {
+        const MAX: usize = 3;
+        let db = self.db()?;
+        let pool = pool(self, &db, transaction_id, Some(WINDOW_DAYS))?;
+        let linked: std::collections::HashSet<i64> = db
+            .prepare(
+                "SELECT original_id FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL
+                 UNION SELECT refund_id FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",
+            )?
+            .query_map([transaction_id], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        let source_refs = reference_tokens(&pool.reference);
+        let counterparty = pool.counterparty.trim().to_lowercase();
+        let matches = |row: &Row, reason: RefundMatch| -> bool {
+            let b = &row.booking;
+            match reason {
+                RefundMatch::SameAmount => {
+                    b.amount_cents == -pool.amount
+                        && currency_code(&b.currency) == currency_code(&pool.currency)
+                }
+                RefundMatch::SameMerchant => {
+                    (!counterparty.is_empty()
+                        && b.counterparty.trim().to_lowercase() == counterparty
+                        || !pool.merchant.is_empty() && b.display_name == pool.merchant)
+                        && days_between(&b.booking_date, &pool.date)
+                            .is_some_and(|d| d <= SUGGESTION_DAYS)
+                }
+                RefundMatch::SameReference => {
+                    !source_refs.is_empty()
+                        && !source_refs.is_disjoint(&reference_tokens(&format!(
+                            "{} {}",
+                            b.purpose, row.end_to_end_id
+                        )))
+                }
+            }
+        };
+        let mut out: Vec<RefundSuggestion> = Vec::new();
+        for reason in [
+            RefundMatch::SameAmount,
+            RefundMatch::SameMerchant,
+            RefundMatch::SameReference,
+        ] {
+            for row in &pool.rows {
+                if out.len() == MAX {
+                    return Ok(out);
+                }
+                let id = row.booking.id;
+                if linked.contains(&id) || out.iter().any(|s| s.booking.id == id) {
+                    continue;
+                }
+                if matches(row, reason) {
+                    out.push(RefundSuggestion {
+                        booking: row.booking.clone(),
+                        reason,
+                    });
+                }
+            }
+        }
+        Ok(out)
     }
 }
 

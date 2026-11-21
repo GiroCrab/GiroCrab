@@ -114,7 +114,7 @@ fn candidates_sign_window_order_filter_conflicts() {
     let ids = |rows: Vec<RefundBooking>| rows.into_iter().map(|b| b.id).collect::<Vec<_>>();
     assert_eq!(
         ids(v.refund_candidates(b[2], String::new(), 20).unwrap()),
-        vec![b[0], b[1]]
+        vec![b[1], b[0]]
     );
     assert_eq!(
         ids(v.refund_candidates(b[2], "sUcHe".into(), 20).unwrap()),
@@ -330,4 +330,174 @@ fn error_texts_have_english() {
     ] {
         assert_ne!(crate::i18n::tr_in(crate::i18n::Lang::En, de), de);
     }
+}
+
+fn add(v: &Vault, amount: i64, date: &str, cp: &str, purpose: &str) -> i64 {
+    let db = v.db().unwrap();
+    db.execute(
+        "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,counterparty,purpose) VALUES (1,?1,?2,?3,?4,?5)",
+        params![format!("X{date}{amount}{cp}{purpose}"), date, amount, cp, purpose],
+    )
+    .unwrap();
+    db.last_insert_rowid()
+}
+
+#[test]
+fn suggestions_fill_amount_then_merchant_then_reference() {
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    seed(&v);
+    let refund = add(
+        &v,
+        4_990,
+        "2025-06-20",
+        "Versandhaus",
+        "Gutschrift RE-2025-7781",
+    );
+    let far_same_amount = add(&v, -4_990, "2025-01-10", "Fremd", "");
+    let near_same_amount = add(&v, -4_990, "2025-06-01", "Fremd", "");
+    let vendor_recent = add(&v, -1_200, "2025-05-15", "versandhaus ", "");
+    let vendor_old = add(&v, -1_300, "2025-03-01", "Versandhaus", "");
+    let reference = add(
+        &v,
+        -9_900,
+        "2025-02-01",
+        "Zahlstelle",
+        "Rechnung re-2025-7781 Danke",
+    );
+    add(&v, -4_990, "2025-06-21", "Fremd", ""); // after the refund
+    let got = |id| -> Vec<(i64, RefundMatch)> {
+        v.refund_suggestions(id)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.booking.id, s.reason))
+            .collect()
+    };
+    assert_eq!(
+        got(refund),
+        vec![
+            (near_same_amount, RefundMatch::SameAmount),
+            (far_same_amount, RefundMatch::SameAmount),
+            (vendor_recent, RefundMatch::SameMerchant),
+        ]
+    );
+    // fewer amount matches: the merchant (two months only), then the reference fill up
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET amount_cents=-4991 WHERE id IN (?1,?2)",
+            [far_same_amount, near_same_amount],
+        )
+        .unwrap();
+    assert_eq!(
+        got(refund),
+        vec![
+            (vendor_recent, RefundMatch::SameMerchant),
+            (reference, RefundMatch::SameReference),
+        ]
+    );
+    assert!(!got(refund).iter().any(|(id, _)| *id == vendor_old));
+    // from the outgoing side: the refund is suggested for its original; linked ones are not
+    assert_eq!(got(reference), vec![(refund, RefundMatch::SameReference)]);
+    v.link_refund(refund, reference).unwrap();
+    assert!(got(reference).is_empty());
+    assert_eq!(
+        got(refund),
+        vec![(vendor_recent, RefundMatch::SameMerchant)]
+    );
+    assert!(v.refund_suggestions(999).is_err());
+}
+
+#[test]
+fn split_original_keeps_its_parts_and_takes_partial_refunds() {
+    use crate::models::TransactionSplitInput;
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    seed(&v);
+    let original = add(&v, -10_000, "2025-06-01", "Versandhaus", "");
+    let first = add(&v, 3_000, "2025-06-10", "Versandhaus", "");
+    let second = add(&v, 2_000, "2025-06-12", "Versandhaus", "");
+    let parts = |a: i64, b: i64| {
+        vec![
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: a,
+                note: "a".into(),
+            },
+            TransactionSplitInput {
+                category_id: None,
+                amount_cents: b,
+                note: "b".into(),
+            },
+        ]
+    };
+    let split = |v: &Vault| -> Vec<i64> {
+        v.list_transaction_splits(original)
+            .unwrap()
+            .iter()
+            .map(|s| s.amount_cents)
+            .collect()
+    };
+    // split first, link afterwards
+    v.set_transaction_splits(original, parts(-7_000, -3_000))
+        .unwrap();
+    assert!(
+        v.refund_candidates(first, String::new(), 20)
+            .unwrap()
+            .iter()
+            .any(|b| b.id == original && b.amount_cents == -10_000)
+    );
+    v.link_refund(first, original).unwrap();
+    v.link_refund(second, original).unwrap();
+    assert_eq!(split(&v), vec![-7_000, -3_000]);
+    let links = v.refund_links(original).unwrap();
+    assert_eq!(
+        links.refunds.iter().map(|r| r.amount_cents).sum::<i64>(),
+        5_000
+    );
+    assert_eq!(
+        v.refund_links(first)
+            .unwrap()
+            .original
+            .unwrap()
+            .amount_cents,
+        -10_000
+    );
+    // split again while linked, then remove the split: the links stay
+    v.set_transaction_splits(original, parts(-5_000, -5_000))
+        .unwrap();
+    assert_eq!(v.refund_links(original).unwrap().refunds.len(), 2);
+    v.set_transaction_splits(original, Vec::new()).unwrap();
+    assert_eq!(v.refund_links(original).unwrap().refunds.len(), 2);
+    let row = v
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .into_iter()
+        .find(|t| t.id == original)
+        .unwrap();
+    assert_eq!(row.refund_link, RefundLinkKind::Original);
+    assert_eq!(row.amount_cents, -10_000);
+}
+
+#[test]
+fn linked_refund_is_no_income_in_the_analysis() {
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    seed(&v);
+    let original = add(&v, -10_000, "2025-06-01", "Versandhaus", "");
+    let refund = add(&v, 3_000, "2025-06-10", "Versandhaus", "");
+    let page = |v: &Vault| v.list_transactions(BookingFilter::default()).unwrap();
+    let before = page(&v);
+    v.link_refund(refund, original).unwrap();
+    let after = page(&v);
+    assert_eq!(after.income_cents, before.income_cents - 3_000);
+    assert_eq!(after.expense_cents, before.expense_cents + 3_000);
+    assert_eq!(after.flow.income_cents, before.flow.income_cents - 3_000);
+    assert_eq!(
+        format!("{:?}", v.selection_flow(vec![], None, None).unwrap()),
+        format!("{:?}", after.flow)
+    );
+    v.unlink_refund(refund).unwrap();
+    assert_eq!(format!("{:?}", page(&v).flow), format!("{:?}", before.flow));
 }

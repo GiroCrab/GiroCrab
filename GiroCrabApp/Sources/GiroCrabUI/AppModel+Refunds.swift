@@ -2,8 +2,8 @@ import Foundation
 import GiroCrabCore
 
 /// Refund links (#714): a refund points at the booking it pays back. The link only documents
-/// what belongs together; amounts, categories and balances stay as they are, so nothing but the
-/// rows' markers needs a refresh. Layout and rules: `docs/ERSTATTUNGEN_UI.md`.
+/// what belongs together; amounts, categories and balances stay as they are. A linked refund
+/// counts as a reduced expense instead of income, so the sums and the analysis are read again. Layout and rules: `docs/ERSTATTUNGEN_UI.md`.
 extension AppModel {
     /// Opens `RefundPickerSheet`: for an incoming booking the original is chosen, for an
     /// outgoing one its refunds.
@@ -38,7 +38,7 @@ extension AppModel {
         refundLinksChanged([refundID, original])
     }
 
-    /// The loaded rows show the new marker at once (no list reload); open link views read again.
+    /// The loaded rows show the new marker at once; sums, analysis and open link views read again.
     private func refundLinksChanged(_ ids: [Int64]) {
         guard let vault else { return }
         for id in Set(ids) {
@@ -48,5 +48,7 @@ extension AppModel {
             if refundPickerBooking?.id == id { refundPickerBooking?.refundLink = kind }
         }
         refundLinksRevision += 1
+        reloadDashboard()
+        refreshAfterEdit()
     }
 }

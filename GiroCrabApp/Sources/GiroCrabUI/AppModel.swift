@@ -1109,9 +1109,12 @@ public final class AppModel {
         case "recurring":
             showRecurringSheet = true
         case "refund", "refund-linked":
-            // "Ursprüngliche Buchung zuordnen …" (#714) for the first incoming booking;
-            // `refund-linked`: already linked to the nearest candidate
-            if let refund = bookings.first(where: { $0.amountCents > 0 }) {
+            // "Ursprüngliche Buchung zuordnen …" (#714) for the first incoming booking the core
+            // has suggestions for (else the first one); `refund-linked`: already linked to the
+            // nearest candidate
+            let incoming = bookings.filter { $0.amountCents > 0 }
+            let suggested = incoming.prefix(40).first { ((try? vault?.refundSuggestions(transactionId: $0.id))?.count ?? 0) > 1 }
+            if let refund = suggested ?? incoming.first {
                 if name == "refund-linked",
                    let original = try? vault?.refundCandidates(transactionId: refund.id, query: "", limit: 1).first {
                     linkRefund(refundID: refund.id, originalID: original.id)

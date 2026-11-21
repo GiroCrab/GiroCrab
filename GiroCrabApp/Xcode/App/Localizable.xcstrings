@@ -16245,6 +16245,17 @@
         }
       }
     },
+    "Gleiche Referenz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same reference"
+          }
+        }
+      }
+    },
     "Gleiche Schreibweise wie bei Regeln: Wörter, „Phrasen“, name:, purpose:, AND, OR, NOT. Einzelne Buchungen ordnen Sie im Kontextmenü zu oder heben die Zuordnung dort auf." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16252,6 +16263,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Same syntax as rules: words, \"phrases\", name:, purpose:, AND, OR, NOT. Assign or remove single transactions in their context menu."
+          }
+        }
+      }
+    },
+    "Gleicher Betrag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same amount"
+          }
+        }
+      }
+    },
+    "Gleicher Händler" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same merchant"
           }
         }
       }
@@ -29281,6 +29314,17 @@
         }
       }
     },
+    "Suchergebnisse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search results"
+          }
+        }
+      }
+    },
     "Suchregel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32510,6 +32554,17 @@
         }
       }
     },
+    "Weitere Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "More transactions"
+          }
+        }
+      }
+    },
     "Weitere Buchungen laden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33302,24 +33357,24 @@
         }
       }
     },
-    "Wählen Sie die Buchung, die mit dieser Erstattung zurückgezahlt wurde. Vorgeschlagen werden Ausgaben aller Konten aus den zwölf Monaten davor." : {
+    "Wählen Sie die Buchung, die mit dieser Erstattung zurückgezahlt wurde. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche auch ältere." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose the transaction this refund pays back. Suggested are expenses of all accounts from the twelve months before it."
+            "value" : "Choose the transaction this refund pays back. Expenses of all accounts from the twelve months before it are offered, older ones via the search."
           }
         }
       }
     },
-    "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Vorgeschlagen werden Eingänge aller Konten aus den zwölf Monaten danach." : {
+    "Wählen Sie die Erstattungen zu dieser Buchung, auch mehrere Teilerstattungen. Zur Auswahl stehen Eingänge aller Konten aus den zwölf Monaten danach, mit der Suche auch spätere." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose the refunds for this transaction, including several partial refunds. Suggested are incoming transactions of all accounts from the twelve months after it."
+            "value" : "Choose the refunds of this transaction, several partial refunds too. Incoming transactions of all accounts from the twelve months after it are offered, later ones via the search."
           }
         }
       }
