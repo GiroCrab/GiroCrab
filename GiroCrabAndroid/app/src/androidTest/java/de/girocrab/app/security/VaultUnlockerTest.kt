@@ -4,7 +4,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.security.KeyStore
-import javax.crypto.Cipher
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -24,9 +23,15 @@ import org.junit.runner.RunWith
 class VaultUnlockerTest {
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+    /**
+     * The app's data directory is the production vault location. Both `@Before` and `@After` wipe
+     * state, so the test gets its own directory and never touches a real vault.
+     */
+    private val testDir = File(context.filesDir, "test-unlock")
     private val alias = "girocrab.test.unlock"
-    private val wrappedFile = File(File(context.filesDir, "test-unlock"), "device-key.bin")
-    private val vaultFile = File(File(context.filesDir, "vaults"), "girocrab.sqlcipher")
+    private val wrappedFile = File(testDir, "device-key.bin")
+    private val vaultFile = File(File(testDir, "vaults"), "girocrab.sqlcipher")
     private val opener = NativeVaultOpener()
 
     private fun keyStore() = VaultKeyStore(wrappedFile, alias, requireUserAuthentication = false)
@@ -34,14 +39,13 @@ class VaultUnlockerTest {
     @Before
     fun clean() {
         deleteAlias()
-        File(context.filesDir, "test-unlock").deleteRecursively()
-        vaultFile.parentFile?.deleteRecursively()
+        testDir.deleteRecursively()
+        testDir.mkdirs()
     }
 
     @After
     fun tearDown() {
-        File(context.filesDir, "test-unlock").deleteRecursively()
-        vaultFile.parentFile?.deleteRecursively()
+        testDir.deleteRecursively()
         deleteAlias()
     }
 
@@ -99,7 +103,9 @@ class VaultUnlockerTest {
     @Test
     fun foreignCipherIsRefused() {
         storeWrappedKey()
-        val foreign = Cipher.getInstance("AES/GCM/NoPadding")
+        // An *initialized* cipher from the same key: only the identity check can refuse it, so the
+        // test cannot pass just because an uninitialized cipher would fail anyway.
+        val foreign = keyStore().unlockCipher()
         val unlocker = unlocker { _, _, _, onResult ->
             onResult(PromptResult.Succeeded(foreign))
         }
@@ -154,7 +160,7 @@ class VaultUnlockerTest {
         keyStore = keyStore(),
         opener = opener,
         prompt = prompt,
-        filesDir = context.filesDir,
+        filesDir = testDir,
     )
 
     /**

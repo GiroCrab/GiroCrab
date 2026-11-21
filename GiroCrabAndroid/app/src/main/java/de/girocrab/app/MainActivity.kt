@@ -444,8 +444,13 @@ private fun GiroCrabIntro(skip: Boolean) {
  */
 private fun describe(result: UnlockResult): String = when (result) {
     is UnlockResult.Opened -> {
-        val count = result.vault.accountCount
-        result.vault.close()
+        // `accountCount` throws when the handle is unusable, so the handle is closed in `finally`
+        // — otherwise a failed read leaks the native handle.
+        val count = try {
+            result.vault.accountCount
+        } finally {
+            result.vault.close()
+        }
         "Tresor geöffnet: $count Konten. Die Anzeige folgt mit dem Mapper (#1429)."
     }
     UnlockResult.NoVaultOnDevice -> "Auf diesem Gerät liegt noch kein Tresor. Import folgt (#1428, 2.6)."
