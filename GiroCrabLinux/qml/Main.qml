@@ -663,8 +663,6 @@ ApplicationWindow {
             AppModel.errorCloseTitle = ""; AppModel.errorOnClose = null
         }
         property bool answered: false
-        // reopened for a newer alert during the exit transition: `closed` never came for the old one
-        onOpened: answered = false
         /// A button: clears this alert, closes it, then runs `action` (none: its `errorOnClose`).
         function answer(action) {
             const next = action || AppModel.errorOnClose
