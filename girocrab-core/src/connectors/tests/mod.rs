@@ -25,80 +25,6 @@ fn errors_after_submit_leave_outcome_unknown() {
 }
 
 #[test]
-fn trade_republic_files_a_depot_pdf_and_keeps_its_direct_cash_booking_link() {
-    let dir = crate::test_support::TempDir::new("girocrab-tr-document-import");
-    let v = Vault::open(
-        dir.join("v.db").to_string_lossy().into_owned(),
-        vec![3u8; 32],
-    )
-    .unwrap();
-    let kind = ConnectorKind::TradeRepublic;
-    let conn = v
-        .add_bank_connection(kind, String::new(), "login".into())
-        .unwrap();
-    let cash = RemoteAccount {
-        external_ref: "tr:cash".into(),
-        name: "Verrechnungskonto".into(),
-        kind: AccountKind::Checking,
-        currency: "EUR".into(),
-        owner: String::new(),
-        iban: String::new(),
-        account_number: String::new(),
-        balance_cents: 0,
-        balance_date: "2025-12-04".into(),
-    };
-    let depot = RemoteAccount {
-        external_ref: "tr:depot".into(),
-        name: "Depot".into(),
-        kind: AccountKind::Brokerage,
-        ..cash.clone()
-    };
-    let transaction = RemoteTransaction {
-        account_ref: "tr:cash".into(),
-        external_id: "trade-1".into(),
-        booking_date: "2025-12-04".into(),
-        value_date: "2025-12-04".into(),
-        amount_cents: -100_00,
-        currency: "EUR".into(),
-        ..Default::default()
-    };
-    store_fetch(
-        &v,
-        kind,
-        conn,
-        FetchResult {
-            accounts: vec![cash, depot],
-            transactions: vec![transaction],
-            documents: vec![crate::documents::RemoteDocument {
-                account_ref: "tr:depot".into(),
-                booking_external_id: Some("trade-1".into()),
-                doc_type: "abrechnung".into(),
-                title: "Wertpapierabrechnung".into(),
-                mime_type: "application/pdf".into(),
-                file_name: "beleg.pdf".into(),
-                source_url: "https://example.invalid/beleg.pdf".into(),
-                date: "2025-12-04".into(),
-                bytes: crate::documents::simple_pdf(&["Wertpapierabrechnung".into()]),
-            }],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let refs: (String, String) = v
-        .db()
-        .unwrap()
-        .query_row(
-            "SELECT depot.external_ref, cash.external_ref
-           FROM booking_documents d JOIN accounts depot ON depot.id = d.account_id
-           JOIN transactions t ON t.id = d.booking_id JOIN accounts cash ON cash.id = t.account_id",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(refs, ("tr:depot".into(), "tr:cash".into()));
-}
-
-#[test]
 fn store_fetch_matches_depot_holdings_without_iban() {
     let p_dir = crate::test_support::TempDir::new("girocrab-depot");
     let p = p_dir.join("v.db");
@@ -1943,6 +1869,51 @@ fn fetch_with_document() -> FetchResult {
         }],
         ..Default::default()
     }
+}
+
+#[test]
+fn comdirect_keeps_an_ambiguous_postbox_document_without_an_account() {
+    let dir = crate::test_support::TempDir::new("girocrab-comdirect-ambiguous-postbox");
+    let v = Vault::open(
+        dir.join("v.db").to_string_lossy().into_owned(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let kind = ConnectorKind::Comdirect;
+    let conn = v
+        .add_bank_connection(kind, String::new(), "login".into())
+        .unwrap();
+    let mut fetched = fetch_with_document();
+    let first = &mut fetched.accounts[0];
+    first.external_ref = "giro-1".into();
+    first.name = "Girokonto 1".into();
+    first.iban = "DE75200411550765432100".into();
+    fetched.accounts.push(RemoteAccount {
+        external_ref: "giro-2".into(),
+        name: "Girokonto 2".into(),
+        iban: "DE61200411550876543210".into(),
+        ..fetched.accounts[0].clone()
+    });
+    let notice = &mut fetched.documents[0];
+    notice.account_ref.clear();
+    notice.title = "Kundeninformation".into();
+    notice.source_url = "comdirect:postbox:ambiguous".into();
+    comdirect_postbox::assign_documents(
+        &mut fetched.documents,
+        &fetched.accounts.iter().collect::<Vec<_>>(),
+    );
+    assert!(fetched.documents[0].account_ref.is_empty());
+    store_fetch(&v, kind, conn, fetched).unwrap();
+    let account_id: Option<i64> = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT account_id FROM booking_documents WHERE source_url = ?1",
+            ["comdirect:postbox:ambiguous"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(account_id, None);
 }
 
 #[test]

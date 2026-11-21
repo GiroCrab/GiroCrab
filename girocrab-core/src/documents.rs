@@ -202,9 +202,9 @@ const EBCDIC_273: [u16; 256] = [
 
 /// Whether the strings of a content stream are EBCDIC rather than ASCII/Latin-1 text: the letters,
 /// digits and the space of EBCDIC outweigh those of ASCII by far.
-fn looks_ebcdic(strings: &[Vec<u8>]) -> bool {
+fn looks_ebcdic(bytes: impl Iterator<Item = u8>) -> bool {
     let (mut ebcdic, mut ascii, mut total) = (0usize, 0usize, 0usize);
-    for &b in strings.iter().flatten() {
+    for b in bytes {
         total += 1;
         if matches!(b, 0x40 | 0x81..=0x89 | 0x91..=0x99 | 0xA2..=0xA9 | 0xC1..=0xC9 | 0xD1..=0xD9 | 0xE2..=0xE9 | 0xF0..=0xF9)
         {
@@ -219,19 +219,25 @@ fn looks_ebcdic(strings: &[Vec<u8>]) -> bool {
 
 /// Whether bytes read as text (letters, digits, spaces, punctuation): hex strings of a CID font hold
 /// glyph numbers (many zero bytes) and are no text.
-fn looks_texty(strings: &[Vec<u8>]) -> bool {
-    let total: usize = strings.iter().map(Vec::len).sum();
-    let texty = strings
+fn looks_texty(bytes: &[u8], ebcdic: bool) -> bool {
+    if bytes.is_empty() || bytes.contains(&0) {
+        return false;
+    }
+    let texty = bytes
         .iter()
-        .flatten()
-        .filter(|&&b| (0x20..0x7F).contains(&b) || b >= 0xA0)
+        .filter(|&&b| {
+            if ebcdic {
+                EBCDIC_273[b as usize] >= 0x20 && !(0x7F..=0x9F).contains(&EBCDIC_273[b as usize])
+            } else {
+                (0x20..0x7F).contains(&b) || b >= 0xA0
+            }
+        })
         .count();
-    total > 0 && texty * 10 >= total * 8
+    texty * 10 >= bytes.len() * 8
 }
 
 fn literal_strings(content: &[u8], out: &mut String) {
-    let mut strings: Vec<Vec<u8>> = Vec::new();
-    let mut hex_strings: Vec<Vec<u8>> = Vec::new();
+    let mut strings = Vec::new();
     // hex strings are text only in a stream that shows text (a CMap or a dictionary holds hex pairs too)
     let shows_text = find(content, b"BT", 0).is_some()
         && (find(content, b"Tj", 0).is_some() || find(content, b"TJ", 0).is_some());
@@ -267,7 +273,7 @@ fn literal_strings(content: &[u8], out: &mut String) {
                 }
                 i += 1;
             }
-            strings.push(s);
+            strings.push((s, false));
         } else if shows_text
             && content[i] == b'<'
             && content.get(i + 1) != Some(&b'<')
@@ -289,29 +295,26 @@ fn literal_strings(content: &[u8], out: &mut String) {
                 if digits.len() % 2 == 1 {
                     digits.push(b'0');
                 }
-                hex_strings.push(
-                    digits
-                        .chunks(2)
-                        .map(|p| {
-                            u8::from_str_radix(std::str::from_utf8(p).unwrap_or("0"), 16)
-                                .unwrap_or(0)
-                        })
-                        .collect(),
-                );
+                let bytes: Vec<u8> = digits
+                    .chunks(2)
+                    .map(|p| {
+                        u8::from_str_radix(std::str::from_utf8(p).unwrap_or("0"), 16).unwrap_or(0)
+                    })
+                    .collect();
+                if looks_texty(&bytes, false) || looks_texty(&bytes, true) {
+                    strings.push((bytes, true));
+                }
             }
             i = j + 1;
         } else {
             i += 1;
         }
     }
-    let ebcdic = looks_ebcdic(&[strings.clone(), hex_strings.clone()].concat());
-    // hex strings count only when they read as text (EBCDIC decoded, or plain)
-    let kept_hex: &[Vec<u8>] = if ebcdic || looks_texty(&hex_strings) {
-        &hex_strings
-    } else {
-        &[]
-    };
-    for s in strings.iter().chain(kept_hex) {
+    let ebcdic = looks_ebcdic(strings.iter().flat_map(|(bytes, _)| bytes.iter().copied()));
+    for (s, is_hex) in strings {
+        if is_hex && !looks_texty(&s, ebcdic) {
+            continue;
+        }
         if ebcdic {
             out.extend(
                 s.iter()
@@ -413,35 +416,60 @@ fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
 /// "Kosteninformation", "Kundeninformation …", "Dividende Wahlweise", "Eröffnungsantrag" and the like.
 /// Keyword based; what a connector knows better (the event behind a document) it refines itself.
 pub fn type_from_title(lower_title: &str) -> &'static str {
-    let rules = &*DOCUMENT_RULES;
-    rules
-        .dokumenttypen
+    TITLE_RULES
         .iter()
-        .find(|rule| {
-            rule.enthaelt
-                .iter()
-                .any(|word| lower_title.contains(word.as_str()))
-        })
-        .map_or(rules.standard.as_str(), |rule| rule.typ.as_str())
+        .find(|(_, words)| words.iter().any(|word| lower_title.contains(word)))
+        .map_or("beleg", |(kind, _)| *kind)
 }
 
-/// Ordered title rules for `type_from_title`, read from `data/document_rules.json`.
-#[derive(serde::Deserialize)]
-struct DocumentRules {
-    dokumenttypen: Vec<TypeRule>,
-    standard: String,
-}
-
-#[derive(serde::Deserialize)]
-struct TypeRule {
-    typ: String,
-    enthaelt: Vec<String>,
-}
-
-static DOCUMENT_RULES: LazyLock<DocumentRules> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../data/document_rules.json"))
-        .expect("data/document_rules.json is valid")
-});
+// The first matching title rule wins.
+const TITLE_RULES: &[(&str, &[&str])] = &[
+    (
+        "steuer",
+        &["steuer", "ertragsaufstellung", "vorabpauschale"],
+    ),
+    (
+        "kontoauszug",
+        &["auszug", "statement", "abschluss", "finanzreport"],
+    ),
+    (
+        "postbox",
+        &[
+            "wahlweise",
+            "kundenvereinbarung",
+            "rechtliche",
+            "mitteilung",
+            "information",
+            "kundenanschreiben",
+            "bedingungsänderung",
+            "vertragsunterlagen",
+            "antrag",
+            "löschbestätigung",
+            "prospekt",
+            "hauptversammlung",
+            "rückkaufangebot",
+            "geschäftsbedingungen",
+            "agb",
+            "agreement",
+            "datenschutz",
+            "leistungsverzeichnis",
+            "eignungsprüfung",
+            "treuhand",
+            "hinweise",
+        ],
+    ),
+    (
+        "abrechnung",
+        &[
+            "abrechnung",
+            "bestätigung",
+            "dividende",
+            "ausführungsanzeige",
+            "ertragsgutschrift",
+            "thesaurierend",
+        ],
+    ),
+];
 
 /// Type of a document that belongs to an account, not to a booking: like `type_from_title`, but a
 /// document that is nothing in particular is a PostBox notice.
@@ -1306,6 +1334,30 @@ mod tests {
     }
 
     #[test]
+    fn cid_glyphs_do_not_change_the_encoding_of_readable_text() {
+        let glyphs = "00C1".repeat(60);
+        let mut out = String::new();
+        literal_strings(
+            format!("BT (IBAN DE75200411550765432100) Tj <{glyphs}> Tj ET").as_bytes(),
+            &mut out,
+        );
+        assert_eq!(out.trim(), "IBAN DE75200411550765432100");
+    }
+
+    #[test]
+    fn mixed_literal_and_hex_text_keeps_an_iban_in_source_order() {
+        let mut out = String::new();
+        literal_strings(
+            b"BT (IBAN DE75 ) Tj <323030343131353530373635343332313030> Tj ( Kontostand) Tj ET",
+            &mut out,
+        );
+        assert_eq!(
+            out.split_whitespace().collect::<String>(),
+            "IBANDE75200411550765432100Kontostand",
+        );
+    }
+
+    #[test]
     fn a_text_stream_after_a_picture_object_is_not_skipped_as_an_image() {
         // the object before holds "/Subtype /Image"; this stream's own dictionary is plain
         let content = b"BT (Wertpapierkauf 24,94 EUR) Tj ET";
@@ -1394,25 +1446,64 @@ mod tests {
             );
         }
         assert_eq!(account_document_type("Rechnung"), "postbox");
-        assert_eq!(DOCUMENT_RULES.standard, "beleg");
+        assert_eq!(type_from_title("rechnung"), "beleg");
     }
 
     #[test]
     fn the_rule_examples_have_the_expected_document_types() {
-        let rules: serde_json::Value =
-            serde_json::from_str(include_str!("../data/document_rules.json")).unwrap();
-        let examples = rules["pruefbeispiele"].as_array().unwrap();
-        assert!(
-            examples.len() >= 15,
-            "keep the examples of every document family"
-        );
-        for e in examples {
-            let title = e["titel"].as_str().unwrap();
-            assert_eq!(
-                account_document_type(title),
-                e["typ"].as_str().unwrap(),
-                "{title}"
-            );
+        for (title, expected) in [
+            (
+                "Wertpapierabrechnung Kauf 12,5 St. WKN A1JX52 (VANGUARD FTSE ALL-WORLD) vom 01.02.2024",
+                "abrechnung",
+            ),
+            (
+                "Wertpapierabrechnung Verkauf 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024",
+                "abrechnung",
+            ),
+            (
+                "Dividendengutschrift 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024",
+                "abrechnung",
+            ),
+            (
+                "Ertragsgutschrift 100 St. WKN 847101 (FONDAK P) vom 10.10.2024",
+                "abrechnung",
+            ),
+            (
+                "Gutschrift thesaurierend 100 St. WKN ETF001 vom 01.02.2024",
+                "abrechnung",
+            ),
+            ("Steuermitteilung WKN A1JX52 vom 31.07.2024", "steuer"),
+            ("Jahressteuerbescheinigung 2023", "steuer"),
+            ("Finanzreport Nr. 12 per 31.12.2024", "kontoauszug"),
+            (
+                "Kosteninformation MSCI World WKN A1H2QY vom 01.03.2024",
+                "postbox",
+            ),
+            (
+                "Kauf - WKN A1JX52 - Wertpapierabrechnung vom 23.07.2021 zu Depot 1 - Ordernr. 2",
+                "abrechnung",
+            ),
+            (
+                "Ertragsabrechnung Dividenden vom 01.06.2023 zu Depot 1",
+                "abrechnung",
+            ),
+            ("Depotauszug vom 15.01.2023 zu Depot 1", "kontoauszug"),
+            (
+                "Kontoauszug 3/2024 vom 31.03.2024 zu Konto 1",
+                "kontoauszug",
+            ),
+            ("Rechnungsabschluss 2024 Konto 1 EUR", "kontoauszug"),
+            ("Erträgnisabrechnung IE00B3RBWM25", "abrechnung"),
+            ("Quartalsbericht Q3 2024 Globales Portfolio", "postbox"),
+            ("OnlineAuszug-Nr 12 2025", "kontoauszug"),
+            (
+                "Wertpapierabrechnung Sparplan – JPM USD EM Bond",
+                "abrechnung",
+            ),
+            ("Dividende – Apple", "abrechnung"),
+            ("Kosteninformation – Apple", "postbox"),
+        ] {
+            assert_eq!(account_document_type(title), expected, "{title}");
         }
     }
 
