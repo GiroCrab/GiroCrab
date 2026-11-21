@@ -142,8 +142,10 @@ pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
 /// Step 36 (#998): the MoneyMoney import of v0.8.5 read `cancel_tsp` (when the last refresh of an
 /// account was cancelled there, e.g. a TAN not confirmed) as "closed" and archived accounts that
 /// are in use: they left the totals and syncs skipped them. Such an archive carries MoneyMoney's
-/// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]); only accounts the
-/// importer owns were archived that way, and the vault merge copies time and stamp as a pair.
+/// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]), and the vault merge
+/// copies time and stamp as a pair. Only the import archived that way: accounts that still carry
+/// its reference, and those with its bookings (`mm-…`) – a fetch took them over by IBAN in the
+/// meantime (the reference is gone, the archive stayed), or the import merged into a bank account.
 /// The reactivation is stamped one millisecond after that wrong archive: the merge carries it to
 /// devices that still hold the archive, an edit made after it (on any device) still wins, and two
 /// devices that repair the same account stamp it alike, so neither takes the other's. Some of these
@@ -156,7 +158,10 @@ fn unarchive_cancelled_refreshes(conn: &Connection) -> CoreResult<()> {
         .prepare(
             "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1
               WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?1
-                AND deleted_ms IS NULL AND external_ref LIKE 'moneymoney-db:%'
+                AND deleted_ms IS NULL
+                AND (external_ref LIKE 'moneymoney-db:%'
+                     OR EXISTS (SELECT 1 FROM transactions t
+                                 WHERE t.account_id = accounts.id AND t.external_id LIKE 'mm-%'))
               RETURNING id",
         )?
         .query_map([ARCHIVE_STAMP_GAP_MS], |r| r.get(0))?
@@ -1102,8 +1107,9 @@ mod tests {
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for
-    /// the next import; an account the user archived, a deleted one, an archive from before the
-    /// stamps and one the importer does not own stay as they are.
+    /// the next import, also once a fetch took it over (its bookings show the import); an account
+    /// the user archived, a deleted one, an archive from before the stamps and a bank account
+    /// without imported bookings stay as they are.
     #[test]
     fn accounts_archived_for_a_cancelled_refresh_are_reactivated() {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -1115,7 +1121,10 @@ mod tests {
                (1,'moneymoney-db:2','Alte Karte',1790002000,1790002000456,NULL),
                (1,'moneymoney-db:3','Gelöscht',1790000000,1790001000123,1790003000000),
                (1,'moneymoney-db:4','Früher archiviert',1700000000,0,NULL),
-               (1,'DE89370400440532013000','Bankkonto',1790000000,1790001000123,NULL);
+               (1,'DE89370400440532013000','Bankkonto',1790000000,1790001000123,NULL),
+               (1,'DE02120300000000202051','Übernommen',1790000000,1790001000123,NULL);
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 SELECT id, 'mm-abc-1', '2026-01-01', -5 FROM accounts WHERE name = 'Übernommen';
              PRAGMA user_version = 35;",
         )
         .unwrap();
@@ -1143,10 +1152,12 @@ mod tests {
         assert_eq!(row("Gelöscht").1, Some(1790000000));
         assert_eq!(row("Früher archiviert").1, Some(1700000000));
         assert_eq!(row("Bankkonto").1, Some(1790000000));
-        assert_eq!(
-            crate::importers::moneymoney_db::archive_unknown(&conn).unwrap(),
-            vec![giro]
-        );
+        // taken over by a fetch: the import's reference is gone, its bookings show it
+        let (adopted, archived, _) = row("Übernommen");
+        assert_eq!(archived, None);
+        let mut noted = crate::importers::moneymoney_db::archive_unknown(&conn).unwrap();
+        noted.sort_unstable();
+        assert_eq!(noted, vec![giro, adopted]);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
