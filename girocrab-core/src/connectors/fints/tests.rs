@@ -100,6 +100,8 @@ fn mock_bank(
 const REJECT_9010: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Der Dialog wurde abgebrochen.'HIRMS:3:2:3+9010::Ungültiger Signaturaufbau: Fehler im Segmentaufbau.'";
 const ACCEPT: &str =
     "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'";
+/// Booked balance 1234,56 EUR (HKSAL).
+const BALANCE: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:7:3+X+Girokonto+EUR+C:1234,56:EUR:20250102'";
 const STALE_SYSTEM_ID: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::abgebrochen.'HIRMS:3:2:3+9931::Anmeldename falsch.'HIRMS:4:2:3+9010::Fehler.'";
 
 fn two_step_connector(url: &str, state: serde_json::Value) -> FinTsConnector {
@@ -1487,7 +1489,6 @@ async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
     // #1083 (flatex): the camt request gets 0030, a TAN the running fetch cannot
     // ask for. MT940 would only send the next TAN to the app; the other
     // account's balance is stored and the failure reported with the sync.
-    const BALANCE: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:7:3+X+Girokonto+EUR+C:1234,56:EUR:20250102'";
     const TAN: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:4+0030::Auftrag empfangen - TAN erforderlich.'HITAN:4:6:4+4++TASK1+TAN eingeben'";
     let (url, seen) = mock_bank(vec![BALANCE, TAN]);
     let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKCAZ": [1], "HKKAZ": [7]}, "tan_required": {"HKCAZ": true, "HKKAZ": true}, "camt_formats": ["urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"]});
@@ -1529,4 +1530,23 @@ fn hispas_advertises_pain_001_09_for_hkccs() {
         b"HICCSS:10:1:3+1+1+0'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.008.001.08'",
     ));
     assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V09));
+}
+
+#[tokio::test]
+async fn a_rejected_account_list_is_no_warning_when_the_upd_lists_the_accounts() {
+    // #1083 (flatex): HKSPA is answered with 9380 on every sync; the UPD lists
+    // every account, so the sync is complete and must not say otherwise.
+    const NO_PERMISSION: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+9050::Teilweise fehlerhaft.'HIRMS:3:2:3+9380::Benutzer hat keine Auftragsberechtigung.'";
+    let (url, _) = mock_bank(vec![NO_PERMISSION, BALANCE]);
+    let mut c = order_connector(&url);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd = vec![upd_acc("0532013000", "", IBAN_A, "Girokonto", &["HKSAL"])];
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(r.accounts.len(), 1);
+
+    // Without UPD accounts the rejection is the reason nothing came: still reported.
+    let (url, _) = mock_bank(vec![NO_PERMISSION]);
+    let e = order_connector(&url).fetch(&test_ctx()).await.unwrap_err();
+    assert!(e.to_string().contains("HKSPA"), "{e}");
 }
