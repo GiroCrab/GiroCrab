@@ -294,6 +294,18 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Dokumentenabruf ist für diesen Zugang ausgeschaltet." => {
             "Document retrieval is switched off for this connection."
         }
+        "Der Name des Händlers fehlt." => "The merchant name is missing.",
+        "Der Name des Händlers ist länger als 80 Zeichen." => {
+            "The merchant name is longer than 80 characters."
+        }
+        "Diesen Händler gibt es in der eingebauten Liste nicht." => {
+            "This merchant is not in the built-in list."
+        }
+        "Diesen eigenen Händler gibt es nicht mehr." => "This custom merchant no longer exists.",
+        "Ein Suchwort ist länger als 60 Zeichen." => "A search word is longer than 60 characters.",
+        "Mindestens ein Suchwort mit zwei oder mehr Buchstaben oder Ziffern angeben." => {
+            "Enter at least one search word with two or more letters or digits."
+        }
         "Der Name des Tags fehlt." => "The tag name is missing.",
         "Der Name des Tags ist länger als 64 Zeichen." => {
             "The tag name is longer than 64 characters."
@@ -939,8 +951,8 @@ fn english(de: &str) -> Option<&'static str> {
             "OAuth device login + GraphQL API of the official CLI"
         }
         "(nicht nötig – Anmeldung im Browser)" => "(not needed – sign in in the browser)",
-        "Vorher auf scalable.capital unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff." => {
-            "First enable CLI access on scalable.capital under Profile → Security → “Agentic Investing”. You sign in in the browser; the login has to be renewed every 7 days. Read-only."
+        "Vorher im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff." => {
+            "First enable CLI access in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”. You sign in in the browser; the login has to be renewed every 7 days. Read-only."
         }
         "Keine Scalable-Sitzung – bitte anmelden." => "No Scalable session – please sign in.",
         "Scalable-Sitzung abgelaufen ({0}) – bitte erneut anmelden." => {
@@ -953,14 +965,16 @@ fn english(de: &str) -> Option<&'static str> {
             "Scalable Capital: could not start the login ({0}: {1})."
         }
         "Bei Scalable Capital im Browser anmelden" => "Sign in to Scalable Capital in the browser",
-        "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe." => {
-            "Open {0} and confirm the code {1} there. GiroCrab then waits for the approval automatically."
+        "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe. Erscheint dort „Aktivierung abgelehnt – Wir können Ihr Gerät nicht aktivieren“, schalten Sie zuerst im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den Zugriff ein und starten Sie die Anmeldung neu." => {
+            "Open {0} and confirm the code {1} there. GiroCrab then waits for the approval automatically. If it shows “Activation denied – We are not able to activate your device”, first switch on access in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”, and start the login again."
         }
         "Browser-Anmeldung" => "Browser login",
         "Die Browser-Anmeldung ist abgelaufen – bitte erneut starten." => {
             "The browser login expired – please start again."
         }
-        "Die Anmeldung wurde im Browser abgelehnt." => "The login was declined in the browser.",
+        "Die Anmeldung wurde im Browser abgelehnt. Prüfen Sie, ob im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ der Zugriff eingeschaltet ist, und starten Sie die Anmeldung neu." => {
+            "The login was declined in the browser. Check that access is switched on in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”, and start the login again."
+        }
         "Anmeldung in der Scalable-App freigeben" => "Approve the login in the Scalable app",
         "Scalable Capital hat eine Freigabe-Anfrage an Ihr verknüpftes Gerät gesendet. Bitte dort bestätigen." => {
             "Scalable Capital sent an approval request to your linked device. Please confirm it there."
@@ -1184,6 +1198,50 @@ fn english(de: &str) -> Option<&'static str> {
             "Kontist: The list of bookings was not delivered completely. Please start the sync again."
         }
         // ------------------------------------------------------------ connectors/uberspace.rs
+        // ------------------------------------------------------------ connectors/hanseatic.rs
+        "Online-Banking (Direkt-Login, Freigabe in der App)" => {
+            "Online banking (direct login, approval in the app)"
+        }
+        "Hanseatic Bank: Kreditkarten mit vorgemerkten Umsätzen sowie SparBriefe, Tages- und Festgeld mit Saldo und Umsätzen. Ältere Umsätze, für die die Bank eine zusätzliche Freigabe verlangt, werden nicht abgerufen. Die erste Anmeldung wird in der App der Hanseatic Bank (oder per smsTAN) bestätigt; danach merkt sich GiroCrab das Gerät. Kontoauszüge und weitere Dokumente aus der Postbox lassen sich abrufen; ungelesene Dokumente gelten danach bei der Bank als gelesen. Inoffiziell: nutzt die Schnittstelle des Online-Bankings, Änderungen sind möglich." => {
+            "Hanseatic Bank: credit cards with pending transactions as well as SparBrief, instant-access and fixed-term savings with balance and transactions. Older transactions for which the bank requires an additional approval are not fetched. The first login is approved in the Hanseatic Bank app (or via smsTAN); GiroCrab then remembers the device. Statements and other Postbox documents can be fetched; unread documents then count as read at the bank. Unofficial: uses the interface of the online banking, changes are possible."
+        }
+        "Hanseatic Bank: Antwort nicht erkannt (Online-Banking geändert?)." => {
+            "Hanseatic Bank: response not recognised (online banking changed?)."
+        }
+        "Hanseatic Bank: Unvollständige oder ungültige Antwort. Es wurden keine Daten übernommen." => {
+            "Hanseatic Bank: Incomplete or invalid response. No data was imported."
+        }
+        "Hanseatic Bank: Anmeldung fehlgeschlagen. Bitte Kundennummer und Passwort prüfen." => {
+            "Hanseatic Bank: Login failed. Please check customer number and password."
+        }
+        "Hanseatic Bank: Der Zugang ist gesperrt. Bitte an die Bank wenden." => {
+            "Hanseatic Bank: Access is locked. Please contact the bank."
+        }
+        "Hanseatic Bank: Die Sitzung wurde beendet. Bitte den Abruf erneut starten." => {
+            "Hanseatic Bank: The session has ended. Please start the sync again."
+        }
+        "Hanseatic Bank: Die Anmeldung wurde in der App nicht bestätigt." => {
+            "Hanseatic Bank: The login was not approved in the app."
+        }
+        "Hanseatic Bank: Die Freigabe in der App ist abgelaufen. Bitte den Abruf erneut starten." => {
+            "Hanseatic Bank: The approval in the app has expired. Please start the sync again."
+        }
+        "Hanseatic Bank: Die smsTAN ist ungültig." => "Hanseatic Bank: The smsTAN is invalid.",
+        "Hanseatic Bank: Die Anfrage wurde abgelehnt." => {
+            "Hanseatic Bank: The request was rejected."
+        }
+        "Hanseatic Bank: Unerwartete Weiterleitung zu einer fremden Adresse – abgebrochen." => {
+            "Hanseatic Bank: Unexpected redirect to another address – aborted."
+        }
+        "Hanseatic Bank: Kundennummer und Passwort erforderlich." => {
+            "Hanseatic Bank: Customer number and password required."
+        }
+        "Bitte die Anmeldung in der App der Hanseatic Bank bestätigen." => {
+            "Please approve the login in the Hanseatic Bank app."
+        }
+        "Bitte die smsTAN eingeben, die die Hanseatic Bank an die hinterlegte Mobilnummer gesendet hat." => {
+            "Please enter the smsTAN the Hanseatic Bank sent to your registered mobile number."
+        }
         "Web-Dashboard (Direkt-Login)" => "Web dashboard (direct login)",
         "E-Mail-Adresse" => "Email address",
         "Uberspace-Hosting: Guthaben und Buchungen aller Asteroids, die zur E-Mail-Adresse des Dashboards gehören. Inoffiziell: liest die Seiten des Dashboards, Änderungen sind möglich." => {
