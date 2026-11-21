@@ -4210,6 +4210,192 @@ fn a_known_card_with_an_iban_wins_over_a_reactivated_one_without() {
     assert_eq!(adopt(), Some(active));
 }
 
+/// A login with imported cards for the `adopt_account` tests: (vault, connection, card inserter).
+fn cards_login() -> (Arc<Vault>, i64, i64) {
+    let v = vault();
+    let conn_id = v
+        .add_bank_connection(
+            ConnectorKind::AmazonVisa,
+            String::new(),
+            "visa-login".into(),
+        )
+        .unwrap();
+    let gid = Vault::ensure_group(&v.db().unwrap(), "Kreditkarten", "creditcard", 1).unwrap();
+    (v, conn_id, gid)
+}
+
+fn insert_card(
+    db: &Connection,
+    conn_id: i64,
+    gid: i64,
+    ext: &str,
+    iban: &str,
+    number: &str,
+    currency: &str,
+) -> i64 {
+    db.execute(
+        "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, account_number, currency, kind, balance_cents)
+         VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, 'credit_card', 0)",
+        params![conn_id, gid, ext, iban, number, currency],
+    )
+    .unwrap();
+    db.last_insert_rowid()
+}
+
+#[test]
+fn a_reactivated_card_is_no_fallback_while_known_ones_are_ambiguous() {
+    // two known cards with an IBAN fit equally well: no guess, and certainly not the
+    // reactivated one without an IBAN (it may be a closed card)
+    let (v, conn_id, gid) = cards_login();
+    let db = v.db().unwrap();
+    let old = insert_card(&db, conn_id, gid, "moneymoney-db:30:aaaa", "", "", "EUR");
+    insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:31:bbbb",
+        "DE89370400440532013000",
+        "",
+        "EUR",
+    );
+    insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:32:cccc",
+        "DE02120300000000202051",
+        "",
+        "EUR",
+    );
+    note_archive_unknown(&db, &[old]).unwrap();
+    let adopted = adopt_account(
+        &db,
+        conn_id,
+        "visa:1",
+        "",
+        "",
+        "EUR",
+        AccountKind::CreditCard,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(adopted, None);
+}
+
+#[test]
+fn a_card_number_in_another_currency_is_not_taken_over() {
+    // the number matches the USD card, the fetch is in EUR: the EUR card is the one
+    let (v, conn_id, gid) = cards_login();
+    let db = v.db().unwrap();
+    let usd = insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:40:dddd",
+        "",
+        "4871000011112222",
+        "USD",
+    );
+    let eur = insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:41:eeee",
+        "",
+        "5232000033334444",
+        "EUR",
+    );
+    let adopted = adopt_account(
+        &db,
+        conn_id,
+        "visa:2",
+        "",
+        "4871000011112222",
+        "EUR",
+        AccountKind::CreditCard,
+        &["4871000011112222"],
+    )
+    .unwrap();
+    assert_ne!(adopted, Some(usd));
+    assert_eq!(adopted, Some(eur));
+}
+
+#[test]
+fn a_foreign_closed_account_leaves_the_repair_note_of_its_target() {
+    // #998: the closed Visa-Karte is merged into another account the repair noted; that
+    // one's state comes from its own MoneyMoney account, not from this one
+    let v = vault();
+    let other = {
+        let db = v.db().unwrap();
+        let gid = Vault::ensure_group(&db, "Kreditkarten", "creditcard", 1).unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name, currency, kind, balance_cents)
+             VALUES (?1, 'moneymoney-db:99:ffff', 'Andere Karte', 'EUR', 'credit_card', 0)",
+            [gid],
+        )
+        .unwrap();
+        let id = db.last_insert_rowid();
+        note_archive_unknown(&db, &[id]).unwrap();
+        id
+    };
+    let path = fake_db_with(false, "UPDATE accounts SET refresh = 16 WHERE rowid = 2;");
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, false);
+    for c in o.accounts.iter_mut().filter(|c| c.mm_id == 2) {
+        c.target_account_id = Some(other);
+    }
+    v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    let db = v.db().unwrap();
+    let archived: Option<i64> = db
+        .query_row(
+            "SELECT archived_unix FROM accounts WHERE id = ?1",
+            [other],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived, None);
+    assert_eq!(archive_unknown(&db).unwrap(), vec![other]);
+}
+
+#[test]
+fn reimport_moves_accounts_to_the_connection_chosen_now() {
+    // imported with the bank's own connection, imported again with Enable Banking before
+    // the first fetch: the accounts follow, the new connection is not left empty
+    let v = vault();
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    v.import_moneymoney_database(path.clone(), PW.into(), options_from(&p, true))
+        .unwrap();
+    let direct = account_by_name(&v, "Girokonto").connection_id.unwrap();
+    let c24 = psd2_catalog()
+        .into_iter()
+        .find(|b| b.aspsp == "C24")
+        .unwrap();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, true);
+    o.bank_choices = vec![MoneyMoneyDbBankChoice {
+        mm_bank_id: 1,
+        connection: Some(MoneyMoneyDbConnectionOption {
+            via: MoneyMoneyDbConnectionVia::EnableBanking,
+            connector: ConnectorKind::EnableBanking,
+            key: format!("enablebanking:{}:{}", c24.country, c24.aspsp),
+            psd2_bank: Some(c24),
+        }),
+    }];
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert_eq!(r.psd2_connections.len(), 1);
+    let eb = r.psd2_connections[0].connection_id;
+    assert_ne!(eb, direct);
+    assert!(!r.psd2_connections[0].accounts.is_empty());
+    assert_eq!(account_by_name(&v, "Girokonto").connection_id, Some(eb));
+}
+
 #[test]
 fn external_refs_never_change() {
     // Imported accounts are matched again by this ref on the next import.

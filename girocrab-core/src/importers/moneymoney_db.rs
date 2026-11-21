@@ -2467,11 +2467,15 @@ pub(crate) fn adopt_account(
         // an IBAN of its own is otherwise never taken over without matching it
         let widen = kind == AccountKind::CreditCard
             || (kind == AccountKind::Checking && external_ref == "tr:cash");
+        // only accounts in the fetched currency ("" = any) are candidates, by card
+        // number or not: a card in another currency is never taken over
+        let currency = currency.trim().to_uppercase();
         let rows: Vec<_> = rows
             .into_iter()
-            .filter(|(_, _, has_iban, _)| widen || !has_iban)
+            .filter(|(_, _, has_iban, cur)| {
+                (widen || !has_iban) && (currency.is_empty() || cur.is_empty() || *cur == currency)
+            })
             .collect();
-        let currency = currency.trim().to_uppercase();
         let card = kind == AccountKind::CreditCard;
         // the other way reports a marked account under another reference
         // (FinTS `<number>-Depot`, REST its depot id): the only live one of
@@ -2537,29 +2541,37 @@ pub(crate) fn adopt_account(
             }
             // else the only one of its kind (also a replacement card with a new
             // number), preferring those without an IBAN; widened: the only one,
-            // with or without an IBAN. Both in the fetched currency ("" = any), and
-            // in both those whose state is known first: a card the #998 repair
-            // reactivated never wins over a known one. A card that another card of
-            // this fetch matches by number waits for that one, whatever the order.
+            // with or without an IBAN. In both those whose state is known first: a
+            // card the #998 repair reactivated never wins over a known one. A card
+            // that another card of this fetch matches by number waits for that one,
+            // whatever the order.
             let taken_by_number = |number: &str| {
                 card && fetched_cards
                     .iter()
                     .any(|fetched| same_card_number(number, fetched))
             };
+            let fits = |number: &str, has_iban: bool, widened: bool| {
+                !taken_by_number(number) && (widened || !has_iban)
+            };
             let single = |widened: bool, known_only: bool| {
-                unique(rows.iter().filter(|(id, number, has_iban, cur)| {
-                    !taken_by_number(number)
-                        && !(known_only && unknown.contains(id))
-                        && (currency.is_empty() || cur.is_empty() || *cur == currency)
-                        && (widened || !has_iban)
+                unique(rows.iter().filter(|(id, number, has_iban, _)| {
+                    fits(number, *has_iban, widened) && !(known_only && unknown.contains(id))
                 }))
                 .map(|(id, _, _, _)| *id)
             };
+            // a reactivated card is the fallback only when no known one fits at all;
+            // several known ones are ambiguous, not a reason to take it
+            let known_fits = rows.iter().any(|(id, number, has_iban, _)| {
+                fits(number, *has_iban, widen) && !unknown.contains(id)
+            });
             by_number
                 .or_else(|| single(false, true))
                 .or_else(|| if widen { single(true, true) } else { None })
-                .or_else(|| single(false, false))
-                .or_else(|| if widen { single(true, false) } else { None })
+                .or_else(|| match known_fits {
+                    true => None,
+                    false => single(false, false)
+                        .or_else(|| if widen { single(true, false) } else { None }),
+                })
         }
     } else {
         // Wallets in several currencies can share one IBAN (Finom EUR/USD):
@@ -3248,9 +3260,18 @@ impl ImportCtx<'_> {
         if let Some(id) = target {
             let revived = crate::sync_merge::revive_account_if_deleted(conn, id)?;
             // Nobody chose the archive state of a revived account (it comes back
-            // active) or of one the #998 repair reactivated: MoneyMoney's applies.
+            // active) or of one the #998 repair reactivated: MoneyMoney's applies –
+            // for the latter only from the MoneyMoney account it came from, not
+            // from another one merged into it.
+            let own: bool = conn.query_row(
+                "SELECT external_ref = ?2 FROM accounts WHERE id = ?1",
+                params![id, ext],
+                |r| r.get(0),
+            )?;
             let before = self.archive_unknown.len();
-            self.archive_unknown.retain(|x| *x != id);
+            if own {
+                self.archive_unknown.retain(|x| *x != id);
+            }
             let unknown = self.archive_unknown.len() != before;
             if a.closed && (revived || unknown) {
                 archive_closed(conn, id)?;
@@ -3535,8 +3556,12 @@ impl ImportCtx<'_> {
     fn link_accounts(&self, bank_connection: &HashMap<i64, i64>) -> CoreResult<()> {
         for (account_id, bank, _) in &self.to_link {
             if let Some(cid) = bank_connection.get(bank) {
+                // an account still under the import's reference was never taken over by a
+                // fetch: it follows the way chosen now (a re-import may switch it), so a
+                // connection set up here never stays empty
                 self.conn.execute(
-                    "UPDATE accounts SET connection_id = ?1 WHERE id = ?2 AND connection_id IS NULL",
+                    "UPDATE accounts SET connection_id = ?1
+                      WHERE id = ?2 AND (connection_id IS NULL OR external_ref LIKE 'moneymoney-db:%')",
                     params![cid, account_id],
                 )?;
             }

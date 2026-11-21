@@ -3746,6 +3746,42 @@ fn a_newer_archive_choice_from_another_device_ends_the_repair_note() {
     );
 }
 
+/// #998: step 36 stamps its reactivation one millisecond after the wrong archive, so two devices
+/// that repaired the same account carry the same stamp and keep their notes, while a choice made
+/// later on another device still wins over the repair.
+#[test]
+fn repairs_of_one_account_agree_and_a_later_choice_wins() {
+    use crate::importers::moneymoney_db::{archive_unknown, note_archive_unknown};
+    let dir = temp_dir("archive-repair");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    for v in [&a, &b] {
+        // what step 36 leaves: active, stamped just after the import's archive
+        exec(
+            v,
+            "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+             INSERT INTO accounts(id, group_id, external_ref, name, archived_ms)
+                 VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124);",
+        );
+        fill_missing_uuids(&v.db().unwrap()).unwrap();
+        note_archive_unknown(&v.db().unwrap(), &[1]).unwrap();
+    }
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(archive_unknown(&v.db().unwrap()).unwrap(), vec![1]);
+    }
+    // archived on B later: A takes it over and forgets its note
+    b.set_account_archived(1, true).unwrap();
+    both_ways(&a, &b);
+    assert!(archive_unknown(&a.db().unwrap()).unwrap().is_empty());
+    assert_eq!(
+        n(
+            &a,
+            "SELECT archived_unix IS NOT NULL FROM accounts WHERE id = 1"
+        ),
+        1
+    );
+}
+
 /// A archived and deleted account A1; B took that over and then got A1 again
 /// from the bank (revive). Both end with A1 live, unarchived and in totals.
 #[test]

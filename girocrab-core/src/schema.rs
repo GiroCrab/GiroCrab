@@ -144,7 +144,9 @@ pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
 /// are in use: they left the totals and syncs skipped them. Such an archive carries MoneyMoney's
 /// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]); only accounts the
 /// importer owns were archived that way, and the vault merge copies time and stamp as a pair.
-/// The reactivation is stamped, so the merge carries it to the other devices. Some of these
+/// The reactivation is stamped one millisecond after that wrong archive: the merge carries it to
+/// devices that still hold the archive, an edit made after it (on any device) still wins, and two
+/// devices that repair the same account stamp it alike, so neither takes the other's. Some of these
 /// accounts are closed in MoneyMoney after all, which the vault cannot tell: they are noted
 /// ([`moneymoney_db::ARCHIVE_UNKNOWN_KEY`]) so the next import gives them MoneyMoney's state.
 ///
@@ -152,12 +154,12 @@ pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
 fn unarchive_cancelled_refreshes(conn: &Connection) -> CoreResult<()> {
     let ids: Vec<i64> = conn
         .prepare(
-            "UPDATE accounts SET archived_unix = NULL, archived_ms = ?1
-              WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?2
+            "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1
+              WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?1
                 AND deleted_ms IS NULL AND external_ref LIKE 'moneymoney-db:%'
               RETURNING id",
         )?
-        .query_map([crate::dates::now_ms(), ARCHIVE_STAMP_GAP_MS], |r| r.get(0))?
+        .query_map([ARCHIVE_STAMP_GAP_MS], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
     crate::importers::moneymoney_db::note_archive_unknown(conn, &ids)
 }
@@ -1135,7 +1137,8 @@ mod tests {
         };
         let (giro, archived, stamp) = row("Girokonto");
         assert_eq!(archived, None);
-        assert!(stamp > 1790001000123, "stamped, so the merge carries it");
+        // just after the wrong archive: the merge carries it, a later edit wins
+        assert_eq!(stamp, 1790001000124);
         assert_eq!(row("Alte Karte").1, Some(1790002000));
         assert_eq!(row("Gelöscht").1, Some(1790000000));
         assert_eq!(row("Früher archiviert").1, Some(1700000000));

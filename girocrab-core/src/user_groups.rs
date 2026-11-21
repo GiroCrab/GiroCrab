@@ -1258,14 +1258,18 @@ impl Vault {
     /// rule runs skip their bookings and they leave the overall total. The
     /// state syncs like the account's name (newest change wins).
     pub fn set_account_archived(&self, account_id: i64, archived: bool) -> Result<(), CoreError> {
-        let conn = self.db()?;
-        if set_archived_inner(&conn, account_id, archived)? == 0 {
+        let db = self.db()?;
+        // the edit and the note go together: a note left behind would let an import undo it
+        let tx = db.unchecked_transaction()?;
+        if set_archived_inner(&tx, account_id, archived)? == 0 {
             return Err(CoreError::NotFound {
                 what: trf("Konto {0}", &[&account_id]),
             });
         }
         // the user's choice: a MoneyMoney import keeps it from now on (#890)
-        crate::importers::moneymoney_db::forget_archive_unknown(&conn, account_id)
+        crate::importers::moneymoney_db::forget_archive_unknown(&tx, account_id)?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Sets an account's SF Symbol (chosen by the user instead of the one
