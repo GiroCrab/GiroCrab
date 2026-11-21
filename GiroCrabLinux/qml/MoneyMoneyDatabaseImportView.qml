@@ -218,11 +218,21 @@ ColumnLayout {
     function linkedAccounts(b) {
         if (!preview) return []
         const owned = preview.owned_account_ids || []
-        return preview.accounts.filter(a => {
+        // an account several sources go into links the login of the first one only (import order)
+        const claimed = new Set()
+        const linked = []
+        for (const a of preview.accounts) {
             const c = choice(a)
             const t = c.target === null || c.target === undefined ? a.reused_account_id : c.target
-            return a.mm_bank_id === b.mm_id && c.selected && (t === null || t === undefined || owned.includes(t))
-        })
+            const isNew = t === null || t === undefined
+            if (!c.selected || a.mm_bank_id === null || a.mm_bank_id === undefined || !(isNew || owned.includes(t))) continue
+            if (!isNew) {
+                if (claimed.has(t)) continue
+                claimed.add(t)
+            }
+            if (a.mm_bank_id === b.mm_id) linked.push(a)
+        }
+        return linked
     }
     /// Every account linked to the login is closed in MoneyMoney (#1437).
     function allClosed(b) { const a = linkedAccounts(b); return a.length > 0 && a.every(x => x.closed) }

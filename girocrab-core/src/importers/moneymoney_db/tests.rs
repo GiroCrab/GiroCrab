@@ -4407,6 +4407,52 @@ fn a_taken_over_account_without_imported_bookings_returns_when_its_source_is_ope
 }
 
 #[test]
+fn an_iban_two_sources_share_leaves_the_state_alone() {
+    // MoneyMoney keeps a closed and an open account with the Girokonto's IBAN (#94): the IBAN
+    // names no source, so neither the wrong archive nor the repair note is resolved by it –
+    // whichever of the two comes first
+    for first_closed in [false, true] {
+        for noted in [false, true] {
+            let v = vault();
+            let giro = taken_over_giro(&v, (!noted).then_some((1_790_000_000, 1_790_001_000_123)));
+            if noted {
+                note_archive_unknown(&v.db().unwrap(), &[giro]).unwrap();
+            }
+            let sort = if first_closed { 0 } else { 9 };
+            import_with(
+                &v,
+                &fake_db_with(
+                    false,
+                    &format!(
+                        "INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred, refresh)
+                           VALUES (6, 1, '0532013000', '20041111', 0, 'DE89 3704 0044 0532 0130 00', 'EUR', 'Girokonto alt', 'Max Mustermann', 0, 0, {sort}, 0, 1, 'GEHEIM', 16);"
+                    ),
+                ),
+                |_| {},
+            );
+            let case = format!("first closed: {first_closed}, noted: {noted}");
+            assert_eq!(archived_unix(&v, giro).is_some(), !noted, "{case}");
+            assert_eq!(
+                archive_unknown(&v.db().unwrap()).unwrap().contains(&giro),
+                noted,
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_confirmed_archive_is_not_taken_back_by_an_import() {
+    // the user archives the account that still carries the old import's archive: the next
+    // import from its open source leaves that choice alone
+    let v = vault();
+    let giro = taken_over_giro(&v, Some((1_790_000_000, 1_790_001_000_123)));
+    v.set_account_archived(giro, true).unwrap();
+    import_with(&v, &fake_db(), |_| {});
+    assert!(archived_unix(&v, giro).is_some());
+}
+
+#[test]
 fn a_noted_account_taken_over_by_iban_takes_its_sources_state() {
     // the repair noted it after a fetch had taken it over: its own source (same IBAN) decides
     let v = vault();

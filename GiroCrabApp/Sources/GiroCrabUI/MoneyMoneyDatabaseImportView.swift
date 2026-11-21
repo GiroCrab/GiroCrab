@@ -835,11 +835,17 @@ struct MoneyMoneyDatabaseImportView: View {
     /// where the core sends it: an earlier import or the bank account that one was folded into.
     private func linkedAccounts(_ b: MoneyMoneyDbBank) -> [MoneyMoneyDbAccount] {
         let owned = Set(preview?.ownedAccountIds ?? [])
-        return (preview?.accounts ?? []).filter { a in
+        // an account several sources go into links the login of the first one only (import order)
+        var claimed = Set<Int64>()
+        var linked: [MoneyMoneyDbAccount] = []
+        for a in preview?.accounts ?? [] {
             let c = binding(a).wrappedValue
             let target = c.target ?? a.reusedAccountId
-            return a.mmBankId == b.mmId && c.selected && target.map(owned.contains) ?? true
+            guard c.selected, a.mmBankId != nil, target.map(owned.contains) ?? true else { continue }
+            if let target, !claimed.insert(target).inserted { continue }
+            if a.mmBankId == b.mmId { linked.append(a) }
         }
+        return linked
     }
 
     /// Every account linked to the login is closed in MoneyMoney (#1437).

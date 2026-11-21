@@ -1447,7 +1447,8 @@ fn renumber(tx: &Connection, ids: &[i64]) -> CoreResult<()> {
 /// [`Vault::set_account_archived`] on a held connection; the number of accounts
 /// changed (0: no such account). Time and stamp come from the same second, and
 /// archiving an archived account keeps both: the #998 repair (schema step 37)
-/// tells the old MoneyMoney import's archives by a gap between them.
+/// tells the old MoneyMoney import's archives by a gap between them. Confirming
+/// such an archive renews both, so neither the repair nor an import undoes it.
 pub(crate) fn set_archived_inner(
     conn: &Connection,
     account_id: i64,
@@ -1455,10 +1456,12 @@ pub(crate) fn set_archived_inner(
 ) -> CoreResult<usize> {
     let now = now_ms();
     Ok(conn.execute(
-        "UPDATE accounts SET archived_unix = CASE WHEN ?2 THEN IFNULL(archived_unix, ?3) END,
-                             archived_ms = CASE WHEN ?2 AND archived_unix IS NOT NULL THEN archived_ms ELSE ?4 END
+        "UPDATE accounts SET archived_unix = CASE WHEN ?2 THEN CASE WHEN archived_unix IS NOT NULL
+                                 AND archived_unix * 1000 >= archived_ms - ?5 THEN archived_unix ELSE ?3 END END,
+                             archived_ms = CASE WHEN ?2 AND archived_unix IS NOT NULL
+                                 AND archived_unix * 1000 >= archived_ms - ?5 THEN archived_ms ELSE ?4 END
          WHERE id = ?1",
-        params![account_id, archived, now / 1000, now],
+        params![account_id, archived, now / 1000, now, crate::schema::ARCHIVE_STAMP_GAP_MS],
     )?)
 }
 

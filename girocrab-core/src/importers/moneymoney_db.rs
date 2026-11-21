@@ -3263,12 +3263,19 @@ impl ImportCtx<'_> {
             // active) or of one the #998 repair reactivated: MoneyMoney's applies –
             // for the latter only from the MoneyMoney account it came from (its
             // reference, or the same IBAN once a fetch took it over), not from
-            // another one merged into it.
+            // another one merged into it. MoneyMoney may keep several accounts
+            // with one IBAN (a closed and an open one, #94): then the IBAN names
+            // no source and the state stays as it is.
+            let iban_source = if src.accounts.iter().filter(|x| x.iban == a.iban).count() == 1 {
+                a.iban.as_str()
+            } else {
+                ""
+            };
             let (own, wrongly_archived): (bool, bool) = conn.query_row(
                 "SELECT external_ref = ?2 OR (?3 <> '' AND upper(replace(IFNULL(iban, ''), ' ', '')) = ?3),
                         archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?4
                    FROM accounts WHERE id = ?1",
-                params![id, ext, a.iban, crate::schema::ARCHIVE_STAMP_GAP_MS],
+                params![id, ext, iban_source, crate::schema::ARCHIVE_STAMP_GAP_MS],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
             let before = self.archive_unknown.len();
