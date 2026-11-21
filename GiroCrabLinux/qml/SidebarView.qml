@@ -64,7 +64,7 @@ Rectangle {
         }
         out.push({ type: "caption", key: "documents", title: qsTr("Dokumente"), open: !sm.documentsCollapsed })
         if (!sm.documentsCollapsed)
-            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & PostBox"), badge: 0 })
+            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & PostBox"), badge: sm.unseenDocumentCount })
         const pending = m.connections.filter(c => !m.allAccounts.some(a => a.connection_id === c.id))
         if (pending.length) {
             out.push({ type: "section", title: qsTr("Neue Bankzugänge") })
@@ -72,6 +72,8 @@ Rectangle {
         }
         // caption style like „Konten“, „Zahlungen“ and „Dokumente“ (#676); „+“ lives in the bottom bar
         out.push({ type: "caption", key: "categories", title: qsTr("Kategorien"), open: !m.categoriesCollapsed })
+        // SidebarView.swift › categorySumNote: the sums follow the active filters (#621)
+        if (!m.categoriesCollapsed && m.categorySumNote !== "") out.push({ type: "sumNote", text: m.categorySumNote })
         if (!m.categoriesCollapsed) {
             out.push({ type: "nav", key: "uncategorized", symbol: "questionmark.folder", title: sm.uncategorizedLabel,
                        badge: m.uncategorizedCount, tint: Theme.warning, regular: true, labels: true })
@@ -376,6 +378,20 @@ Rectangle {
                                elide: Text.ElideRight; Layout.fillWidth: true; Accessible.role: Accessible.Heading }
                     }
                 } }
+                // SidebarView.swift › categorySumNote (#621): caption, secondary, at most two lines,
+                // on the heading's text axis; not selectable
+                DelegateChoice { roleValue: "sumNote"; delegate: Item {
+                    id: sumNoteRow
+                    required property var modelData
+                    width: ListView.view.width; height: sumNoteText.implicitHeight + 4
+                    Text {
+                        id: sumNoteText
+                        x: 8 + SidebarModel.rowLeading + SidebarModel.iconInset; y: 2; width: parent.width - x - 14
+                        text: sumNoteRow.modelData.text
+                        font.pixelSize: Theme.caption; color: Theme.secondary
+                        wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+                    }
+                } }
                 // SidebarView.swift › categoryRows: one icon axis per level – a leaf reserves the chevron column
                 DelegateChoice { roleValue: "category"; delegate: SidebarRow {
                     id: catRow
@@ -454,7 +470,7 @@ Rectangle {
         AppMenuItem { text: qsTr("Neue Kategorie …"); icon.name: SF.icon("tag"); onTriggered: AppModel.newCategoryRequest = { parent: sidebar.selectedCategoryID } }
         AppMenuItem { text: qsTr("Neue Kategoriengruppe …"); icon.name: SF.icon("tag.circle"); onTriggered: AppModel.newCategoryRequest = { parent: null } }
     }
-    function openNavMenu(key) { if (key === "newBookings") allMenu.popup(); else uncategorizedMenu.popup() }
+    function openNavMenu(key) { if (key === "newBookings") allMenu.popup(); else if (key === "documents") documentsMenu.popup(); else uncategorizedMenu.popup() }
     /// „Neue Umsätze“, „Vermögen“, „Geplant“, „Lastschriften“, „Belege & PostBox“ and „Ohne Kategorie“:
     /// a page row with the empty chevron column, icon, title and count badge.
     component NavRow: SidebarRow {
@@ -464,7 +480,7 @@ Rectangle {
         signal menuRequested(string key)
         selectionKey: modelData.key
         TapHandler {
-            enabled: navRow.modelData.key === "newBookings" || navRow.modelData.key === "uncategorized"
+            enabled: navRow.modelData.key === "newBookings" || navRow.modelData.key === "uncategorized" || navRow.modelData.key === "documents"
             acceptedButtons: Qt.RightButton
             onTapped: navRow.menuRequested(navRow.modelData.key)
         }
@@ -579,6 +595,12 @@ Rectangle {
         id: allMenu
         AppMenuItem { text: qsTr("Alle Buchungen als gelesen markieren"); icon.name: SF.icon("checkmark.circle"); enabled: AppModel.newCount > 0
                    onTriggered: AppModel.markAllChecked(AppModel.allAccounts.map(a => a.id)) }
+    }
+    // „Belege & PostBox“ (#934): the unread documents
+    AppMenu {
+        id: documentsMenu
+        AppMenuItem { text: qsTr("Alle als gelesen markieren"); enabled: SidebarModel.unseenDocumentCount > 0
+                      onTriggered: AppModel.markAllDocumentsSeen() }
     }
     // pending bank logins ("Neue Bankzugänge")
     AppMenu {

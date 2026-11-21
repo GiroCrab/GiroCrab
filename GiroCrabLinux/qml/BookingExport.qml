@@ -20,12 +20,6 @@ QtObject {
     function format(id) { return formats.find(f => f.id === id) || formats[0] }
     function isCamt(id) { return format(id).camt }
 
-    // MARK: - ExportAccountOutput
-    readonly property var outputs: [
-        { id: "combined", title: qsTr("Alle in einer Datei"), help: qsTr("Eine Umsatzliste mit den gewählten Konten") },
-        { id: "perAccount", title: qsTr("Jedes Konto einzeln"), help: qsTr("Eine Datei pro gewähltem Konto nach Downloads") }
-    ]
-
     // MARK: - ExportPeriodPreset
     /// Presets shown as a flat list (custom uses date pickers below).
     readonly property var menuCases: ["current", "thisMonth", "lastMonth", "last3Months", "last12Months",
@@ -78,10 +72,11 @@ QtObject {
 
     // MARK: - ExportOptions (remembered across launches, separate from print)
     function defaults() {
-        return { format: "pdf", scope: "filtered", periodPreset: "lastMonth", customFrom: "", customTo: "",
+        return { format: "pdf", scope: "filtered", periodPreset: "current", customFrom: "", customTo: "",
                  selectedAccountIDs: [], accountOutput: "combined", showCategory: true, showNote: false,
                  showTotals: false, groupByAccount: true, showCurrentBalance: false, showDailyBalance: false,
-                 firstLineOnly: true, direction: "all", newestFirst: false }
+                 showRunningBalance: false, showIban: false, showTags: false, firstLineOnly: true, direction: "all",
+                 newestFirst: false }
     }
     property Settings store: Settings {
         category: "export"
@@ -96,15 +91,16 @@ QtObject {
             const saved = store.options ? JSON.parse(store.options) : {}
             for (const k in o) if (saved[k] !== undefined && typeof saved[k] === typeof o[k]) o[k] = saved[k]
             if (!formats.some(f => f.id === o.format)) o.format = "pdf"
-            if (menuCases.indexOf(o.periodPreset) < 0) o.periodPreset = "lastMonth"
+            if (menuCases.indexOf(o.periodPreset) < 0) o.periodPreset = "current"
         } catch (e) {}
         return o
     }
     function save(o) { store.options = JSON.stringify(o) }
-    /// True when content toggles differ from a fresh default (opens „Weitere Optionen“).
+    /// True when content toggles differ from a fresh default (opens „Optionen“).
     function hasNonDefaultContent(o) {
         const d = defaults()
         return o.showCategory !== d.showCategory || o.showNote !== d.showNote || o.showDailyBalance !== d.showDailyBalance
+            || o.showRunningBalance !== d.showRunningBalance || o.showIban !== d.showIban || o.showTags !== d.showTags
             || o.groupByAccount !== d.groupByAccount || o.firstLineOnly !== d.firstLineOnly || o.newestFirst !== d.newestFirst
     }
     /// Print options used for the PDF HTML (always white-label Umsatzliste).
@@ -115,7 +111,7 @@ QtObject {
                  statement_style: true }
     }
 
-    // MARK: - ExportDirectory
+    // MARK: - ExportDirectory (the save dialog starts there; Downloads at first)
     function downloadsDirectory() { return AppModel.localPath(StandardPaths.writableLocation(StandardPaths.DownloadLocation)) }
     function preferredDirectory() { return store.lastDirectory || downloadsDirectory() }
     function remember(path) { store.lastDirectory = path.slice(0, path.lastIndexOf("/")) }
@@ -187,7 +183,8 @@ QtObject {
                  created_at: (created || new Date()).toISOString().replace(/\.\d{3}Z$/, "Z") }
     }
 
-    /// Excel CSV with optional Tagessaldo column; formatting and formula guard live in the core.
+    /// Excel CSV with optional IBAN, Tags (#831), Tagessaldo and Saldo (#577) columns; formatting and formula
+    /// guard live in the core.
     function csv(report, o) {
         const rows = PrintReport.rows(report.rows, asPrintOptions(o))
         let lines = []
@@ -196,6 +193,8 @@ QtObject {
                                                                      currency: a.currency, date: a.balance_date }))
         }
         const balances = o.showDailyBalance ? (report.daily_balances[0] || {}) : null
+        // PrintReport.runningBalances: balance after each booking (key = booking id, #577)
+        const running = report.running_balances || {}
         const out = rows.map((r, i) => {
             let day = null
             if (balances) {
@@ -206,11 +205,14 @@ QtObject {
                 day = edge && balances[r.date] !== undefined ? balances[r.date] : null
             }
             return { date: r.date, account_name: r.account_name, counterparty: r.counterparty,
+                     counterparty_iban: r.counterparty_iban || "", tags: (r.tag_names || []).join(", "),
                      purpose: PrintReport.displayPurpose(r, o.firstLineOnly), category: r.category || "",
-                     note: r.note || "", amount_cents: r.amount_cents, currency: r.currency, day_balance_cents: day }
+                     note: r.note || "", amount_cents: r.amount_cents, currency: r.currency, day_balance_cents: day,
+                     balance_cents: running[r.id] !== undefined ? running[r.id] : null }
         })
         return AppModel.core("export_csv", { rows: out, balance_lines: lines,
-            columns: { category: o.showCategory, note: o.showNote, daily_balance: o.showDailyBalance } })
+            columns: { category: o.showCategory, note: o.showNote, daily_balance: o.showDailyBalance,
+                       running_balance: o.showRunningBalance, iban: o.showIban, tags: o.showTags } })
     }
 
     // MARK: - AppModel+Printing (export queries)
@@ -242,14 +244,19 @@ QtObject {
     }
 
     /// Bookings for an export, read on a worker thread (`list_transactions` enriches every row).
-    function loadExportBookings(accountIDs, preset, bookingIDs, o, ignoreListFilters, done, failed) {
+    /// `withBalances` (loadExportPage, #577): also the balance after each booking for the CSV „Saldo“
+    /// column, only for a selection of accounts, as in the list; `done(rows, { bookingID: cents }, tagNote)`.
+    function loadExportBookings(accountIDs, preset, bookingIDs, o, ignoreListFilters, done, failed, withBalances) {
         const filter = exportFilter(accountIDs, preset, o, ignoreListFilters)
+        filter.with_balances = !!withBalances && ListBalances.selectionHasBalances
         // the tag note of exactly this query, taken when it starts (`exportReport`)
         const tagNote = TagFilter.noteFor(filter)
         AppModel.coreAsync("list_transactions", { filter: filter }, page => {
             let rows = page.transactions
             if (bookingIDs) rows = rows.filter(b => bookingIDs.indexOf(b.id) >= 0)
-            done(rows, tagNote)
+            const balances = {}
+            for (const b of page.running_balances || []) balances[b.booking_id] = b.balance_cents
+            done(rows, balances, tagNote)
         }, failed)
     }
 
@@ -290,10 +297,11 @@ QtObject {
     function buildFile(accountIDs, bookingIDs, o, done, failed) {
         const preset = o.scope === "selection" ? "current" : o.periodPreset
         const camt = isCamt(o.format)
-        loadExportBookings(accountIDs.length ? accountIDs : null, preset, bookingIDs, o, camt, (bookings, tagNote) => {
+        loadExportBookings(accountIDs.length ? accountIDs : null, preset, bookingIDs, o, camt, (bookings, balances, tagNote) => {
             if (!bookings.length) { done(null); return }
             try {
                 let report = exportReport(bookings, accountIDs, preset, bookingIDs, o, tagNote)
+                report.running_balances = balances
                 report.generated_at = new Date()
                 report = prepareStatement(report)
                 // CAMT.053: the core reads the booked balances itself (#483)
@@ -317,7 +325,7 @@ QtObject {
             } catch (e) {
                 failed(e.message)
             }
-        }, failed)
+        }, failed, o.format === "csv" && o.showRunningBalance)
     }
 
     /// ExportSheet.swift › camtRange: period the core states for a CAMT.053 export (`null` for
@@ -352,20 +360,9 @@ QtObject {
 
     // MARK: - AppModel+Printing › presentExportFile / presentExportFiles
 
-    /// Writes an export: straight into Downloads (or the last folder), or via the save dialog (Main.qml).
-    function presentExportFile(file, askWhere) {
-        if (askWhere) { AppModel.exportSaveRequest = file; return }
-        try {
-            const path = AppModel.core("save_export_file", { text: file.text, from_path: file.from_path,
-                dir: preferredDirectory(), fallback_dir: downloadsDirectory(), filename: file.filename })
-            remember(path)
-            AppModel.toast = qsTr("Gespeichert: %1").arg(path.slice(path.lastIndexOf("/") + 1))
-        } catch (e) {
-            AppModel.errorTitle = qsTr("Export fehlgeschlagen")
-            AppModel.errorMessage = e.message
-        }
-    }
-    /// The save dialog's answer: `path` chosen (the dialog asked about replacing), or `null` = cancelled.
+    /// Writes export bytes through the save dialog (Main.qml, which asks about replacing).
+    function presentExportFile(file) { AppModel.exportSaveRequest = file }
+    /// The save dialog's answer: `path` chosen, or `null` = cancelled.
     function saveExportRequest(path) {
         const file = AppModel.exportSaveRequest
         AppModel.exportSaveRequest = null
@@ -382,14 +379,25 @@ QtObject {
             AppModel.errorMessage = e.message
         }
     }
-    /// Saves several files into Downloads (or the last folder) without a dialog.
-    function presentExportFiles(files) {
+    /// Saves one file per account into a folder the user picks (Main.qml), never replacing existing files.
+    function presentExportFiles(files) { if (files.length) AppModel.exportFolderRequest = files }
+    /// The folder dialog's answer: `dir` chosen, or `null` = cancelled.
+    function saveExportFiles(dir) {
+        const files = AppModel.exportFolderRequest || []
+        AppModel.exportFolderRequest = null
+        if (dir === null) {
+            for (const file of files) {
+                if (!file.from_path) continue
+                try { AppModel.core("save_export_file", { from_path: file.from_path, discard: true }) } catch (e) {}
+            }
+            return
+        }
         if (!files.length) return
         let saved = 0, firstName = files[0].filename
         for (const file of files) {
             try {
                 const path = AppModel.core("save_export_file", { text: file.text, from_path: file.from_path,
-                    dir: preferredDirectory(), fallback_dir: downloadsDirectory(), filename: file.filename })
+                    dir: dir, fallback_dir: dir, filename: file.filename })
                 if (saved === 0) firstName = path.slice(path.lastIndexOf("/") + 1)
                 remember(path)
                 saved++
@@ -399,6 +407,6 @@ QtObject {
                 return
             }
         }
-        AppModel.toast = saved === 1 ? qsTr("Gespeichert: %1").arg(firstName) : qsTr("%1 Dateien in Downloads gespeichert").arg(saved)
+        AppModel.toast = saved === 1 ? qsTr("Gespeichert: %1").arg(firstName) : qsTr("%1 Dateien gespeichert").arg(saved)
     }
 }
