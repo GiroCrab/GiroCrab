@@ -32,11 +32,16 @@ was es gibt. Über der Liste steht „N Dokumente“ oder „N von M Dokumenten�
 Breite füllen; die Beschriftung steht auf der Grundlinie des Feldtexts und wird mit ihrem Feld abgeblendet (Konto bei
 Bankzugang „Ohne Konto“). Jede Beschriftungszelle enthält alle Beschriftungen der Spalte unsichtbar übereinander und ist
 damit so breit wie die längste (Schriftgröße, Sprache), ohne Messen und ohne Zustand. VoiceOver liest die Beschriftung
-des Pickers selbst, die sichtbare ist ausgeblendet. Typ und Jahr erscheinen, wenn es eine Wahl gibt oder ihr Filter
-gesetzt ist; der gesetzte Wert bleibt auswählbar, auch wenn die gefundenen Dokumente ihn nicht mehr haben (ein Picker
-braucht einen Eintrag für seine Auswahl; `DocumentFilters.types/years(of:active:)`). Darunter „Nur ungelesene“ und „Nur ohne zugeordneten Umsatz“ als Ankreuzfelder (Filter sind keine
-Einstellungen: HIG › Toggles), dann „Beleg hinzufügen …“, der Export und das Menü „Aktionen“ (…) mit „Alle als gelesen
-markieren“ und „Alle Dokumente anzeigen“ (setzt alle Filter zurück).
+des Pickers selbst, die sichtbare ist ausgeblendet.
+
+Typ und Jahr erscheinen, wenn es eine Wahl gibt oder ihr Filter gesetzt ist. Der gesetzte Wert bleibt auswählbar,
+auch wenn die gefundenen Dokumente ihn nicht mehr haben (anderes Konto, neue Suche): Ein Picker braucht einen Eintrag
+für seine Auswahl, sonst zeigt er nichts an und der Filter wirkt unsichtbar weiter
+(`DocumentFilters.types/years(of:active:)`).
+
+Darunter „Nur ungelesene“ und „Nur ohne zugeordneten Umsatz“ als Ankreuzfelder (Filter sind keine Einstellungen:
+HIG › Toggles), dann „Beleg hinzufügen …“, der Export und das Menü „Aktionen“ (…) mit „Alle als gelesen markieren“ und
+„Alle Dokumente anzeigen“ (setzt alle Filter zurück).
 
 **Zeile:** Titel, „Herkunft · Konto“ und als dritte Zeile der zugeordnete Umsatz. „Ohne zugeordneten Umsatz“ (orange)
 steht an eigenen Belegen, die auf ihren Umsatz warten; Bankdokumente haben meist keinen und zeigen ihn nur, solange
