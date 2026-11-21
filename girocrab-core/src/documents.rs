@@ -178,7 +178,69 @@ pub(crate) fn insert_doc(
 
 // ------------------------------------------------------------------ PDF text extraction
 
+/// IBM-273 (German EBCDIC) as Unicode. Some banks (comdirect) print their documents from a mainframe: the
+/// PDF text is EBCDIC, a space is `0x40`, the digits are `0xF0..=0xF9`.
+#[rustfmt::skip]
+const EBCDIC_273: [u16; 256] = [
+    0x0000, 0x0001, 0x0002, 0x0003, 0x009C, 0x0009, 0x0086, 0x007F, 0x0097, 0x008D, 0x008E, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F,
+    0x0010, 0x0011, 0x0012, 0x0013, 0x009D, 0x0085, 0x0008, 0x0087, 0x0018, 0x0019, 0x0092, 0x008F, 0x001C, 0x001D, 0x001E, 0x001F,
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x000A, 0x0017, 0x001B, 0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x0005, 0x0006, 0x0007,
+    0x0090, 0x0091, 0x0016, 0x0093, 0x0094, 0x0095, 0x0096, 0x0004, 0x0098, 0x0099, 0x009A, 0x009B, 0x0014, 0x0015, 0x009E, 0x001A,
+    0x0020, 0x00A0, 0x00E2, 0x007B, 0x00E0, 0x00E1, 0x00E3, 0x00E5, 0x00E7, 0x00F1, 0x00C4, 0x002E, 0x003C, 0x0028, 0x002B, 0x0021,
+    0x0026, 0x00E9, 0x00EA, 0x00EB, 0x00E8, 0x00ED, 0x00EE, 0x00EF, 0x00EC, 0x007E, 0x00DC, 0x0024, 0x002A, 0x0029, 0x003B, 0x005E,
+    0x002D, 0x002F, 0x00C2, 0x005B, 0x00C0, 0x00C1, 0x00C3, 0x00C5, 0x00C7, 0x00D1, 0x00F6, 0x002C, 0x0025, 0x005F, 0x003E, 0x003F,
+    0x00F8, 0x00C9, 0x00CA, 0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF, 0x00CC, 0x0060, 0x003A, 0x0023, 0x00A7, 0x0027, 0x003D, 0x0022,
+    0x00D8, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067, 0x0068, 0x0069, 0x00AB, 0x00BB, 0x00F0, 0x00FD, 0x00FE, 0x00B1,
+    0x00B0, 0x006A, 0x006B, 0x006C, 0x006D, 0x006E, 0x006F, 0x0070, 0x0071, 0x0072, 0x00AA, 0x00BA, 0x00E6, 0x00B8, 0x00C6, 0x00A4,
+    0x00B5, 0x00DF, 0x0073, 0x0074, 0x0075, 0x0076, 0x0077, 0x0078, 0x0079, 0x007A, 0x00A1, 0x00BF, 0x00D0, 0x00DD, 0x00DE, 0x00AE,
+    0x00A2, 0x00A3, 0x00A5, 0x00B7, 0x00A9, 0x0040, 0x00B6, 0x00BC, 0x00BD, 0x00BE, 0x00AC, 0x007C, 0x203E, 0x00A8, 0x00B4, 0x00D7,
+    0x00E4, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047, 0x0048, 0x0049, 0x00AD, 0x00F4, 0x00A6, 0x00F2, 0x00F3, 0x00F5,
+    0x00FC, 0x004A, 0x004B, 0x004C, 0x004D, 0x004E, 0x004F, 0x0050, 0x0051, 0x0052, 0x00B9, 0x00FB, 0x007D, 0x00F9, 0x00FA, 0x00FF,
+    0x00D6, 0x00F7, 0x0053, 0x0054, 0x0055, 0x0056, 0x0057, 0x0058, 0x0059, 0x005A, 0x00B2, 0x00D4, 0x005C, 0x00D2, 0x00D3, 0x00D5,
+    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039, 0x00B3, 0x00DB, 0x005D, 0x00D9, 0x00DA, 0x009F,
+];
+
+/// Whether the strings of a content stream are EBCDIC rather than ASCII/Latin-1 text: the letters,
+/// digits and the space of EBCDIC outweigh those of ASCII by far.
+fn looks_ebcdic(bytes: impl Iterator<Item = u8>) -> bool {
+    let (mut ebcdic, mut ascii, mut total) = (0usize, 0usize, 0usize);
+    for b in bytes {
+        total += 1;
+        if matches!(b, 0x40 | 0x81..=0x89 | 0x91..=0x99 | 0xA2..=0xA9 | 0xC1..=0xC9 | 0xD1..=0xD9 | 0xE2..=0xE9 | 0xF0..=0xF9)
+        {
+            ebcdic += 1;
+        }
+        if matches!(b, 0x20 | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z') {
+            ascii += 1;
+        }
+    }
+    total >= 20 && ebcdic > ascii * 2
+}
+
+/// Whether bytes read as text (letters, digits, spaces, punctuation): hex strings of a CID font hold
+/// glyph numbers (many zero bytes) and are no text.
+fn looks_texty(bytes: &[u8], ebcdic: bool) -> bool {
+    if bytes.is_empty() || bytes.contains(&0) {
+        return false;
+    }
+    let texty = bytes
+        .iter()
+        .filter(|&&b| {
+            if ebcdic {
+                EBCDIC_273[b as usize] >= 0x20 && !(0x7F..=0x9F).contains(&EBCDIC_273[b as usize])
+            } else {
+                (0x20..0x7F).contains(&b) || b >= 0xA0
+            }
+        })
+        .count();
+    texty * 10 >= bytes.len() * 8
+}
+
 fn literal_strings(content: &[u8], out: &mut String) {
+    let mut strings = Vec::new();
+    // hex strings are text only in a stream that shows text (a CMap or a dictionary holds hex pairs too)
+    let shows_text = find(content, b"BT", 0).is_some()
+        && (find(content, b"Tj", 0).is_some() || find(content, b"TJ", 0).is_some());
     let mut i = 0;
     while i < content.len() {
         if content[i] == b'(' {
@@ -211,12 +273,58 @@ fn literal_strings(content: &[u8], out: &mut String) {
                 }
                 i += 1;
             }
-            // PDFDocEncoding ≈ Latin-1 for the characters we need (€ 0xA0 → handled by "EUR")
-            out.extend(s.iter().map(|&b| if b == 0x80 { '€' } else { b as char }));
-            out.push(' ');
+            strings.push((s, false));
+        } else if shows_text
+            && content[i] == b'<'
+            && content.get(i + 1) != Some(&b'<')
+            && (i == 0 || content[i - 1] != b'<')
+        {
+            // `<E3 85 93>`: hex digits up to the closing '>'
+            let mut digits: Vec<u8> = Vec::new();
+            let mut j = i + 1;
+            while j < content.len() && content[j] != b'>' {
+                if content[j].is_ascii_hexdigit() {
+                    digits.push(content[j]);
+                } else if !content[j].is_ascii_whitespace() {
+                    digits.clear();
+                    break;
+                }
+                j += 1;
+            }
+            if !digits.is_empty() {
+                if digits.len() % 2 == 1 {
+                    digits.push(b'0');
+                }
+                let bytes: Vec<u8> = digits
+                    .chunks(2)
+                    .map(|p| {
+                        u8::from_str_radix(std::str::from_utf8(p).unwrap_or("0"), 16).unwrap_or(0)
+                    })
+                    .collect();
+                if looks_texty(&bytes, false) || looks_texty(&bytes, true) {
+                    strings.push((bytes, true));
+                }
+            }
+            i = j + 1;
         } else {
             i += 1;
         }
+    }
+    let ebcdic = looks_ebcdic(strings.iter().flat_map(|(bytes, _)| bytes.iter().copied()));
+    for (s, is_hex) in strings {
+        if is_hex && !looks_texty(&s, ebcdic) {
+            continue;
+        }
+        if ebcdic {
+            out.extend(
+                s.iter()
+                    .map(|&b| char::from_u32(EBCDIC_273[b as usize] as u32).unwrap_or(' ')),
+            );
+        } else {
+            // PDFDocEncoding ≈ Latin-1 for the characters we need (€ 0xA0 → handled by "EUR")
+            out.extend(s.iter().map(|&b| if b == 0x80 { '€' } else { b as char }));
+        }
+        out.push(' ');
     }
 }
 
@@ -236,11 +344,20 @@ pub fn extract_pdf_text(bytes: &[u8]) -> String {
     let mut inflate_budget = MAX_INFLATED_TOTAL;
     let mut i = 0;
     while let Some(pos) = find(bytes, b"stream", i) {
-        let dict_start = bytes[..pos]
-            .iter()
-            .rposition(|&b| b == b'<')
-            .map(|p| p.saturating_sub(400))
-            .unwrap_or(0);
+        // the dictionary of this stream: from its `obj` keyword on (a window before the dictionary
+        // would take in the previous object, "/Image" of a picture included, and skip a text stream)
+        let window = pos.saturating_sub(1500);
+        let dict_start = bytes[window..pos]
+            .windows(3)
+            .rposition(|w| w == b"obj")
+            .map(|p| window + p)
+            .unwrap_or_else(|| {
+                bytes[..pos]
+                    .iter()
+                    .rposition(|&b| b == b'<')
+                    .map(|p| p.saturating_sub(400))
+                    .unwrap_or(0)
+            });
         let dict = &bytes[dict_start..pos];
         let mut start = pos + 6;
         if bytes.get(start) == Some(&b'\r') {
@@ -292,6 +409,75 @@ fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .windows(needle.len())
         .position(|w| w == needle)
         .map(|p| p + from)
+}
+
+/// Document type (`beleg | abrechnung | kontoauszug | postbox | steuer`) from a lower-cased German
+/// bank title: "Abrechnung Ausführung", "Online Auszug", "Quartalsdepotauszug", "Steuerbescheinigung",
+/// "Kosteninformation", "Kundeninformation …", "Dividende Wahlweise", "Eröffnungsantrag" and the like.
+/// Keyword based; what a connector knows better (the event behind a document) it refines itself.
+pub fn type_from_title(lower_title: &str) -> &'static str {
+    TITLE_RULES
+        .iter()
+        .find(|(_, words)| words.iter().any(|word| lower_title.contains(word)))
+        .map_or("beleg", |(kind, _)| *kind)
+}
+
+// The first matching title rule wins.
+const TITLE_RULES: &[(&str, &[&str])] = &[
+    (
+        "steuer",
+        &["steuer", "ertragsaufstellung", "vorabpauschale"],
+    ),
+    (
+        "kontoauszug",
+        &["auszug", "statement", "abschluss", "finanzreport"],
+    ),
+    (
+        "postbox",
+        &[
+            "wahlweise",
+            "kundenvereinbarung",
+            "rechtliche",
+            "mitteilung",
+            "information",
+            "kundenanschreiben",
+            "bedingungsänderung",
+            "vertragsunterlagen",
+            "antrag",
+            "löschbestätigung",
+            "prospekt",
+            "hauptversammlung",
+            "rückkaufangebot",
+            "geschäftsbedingungen",
+            "agb",
+            "agreement",
+            "datenschutz",
+            "leistungsverzeichnis",
+            "eignungsprüfung",
+            "treuhand",
+            "hinweise",
+        ],
+    ),
+    (
+        "abrechnung",
+        &[
+            "abrechnung",
+            "bestätigung",
+            "dividende",
+            "ausführungsanzeige",
+            "ertragsgutschrift",
+            "thesaurierend",
+        ],
+    ),
+];
+
+/// Type of a document that belongs to an account, not to a booking: like `type_from_title`, but a
+/// document that is nothing in particular is a PostBox notice.
+pub fn account_document_type(title: &str) -> &'static str {
+    match type_from_title(&title.to_lowercase()) {
+        "beleg" => "postbox",
+        t => t,
+    }
 }
 
 // ------------------------------------------------------------------ matching
@@ -1107,6 +1293,232 @@ pub fn simple_pdf(lines: &[String]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Characters of a text as IBM-273 bytes, the way comdirect's mainframe prints them.
+    fn ebcdic(text: &str) -> Vec<u8> {
+        text.chars()
+            .map(|c| {
+                EBCDIC_273
+                    .iter()
+                    .position(|&u| u as u32 == c as u32)
+                    .expect("in the table") as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ebcdic_text_of_a_mainframe_pdf_is_read_in_literal_and_hex_strings() {
+        let line = "Zu Ihren Lasten vor Steuern EUR 24,94 Wertpapierkauf IE00B3RBWM25";
+        let bytes = ebcdic(line);
+        let mut literal = b"BT (".to_vec();
+        literal.extend(&bytes);
+        literal.extend(b") Tj ET");
+        let mut out = String::new();
+        literal_strings(&literal, &mut out);
+        assert!(out.contains(line), "{out}");
+        // the same line as a hex string
+        let hex: String = bytes.iter().map(|b| format!("{b:02X}")).collect();
+        let mut out = String::new();
+        literal_strings(format!("BT <{hex}> Tj ET").as_bytes(), &mut out);
+        assert!(out.contains(line), "{out}");
+    }
+
+    #[test]
+    fn ordinary_text_and_non_text_hex_stay_as_they_were() {
+        // an ASCII PDF is not taken for EBCDIC
+        let mut out = String::new();
+        literal_strings(
+            b"BT (Kontoauszug vom 01.02.2024 Saldo 1.234,56 EUR) Tj ET",
+            &mut out,
+        );
+        assert!(
+            out.contains("Kontoauszug vom 01.02.2024 Saldo 1.234,56 EUR"),
+            "{out}"
+        );
+        // hex glyph numbers of a CID font are no text
+        let mut out = String::new();
+        literal_strings(b"BT <0012001300140015> Tj <00240025> Tj ET", &mut out);
+        assert!(out.trim().is_empty(), "{out:?}");
+        // a CMap (no text operators) is not read as text either
+        let mut out = String::new();
+        literal_strings(b"begincmap <0000> <FFFF> <0041> endcmap", &mut out);
+        assert!(out.trim().is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn cid_glyphs_do_not_change_the_encoding_of_readable_text() {
+        let glyphs = "00C1".repeat(60);
+        let mut out = String::new();
+        literal_strings(
+            format!("BT (IBAN DE75200411550765432100) Tj <{glyphs}> Tj ET").as_bytes(),
+            &mut out,
+        );
+        assert_eq!(out.trim(), "IBAN DE75200411550765432100");
+    }
+
+    #[test]
+    fn mixed_literal_and_hex_text_keeps_an_iban_in_source_order() {
+        let mut out = String::new();
+        literal_strings(
+            b"BT (IBAN DE75 ) Tj <323030343131353530373635343332313030> Tj ( Kontostand) Tj ET",
+            &mut out,
+        );
+        assert_eq!(
+            out.split_whitespace().collect::<String>(),
+            "IBANDE75200411550765432100Kontostand",
+        );
+    }
+
+    #[test]
+    fn a_text_stream_after_a_picture_object_is_not_skipped_as_an_image() {
+        // the object before holds "/Subtype /Image"; this stream's own dictionary is plain
+        let content = b"BT (Wertpapierkauf 24,94 EUR) Tj ET";
+        let mut pdf = b"%PDF-1.4\n1 0 obj\n<< /Type /XObject /Subtype /Image >>\nstream\nxx\nendstream\nendobj\n".to_vec();
+        pdf.extend(b"2 0 obj\n<< /Length 40 >>\nstream\n");
+        pdf.extend(content);
+        pdf.extend(b"\nendstream\nendobj\n");
+        assert!(extract_pdf_text(&pdf).contains("Wertpapierkauf 24,94 EUR"));
+    }
+
+    /// The rules as they were hard-coded before `data/document_rules.json`.
+    fn legacy_type_from_title(lower_title: &str) -> &'static str {
+        let has = |k: &str| lower_title.contains(k);
+        if has("steuer") || has("ertragsaufstellung") || has("vorabpauschale") {
+            "steuer"
+        } else if has("auszug") || has("statement") || has("abschluss") {
+            "kontoauszug"
+        } else if [
+            "wahlweise",
+            "kundenvereinbarung",
+            "rechtliche",
+            "mitteilung",
+            "information",
+            "kundenanschreiben",
+            "bedingungsänderung",
+            "vertragsunterlagen",
+            "antrag",
+            "löschbestätigung",
+            "prospekt",
+            "hauptversammlung",
+            "rückkaufangebot",
+            "geschäftsbedingungen",
+            "agb",
+            "agreement",
+            "datenschutz",
+            "leistungsverzeichnis",
+            "eignungsprüfung",
+            "treuhand",
+            "hinweise",
+        ]
+        .iter()
+        .any(|k| has(k))
+        {
+            "postbox"
+        } else if has("abrechnung")
+            || has("bestätigung")
+            || has("dividende")
+            || has("ausführungsanzeige")
+        {
+            "abrechnung"
+        } else {
+            "beleg"
+        }
+    }
+
+    #[test]
+    fn the_rules_file_gives_the_same_types_as_the_old_keyword_chain() {
+        for title in [
+            "abrechnung ausführung",
+            "online auszug",
+            "quartalsdepotauszug",
+            "steuerbescheinigung",
+            "kosteninformation",
+            "kundeninformation zu ihrem depot",
+            "dividende wahlweise",
+            "eröffnungsantrag",
+            "wertpapierabrechnung sparplan",
+            "vorabpauschale 2024",
+            "kundenvereinbarung",
+            "agb",
+            "ausführungsanzeige",
+            "rechnungsabschluss",
+            "jahresdepotauszug",
+            "dokumente",
+            "",
+            "rechnung",
+            "beleg 12/2024",
+            "bestätigung",
+            "hinweise zu den kosten",
+            "statement 03/2025",
+        ] {
+            assert_eq!(
+                type_from_title(title),
+                legacy_type_from_title(title),
+                "{title}"
+            );
+        }
+        assert_eq!(account_document_type("Rechnung"), "postbox");
+        assert_eq!(type_from_title("rechnung"), "beleg");
+    }
+
+    #[test]
+    fn the_rule_examples_have_the_expected_document_types() {
+        for (title, expected) in [
+            (
+                "Wertpapierabrechnung Kauf 12,5 St. WKN A1JX52 (VANGUARD FTSE ALL-WORLD) vom 01.02.2024",
+                "abrechnung",
+            ),
+            (
+                "Wertpapierabrechnung Verkauf 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024",
+                "abrechnung",
+            ),
+            (
+                "Dividendengutschrift 10 St. WKN 716460 (SAP SE O.N.) vom 05.05.2024",
+                "abrechnung",
+            ),
+            (
+                "Ertragsgutschrift 100 St. WKN 847101 (FONDAK P) vom 10.10.2024",
+                "abrechnung",
+            ),
+            (
+                "Gutschrift thesaurierend 100 St. WKN ETF001 vom 01.02.2024",
+                "abrechnung",
+            ),
+            ("Steuermitteilung WKN A1JX52 vom 31.07.2024", "steuer"),
+            ("Jahressteuerbescheinigung 2023", "steuer"),
+            ("Finanzreport Nr. 12 per 31.12.2024", "kontoauszug"),
+            (
+                "Kosteninformation MSCI World WKN A1H2QY vom 01.03.2024",
+                "postbox",
+            ),
+            (
+                "Kauf - WKN A1JX52 - Wertpapierabrechnung vom 23.07.2021 zu Depot 1 - Ordernr. 2",
+                "abrechnung",
+            ),
+            (
+                "Ertragsabrechnung Dividenden vom 01.06.2023 zu Depot 1",
+                "abrechnung",
+            ),
+            ("Depotauszug vom 15.01.2023 zu Depot 1", "kontoauszug"),
+            (
+                "Kontoauszug 3/2024 vom 31.03.2024 zu Konto 1",
+                "kontoauszug",
+            ),
+            ("Rechnungsabschluss 2024 Konto 1 EUR", "kontoauszug"),
+            ("Erträgnisabrechnung IE00B3RBWM25", "abrechnung"),
+            ("Quartalsbericht Q3 2024 Globales Portfolio", "postbox"),
+            ("OnlineAuszug-Nr 12 2025", "kontoauszug"),
+            (
+                "Wertpapierabrechnung Sparplan – JPM USD EM Bond",
+                "abrechnung",
+            ),
+            ("Dividende – Apple", "abrechnung"),
+            ("Kosteninformation – Apple", "postbox"),
+        ] {
+            assert_eq!(account_document_type(title), expected, "{title}");
+        }
+    }
+
     use crate::test_support::query_plan;
 
     #[test]

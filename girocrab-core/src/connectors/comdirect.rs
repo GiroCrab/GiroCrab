@@ -182,20 +182,6 @@ impl ComdirectConnector {
         super::read_body_limited(resp, super::MAX_DOC_BYTES).await
     }
 
-    /// PostBox: recent PDF documents (Finanzreport, Wertpapierabrechnungen …),
-    /// all attached to `account_ref`.
-    async fn postbox(
-        &mut self,
-        account_ref: &str,
-        since: &str,
-    ) -> Vec<crate::documents::RemoteDocument> {
-        let mut docs = self.postbox_documents(since).await.unwrap_or_default();
-        for d in &mut docs {
-            d.account_ref = account_ref.to_string();
-        }
-        docs
-    }
-
     /// PostBox PDFs created on or after `since` (`YYYY-MM-DD`, empty = all),
     /// without an account (`account_ref` empty). `None` when the listing
     /// failed, so the caller does not take an empty PostBox for a fetched one.
@@ -291,18 +277,12 @@ pub(crate) fn postbox_stub(d: &Value) -> Option<crate::documents::RemoteDocument
     let id = d["documentId"].as_str().filter(|s| !s.is_empty())?;
     let date = postbox_date(d);
     let name = d["name"].as_str().unwrap_or("PostBox-Dokument").to_string();
-    let lower = name.to_lowercase();
     Some(crate::documents::RemoteDocument {
         account_ref: String::new(),
         booking_external_id: None,
         title: name.clone(),
-        doc_type: if lower.contains("steuer") {
-            "steuer".into()
-        } else if lower.contains("abrechnung") {
-            "abrechnung".into()
-        } else {
-            "postbox".into()
-        },
+        // the shared typing of documents that belong to an account (also used to sort them anew)
+        doc_type: crate::documents::account_document_type(&name).into(),
         mime_type: "application/pdf".into(),
         file_name: format!("{}_{}.pdf", date, name.replace(' ', "_")),
         bytes: Vec::new(),
@@ -563,13 +543,6 @@ impl BankConnector for ComdirectConnector {
                 holds_ok = false;
             }
         }
-        // PostBox documents (optional, errors are ignored; not when document retrieval is off)
-        if ctx.documents.enabled()
-            && let Some(first) = out.accounts.first().map(|a| a.external_ref.clone())
-        {
-            let docs = self.postbox(&first, &ctx.since).await;
-            out.documents.extend(docs);
-        }
         // Securities accounts (value only)
         crate::depot_debug::log("comdirect REST: fetching depots");
         let depots_res = self.get("/api/brokerage/clients/user/v3/depots").await;
@@ -659,6 +632,17 @@ impl BankConnector for ComdirectConnector {
         // otherwise the stored holds stay as they are.
         if holds_ok {
             out.hold_prefix = Some(HOLD_PREFIX.into());
+        }
+        // The PostBox is fetched once the list includes both cash and securities accounts.
+        if ctx.documents.enabled() && !out.accounts.is_empty() {
+            let mut docs = self.postbox_documents(&ctx.since).await.unwrap_or_default();
+            let accounts: Vec<_> = out
+                .accounts
+                .iter()
+                .filter(|a| !ctx.skipped_accounts.contains(&a.external_ref))
+                .collect();
+            super::comdirect_postbox::assign_documents(&mut docs, &accounts);
+            out.documents.extend(docs);
         }
         Ok(out)
     }
