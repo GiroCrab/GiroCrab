@@ -8,7 +8,7 @@ const hook = source.match(/static let hook = #"""\n([\s\S]*?)\n    """#/)[1];
 const api = 'https://service.meindepot.union-investment.de';
 const pageOrigin = 'https://anlegen.meindepot.union-investment.de';
 const response = (data, status=200) => ({ok: status >= 200 && status < 300, status, json: async () => data,
-  arrayBuffer: async () => Buffer.from(data).buffer.slice(0)});
+  arrayBuffer: async () => Uint8Array.from(Buffer.from(data)).buffer});
 function page(fetch, origin=pageOrigin) {
   class XHR { open() {} setRequestHeader() {} addEventListener() {} }
   const window = {fetch};
