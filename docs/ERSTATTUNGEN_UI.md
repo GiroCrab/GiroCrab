@@ -146,10 +146,13 @@ aus `planning::store_splits`):
 
 - **Aufteilung aufgehoben:** Die Verknüpfungen gelten der ganzen Buchung. Jede Erstattung wird bis zu dem aufgefüllt,
   was die Buchung noch offen hat, nicht mehr nur bis zum Betrag ihres früheren Teils.
-- **Anders aufgeteilt** (andere Beträge oder andere Anzahl der Teile): Die Verknüpfungen gelten ebenfalls der ganzen
-  Buchung. Ihr Anteil wird vom letzten Teil zum ersten verteilt, jeder Teil wird gefüllt, bis der Anteil aufgebraucht
-  ist; so zählt er in den Kategorien dieser Teile. Dasselbe gilt für eine als Ganzes verknüpfte Buchung, die erst
-  danach geteilt wird, und für eine Verknüpfung von einem anderen Gerät, deren Teil es hier nicht gibt.
+- **Anders aufgeteilt** (andere Beträge oder andere Anzahl der Teile): Die Verknüpfung bleibt bei ihrem Teil, solange
+  die Buchung an dieser Position noch einen Teil derselben Richtung hat; sie gilt dann seinem neuen Betrag und nie den
+  anderen Teilen. Gibt es den Teil nicht mehr (weniger Teile, oder der Teil hat die Richtung gewechselt), gilt die
+  Verknüpfung der ganzen Buchung. Ihr Anteil wird dann vom letzten Teil zum ersten verteilt, jeder Teil wird gefüllt,
+  bis der Anteil aufgebraucht ist; so zählt er in den Kategorien dieser Teile. Dasselbe gilt für eine als Ganzes
+  verknüpfte Buchung, die erst danach geteilt wird, und für eine Verknüpfung von einem anderen Gerät, deren Teil es
+  hier nicht gibt.
 - **Nur Kategorie oder Notiz eines Teils geändert:** Die Verknüpfung bleibt bei ihrem Teil.
 
 Die umgestellten Verknüpfungen behalten ihren Platz unter den Verknüpfungen ihrer Erstattung (der Stempel des
