@@ -17,7 +17,7 @@ pub(super) struct CategoryFlow {
 }
 
 impl Vault {
-    fn category_rows(
+    pub(crate) fn category_rows(
         conn: &Connection,
     ) -> CoreResult<Vec<(i64, Option<i64>, String, String, String, i32, Option<i64>)>> {
         let mut stmt = conn.prepare("SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL")?;
@@ -235,9 +235,10 @@ impl Vault {
                AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
              GROUP BY m ORDER BY m",
             crate::planning::effective_sql(
+                &db,
                 ", t.account_id AS account_id",
                 crate::planning::sums_condition(account_ids.len())
-            ),
+            )?,
             in_list(&ids)
         );
         let mut stmt = db.prepare(&sql)?;
@@ -284,9 +285,10 @@ impl Vault {
                AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
              GROUP BY upper(currency) ORDER BY upper(currency)",
             crate::planning::effective_sql(
+                &db,
                 ", t.account_id AS account_id, t.currency AS currency",
                 " AND upper(t.currency) NOT IN ('', 'EUR')"
-            ),
+            )?,
             in_list(&ids)
         );
         let mut stmt = db.prepare(&sql)?;
@@ -341,7 +343,7 @@ impl Vault {
              WHERE category_id IS NOT NULL
                AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
              GROUP BY category_id, upper(currency)",
-            crate::planning::effective_sql(", t.currency AS currency", &condition)
+            crate::planning::effective_sql(&db, ", t.currency AS currency", &condition)?
         ))?;
         let checked = checked.map(i64::from);
         let own = stmt
@@ -607,7 +609,7 @@ impl Vault {
     }
 
     /// `category_id` and all its descendants (capped like the history queries).
-    fn category_subtree(
+    pub(crate) fn category_subtree(
         rows: &[(i64, Option<i64>, String, String, String, i32, Option<i64>)],
         category_id: i64,
     ) -> Vec<i64> {
@@ -657,7 +659,7 @@ impl Vault {
                 "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
                  WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
                  GROUP BY category_id",
-                crate::planning::effective_sql("", &condition)
+                crate::planning::effective_sql(&db, "", &condition)?
             ))?;
             let checked = checked.map(i64::from);
             let it = stmt.query_map(params![date_from, date_to, checked], |r| {

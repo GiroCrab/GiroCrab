@@ -143,6 +143,7 @@ pub struct RefundLinks {
 #[derive(Clone)]
 struct Part {
     amount: i64,
+    category: Option<i64>,
     label: String,
 }
 
@@ -150,7 +151,7 @@ struct Part {
 fn split_parts(conn: &Connection) -> CoreResult<HashMap<i64, Vec<Part>>> {
     let mut out: HashMap<i64, Vec<Part>> = HashMap::new();
     let mut stmt = conn.prepare(
-        "SELECT s.transaction_id,s.amount_cents,COALESCE(c.name,''),s.note FROM transaction_splits s
+        "SELECT s.transaction_id,s.amount_cents,COALESCE(c.name,''),s.note,s.category_id FROM transaction_splits s
          LEFT JOIN categories c ON c.id=s.category_id ORDER BY s.id",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -159,16 +160,21 @@ fn split_parts(conn: &Connection) -> CoreResult<HashMap<i64, Vec<Part>>> {
             r.get::<_, i64>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, String>(3)?,
+            r.get::<_, Option<i64>>(4)?,
         ))
     })?;
     for row in rows {
-        let (id, amount, category, note) = row?;
-        let label = [category.trim(), note.trim()]
+        let (id, amount, name, note, category) = row?;
+        let label = [name.trim(), note.trim()]
             .into_iter()
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>()
             .join(" · ");
-        out.entry(id).or_default().push(Part { amount, label });
+        out.entry(id).or_default().push(Part {
+            amount,
+            category,
+            label,
+        });
     }
     Ok(out)
 }
@@ -419,6 +425,136 @@ pub(crate) fn covered(conn: &Connection) -> CoreResult<HashMap<i64, i64>> {
         out.remove(original);
     }
     Ok(out)
+}
+
+/// What the links move between categories (refund, category it counts in, cents): the part of
+/// a refund that pays back a booking counts in that booking's category, or in the category of
+/// the split part the link names. What is left of the refund stays in its own category. A link
+/// to a whole booking that has been split since moves nothing.
+pub(crate) fn moves(conn: &Connection) -> CoreResult<Vec<(i64, Option<i64>, i64)>> {
+    let has_links: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL)",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_links {
+        return Ok(Vec::new());
+    }
+    let parts = split_parts(conn)?;
+    let shares = shares(conn, &parts)?;
+    let own: HashMap<i64, Option<i64>> = conn
+        .prepare(
+            "SELECT DISTINCT o.id,o.category_id FROM refund_links l
+             JOIN transactions o ON o.id=l.original_id WHERE l.deleted_ms IS NULL",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut out: Vec<(i64, Option<i64>, i64)> = shares
+        .links
+        .iter()
+        .filter(|(_, share)| **share > 0)
+        .filter_map(|((refund, original, part), share)| {
+            let category = match part_of(&parts, *original, *part) {
+                Some(p) => p.category,
+                None if parts.contains_key(original) => return None,
+                None => *own.get(original)?,
+            };
+            Some((*refund, category, *share))
+        })
+        .collect();
+    out.sort_unstable();
+    Ok(out)
+}
+
+/// `moves` as a table expression (refund_id, category_id, amount_cents) for SQL sums; `None`
+/// when no link moves anything.
+pub(crate) fn moves_sql(conn: &Connection) -> CoreResult<Option<String>> {
+    let moves = moves(conn)?;
+    if moves.is_empty() {
+        return Ok(None);
+    }
+    let rows: Vec<String> = moves
+        .iter()
+        .map(|(refund, category, cents)| {
+            let category = category.map_or("NULL".to_string(), |c| c.to_string());
+            format!("({refund},{category},{cents})")
+        })
+        .collect();
+    Ok(Some(format!(
+        "(SELECT column1 AS refund_id, column2 AS category_id, column3 AS amount_cents FROM (VALUES {}))",
+        rows.join(",")
+    )))
+}
+
+/// The moved refund parts a category filter has to count (`moves`).
+pub(crate) struct CategoryRefunds {
+    /// Per refund: what its links pay back in total.
+    assigned: HashMap<i64, i64>,
+    /// Per refund: what of that counts in the filtered categories.
+    into: HashMap<i64, i64>,
+}
+
+impl CategoryRefunds {
+    /// `categories`: the filtered categories (`None` = bookings without one). `None` when no
+    /// link moves anything.
+    pub(crate) fn load(conn: &Connection, categories: &[Option<i64>]) -> CoreResult<Option<Self>> {
+        let moves = moves(conn)?;
+        if moves.is_empty() {
+            return Ok(None);
+        }
+        let mut out = Self {
+            assigned: HashMap::new(),
+            into: HashMap::new(),
+        };
+        for (refund, category, cents) in moves {
+            *out.assigned.entry(refund).or_default() += cents;
+            if categories.contains(&category) {
+                *out.into.entry(refund).or_default() += cents;
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// The refunds that count in the filtered categories through a link.
+    pub(crate) fn moved_in(&self) -> impl Iterator<Item = i64> + '_ {
+        self.into.keys().copied()
+    }
+
+    /// `models::split_flow_parts` under a category filter: `share` is what the booking's own
+    /// category (or its split parts) puts into the filter. Of a linked refund only the rest its
+    /// links leave counts there; what they pay back counts where the paid-back booking is.
+    pub(crate) fn flow_parts(
+        this: Option<&Self>,
+        id: i64,
+        flow: crate::merchants::FlowKind,
+        share_cents: i64,
+        amount_cents: i64,
+        refund_income_cents: i64,
+    ) -> [(crate::merchants::FlowKind, i64); 2] {
+        let Some(assigned) = this
+            .and_then(|m| m.assigned.get(&id))
+            .filter(|_| amount_cents > 0)
+        else {
+            return crate::models::split_flow_parts(
+                flow,
+                share_cents,
+                amount_cents,
+                refund_income_cents,
+            );
+        };
+        let open = (amount_cents - assigned).max(0);
+        let rest = if share_cents == amount_cents {
+            open
+        } else {
+            (i128::from(open) * i128::from(share_cents) / i128::from(amount_cents)) as i64
+        };
+        let income = if refund_income_cents > 0 { rest } else { 0 };
+        let into = this.and_then(|m| m.into.get(&id)).copied().unwrap_or(0);
+        [
+            (flow, rest - income + into),
+            (crate::merchants::FlowKind::Income, income),
+        ]
+    }
 }
 
 pub(crate) fn linked_refund_ids(conn: &Connection) -> CoreResult<std::collections::HashSet<i64>> {

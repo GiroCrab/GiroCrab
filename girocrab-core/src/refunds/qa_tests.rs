@@ -214,7 +214,8 @@ fn qa_split_refund_category_views_conserve_partial_income() {
             pa.income_cents + pb.income_cents,
             pa.expense_cents + pb.expense_cents
         ),
-        (7000, 3000),
+        // what the refund pays back counts where the paid-back booking is (no category)
+        (7000, 0),
         "A income/expense={}/{}, B={}/{}",
         pa.income_cents,
         pa.expense_cents,
@@ -224,7 +225,6 @@ fn qa_split_refund_category_views_conserve_partial_income() {
 }
 
 #[test]
-#[ignore = "open product call: a refund does not net against the split original's categories"]
 fn qa_split_original_parts_unchanged_and_category_expenses() {
     let (_d, v, a) = fixture();
     let (ca, cb) = categories(&v);
@@ -303,11 +303,11 @@ fn qa_split_refund_insights_cashflow_api_and_category_sums() {
     let cats = v.list_categories(None, None).unwrap();
     assert_eq!(
         cats.iter().find(|c| c.id == ca).unwrap().own_total_cents,
-        6000
+        4200
     );
     assert_eq!(
         cats.iter().find(|c| c.id == cb).unwrap().own_total_cents,
-        4000
+        2800
     );
     v.set_local_api_scope(crate::local_api::ShareScope {
         enabled: true,
@@ -406,4 +406,76 @@ fn qa_exhausted_source_has_no_unlinkable_suggestions() {
         v.refund_suggestions(r).unwrap().is_empty(),
         "exhausted refund should not suggest another booking"
     );
+}
+
+fn totals(v: &Vault, cat: i64) -> (i64, u32) {
+    let c = v
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == cat)
+        .unwrap();
+    (c.own_total_cents, c.transaction_count)
+}
+
+/// What a refund pays back counts in the category of the booking it pays back, the rest in
+/// the refund's own category: in the filtered list and in the category totals.
+#[test]
+fn assigned_refund_counts_in_the_category_of_its_original() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let o = booking(&v, a, -3000);
+    let r = booking(&v, a, 5000);
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    v.set_transaction_category(r, Some(cb)).unwrap();
+    assert_eq!(page(&v, Some(ca)).expense_cents, -3000);
+    assert_eq!(totals(&v, ca).0, -3000);
+    assert_eq!(totals(&v, cb).0, 5000);
+
+    v.link_refund(r, o, 0).unwrap();
+    let in_a = page(&v, Some(ca));
+    assert_eq!((in_a.expense_cents, in_a.income_cents), (0, 0));
+    // the refund is listed with the booking it pays back
+    let mut ids: Vec<i64> = in_a.transactions.iter().map(|b| b.id).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![o, r]);
+    let in_b = page(&v, Some(cb));
+    assert_eq!((in_b.expense_cents, in_b.income_cents), (0, 2000));
+    let all = page(&v, None);
+    assert_eq!((all.expense_cents, all.income_cents), (0, 2000));
+    assert_eq!(totals(&v, ca).0, 0);
+    assert_eq!(totals(&v, cb).0, 2000);
+
+    v.unlink_refund(r, o, 0).unwrap();
+    assert_eq!(page(&v, Some(ca)).expense_cents, -3000);
+    assert_eq!(page(&v, Some(cb)).income_cents, 5000);
+    assert_eq!(totals(&v, ca), (-3000, 1));
+    assert_eq!(totals(&v, cb), (5000, 1));
+}
+
+/// Two refunds on different parts of one split booking each count in their part's category;
+/// a refund without a category counts there too.
+#[test]
+fn assigned_refunds_count_in_the_categories_of_their_parts() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let o = booking(&v, a, -10000);
+    let first = booking(&v, a, 1000);
+    let second = booking(&v, a, 4000);
+    split(&v, o, ca, cb, -1);
+    v.link_refund(first, o, 1).unwrap();
+    v.link_refund(second, o, 2).unwrap();
+    assert_eq!(page(&v, Some(ca)).expense_cents, -5000);
+    assert_eq!(page(&v, Some(cb)).expense_cents, 0);
+    assert_eq!(totals(&v, ca).0, -5000);
+    assert_eq!(totals(&v, cb).0, 0);
+    let none = v
+        .list_transactions(BookingFilter {
+            uncategorized_only: true,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!((none.expense_cents, none.income_cents), (0, 0));
+    let all = page(&v, None);
+    assert_eq!((all.expense_cents, all.income_cents), (-5000, 0));
 }

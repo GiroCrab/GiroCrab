@@ -663,12 +663,13 @@ impl Vault {
                LEFT JOIN categories c ON c.id = e.category_id AND c.deleted_ms IS NULL
               GROUP BY c.id, e.currency",
             crate::planning::effective_sql(
+                &db,
                 ", t.currency AS currency",
                 &format!(
                     " AND t.account_id IN ({}) AND t.booking_date BETWEEN ?1 AND ?2",
                     ph.join(",")
                 ),
-            )
+            )?
         );
         let mut args: Vec<rusqlite::types::Value> = vec![from.clone().into(), to.clone().into()];
         args.extend(accounts.iter().map(|id| (*id).into()));

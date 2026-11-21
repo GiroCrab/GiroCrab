@@ -7,7 +7,9 @@ Kontextmenü der Buchungsliste, das Blatt zum Zuordnen (`RefundPickerSheet`), da
 ## Grundprinzip
 
 Die Verknüpfung dokumentiert nur, was zusammengehört. **Beträge, Kategorien, Splits und Kontostände ändern sich
-nicht**; die Verrechnung in den Kategorien bleibt Sache der Kategorisierung. Der Core (`refunds.rs`) hält Paare aus
+nicht**. In den Auswertungen nach Kategorie zählt der zugeordnete Teil einer Erstattung in der Kategorie der Buchung
+(bei geteilten Buchungen: des gewählten Teils), die er zurückzahlt; der nicht zugeordnete Rest bleibt in der Kategorie
+der Erstattung. Der Core (`refunds.rs`) hält Paare aus
 Erstattung und ursprünglicher Buchung: Eine ursprüngliche Buchung kann mehrere (Teil-)Erstattungen haben, eine
 Erstattung kann mehrere Buchungen zurückzahlen (eine Sammelerstattung).
 

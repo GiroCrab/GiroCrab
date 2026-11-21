@@ -411,6 +411,30 @@ impl Vault {
         Ok(ibans)
     }
 
+    /// What the refund links move into the categories of `filter` (#714); `None` without a
+    /// category filter or when no link moves anything.
+    pub(crate) fn category_refunds(
+        &self,
+        db: &rusqlite::Connection,
+        filter: &BookingFilter,
+    ) -> Result<Option<crate::refunds::CategoryRefunds>, CoreError> {
+        let categories: Vec<Option<i64>> = if filter.uncategorized_only {
+            vec![None]
+        } else if let Some(cat) = filter.category_id {
+            if filter.include_subcategories {
+                Self::category_subtree(&Self::category_rows(db)?, cat)
+                    .into_iter()
+                    .map(Some)
+                    .collect()
+            } else {
+                vec![Some(cat)]
+            }
+        } else {
+            return Ok(None);
+        };
+        crate::refunds::CategoryRefunds::load(db, &categories)
+    }
+
     /// WHERE clause (plus optional CTE, bound arguments and the KPI share
     /// expression) of a `BookingFilter`; shared by the list and bulk updates.
     #[allow(clippy::type_complexity)]
@@ -494,7 +518,28 @@ impl Vault {
         } else {
             None
         };
+        // A refund also belongs to the categories of the bookings it pays back (#714,
+        // `refunds::moves`): it is listed there, and its own share is 0 unless its own
+        // category is filtered too (`CategoryRefunds::flow_parts` adds what it pays back).
+        let mut moved: Vec<i64> = self
+            .category_refunds(db, filter)?
+            .map(|m| m.moved_in().collect())
+            .unwrap_or_default();
+        moved.sort_unstable();
         let share_sql = match &cat_match {
+            Some(m) if !moved.is_empty() => {
+                let ids: Vec<String> = moved.iter().map(i64::to_string).collect();
+                wh.push(format!(
+                    "({} OR t.id IN ({}))",
+                    category_match_sql(m),
+                    ids.join(",")
+                ));
+                format!(
+                    "CASE WHEN EXISTS (SELECT 1 FROM transaction_splits sp WHERE sp.transaction_id = t.id) \
+                     THEN COALESCE((SELECT SUM(sp.amount_cents) FROM transaction_splits sp WHERE sp.transaction_id = t.id AND sp.category_id {m}), 0) \
+                     WHEN t.category_id {m} THEN t.amount_cents ELSE 0 END"
+                )
+            }
             Some(m) => {
                 wh.push(category_match_sql(m));
                 format!(
@@ -972,6 +1017,7 @@ impl Vault {
         // intersected with the selection
         let totals = totals_set(&db, &filter)?;
         let mut per: std::collections::BTreeMap<String, SelectionFlow> = Default::default();
+        let moved = self.category_refunds(&db, &filter)?;
         self.visit_bookings(&db, &filter, |share, t| {
             if !crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
                 && totals
@@ -979,9 +1025,14 @@ impl Vault {
                     .is_none_or(|set| set.contains(&t.account_id))
             {
                 let sums = per.entry(t.currency.to_uppercase()).or_default();
-                for (flow, share) in
-                    split_flow_parts(t.flow, share, t.amount_cents, t.refund_income_cents)
-                {
+                for (flow, share) in crate::refunds::CategoryRefunds::flow_parts(
+                    moved.as_ref(),
+                    t.id,
+                    t.flow,
+                    share,
+                    t.amount_cents,
+                    t.refund_income_cents,
+                ) {
                     sums.add(flow, share);
                 }
             }
@@ -1259,6 +1310,7 @@ impl Vault {
         let mut kept: Vec<(i64, String)> = Vec::new();
         let mut total = 0u32;
         let totals = totals_set(db, filter)?;
+        let moved = self.category_refunds(db, filter)?;
         for row in rows {
             let (id, date, account_id, share, currency, amount) = row?;
             let Some(class) = classes.get(&id) else {
@@ -1274,9 +1326,14 @@ impl Vault {
             if counts_for_totals
                 && crate::planning::counts_in_sums(filter.account_ids.len(), &currency)
             {
-                for (kind, share) in
-                    split_flow_parts(class.flow, share, amount, class.refund_income_cents)
-                {
+                for (kind, share) in crate::refunds::CategoryRefunds::flow_parts(
+                    moved.as_ref(),
+                    id,
+                    class.flow,
+                    share,
+                    amount,
+                    class.refund_income_cents,
+                ) {
                     match kpi_side(kind, share) {
                         KpiSide::Income => income += share,
                         KpiSide::Expense => expense += share,
@@ -1367,6 +1424,7 @@ impl Vault {
         let mut txs: Vec<Booking> = Vec::new();
         let mut total = 0usize;
         let totals = totals_set(db, filter)?;
+        let moved = self.category_refunds(db, filter)?;
         self.visit_bookings(db, filter, |share, t| {
             // One KPI definition (`kpi_side`) for the page sums and `SelectionFlow`;
             // transfers between own accounts are neutral (else counted on both sides).
@@ -1381,9 +1439,14 @@ impl Vault {
             if counts_for_totals
                 && crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
             {
-                for (kind, share) in
-                    split_flow_parts(t.flow, share, t.amount_cents, t.refund_income_cents)
-                {
+                for (kind, share) in crate::refunds::CategoryRefunds::flow_parts(
+                    moved.as_ref(),
+                    t.id,
+                    t.flow,
+                    share,
+                    t.amount_cents,
+                    t.refund_income_cents,
+                ) {
                     match kpi_side(kind, share) {
                         KpiSide::Income => income += share,
                         KpiSide::Expense => expense += share,
