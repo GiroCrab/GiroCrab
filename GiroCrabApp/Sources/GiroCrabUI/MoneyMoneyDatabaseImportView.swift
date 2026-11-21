@@ -831,12 +831,14 @@ struct MoneyMoneyDatabaseImportView: View {
 
     /// The accounts the import links to login `b`, the core's rule (#1437): chosen for import and
     /// going into a new account or one an earlier import owns. One merged into a bank-synced
-    /// account still brings its bookings, but no connection for its login.
+    /// account still brings its bookings, but no connection for its login. "Neues Konto" goes
+    /// where the core sends it: an earlier import or the bank account that one was folded into.
     private func linkedAccounts(_ b: MoneyMoneyDbBank) -> [MoneyMoneyDbAccount] {
         let owned = Set(preview?.ownedAccountIds ?? [])
         return (preview?.accounts ?? []).filter { a in
             let c = binding(a).wrappedValue
-            return a.mmBankId == b.mmId && c.selected && c.target.map(owned.contains) ?? true
+            let target = c.target ?? a.reusedAccountId
+            return a.mmBankId == b.mmId && c.selected && target.map(owned.contains) ?? true
         }
     }
 
@@ -1106,7 +1108,8 @@ extension AppModel {
                                 owner: "Max Mustermann", groupName: group, mmBankId: bankId, isPortfolio: portfolio, suggestedKind: kind,
                                 existingAccountId: existing?.id, existingAccountName: existing?.name, bookingCount: count, pendingCount: pending, holdingCount: portfolio ? 3 : 0,
                                 notesCount: 0, firstDate: from, lastDate: to, statementCount: kind == .checking ? 48 : 0, computedBalanceCents: balance,
-                                balanceSource: "Anfangssaldo laut Saldenverlauf der Datenbank + Umsätze", closed: false)
+                                balanceSource: "Anfangssaldo laut Saldenverlauf der Datenbank + Umsätze", closed: false,
+                                reusedAccountId: nil)
         }
         let accounts = [
             acc(1, "Girokonto", "comdirect", "20041111", iban: "DE89370400440532013000", kind: .checking, existing: existingGiro,

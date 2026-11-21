@@ -168,6 +168,9 @@ pub struct MoneyMoneyDbAccount {
     /// Closed in MoneyMoney: imported archived. A login whose imported
     /// accounts are all closed gets no connection unless chosen (#1437).
     pub closed: bool,
+    /// Where a target of `None` ("new account") goes: the account an earlier import created,
+    /// or the bank-synced one it was folded into; `None` = a new account (#1437).
+    pub reused_account_id: Option<i64>,
 }
 
 /// One bank login in MoneyMoney. Secrets are never part of this record.
@@ -2294,6 +2297,19 @@ fn into_split(row: &mut MmRow, parts: Vec<MmRow>) -> Result<(), Vec<MmRow>> {
 
 // ------------------------------------------------------------------ vault side
 
+/// The account an earlier import of `a` created (soft-deleted ones too: the import revives
+/// them), or the bank account a twin of it was folded into: where a target of `None` goes.
+fn reused_account(conn: &Connection, a: &SrcAccount) -> CoreResult<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
+        [ext_ref(a)],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()?
+    .map(|id| crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id)))
+    .transpose()
+}
+
 /// The vault account each MoneyMoney account is merged into, keyed by its
 /// MoneyMoney rowid. A vault account is claimed at most once: MoneyMoney keeps
 /// closed / duplicate accounts with the same IBAN (issue #94), and without this
@@ -2307,30 +2323,12 @@ fn find_existing_accounts(
     let mut out: HashMap<i64, (i64, String)> = HashMap::new();
     let mut claimed: HashSet<i64> = HashSet::new();
     for a in accounts {
-        let by_ref: Option<(i64, String)> = conn
-            .query_row(
-                // includes soft-deleted rows: the import revives a deleted account
-                "SELECT id, name FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
-                [ext_ref(a)],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        // a twin folded into its bank account: the import goes there
-        let by_ref = match by_ref {
-            Some((id, name)) => match crate::sync_merge::twins::folded_into(conn, id)? {
-                Some(bank) => Some((
-                    bank,
-                    conn.query_row("SELECT name FROM accounts WHERE id = ?1", [bank], |r| {
-                        r.get(0)
-                    })?,
-                )),
-                None => Some((id, name)),
-            },
-            None => None,
-        };
-        if let Some(found) = by_ref {
-            claimed.insert(found.0);
-            out.insert(a.id, found);
+        if let Some(id) = reused_account(conn, a)? {
+            let name = conn.query_row("SELECT name FROM accounts WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })?;
+            claimed.insert(id);
+            out.insert(a.id, (id, name));
         }
     }
     for a in accounts.iter().filter(|a| !a.iban.is_empty()) {
@@ -2780,6 +2778,7 @@ fn preview(
             computed_balance_cents: r.balance_cents,
             balance_source: r.balance_source,
             closed: a.closed,
+            reused_account_id: reused_account(conn, a)?,
         });
     }
     let mut banks = Vec::new();
@@ -3243,18 +3242,8 @@ impl ImportCtx<'_> {
         let kind = choice.kind;
         let target = match choice.target_account_id {
             Some(id) => Some(id),
-            None => conn
-                .query_row(
-                    // includes soft-deleted rows: revived below
-                    "SELECT id FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
-                    [&ext],
-                    |r| r.get::<_, i64>(0),
-                )
-                .optional()?
-                .map(|id| {
-                    crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id))
-                })
-                .transpose()?,
+            // revived below when it was deleted
+            None => reused_account(conn, a)?,
         };
         if let Some(id) = target {
             let revived = crate::sync_merge::revive_account_if_deleted(conn, id)?;

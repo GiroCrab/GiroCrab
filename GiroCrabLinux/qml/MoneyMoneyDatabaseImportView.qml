@@ -213,13 +213,15 @@ ColumnLayout {
     function connectionOptions(b) { return b.connection_options }
     /// The accounts the import links to login `b`, the core's rule (#1437): chosen for import and
     /// going into a new account or one an earlier import owns. One merged into a bank-synced
-    /// account still brings its bookings, but no connection for its login.
+    /// account still brings its bookings, but no connection for its login. "Neues Konto" goes
+    /// where the core sends it: an earlier import or the bank account that one was folded into.
     function linkedAccounts(b) {
         if (!preview) return []
         const owned = preview.owned_account_ids || []
         return preview.accounts.filter(a => {
             const c = choice(a)
-            return a.mm_bank_id === b.mm_id && c.selected && (c.target === null || c.target === undefined || owned.includes(c.target))
+            const t = c.target === null || c.target === undefined ? a.reused_account_id : c.target
+            return a.mm_bank_id === b.mm_id && c.selected && (t === null || t === undefined || owned.includes(t))
         })
     }
     /// Every account linked to the login is closed in MoneyMoney (#1437).

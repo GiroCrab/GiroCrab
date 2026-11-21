@@ -3696,6 +3696,9 @@ fn import_goes_to_the_bank_account_a_twin_was_folded_into() {
         .preview_moneymoney_database(path, String::new(), None)
         .unwrap();
     assert_eq!(p.accounts[0].existing_account_id, Some(ids[0]));
+    // "new account" goes there too: a bank-synced account, so it links no login (#1437)
+    assert_eq!(p.accounts[0].reused_account_id, Some(ids[0]));
+    assert!(!p.owned_account_ids.contains(&ids[0]));
 }
 
 // ------------------------------------------------------- transfer templates (#579)
@@ -4318,10 +4321,13 @@ fn preview_names_the_accounts_the_import_owns() {
     let giro = p.accounts.iter().find(|a| a.name == "Girokonto").unwrap();
     assert_eq!(giro.existing_account_id, Some(synced));
     assert!(!p.owned_account_ids.contains(&synced));
-    assert!(
-        p.owned_account_ids
-            .contains(&account_by_name(&v, "Visa-Karte").id)
-    );
+    // matched by IBAN only: "new account" would really be a new one
+    assert_eq!(giro.reused_account_id, None);
+    // imported before: "new account" reuses it, and it is the import's own
+    let visa = account_by_name(&v, "Visa-Karte").id;
+    let card = p.accounts.iter().find(|a| a.name == "Visa-Karte").unwrap();
+    assert_eq!(card.reused_account_id, Some(visa));
+    assert!(p.owned_account_ids.contains(&visa));
 }
 
 #[test]
