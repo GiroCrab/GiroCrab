@@ -1530,3 +1530,29 @@ fn hispas_advertises_pain_001_09_for_hkccs() {
     ));
     assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V09));
 }
+
+#[tokio::test]
+async fn a_rejected_account_list_is_no_warning_when_the_upd_lists_the_accounts() {
+    // #1083 (flatex): HKSPA is answered with 9380 on every sync; the UPD lists
+    // every account, so the sync is complete and must not say otherwise.
+    const NO_PERMISSION: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+9050::Teilweise fehlerhaft.'HIRMS:3:2:3+9380::Benutzer hat keine Auftragsberechtigung.'";
+    const BALANCE: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:6:3+X+Girokonto+EUR+C:1234,56:EUR:20250102'";
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSPA": [3], "HKSAL": [6]}, "tan_required": {}});
+    let (url, seen) = mock_bank(vec![NO_PERMISSION, BALANCE]);
+    let mut c = two_step_connector(&url, state.clone());
+    c.upd = vec![upd_acc("0532013000", "", IBAN_A, "Girokonto", &["HKSAL"])];
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(r.accounts.len(), 1);
+    assert_eq!(r.accounts[0].balance_cents, 123_456);
+
+    // Without UPD accounts the rejection is the reason nothing came: still reported.
+    let (url, _) = mock_bank(vec![NO_PERMISSION]);
+    let mut c = two_step_connector(&url, state);
+    let r = c.fetch(&test_ctx()).await;
+    match r {
+        Err(e) => assert!(e.to_string().contains("HKSPA"), "{e}"),
+        Ok(r) => panic!("{:?} / {:?}", r.accounts.len(), r.warnings),
+    }
+}
