@@ -57,6 +57,9 @@ pub fn handles(method: &str) -> bool {
             | "import_sharinbox_snapshot"
             | "pending_sharinbox_documents"
             | "import_sharinbox_document"
+            | "import_unioninvestment_snapshot"
+            | "pending_unioninvestment_documents"
+            | "import_unioninvestment_document"
             | "import_schwaebisch_hall_snapshot"
             | "pending_schwaebisch_hall_documents"
             | "import_schwaebisch_hall_document"
@@ -225,6 +228,15 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
             .map_err(err)?),
         "import_sharinbox_document" => ok(vault()?
             .import_sharinbox_document(id()?, arg(a, "document_json")?, bytes(a)?)
+            .map_err(err)?),
+        "import_unioninvestment_snapshot" => ok(vault()?
+            .import_unioninvestment_snapshot(id()?, arg(a, "snapshot_json")?)
+            .map_err(err)?),
+        "pending_unioninvestment_documents" => ok(vault()?
+            .pending_unioninvestment_documents(id()?, arg(a, "documents_json")?)
+            .map_err(err)?),
+        "import_unioninvestment_document" => ok(vault()?
+            .import_unioninvestment_document(id()?, arg(a, "document_json")?, bytes(a)?)
             .map_err(err)?),
         "import_schwaebisch_hall_snapshot" => ok(vault()?
             .import_schwaebisch_hall_snapshot(id()?, arg(a, "snapshot_json")?)

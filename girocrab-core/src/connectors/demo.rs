@@ -129,6 +129,7 @@ impl BankConnector for DemoConnector {
             | ConnectorKind::EquatePlus
             | ConnectorKind::Quirion
             | ConnectorKind::Sharinbox
+            | ConnectorKind::UnionInvestment
             | ConnectorKind::SchwaebischHall
             | ConnectorKind::Fnz
             | ConnectorKind::EnableBanking => Challenge {

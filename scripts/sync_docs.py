@@ -110,6 +110,7 @@ CONNECTOR_DOCS = {
     "trade-republic": ("Trade Republic", "Trade Republic"),
     "volkswagen-bank": ("Volkswagen Bank", "Volkswagen Bank"),
     "sharinbox": ("Sharinbox (Société Générale)", "Sharinbox (Société Générale)"),
+    "unioninvestment": ("Union Investment", "Union Investment"),
     "uberspace": ("Uberspace", "Uberspace"),
     "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),
     "kontist": ("Kontist", "Kontist"),
