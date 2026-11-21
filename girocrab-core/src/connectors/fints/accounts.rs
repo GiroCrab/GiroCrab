@@ -125,12 +125,13 @@ pub(super) fn account_label(acc: &SepaAccount) -> String {
 }
 
 impl FinTsConnector {
-    /// Accounts from UPD merged with HKSPA (BIC/IBAN). Returns (account, upd).
+    /// Accounts from UPD merged with HKSPA (BIC/IBAN) as (account, upd), and why
+    /// HKSPA failed, if it did: whether that matters is the caller's to judge.
     pub(super) async fn account_list(
         &mut self,
         ctx: &ConnectContext,
-        errors: &mut Vec<String>,
-    ) -> Vec<(SepaAccount, Option<UpdAccount>)> {
+    ) -> (Vec<(SepaAccount, Option<UpdAccount>)>, Option<String>) {
+        let mut error = None;
         let mut sepa: Vec<SepaAccount> = Vec::new();
         if self.bank_supports("HKSPA") {
             let v = self.version("HKSPA");
@@ -156,10 +157,10 @@ impl FinTsConnector {
                         }
                     }
                 }
-                Err(e) => errors.push(trf("Kontenliste (HKSPA) – {0}", &[&e])),
+                Err(e) => error = Some(trf("Kontenliste (HKSPA) – {0}", &[&e])),
             }
         }
-        merge_upd_with_sepa(&self.upd, sepa, &self.blz)
+        (merge_upd_with_sepa(&self.upd, sepa, &self.blz), error)
     }
 
     /// The order's source account from the bank's account list. `None` when the
@@ -170,19 +171,14 @@ impl FinTsConnector {
         iban: &str,
         seg_id: &str,
     ) -> CoreResult<Option<SepaAccount>> {
-        let mut errors = Vec::new();
-        let accounts = self.account_list(ctx, &mut errors).await;
+        let (accounts, list_error) = self.account_list(ctx).await;
         let want = normalize_iban(iban);
         let Some((acc, upd)) = accounts
             .into_iter()
             .find(|(a, _)| normalize_iban(&a.iban) == want)
         else {
             // A failed HKSPA is the likely reason the account is missing.
-            let reason = if errors.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", errors.join(" / "))
-            };
+            let reason = list_error.map(|e| format!(" ({e})")).unwrap_or_default();
             return Err(CoreError::NotFound {
                 what: trf("Konto {0} bei der Bank{1}", &[&iban, &reason]),
             });
