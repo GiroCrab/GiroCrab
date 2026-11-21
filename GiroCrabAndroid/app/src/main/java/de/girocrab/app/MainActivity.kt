@@ -65,10 +65,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.girocrab.app.model.AppViewModel
 import de.girocrab.app.model.VaultState
+import de.girocrab.app.security.AndroidCipherPrompt
+import de.girocrab.app.security.NativeVaultOpener
+import de.girocrab.app.security.UnlockResult
+import de.girocrab.app.security.VaultKeyStore
+import de.girocrab.app.security.VaultUnlocker
 import de.girocrab.app.ui.screens.BiometricLockScreen
 import de.girocrab.app.ui.screens.DemoBanner
 import de.girocrab.app.ui.screens.EmptyVaultCard
@@ -177,6 +183,20 @@ fun GiroCrabRoot(
     val locked = (state.vaultState == VaultState.Locked && !state.loading) || lockPreview
     LaunchedEffect(state.privacyMode, locked) { setSecure(state.privacyMode) }
 
+    // The unlocker owns the Keystore cipher: without an authenticated prompt nothing is unwrapped.
+    val context = LocalContext.current
+    val unlocker = remember(context) {
+        (context as? FragmentActivity)?.let { activity ->
+            VaultUnlocker(
+                keyStore = VaultKeyStore(VaultKeyStore.defaultFile(activity.filesDir)),
+                opener = NativeVaultOpener(),
+                prompt = AndroidCipherPrompt(activity),
+                filesDir = activity.filesDir,
+            )
+        }
+    }
+    var unlockMessage by remember { mutableStateOf<String?>(null) }
+
     if (state.loading && state.vaultState == VaultState.Locked) {
         Box(Modifier.fillMaxSize())
         return
@@ -185,8 +205,17 @@ fun GiroCrabRoot(
     if (locked) {
         BiometricLockScreen(
             previewMode = lockPreview,
-            onUnlock = { vm.bootstrap() },
-            onBackToDemo = { lockPreview = false },
+            message = unlockMessage,
+            onUnlockRequest = {
+                val request = unlocker
+                if (request == null) {
+                    unlockMessage = "Entsperren ist auf diesem Gerät nicht verfügbar."
+                } else {
+                    unlockMessage = null
+                    request.unlock { result -> unlockMessage = describe(result) }
+                }
+            },
+            onBackToDemo = { if (lockPreview) lockPreview = false else vm.showDemo() },
         )
         return
     }
@@ -407,4 +436,20 @@ private fun GiroCrabIntro(skip: Boolean) {
             }
         }
     }
+}
+
+/**
+ * Message for the lock screen. Opening the vault is proven by the account count — the data itself
+ * still comes from the mapper in #1429 (3.1), so the handle is closed again right here.
+ */
+private fun describe(result: UnlockResult): String = when (result) {
+    is UnlockResult.Opened -> {
+        val count = result.vault.accountCount
+        result.vault.close()
+        "Tresor geöffnet: $count Konten. Die Anzeige folgt mit dem Mapper (#1429)."
+    }
+    UnlockResult.NoVaultOnDevice -> "Auf diesem Gerät liegt noch kein Tresor. Import folgt (#1428, 2.6)."
+    UnlockResult.KeyInvalidated -> "Der Geräteschlüssel ist ungültig (neue Biometrie oder zurückgesetzte Sperre). Nur eine Sicherung bringt den Tresor zurück."
+    UnlockResult.Unavailable -> "Entsperren ist auf diesem Gerät nicht verfügbar."
+    is UnlockResult.Refused -> result.message ?: "Entsperren abgebrochen."
 }
