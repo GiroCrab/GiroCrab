@@ -533,12 +533,29 @@ fn refund_larger_than_its_original_is_spread_over_several() {
     assert_eq!(v.refund_links(refund).unwrap().assigned_cents, Some(2_000));
     // the rest goes to the second original
     v.link_refund(refund, second).unwrap();
-    assert_eq!(v.refund_links(refund).unwrap().assigned_cents, Some(5_000));
+    let own = v.refund_links(refund).unwrap();
+    assert_eq!(own.assigned_cents, Some(5_000));
+    // each booking takes at most its amount, the next one at most the rest
+    assert_eq!(
+        own.originals
+            .iter()
+            .map(|o| o.share_cents)
+            .collect::<Vec<_>>(),
+        vec![Some(2_000), Some(3_000)]
+    );
     assert_eq!(v.refund_links(second).unwrap().refunded_cents, Some(3_000));
+    assert_eq!(
+        v.refund_links(second).unwrap().refunds[0].share_cents,
+        Some(3_000)
+    );
     // a later refund only fills what is still open
     v.link_refund(later, second).unwrap();
     assert_eq!(v.refund_links(second).unwrap().refunded_cents, Some(4_000));
     assert_eq!(v.refund_links(later).unwrap().assigned_cents, Some(1_000));
+    assert_eq!(
+        v.refund_candidates(first, String::new(), 50).unwrap()[0].share_cents,
+        None
+    );
     // a linked refund stays a candidate for further originals, a pair links once
     assert!(
         v.refund_candidates(first, String::new(), 50)

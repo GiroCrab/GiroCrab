@@ -48,6 +48,10 @@ Darunter zuerst die **verknüpften** Buchungen (✓) mit der Summe, wenn alle Be
   eine zweite Zeile, wie viel sie betragen und dass der Rest weiteren Buchungen zugeordnet werden kann.
 - Erstattung: „Zugeordnet: … von …“ und, solange etwas übrig ist, „Noch offen: …“.
 
+Jede verknüpfte Zeile zeigt unter ihrem Betrag „Zugeordnet: …“ (`RefundBooking.share_cents`): den Teil der Erstattung,
+der auf diese Verknüpfung entfällt – höchstens der Betrag der Buchung und höchstens der Rest der Erstattung. Ist die
+Erstattung schon aufgebraucht, steht dort 0 in der Warnfarbe. Dasselbe zeigt die Karte im Inspektor.
+
 Dann bis zu drei **Vorschläge** des Core (`refund_suggestions`), jeder mit seinem Grund, aufgefüllt in dieser
 Reihenfolge und darin nach Nähe zum Datum: gleicher Betrag in der Gegenrichtung (gleiche Währung), gleiche Gegenpartei
 oder gleicher Händler innerhalb von zwei Monaten, gleiche Referenz (Bestell- oder Rechnungsnummer im Verwendungszweck,

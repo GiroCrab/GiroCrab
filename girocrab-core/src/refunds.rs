@@ -62,6 +62,10 @@ pub struct RefundBooking {
     /// Raw counterparty and purpose, for the second line of a row and for searching.
     pub counterparty: String,
     pub purpose: String,
+    /// In [`RefundLinks`]: how much of the refund this link pays back, at most the original's
+    /// amount and at most what the refund has left after its earlier originals. `None` for a
+    /// candidate and for a link between different currencies.
+    pub share_cents: Option<i64>,
 }
 
 /// Why a booking is suggested for a link.
@@ -209,6 +213,7 @@ fn rows(
                     },
                     counterparty: cp,
                     purpose,
+                    share_cents: None,
                 },
                 end_to_end_id: r.get(8)?,
             })
@@ -462,9 +467,15 @@ impl Vault {
                 &rules,
             )
         };
-        let originals = side("refund_id", "original_id")?;
-        let refunds = side("original_id", "refund_id")?;
+        let mut originals = side("refund_id", "original_id")?;
+        let mut refunds = side("original_id", "refund_id")?;
         let (shares, mixed) = shares(&db)?;
+        for o in &mut originals {
+            o.share_cents = shares.get(&(transaction_id, o.id)).copied();
+        }
+        for r in &mut refunds {
+            r.share_cents = shares.get(&(r.id, transaction_id)).copied();
+        }
         let sum = |pairs: Vec<(i64, i64)>| -> Option<i64> {
             (!pairs.is_empty() && !pairs.iter().any(|p| mixed.contains(p)))
                 .then(|| pairs.iter().filter_map(|p| shares.get(p)).sum())

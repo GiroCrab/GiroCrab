@@ -11079,6 +11079,17 @@
         }
       }
     },
+    "Die Erstattung ist bereits vollständig anderen Buchungen zugeordnet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The refund is already fully assigned to other transactions."
+          }
+        }
+      }
+    },
     "Die Erstattungen betragen zusammen %@. Was über diese Buchung hinausgeht, zählt hier nicht und kann weiteren Buchungen zugeordnet werden." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28329,6 +28340,17 @@
         }
       }
     },
+    "So viel der Erstattung entfällt auf diese Verknüpfung." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This much of the refund goes to this link."
+          }
+        }
+      }
+    },
     "Socket" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33912,6 +33934,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Create Access Key"
+          }
+        }
+      }
+    },
+    "Zugeordnet: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assigned: %@"
           }
         }
       }

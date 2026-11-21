@@ -98,6 +98,10 @@ final class RefundLinkTests: XCTestCase {
         let own = try vault.refundLinks(transactionId: refund.id)
         let assigned = -(originals[0].amountCents + originals[1].amountCents)
         XCTAssertEqual(own.assignedCents, assigned)
+        // each linked booking shows its share: at most its amount
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: own.originals.map { ($0.id, $0.shareCents) }),
+                       Dictionary(uniqueKeysWithValues: originals.map { ($0.id, Optional(-$0.amountCents)) }))
+        XCTAssertNil(try vault.refundCandidates(transactionId: refund.id, query: "", limit: 1).first?.shareCents)
         let ownLines = RefundSum.lines(booking: refund, links: own)
         XCTAssertEqual(ownLines.count, 2)
         XCTAssertTrue(ownLines[1].contains(money(refund.amountCents - assigned)))

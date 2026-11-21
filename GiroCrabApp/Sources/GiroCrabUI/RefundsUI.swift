@@ -72,9 +72,21 @@ private struct RefundBookingLine: View {
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            AmountLabel(cents: row.amountCents, currency: row.currency)
-                .lineLimit(1)
-                .fixedSize()
+            VStack(alignment: .trailing, spacing: 1) {
+                AmountLabel(cents: row.amountCents, currency: row.currency)
+                    .lineLimit(1)
+                    .fixedSize()
+                // a linked booking: what this link takes of the refund
+                if let share = row.shareCents {
+                    Text(RefundSum.share(share, currency: row.currency))
+                        .appFont(.caption, monospacedDigit: true)
+                        .foregroundStyle(share == 0 ? Theme.warning : Theme.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .sensitive(.amounts)
+                        .help(share == 0 ? "Die Erstattung ist bereits vollständig anderen Buchungen zugeordnet." : "So viel der Erstattung entfällt auf diese Verknüpfung.")
+                }
+            }
         }
     }
 }
@@ -83,6 +95,11 @@ private struct RefundBookingLine: View {
 /// is never refunded beyond its amount and a refund counts once, so a refund that is larger than
 /// its booking leaves a rest for further bookings. Nothing when currencies differ (#569).
 enum RefundSum {
+    /// "Zugeordnet: 12,00 €" below the amount of a linked booking.
+    static func share(_ cents: Int64, currency: String) -> String {
+        String(localized: "Zugeordnet: \(Money.format(cents, currency: currency.isEmpty ? "EUR" : currency.uppercased()))")
+    }
+
     static func lines(booking: Booking, links: RefundLinks) -> [String] {
         let currency = booking.currency.isEmpty ? "EUR" : booking.currency.uppercased()
         let money = { (cents: Int64) in Money.format(cents, currency: currency) }
