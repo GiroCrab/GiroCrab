@@ -101,6 +101,10 @@ public final class AppModel {
     var listBalances = ListBalances()
     /// Watches Ansicht › Saldo anzeigen, which the settings window can change too.
     @ObservationIgnored private var runningBalanceObserver: NSKeyValueObservation?
+    /// Bumped whenever the effective total set changes (#337: account / group
+    /// switch, group move). The overall money figures (cashflow card) follow
+    /// it — the booking list count alone does not move, it is a proof view.
+    var totalsVersion = 0
     /// Flows of the selected account/group in the selected period; nil = not loaded yet.
     var selectionFlow: (consumption: Int64, invested: Int64, income: Int64)? { didSet { refreshOtherCurrencies() } }
     /// „Ohne Kategorie“ badge while list filters narrow the sums; nil = the accounts' own counts (#357).
@@ -135,6 +139,14 @@ public final class AppModel {
     /// (legacy "1"/"true" from the old toggle count as "google").
     var logoProvider = "off"
     var onlineLogos: Bool { logoProvider != "off" }
+    /// Händlererkennung (#1373, Einstellungen › Händler). Off, bookings show their counterparty
+    /// without merchant name or logo: no logo domain to edit, no logo tip.
+    var merchantRecognitionEnabled = true
+    /// Bumped when the merchant settings may have changed (own change, iCloud merge, sync):
+    /// Einstellungen › Händler reads its list again.
+    var merchantSettingsRevision = 0
+    /// Merchant setting changes queued so far; only the newest reloads the views (`changeMerchants`).
+    @ObservationIgnored var merchantWriteCount = 0
     /// Not observed: signets read it in their body (`cachedLogo`), and filling it
     /// must not re-render every signet on screen.
     @ObservationIgnored var logoCache: [String: (image: Image, pixels: Int)] = [:]
@@ -282,6 +294,10 @@ public final class AppModel {
         get { directionFilter }
         set { loadingFilterInBackground { directionFilter = newValue } }
     }
+    var interactiveIncludeSubcategories: Bool {
+        get { includeSubcategories }
+        set { loadingFilterInBackground { includeSubcategories = newValue } }
+    }
     /// Amount range as set by the header popover (the list follows in the background, #357).
     var interactiveAmountFilter: AmountFilter {
         get { amountFilter }
@@ -331,10 +347,29 @@ public final class AppModel {
         }
     }
 
-    /// Any list filter of the header row (status, type, tags, accounts, amount, search) narrows the list.
+    /// Category scope for this session, shared across category selections.
+    var includeSubcategories = true {
+        didSet {
+            guard includeSubcategories != oldValue, !suspendsFilterReloads,
+                  case .category? = sidebarSelection else { return }
+            listLimit = Self.defaultListLimit
+            reloadAfterFilterChange()
+        }
+    }
+
+    var showsSubcategoryFilter: Bool {
+        if case .category? = shownSelection { return true }
+        return false
+    }
+
+    private var excludesSubcategories: Bool {
+        showsSubcategoryFilter && !includeSubcategories
+    }
+
+    /// Any list filter of the header row narrows the list.
     var hasActiveListFilters: Bool {
         statusFilter != .all || directionFilter != .all || tagFilter.isActive || amountFilter.isActive
-            || !searchText.isEmpty || !categoryAccountIDs.isEmpty
+            || !searchText.isEmpty || !categoryAccountIDs.isEmpty || excludesSubcategories
     }
 
     /// „Filter zurücksetzen“ (#840): clears every list filter with a single reload; the period stays.
@@ -344,6 +379,7 @@ public final class AppModel {
             defer { suspendsFilterReloads = false }
             statusFilter = .all
             directionFilter = .all
+            includeSubcategories = true
             clearTagFilter()
             amountFilter = AmountFilter()
             categoryAccountFilter = []
@@ -365,7 +401,7 @@ public final class AppModel {
 
     /// Filled icon while any filter is active.
     var filterSymbol: String {
-        statusFilter == .all && directionFilter == .all
+        statusFilter == .all && directionFilter == .all && !excludesSubcategories
             ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
     }
     /// Income / expenses only (GitHub #53); filtered in the core, so totals and CSV follow.
@@ -896,7 +932,7 @@ public final class AppModel {
         }
         if options.freshVault || options.demoSeed {
             // Developer switches only (screenshots): synchronous, not the normal start path.
-            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? Bundle.main.preferredLocalizations.first ?? "de")
+            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? AppLanguage.coreCode)
         }
         if options.freshVault {
             openFreshVault()
@@ -1148,7 +1184,7 @@ public final class AppModel {
         Task { @MainActor [weak self] in
             let mayHoldRealData = await Task.detached(priority: .userInitiated) { () -> Bool in
                 // Core texts follow the language the app bundle resolved (German without a bundle).
-                GiroCrabCore.setLanguage(code: Bundle.main.preferredLocalizations.first ?? "de")
+                GiroCrabCore.setLanguage(code: AppLanguage.coreCode)
                 // Decrypted QuickLook copies a crash or force quit may have left behind.
                 Self.removeQuickLookFiles()
                 return Self.vaultMayHoldRealData

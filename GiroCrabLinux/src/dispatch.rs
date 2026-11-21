@@ -628,6 +628,10 @@ fn call(method: &str, a: &Value) -> R {
         }
         "batch" => batch(a),
         "reset_app" => reset_app(),
+        // the search field's text as the core searches it (plural stems, #54f83952)
+        "literal_search_term" => ok(crate::search_terms::literal_search_term(&arg::<String>(
+            a, "text",
+        )?)),
         "set_connection_account_choices" => set_connection_account_choices(&vault()?, a),
         // catalog / directory (free functions of the core)
         "bank_catalog" => ok(girocrab_core::bank_catalog()),
@@ -1472,8 +1476,23 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         // a refusal (`InvalidInput`: loan/depot, gap in the marked bookings) as its plain
         // message, without the „Ungültige Eingabe:“ prefix of other errors.
         "camt053_export" => Some(camt053_export(v, a)),
+        // The Linux cashflow card is the overview: an overall money figure
+        // (#337) — only the effective total set contributes, like the Windows
+        // overview card. Not in the macro below because it carries no
+        // `respect_in_total` from QML.
+        "cashflow_by_period" => Some(cashflow_by_period_totals(v, a)),
         _ => dispatch_vault_methods(v, method, a),
     }
+}
+
+fn cashflow_by_period_totals(v: &Vault, a: &Value) -> R {
+    ok(v.cashflow_by_period(
+        arg(a, "granularity")?,
+        arg(a, "count")?,
+        arg::<Option<Vec<i64>>>(a, "account_ids")?,
+        true,
+    )
+    .map_err(|e| e.to_string())?)
 }
 
 fn camt053_export(v: &Vault, a: &Value) -> R {
@@ -1570,7 +1589,6 @@ vault_methods! {
     // insights / planning / recurring
     merchant_stats(merchant_key) merchant_history(merchant_key, account_id)
     selection_flow(account_ids, date_from, date_to)
-    cashflow_by_period(granularity, count, account_ids)
     list_category_budget_progress(year, month)
     list_recurring(account_ids) recurring_month(account_ids, year, month)
     // settings
@@ -1599,8 +1617,14 @@ vault_methods! {
     seed_demo_account_selection()
     // --- Seitenleiste: Zähler und gefilterte Kategorien (AppModel+Loading/Selection) ---
     count_planned_payments() count_active_mandates()
+    list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
+    // --- Offline-Konten und manuelle Buchungen (OfflineAccountsUI.swift, #679, #81) ---
+    create_offline_account(name, kind, currency, opening_cents)
+    save_manual_booking(account_id, booking_id, setup) delete_manual_booking(booking_id)
+    mirror_booking_to_offline_account(booking_id, account_id)
+    correct_offline_balance(account_id, target_cents)
     // --- Geplante Zahlungen (AppModel+Planned, PlannedPaymentsView) ---
     list_planned_payments(from, to, account_ids) planned_payment_totals(from, to, account_ids)
     // --- Daueraufträge (AppModel+StandingOrders, StandingOrderSheet) ---
@@ -2263,6 +2287,96 @@ mod tests {
         );
         drop(v);
         let _ = std::fs::remove_file(path);
+    }
+
+    /// Offline-Konten (#679, #81, OfflineAccounts.qml): create a cash account, book by hand,
+    /// edit, mirror, correct the balance and delete – the balance follows every step.
+    #[test]
+    fn offline_account_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-offline-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![5; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let balance = |id: &Value| {
+            call("list_accounts", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| &a["id"] == id)
+                .unwrap()["balance_cents"]
+                .as_i64()
+                .unwrap()
+        };
+        let id = call(
+            "create_offline_account",
+            json!({ "name": "Kasse", "kind": "Cash", "currency": "", "opening_cents": 5000 }),
+        );
+        assert!(
+            call("list_offline_account_ids", json!({}))
+                .as_array()
+                .unwrap()
+                .contains(&id)
+        );
+        assert_eq!(balance(&id), 5000);
+        let setup = |cents: i64| {
+            json!({ "booking_date": "2026-11-01", "amount_cents": cents, "counterparty": "Bäcker",
+                    "purpose": "Brötchen", "category_id": null, "note": "" })
+        };
+        let booking = call(
+            "save_manual_booking",
+            json!({ "account_id": id, "booking_id": null, "setup": setup(-350) }),
+        );
+        assert_eq!(balance(&id), 4650);
+        assert_eq!(
+            call(
+                "save_manual_booking",
+                json!({ "account_id": id, "booking_id": booking, "setup": setup(-400) }),
+            ),
+            booking
+        );
+        assert_eq!(balance(&id), 4600);
+        // a booking of another account, mirrored with the amount reversed
+        let other = call(
+            "list_transactions",
+            json!({ "filter": {
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 1, "offset": 0, "scope": "All", "merchant_key": null, "direction": "Expense",
+            "checked": null, "whole_days": true, "amount_min_cents": null,
+            "amount_max_cents": null, "with_balances": false } }),
+        )["transactions"][0]
+            .clone();
+        assert_ne!(other["account_id"], id);
+        call(
+            "mirror_booking_to_offline_account",
+            json!({ "booking_id": other["id"], "account_id": id }),
+        );
+        let mirrored = 4600 - other["amount_cents"].as_i64().unwrap();
+        assert_eq!(balance(&id), mirrored);
+        assert!(
+            call(
+                "correct_offline_balance",
+                json!({ "account_id": id, "target_cents": 10000 })
+            )
+            .is_i64()
+        );
+        assert_eq!(balance(&id), 10000);
+        assert!(
+            call(
+                "correct_offline_balance",
+                json!({ "account_id": id, "target_cents": 10000 })
+            )
+            .is_null()
+        );
+        call("delete_manual_booking", json!({ "booking_id": booking }));
+        assert_eq!(balance(&id), 10400);
+        drop(v);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
