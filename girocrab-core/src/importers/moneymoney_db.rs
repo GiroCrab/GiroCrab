@@ -74,7 +74,7 @@ const MM_CLOSED: i64 = 16;
 
 /// Vault setting (this device only, not merged): ids of imported accounts whose
 /// archive state nobody chose, so the next import gives them MoneyMoney's. The
-/// #998 repair (schema step 36) reactivates accounts the import of v0.8.5
+/// #998 repair (schema step 37) reactivates accounts the import of v0.8.5
 /// archived wrongly, and some of them are closed in MoneyMoney after all. Until
 /// then a sync's takeover prefers the other accounts (#816).
 pub(crate) const ARCHIVE_UNKNOWN_KEY: &str = "moneymoney_db.archive_unknown";
@@ -3280,8 +3280,8 @@ impl ImportCtx<'_> {
                 archive_closed(conn, id)?;
             } else if own && wrongly_archived && !a.closed {
                 // still archived by the import of v0.8.5 and taken over by a fetch
-                // without imported bookings, so step 36 could not tell: its own
-                // MoneyMoney account says it is in use (stamped like step 36)
+                // without imported bookings, so step 37 could not tell: its own
+                // MoneyMoney account says it is in use (stamped like step 37)
                 conn.execute(
                     "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1 WHERE id = ?1",
                     [id],

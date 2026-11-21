@@ -1,5 +1,5 @@
 //! View-models of the list views without Slint: Geplant (recurring bookings), Lastschriften
-//! (mandates), Belege & PostBox (documents) and the rules dialog. Pure functions over core
+//! (mandates), Belege & Postbox (documents) and the rules dialog. Pure functions over core
 //! records, unit-tested on every platform.
 
 use girocrab_core::documents::DocumentInfo;

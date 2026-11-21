@@ -51,7 +51,7 @@ Sheet {
                 BusyIndicator { implicitWidth: 18; implicitHeight: 18; running: parent.visible }
                 Text { text: sheet.active && sheet.active.waiting ? qsTr("Warte auf Freigabe …") : qsTr("Push-Nachricht gesendet"); color: Theme.secondary; font.pixelSize: Theme.callout + 1 } }
         }
-        // .progress: approval given, a longer download runs (comdirect PostBox, #838)
+        // .progress: approval given, a longer download runs (comdirect Postbox, #838)
         ColumnLayout {
             visible: sheet.c !== null && sheet.c.kind === "Progress"
             Layout.fillWidth: true; spacing: 12

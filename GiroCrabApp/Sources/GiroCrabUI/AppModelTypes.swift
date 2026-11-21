@@ -13,7 +13,7 @@ enum SidebarItem: Hashable {
     case account(Int64)
     case category(Int64)
     case uncategorized
-    /// "Belege & PostBox"
+    /// "Belege & Postbox"
     case documents
     /// „Neue Umsätze“ (GitHub #352): unreviewed bookings of all accounts.
     case newBookings
@@ -76,12 +76,12 @@ enum DocumentsScope: String, CaseIterable, Identifiable {
         switch self {
         case .all: return String(localized: "Alle Dokumente")
         case .receipts: return String(localized: "Belege")
-        case .postbox: return String(localized: "PostBox")
+        case .postbox: return String(localized: "Postbox")
         }
     }
 
     var heading: String {
-        self == .all ? String(localized: "Belege & PostBox") : title
+        self == .all ? String(localized: "Belege & Postbox") : title
     }
 
     var description: String {
@@ -110,7 +110,7 @@ extension DocumentInfo {
         !sourceUrl.isEmpty && !sourceUrl.hasPrefix("demo-doc-")
     }
     var originTitle: String {
-        isBankDocument ? String(localized: "PostBox") : String(localized: "Beleg")
+        isBankDocument ? String(localized: "Postbox") : String(localized: "Beleg")
     }
 }
 

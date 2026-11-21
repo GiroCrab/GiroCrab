@@ -290,7 +290,7 @@ impl ComdirectConnector {
 pub(crate) fn postbox_stub(d: &Value) -> Option<crate::documents::RemoteDocument> {
     let id = d["documentId"].as_str().filter(|s| !s.is_empty())?;
     let date = postbox_date(d);
-    let name = d["name"].as_str().unwrap_or("PostBox-Dokument").to_string();
+    let name = d["name"].as_str().unwrap_or("Postbox-Dokument").to_string();
     let lower = name.to_lowercase();
     Some(crate::documents::RemoteDocument {
         account_ref: String::new(),

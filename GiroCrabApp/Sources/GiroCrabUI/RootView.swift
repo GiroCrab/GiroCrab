@@ -502,7 +502,7 @@ struct MainSplitView: View {
         } detail: {
             HStack(spacing: 0) {
                 bookingColumn
-                // Belege & PostBox has its own preview; the booking inspector would show whatever
+                // Belege & Postbox has its own preview; the booking inspector would show whatever
                 // booking was selected last, whichever document is open.
                 if showInspector, model.mainColumn != .documents {
                     inspectorSplitter

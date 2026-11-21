@@ -101,14 +101,21 @@ class VaultKeyStore(
      * [storeWrapped] then encrypts the freshly generated vault key with it.
      */
     fun setupCipher(): Cipher = try {
-        Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, createOrGetKey()) }
+        newEncryptCipher()
     } catch (e: KeyPermanentlyInvalidatedException) {
-        // Reusing the dead alias would fail forever; wiping it silently would throw away the only
-        // wrapped copy. The caller decides: resetForNewSetup() and restore from a backup.
-        throw IllegalStateException(
-            "Der Geräteschlüssel ist ungültig. Erst resetForNewSetup() aufrufen und die Sicherung einspielen.",
-            e,
-        )
+        if (!wrappedFile.isFile) {
+            // Nothing is wrapped with the dead key (state() says NotSetUp, e.g. after clearWrapped()),
+            // so dropping it loses nothing; keeping it would block every setup forever.
+            deleteKeyEntry()
+            newEncryptCipher()
+        } else {
+            // Reusing the dead alias would fail forever; wiping it silently would throw away the only
+            // wrapped copy. The caller decides: resetForNewSetup() and restore from a backup.
+            throw IllegalStateException(
+                "Der Geräteschlüssel ist ungültig. Erst resetForNewSetup() aufrufen und die Sicherung einspielen.",
+                e,
+            )
+        }
     }
 
     /**
@@ -169,10 +176,13 @@ class VaultKeyStore(
      * Drops both the wrapped key and the Keystore entry — the only way out of [State.Invalidated]:
      * an invalidated key can never be used again, so keeping it only blocks every later setup.
      * Afterwards the vault has to come back from a backup (#1428, 2.6).
+     *
+     * A failed Keystore deletion is thrown, not swallowed: a surviving dead entry would make every
+     * later [setupCipher] fail again without the caller ever learning why.
      */
     fun resetForNewSetup() {
         clearWrapped()
-        runCatching { keyStore.deleteEntry(alias) }
+        deleteKeyEntry()
     }
 
     /** Drops the wrapped key. The Keystore entry stays; [state] returns [State.NotSetUp] afterwards. */
@@ -204,6 +214,14 @@ class VaultKeyStore(
     }
 
     private fun createOrGetKey(): SecretKey = findKey() ?: generateKey()
+
+    private fun newEncryptCipher(): Cipher =
+        Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, createOrGetKey()) }
+
+    /** A missing entry is fine (older Keystores throw on deleting one); any other failure is not. */
+    private fun deleteKeyEntry() {
+        if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
+    }
 
     private fun generateKey(): SecretKey {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)

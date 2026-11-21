@@ -3746,7 +3746,7 @@ fn a_newer_archive_choice_from_another_device_ends_the_repair_note() {
     );
 }
 
-/// #998: step 36 stamps its reactivation one millisecond after the wrong archive, so two devices
+/// #998: step 37 stamps its reactivation one millisecond after the wrong archive, so two devices
 /// that repaired the same account carry the same stamp and keep their notes, while a choice made
 /// later on another device still wins over the repair.
 #[test]
@@ -3755,7 +3755,7 @@ fn repairs_of_one_account_agree_and_a_later_choice_wins() {
     let dir = temp_dir("archive-repair");
     let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
     for v in [&a, &b] {
-        // what step 36 leaves: active, stamped just after the import's archive
+        // what step 37 leaves: active, stamped just after the import's archive
         exec(
             v,
             "INSERT INTO account_groups(id, name) VALUES (1, 'G');
@@ -4278,6 +4278,65 @@ fn note_on_an_already_folded_twin_reaches_the_bank_account() {
     merge(&a, &b);
     assert_eq!(
         text(&a, &format!("SELECT note FROM accounts WHERE id = {bank}")),
+        "Haushalt"
+    );
+}
+
+/// #1467 review: like the note, a bank label set on the twin by a device that
+/// hadn't folded it yet reaches the bank account the twin was folded into.
+#[test]
+fn bank_label_on_an_already_folded_twin_reaches_the_bank_account() {
+    let dir = temp_dir("twin-label");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let ca = comdirect(&a);
+    let cb = comdirect(&b);
+    giro(&a, ca, MM_GIRO, &["mm-1", "mm-2"]);
+    let bank = giro(&a, ca, "API1", &["mm-1", "mm-2", "b1"]);
+    let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+    for v in [&a, &b] {
+        exec(v, "UPDATE bank_connections SET created_ms = 1");
+        exec(v, "UPDATE accounts SET created_ms = 1");
+    }
+    drop(a);
+    let a = open(&dir, "a.db");
+    b.set_account_bank_label(twin, Some("Haushalt".into()))
+        .unwrap();
+    merge(&a, &b);
+    assert_eq!(
+        text(
+            &a,
+            &format!("SELECT bank_label FROM accounts WHERE id = {bank}")
+        ),
+        "Haushalt"
+    );
+}
+
+/// #1474 review: a label set on a twin that is still live goes with it when
+/// it is folded, like its note.
+#[test]
+fn bank_label_of_a_twin_goes_with_the_fold() {
+    let dir = temp_dir("twin-label-fold");
+    let a = open(&dir, "a.db");
+    let ca = comdirect(&a);
+    let twin = giro(&a, ca, MM_GIRO, &["mm-1", "mm-2"]);
+    let bank = giro(&a, ca, "API1", &["mm-1", "mm-2", "b1"]);
+    a.set_account_bank_label(twin, Some("Haushalt".into()))
+        .unwrap();
+    drop(a);
+    let a = open(&dir, "a.db");
+    assert_eq!(
+        n(
+            &a,
+            &format!("SELECT deleted_ms IS NOT NULL FROM accounts WHERE id = {twin}")
+        ),
+        1,
+        "the twin is folded"
+    );
+    assert_eq!(
+        text(
+            &a,
+            &format!("SELECT bank_label FROM accounts WHERE id = {bank}")
+        ),
         "Haushalt"
     );
 }

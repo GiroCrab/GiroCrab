@@ -1152,7 +1152,7 @@ pub(crate) enum PostboxMode {
     Off,
     /// When it is on for the login and due.
     Due,
-    /// Now ("PostBox jetzt abrufen").
+    /// Now ("Postbox jetzt abrufen").
     Now,
 }
 
@@ -1247,7 +1247,7 @@ impl Vault {
         }
         if !is_comdirect_fints(&key) {
             return Err(CoreError::invalid(tr(
-                "Die PostBox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
+                "Die Postbox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
             )));
         }
         for k in ["comdirect.client_id", "comdirect.client_secret"] {
@@ -1280,7 +1280,7 @@ impl Vault {
     ) -> Result<Arc<SyncSession>, CoreError> {
         if !self.comdirect_postbox_enabled(connection_id)? {
             return Err(CoreError::invalid(tr(
-                "Der PostBox-Abruf ist für diesen Zugang nicht eingeschaltet.",
+                "Der Postbox-Abruf ist für diesen Zugang nicht eingeschaltet.",
             )));
         }
         if !documents_fetch_on(&*self.db()?, connection_id)? {

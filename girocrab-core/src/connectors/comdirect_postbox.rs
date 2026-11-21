@@ -45,9 +45,9 @@ pub(crate) trait PostboxSource: Send {
     /// downloaded: a stored copy still gets its account.
     fn stub(&self, entry: &Value) -> Option<RemoteDocument>;
     async fn finish(&mut self, ctx: &ConnectContext);
-    /// Name of the document source in the app's steps ("PostBox", "Online-Archiv").
+    /// Name of the document source in the app's steps ("Postbox", "Online-Archiv").
     fn label(&self) -> String {
-        tr("PostBox").into()
+        tr("Postbox").into()
     }
     /// The account a downloaded document belongs to; `None` leaves it without
     /// one. comdirect: the account whose IBAN or number is in the PDF text,
@@ -666,7 +666,7 @@ mod tests {
         let Phase::Challenge(ch) = w.begin(&c).await.unwrap() else {
             panic!("expected the PostBox approval")
         };
-        assert_eq!(ch.title, "PostBox: Freigeben");
+        assert_eq!(ch.title, "Postbox: Freigeben");
         assert!(matches!(
             w.respond(&c, ChallengeResponse::Poll).await.unwrap(),
             Phase::Pending(_)

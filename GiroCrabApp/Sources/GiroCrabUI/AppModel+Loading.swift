@@ -912,7 +912,7 @@ extension AppModel {
         case .account(let id): return allAccounts.first { $0.id == id }?.name ?? String(localized: "Konto")
         case .category(let id): return categories.first { $0.id == id }?.path ?? String(localized: "Kategorie")
         case .uncategorized: return uncategorizedLabel
-        case .documents: return String(localized: "Belege & PostBox")
+        case .documents: return String(localized: "Belege & Postbox")
         case .newBookings: return String(localized: "Neue Umsätze")
         case .planned: return String(localized: "Geplant")
         case .directDebits: return String(localized: "Lastschriften")

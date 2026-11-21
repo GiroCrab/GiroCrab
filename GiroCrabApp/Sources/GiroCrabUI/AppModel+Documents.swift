@@ -81,7 +81,7 @@ extension AppModel {
         runCore { try vault.setAutoStatements(accountId: account.id, enabled: on) }
     }
 
-    /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
+    /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     func comdirectPostboxEnabled(_ connectionID: Int64) -> Bool {
         (try? vault?.comdirectPostboxEnabled(connectionId: connectionID)) ?? false
     }
@@ -91,14 +91,14 @@ extension AppModel {
         runCore { try vault.setComdirectPostbox(connectionId: connectionID, enabled: on) }
     }
 
-    /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
+    /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     func fetchComdirectPostbox(_ connection: BankConnection) {
         guard syncingConnectionID == nil else { return }
         postboxConnectionID = connection.id
         requestSync(connection)
     }
 
-    // MARK: - Belege & PostBox
+    // MARK: - Belege & Postbox
 
     func accountDocuments(_ accountID: Int64) -> [DocumentInfo] {
         _ = documentsVersion
@@ -107,7 +107,7 @@ extension AppModel {
     }
 
     /// Connections whose bank delivers documents but whose retrieval is switched off, for the whole
-    /// list or (`accountFilter`) the one account on screen. "Belege & PostBox" explains why nothing new comes.
+    /// list or (`accountFilter`) the one account on screen. "Belege & Postbox" explains why nothing new comes.
     func connectionsWithDocumentsOff(accountFilter: Int64?, connectionFilter: Int64? = nil) -> [BankConnection] {
         var ids: Set<Int64>?
         if let accountFilter {
@@ -221,13 +221,13 @@ extension AppModel {
             .filter { scope.includes($0) && (!withoutAccount || $0.accountId == nil) }
     }
 
-    /// Bank connections to offer in the "Belege & PostBox" filter: those with at least one account.
+    /// Bank connections to offer in the "Belege & Postbox" filter: those with at least one account.
     var documentsFilterConnections: [BankConnection] {
         let used = Set(accountsByID.values.compactMap(\.connectionId))
         return connections.filter { used.contains($0.id) }
     }
 
-    /// The account menu of "Belege & PostBox", narrowed to the chosen bank connection (#1042).
+    /// The account menu of "Belege & Postbox", narrowed to the chosen bank connection (#1042).
     var documentsAccountSections: [AccountMenuSection] {
         guard let cid = documentsConnectionFilter, cid != Self.documentsWithoutAccount else { return accountMenuSections }
         return accountMenuSections.compactMap { section in
@@ -260,7 +260,7 @@ extension AppModel {
         documentsVersion += 1
     }
 
-    /// Marks every unread document read (sidebar: „Belege & PostBox“).
+    /// Marks every unread document read (sidebar: „Belege & Postbox“).
     func markAllDocumentsSeen() {
         guard let vault else { return }
         runCore {
@@ -328,7 +328,7 @@ extension AppModel {
             if !linked.isEmpty {
                 toast = String(localized: "Beleg zugeordnet: \(linked.joined(separator: ", "))")
             } else if unmatched > 0 {
-                toast = String(localized: "Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
+                toast = String(localized: "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             }
             documentsChanged()
         }

@@ -662,7 +662,7 @@ fn call(method: &str, a: &Value) -> R {
             ok(crate::sessions::register(crate::sessions::Session::Sync(s)))
         }
         // Automatischer Abruf (AutoSync.qml, PSD2Consent.swift › autoSyncTick, #546): the same
-        // SyncSession without anything that needs a new approval (no comdirect PostBox, #838).
+        // SyncSession without anything that needs a new approval (no comdirect Postbox, #838).
         "begin_quiet_sync" => {
             let v = vault()?;
             let s = v

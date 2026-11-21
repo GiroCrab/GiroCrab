@@ -111,7 +111,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             login_label: tr("Zugangsbezeichnung").into(),
             secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
             required_settings: vec![],
-            note: tr("Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.").into(),
+            note: tr("Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & Postbox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.").into(),
         },
         ConnectorKind::Quirion => BankDescriptor {
             kind,

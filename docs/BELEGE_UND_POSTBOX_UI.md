@@ -1,6 +1,6 @@
-# Belege & PostBox (UI-Aufbau)
+# Belege & Postbox (UI-Aufbau)
 
-Diese Seite beschreibt, was die Ansicht „Belege & PostBox“ (`DocumentsView` in `DocumentsUI.swift`) zeigt, was sie
+Diese Seite beschreibt, was die Ansicht „Belege & Postbox“ (`DocumentsView` in `DocumentsUI.swift`) zeigt, was sie
 nicht tut und welche Regeln für Änderungen gelten. Sie gilt für macOS und iPhone/iPad; „Mobile Ansicht“ nennt die
 Unterschiede. Wie Dokumente einer Buchung zugeordnet werden, steht in `docs/dokument-zuordnung.md`.
 
@@ -8,9 +8,9 @@ Unterschiede. Wie Dokumente einer Buchung zugeordnet werden, steht in `docs/doku
 
 Die Ansicht zeigt *Dokumente* (PDF, Fotos), keine Buchungen. Ein Dokument gehört zu einem Konto und kann zusätzlich
 an genau einer Buchung hängen (`booking_documents.booking_id`). Zwei Herkünfte, die die Liste auseinanderhält
-(`DocumentInfo.originTitle`): **Beleg** (selbst hinzugefügt: Drag & Drop, „Beleg hinzufügen …“) und **PostBox**
+(`DocumentInfo.originTitle`): **Beleg** (selbst hinzugefügt: Drag & Drop, „Beleg hinzufügen …“) und **Postbox**
 (von einer Bank geliefert, auch wenn es schon an einer Buchung hängt). Der Typ (Abrechnung, Kontoauszug, Steuer,
-PostBox, Beleg) kommt vom Connector und zeigt sich am Symbol und im Typfilter.
+Postbox, Beleg) kommt vom Connector und zeigt sich am Symbol und im Typfilter.
 
 **Aufbau (Mac):** Seitenleiste · Liste (links, mit Filtern) · Vorschau (Mitte). Die Ansicht hat **keine rechte
 Buchungsspalte**: Sie hat ihre eigene Vorschau, und die Buchungsspalte würde sonst die zuletzt gewählte Buchung zeigen,
@@ -40,8 +40,8 @@ ungelesen).
   hinzufügen …“) sind sofort gelesen. Bestehende Dokumente zählen nach dem Update auf Schema 30 als gelesen.
 - **Gelesen** wird ein Dokument, sobald es in der Liste gewählt wird. Von Hand: „Als gelesen / ungelesen markieren“
   (Kontextmenü), „Alle als gelesen markieren“ (für die sichtbare Liste, also mit Filtern) und im Kontextmenü von
-  „Belege & PostBox“ in der Seitenleiste (für alle).
-- **Anzeige:** Zähler an „Belege & PostBox“ in der Seitenleiste (`unseenDocumentCount`, `COUNT(*)` über einen
+  „Belege & Postbox“ in der Seitenleiste (für alle).
+- **Anzeige:** Zähler an „Belege & Postbox“ in der Seitenleiste (`unseenDocumentCount`, `COUNT(*)` über einen
   Teilindex), blauer Punkt und fetter Titel an ungelesenen Zeilen, Filter „Nur ungelesene“. Das gerade gewählte Dokument
   bleibt in diesem Filter stehen, auch wenn es eben gelesen wurde.
 - **Zähler der Seitenleiste** (Geplant, Lastschriften, ungelesene Dokumente) werden bei jedem Tresorwechsel und nach

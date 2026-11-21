@@ -107,7 +107,7 @@ struct SidebarView: View {
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
                 Image(systemName: "doc.on.doc").foregroundStyle(Theme.secondary).frame(width: 20)
-                Text("Belege & PostBox").fontWeight(.medium).appDefaultFont()
+                Text("Belege & Postbox").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
             .badge(model.unseenDocumentCount)
@@ -444,7 +444,7 @@ struct SidebarView: View {
     /// `drop` sits inside the context menu (and the caller's drag), so its drop
     /// zones don't cover the row for clicks.
     private func accountRow(_ account: Account, drop: DropSlot? = nil) -> some View {
-        AccountRow(account: account, syncing: model.syncingConnectionID != nil && model.syncingConnectionID == account.connectionId)
+        AccountRow(account: account, syncing: model.isSyncing(account))
             .dropSlot(drop)
             .background {
                 if dialogAccountID == account.id {
@@ -806,7 +806,7 @@ struct AccountRow: View {
                             .help("Archiviert – wird nicht mehr abgerufen")
                     } else {
                         Text(searchAwareSubtitle)
-                            .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
+                            .sensitive(searchAwareSubtitle == account.bankName && account.bankLabel == nil ? [] : .personal) // owner / IBAN hits, own bank label
                             .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -833,12 +833,12 @@ struct AccountRow: View {
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
-    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
+    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
         let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
         // the owner tells accounts of the same name apart
         let owner = model.accountDistinction(account)
-        return [account.bankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        return [account.sidebarBankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private var searchAwareSubtitle: String {

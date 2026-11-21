@@ -400,7 +400,7 @@ struct MerchantLogoSettingsSection: View {
 }
 
 #if os(macOS)
-/// Automatic copy of all documents (statements, receipts, PostBox) into a
+/// Automatic copy of all documents (statements, receipts, Postbox) into a
 /// folder, e.g. in iCloud Drive (GitHub #57).
 struct DocumentFolderSettings: View {
     @Environment(AppModel.self) private var model
@@ -438,7 +438,7 @@ struct DocumentFolderSettings: View {
                         }
                     }
                 }
-                Text("Kontoauszüge, Belege und PostBox-Dokumente werden nach jedem Sync als Kopie abgelegt: <Ordner>/<Konto>/<Jahr>/. Vorhandene Dateien werden nie überschrieben. Achtung: Im Ordner liegen die PDFs unverschlüsselt – in iCloud Drive also auch in Ihrer iCloud.")
+                Text("Kontoauszüge, Belege und Postbox-Dokumente werden nach jedem Sync als Kopie abgelegt: <Ordner>/<Konto>/<Jahr>/. Vorhandene Dateien werden nie überschrieben. Achtung: Im Ordner liegen die PDFs unverschlüsselt – in iCloud Drive also auch in Ihrer iCloud.")
                     .appFont(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } header: { Text("Dokumentenordner").appSectionHeader() }

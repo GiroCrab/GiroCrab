@@ -69,7 +69,7 @@ struct TwoFactorSheet: View {
                             .disabled(active.busy)
                     }
                 case .progress:
-                    // approval given, a longer download runs (comdirect PostBox, #838)
+                    // approval given, a longer download runs (comdirect Postbox, #838)
                     Image(systemName: "tray.and.arrow.down")
                         .font(.system(size: 56, weight: .light))
                         .foregroundStyle(.tint)

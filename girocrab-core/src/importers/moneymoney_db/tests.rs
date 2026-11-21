@@ -4387,7 +4387,7 @@ fn archived_unix(v: &Vault, id: i64) -> Option<i64> {
 
 #[test]
 fn a_taken_over_account_without_imported_bookings_returns_when_its_source_is_open() {
-    // #998: step 36 cannot see it (no reference, no imported bookings); its own MoneyMoney
+    // #998: step 37 cannot see it (no reference, no imported bookings); its own MoneyMoney
     // account, found by IBAN, can – open brings it back, closed keeps it archived
     for (closed, stays_archived) in [(false, false), (true, true)] {
         let v = vault();
@@ -4639,7 +4639,7 @@ fn account_closed_in_moneymoney_is_imported_archived() {
     assert!(!bookings(&v, card.id).is_empty(), "bookings imported");
     assert!(account_by_name(&v, "Girokonto").archived_unix.is_none());
     // stamped in one second like an archive in the app: the #998 repair
-    // (schema step 36) must never take it for a wrong one
+    // (schema step 37) must never take it for a wrong one
     let (unix, ms): (i64, i64) = v
         .db()
         .unwrap()
@@ -4686,7 +4686,7 @@ fn deleted_closed_account_comes_back_archived() {
 
 #[test]
 fn accounts_the_repair_reactivated_take_moneymoney_state_on_the_next_import() {
-    // #998 step 36 cannot tell a closed account: the next import can
+    // #998 step 37 cannot tell a closed account: the next import can
     let v = vault();
     import_with(&v, &fake_db(), |_| {});
     let giro = account_by_name(&v, "Girokonto").id;

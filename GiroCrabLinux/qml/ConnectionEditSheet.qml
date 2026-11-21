@@ -22,7 +22,7 @@ Sheet {
     property var revealed: ({})
     property var status: null
     property bool showAdvanced: false
-    /// comdirect via FinTS: PostBox through the bank's API as well (#838).
+    /// comdirect via FinTS: Postbox through the bank's API as well (#838).
     property bool postbox: false
 
     readonly property string kind: connection ? connection.connector : ""
@@ -54,7 +54,7 @@ Sheet {
     }
     // With GiroCrab's own registration built in, it is chosen in Settings, not per bank.
     readonly property var keys: AppModel.fintsBuiltinAvailable ? allKeys.filter(k => k !== "fints.product_id") : allKeys
-    /// comdirect via FinTS: the API credentials for the PostBox (#838), shown in its section.
+    /// comdirect via FinTS: the API credentials for the Postbox (#838), shown in its section.
     readonly property var postboxKeys: isComdirect && kind === "FinTsGeneric" ? ["comdirect.client_id", "comdirect.client_secret"] : []
     /// Optional power-user PSD2 credentials (collapsed "Erweitert" section).
     readonly property var advancedKeys: kind === "AmericanExpress"
@@ -156,7 +156,7 @@ Sheet {
         close()
     }
     function current() { return AppModel.connections.find(c => c.id === connection.id) || connection }
-    /// The other save-and-go actions (log in, PostBox, reconnect, import): like `saveAll`, the
+    /// The other save-and-go actions (log in, Postbox, reconnect, import): like `saveAll`, the
     /// action starts only once the account selection is stored, never with the old one.
     function saveThen(action) {
         save()
@@ -329,11 +329,11 @@ Sheet {
                 }
                 SettingsFormSection {
                     visible: sheet.isComdirect && sheet.kind === "FinTsGeneric"
-                    title: qsTr("PostBox")
-                    footer: qsTr("Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-PostBox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & PostBox“ lässt sich ein Dokument einem anderen Konto zuordnen.")
+                    title: qsTr("Postbox")
+                    footer: qsTr("Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-Postbox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & Postbox“ lässt sich ein Dokument einem anderen Konto zuordnen.")
                     Repeater { model: sheet.postboxKeys; KeyField { required property string modelData; key: modelData } }
                     CheckBox {
-                        text: qsTr("PostBox über die Schnittstelle der Bank abrufen")
+                        text: qsTr("Postbox über die Schnittstelle der Bank abrufen")
                         checked: sheet.postbox
                         onToggled: {
                             // the switch needs the credentials stored
@@ -345,7 +345,7 @@ Sheet {
                     }
                     Button {
                         visible: sheet.postbox
-                        text: qsTr("PostBox jetzt abrufen")
+                        text: qsTr("Postbox jetzt abrufen")
                         enabled: AppModel.syncingConnectionID === null
                         onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
                     }

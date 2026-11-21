@@ -52,7 +52,9 @@
 //!   excluded (stamp 0, so any explicit user choice wins on sync).
 //! - 35: merchant recognition settings (#1373): tables `merchant_switches` (master switch and
 //!   switched-off bundled merchants) and `custom_merchants` (own merchants), both merged.
-//! - 36: repair (#998): accounts the MoneyMoney import archived because their last refresh there
+//! - 36: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
+//!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
+//! - 37: repair (#998): accounts the MoneyMoney import archived because their last refresh there
 //!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
@@ -105,7 +107,8 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::recipients::SCHEMA),                      // 33: hidden recipients (#978)
     Step::Hook(account_total_flag),                            // 34 (#337)
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
-    Step::Hook(unarchive_cancelled_refreshes),                 // 36: repair (#998)
+    Step::Hook(account_bank_label),                            // 36 (#1467)
+    Step::Hook(unarchive_cancelled_refreshes),                 // 37: repair (#998)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -135,11 +138,11 @@ fn account_notes(conn: &Connection) -> CoreResult<()> {
 }
 
 /// An archive the app (`set_account_archived`, also the account selection) or the MoneyMoney
-/// import sets carries its time and its stamp from the same second. Step 36 takes an archive
+/// import sets carries its time and its stamp from the same second. Step 37 takes an archive
 /// whose time lies more than this before its stamp for one the import of v0.8.5 made.
 pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
 
-/// Step 36 (#998): the MoneyMoney import of v0.8.5 read `cancel_tsp` (when the last refresh of an
+/// Step 37 (#998): the MoneyMoney import of v0.8.5 read `cancel_tsp` (when the last refresh of an
 /// account was cancelled there, e.g. a TAN not confirmed) as "closed" and archived accounts that
 /// are in use: they left the totals and syncs skipped them. Such an archive carries MoneyMoney's
 /// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]), and the vault merge
@@ -937,6 +940,20 @@ fn account_total_flag(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// Step 36 (#1467): what the sidebar shows in place of the bank name, with
+/// its sync stamp; NULL keeps the bank name.
+fn account_bank_label(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "bank_label")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN bank_label TEXT;")?;
+    }
+    if !has_column(conn, "main", "accounts", "bank_label_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN bank_label_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1106,7 +1123,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 36);
+        assert_eq!(SCHEMA_VERSION, 37);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for
@@ -1131,7 +1148,7 @@ mod tests {
                  SELECT id, 'mm-abc-1', '2026-01-01', -5 FROM accounts WHERE name = 'Übernommen';
              INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
                  SELECT id, 'mm-switch-pending-hold-1', '2026-01-01', -5 FROM accounts WHERE name = 'Umgestellt';
-             PRAGMA user_version = 35;",
+             PRAGMA user_version = 36;",
         )
         .unwrap();
         migrate(&mut conn).unwrap();

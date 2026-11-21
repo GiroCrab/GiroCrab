@@ -80,6 +80,17 @@
         }
       }
     },
+    "%@ (vom Bankzugang)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (from the bank login)"
+          }
+        }
+      }
+    },
     "%@ / %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -894,6 +905,17 @@
         }
       }
     },
+    "%lld Konten dieses Zugangs zeigen in der Seitenleiste einen eigenen Banknamen oder keinen (Kontoeinstellungen)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld accounts of this login show their own bank name or none in the sidebar (Account Settings)."
+          }
+        }
+      }
+    },
     "%lld Konten in Fremdwährung sind nicht enthalten." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1351,6 +1373,17 @@
         }
       }
     },
+    "%lld bereits übernommen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld already imported"
+          }
+        }
+      }
+    },
     "%lld exportieren …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1469,13 +1502,13 @@
         }
       }
     },
-    "%lld neue PostBox-Dokumente" : {
+    "%lld neue Postbox-Dokumente" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld new PostBox documents"
+            "value" : "%lld new Postbox documents"
           }
         }
       }
@@ -6316,6 +6349,17 @@
         }
       }
     },
+    "Bank in der Seitenleiste" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank in Sidebar"
+          }
+        }
+      }
+    },
     "Bank suchen und hinzufügen …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6941,6 +6985,17 @@
         }
       }
     },
+    "Bekannte Bestellungen neu lesen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Re-read known orders"
+          }
+        }
+      }
+    },
     "Belastung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7084,13 +7139,13 @@
         }
       }
     },
-    "Belege & PostBox" : {
+    "Belege & Postbox" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Documents & PostBox"
+            "value" : "Documents & Postbox"
           }
         }
       }
@@ -7128,24 +7183,24 @@
         }
       }
     },
-    "Belege kommen beim Abruf (Trade Republic, comdirect-PostBox, FinTS-Kontoauszug) oder per Drag & Drop." : {
+    "Belege kommen beim Abruf (Trade Republic, comdirect-Postbox, FinTS-Kontoauszug) oder per Drag & Drop." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Documents arrive when fetching (Trade Republic, comdirect PostBox, FinTS statement) or via drag and drop."
+            "value" : "Documents arrive when fetching (Trade Republic, comdirect Postbox, FinTS statement) or via drag and drop."
           }
         }
       }
     },
-    "Belege, Kontoauszüge und PostBox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach." : {
+    "Belege, Kontoauszüge und Postbox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Receipts, statements and PostBox documents are fetched with every sync. Off: no new documents, stored ones stay. Switching it on again lets the next sync fetch missing documents."
+            "value" : "Receipts, statements and Postbox documents are fetched with every sync. Off: no new documents, stored ones stay. Switching it on again lets the next sync fetch missing documents."
           }
         }
       }
@@ -10349,6 +10404,17 @@
         }
       }
     },
+    "Der Tresor wurde während des Abrufs gewechselt – es wurde nichts übernommen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The vault was switched during the fetch – nothing was imported."
+          }
+        }
+      }
+    },
     "Der Tresor-Schlüssel konnte nicht im Schlüsselbund gespeichert werden (Fehler %d). Der Tresor bleibt bis zum Beenden geöffnet – bitte GiroCrab nicht beenden, den Schlüsselbund prüfen (Schlüsselbundverwaltung) und den Vorgang wiederholen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11933,13 +11999,13 @@
         }
       }
     },
-    "Dokumente werden unter „Belege & PostBox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto." : {
+    "Dokumente werden unter „Belege & Postbox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Documents are kept under “Belege & PostBox” (search: equateplus) and are not assigned to bookings or activities automatically. Only if the plan name in the document matches a plan does it also appear with that plan’s account."
+            "value" : "Documents are kept under “Documents & Postbox” (search: equateplus) and are not assigned to bookings or activities automatically. Only if the plan name in the document matches a plan does it also appear with that plan’s account."
           }
         }
       }
@@ -12517,6 +12583,17 @@
         }
       }
     },
+    "Eigener Name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom Name"
+          }
+        }
+      }
+    },
     "Eigener Tresor" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12579,6 +12656,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Select a document from the list to open its preview."
+          }
+        }
+      }
+    },
+    "Ein Konto dieses Zugangs zeigt in der Seitenleiste einen eigenen Banknamen oder keinen (Kontoeinstellungen)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "One account of this login shows its own bank name or none in the sidebar (Account Settings)."
           }
         }
       }
@@ -13441,13 +13529,13 @@
         }
       }
     },
-    "EquatePlus: %lld neue PDFs in „Belege & PostBox“." : {
+    "EquatePlus: %lld neue PDFs in „Belege & Postbox“." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "EquatePlus: %lld new PDFs in “Belege & PostBox”."
+            "value" : "EquatePlus: %lld new PDFs in “Documents & Postbox”."
           }
         }
       }
@@ -14178,13 +14266,13 @@
         }
       }
     },
-    "Fehlende Angaben ergänzen (z. B. FinTS-Produkt-ID, API-Schlüssel) – das Formular öffnet sich automatisch" : {
+    "Fehlende Angaben ergänzen (z. B. API-Schlüssel) – das Formular öffnet sich automatisch" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fill in missing details (e.g. FinTS product ID, API keys) – the form opens automatically"
+            "value" : "Fill in missing details (e.g. API keys) – the form opens automatically"
           }
         }
       }
@@ -17262,6 +17350,17 @@
         }
       }
     },
+    "Immer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always"
+          }
+        }
+      }
+    },
     "Immobilien" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18699,13 +18798,13 @@
         }
       }
     },
-    "Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt" : {
+    "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No matching transaction found – filed under “Documents & PostBox”"
+            "value" : "No matching transaction found – filed under “Documents & Postbox”"
           }
         }
       }
@@ -19278,6 +19377,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No manual loans created"
+          }
+        }
+      }
+    },
+    "Keine neuen Bestellungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No new orders"
           }
         }
       }
@@ -20267,24 +20377,24 @@
         }
       }
     },
-    "Kontoauszüge, Belege und PostBox-Dokumente werden nach jedem Sync als Kopie abgelegt: <Ordner>/<Konto>/<Jahr>/. Vorhandene Dateien werden nie überschrieben. Achtung: Im Ordner liegen die PDFs unverschlüsselt – in iCloud Drive also auch in Ihrer iCloud." : {
+    "Kontoauszüge, Belege und Postbox-Dokumente werden nach jedem Sync als Kopie abgelegt: <Ordner>/<Konto>/<Jahr>/. Vorhandene Dateien werden nie überschrieben. Achtung: Im Ordner liegen die PDFs unverschlüsselt – in iCloud Drive also auch in Ihrer iCloud." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Statements, receipts and PostBox documents are copied after every sync to <folder>/<account>/<year>/. Existing files are never overwritten. Note: the PDFs in this folder are not encrypted – in iCloud Drive they are also stored in your iCloud."
+            "value" : "Statements, receipts and Postbox documents are copied after every sync to <folder>/<account>/<year>/. Existing files are never overwritten. Note: the PDFs in this folder are not encrypted – in iCloud Drive they are also stored in your iCloud."
           }
         }
       }
     },
-    "Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-PostBox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & PostBox“ lässt sich ein Dokument einem anderen Konto zuordnen." : {
+    "Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-Postbox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & Postbox“ lässt sich ein Dokument einem anderen Konto zuordnen." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Statements, Finanzreport and securities confirmations from the comdirect PostBox, at most once a week during a sync. This needs the client ID and client secret of the comdirect API and a separate approval in the photoTAN app. Securities documents go to the depot, the others to the first checking account. The context menu in “Documents & PostBox” moves a document to another account."
+            "value" : "Statements, Finanzreport and securities confirmations from the comdirect Postbox, at most once a week during a sync. This needs the client ID and client secret of the comdirect API and a separate approval in the photoTAN app. Securities documents go to the depot, the others to the first checking account. The context menu in “Documents & Postbox” moves a document to another account."
           }
         }
       }
@@ -25648,50 +25758,6 @@
         }
       }
     },
-    "PostBox" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "PostBox"
-          }
-        }
-      }
-    },
-    "PostBox jetzt abrufen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fetch PostBox now"
-          }
-        }
-      }
-    },
-    "PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "PostBox not fetched. Please check the client ID and client secret of the comdirect API."
-          }
-        }
-      }
-    },
-    "PostBox über die Schnittstelle der Bank abrufen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fetch the PostBox through the bank's interface"
-          }
-        }
-      }
-    },
     "Postbank ID" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25725,6 +25791,39 @@
         }
       }
     },
+    "Postbox" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Postbox"
+          }
+        }
+      }
+    },
+    "Postbox jetzt abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch Postbox now"
+          }
+        }
+      }
+    },
+    "Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Postbox not fetched. Please check the client ID and client secret of the comdirect API."
+          }
+        }
+      }
+    },
     "Postbox und Archiv auflisten …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25732,6 +25831,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Listing mailbox and archive…"
+          }
+        }
+      }
+    },
+    "Postbox über die Schnittstelle der Bank abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch the Postbox through the bank's interface"
           }
         }
       }
@@ -34055,13 +34165,13 @@
         }
       }
     },
-    "keine neuen PostBox-Dokumente" : {
+    "keine neuen Postbox-Dokumente" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "no new PostBox documents"
+            "value" : "no new Postbox documents"
           }
         }
       }
@@ -34505,6 +34615,17 @@
         }
       }
     },
+    "z. B. Haushalt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Household"
+          }
+        }
+      }
+    },
     "z. B. Händler, Zertifikat, Aufbewahrung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -34699,6 +34820,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Older bookings (included in the opening balance)"
+          }
+        }
+      }
+    },
+    "Ältere, schon übernommene Bestellungen werden übersprungen; jüngere werden wegen späterer Erstattungen erneut gelesen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Older orders that were already imported are skipped; newer ones are read again because refunds show up later."
           }
         }
       }

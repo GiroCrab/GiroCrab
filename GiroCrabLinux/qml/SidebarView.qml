@@ -64,7 +64,7 @@ Rectangle {
         }
         out.push({ type: "caption", key: "documents", title: qsTr("Dokumente"), open: !sm.documentsCollapsed })
         if (!sm.documentsCollapsed)
-            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & PostBox"), badge: 0 })
+            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & Postbox"), badge: 0 })
         const pending = m.connections.filter(c => !m.allAccounts.some(a => a.connection_id === c.id))
         if (pending.length) {
             out.push({ type: "section", title: qsTr("Neue Bankzugänge") })
@@ -455,7 +455,7 @@ Rectangle {
         AppMenuItem { text: qsTr("Neue Kategoriengruppe …"); icon.name: SF.icon("tag.circle"); onTriggered: AppModel.newCategoryRequest = { parent: null } }
     }
     function openNavMenu(key) { if (key === "newBookings") allMenu.popup(); else uncategorizedMenu.popup() }
-    /// „Neue Umsätze“, „Vermögen“, „Geplant“, „Lastschriften“, „Belege & PostBox“ and „Ohne Kategorie“:
+    /// „Neue Umsätze“, „Vermögen“, „Geplant“, „Lastschriften“, „Belege & Postbox“ and „Ohne Kategorie“:
     /// a page row with the empty chevron column, icon, title and count badge.
     component NavRow: SidebarRow {
         id: navRow

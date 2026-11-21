@@ -56,7 +56,7 @@ Programme und kann jederzeit später angefordert werden:
   Reihenfolge der Portalliste spielt dabei keine Rolle, auch nicht nach einem Teilerfolg.
 - Das Portal bereitet manche Dateien erst vor und meldet zunächst „In Bearbeitung“; GiroCrab
   wartet kurz und fragt erneut.
-- **Wo die Dokumente landen:** unter **Belege & PostBox** (dort per Suche „equateplus“ alle auf einmal). Sie werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.
+- **Wo die Dokumente landen:** unter **Belege & Postbox** (dort per Suche „equateplus“ alle auf einmal). Sie werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.
 - Ein Dokument wird dem Programm-Depot zugeordnet, wenn der im Dokument genannte Programmname
   zu genau einem Programm dieses Zugangs passt, sonst keinem Konto. Eine Zuordnung zu Umsätzen
   oder Aktivitäten gibt es nicht.
