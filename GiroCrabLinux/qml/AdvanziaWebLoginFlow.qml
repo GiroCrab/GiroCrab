@@ -256,8 +256,10 @@ return 'unknown';`
         ticking = true
         const gen = generation
         const done = () => { if (gen === generation) ticking = false }
-        ready = false
+        // `ready` changes only once a poll knows better: cleared at the start of every poll, it
+        // unloaded the cover with the account picker each second and reset the choice.
         if (onLogin) {
+            ready = false
             stablePortalTicks = 0
             browser.runAsync(inspect, {}, browser.mainWorld).then(s => {
                 if (gen !== generation) return
@@ -267,7 +269,7 @@ return 'unknown';`
             return
         }
         if (!browser.loading) authentication = onPortalPage ? "loading" : "unknown"
-        if (!onPortalPage || browser.loading || browser.onLoginPage || accountConflict) { done(); return }
+        if (!onPortalPage || browser.loading || browser.onLoginPage || accountConflict) { ready = false; done(); return }
         // also after a portal redirect / late page start: the hook is idempotent
         browser.evaluate(hook, browser.mainWorld, () => {
             if (gen !== generation) return
@@ -314,9 +316,10 @@ return 'unknown';`
             if (typeof fields.error === "string") { fail(errorMessage(fields.error)); return }
             if (!Array.isArray(fields.bodies) || typeof fields.balance !== "string") { fail(errorMessage("SCHEMA")); return }
             const selected = !profile.has_account && target > 0 ? target : null
-            AppModel.corePromise("import_advanzia_capture", { connection_id: id, bank_account_id: bank, profile_id: profile.profile_id,
-                                                              json_bodies: fields.bodies, balance_json_number: fields.balance,
-                                                              target_account_id: selected }).then(s => {
+            // coreAsync, not corePromise: the rejection keeps the error kind (InvalidInput: the core's own text)
+            AppModel.coreAsync("import_advanzia_capture", { connection_id: id, bank_account_id: bank, profile_id: profile.profile_id,
+                                                            json_bodies: fields.bodies, balance_json_number: fields.balance,
+                                                            target_account_id: selected }, s => {
                 if (gen !== generation) return
                 automatic = "finished"; phase = "finished"
                 AppModel.toast = qsTr("Advanzia: %1 Konten aktualisiert, %2 neue Buchungen.").arg(s.accounts_updated).arg(s.transactions_imported)
@@ -332,7 +335,7 @@ return 'unknown';`
         }, () => { if (gen === generation) fail(errorMessage("NETWORK")) })
     }
     function fail(message) {
-        phase = "failed"; error = message
+        phase = "failed"; error = message; ready = false
         if (automatic === "running") automatic = "failed"
     }
     /// „Erneut versuchen“ (AdvanziaWorkflow.restart): a fresh attempt on the same page.
@@ -340,7 +343,7 @@ return 'unknown';`
         generation++
         ticking = false
         error = ""; notice = ""
-        accountConflict = false; accountID = ""; stablePortalTicks = 0; openedTransactions = false
+        accountConflict = false; accountID = ""; stablePortalTicks = 0; openedTransactions = false; ready = false
         automatic = "waiting"
         phase = profile ? "signingIn" : "preparing"
         if (!profile) loadProfile()
