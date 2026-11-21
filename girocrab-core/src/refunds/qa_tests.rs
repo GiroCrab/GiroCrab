@@ -231,7 +231,7 @@ fn qa_split_original_parts_unchanged_and_category_expenses() {
     let o = booking(&v, a, -10000);
     let r = booking(&v, a, 3000);
     split(&v, o, ca, cb, -1);
-    v.link_refund(r, o, 0).unwrap();
+    v.link_refund(r, o, 1).unwrap();
     assert_eq!(
         v.list_transaction_splits(o)
             .unwrap()
@@ -246,6 +246,9 @@ fn qa_split_original_parts_unchanged_and_category_expenses() {
         -7000,
         "linked split-original categories should net the assigned refund"
     );
+    // the refund counts in the category of the part it was linked to
+    assert_eq!(page(&v, Some(ca)).expense_cents, -3000);
+    assert_eq!(page(&v, Some(cb)).expense_cents, -4000);
 }
 
 #[test]
