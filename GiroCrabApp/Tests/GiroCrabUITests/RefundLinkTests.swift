@@ -257,6 +257,36 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(kind(original.id), .original)
     }
 
+    /// A split income is linked by the part of it that is the refund: only that part pays back.
+    func testAPartOfASplitIncomeIsTheRefund() throws {
+        let (refund, originals) = try pair()
+        let original = originals[0]
+        let vault = try XCTUnwrap(model.vault)
+        try XCTSkipIf(refund.amountCents < 2 || original.amountCents > -2, "The demo pair is too small to split")
+        try vault.setTransactionSplits(transactionId: refund.id, splits: [
+            TransactionSplitInput(categoryId: nil, amountCents: refund.amountCents - 1, note: ""),
+            TransactionSplitInput(categoryId: nil, amountCents: 1, note: "Auslage")
+        ])
+        // a part the income does not have
+        model.linkRefund(refundID: refund.id, originalID: original.id, refundPart: 3)
+        XCTAssertNotNil(model.errorMessage)
+        model.errorMessage = nil
+
+        model.linkRefund(refundID: refund.id, originalID: original.id, refundPart: 2)
+
+        XCTAssertNil(model.errorMessage)
+        let links = try vault.refundLinks(transactionId: refund.id)
+        XCTAssertEqual(links.originals.map(\.refundPart), [2])
+        XCTAssertEqual(links.originals.first?.refundPartLabel, "Auslage")
+        XCTAssertEqual(links.assignedCents, 1)
+        XCTAssertEqual(try vault.refundLinks(transactionId: original.id).refunds.map(\.amountCents), [1])
+        XCTAssertEqual(kind(refund.id), .refund)
+
+        model.unlinkRefundOriginals(refundID: refund.id)
+        XCTAssertTrue(try vault.refundLinks(transactionId: refund.id).originals.isEmpty)
+        XCTAssertEqual(kind(refund.id), RefundLinkKind.none)
+    }
+
     /// The suggestions are candidates too, at most three, and never an already linked booking.
     func testSuggestionsAreAtMostThreeCandidates() throws {
         let vault = try XCTUnwrap(model.vault)

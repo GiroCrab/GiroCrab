@@ -23,7 +23,10 @@ Buchung nicht mehr aufnimmt, bleibt für die nächste. `RefundLinks.refunded_cen
 - Keine Ketten: Eine Erstattung ist nie zugleich ursprüngliche Buchung einer anderen.
 - Konten und Währungen dürfen sich unterscheiden (Kauf mit der Karte, Erstattung aufs Girokonto).
 - Bei einer Splitbuchung gilt die Verknüpfung einem ihrer Teile (siehe „Geteilte Buchungen“); ihre Teile bleiben, wie
-  sie sind.
+  sie sind. Das gilt für beide Seiten: bei einer geteilten Ausgabe für den Teil, der erstattet wird, bei einer
+  geteilten Einnahme für den Teil, der die Erstattung ist.
+- Wechselt eine verknüpfte Buchung die Seite (eine von Hand geführte Ausgabe wird zur Einnahme oder umgekehrt), ist
+  sie keine ursprüngliche Buchung bzw. Erstattung mehr: Ihre Verknüpfungen werden aufgehoben.
 - Wird eine der beiden Buchungen gelöscht, verschwindet die Verknüpfung aus der Anzeige.
 - Verknüpfen und Aufheben erreichen über iCloud die anderen Geräte (neueste Änderung gewinnt) und lassen sich mit
   Bearbeiten › Widerrufen zurücknehmen.
@@ -96,6 +99,7 @@ Namen, Konto und Verwendungszweck tragen `.sensitive()`, Beträge und die Summe 
 `--demo-sheet refund-split` teilt den ersten Vorschlag in zwei eigene Kategorien: das Blatt führt statt der
 geteilten Buchung ihre Teile („Teil 1 · Garten“), die Verknüpfung gilt dem gewählten Teil. `--demo-sheet refund-split-out`
 öffnet das Blatt dieser geteilten Ausgabe; „Erstattung für“ wählt dort den Teil, dem die nächste Erstattung gilt.
+`--demo-sheet refund-split-in` teilt die Einnahme selbst; „Erstattung aus“ wählt den Teil, der die Erstattung ist.
 
 ## Geteilte Buchungen
 
@@ -103,7 +107,19 @@ Eine geteilte ursprüngliche Buchung behält ihre Teile und Kategorien. Die Verk
 Erstattung zurückzahlt (`refund_links.original_part`, ab 1), und nimmt höchstens dessen Betrag auf; „Erstattet: … von …“
 rechnet mit dem Gesamtbetrag der Buchung.
 
-Wird die Aufteilung geändert, folgen die Verknüpfungen (`refunds::split_changed`, aus `planning::store_splits`):
+Ist die **Einnahme** geteilt (etwa Gehalt mit erstatteten Auslagen), nennt die Verknüpfung den Teil, der die
+Erstattung ist (`refund_links.refund_part`, ab 1): Nur dieser Teil zahlt zurück, höchstens mit seinem Betrag, und nur
+er zählt nicht mehr als Einnahme; die übrigen Teile bleiben in ihren Kategorien, wie sie sind. Im Blatt der Einnahme
+wählt „Erstattung aus“ den Teil für die nächste Verknüpfung, im Blatt einer Ausgabe steht eine geteilte Einnahme mit
+ihren eingehenden Teilen zur Auswahl. Eine Verknüpfung der ganzen geteilten Einnahme (`refund_part` 0: aus der Zeit vor
+der Teilung, oder von einer Oberfläche ohne diese Auswahl über `link_refund`) nimmt ihren Anteil aus den Teilen vom
+letzten zum ersten.
+
+Die Teile werden über ihre Position gezählt. Deshalb übernimmt der Abgleich zwischen Geräten die Teile in ihrer
+Reihenfolge (`sync_merge::bookings::load_splits`), statt sie zu sortieren.
+
+Wird die Aufteilung einer Ausgabe oder einer Einnahme geändert, folgen die Verknüpfungen (`refunds::split_changed`,
+aus `planning::store_splits`):
 
 - **Aufteilung aufgehoben:** Die Verknüpfungen gelten der ganzen Buchung. Jede Erstattung wird bis zu dem aufgefüllt,
   was die Buchung noch offen hat, nicht mehr nur bis zum Betrag ihres früheren Teils.
@@ -122,7 +138,8 @@ weiterhin einen Teil.
 Eine verknüpfte Erstattung zählt nicht als Einnahme, soweit sie Buchungen zugeordnet ist. Wie eine Erstattung, die der
 Core am Buchungstext erkennt, mindert dieser Teil die Ausgaben: in den Kennzahlen der Buchungsliste, im Cashflow und in
 den Auswertungen, die auf derselben Einordnung beruhen. Der noch nicht zugeordnete Rest bleibt Einnahme
-(`Booking.refund_income_cents`, `models::flow_parts`), bis auch er zugeordnet ist.
+(`Booking.refund_income_cents`, `models::flow_parts`), bis auch er zugeordnet ist. Eine Verknüpfung zwischen
+verschiedenen Währungen ordnet nichts zu (#569): Die Erstattung bleibt dort ganz Einnahme.
 
 Das Kreisdiagramm der Ausgaben im Kopf (`AccountExpensePie`, `Vault::list_category_expenses`) zeigt die Ausgaben je
 Kategorie abzüglich des zugeordneten Teils; er zählt am Datum und auf dem Konto der Erstattung. Die Summen der

@@ -1108,7 +1108,7 @@ public final class AppModel {
             showMoneyMoneyImport = true
         case "recurring":
             showRecurringSheet = true
-        case "refund", "refund-linked", "refund-split", "refund-split-out":
+        case "refund", "refund-linked", "refund-split", "refund-split-out", "refund-split-in":
             // "Ursprüngliche Buchung zuordnen …" (#714) for the first incoming booking the core
             // has suggestions for (else the first one); `refund-linked`: already linked to the
             // nearest candidate
@@ -1137,6 +1137,17 @@ public final class AppModel {
                         refundPickerBooking = split
                         break
                     }
+                }
+                // `refund-split-in`: the income itself is split, the sheet offers the choice of
+                // the part that is the refund
+                if name == "refund-split-in", let vault, refund.amountCents > 1,
+                   let first = try? vault.createCategory(name: "Auslagen", parentId: nil, sfSymbol: "arrow.uturn.backward", colorHex: "#4C9A2A") {
+                    let half = refund.amountCents / 2
+                    try? vault.setTransactionSplits(transactionId: refund.id, splits: [
+                        TransactionSplitInput(categoryId: refund.categoryId, amountCents: refund.amountCents - half, note: ""),
+                        TransactionSplitInput(categoryId: first, amountCents: half, note: ""),
+                    ])
+                    reloadAll()
                 }
                 selectedBookingID = refund.id
                 refundPickerBooking = booking(withID: refund.id) ?? refund

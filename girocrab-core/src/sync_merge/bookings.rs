@@ -93,7 +93,9 @@ impl BookingFields {
     }
 }
 
-/// transaction id -> its split lines (sorted), categories as uuids.
+/// transaction id -> its split lines in their order, categories as uuids. The order is part
+/// of the split: refund links name a part by its position (#714), so every device must count
+/// the parts alike.
 fn load_splits(
     conn: &Connection,
     schema: &str,
@@ -102,15 +104,12 @@ fn load_splits(
     let mut out: HashMap<i64, Vec<SplitLine>> = HashMap::new();
     let rows: Vec<(i64, Option<i64>, i64, String)> = conn
         .prepare(&format!(
-            "SELECT transaction_id, category_id, amount_cents, note FROM {schema}.transaction_splits"
+            "SELECT transaction_id, category_id, amount_cents, note FROM {schema}.transaction_splits ORDER BY id"
         ))?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<Result<_, _>>()?;
     for (t, c, amount, note) in rows {
         out.entry(t).or_default().push((uuid_of(c), amount, note));
-    }
-    for lines in out.values_mut() {
-        lines.sort();
     }
     Ok(out)
 }

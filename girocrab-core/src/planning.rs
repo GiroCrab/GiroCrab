@@ -64,7 +64,8 @@ pub(crate) fn has_other_currencies(conn: &rusqlite::Connection) -> rusqlite::Res
 /// more conditions on `t` (e.g. " AND t.account_id = ?1"). Both appear in both
 /// halves of the UNION, so `condition` must use numbered parameters.
 /// What a linked refund pays back (#714) counts in the category of the booking it pays back
-/// (`refunds::moves`), the rest of the refund in its own.
+/// (`refunds::moves`), the rest of the refund in its own: of a split refund in the parts the
+/// links leave.
 pub(crate) fn effective_sql(
     db: &rusqlite::Connection,
     extra: &str,
@@ -97,25 +98,21 @@ pub(crate) fn effective_sql_own(
 )"
         ));
     };
-    let paid = format!(
-        "LEFT JOIN (SELECT refund_id, SUM(amount_cents) AS cents FROM {moves} GROUP BY refund_id) paid ON paid.refund_id = t.id"
-    );
+    let (into, paid, drawn) = (&moves.into, &moves.paid, &moves.drawn);
     Ok(format!(
         "(
     SELECT t.category_id AS category_id, t.amount_cents - COALESCE(paid.cents, 0) AS amount_cents, t.booking_date AS booking_date{extra}
-      FROM transactions t {paid}
+      FROM transactions t LEFT JOIN {paid} paid ON paid.refund_id = t.id
      WHERE t.deleted_ms IS NULL{condition}{own}
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
-    SELECT s.category_id,
-           CASE WHEN paid.cents IS NULL OR t.amount_cents <= 0 THEN s.amount_cents
-                ELSE s.amount_cents * MAX(t.amount_cents - paid.cents, 0) / t.amount_cents END,
-           t.booking_date{extra}
-      FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id {paid}
+    SELECT s.category_id, s.amount_cents - COALESCE(drawn.cents, 0), t.booking_date{extra}
+      FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
+      LEFT JOIN {drawn} drawn ON drawn.split_id = s.id
      WHERE t.deleted_ms IS NULL{condition}{own}
     UNION ALL
     SELECT m.category_id, m.amount_cents, t.booking_date{extra}
-      FROM {moves} m JOIN transactions t ON t.id = m.refund_id
+      FROM {into} m JOIN transactions t ON t.id = m.refund_id
      WHERE t.deleted_ms IS NULL{condition}
 )"
     ))

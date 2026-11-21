@@ -300,14 +300,15 @@ fn qa_split_refund_insights_cashflow_api_and_category_sums() {
         .cashflow_by_period(PeriodGranularity::Month, 1, Some(vec![a]), false)
         .unwrap();
     assert_eq!((c[0].income_cents, c[0].expense_cents), (7000, 0));
+    // the link to the whole of the split refund takes from its last part first
     let cats = v.list_categories(None, None).unwrap();
     assert_eq!(
         cats.iter().find(|c| c.id == ca).unwrap().own_total_cents,
-        4200
+        6000
     );
     assert_eq!(
         cats.iter().find(|c| c.id == cb).unwrap().own_total_cents,
-        2800
+        1000
     );
     v.set_local_api_scope(crate::local_api::ShareScope {
         enabled: true,
@@ -725,4 +726,243 @@ fn new_category_of_a_part_keeps_its_refund() {
         .unwrap();
     assert_eq!(refunds_of(&v, o), vec![(r, 1, Some(1000))]);
     assert_eq!(all_expenses(&v, [ca, cb, cc]), [0, -4000, -5000]);
+}
+
+fn third_category(v: &Vault) -> i64 {
+    v.create_category("QA C".into(), None, "tag".into(), "#abcdef".into())
+        .unwrap()
+}
+fn sums(p: &BookingPage) -> (i64, i64) {
+    (p.income_cents, p.expense_cents)
+}
+
+/// A split income is linked by the part of it that is the refund: only that part pays back,
+/// the other parts stay what they are.
+#[test]
+fn part_of_a_split_income_is_the_refund() {
+    let (_d, v, a) = fixture();
+    let (salary, refund) = categories(&v);
+    let shop = third_category(&v);
+    let income = booking(&v, a, 32000);
+    let o = booking(&v, a, -5000);
+    let other = booking(&v, a, -1000);
+    v.set_transaction_category(o, Some(shop)).unwrap();
+    v.set_transaction_splits(income, vec![part(salary, 30000), part(refund, 2000)])
+        .unwrap();
+    // the outgoing booking is offered the parts of the income, not the income as a whole
+    let offered: Vec<(u32, i64, i64)> = v
+        .refund_candidates(o, String::new(), 20)
+        .unwrap()
+        .into_iter()
+        .filter(|b| b.id == income)
+        .map(|b| (b.refund_part, b.amount_cents, b.open_cents))
+        .collect();
+    assert_eq!(offered, vec![(1, 30000, 30000), (2, 2000, 2000)]);
+
+    v.link_refund_parts(income, 2, o, 0).unwrap();
+    let links = v.refund_links(income).unwrap();
+    assert_eq!(
+        links
+            .originals
+            .iter()
+            .map(|b| (b.id, b.part, b.refund_part, b.share_cents))
+            .collect::<Vec<_>>(),
+        vec![(o, 0, 2, Some(2000))]
+    );
+    assert_eq!(links.originals[0].refund_part_label, "QA B");
+    assert_eq!(
+        (links.assigned_cents, links.open_cents),
+        (Some(2000), 30000)
+    );
+    let back = v.refund_links(o).unwrap();
+    assert_eq!(
+        back.refunds
+            .iter()
+            .map(|r| (r.id, r.refund_part, r.amount_cents, r.share_cents))
+            .collect::<Vec<_>>(),
+        vec![(income, 2, 2000, Some(2000))]
+    );
+    assert_eq!(back.refunded_cents, Some(2000));
+    // the salary part stays whole, the refund part is used up, the expense goes down
+    assert_eq!(
+        [salary, refund, shop].map(|c| totals(&v, c).0),
+        [30000, 0, -3000]
+    );
+    assert_eq!(expenses(&v, vec![], None, None, shop), -3000);
+    assert_eq!(sums(&page(&v, None)), (30000, -4000));
+    assert_eq!(sums(&page(&v, Some(salary))), (30000, 0));
+    assert_eq!(sums(&page(&v, Some(refund))), (0, 0));
+    assert_eq!(sums(&page(&v, Some(shop))), (0, -3000));
+    // the part is used up; the other part and the whole income still take a booking
+    assert!(v.link_refund_parts(income, 2, other, 0).is_err());
+    v.link_refund_parts(income, 1, other, 0).unwrap();
+    assert_eq!(
+        allocations(&v, income),
+        vec![(o, Some(2000)), (other, Some(1000))]
+    );
+    // the earlier call removes the links of every part of the refund to that booking
+    v.unlink_refund(income, other, 0).unwrap();
+    v.unlink_refund_parts(income, 1, o, 0).unwrap();
+    assert_eq!(allocations(&v, income), vec![(o, Some(2000))]);
+    v.unlink_refund_parts(income, 2, o, 0).unwrap();
+    assert!(allocations(&v, income).is_empty());
+    assert_eq!(sums(&page(&v, None)), (32000, -6000));
+}
+
+/// Only a part on the income's side can be the refund, and a booking without parts has none.
+#[test]
+fn refund_part_must_be_an_incoming_part_of_the_income() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let income = booking(&v, a, 10000);
+    let plain = booking(&v, a, 4000);
+    let o = booking(&v, a, -5000);
+    v.set_transaction_splits(income, vec![part(ca, 12000), part(cb, -2000)])
+        .unwrap();
+    assert!(v.link_refund_parts(income, 2, o, 0).is_err());
+    assert!(v.link_refund_parts(income, 3, o, 0).is_err());
+    assert!(v.link_refund_parts(plain, 1, o, 0).is_err());
+    // as a whole a split income is still linked (front ends without a choice of the part)
+    v.link_refund(income, o, 0).unwrap();
+    assert_eq!(allocations(&v, income), vec![(o, Some(5000))]);
+    assert_eq!([ca, cb].map(|c| totals(&v, c).0), [7000, -2000]);
+}
+
+/// A part of a split income that matches the amount of a booking is suggested for it.
+#[test]
+fn part_of_a_split_income_is_suggested_by_its_amount() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let o = add(&v, a, -2000, "2025-03-01", "Shop", "");
+    let income = add(&v, a, 32000, "2025-03-20", "Employer", "");
+    v.set_transaction_splits(income, vec![part(ca, 30000), part(cb, 2000)])
+        .unwrap();
+    let suggested: Vec<(i64, u32, RefundMatch)> = v
+        .refund_suggestions(o)
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.booking.id, s.booking.refund_part, s.reason))
+        .collect();
+    assert_eq!(suggested, vec![(income, 2, RefundMatch::SameAmount)]);
+    v.link_refund_parts(income, 2, o, 0).unwrap();
+    assert!(v.refund_suggestions(o).unwrap().is_empty());
+}
+
+/// An income that is split differently or not at all any more keeps its links as links of the
+/// whole income, like an outgoing booking.
+#[test]
+fn changed_split_of_an_income_links_it_as_a_whole() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let income = booking(&v, a, 32000);
+    let o = booking(&v, a, -5000);
+    v.set_transaction_splits(income, vec![part(ca, 30000), part(cb, 2000)])
+        .unwrap();
+    v.link_refund_parts(income, 2, o, 0).unwrap();
+    let own = |v: &Vault| -> Vec<(u32, Option<i64>)> {
+        v.refund_links(income)
+            .unwrap()
+            .originals
+            .iter()
+            .map(|b| (b.refund_part, b.share_cents))
+            .collect()
+    };
+    assert_eq!(own(&v), vec![(2, Some(2000))]);
+    // another category for a part is no other split
+    v.set_transaction_splits(income, vec![part(cb, 30000), part(ca, 2000)])
+        .unwrap();
+    assert_eq!(own(&v), vec![(2, Some(2000))]);
+    // other amounts: the whole income pays back, taken from its last part first
+    v.set_transaction_splits(income, vec![part(ca, 29000), part(cb, 3000)])
+        .unwrap();
+    assert_eq!(own(&v), vec![(0, Some(5000))]);
+    assert_eq!([ca, cb].map(|c| totals(&v, c).0), [27000, 0]);
+    v.set_transaction_splits(income, Vec::new()).unwrap();
+    assert_eq!(own(&v), vec![(0, Some(5000))]);
+}
+
+/// The parts of a split refund keep every cent of what its links leave (no shares by
+/// proportion that round down).
+#[test]
+fn split_refund_loses_no_cent_in_the_category_sums() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let cc = third_category(&v);
+    let o = booking(&v, a, -3000);
+    let r = booking(&v, a, 10001);
+    v.set_transaction_splits(r, vec![part(ca, 3334), part(cb, 3334), part(cc, 3333)])
+        .unwrap();
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!([ca, cb, cc].map(|c| totals(&v, c).0), [3334, 3334, 333]);
+    assert_eq!(
+        [ca, cb, cc].map(|c| page(&v, Some(c)).income_cents),
+        [3334, 3334, 333]
+    );
+    assert_eq!(sums(&page(&v, None)), (7001, 0));
+}
+
+/// A refund linked to a booking of another currency assigns nothing (#569): it stays income.
+#[test]
+fn refund_linked_across_currencies_stays_income() {
+    let (_d, v, a) = fixture();
+    let usd = v
+        .create_offline_account("QA USD".into(), AccountKind::Checking, "USD".into(), 0)
+        .unwrap();
+    let o = booking(&v, a, -3000);
+    let r = booking(&v, usd, 10000);
+    let own = |v: &Vault| {
+        sums(
+            &v.list_transactions(BookingFilter {
+                account_ids: vec![usd],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+    };
+    assert_eq!(own(&v), (10000, 0));
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!(allocations(&v, r), vec![(o, None)]);
+    assert_eq!(own(&v), (10000, 0));
+}
+
+/// A linked booking that changes its side (an expense turned into an income) is no original
+/// any more: its links are removed.
+#[test]
+fn booking_that_changes_its_side_loses_its_links() {
+    let (_d, v, a) = fixture();
+    let (ca, _) = categories(&v);
+    let o = booking(&v, a, -3000);
+    let r = booking(&v, a, 1000);
+    v.set_transaction_category(o, Some(ca)).unwrap();
+    v.link_refund(r, o, 0).unwrap();
+    assert_eq!(sums(&page(&v, None)), (0, -2000));
+    let edit = |amount: i64| {
+        v.save_manual_booking(
+            a,
+            Some(o),
+            ManualBookingSetup {
+                booking_date: crate::dates::today_iso(),
+                amount_cents: amount,
+                counterparty: "QA vendor".into(),
+                purpose: String::new(),
+                category_id: Some(ca),
+                note: String::new(),
+            },
+        )
+        .unwrap();
+    };
+    // another amount on the same side keeps the link
+    edit(-2500);
+    assert_eq!(allocations(&v, r), vec![(o, Some(1000))]);
+    edit(3000);
+    assert!(allocations(&v, r).is_empty());
+    assert!(v.refund_links(o).unwrap().refunds.is_empty());
+    assert_eq!(sums(&page(&v, None)), (4000, 0));
+    assert_eq!(expenses(&v, vec![], None, None, ca), 0);
+    let row = page(&v, None)
+        .transactions
+        .into_iter()
+        .find(|t| t.id == r)
+        .unwrap();
+    assert_eq!(row.refund_link, RefundLinkKind::None);
 }

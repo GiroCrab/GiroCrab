@@ -13,26 +13,27 @@ extension AppModel {
     }
 
     /// Links `refundID` to `originalID`; its other links stay (a refund can pay back several bookings).
-    /// `part`: for a split booking the part the refund pays back (from 1), else 0.
-    func linkRefund(refundID: Int64, originalID: Int64, part: UInt32 = 0) {
+    /// `part`: for a split booking the part the refund pays back (from 1), else 0. `refundPart`:
+    /// for a split refund the part of it that pays back (from 1), else 0.
+    func linkRefund(refundID: Int64, originalID: Int64, part: UInt32 = 0, refundPart: UInt32 = 0) {
         guard let vault else { return }
-        let linked = (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID && $0.part == part }) ?? false
+        let linked = (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID && $0.part == part && $0.refundPart == refundPart }) ?? false
         guard !linked else { return }
-        do { try vault.linkRefund(refundId: refundID, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
+        do { try vault.linkRefundParts(refundId: refundID, refundPart: refundPart, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.unlinkRefund(refundID: refundID, originalID: originalID, part: part) }
+            um.registerUndo(withTarget: self) { m in m.unlinkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart) }
             um.setActionName(String(localized: "Erstattung zuordnen"))
         }
         refundLinksChanged([refundID, originalID])
     }
 
     /// Removes the link of `refundID` to `originalID`; both bookings and their other links stay.
-    func unlinkRefund(refundID: Int64, originalID: Int64, part: UInt32 = 0) {
+    func unlinkRefund(refundID: Int64, originalID: Int64, part: UInt32 = 0, refundPart: UInt32 = 0) {
         guard let vault,
-              (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID && $0.part == part }) == true else { return }
-        do { try vault.unlinkRefund(refundId: refundID, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
+              (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID && $0.part == part && $0.refundPart == refundPart }) == true else { return }
+        do { try vault.unlinkRefundParts(refundId: refundID, refundPart: refundPart, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.linkRefund(refundID: refundID, originalID: originalID, part: part) }
+            um.registerUndo(withTarget: self) { m in m.linkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart) }
             um.setActionName(String(localized: "Verknüpfung aufheben"))
         }
         refundLinksChanged([refundID, originalID])
@@ -42,7 +43,7 @@ extension AppModel {
     func unlinkRefundOriginals(refundID: Int64) {
         guard let vault, let originals = try? vault.refundLinks(transactionId: refundID).originals else { return }
         windowUndoManager?.beginUndoGrouping()
-        for original in originals { unlinkRefund(refundID: refundID, originalID: original.id, part: original.part) }
+        for original in originals { unlinkRefund(refundID: refundID, originalID: original.id, part: original.part, refundPart: original.refundPart) }
         windowUndoManager?.endUndoGrouping()
     }
 

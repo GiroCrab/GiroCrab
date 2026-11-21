@@ -63,6 +63,22 @@ private struct RefundBookingLine: View {
         row.purpose.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    /// "Teil 2 · Garten" for the part the row stands for; on a linked row also the part on the
+    /// other end: "für Teil 1 · …" (of the booking a refund pays back), "aus Teil 2 · …" (of the refund).
+    private var partLines: [String] {
+        let text = { (title: String, label: String) in [title, label].filter { !$0.isEmpty }.joined(separator: " · ") }
+        let refund = row.amountCents > 0
+        var out: [String] = []
+        if refund {
+            if row.refundPart > 0 { out.append(text(String(localized: "Teil \(Int(row.refundPart))"), row.refundPartLabel)) }
+            if row.part > 0 { out.append(text(String(localized: "für Teil \(Int(row.part))"), row.partLabel)) }
+        } else {
+            if row.part > 0 { out.append(text(String(localized: "Teil \(Int(row.part))"), row.partLabel)) }
+            if row.refundPart > 0 { out.append(text(String(localized: "aus Teil \(Int(row.refundPart))"), row.refundPartLabel)) }
+        }
+        return out
+    }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
@@ -76,9 +92,10 @@ private struct RefundBookingLine: View {
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
                     .sensitive()
-                // a split booking is linked by one of its parts
-                if row.part > 0 {
-                    Text(verbatim: [String(localized: "Teil \(Int(row.part))"), row.partLabel].filter { !$0.isEmpty }.joined(separator: " · "))
+                // a split booking is linked by one of its parts: the part of this booking, then
+                // the part of the booking on the other end of the link
+                ForEach(partLines, id: \.self) {
+                    Text(verbatim: $0)
                         .appFont(.caption, weight: .medium)
                         .foregroundStyle(Theme.accent)
                         .lineLimit(1)
@@ -156,8 +173,9 @@ struct RefundPickerSheet: View {
     @State private var top: [RefundSuggestion] = []
     @State private var loaded = false
     @State private var search = ""
-    /// The outgoing parts of a split booking the sheet was opened from, and the one the next
-    /// refund is linked to.
+    /// The parts of a split booking the sheet was opened from that can be linked (the outgoing
+    /// parts of an outgoing booking, the incoming ones of a refund), and the one the next link
+    /// is made for.
     @State private var ownParts: [(part: UInt32, split: TransactionSplit)] = []
     @State private var ownPart: UInt32 = 0
     @State private var loadError: String?
@@ -175,7 +193,7 @@ struct RefundPickerSheet: View {
         return candidates.filter { !ids.contains(Self.key($0)) }
     }
     /// A split booking appears once per part.
-    private static func key(_ r: RefundBooking) -> String { "\(r.id)-\(r.part)" }
+    private static func key(_ r: RefundBooking) -> String { "\(r.id)-\(r.part)-\(r.refundPart)" }
     private func partTitle(_ p: (part: UInt32, split: TransactionSplit)) -> String {
         let category = p.split.categoryId.flatMap { id in model.categories.first { $0.id == id }?.name } ?? ""
         return ([String(localized: "Teil \(Int(p.part))"), category, p.split.note].filter { !$0.isEmpty } + [Money.format(p.split.amountCents, currency: booking.currency.isEmpty ? "EUR" : booking.currency.uppercased())])
@@ -218,7 +236,7 @@ struct RefundPickerSheet: View {
                     .foregroundStyle(Theme.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !ownParts.isEmpty {
-                    Picker("Erstattung für", selection: $ownPart) {
+                    Picker(fromRefund ? "Erstattung aus" : "Erstattung für", selection: $ownPart) {
                         ForEach(ownParts, id: \.part) { Text(partTitle($0)).tag($0.part) }
                     }
                     .sensitive([.labels, .amounts])
@@ -350,9 +368,10 @@ struct RefundPickerSheet: View {
         let refundID = fromRefund ? booking.id : r.id
         let originalID = fromRefund ? r.id : booking.id
         if isLinked {
-            model.unlinkRefund(refundID: refundID, originalID: originalID, part: r.part)
+            model.unlinkRefund(refundID: refundID, originalID: originalID, part: r.part, refundPart: r.refundPart)
         } else {
-            model.linkRefund(refundID: refundID, originalID: originalID, part: fromRefund ? r.part : ownPart)
+            model.linkRefund(refundID: refundID, originalID: originalID, part: fromRefund ? r.part : ownPart,
+                             refundPart: fromRefund ? ownPart : r.refundPart)
         }
     }
 
@@ -366,7 +385,7 @@ struct RefundPickerSheet: View {
             let result = try await model.vaultOffMain { vault -> (RefundLinks, [RefundSuggestion], [RefundBooking], [TransactionSplit]) in
                 (try vault.refundLinks(transactionId: id), try vault.refundSuggestions(transactionId: id),
                  try vault.refundCandidates(transactionId: id, query: query, limit: 200),
-                 outgoing ? try vault.listTransactionSplits(transactionId: id) : [])
+                 try vault.listTransactionSplits(transactionId: id))
             }
             guard run == loads, let result else { return }
             links = result.0
@@ -374,8 +393,10 @@ struct RefundPickerSheet: View {
             let linkedIDs = Set(linked.map(Self.key))
             top = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
             candidates = result.2
-            // parts count from 1 in the order of the split; only outgoing ones take a refund
-            ownParts = result.3.enumerated().map { (part: UInt32($0.offset + 1), split: $0.element) }.filter { $0.split.amountCents < 0 }
+            // parts count from 1 in the order of the split; only outgoing ones take a refund,
+            // only incoming ones of a refund pay back
+            ownParts = result.3.enumerated().map { (part: UInt32($0.offset + 1), split: $0.element) }
+                .filter { outgoing ? $0.split.amountCents < 0 : $0.split.amountCents > 0 }
             if !ownParts.contains(where: { $0.part == ownPart }) { ownPart = ownParts.first?.part ?? 0 }
             loadError = nil
         } catch {
@@ -447,7 +468,7 @@ struct RefundLinksCard: View {
             }
             .buttonStyle(.plain)
             .help("Diese Buchung in der Liste anzeigen")
-            Button { model.unlinkRefund(refundID: refundID, originalID: originalID, part: r.part) } label: {
+            Button { model.unlinkRefund(refundID: refundID, originalID: originalID, part: r.part, refundPart: r.refundPart) } label: {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.tertiary)
             }
             .buttonStyle(.borderless)

@@ -851,3 +851,66 @@ fn removed_split_reaches_the_other_device_as_a_link_to_the_whole_booking() {
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     assert_eq!(part_links(&a, aa[2]), vec![(aa[1], 0, Some(50))]);
 }
+
+/// The part of a split refund a link names reaches the other device with the link.
+#[test]
+fn link_of_a_refund_part_reaches_the_other_device() {
+    let d = TempDir::new("refunds-part-sync");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    let part = |amount: i64| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    let own = |v: &Vault, refund: i64| -> Vec<(i64, u32, Option<i64>)> {
+        v.refund_links(refund)
+            .unwrap()
+            .originals
+            .iter()
+            .map(|o| (o.id, o.refund_part, o.share_cents))
+            .collect()
+    };
+    // the smaller part comes second: the other device must count the parts in this order too
+    a.set_transaction_splits(aa[2], vec![part(30), part(20)])
+        .unwrap();
+    a.link_refund_parts(aa[2], 2, aa[0], 0).unwrap();
+    assert_eq!(own(&a, aa[2]), vec![(aa[0], 2, Some(20))]);
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(
+        b.list_transaction_splits(bb[2])
+            .unwrap()
+            .iter()
+            .map(|s| s.amount_cents)
+            .collect::<Vec<_>>(),
+        vec![30, 20]
+    );
+    assert_eq!(own(&b, bb[2]), vec![(bb[0], 2, Some(20))]);
+    b.unlink_refund_parts(bb[2], 2, bb[0], 0).unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    assert!(own(&a, aa[2]).is_empty());
+}
+
+/// A link whose booking is on the wrong side now (its amount was changed elsewhere) pays
+/// nothing back and marks no booking; it can still be removed.
+#[test]
+fn link_of_a_booking_on_the_wrong_side_counts_for_nothing() {
+    let d = TempDir::new("refunds");
+    let v = open(&d, "v");
+    let ids = seed(&v);
+    v.link_refund(ids[2], ids[0], 0).unwrap();
+    assert_eq!(part_links(&v, ids[2]), vec![(ids[0], 0, Some(50))]);
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET amount_cents=100 WHERE id=?1",
+            [ids[0]],
+        )
+        .unwrap();
+    assert_eq!(part_links(&v, ids[2]), vec![(ids[0], 0, None)]);
+    assert!(markers(&v.db().unwrap()).unwrap().is_empty());
+    v.unlink_refund(ids[2], ids[0], 0).unwrap();
+    assert!(part_links(&v, ids[2]).is_empty());
+}

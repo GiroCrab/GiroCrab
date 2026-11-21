@@ -267,7 +267,7 @@ pub(super) struct BookingFinisher {
     /// Refunds linked to their original booking (#714): never income.
     linked_refunds: HashSet<i64>,
     /// What the links of a linked booking cover (`refunds::covered`).
-    refund_covered: HashMap<i64, i64>,
+    refund_covered: crate::refunds::Covered,
     paypal_accounts: HashSet<i64>,
     /// Merchant recognition with the user's changes (#1373).
     merchants: Arc<MerchantRules>,
@@ -371,19 +371,17 @@ impl BookingFinisher {
             t.merchant.domain_source = "override".into();
             t.merchant_domain = Some(d.clone());
         }
-        t.refund_part_cents = self
-            .refund_covered
-            .get(&t.id)
-            .copied()
-            .filter(|covered| *covered < t.amount_cents.saturating_abs());
+        let covered = self.refund_covered.cents.get(&t.id).copied();
+        t.refund_part_cents = covered.filter(|covered| {
+            *covered < t.amount_cents.saturating_abs() && !self.refund_covered.mixed.contains(&t.id)
+        });
         // A refund the user linked to its original booking (#714) is no income: like a refund
         // the wording gives away, it reduces the expenses of the analysis instead. Only what
-        // its originals take up does; the rest stays income until it is assigned too.
+        // its originals take up does; the rest stays income until it is assigned too (all of
+        // it when its links take up nothing, as between different currencies).
         if t.flow == FlowKind::Income && self.linked_refunds.contains(&t.id) {
             t.flow = FlowKind::Consumption;
-            t.refund_income_cents = t
-                .refund_part_cents
-                .map_or(0, |covered| t.amount_cents - covered);
+            t.refund_income_cents = (t.amount_cents - covered.unwrap_or(0)).max(0);
         }
         if let Some(loan) = self.loan_links.get(&t.id) {
             t.flow = match visible {

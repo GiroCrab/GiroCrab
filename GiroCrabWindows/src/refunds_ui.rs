@@ -362,6 +362,8 @@ mod tests {
             open_cents: open,
             part: 0,
             part_label: String::new(),
+            refund_part: 0,
+            refund_part_label: String::new(),
         }
     }
 
