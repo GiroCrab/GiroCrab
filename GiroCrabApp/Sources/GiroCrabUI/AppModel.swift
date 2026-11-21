@@ -320,6 +320,9 @@ public final class AppModel {
     /// Recurring bookings of the current month: booked vs. still due.
     var recurringMonth: RecurringMonthOverview?
     var showRecurringSheet = false
+    var showDuplicatesSheet = false
+    /// Pairs offered in "Mögliche Doppel …" (bank booking vs. imported MoneyMoney row).
+    var possibleDuplicates: [PossibleDuplicate] = []
     var showAddBank = false
     /// Series hidden with "Nicht wiederkehrend" (can be shown again).
     var recurringHidden: [IgnoredRecurring] = []

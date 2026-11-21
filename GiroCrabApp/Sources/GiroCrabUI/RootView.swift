@@ -649,6 +649,10 @@ struct MainSplitView: View {
             RecurringSheet()
                 .environment(model)
         }
+        .capturableSheet(isPresented: $model.showDuplicatesSheet) {
+            DuplicatesSheet()
+                .environment(model)
+        }
         .capturableSheet(item: $model.customRecurringBooking) { b in
             CustomDatesSheet(initialDates: model.recurringSeries(for: b).flatMap { $0.interval == .custom ? $0.customDates : nil } ?? []) { dates in
                 model.markRecurring(b, .custom, customDates: dates)
