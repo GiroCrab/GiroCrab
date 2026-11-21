@@ -69,6 +69,8 @@ struct Ui {
     docs: Vec<DocumentInfo>,
     /// Document ids by table row of the Belege view.
     doc_rows: Vec<i64>,
+    /// Unread document ids of the shown Belege list ("Alle als gelesen markieren").
+    doc_unread: Vec<i64>,
     selected_doc: Option<i64>,
     link_ids: Vec<i64>,
     rules: Vec<Rule>,
@@ -408,6 +410,7 @@ fn to_table(rows: Vec<Cells>) -> Vec<TableRow> {
             c3: r.cells[3].clone().into(),
             c4: r.cells[4].clone().into(),
             negative: r.negative,
+            unread: r.unread,
         })
         .collect()
 }
@@ -543,7 +546,7 @@ pub fn render_view(win: &MainWindow) {
         }
         MODE_DOCUMENTS => {
             win.set_view_title("Belege & Postbox".into());
-            let (mut rows, accounts) = with_ui(|u| {
+            let (rows, accounts) = with_ui(|u| {
                 (
                     lists::document_rows(&u.docs, &date),
                     u.accounts
@@ -553,6 +556,13 @@ pub fn render_view(win: &MainWindow) {
                         .collect::<Vec<_>>(),
                 )
             });
+            let keep = with_ui(|u| u.selected_doc);
+            let rows = lists::unread_only(rows, win.get_docs_unseen_only(), keep);
+            let unread = lists::unread_ids(&rows);
+            win.set_doc_unread_any(!unread.is_empty());
+            win.set_doc_seen(!keep.is_some_and(|id| unread.contains(&id)));
+            with_ui(|u| u.doc_unread = unread);
+            let mut rows = rows;
             for r in &mut rows {
                 r.mask(&[0, 3], privacy);
             }
@@ -739,6 +749,14 @@ fn reload_docs(win: &MainWindow, vault: &Arc<Vault>, status: String) {
     win.set_view_status(status.into());
 }
 
+/// One small UPDATE: runs synchronously, then the list reloads right away.
+fn mark_seen(win: &MainWindow, vault: &Arc<Vault>, ids: Vec<i64>, seen: bool) {
+    match vault.mark_documents_seen(ids, seen) {
+        Ok(_) => reload_docs(win, vault, String::new()),
+        Err(e) => win.set_view_status(e.to_string().into()),
+    }
+}
+
 fn run_doc_job(
     win: &MainWindow,
     vault: &Arc<Vault>,
@@ -767,6 +785,9 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         with_ui(|u| u.selected_doc = doc);
         win.set_table_selected(if doc.is_some() { i } else { -1 });
         set_doc_flags(&win);
+        win.set_doc_seen(!with_ui(|u| {
+            u.selected_doc.is_some_and(|id| u.doc_unread.contains(&id))
+        }));
     });
 
     let (weak, slot2) = (win.as_weak(), slot.clone());
@@ -866,6 +887,35 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         });
     });
 
+    let weak = win.as_weak();
+    win.on_docs_filter_changed(move || {
+        if let Some(win) = weak.upgrade() {
+            render_view(&win);
+        }
+    });
+
+    let (weak, slot2) = (win.as_weak(), slot.clone());
+    win.on_doc_mark_seen(move |seen| {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+            return;
+        };
+        let Some(id) = with_ui(|u| u.selected_doc) else {
+            return;
+        };
+        mark_seen(&win, &v, vec![id], seen);
+    });
+
+    let (weak, slot2) = (win.as_weak(), slot.clone());
+    win.on_doc_mark_all_seen(move || {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+            return;
+        };
+        let ids = with_ui(|u| u.doc_unread.clone());
+        if !ids.is_empty() {
+            mark_seen(&win, &v, ids, true);
+        }
+    });
+
     let (weak, slot2) = (win.as_weak(), slot.clone());
     win.on_doc_link_open(move || {
         let Some(win) = weak.upgrade() else { return };
@@ -936,6 +986,7 @@ fn search_bookings(win: &MainWindow, vault: &Arc<Vault>, query: String) {
                             String::new(),
                         ],
                         negative: b.amount_cents < 0,
+                        unread: false,
                     })
                     .collect();
                 with_ui(|u| u.link_ids = rows.iter().map(|r| r.id).collect());
