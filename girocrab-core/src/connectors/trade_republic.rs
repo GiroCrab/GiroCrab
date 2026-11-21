@@ -270,12 +270,13 @@ impl DocumentCandidate {
         let lower = title.to_lowercase();
         let doc_type =
             refine_document_type(crate::documents::type_from_title(&lower), &self.kind_text);
-        let account_ref = document_account_ref(
-            &lower,
-            doc_type,
-            matches!(lower.as_str(), "dokumente" | "dokument"),
-        )
-        .unwrap_or("tr:cash");
+        let account_hint =
+            if doc_type != "steuer" && matches!(lower.as_str(), "dokumente" | "dokument") {
+                &self.kind_text
+            } else {
+                &lower
+            };
+        let account_ref = document_account_ref(account_hint, doc_type).unwrap_or("tr:cash");
         (doc_type, account_ref)
     }
 }
@@ -288,13 +289,8 @@ impl DocumentCandidate {
 /// document stays where it is (tax papers, general information, an older document just called
 /// "Dokumente" whose event is not known).
 ///
-/// `head`: the lower-cased document name before the dash; `doc_type`: its type; `generic`: the name
-/// says nothing ("Dokumente").
-fn document_account_ref(head: &str, doc_type: &str, generic: bool) -> Option<&'static str> {
-    if generic {
-        // the type came from the timeline event: a trade, a savings plan or a dividend
-        return (doc_type == "abrechnung").then_some("tr:depot");
-    }
+/// `head` is the lower-cased document title or the timeline context for a generic title.
+fn document_account_ref(head: &str, doc_type: &str) -> Option<&'static str> {
     if doc_type == "kontoauszug" {
         return Some(if head.contains("depot") {
             "tr:depot"
@@ -304,9 +300,12 @@ fn document_account_ref(head: &str, doc_type: &str, generic: bool) -> Option<&'s
     }
     // interest and fees of the settlement account (a dividend is no interest)
     if !head.contains("dividende")
-        && ["zins", "gebühr", "kontoführung"]
+        && (["zins", "gebühr", "kontoführung"]
             .iter()
             .any(|k| head.contains(k))
+            || head
+                .split_whitespace()
+                .any(|word| matches!(word, "interest" | "fee" | "fees") || word.ends_with("_fee")))
     {
         return Some("tr:cash");
     }
@@ -346,6 +345,7 @@ fn is_securities_notice(lower_title: &str) -> bool {
         "dividende",
         "wahlweise",
         "kapitalmaßnahme",
+        "corporate_action",
         "split",
         "umtausch",
         "spin-off",
@@ -1867,6 +1867,27 @@ fn is_trade_republic_host(url: &reqwest::Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_document_uses_the_event_to_determine_its_account() {
+        for (event, expected) in [
+            ("kapitalmaßnahme corporate_action apple", DEPOT_REF),
+            ("corporate_action apple", DEPOT_REF),
+            ("kauf trade apple", DEPOT_REF),
+            ("zinsen interest", "tr:cash"),
+            ("gebühren", "tr:cash"),
+            ("order fee", "tr:cash"),
+            ("steuer dividende apple", "tr:cash"),
+        ] {
+            let candidate = DocumentCandidate {
+                id: "evt-1".into(),
+                date: "2026-11-21".into(),
+                title: "Apple".into(),
+                kind_text: event.into(),
+            };
+            assert_eq!(candidate.classify("Dokumente").1, expected, "{event}");
+        }
+    }
 
     #[test]
     fn first_fetch_files_a_generic_trade_pdf_at_the_depot_without_a_portfolio() {
