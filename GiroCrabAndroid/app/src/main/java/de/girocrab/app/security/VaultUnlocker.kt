@@ -208,7 +208,15 @@ class VaultUnlocker(
             return
         }
         try {
-            val vault = opener.open(opener.defaultVaultPath(filesDir), key)
+            val path = opener.defaultVaultPath(filesDir)
+            // Opening creates a missing file: without this check an empty vault would appear. A
+            // zero-byte leftover counts as missing for the same reason (see `unlock`).
+            val file = File(path)
+            if (!file.isFile || file.length() == 0L) {
+                onResult(UnlockResult.NoVaultOnDevice)
+                return
+            }
+            val vault = opener.open(path, key)
             onResult(if (vault != null) UnlockResult.Opened(vault) else UnlockResult.Unavailable)
         } catch (e: Exception) {
             onResult(UnlockResult.Refused(e.message))

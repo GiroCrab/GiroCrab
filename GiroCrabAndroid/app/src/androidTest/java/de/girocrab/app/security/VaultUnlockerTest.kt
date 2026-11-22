@@ -143,7 +143,8 @@ class VaultUnlockerTest {
 
     @Test
     fun authenticatedPromptOpensTheVault() {
-        storeWrappedKey()
+        val key = storeWrappedKey()
+        createVaultFile(key)
         val unlocker = unlocker { cipher, _, _, onResult ->
             onResult(PromptResult.Succeeded(cipher))
         }
@@ -185,7 +186,8 @@ class VaultUnlockerTest {
      */
     @Test
     fun throwingCallerIsAnsweredOnlyOnce() {
-        storeWrappedKey()
+        val key = storeWrappedKey()
+        createVaultFile(key)
         val unlocker = unlocker { cipher, _, _, onResult ->
             onResult(PromptResult.Succeeded(cipher))
         }
@@ -237,7 +239,25 @@ class VaultUnlockerTest {
         assertEquals("the vault file must stay as it was", before, vaultBytes())
     }
 
+    /** A stored key without its vault is not a vault: nothing may be created behind the prompt. */
+    @Test
+    fun storedKeyWithoutVaultFileIsNoVaultOnDevice() {
+        storeWrappedKey(createVault = false)
+        val unlocker = unlocker { cipher, _, _, onResult -> onResult(PromptResult.Succeeded(cipher)) }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.NoVaultOnDevice, result)
+        assertFalse("no vault may be created", vaultFile.exists())
+    }
+
     // --- helpers ---------------------------------------------------------------------------
+
+    private fun createVaultFile(key: ByteArray) {
+        val vault = opener.open(opener.defaultVaultPath(testDir), key.copyOf())
+        checkNotNull(vault) { "native core not linked" }.close()
+    }
 
     private fun unlocker(prompt: CipherPrompt) = VaultUnlocker(
         keyStore = keyStore(),

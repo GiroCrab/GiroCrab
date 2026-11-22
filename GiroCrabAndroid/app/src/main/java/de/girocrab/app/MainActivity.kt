@@ -595,14 +595,27 @@ private fun describeImport(result: ImportResult): String = when (result) {
 
 private fun describe(result: UnlockResult): String? = when (result) {
     is UnlockResult.Opened -> {
-        // `accountCount` throws when the handle is unusable, so the handle is closed in `finally`
-        // — otherwise a failed read leaks the native handle.
-        val count = try {
-            result.vault.accountCount
+        // `accountCount` throws when the handle is unusable; the handle is closed in `finally`
+        // and a failing read or close becomes a message instead of crashing the main thread.
+        var failure: Exception? = null
+        var count = 0
+        try {
+            count = result.vault.accountCount
+        } catch (e: Exception) {
+            failure = e
         } finally {
-            result.vault.close()
+            try {
+                result.vault.close()
+            } catch (e: Exception) {
+                if (failure == null) failure = e
+            }
         }
-        "Tresor geöffnet: $count Konten."
+        val problem = failure
+        if (problem != null) {
+            "Tresor geöffnet, Kontenzahl nicht lesbar (${problem.javaClass.simpleName}: ${problem.message})"
+        } else {
+            "Tresor geöffnet: $count Konten."
+        }
     }
     UnlockResult.NoVaultOnDevice ->
         "Auf diesem Gerät liegt noch kein Tresor. Spiele eine Sicherung vom Desktop ein — dort über „Tresor sichern“ erzeugt."
