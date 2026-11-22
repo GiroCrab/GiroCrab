@@ -58,23 +58,33 @@ accounts, amount and split vector merge as one unit under `splits_ms`, with a
 deterministic `(amount, vector)` tie-break. Amount-only edits stamp that same unit.
 Bank amounts remain bank-owned; an incompatible incoming split vector is not applied.
 
+Upgrade limitation: pre-upgrade amount-only edits have no recoverable edit stamp.
+If those amounts diverged while `splits_ms` stayed equal, the first merge after
+upgrade converges by deterministic `(amount, vector)` value, not by edit recency.
+This can select an older amount. Bumping the stamp at upgrade would only replace
+that deterministic choice with whichever device upgraded last.
+
 ### One pure resolver, never widening
 
 The [resolver](../../girocrab-core/src/refunds.rs) uses current booking/split state
-and stored amount snapshots. An existing endpoint must still have the appropriate
-nonzero sign. If its part is missing, including a whole booking that has since
-been split, resolution requires a unique admissible same-signed-amount replacement
-within that booking. Ambiguous, missing, conflicting or incompatible endpoints
-make the link inactive. Existing resolved pairs are reserved so fallback cannot
-duplicate a canonical pair.
+and exact endpoint identities. An existing endpoint must still have the appropriate
+nonzero sign. Missing UUIDs, including a whole-booking marker while the booking
+is split, make the link inactive. There is no read-time amount matching.
+
+Replacement happens in the local split-vector save: drop unless a same-amount
+replacement exists in the same edit. Exactly one new part may inherit the UUID
+of exactly one removed referenced part of the same signed amount. Retained parts
+are not replacement candidates. Multiple removed referenced parts or multiple
+new candidates of that amount mean no inheritance. Otherwise the old UUID
+disappears; a later edit creating that amount cannot revive it. The vector and
+its identities sync as one unit; this does not write any link row.
 
 Resolution never takes several replacement parts, spreads a link across them or
 substitutes a larger parent amount. It does not infer a new user choice from
 available capacity. Resolution writes nothing, including after local split edits,
 sign changes or true booking/account deletion. The original link key, snapshots
 and stamps remain unchanged; deleted or incompatible bookings make it inactive
-at read time. Only explicit unlink creates a link tombstone. Otherwise a derived
-replacement row could survive a peer's later unlink of the original key.
+at read time. Split edits never create a link tombstone or a successor link row.
 
 ### Allocation is deterministic and revision-cached
 
@@ -100,12 +110,29 @@ not guess counterpart ids or discard their split UUIDs.
 
 Import deduplication and take-over paths apply the same row-ranking mechanism
 when remapping actual booking identities before deleting the redundant booking.
-Part UUIDs stay unchanged; missing survivor parts follow the read-time rule.
-This identity remap is not a derived split-part retarget.
+The map addresses complete endpoints, including part UUIDs. Consolidating imported
+part bookings explicitly maps each whole part booking to the split UUID created
+from it, even when several parts have equal amounts. Other identity take-overs
+preserve UUIDs; missing survivor UUIDs do not fall back by amount.
+
+A remap stamps the old key as a moved tombstone and writes the mapped row with
+`moved_from` pointing to that old key, preserving creation/order. At read time,
+the mapped row is inactive if that source key holds a user-unlink tombstone
+(not a moved tombstone) whose change stamp is later than the mapped row's stamp.
+Undo of that exact user unlink makes the source row live again, reactivating the
+mapped row; the deleted source booking keeps the old endpoint inactive. This
+provenance is mapped through sync booking identities, not local integer order.
+Canonical duplicate/twin folds remap complete keys and provenance without new
+stamps, including tombstones and rows whose current endpoints are unaffected.
+Physical cleanup clears provenance references without a surviving identity by FK.
 
 For a natural-key collision, choose the maximum complete row under the total rank
 `(changed_ms, deleted_ms.is_some(), created_ms, refund_cents, original_cents,
-deleted_ms)`. Keep every field of that winner, including `created_ms`. Tombstones
+deleted_ms, user-tombstone priority, provenance presence, moved_from key snapshot)`.
+The final key snapshot stores sync identities and parts at move time; merge does
+not recompute its order from mutable bookings or local integer ids. Migration 39
+adds these move fields without changing the schema written by version 38.
+Keep every field of that winner, including `created_ms` and provenance. Tombstones
 participate in the same rule, including collisions after twin remapping. Do not
 resolve endpoints, generate timestamps or rewrite payloads during link merge.
 
@@ -113,7 +140,7 @@ resolve endpoints, generate timestamps or rewrite payloads during link merge.
 
 [Unlink](../../girocrab-core/src/refunds/api.rs) returns the tombstone's change
 stamp as its undo token. Restore succeeds only if the row is still deleted and
-its current change stamp equals that token. It retains the original creation
+its current change stamp equals that token and it is not a moved marker. It retains the original creation
 stamp and allocation priority; a newer peer tombstone cannot be revived by an
 older undo. Explicitly re-linking a tombstoned key instead gets a fresh creation
 stamp rather than reviving its old priority.

@@ -29,6 +29,11 @@ null ist vorausgewählt. Ein positiver Teil zahlt zurück, ein negativer Teil
 wird zurückgezahlt. Das gilt auch für gemischte Splitbuchungen. Ganze Buchungen
 können nur dann Endpunkte sein, wenn sie nicht aufgeteilt sind.
 
+Wird ein verknüpfter Teil entfernt, bleibt seine Identität nur bei einem
+eindeutigen Ersatz mit gleichem Betrag und Vorzeichen in derselben Bearbeitung
+erhalten. Andernfalls entfällt die Zuordnung. Ein später neu angelegter Teil
+mit gleichem Betrag übernimmt sie nicht.
+
 ## Verknüpfung und Rückgängig
 
 Unter macOS zeigt die Inspector-Karte „Erstattungen“ beide Rollen und alle aktiven

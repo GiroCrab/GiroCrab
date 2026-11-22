@@ -452,6 +452,33 @@ pub(crate) fn store_splits(
         };
         uuids.push(uuid);
     }
+    let referenced = conn
+        .prepare_cached(
+            "SELECT DISTINCT s.uuid,s.amount_cents FROM transaction_splits s JOIN refund_links l
+         ON (l.refund_id=s.transaction_id AND l.refund_part=s.uuid)
+         OR (l.original_id=s.transaction_id AND l.original_part=s.uuid)
+         WHERE s.transaction_id=?1 AND l.deleted_ms IS NULL",
+        )?
+        .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut removed = std::collections::HashMap::<i64, Vec<String>>::new();
+    for (uuid, amount) in referenced {
+        if !kept.contains(&uuid) {
+            removed.entry(amount).or_default().push(uuid);
+        }
+    }
+    let mut added = std::collections::HashMap::<i64, Vec<usize>>::new();
+    for (position, line) in lines.iter().enumerate().filter(|(_, l)| l.uuid.is_none()) {
+        added.entry(line.amount_cents).or_default().push(position);
+    }
+    for (amount, old) in removed {
+        if let ([uuid], Some(new)) = (old.as_slice(), added.get(&amount))
+            && let [position] = new.as_slice()
+        {
+            uuids[*position] = uuid.clone();
+            kept.insert(uuid.clone());
+        }
+    }
     for uuid in existing.difference(&kept) {
         conn.execute("DELETE FROM transaction_splits WHERE uuid=?1", [uuid])?;
     }

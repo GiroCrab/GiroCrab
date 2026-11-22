@@ -1603,7 +1603,7 @@ pub(crate) fn merge_synced_twin(
         "UPDATE transactions SET external_id = ?2 WHERE id = ?1",
         params![bank_id, mm_ext],
     )?;
-    crate::refunds::move_endpoints(conn, &std::collections::HashMap::from([(bank_id, mm_id)]))?;
+    crate::refunds::move_booking(conn, bank_id, mm_id)?;
     crate::sync_merge::soft_delete_booking(conn, bank_id)?;
     Ok(true)
 }

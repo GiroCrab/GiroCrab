@@ -1312,7 +1312,7 @@ fn convert_legacy_copies(db: &rusqlite::Connection, account_id: i64) -> Result<u
         let survivor: i64 = db.query_row(
             "SELECT c.id FROM transactions c JOIN transactions old ON c.account_id=old.account_id AND c.external_id=?2 || old.external_id WHERE old.id=?1",
             params![id, HOLD_PREFIX], |r| r.get(0))?;
-        crate::refunds::move_endpoints(db, &std::collections::HashMap::from([(*id, survivor)]))?;
+        crate::refunds::move_booking(db, *id, survivor)?;
         crate::sync_merge::soft_delete_booking(db, *id)?;
     }
     Ok(copies.len() as u32)
@@ -1421,6 +1421,23 @@ pub(crate) fn merge_imported_split_parts(
             )
             .collect();
         crate::planning::store_splits(db, bank_id, &lines)?;
+        let uuids = db
+            .prepare_cached(
+                "SELECT uuid FROM transaction_splits WHERE transaction_id=?1 ORDER BY position,id",
+            )?
+            .query_map([bank_id], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let endpoints = parts
+            .iter()
+            .zip(uuids)
+            .map(|(part, uuid)| {
+                (
+                    crate::refunds::Endpoint(part.0, String::new()),
+                    crate::refunds::Endpoint(bank_id, uuid),
+                )
+            })
+            .collect();
+        crate::refunds::move_endpoints(db, &endpoints)?;
         crate::planning::clear_split_category(db, bank_id)?;
         if !bank_checked && parts.iter().all(|p| p.4) {
             db.execute(
@@ -1447,7 +1464,6 @@ pub(crate) fn merge_imported_split_parts(
             )?;
         }
         for (id, ..) in &parts {
-            crate::refunds::move_endpoints(db, &std::collections::HashMap::from([(*id, bank_id)]))?;
             crate::sync_merge::soft_delete_booking(db, *id)?;
         }
         merged += 1;
@@ -1477,7 +1493,7 @@ pub(crate) fn hand_over(db: &rusqlite::Connection, from: i64, to: i64) -> Result
           WHERE id = ?2 AND checked = 0 AND (SELECT checked FROM transactions WHERE id = ?1) = 1",
         params![from, to, now],
     )?;
-    crate::refunds::move_endpoints(db, &std::collections::HashMap::from([(from, to)]))?;
+    crate::refunds::move_booking(db, from, to)?;
     crate::sync_merge::soft_delete_booking(db, from)
 }
 

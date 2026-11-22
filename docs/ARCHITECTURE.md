@@ -43,6 +43,7 @@ and `migrate` runs the missing ones in a single transaction.
 | 36 | per-account bank label and its sync stamp |
 | 37 | sidebar sections by account kind |
 | 38 | stable split UUIDs with deterministic backfill, separate split position and `refund_links` (#714) |
+| 39 | refund import-move markers and source-key provenance (#714) |
 
 The tables of securities depots are described in `docs/DEPOT_DATENMODELL.md`.
 
@@ -126,7 +127,10 @@ UUIDs, and the split and twin merge paths retain them.
 `refunds.rs` resolves endpoints and allocates capacity in sync-identity order;
 `refunds/store.rs` merges complete link rows after exact booking-id mapping,
 including import take-overs. Local edits and deletions keep original link keys
-and stamps; resolution never writes derived retargets or tombstones.
+and stamps. Split replacement inherits a referenced UUID only for an unambiguous
+same-amount replacement in the same edit; resolution is exact-UUID only.
+Import remaps retain moved tombstones and source-key provenance so a later user
+unlink suppresses the moved row at read time. Merge remains full-row LWW.
 `refunds/api.rs` exposes link/unlink and compare-and-set restore. Allocation is
 cached by vault data revision, not persisted as additional financial truth.
 
@@ -143,4 +147,4 @@ for platform entry points and privacy behavior.
 
 Manual bookings in offline accounts merge amount and split vector atomically
 under `splits_ms`, with a deterministic value tie-break. Bank booking amounts
-keep their existing merge semantics. No additional schema step is needed.
+keep their existing merge semantics. The manual amount unit needs no schema step.

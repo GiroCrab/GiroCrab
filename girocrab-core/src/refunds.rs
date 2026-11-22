@@ -15,7 +15,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use store::{merge_attached, move_endpoints};
+pub(crate) use store::{fold_booking, merge_attached, migrate, move_booking, move_endpoints};
 
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -84,10 +84,13 @@ struct Row {
     created_ms: i64,
     changed_ms: i64,
     deleted_ms: Option<i64>,
+    moved: bool,
+    moved_from: Option<Key>,
+    moved_from_key: String,
 }
 
 impl Row {
-    fn rank(&self) -> (i64, bool, i64, i64, i64, Option<i64>) {
+    fn rank(&self) -> (i64, bool, i64, i64, i64, Option<i64>, bool, bool, &str) {
         (
             self.changed_ms,
             self.deleted_ms.is_some(),
@@ -95,6 +98,9 @@ impl Row {
             self.refund_cents,
             self.original_cents,
             self.deleted_ms,
+            !self.moved,
+            self.moved_from.is_some(),
+            &self.moved_from_key,
         )
     }
 }
@@ -213,38 +219,18 @@ fn invalid() -> CoreError {
     CoreError::invalid(tr("Diese Erstattungszuordnung ist nicht möglich."))
 }
 
-fn options(
-    state: &State,
-    endpoint: &Endpoint,
-    snapshot: i64,
-    positive: bool,
-) -> (Vec<Endpoint>, bool) {
-    let Some(book) = state.books.get(&endpoint.0).filter(|b| b.live) else {
-        return (Vec::new(), false);
-    };
-    let valid =
-        |amount: i64| amount != 0 && (amount > 0) == positive && amount.checked_abs().is_some();
-    if let Some(amount) = book.amount_of(&endpoint.1) {
-        return (
-            if valid(amount) {
-                vec![endpoint.clone()]
-            } else {
-                Vec::new()
-            },
-            true,
-        );
-    }
-    (
-        book.endpoints()
-            .into_iter()
-            .filter(|(_, amount)| *amount == snapshot && valid(*amount))
-            .map(|(e, _)| e)
-            .collect(),
-        false,
-    )
+fn move_blocked(state: &State, row: &Row) -> bool {
+    row.moved_from.as_ref().is_some_and(|key| {
+        state.rows.iter().any(|source| {
+            source.key == *key
+                && source.deleted_ms.is_some()
+                && !source.moved
+                && source.changed_ms > row.changed_ms
+        })
+    })
 }
 
-/// Only current state and immutable allocation keys enter this function.
+/// Only exact endpoints and immutable allocation keys enter this function.
 fn resolve(state: &State) -> Vec<Allocation> {
     let identity = |id| {
         state
@@ -274,53 +260,25 @@ fn resolve(state: &State) -> Vec<Allocation> {
                 &b.key.original.1,
             ))
     });
-    let choices: Vec<_> = rows
-        .iter()
-        .map(|r| {
-            let same_currency = state
-                .books
-                .get(&r.key.refund.0)
-                .zip(state.books.get(&r.key.original.0))
-                .is_some_and(|(a, b)| a.currency == b.currency && a.id != b.id);
-            if !same_currency {
-                return ((Vec::new(), false), (Vec::new(), false));
-            }
-            (
-                options(state, &r.key.refund, r.refund_cents, true),
-                options(state, &r.key.original, r.original_cents, false),
-            )
-        })
-        .collect();
-    let mut used: HashSet<Key> = choices
-        .iter()
-        .filter(|((rs, re), (os, oe))| *re && *oe && rs.len() == 1 && os.len() == 1)
-        .map(|((rs, _), (os, _))| Key {
-            refund: rs[0].clone(),
-            original: os[0].clone(),
-        })
-        .collect();
     rows.into_iter()
-        .zip(choices)
-        .map(|(row, ((rs, re), (os, oe)))| {
-            let mut pairs = rs
-                .iter()
-                .flat_map(|r| {
-                    os.iter().map(move |o| Key {
-                        refund: r.clone(),
-                        original: o.clone(),
-                    })
-                })
-                .filter(|k| re && oe || !used.contains(k));
-            let first = pairs.next();
-            let unique = first.filter(|_| pairs.next().is_none());
-            drop(pairs);
-            let (refund, original) = match unique {
-                Some(key) => {
-                    used.insert(key.clone());
-                    (Some(key.refund), Some(key.original))
-                }
-                None => (None, None),
+        .map(|row| {
+            let endpoint = |e: &Endpoint, positive| {
+                let book = state.books.get(&e.0).filter(|b| b.live)?;
+                let amount = book.amount_of(&e.1)?;
+                (amount != 0 && (amount > 0) == positive && amount.checked_abs().is_some())
+                    .then(|| e.clone())
             };
+            let compatible = state
+                .books
+                .get(&row.key.refund.0)
+                .zip(state.books.get(&row.key.original.0))
+                .is_some_and(|(a, b)| a.currency == b.currency && a.id != b.id);
+            let pair = if compatible && !move_blocked(state, row) {
+                endpoint(&row.key.refund, true).zip(endpoint(&row.key.original, false))
+            } else {
+                None
+            };
+            let (refund, original) = pair.map_or((None, None), |(r, o)| (Some(r), Some(o)));
             Allocation {
                 row: row.clone(),
                 refund,
@@ -345,8 +303,9 @@ impl Projection {
             book.live &= accounts.contains(&book.account_id);
         }
         state.rows.retain(|r| {
-            state.books.get(&r.key.refund.0).is_some_and(|b| b.live)
-                && state.books.get(&r.key.original.0).is_some_and(|b| b.live)
+            r.deleted_ms.is_some()
+                || (state.books.get(&r.key.refund.0).is_some_and(|b| b.live)
+                    && state.books.get(&r.key.original.0).is_some_and(|b| b.live))
         });
         Ok(Self::from_state(state)?.allocations)
     }

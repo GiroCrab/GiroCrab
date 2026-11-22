@@ -38,7 +38,7 @@ impl Vault {
         if state
             .rows
             .iter()
-            .any(|r| r.key == key && r.deleted_ms.is_none())
+            .any(|r| r.key == key && r.deleted_ms.is_none() && !move_blocked(&state, r))
         {
             return Ok(());
         }
@@ -69,6 +69,9 @@ impl Vault {
                 created_ms: ms,
                 changed_ms: ms,
                 deleted_ms: None,
+                moved: false,
+                moved_from: None,
+                moved_from_key: String::new(),
             },
         )?;
         tx.commit()?;
@@ -94,6 +97,7 @@ impl Vault {
         let token = next_stamp(&tx)?;
         row.changed_ms = token;
         row.deleted_ms = Some(token);
+        row.moved = false;
         write(&tx, &row)?;
         tx.commit()?;
         Ok(token)
@@ -115,15 +119,16 @@ impl Vault {
         let row = state
             .rows
             .iter_mut()
-            .find(|r| r.key == key && r.deleted_ms.is_some() && r.changed_ms == token)
+            .find(|r| r.key == key && r.deleted_ms.is_some() && !r.moved && r.changed_ms == token)
             .ok_or_else(invalid)?;
         row.changed_ms = next_stamp(&tx)?;
         row.deleted_ms = None;
         let restored = row.clone();
-        if !resolve(&state)
-            .iter()
-            .any(|a| a.row.key == key && a.refund.is_some() && a.original.is_some())
-        {
+        if !resolve(&state).iter().any(|a| {
+            (a.row.key == key || a.row.moved_from.as_ref() == Some(&key))
+                && a.refund.is_some()
+                && a.original.is_some()
+        }) {
             return Err(invalid());
         }
         write(&tx, &restored)?;

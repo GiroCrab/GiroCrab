@@ -204,9 +204,7 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
                 params![k, o],
             )?;
         }
-        if same_amount {
-            crate::refunds::move_endpoints(conn, &std::collections::HashMap::from([(o, k)]))?;
-        }
+        crate::refunds::fold_booking(conn, o, k, same_amount)?;
         // a loan link of `keep` wins (transaction_id is the key)
         conn.execute(
             "UPDATE OR IGNORE loan_links SET transaction_id = ?1 WHERE transaction_id = ?2",
@@ -759,10 +757,7 @@ impl Vault {
                       WHERE transactions.id = ?1",
                     params![live, stale],
                 )?;
-                crate::refunds::move_endpoints(
-                    &tx,
-                    &std::collections::HashMap::from([(stale, live)]),
-                )?;
+                crate::refunds::move_booking(&tx, stale, live)?;
             }
             tx.execute(
                 "UPDATE transactions SET external_id = 'switch-stale-' || id || ':' || substr(external_id, 11)
@@ -917,6 +912,95 @@ mod tests {
                 assert!(links.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn duplicate_account_fold_keeps_unlink_and_provenance_on_unaffected_endpoints() {
+        let dir = crate::test_support::TempDir::new("refund-duplicate-provenance");
+        let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![6; 32]).unwrap();
+        let keep = v
+            .create_offline_account(
+                "Keep".into(),
+                crate::models::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let dup = v
+            .create_offline_account(
+                "Duplicate".into(),
+                crate::models::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let add = |account, cents| {
+            v.save_manual_booking(
+                account,
+                None,
+                crate::offline::ManualBookingSetup {
+                    booking_date: "2026-01-01".into(),
+                    amount_cents: cents,
+                    counterparty: String::new(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap()
+        };
+        let canonical = add(keep, -100);
+        let source = add(dup, -100);
+        let target = add(keep, -100);
+        let refund = add(keep, 100);
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET external_id='original' WHERE id IN (?1,?2)",
+                params![canonical, source],
+            )
+            .unwrap();
+        v.link_refund(refund, String::new(), source, String::new())
+            .unwrap();
+        crate::importers::portal_import::hand_over(&v.db().unwrap(), source, target).unwrap();
+        let token: i64 = v
+            .db()
+            .unwrap()
+            .query_row("SELECT MAX(changed_ms)+1000 FROM refund_links", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        {
+            let db = v.db().unwrap();
+            db.execute(
+                "UPDATE refund_links SET moved=0,changed_ms=?2,deleted_ms=?2 WHERE original_id=?1",
+                params![source, token],
+            )
+            .unwrap();
+            db.execute(
+                "UPDATE transactions SET deleted_ms=?2 WHERE id=?1",
+                params![canonical, token],
+            )
+            .unwrap();
+            let tx = db.unchecked_transaction().unwrap();
+            merge_duplicate_account(&tx, keep, dup).unwrap();
+            tx.execute("DELETE FROM accounts WHERE id=?1", [dup])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(v.refund_links(refund).unwrap()[0].inactive);
+        let mapped:i64=v.db().unwrap().query_row("SELECT moved_from_original_id FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",[target],|r|r.get(0)).unwrap();
+        assert_eq!(mapped, canonical);
+        v.restore_refund(refund, String::new(), canonical, String::new(), token)
+            .unwrap();
+        assert_eq!(
+            v.refund_links(refund)
+                .unwrap()
+                .iter()
+                .map(|l| l.allocated_cents)
+                .sum::<i64>(),
+            100
+        );
     }
 
     #[test]

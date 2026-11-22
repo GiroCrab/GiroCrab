@@ -363,7 +363,8 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
          CREATE TABLE other.transaction_tags AS SELECT * FROM main.transaction_tags
              WHERE transaction_id IN (SELECT id FROM other.transactions);
          CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links
-             WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions);"
+             WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions)
+                OR moved_from_refund_id IN (SELECT id FROM other.transactions) OR moved_from_original_id IN (SELECT id FROM other.transactions);"
     ))?;
     // Transfer the twin's UUIDs through `other` without violating global uniqueness.
     conn.execute(
@@ -388,7 +389,8 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     let mut booking_map:HashMap<i64,i64>=conn.prepare("SELECT id,id FROM main.transactions WHERE id NOT IN (SELECT id FROM other.transactions)")?
         .query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
     booking_map.extend(moved);
-    conn.execute("DELETE FROM main.refund_links WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions)",[])?;
+    conn.execute("DELETE FROM main.refund_links WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions)
+        OR moved_from_refund_id IN (SELECT id FROM other.transactions) OR moved_from_original_id IN (SELECT id FROM other.transactions)",[])?;
     crate::refunds::merge_attached(conn, &booking_map)?;
     // stamped: a device still holding the rule on the twin's key loses
     conn.execute(

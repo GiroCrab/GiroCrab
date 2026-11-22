@@ -32,6 +32,9 @@ fn index<'a>(v: &Vault, db: &Connection, p: &'a Projection) -> CoreResult<&'a Se
             .collect();
         let mut linked = HashSet::new();
         for a in &p.allocations {
+            if a.refund.is_none() || a.original.is_none() {
+                continue;
+            }
             linked.insert(a.row.key.clone());
             if let (Some(refund), Some(original)) = (&a.refund, &a.original) {
                 linked.insert(Key {
