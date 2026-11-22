@@ -791,6 +791,19 @@ struct MainSplitView: View {
                 }
                 .dialogSuppressionToggle(isSuppressed: $enableBankingNoticeSuppressed)
         }
+        .background {
+            Color.clear
+                .alert("Enable-Banking-Anwendung synchronisiert",
+                       // after the default application's notice, never on top of it
+                       isPresented: Binding(get: { model.enableBankingLoginNotice != nil && model.enableBankingAdoptNotice == nil },
+                                            set: { if !$0 { model.enableBankingLoginNotice = nil } }),
+                       presenting: model.enableBankingLoginNotice) { _ in
+                    Button("OK") {}
+                } message: { notice in
+                    Text(notice.message)
+                }
+                .dialogSuppressionToggle(isSuppressed: $enableBankingNoticeSuppressed)
+        }
         .toastOverlay()
     }
 }

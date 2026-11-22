@@ -699,6 +699,17 @@ public final class AppModel {
     @ObservationIgnored var enableBankingKeyStore: EnableBankingKeyStore = KeychainEnableBankingKeyStore()
     /// Taken over from another device; shown once unless the user turned it off.
     var enableBankingAdoptNotice: EnableBankingAdoptNotice?
+    /// Where the bank logins' own applications are shared between devices (#962).
+    @ObservationIgnored var enableBankingLoginStore: EnableBankingLoginStore = KeychainEnableBankingLoginStore()
+    /// Logins that took over an application from another device; shown once unless turned off.
+    var enableBankingLoginNotice: EnableBankingLoginNotice?
+    /// The running sync of the logins' applications; the next one waits for it (#962).
+    @ObservationIgnored var enableBankingLoginTask: Task<Void, Never>?
+    /// Logins whose application was changed here and on another device (#962).
+    /// Observed: the bank login sheet enables "Speichern" for them.
+    var enableBankingLoginConflicts: Set<Int64> = []
+    /// Closed on lock/reset so no running upload writes after it (#962).
+    @ObservationIgnored var enableBankingUploadGate = EnableBankingUploadGate()
     /// The personal vault while demo data is shown (nil if never unlocked).
     private(set) var ownVault: Vault? {
         didSet { if oldValue !== ownVault { reconcileLocalApiServer() } }
@@ -1260,9 +1271,31 @@ public final class AppModel {
         unitTests: Bool = runningUnitTests,
         pid: Int32 = ProcessInfo.processInfo.processIdentifier
     ) -> URL {
-        FileManager.default.temporaryDirectory
+        if unitTests { _ = sweptStaleTestVaults }
+        return FileManager.default.temporaryDirectory
             .appendingPathComponent(unitTests ? "\(name)-\(pid).girocrab" : "\(name).girocrab")
     }
+
+    /// Test runs leave their `<name>-<pid>.girocrab` files behind (thousands
+    /// piled up in the temp folder). Once per process, the first call removes
+    /// the files of test processes that no longer run.
+    nonisolated private static let sweptStaleTestVaults: Void = {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
+        for file in names where file.hasPrefix("GiroCrab-Demo-") || file.hasPrefix("GiroCrab-Fresh-") {
+            // `<name>-<pid>.girocrab` plus its `-wal` / `-shm` sidecars.
+            guard let dash = file.firstIndex(of: "-"),
+                  let marker = file.range(of: ".girocrab"),
+                  ["", "-wal", "-shm"].contains(String(file[marker.upperBound...]))
+            else { continue }
+            let rest = file[file.index(after: dash)..<marker.lowerBound]
+            guard let pid = Int32(rest.split(separator: "-").last ?? "") else { continue }
+            // kill(pid, 0) == 0: alive; EPERM: alive, owned by someone else.
+            if kill(pid, 0) == 0 || errno == EPERM { continue }
+            try? fm.removeItem(at: dir.appendingPathComponent(file))
+        }
+    }()
 
     nonisolated private static func makeDemoVault() throws -> Vault {
         let url = Self.tempVaultURL("GiroCrab-Demo")
@@ -1737,6 +1770,12 @@ public final class AppModel {
         newCategoryRequest = nil
         scheduledBankSyncPaused = false
         reportPick = nil
+        // before the reset deletes the keychain items: no upload may recreate them (#962)
+        enableBankingLoginTask?.cancel()
+        enableBankingLoginTask = nil
+        enableBankingUploadGate.close()
+        enableBankingUploadGate = EnableBankingUploadGate()
+        enableBankingLoginConflicts = []
         scopeLoadTask?.cancel()
         categoryRefreshTask?.cancel()
         dashboardTask?.cancel()

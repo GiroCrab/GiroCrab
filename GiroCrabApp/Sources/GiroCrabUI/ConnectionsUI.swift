@@ -735,6 +735,8 @@ struct ConnectionEditSheet: View {
            storePortalLogin != initialStorePortalLogin || !pin.isEmpty
             || portalUser.trimmingCharacters(in: .whitespaces) != initialPortalUser { return true }
         if connection.connector == .advanzia, advanziaSettings.hasChanges { return true }
+        // saving resolves a conflict with another device, even unchanged (#962)
+        if model.enableBankingLoginHasConflict(connection.id) { return true }
         return selection.hasChanges
     }
     /// Mac: the trash in the list of connections removes it, so the sheet has no button for that.
@@ -883,6 +885,9 @@ struct ConnectionEditSheet: View {
             if id != loadedEBApp.id.trimmingCharacters(in: .whitespacesAndNewlines)
                 || pem != loadedEBApp.pem.trimmingCharacters(in: .whitespacesAndNewlines) {
                 model.setConnectionEnableBankingApp(connection.id, applicationID: id, pem: pem)
+            } else {
+                // saved again unchanged: resolves a conflict with another device (#962)
+                model.keepEnableBankingLoginApp(connection.id)
             }
         }
         if isFinTs {

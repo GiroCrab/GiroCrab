@@ -547,6 +547,28 @@
         }
       }
     },
+    "%@: Anwendung %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@: application %2$@"
+          }
+        }
+      }
+    },
+    "%@: Standard-Anwendung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: default application"
+          }
+        }
+      }
+    },
     "%@: automatischer Abruf fehlgeschlagen – %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5364,6 +5386,17 @@
         }
       }
     },
+    "Aquarium" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aquarium"
+          }
+        }
+      }
+    },
     "Archivieren" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5536,6 +5569,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Switch to the bank's own interface …"
+          }
+        }
+      }
+    },
+    "Auf diesem und einem anderen Gerät wurde eine andere Anwendung gewählt. Hier bleibt die bisherige, bis Sie sie im Bankzugang erneut speichern: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A different application was chosen on this and on another device. This device keeps its own until you save it again in the bank login: %@"
           }
         }
       }
@@ -11815,6 +11859,17 @@
         }
       }
     },
+    "Dienstreise" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Business trip"
+          }
+        }
+      }
+    },
     "Diese Angaben braucht GiroCrab einmalig, danach gelten sie für alle Banken dieser Art." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13053,6 +13108,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "An update is being prepared."
+          }
+        }
+      }
+    },
+    "Ein anderes Gerät hat Bankzugängen eine eigene Enable-Banking-Anwendung gegeben. Beim nächsten Abruf ist auf diesem Gerät eine neue Zustimmung nötig." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another device gave bank logins an Enable Banking application of their own. The next fetch on this device needs a new consent."
           }
         }
       }
@@ -17275,6 +17341,17 @@
         }
       }
     },
+    "Hund" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dog"
+          }
+        }
+      }
+    },
     "Händler" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18960,6 +19037,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Categorization Rules… (⌥⌘K)"
+          }
+        }
+      }
+    },
+    "Katze" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cat"
           }
         }
       }
@@ -21720,6 +21808,17 @@
         }
       }
     },
+    "Lizenz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Licence"
+          }
+        }
+      }
+    },
     "Logo laden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22739,6 +22838,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Music"
+          }
+        }
+      }
+    },
+    "Musikunterricht" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Music lessons"
           }
         }
       }
@@ -28521,6 +28631,17 @@
         }
       }
     },
+    "Software" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Software"
+          }
+        }
+      }
+    },
     "Sollzins %@ % · Zinsen seit Stichtag %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28732,6 +28853,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Donation"
+          }
+        }
+      }
+    },
+    "Spenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donations"
           }
         }
       }
@@ -31675,6 +31807,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total assets"
+          }
+        }
+      }
+    },
+    "Versand" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shipping"
           }
         }
       }

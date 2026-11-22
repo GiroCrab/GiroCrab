@@ -58,6 +58,13 @@ zu Ihren Banken per **FinTS 3.0 / HBCI** und **PSD2 (Enable Banking)** – ohne 
 
 GiroCrab ist eine freie, quelloffene Banking-App (GPLv3) für macOS, Linux (Qt 6 / QML) und – derzeit als Beta über TestFlight – für iPhone und iPad. Alle Daten liegen verschlüsselt auf deinem Gerät. GiroCrab ist ein junges Community-Projekt: Die Bankenabdeckung wächst noch (siehe Bank-Tabelle), und PSD2-Zugänge laufen über einen eigenen, kostenlosen Enable-Banking-Zugang.
 
+### ✨ Neu in v0.8.8
+
+- 🔐 **Enable Banking & iCloud-Schlüsselbund (#962, #1590):** Eigene Enable-Banking-Anwendung pro Bankzugang über den iCloud-Schlüsselbund synchronisieren, Konflikte beim Speichern gezielt auflösen und zuverlässiges Zurücksetzen/Sperren ohne Datenverlust.
+- ₿ **Bitcoin Core & neue Kontoarten (#1592, #1630, #1454, #1620, #1631):** Eigene Bitcoin-Core-Wallet als Depot anbinden, neue Kontoarten **Bausparen** und **Festgeld**, nach Kontoart gruppierte Übersichten im Vermögens- und Kontobereich sowie Überweisungslinks (`girocrab://transfer`, #1575).
+- 🧾 **Belegabgleich, Händlererkennung & Regeln (#1511, #1373, #1505, #1604, #1671):** Bankbelege automatisch nach Inhalt mit Buchungen verknüpfen und neu einsortieren, manuell gelöste Verknüpfungen bewahren, eigene Händler & Regeln mit Anwendungsbereich/Tags pflegen sowie Regeleditor im eigenen Fenster.
+- 🏦 **FinTS, Überweisungen & plattformübergreifende Verbesserungen (#1513, #1563, #1570, #1607):** Tagesgeld-Umbuchungen (`HKCUM`), Banknamen zur IBAN in Zahlungsformularen, lückenlose Montagsbuchungen ohne Bis-Datum, individuelle Abrufintervalle je Zugang sowie erweiterter CSV-Export, Lesestatus für Belege unter Windows und Android-Keystore-Integration.
+
 ### ✨ Neu in v0.8.7
 
 - 🏦 **Neue Banken & Amex-Kontoauszüge (#1168, #1435, #1440, #1451, #1456, #1416):** Native Konnektoren für **Hanseatic Bank** (Kreditkarten, Tages-/Festgeld, SparBrief & Postbox-PDFs), **BHW Bausparkasse** (Bausparverträge, Baudarlehen & Postfach-PDFs) und **Kontist**-Geschäftskonten, automatischer & manueller **PDF-Kontoauszugsabruf für American Express** im Portal-Fenster, **C24, N26 und Bank Norwegian** verifiziert in der Banken-Matrix sowie aktualisierte FinTS-Adresse für **1822direkt**.
@@ -329,6 +336,13 @@ recognition, savings-plan view, loan repayment progress and direct connections t
 ### Who is GiroCrab for?
 
 GiroCrab is a free, open-source banking app (GPLv3) for macOS, Linux (Qt 6 / QML) and – currently in beta via TestFlight – for iPhone and iPad. All data stays encrypted on your device. GiroCrab is a young community project: bank coverage is still growing (see the bank table), and PSD2 access works through your own free Enable Banking account.
+
+### ✨ What's new in v0.8.8
+
+- 🔐 **Enable Banking & iCloud Keychain (#962, #1590):** Sync per-connection Enable Banking applications via iCloud Keychain, resolve conflicts cleanly on save, and harden lock/reset handling.
+- ₿ **Bitcoin Core & New Account Types (#1592, #1630, #1454, #1620, #1631):** Track self-hosted **Bitcoin Core** wallets in Net Worth, add **Building Savings** (*Bausparen*) and **Fixed-Term Deposit** (*Festgeld*) account types, group accounts and cash by type, and support `girocrab://transfer` payment links (#1575).
+- 🧾 **Document Matching, Merchant Rules & Categorization (#1511, #1373, #1505, #1604, #1671):** Automatically match and re-sort bank documents by content while preserving manual unlinks, configure custom merchant patterns, scoped rules with tags, and a dedicated macOS Rule Editor window.
+- 🏦 **FinTS, Transfers & Cross-Platform Improvements (#1513, #1563, #1570, #1607):** Savings-to-reference transfers (`HKCUM`), IBAN bank-name hints, complete Monday statement fetches, per-connection polling intervals, expanded Windows CSV export and document read status, plus Android Keystore support.
 
 ### ✨ What's new in v0.8.7
 

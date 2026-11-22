@@ -8,8 +8,6 @@ import QtQuick.Layouts
 // button of the stream header's filter row (StreamHeaderCard.qml), state in TagFilter.qml.
 Popup {
     id: pop
-    // ReportDialogs.swift › capturablePopover (#384): drawn into the bug report picture
-    Component.onDestruction: ReportDialogs.untrack(pop)
     /// [Int64?: TagTotal] keyed by String(tag_id) ("null" = untagged); null while loading.
     property var totals: null
     padding: 12
@@ -17,6 +15,8 @@ Popup {
     margins: 8
     // (the height settles once the content is laid out at the popover's width)
     onImplicitHeightChanged: if (visible) place()
+    // ReportDialogs.swift › capturablePopover (#384): drawn into the bug report picture
+    Component.onDestruction: ReportDialogs.untrack(pop)
     onOpened: { place(); ReportDialogs.track(pop) }
     function place() {
         if (!parent) return
