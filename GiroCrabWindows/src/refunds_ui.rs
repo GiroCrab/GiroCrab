@@ -261,10 +261,14 @@ fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<Re
         }));
         out.extend(linked.iter().map(|b| row(b, 1, "")));
     }
+    // the booking and its part on the other side of the link: a linked row carries the own
+    // part, a row that can be chosen does not
+    let other_end = |b: &RefundBooking| (b.id, if from_refund { b.part } else { b.refund_part });
     let shown = |c: &RefundBooking| {
-        linked
-            .iter()
-            .any(|b| (b.id, b.part, b.refund_part) == (c.id, c.part, c.refund_part))
+        linked.iter().any(|b| {
+            let own = if from_refund { b.refund_part } else { b.part };
+            (l.own_part == 0 || own == l.own_part) && other_end(b) == other_end(c)
+        })
     };
     let top: Vec<&RefundSuggestion> = l
         .suggestions
@@ -285,13 +289,7 @@ fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<Re
     let others: Vec<&RefundBooking> = l
         .candidates
         .iter()
-        .filter(|c| {
-            !shown(c)
-                && !top.iter().any(|s| {
-                    (s.booking.id, s.booking.part, s.booking.refund_part)
-                        == (c.id, c.part, c.refund_part)
-                })
-        })
+        .filter(|c| !shown(c) && !top.iter().any(|s| other_end(&s.booking) == other_end(c)))
         .collect();
     if !others.is_empty() {
         out.push(header(
@@ -725,6 +723,21 @@ mod tests {
                 .iter()
                 .filter(|r| r.kind == 3)
                 .all(|r| r.blocked.contains("Teil"))
+        );
+        // the booking part 2 is linked to is in the list once, as the linked row
+        let listed = |l: &Loaded| {
+            rows(l, true, true, false)
+                .iter()
+                .filter(|r| r.id == rent.id as i32)
+                .map(|r| r.kind)
+                .collect::<Vec<_>>()
+        };
+        let named = v.refund_links(income.id).unwrap().originals[0]
+            .display_name
+            .clone();
+        assert_eq!(
+            listed(&load(&v, income.id, &named, 280000, 2, "EUR").unwrap()),
+            [1]
         );
         assert!(load(&v, income.id, "", 280000, 1, "EUR").unwrap().open > 0);
         v.unlink_refund_parts(income.id, 2, rent.id, 0).unwrap();
