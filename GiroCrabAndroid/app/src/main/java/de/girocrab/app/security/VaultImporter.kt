@@ -156,8 +156,7 @@ class VaultImporter(
         finish: (ImportResult) -> Unit,
     ) {
         var vault: OwnVault? = null
-        val outcome: ImportResult
-        try {
+        val outcome: ImportResult = try {
             val opened = opener.open(vaultPath.path, key)
                 ?: return finish(ImportResult.Unavailable)
             vault = opened
@@ -173,7 +172,7 @@ class VaultImporter(
             // Published only after the data is in place — see the class comment.
             keyStore.storeWrapped(key, authenticated)
             vault = null // ownership moves to the caller
-            outcome = ImportResult.Imported(opened)
+            ImportResult.Imported(opened)
         } catch (e: Exception) {
             runCatching { vault?.close() }
             keyStore.clearWrapped()
@@ -183,7 +182,7 @@ class VaultImporter(
             } else {
                 "Import abgebrochen (${e.javaClass.simpleName}: ${e.message})"
             }
-            outcome = ImportResult.Failed(reason ?: "Import abgebrochen.")
+            ImportResult.Failed(reason ?: "Import abgebrochen.")
         } finally {
             key.fill(0)
         }
