@@ -457,17 +457,28 @@ fn main() {
 
 /// REFUNDS=n links n incoming bookings to an outgoing one each (#714), before every other
 /// timing: the list and the category sums then read those links. `false` when the vault has
-/// fewer pairs than that.
+/// fewer pairs than that or a link fails for another reason.
 fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize) -> bool {
     let incoming = all.iter().filter(|t| t.amount_cents > 0);
     let outgoing = all.iter().filter(|t| t.amount_cents < 0);
     let pairs: Vec<(i64, i64)> = incoming.zip(outgoing).map(|(r, o)| (r.id, o.id)).collect();
     let t = std::time::Instant::now();
-    let linked: Vec<(i64, i64)> = pairs
-        .into_iter()
-        .filter(|&(r, o)| vault.link_refund(r, o, 0).is_ok())
-        .take(n)
-        .collect();
+    let mut linked: Vec<(i64, i64)> = Vec::new();
+    for (r, o) in pairs {
+        if linked.len() == n {
+            break;
+        }
+        match vault.link_refund(r, o, 0) {
+            Ok(()) => linked.push((r, o)),
+            // a pair that cannot be linked (a transfer, a used-up booking)
+            Err(girocrab_core::CoreError::InvalidInput { .. }) => {}
+            // anything else (a full disk) is the cause to report, not too few pairs
+            Err(e) => {
+                eprintln!("REFUNDS={n}: link_refund failed: {e}");
+                return false;
+            }
+        }
+    }
     let per_link = t.elapsed().as_secs_f32() * 1000.0 / linked.len().max(1) as f32;
     println!(
         "refund links: {} ({per_link:.1} ms per link_refund)",

@@ -525,10 +525,22 @@ fn suggestions_leave_out_only_the_links_of_the_selected_part() {
             .map(|s| s.booking.id)
             .collect()
     };
-    assert!(suggested(1).contains(&b[0]));
-    v.link_refund_parts(b[2], 1, b[0], 0).unwrap();
-    assert!(!suggested(1).contains(&b[0]));
-    assert!(suggested(2).contains(&b[0]));
+    // in another currency the link uses up neither side: only the link itself can be the
+    // reason the booking is left out
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,currency,counterparty,purpose)
+             VALUES (1,'USD','2025-01-20',-100,'USD','Laden','')",
+            [],
+        )
+        .unwrap();
+    let usd = v.db().unwrap().last_insert_rowid();
+    assert!(suggested(1).contains(&usd));
+    v.link_refund_parts(b[2], 1, usd, 0).unwrap();
+    assert!(v.refund_part_open(b[2], true, 1).unwrap() > 0);
+    assert!(!suggested(1).contains(&usd));
+    assert!(suggested(2).contains(&usd));
 }
 
 /// A date both purposes carry is no shared reference.
