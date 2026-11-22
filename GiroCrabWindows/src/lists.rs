@@ -87,6 +87,7 @@ pub fn planned_rows(
                 String::new(),
             ],
             negative: s.amount_cents < 0,
+            unread: false,
         })
         .collect()
 }
@@ -143,6 +144,7 @@ pub fn mandate_rows(
                 String::new(),
             ],
             negative: false,
+            unread: false,
         })
         .collect()
 }
@@ -184,8 +186,25 @@ pub fn document_rows(docs: &[DocumentInfo], date: &dyn Fn(&str) -> String) -> Ve
                 String::new(),
             ],
             negative: false,
+            unread: !d.seen,
         })
         .collect()
+}
+
+/// "Nur ungelesene": keeps the unread rows and the open document, so the selection does not
+/// vanish right after "Als gelesen markieren" (Mac: `DocumentFilters.apply`, `keeping`).
+pub fn unread_only(rows: Vec<Cells>, on: bool, keep: Option<i64>) -> Vec<Cells> {
+    if !on {
+        return rows;
+    }
+    rows.into_iter()
+        .filter(|r| r.unread || Some(r.id) == keep)
+        .collect()
+}
+
+/// Ids for "Alle als gelesen markieren": the unread documents of the shown list only.
+pub fn unread_ids(rows: &[Cells]) -> Vec<i64> {
+    rows.iter().filter(|r| r.unread).map(|r| r.id).collect()
 }
 
 /// File name safe to write into a temp folder: no path parts, no characters Windows rejects.
@@ -509,6 +528,78 @@ mod tests {
         assert_eq!(rows[1].cells[4], "500 B");
         assert_eq!(size_text(0), "");
         assert_eq!(size_text(2048), "2 kB");
+    }
+
+    fn unseen(mut d: DocumentInfo) -> DocumentInfo {
+        d.seen = false;
+        d
+    }
+
+    #[test]
+    fn documents_map_seen_to_unread() {
+        let rows = document_rows(
+            &[
+                doc(1, "Gelesen", "2026-01-01", "", 1),
+                unseen(doc(2, "Neu", "2026-02-01", "", 1)),
+            ],
+            &plain,
+        );
+        assert_eq!((rows[0].id, rows[0].unread), (2, true));
+        assert_eq!((rows[1].id, rows[1].unread), (1, false));
+    }
+
+    #[test]
+    fn unread_filter_keeps_unread_and_open_document() {
+        let rows = document_rows(
+            &[
+                doc(1, "A", "2026-01-01", "", 1),
+                unseen(doc(2, "B", "2026-02-01", "", 1)),
+                doc(3, "C", "2026-03-01", "", 1),
+            ],
+            &plain,
+        );
+        let ids = |v: &[Cells]| v.iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(&unread_only(rows.clone(), false, None)), [3, 2, 1]);
+        assert_eq!(ids(&unread_only(rows.clone(), true, None)), [2]);
+        assert_eq!(ids(&unread_only(rows, true, Some(1))), [2, 1]);
+    }
+
+    #[test]
+    fn unread_filter_follows_the_new_selection() {
+        let rows = document_rows(
+            &[
+                doc(1, "A", "2026-01-01", "", 1),
+                unseen(doc(2, "B", "2026-02-01", "", 1)),
+            ],
+            &plain,
+        );
+        let ids = |v: &[Cells]| v.iter().map(|r| r.id).collect::<Vec<_>>();
+        // Read A was open and kept; selecting unread B drops A from the filtered list.
+        assert_eq!(ids(&unread_only(rows.clone(), true, Some(1))), [2, 1]);
+        assert_eq!(ids(&unread_only(rows, true, Some(2))), [2]);
+    }
+
+    #[test]
+    fn mark_all_takes_only_listed_unread_ids() {
+        let rows = document_rows(
+            &[
+                unseen(doc(4, "X", "2026-01-01", "", 1)),
+                doc(5, "Y", "2026-02-01", "", 1),
+                unseen(doc(6, "Z", "2026-03-01", "", 1)),
+            ],
+            &plain,
+        );
+        assert_eq!(unread_ids(&rows), [6, 4]);
+    }
+
+    #[test]
+    fn privacy_mask_keeps_unread_flag() {
+        let mut row =
+            document_rows(&[unseen(doc(7, "Arzt", "2026-01-01", "Praxis", 1))], &plain).remove(0);
+        row.mask(&[0, 3], true);
+        assert_ne!(row.cells[0], "Arzt");
+        assert_ne!(row.cells[3], "Praxis");
+        assert!(row.unread);
     }
 
     #[test]
