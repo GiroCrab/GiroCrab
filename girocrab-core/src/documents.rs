@@ -629,6 +629,7 @@ pub(crate) fn booking_label_of(
     counterparty: Option<String>,
     purpose: Option<String>,
     amount_cents: Option<i64>,
+    currency: Option<String>,
     booking_date: Option<String>,
 ) -> String {
     match (counterparty, amount_cents, booking_date) {
@@ -636,7 +637,10 @@ pub(crate) fn booking_label_of(
             // as the booking list names it: the purpose decides behind payment services,
             // and without a counterparty
             let m = merchants.resolve(&cp, purpose.as_deref().unwrap_or(""));
-            format!("{} · {} · {}", m.name, format_cents(a, "EUR".into()), d)
+            let currency = currency
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| "EUR".into());
+            format!("{} · {} · {}", m.name, format_cents(a, currency), d)
         }
         _ => String::new(),
     }
@@ -646,7 +650,14 @@ fn row_to_info(
     r: &rusqlite::Row,
     merchants: &crate::merchants::MerchantRules,
 ) -> rusqlite::Result<DocumentInfo> {
-    let booking_label = booking_label_of(merchants, r.get(12)?, r.get(16)?, r.get(13)?, r.get(14)?);
+    let booking_label = booking_label_of(
+        merchants,
+        r.get(12)?,
+        r.get(16)?,
+        r.get(13)?,
+        r.get(17)?,
+        r.get(14)?,
+    );
     Ok(DocumentInfo {
         id: r.get(0)?,
         booking_id: r.get(1)?,
@@ -670,7 +681,7 @@ fn row_to_info(
 /// `ON DELETE SET NULL` did): `t` and `da` only join live rows.
 const SELECT_INFO: &str = "SELECT d.id, t.id, COALESCE(da.id, t.account_id), d.title, d.doc_type, d.mime_type, d.file_name,
         length(d.pdf_bytes), d.source_url, COALESCE(NULLIF(d.doc_date,''), t.booking_date, ''), d.created_at, a.name,
-        t.counterparty, t.amount_cents, t.booking_date, d.seen_at IS NOT NULL, t.purpose
+        t.counterparty, t.amount_cents, t.booking_date, d.seen_at IS NOT NULL, t.purpose, t.currency
    FROM booking_documents d
    LEFT JOIN transactions t ON t.id = d.booking_id AND t.deleted_ms IS NULL
    LEFT JOIN accounts da ON da.id = d.account_id AND da.deleted_ms IS NULL
@@ -818,6 +829,9 @@ impl Vault {
     }
 
     /// Marks documents read (`seen` true) or unread. Returns how many changed.
+    /// Only stored files have a read status: a linked receipt (#590,
+    /// `link_url` set) is always read and never counts here, so front ends
+    /// offer "unread" for files only.
     pub fn mark_documents_seen(&self, doc_ids: Vec<i64>, seen: bool) -> Result<u32, CoreError> {
         let db = self.db()?;
         mark_seen(&db, &doc_ids, seen)

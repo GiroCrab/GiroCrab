@@ -1600,6 +1600,7 @@ pub(crate) fn merge_synced_twin(
         "UPDATE transactions SET external_id = ?2 WHERE id = ?1",
         params![bank_id, mm_ext],
     )?;
+    crate::document_links::hand_over(conn, bank_id, mm_id)?;
     crate::sync_merge::soft_delete_booking(conn, bank_id)?;
     Ok(true)
 }
@@ -2919,6 +2920,95 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
         assert!(
             merge_synced_twin(&db, bank_row, "2026-05-10", -1250, "", "REWE", "EREF+1").unwrap()
         );
+    }
+
+    /// The row that takes over the bank's key also takes over what a twin
+    /// fold paired with the removed one (#590).
+    #[test]
+    fn merge_synced_twin_hands_the_pairing_to_the_row_that_stays() {
+        let (_dir, v) = vault();
+        let acc = mm_acct(&v, "10.05.2026;REWE Markt;Einkauf;-12,50;Essen;wichtig\n");
+        let db = v.db().unwrap();
+        let add = |ext: &str, date: &str, cents: i64| {
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose)
+                 VALUES (?1, ?2, ?3, ?4, 'REWE', 'EREF+1')",
+                params![acc, ext, date, cents],
+            )
+            .unwrap();
+            db.last_insert_rowid()
+        };
+        let bank = add("f1", "2026-05-10", -1250);
+        let twin = add("of-a-twin", "2020-01-01", -1);
+        db.execute(
+            "INSERT INTO folded_bookings(booking_id, copy_id) VALUES (?1, ?2)",
+            params![twin, bank],
+        )
+        .unwrap();
+        assert!(merge_synced_twin(&db, bank, "2026-05-10", -1250, "", "REWE", "EREF+1").unwrap());
+        let live: bool = db
+            .query_row(
+                "SELECT t.deleted_ms IS NULL FROM folded_bookings f
+                   JOIN transactions t ON t.id = f.copy_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(live);
+    }
+
+    /// The known limit of bookings without an id of their own: a receipt
+    /// another device linked to the row before this repair swapped the keys
+    /// reaches the deleted row. It is not lost: it is listed without a
+    /// booking, on its account, and can be linked again (#590).
+    #[test]
+    fn a_receipt_from_before_a_key_swap_stays_visible() {
+        let (dir, v) = vault();
+        let acc = mm_acct(&v, "10.05.2026;REWE Markt;Einkauf;-12,50;Essen;wichtig\n");
+        let (bank, imported) = {
+            let db = v.db().unwrap();
+            let imported: i64 = db
+                .query_row("SELECT id FROM transactions", [], |r| r.get(0))
+                .unwrap();
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty, purpose)
+                 VALUES (?1, 'f1', '2026-05-10', -1250, 'REWE', 'EREF+1')",
+                params![acc],
+            )
+            .unwrap();
+            (db.last_insert_rowid(), imported)
+        };
+        let copy = dir.join("other.db").to_string_lossy().to_string();
+        v.write_snapshot(copy.clone()).unwrap();
+        let key = vec![5u8; 32];
+        let other = Vault::open(copy.clone(), key.clone()).unwrap();
+        other
+            .attach_document_link(imported, "https://archiv.example/1".into(), "Bon".into())
+            .unwrap();
+        assert!(
+            merge_synced_twin(
+                &v.db().unwrap(),
+                bank,
+                "2026-05-10",
+                -1250,
+                "",
+                "REWE",
+                "EREF+1"
+            )
+            .unwrap()
+        );
+        v.merge_other_vault(copy, key).unwrap();
+
+        let docs = v
+            .list_all_documents(crate::documents::DocumentFilter {
+                unlinked_only: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].account_id, Some(acc));
+        v.link_document(docs[0].id, Some(imported)).unwrap();
+        assert_eq!(v.list_documents_for_booking(imported).unwrap().len(), 1);
     }
 
     #[test]

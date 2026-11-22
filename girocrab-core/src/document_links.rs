@@ -32,8 +32,18 @@
 //! again. Where both sides hold the same edit and only one of them still
 //! points at a live booking, that one wins.
 //!
+//! A booking takes an address once ([`already_linked`]). Two devices that
+//! link it before they meet still make two references: like two attached
+//! files, both are shown and counted, and the user deletes one. Nothing
+//! folds them, so an edit is always an edit of that one reference.
+//!
+//! Where a booking hands over to another on this device (a settled hold, a
+//! repaired duplicate, merged parts), [`hand_over`] takes its references
+//! and the pairings of twin folds along.
+//!
 //! A reference whose booking does not survive a merge at all (deleted on the
-//! other device) stays in the vault without a booking, like a stored file in
+//! other device, or a repair here gave its key to another row before the
+//! reference arrived) stays in the vault without a booking, like a stored file in
 //! that case: nothing is lost, it shows up under "ohne zugeordneten Umsatz"
 //! and can be removed or linked again.
 
@@ -51,7 +61,10 @@ use crate::vault::Vault;
 #[cfg(test)]
 mod tests;
 
-/// Step 38 (#590): references to receipts kept outside the vault.
+/// Step 38 (#590): references to receipts kept outside the vault, and which
+/// copy a fold of a MoneyMoney twin paired each booking with. The latter is
+/// local to the device that folded: a reference that arrives later follows
+/// that pairing (`twins::folded_booking`).
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS document_links (
     id          INTEGER PRIMARY KEY,
@@ -67,7 +80,12 @@ CREATE TABLE IF NOT EXISTS document_links (
     deleted_ms  INTEGER                             -- tombstone, kept for sync
 );
 -- answers the document count of the booking list (live references only)
-CREATE INDEX IF NOT EXISTS document_links_booking ON document_links(booking_id) WHERE deleted_ms IS NULL;
+CREATE INDEX IF NOT EXISTS document_links_booking ON document_links(booking_id, deleted_ms) WHERE deleted_ms IS NULL;
+CREATE TABLE IF NOT EXISTS folded_bookings (
+    booking_id  INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,  -- of the twin
+    copy_id     INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE  -- of the bank account
+);
+CREATE INDEX IF NOT EXISTS folded_bookings_copy ON folded_bookings(copy_id);
 ";
 
 /// The document count of a booking adds this to its stored files. The
@@ -75,6 +93,25 @@ CREATE INDEX IF NOT EXISTS document_links_booking ON document_links(booking_id) 
 /// `document_links_booking` answers it (a test checks the plan).
 pub(crate) const COUNT_FOR_BOOKING_SQL: &str =
     "(SELECT count(*) FROM document_links l WHERE l.booking_id = t.id AND l.deleted_ms IS NULL)";
+
+/// Moves the live references of booking ?1 to booking ?2, stamped as an edit
+/// (?3 time, ?4 mark): for a booking that changes its identity. The condition
+/// keeps `deleted_ms IS NULL`, or the partial index does not answer it.
+pub(crate) const MOVE_BOOKING_SQL: &str = "UPDATE document_links
+        SET booking_id = ?2, updated_ms = max(updated_ms + 1, ?3), rev = ?4
+      WHERE booking_id = ?1 AND deleted_ms IS NULL";
+
+/// Booking `from` hands over to booking `to`, which stays (it is deleted or
+/// removed, or gave up its identity): its references go along, stamped as
+/// an edit, and so does what a twin fold paired with it.
+pub(crate) fn hand_over(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
+    conn.execute(
+        "UPDATE folded_bookings SET copy_id = ?2 WHERE copy_id = ?1",
+        [from, to],
+    )?;
+    conn.execute(MOVE_BOOKING_SQL, params![from, to, now_ms(), new_rev()])?;
+    Ok(())
+}
 
 /// Longest URL (bytes, after normalisation).
 const MAX_URL: usize = 2048;
@@ -176,7 +213,7 @@ fn title_from_url(url: &Url) -> String {
 /// reads as none, like for stored files: `t` and `la` only join live rows.
 const SELECT_INFO: &str = "SELECT l.id, t.id, COALESCE(la.id, t.account_id), l.title, l.url,
             COALESCE(NULLIF(l.doc_date,''), t.booking_date, ''), l.created_at, a.name,
-            t.counterparty, t.amount_cents, t.booking_date, t.purpose
+            t.counterparty, t.amount_cents, t.booking_date, t.purpose, t.currency
        FROM document_links l
        LEFT JOIN transactions t ON t.id = l.booking_id AND t.deleted_ms IS NULL
        LEFT JOIN accounts la ON la.id = l.account_id AND la.deleted_ms IS NULL
@@ -200,7 +237,14 @@ fn row_to_info(
         doc_date: r.get(5)?,
         created_at: r.get(6)?,
         account_name: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
-        booking_label: booking_label_of(merchants, r.get(8)?, r.get(11)?, r.get(9)?, r.get(10)?),
+        booking_label: booking_label_of(
+            merchants,
+            r.get(8)?,
+            r.get(11)?,
+            r.get(9)?,
+            r.get(12)?,
+            r.get(10)?,
+        ),
         // the user put it there: nothing new to read
         seen: true,
     })
@@ -291,25 +335,32 @@ fn already_linked(
 
 /// Moves the reference in row `row_id` to another (live) booking, or off its
 /// booking; unlinked it stays with the account it had. Like when attaching,
-/// a booking takes one link only once.
+/// a booking takes one link only once. What is so already is no edit: a
+/// stamp on it would beat a move another device really made.
 pub(crate) fn relink(conn: &Connection, row_id: i64, booking_id: Option<i64>) -> CoreResult<()> {
     let account = match booking_id {
         Some(b) => Some(live_booking_account(conn, b)?),
         None => None,
     };
-    if let Some(b) = booking_id {
-        let url: Option<String> = conn
-            .query_row(
-                "SELECT url FROM document_links WHERE id = ?1 AND deleted_ms IS NULL",
-                [row_id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(url) = url
+    let current: Option<(Option<i64>, Option<i64>, String)> = conn
+        .query_row(
+            "SELECT booking_id, account_id, url FROM document_links
+              WHERE id = ?1 AND deleted_ms IS NULL",
+            [row_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((from, at, url)) = current else {
+        return Err(not_found(doc_id_of(row_id)));
+    };
+    if from != booking_id {
+        if let Some(b) = booking_id
             && already_linked(conn, b, &url, Some(row_id))?
         {
             return Err(invalid(tr("Dieser Link hängt schon an der Buchung.")));
         }
+    } else if account.is_none() || account == at {
+        return Ok(());
     }
     let n = conn.execute(
         "UPDATE document_links
@@ -327,11 +378,25 @@ pub(crate) fn relink(conn: &Connection, row_id: i64, booking_id: Option<i64>) ->
 /// Moves the reference in row `row_id` to the (live) account `account_id`, or
 /// to none, like a stored file (`Vault::set_document_account`): a booking of
 /// another account it hangs on is unlinked, one of the new account stays.
+/// What is so already is no edit, as in [`relink`].
 pub(crate) fn set_account(
     conn: &Connection,
     row_id: i64,
     account_id: Option<i64>,
 ) -> CoreResult<()> {
+    // whether it has that account already and stays where it hangs
+    let unchanged: Option<bool> = conn
+        .query_row(
+            "SELECT l.account_id IS ?2 AND (l.booking_id IS NULL OR IFNULL(
+                        (SELECT account_id FROM transactions WHERE id = l.booking_id) = ?2, 0))
+               FROM document_links l WHERE l.id = ?1 AND l.deleted_ms IS NULL",
+            params![row_id, account_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if unchanged == Some(true) {
+        return Ok(());
+    }
     let n = conn.execute(
         "UPDATE document_links
             SET account_id = ?2,
@@ -474,82 +539,6 @@ impl Row {
     }
 }
 
-/// The same address linked to the same booking on two devices before they
-/// met is one reference: the one with the smallest uuid stays, the others
-/// are deleted. The deletion is stamped from the references themselves, so
-/// every device that sees both writes the very same one. References that
-/// hang on no booking are never folded: the same address may be several
-/// receipts there, each with its own title and date.
-fn fold_doubles(state: &mut BTreeMap<String, Row>) {
-    // (booking, address) -> kept uuid
-    let mut kept: HashMap<(i64, String), String> = HashMap::new();
-    let mut doubles: Vec<(String, String)> = Vec::new();
-    // in uuid order: the first of a kind is the smallest
-    for (uuid, r) in state.iter() {
-        let Some(booking) = r.booking.filter(|_| r.deleted_ms.is_none()) else {
-            continue;
-        };
-        match kept.entry((booking, r.url.clone())) {
-            std::collections::hash_map::Entry::Occupied(first) => {
-                doubles.push((uuid.clone(), first.get().clone()));
-            }
-            std::collections::hash_map::Entry::Vacant(free) => {
-                free.insert(uuid.clone());
-            }
-        }
-    }
-    for (uuid, first) in doubles {
-        // both were just seen in `state`
-        let Some(kept_ms) = state.get(&first).map(|r| r.updated_ms) else {
-            continue;
-        };
-        let Some(r) = state.get_mut(&uuid) else {
-            continue;
-        };
-        let stamp = kept_ms.max(r.updated_ms) + 1;
-        r.deleted_ms = Some(stamp);
-        r.updated_ms = stamp;
-        r.rev = format!("=> {first}");
-        r.booking = None;
-        r.account = None;
-        r.url.clear();
-        r.title.clear();
-        r.doc_date.clear();
-    }
-}
-
-/// [`fold_doubles`] for one booking, straight in the table: after a move
-/// outside a device merge (duplicate bank logins, a folded twin) that may
-/// have put a second reference to the same address on `booking`. Same rule
-/// and same stamps, so a device that folds here and one that folds in its
-/// next merge write the same deletion.
-pub(crate) fn fold_on_booking(conn: &Connection, booking: i64) -> CoreResult<()> {
-    let rows: Vec<(String, String, i64)> = conn
-        .prepare(
-            "SELECT uuid, url, updated_ms FROM document_links
-              WHERE booking_id = ?1 AND deleted_ms IS NULL ORDER BY uuid",
-        )?
-        .query_map([booking], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .collect::<Result<_, _>>()?;
-    // address -> (kept uuid, its stamp)
-    let mut kept: HashMap<String, (String, i64)> = HashMap::new();
-    for (uuid, url, updated_ms) in rows {
-        let Some((first, first_ms)) = kept.get(&url) else {
-            kept.insert(url, (uuid, updated_ms));
-            continue;
-        };
-        let stamp = (*first_ms).max(updated_ms) + 1;
-        conn.execute(
-            "UPDATE document_links
-                SET deleted_ms = ?2, updated_ms = ?2, rev = ?3,
-                    booking_id = NULL, account_id = NULL, url = '', title = '', doc_date = ''
-              WHERE uuid = ?1",
-            params![uuid, stamp, format!("=> {first}")],
-        )?;
-    }
-    Ok(())
-}
-
 /// Whether `booking` names a live booking.
 fn is_live(conn: &Connection, booking: Option<i64>) -> CoreResult<bool> {
     let Some(id) = booking else {
@@ -633,11 +622,15 @@ pub(crate) fn merge_attached(
         if o.deleted_ms.is_some() {
             o.booking = None;
             o.account = None;
-        } else if parse_link(&o.url).is_err() {
+        } else {
             // What `attach_document_link` would refuse is not taken from
-            // another vault either: whatever opens a reference relies on
-            // an `http(s)` address without credentials.
-            continue;
+            // another vault either (whatever opens a reference relies on an
+            // `http(s)` address without credentials), and what it would take
+            // is stored in the same form: `already_linked` compares addresses.
+            let Ok(url) = parse_link(&o.url) else {
+                continue;
+            };
+            o.url = url.into();
         }
         if let Some(other_booking) = o.booking {
             match booking_map.get(&other_booking) {
@@ -681,7 +674,6 @@ pub(crate) fn merge_attached(
     for r in state.values_mut() {
         r.normalize(conn, &mut folded)?;
     }
-    fold_doubles(&mut state);
     for (uuid, r) in &state {
         match local.get(uuid) {
             Some(old) if old == r => {}

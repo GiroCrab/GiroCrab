@@ -535,6 +535,12 @@ fn the_count_of_a_booking_comes_from_the_partial_index() {
     let plan = plan.join(" | ");
     assert!(plan.contains("document_links_booking"), "{plan}");
     assert!(!plan.contains("SCAN l"), "{plan}");
+    // each address once, read from the index alone
+    assert!(
+        plan.contains("COVERING INDEX document_links_booking"),
+        "{plan}"
+    );
+    assert!(!plan.contains("TEMP B-TREE"), "{plan}");
 }
 
 // ------------------------------------------------------------------ merge
@@ -834,120 +840,201 @@ fn a_side_without_references_keeps_those_of_the_other() {
     );
 }
 
-/// Two devices link the same address to the same booking before they meet:
-/// afterwards it is one reference, the same one on both, in whichever order
-/// they merge. A reference to something else on that booking stays.
+/// Two devices that link one address to one booking before they meet made
+/// two references, like two attached files: both are shown and counted, and
+/// deleting one leaves the other, on both devices.
 #[test]
-fn the_same_reference_made_on_two_devices_is_one() {
+fn the_same_link_made_on_two_devices_shows_twice_until_one_is_deleted() {
     for first_a in [true, false] {
-        let dir = TempDir::new(if first_a {
-            "links-double-a"
-        } else {
-            "links-double-b"
-        });
+        let dir = TempDir::new("links-double");
         let a = open(&dir, "a.db");
         let b = open(&dir, "b.db");
-        seed(&a, &["T1"]);
-        seed(&b, &["T1"]);
-        a.attach_document_link(id_of(&a, "T1"), URL.into(), "Rechnung".into())
-            .unwrap();
-        both_ways(&a, &b);
-        assert_eq!(document_count(&b, "T1"), 1);
-        // offline: each links the same second address
         for v in [&a, &b] {
-            v.attach_document_link(
-                id_of(v, "T1"),
-                "https://shop.example/bon/7".into(),
-                "Bon".into(),
-            )
-            .unwrap();
+            seed(v, &["T1"]);
+            v.attach_document_link(id_of(v, "T1"), URL.into(), "Rechnung".into())
+                .unwrap();
         }
-        if first_a {
-            merge(&a, &b);
-            merge(&b, &a);
-            merge(&a, &b);
-        } else {
-            merge(&b, &a);
-            merge(&a, &b);
-            merge(&b, &a);
-        }
-        let state = |v: &Vault| {
-            text(
-                v,
-                "SELECT group_concat(line, ' | ') FROM (
-                    SELECT uuid || ':' || (url = '') || ':' || (deleted_ms IS NOT NULL) || ':'
-                           || updated_ms || ':' || rev AS line
-                      FROM document_links ORDER BY uuid)",
-            )
-        };
-        assert_eq!(state(&a), state(&b));
+        let (x, y) = if first_a { (&a, &b) } else { (&b, &a) };
+        both_ways(x, y);
         for v in [&a, &b] {
-            assert_eq!(document_count(v, "T1"), 2, "each address once");
+            assert_eq!(document_count(v, "T1"), 2);
             assert_eq!(
-                n(
-                    v,
-                    "SELECT count(*) FROM document_links WHERE deleted_ms IS NOT NULL"
-                ),
-                1
-            );
-            assert_eq!(
-                n(
-                    v,
-                    "SELECT count(*) FROM document_links WHERE deleted_ms IS NOT NULL
-                       AND (booking_id IS NOT NULL OR url != '')"
-                ),
-                0
+                v.list_all_documents(DocumentFilter::default())
+                    .unwrap()
+                    .len(),
+                2
             );
         }
-        // nothing changes any more
-        both_ways(&a, &b);
-        assert_eq!(document_count(&a, "T1"), 2);
-        assert_eq!(state(&a), state(&b));
+        let docs = x.list_documents_for_booking(id_of(x, "T1")).unwrap();
+        assert_eq!(docs.len(), 2);
+        x.delete_document(docs[0].id).unwrap();
+        both_ways(x, y);
+        for v in [&a, &b] {
+            assert_eq!(document_count(v, "T1"), 1);
+        }
     }
 }
 
-/// Two references to one address on one booking, as a move outside a device
-/// merge can leave them (duplicate bank logins, a folded twin): one stays,
-/// with the deletion a device merge would write for the other.
+/// What the user does to one of two references to the same address is done
+/// to that one alone, whatever the device knows of the other: a move made
+/// to the other one on another device survives it.
 #[test]
-fn doubles_on_one_booking_are_folded_outside_a_merge_too() {
-    let dir = TempDir::new("links-fold-local");
-    let v = open(&dir, "v.db");
-    seed(&v, &["T1", "T2"]);
-    let (t1, t2) = (id_of(&v, "T1"), id_of(&v, "T2"));
-    v.attach_document_link(t1, URL.into(), "A".into()).unwrap();
-    v.attach_document_link(t2, URL.into(), "B".into()).unwrap();
-    v.attach_document_link(t2, "https://archiv.example/other".into(), "C".into())
-        .unwrap();
-    // what merging a duplicate booking into the kept one does
-    exec(&v, &format!("UPDATE document_links SET booking_id = {t1}"));
-    assert_eq!(document_count(&v, "T1"), 3);
+fn an_edit_of_one_double_never_costs_the_move_of_the_other() {
+    for knows_both in [false, true] {
+        for op in ["delete", "relink", "unlink", "account"] {
+            let dir = TempDir::new("links-double-edit");
+            let a = open(&dir, "a.db");
+            let b = open(&dir, "b.db");
+            for v in [&a, &b] {
+                seed(v, &["T1", "T2", "T3"]);
+                v.attach_document_link(id_of(v, "T1"), URL.into(), "Bon".into())
+                    .unwrap();
+            }
+            let own = |v: &Vault| doc_id_of(n(v, "SELECT min(id) FROM document_links"));
+            let (mine, theirs) = (own(&a), own(&b));
+            if knows_both {
+                merge(&a, &b);
+            }
+            b.link_document(theirs, Some(id_of(&b, "T2"))).unwrap();
+            let left: &[&str] = match op {
+                "delete" => {
+                    a.delete_document(mine).unwrap();
+                    &["T2"]
+                }
+                "relink" => {
+                    a.link_document(mine, Some(id_of(&a, "T3"))).unwrap();
+                    &["T2", "T3"]
+                }
+                "unlink" => {
+                    a.link_document(mine, None).unwrap();
+                    &["-", "T2"]
+                }
+                _ => {
+                    a.set_document_account(mine, None).unwrap();
+                    &["-", "T2"]
+                }
+            };
+            merge(&a, &b);
+            both_ways(&a, &b);
+            for v in [&a, &b] {
+                assert_eq!(linked(v), left, "{op}, knew both: {knows_both}");
+            }
+        }
+    }
+}
 
-    fold_on_booking(&v.db().unwrap(), t1).unwrap();
-    assert_eq!(document_count(&v, "T1"), 2, "one per address");
+/// Setting what is already so is no edit: it must not beat the move another
+/// device really made.
+#[test]
+fn an_edit_that_changes_nothing_is_not_stamped() {
+    for op in ["booking", "account", "unlinked", "no account"] {
+        let dir = TempDir::new("links-no-change");
+        let a = open(&dir, "a.db");
+        let b = open(&dir, "b.db");
+        let acc = seed(&a, &["T1", "T2"]);
+        seed(&b, &["T1", "T2"]);
+        let id = a
+            .attach_document_link(id_of(&a, "T1"), URL.into(), "Bon".into())
+            .unwrap();
+        match op {
+            "unlinked" => a.link_document(id, None).unwrap(),
+            "no account" => a.set_document_account(id, None).unwrap(),
+            _ => {}
+        }
+        merge(&b, &a);
+        b.link_document(
+            doc_id_of(n(&b, "SELECT id FROM document_links")),
+            Some(id_of(&b, "T2")),
+        )
+        .unwrap();
+        // later than the move, if it were an edit
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let before = text(&a, "SELECT updated_ms || ':' || rev FROM document_links");
+        match op {
+            "booking" => a.link_document(id, Some(id_of(&a, "T1"))).unwrap(),
+            "account" => a.set_document_account(id, Some(acc)).unwrap(),
+            "unlinked" => a.link_document(id, None).unwrap(),
+            _ => a.set_document_account(id, None).unwrap(),
+        }
+        assert_eq!(
+            text(&a, "SELECT updated_ms || ':' || rev FROM document_links"),
+            before,
+            "{op}"
+        );
+        both_ways(&a, &b);
+        assert_eq!(linked(&a), ["T2"], "{op}");
+    }
+}
+
+/// A reference has no read status: it stays read, and the count says that
+/// nothing was changed.
+#[test]
+fn marking_documents_seen_leaves_references_read() {
+    let dir = TempDir::new("links-seen");
+    let v = open(&dir, "v.db");
+    seed(&v, &["T1"]);
+    let t1 = id_of(&v, "T1");
+    let link = v
+        .attach_document_link(t1, URL.into(), "Bon".into())
+        .unwrap();
+    let file = v
+        .attach_document_to_booking(t1, "r.pdf".into(), b"%PDF-1.4 receipt".to_vec())
+        .unwrap();
+    assert_eq!(v.mark_documents_seen(vec![link], false).unwrap(), 0);
+    assert_eq!(v.mark_documents_seen(vec![link, file], false).unwrap(), 1);
+    for d in v.list_documents_for_booking(t1).unwrap() {
+        assert_eq!(d.seen, d.id == link);
+    }
+}
+
+/// An address from another vault is stored the way attaching stores it, so
+/// the check for a link a booking already has finds it.
+#[test]
+fn a_merge_stores_an_address_the_way_attaching_does() {
+    let dir = TempDir::new("links-merge-normal");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    seed(&a, &["T1"]);
+    seed(&b, &["T1"]);
+    a.attach_document_link(id_of(&a, "T1"), URL.into(), "Bon".into())
+        .unwrap();
+    exec(
+        &b,
+        "INSERT INTO document_links(uuid, booking_id, account_id, url, updated_ms, rev)
+         SELECT 'x1', id, account_id, ' HTTPS://Archiv.Example/documents/123', 5, 'r'
+           FROM transactions WHERE external_id = 'T1'",
+    );
+    merge(&a, &b);
     assert_eq!(
         text(
-            &v,
-            &format!("SELECT uuid FROM document_links WHERE deleted_ms IS NULL AND url = '{URL}'")
+            &a,
+            "SELECT url FROM document_links WHERE uuid = 'x1' AND deleted_ms IS NULL"
         ),
-        text(
-            &v,
-            "SELECT min(uuid) FROM document_links WHERE title IN ('A', 'B') OR rev LIKE '=> %'"
-        ),
-        "the smallest uuid stays"
+        URL
     );
-    assert_eq!(
-        n(
-            &v,
-            "SELECT count(*) FROM document_links
-              WHERE deleted_ms IS NOT NULL AND url = '' AND title = '' AND booking_id IS NULL
-                AND rev LIKE '=> %'"
-        ),
-        1
-    );
-    // nothing left to fold
-    fold_on_booking(&v.db().unwrap(), t1).unwrap();
-    assert_eq!(document_count(&v, "T1"), 2);
+    assert_eq!(document_count(&a, "T1"), 2);
+}
+
+/// The label of the booking names its own currency, for a reference and
+/// for a stored file alike.
+#[test]
+fn the_booking_label_keeps_the_currency_of_the_booking() {
+    let dir = TempDir::new("links-label-currency");
+    let v = open(&dir, "v.db");
+    seed(&v, &["T1"]);
+    exec(&v, "UPDATE transactions SET currency = 'USD'");
+    let t1 = id_of(&v, "T1");
+    v.attach_document_link(t1, URL.into(), "Invoice".into())
+        .unwrap();
+    v.attach_document_to_booking(t1, "r.pdf".into(), b"%PDF-1.4 receipt".to_vec())
+        .unwrap();
+    let docs = v.list_documents_for_booking(t1).unwrap();
+    assert_eq!(docs.len(), 2);
+    for d in docs {
+        let amount = crate::money::format_cents(-100, "USD".into());
+        assert!(amount.contains("USD") || amount.contains('$'), "{amount}");
+        assert_eq!(d.booking_label, format!("Laden · {amount} · 2026-01-01"));
+    }
 }
 
 /// A reference from another vault whose address `attach_document_link`
@@ -1031,4 +1118,31 @@ fn a_merge_reports_the_references_it_changed() {
     assert_eq!(merge(&b, &a).documents_updated, 1);
     assert_eq!(merge(&b, &a).documents_updated, 0);
     assert_eq!(merge(&a, &b).documents_updated, 0);
+}
+
+/// A fold or deduplication moves the references of thousands of bookings
+/// one by one, and an unresolved reference asks for its partner on every
+/// merge: neither may read a whole table each time.
+#[test]
+fn moves_and_partner_lookups_use_their_indexes() {
+    let dir = TempDir::new("links-move-plan");
+    let v = open(&dir, "v.db");
+    let db = v.db().unwrap();
+    let plan = |sql: &str, p: &[&dyn rusqlite::ToSql]| -> String {
+        db.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map(p, |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let moved = plan(MOVE_BOOKING_SQL, &[&1, &2, &3, &"r"]);
+    assert!(moved.contains("document_links_booking"), "{moved}");
+    let partner = plan(
+        &crate::sync_merge::twins::unpaired_sql(),
+        &[&1, &2, &"F", &"2026-01-01", &-100],
+    );
+    assert!(partner.contains("tx_import_fp"), "{partner}");
+    assert!(!partner.contains("tx_account_category"), "{partner}");
 }

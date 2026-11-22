@@ -4653,11 +4653,129 @@ fn a_late_reference_on_a_twin_booking_never_lands_on_a_hold() {
     assert_eq!(link_target(&b), "API1:z-final:1");
 }
 
-/// The twin's booking and the bank's copy carry the same link when the twin
-/// is folded: the bank's copy shows it once right away, without waiting for
-/// a device merge (#590).
+/// The fold may take over the twin's newer text. The bank's booking then no
+/// longer has the fingerprint they were paired by; a reference made later
+/// on the twin's booking still reaches it.
 #[test]
-fn a_fold_leaves_one_reference_where_both_copies_had_the_same_link() {
+fn a_late_reference_finds_the_copy_whose_text_the_fold_changed() {
+    let fp = crate::importers::moneymoney_import::fingerprint("2026-01-01", -102, "", "", "");
+    let twin_text = format!(
+        "UPDATE transactions SET import_fp = '{fp}', purpose = 'Neuer Zweck', text_ms = 99
+          WHERE external_id = 'mm-1'"
+    );
+    let dir = temp_dir("twin-link-text");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    giro(&a, c, "API1", &["mm-0", "mm-8", "bank-1"]);
+    giro(&a, c, MM_GIRO, &["mm-0", "mm-8", "mm-1"]);
+    exec(&a, &twin_text);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin: mm-1 -> bank-1, with its text
+
+    assert_eq!(
+        text(
+            &a,
+            "SELECT purpose FROM transactions WHERE external_id = 'bank-1'"
+        ),
+        "Neuer Zweck",
+        "folded"
+    );
+
+    let b = open(&dir, "b.db");
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-0", "mm-8", "mm-1"]);
+    exec(&b, &twin_text);
+    let booking = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-1'"
+        ),
+    );
+    b.attach_document_link(booking, "https://archiv.example/7".into(), "Bon".into())
+        .unwrap();
+
+    merge(&a, &b);
+    assert_eq!(link_target(&a), "API1:bank-1:1");
+}
+
+/// The fold paired two identical bookings in id order. A third one that
+/// sorts in between arrives later, with a new reference on the second: that
+/// reference still reaches the copy the fold chose.
+#[test]
+fn a_late_reference_follows_the_folds_pairing_not_todays_rank() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    for bank in [
+        &["bank-1", "bank-2", "bank-3"][..],
+        &["bank-1", "bank-2"][..],
+    ] {
+        let dir = temp_dir("twin-link-rank");
+        let a = open(&dir, "a.db");
+        let c = comdirect(&a);
+        giro(&a, c, "API1", bank);
+        giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+        exec(&a, identical);
+        drop(a);
+        let a = open(&dir, "a.db"); // folds the twin: mm-1 -> bank-1, mm-2 -> bank-2
+
+        let b = open(&dir, "b.db");
+        let cb = comdirect(&b);
+        let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-10", "mm-2"]);
+        exec(&b, identical);
+        let second = n(
+            &b,
+            &format!(
+                "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-2'"
+            ),
+        );
+        b.attach_document_link(second, "https://archiv.example/8".into(), "Bon".into())
+            .unwrap();
+
+        merge(&a, &b);
+        assert_eq!(link_target(&a), "API1:bank-2:1", "{bank:?}");
+    }
+}
+
+/// A device without the fold's record of the pairing does not guess between
+/// identical bookings: the reference stays with the bank account, without a
+/// booking, to be linked again.
+#[test]
+fn a_late_reference_is_never_guessed_between_identical_bookings() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    let dir = temp_dir("twin-link-no-guess");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    let bank = giro(&a, c, "API1", &["bank-1", "bank-2"]);
+    giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+    exec(&a, identical);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin
+    exec(&a, "DELETE FROM folded_bookings"); // as if another device had folded
+
+    let b = open(&dir, "b.db");
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+    exec(&b, identical);
+    let second = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-2'"
+        ),
+    );
+    b.attach_document_link(second, "https://archiv.example/9".into(), "Bon".into())
+        .unwrap();
+
+    merge(&a, &b);
+    let docs = a
+        .list_all_documents(crate::documents::DocumentFilter::default())
+        .unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!((docs[0].booking_id, docs[0].account_id), (None, Some(bank)));
+}
+
+/// The twin's booking and the bank's copy carry the same link when the twin
+/// is folded: both references end up on the bank's copy, like two files.
+#[test]
+fn a_fold_keeps_both_references_where_both_copies_had_the_same_link() {
     let dir = temp_dir("twin-link-double");
     let a = open(&dir, "a.db");
     let c = comdirect(&a);
@@ -4672,23 +4790,12 @@ fn a_fold_leaves_one_reference_where_both_copies_had_the_same_link() {
     assert_eq!(n(&a, "SELECT count(*) FROM document_links"), 2);
     drop(a);
     let a = open(&dir, "a.db"); // folds the twin
-    assert_eq!(
-        n(
-            &a,
-            "SELECT count(*) FROM document_links WHERE deleted_ms IS NULL"
-        ),
-        1
+    let bank = n(
+        &a,
+        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+          WHERE a.external_ref = 'API1'",
     );
-    assert_eq!(
-        text(
-            &a,
-            "SELECT a.external_ref || ':' || t.external_id
-               FROM document_links l JOIN transactions t ON t.id = l.booking_id
-               JOIN accounts a ON a.id = t.account_id
-              WHERE l.deleted_ms IS NULL"
-        ),
-        "API1:mm-1"
-    );
+    assert_eq!(a.list_documents_for_booking(bank).unwrap().len(), 2);
 }
 
 /// Both devices hold a reference on the second of two identical twin
