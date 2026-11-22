@@ -273,6 +273,8 @@ fn load_rows(vault: &Vault, target: Target) -> Result<Vec<Row>, String> {
 struct State {
     analytics_vault: Option<Arc<Vault>>,
     expense_scope: Option<(Target, String, u64, u64)>,
+    expense_request_sequence: u64,
+    expense_rules_pending: bool,
     booking_revision: u64,
     expense_error: Option<String>,
     expense_categories: Vec<Category>,
@@ -297,6 +299,16 @@ struct State {
     logos: std::collections::HashMap<String, slint::Image>,
     /// Keys already requested this session (hit or miss), so a miss is not retried on every redraw.
     logos_requested: std::collections::HashSet<String>,
+}
+
+impl State {
+    fn expense_request_is_current(&self, key: &(Target, String, u64, u64), sequence: u64) -> bool {
+        !self.expense_rules_pending
+            && self.expense_request_sequence == sequence
+            && self.expense_scope.as_ref() == Some(key)
+            && self.generation == key.2
+            && self.booking_revision == key.3
+    }
 }
 
 /// One-booking edit run against the vault for the selected booking id.
@@ -423,16 +435,21 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
             st.generation,
             st.booking_revision,
         );
-        if st.expense_scope.as_ref() == Some(&key) {
+        if st.expense_rules_pending || st.expense_scope.as_ref() == Some(&key) {
             return None;
         }
         st.expense_scope = Some(key.clone());
+        st.expense_request_sequence = st.expense_request_sequence.wrapping_add(1);
         st.expense_categories.clear();
         st.expense_uncategorized = (0, 0);
         st.expense_currency.clear();
-        Some((st.analytics_vault.clone()?, key))
+        Some((
+            st.analytics_vault.clone()?,
+            key,
+            st.expense_request_sequence,
+        ))
     });
-    if let Some((vault, key)) = request {
+    if let Some((vault, key, sequence)) = request {
         let weak = win.as_weak();
         std::thread::spawn(move || {
             let from = (!key.1.is_empty()).then(|| key.1.clone());
@@ -454,7 +471,8 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
                 ))
             });
             let _ = weak.upgrade_in_event_loop(move |win| {
-                if !is_current(&vault) || !with_state(|st| st.expense_scope.as_ref() == Some(&key))
+                if !is_current(&vault)
+                    || !with_state(|st| st.expense_request_is_current(&key, sequence))
                 {
                     return;
                 }
@@ -2199,11 +2217,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             win.set_busy(true);
+            with_state(|st| {
+                st.expense_rules_pending = true;
+                st.expense_scope = None;
+            });
             win.set_sync_status("Regeln werden angewendet …".into());
             let weak = win.as_weak();
             std::thread::spawn(move || {
                 let result = v.apply_rules(true).map_err(|e| e.to_string());
                 let _ = weak.upgrade_in_event_loop(move |win| {
+                    with_state(|st| st.expense_rules_pending = false);
                     win.set_busy(false);
                     match result {
                         Ok(n) => {
@@ -2212,7 +2235,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             );
                             reload(&win, v);
                         }
-                        Err(e) => win.set_sync_status(e.into()),
+                        Err(e) => {
+                            win.set_sync_status(e.into());
+                            render_analytics(&win, privacy_on(&win));
+                        }
                     }
                 });
             });
@@ -2465,12 +2491,14 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
                 if ids.is_empty() {
                     return;
                 }
-                if let Err(e) = f(&v, &ids) {
+                let result = f(&v, &ids);
+                with_state(|st| st.booking_revision = st.booking_revision.wrapping_add(1));
+                if let Err(e) = result {
+                    render_analytics(&win, privacy_on(&win));
                     win.set_sync_status(e.into());
                     return;
                 }
                 with_state(|st| {
-                    st.booking_revision = st.booking_revision.wrapping_add(1);
                     for r in st.rows.iter_mut().filter(|r| ids.contains(&r.id)) {
                         apply(r);
                     }
@@ -2750,6 +2778,34 @@ fn strip_csv_columns(csv: &str, keep_iban: bool, keep_tags: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expense_completion_rejects_repeated_scopes_and_invalidated_data() {
+        let a = (Target::AllAccounts, String::new(), 0, 0);
+        let mut st = State::default();
+        assert!(!st.expense_request_is_current(&a, 0));
+        st.expense_scope = Some(a.clone());
+        st.expense_request_sequence = 1;
+        assert!(st.expense_request_is_current(&a, 1));
+        st.expense_scope = Some((Target::AllAccounts, "2026-01-01".into(), 0, 0));
+        st.expense_request_sequence = 2;
+        assert!(!st.expense_request_is_current(&a, 1));
+        st.expense_scope = Some(a.clone());
+        st.expense_request_sequence = 3;
+        assert!(!st.expense_request_is_current(&a, 1));
+        assert!(st.expense_request_is_current(&a, 3));
+        st.expense_rules_pending = true;
+        assert!(!st.expense_request_is_current(&a, 3));
+        st.expense_rules_pending = false;
+        st.booking_revision = 1;
+        assert!(!st.expense_request_is_current(&a, 3));
+        st.booking_revision = 0;
+        st.generation = 1;
+        assert!(!st.expense_request_is_current(&a, 3));
+        st.generation = 0;
+        st.expense_scope = None;
+        assert!(!st.expense_request_is_current(&a, 3));
+    }
 
     #[test]
     fn transfer_url_is_parsed() {
