@@ -2172,6 +2172,12 @@ fn brand_banks_with_pseudo_bank_code_map_to_their_connector() {
     assert_eq!(connector_for("37019000", "bunq"), Some(ConnectorKind::Bunq));
     assert_eq!(connector_for("", "bunq"), Some(ConnectorKind::Bunq));
     assert_eq!(connector_for("BUNQNL2A", ""), Some(ConnectorKind::Bunq));
+    // logins of web services without a bank code, by their service name
+    assert_eq!(
+        connector_for("", "Go and Grow"),
+        Some(ConnectorKind::GoAndGrow)
+    );
+    assert_eq!(connector_for("", "Bondora"), Some(ConnectorKind::GoAndGrow));
 }
 
 #[test]

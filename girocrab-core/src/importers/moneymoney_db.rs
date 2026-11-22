@@ -856,6 +856,8 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
         Some(ConnectorKind::Comdirect)
     } else if n.contains("bunq") || is_bunq_bic(bankcode) {
         Some(ConnectorKind::Bunq)
+    } else if n.contains("go and grow") || n.contains("go & grow") || n.contains("bondora") {
+        Some(ConnectorKind::GoAndGrow)
     } else {
         None // incl. any other German bank with an 8-digit code
     }

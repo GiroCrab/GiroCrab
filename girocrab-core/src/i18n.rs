@@ -1154,6 +1154,35 @@ fn english(de: &str) -> Option<&'static str> {
         "Volkswagen Bank: Unerwartete Antwort auf die TAN-Abfrage." => {
             "Volkswagen Bank: unexpected answer to the TAN request."
         }
+        // ------------------------------------------------------------ connectors/goandgrow.rs
+        "Go & Grow: Anmeldeseite nicht erkannt (Seite geändert?)." => {
+            "Go & Grow: Login page not recognised (page changed?)."
+        }
+        "Go & Grow: Anmeldung fehlgeschlagen. Bitte E-Mail-Adresse und Passwort prüfen." => {
+            "Go & Grow: Login failed. Please check email address and password."
+        }
+        "Go & Grow: Unerwartete Antwort der API (HTTP {0})." => {
+            "Go & Grow: Unexpected API response (HTTP {0})."
+        }
+        "Go & Grow: Weiterleitung zu einer unbekannten Adresse ({0}) abgebrochen." => {
+            "Go & Grow: Redirect to an unknown address ({0}) stopped."
+        }
+        "Go & Grow: Kein Konto in der Antwort gefunden." => {
+            "Go & Grow: No account found in the response."
+        }
+        "Go & Grow: Sitzung abgelaufen. Bitte erneut abrufen." => {
+            "Go & Grow: Session expired. Please sync again."
+        }
+        "Go & Grow: E-Mail-Adresse und Passwort erforderlich." => {
+            "Go & Grow: Email address and password required."
+        }
+        "Go & Grow: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen." => {
+            "Go & Grow: Incomplete booking in the response. No data was taken over."
+        }
+        "Go & Grow (ehemals Bondora): Saldo und Umsätze. Die Schnittstelle liefert nur die letzten zehn Buchungen (Zinsen, Ein- und Auszahlungen); ältere lassen sich nur per Import übernehmen. Darum abrufen, bevor mehr als zehn neue Buchungen anfallen – bei täglichen Zinsen ohne weitere Buchungen also spätestens alle zehn Tage. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich." => {
+            "Go & Grow (formerly Bondora): balance and bookings. The interface delivers only the latest ten bookings (interest, deposits and withdrawals); older ones can only be added by an import. Sync before more than ten new bookings accumulate – with daily interest and no other bookings, at least every ten days. Unofficial: uses the web app's interface, changes are possible."
+        }
+        "Web-App (Direkt-Login)" => "Web app (direct login)",
         // ------------------------------------------------------------ connectors/kontist.rs
         "Kontist GraphQL-API (OAuth2 + Freigabe in der App)" => {
             "Kontist GraphQL API (OAuth2 + approval in the app)"

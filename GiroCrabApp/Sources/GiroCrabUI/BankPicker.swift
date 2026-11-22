@@ -43,7 +43,7 @@ struct KindAddForm: View {
     static func loginRequired(_ kind: ConnectorKind) -> Bool {
         [.comdirect, .tradeRepublic, .advanzia, .volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .alteLeipziger,
          // their connectors refuse to sign in without it (customer number, user name, token)
-         .hanseaticBank, .easybank, .ibkr, .kontist, .volkswagenBank, .uberspace, .fordMoney, .opelDirektbank, .bhw].contains(kind)
+         .hanseaticBank, .easybank, .ibkr, .kontist, .volkswagenBank, .uberspace, .fordMoney, .opelDirektbank, .bhw, .goAndGrow].contains(kind)
     }
 
     /// Page where the bank hands out the API credentials GiroCrab asks for.
