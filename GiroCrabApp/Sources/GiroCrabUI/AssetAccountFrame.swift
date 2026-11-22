@@ -63,10 +63,12 @@ struct AssetAccountFrame<Top: View, Header: View, Metrics: View, Analysis: View,
             BankingPolicyBanner()
             AnnouncementBanner()
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: ViewLayout.assetBlockSpacing) {
                     // Marketing screenshots (`--screenshot`) look like a real vault: no demo banner.
                     if model.demoActive && LaunchOptions.current.screenshotPath == nil {
+                        // same gap to the first card as above the booking list (#1538)
                         DemoBanner()
+                            .padding(.bottom, ViewLayout.demoBannerBottomPadding(stackSpacing: ViewLayout.assetBlockSpacing))
                     }
                     top()
                     header()
