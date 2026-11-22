@@ -239,9 +239,28 @@ struct NameFieldBounds: PreferenceKey {
     }
 }
 
-/// The IBAN field of the transfer and standing order forms (#1475): grouped in fours as it is typed.
+/// The IBAN field of the transfer and standing order forms (#1475). It groups the IBAN in fours
+/// while it is typed at the end, but never rewrites it while a character in the middle is
+/// corrected: setting the whole text moves the cursor to the end. Then the grouping follows when
+/// the field loses the focus.
 struct IBANInput: View {
     @Binding var iban: String
+    @FocusState private var focused: Bool
+
+    /// Whether a change of the text is regrouped at once: any change from outside the field (a picked
+    /// recipient, a template, a paste), or typing and deleting at the end. A correction in the middle
+    /// is left as typed, so the cursor stays where the person put it.
+    static func regroupsAtOnce(old: String, new: String, focused: Bool) -> Bool {
+        guard focused else { return true }
+        func clean(_ s: String) -> String { s.uppercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) } }
+        let (o, n) = (clean(old), clean(new))
+        return o != n && (n.hasPrefix(o) || o.hasPrefix(n))
+    }
+
+    private func regroup() {
+        let f = TransferSheetView.groupedIBAN(iban)
+        if f != iban { iban = f }
+    }
 
     var body: some View {
         TextField("IBAN", text: $iban, prompt: Text("DE00 0000 0000 0000 0000 00"))
@@ -251,10 +270,12 @@ struct IBANInput: View {
             #if os(iOS)
             .textInputAutocapitalization(.characters)
             #endif
-            .onChange(of: iban) { _, new in
-                let f = TransferSheetView.groupedIBAN(new)
-                if f != new { iban = f }
+            .focused($focused)
+            .onChange(of: iban) { old, new in
+                if Self.regroupsAtOnce(old: old, new: new, focused: focused) { regroup() }
             }
+            .onChange(of: focused) { _, now in if !now { regroup() } }
+            .onSubmit { regroup() }
             .sensitive()
     }
 }

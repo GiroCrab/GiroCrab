@@ -395,6 +395,7 @@ struct StandingOrderSheet: View {
             Button("Weiter") {
                 model.transferError = nil
                 model.invalidateStandingImports()  // an invoice still being read must not change what is under review
+                model.standingDraft.iban = TransferSheetView.groupedIBAN(draft.iban)  // grouped even if the field never lost the focus
                 reviewing = true
             }
                 .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!draft.isValid)

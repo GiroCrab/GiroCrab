@@ -676,6 +676,7 @@ struct TransferSheetView: View {
 
     private func leaveForm(to next: Step) {
         model.transferError = nil
+        model.transferDraft.iban = Self.groupedIBAN(model.transferDraft.iban)  // grouped even if the field never lost the focus
         step = next
     }
 
