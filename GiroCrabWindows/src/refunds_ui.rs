@@ -345,7 +345,10 @@ fn refresh(win: &MainWindow, v: Arc<Vault>) {
     std::thread::spawn(move || {
         let loaded = load(&v, booking, &search, cents, own_part, &currency);
         let _ = weak.upgrade_in_event_loop(move |win| {
-            // an answer for an earlier booking, search or part is dropped
+            // an answer for another vault session, an earlier booking, search or part is dropped
+            if !crate::is_current(&v) {
+                return;
+            }
             let current = with_ui(|u| {
                 u.booking.as_ref().map(|b| b.0) == Some(booking)
                     && u.search == search
