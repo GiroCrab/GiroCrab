@@ -100,7 +100,7 @@ private struct RefundBookingLine: View {
                         .appFont(.caption, weight: .medium)
                         .foregroundStyle(Theme.accent)
                         .lineLimit(1)
-                        .sensitive(.labels)
+                        .sensitive([.personal, .labels]) // the label holds the split note
                 }
                 if showsPurpose, !purpose.isEmpty {
                     Text(purpose)
@@ -196,10 +196,13 @@ struct RefundPickerSheet: View {
     /// Counts the loads: only the newest one may show its result.
     @State private var loads = 0
 
+    /// The booking as the list has it now: a sync can change its amount while the sheet is open.
+    private var current: Booking { model.bookings.first { $0.id == booking.id } ?? booking }
+
     /// The booking (its chosen part) pays back: the bookings it pays back are chosen. Otherwise
     /// what pays it back is collected.
     private var fromRefund: Bool {
-        ownParts.first { $0.part == ownPart }.map { $0.split.amountCents > 0 } ?? (booking.amountCents > 0)
+        ownParts.first { $0.part == ownPart }.map { $0.split.amountCents > 0 } ?? (current.amountCents > 0)
     }
     private var rowsKey: String { "\(ownPart)|\(fromRefund)" }
     private var candidates: [RefundBooking] { rowsFor == rowsKey ? loadedCandidates : [] }
@@ -248,7 +251,7 @@ struct RefundPickerSheet: View {
                             .sensitive()
                     }
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                    AmountLabel(cents: booking.amountCents, currency: booking.currency).fixedSize()
+                    AmountLabel(cents: current.amountCents, currency: current.currency).fixedSize()
                 }
                 Text(fromRefund
                      ? "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche alle, auch spätere."
@@ -264,7 +267,7 @@ struct RefundPickerSheet: View {
                     Picker(fromRefund ? "Erstattung aus" : "Erstattung für", selection: $ownPart) {
                         ForEach(ownParts, id: \.part) { Text(partTitle($0)).tag($0.part) }
                     }
-                    .sensitive([.labels, .amounts])
+                    .sensitive([.personal, .labels, .amounts]) // with the split note
                 }
                 TextField("Name oder Verwendungszweck suchen", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -444,7 +447,7 @@ struct RefundPickerSheet: View {
             // booking's own side
             ownParts = result.3.enumerated().map { (part: UInt32($0.offset + 1), split: $0.element) }
             if !ownParts.contains(where: { $0.part == ownPart }) {
-                ownPart = (ownParts.first { ($0.split.amountCents > 0) == (booking.amountCents > 0) } ?? ownParts.first)?.part ?? 0
+                ownPart = (ownParts.first { ($0.split.amountCents > 0) == (current.amountCents > 0) } ?? ownParts.first)?.part ?? 0
             }
             loadError = nil
         } catch {
