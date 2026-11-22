@@ -343,6 +343,34 @@ fn unlink_survives_older_peer_and_relink_revives() {
     assert_eq!(originals(&a, aa[2]), vec![aa[1]]);
 }
 
+/// An unlink from the other device reaches the link of a booking that is deleted here, so
+/// the booking does not come back with the link.
+#[test]
+fn unlink_reaches_the_link_of_a_deleted_booking() {
+    let d = TempDir::new("refunds-sync-deleted");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    a.link_refund(aa[2], aa[0], 0).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(originals(&b, bb[2]), vec![bb[0]]);
+    a.unlink_refund(aa[2], aa[0], 0).unwrap();
+    let deleted = |v: &Vault, id: i64, ms: Option<i64>| {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET deleted_ms=?2 WHERE id=?1",
+                rusqlite::params![id, ms],
+            )
+            .unwrap();
+    };
+    deleted(&b, bb[0], Some(i64::MAX / 2));
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    deleted(&b, bb[0], None);
+    assert!(originals(&b, bb[2]).is_empty());
+}
+
 #[test]
 fn equal_stamp_merges_agree_in_both_orders() {
     for deleted in [false, true] {
@@ -1239,4 +1267,48 @@ fn links_with_equal_stamps_are_listed_in_the_order_they_are_filled() {
         .map(|o| (o.id, o.share_cents))
         .collect();
     assert_eq!(listed, vec![(b[5], Some(1)), (b[0], Some(49))]);
+}
+
+/// Each device removes the split of one end of a link between two parts while offline: both
+/// rewrite the link, under two keys. The merge leaves one link of the pair on both devices.
+#[test]
+fn split_removed_on_both_ends_on_two_devices_leaves_one_link() {
+    let d = TempDir::new("refunds-both-splits");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    let part = |amount: i64| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    a.set_transaction_splits(aa[1], vec![part(-150), part(-50)])
+        .unwrap();
+    a.set_transaction_splits(aa[2], vec![part(30), part(20)])
+        .unwrap();
+    a.link_refund_parts(aa[2], 2, aa[1], 2).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    a.set_transaction_splits(aa[2], Vec::new()).unwrap();
+    b.set_transaction_splits(bb[1], Vec::new()).unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    let live = |v: &Vault| -> Vec<(i64, i64)> {
+        v.db()
+            .unwrap()
+            .prepare("SELECT original_part,refund_part FROM refund_links WHERE deleted_ms IS NULL")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(live(&a), vec![(0, 0)]);
+    assert_eq!(live(&b), vec![(0, 0)]);
+    assert_eq!(part_links(&a, aa[2]), vec![(aa[1], 0, Some(50))]);
+    assert_eq!(part_links(&b, bb[2]), vec![(bb[1], 0, Some(50))]);
+    b.unlink_refund(bb[2], bb[1], 0).unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    assert!(originals(&a, aa[2]).is_empty());
 }
