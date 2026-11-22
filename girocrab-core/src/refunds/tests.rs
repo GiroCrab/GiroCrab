@@ -973,3 +973,62 @@ fn links_with_equal_stamps_are_filled_alike_on_both_devices() {
     );
     assert_eq!(share(&a, r_a, t1_a), Some(60));
 }
+
+/// The same with originals of two accounts that carry the same date and bank id (ids are
+/// unique within an account only): the account decides, not the local id.
+#[test]
+fn links_with_equal_stamps_and_twin_bookings_of_two_accounts_are_filled_alike() {
+    let d = TempDir::new("refunds-tie-accounts");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    for v in [&a, &b] {
+        v.db()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO account_groups(name) VALUES ('G');
+                 INSERT INTO accounts(group_id,external_ref,name) VALUES (1,'A','Konto');
+                 INSERT INTO accounts(group_id,external_ref,name) VALUES (1,'B','Zweites Konto');",
+            )
+            .unwrap();
+    }
+    let insert = |v: &Vault, account: i64, key: &str, amount: i64| -> i64 {
+        let db = v.db().unwrap();
+        db.execute(
+            "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,counterparty,purpose) VALUES (?1,?2,'2025-03-01',?3,'Laden','')",
+            params![account, key, amount],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let on_a: Vec<i64> = [(1, "R", 100), (1, "T", -60), (2, "T", -60)]
+        .map(|(account, key, amount)| insert(&a, account, key, amount))
+        .to_vec();
+    let on_b: Vec<i64> = [(2, "T", -60), (1, "T", -60), (1, "R", 100)]
+        .map(|(account, key, amount)| insert(&b, account, key, amount))
+        .to_vec();
+    let (r_a, t1_a, t2_a) = (on_a[0], on_a[1], on_a[2]);
+    let (t2_b, t1_b, r_b) = (on_b[0], on_b[1], on_b[2]);
+    a.link_refund(r_a, t1_a, 0).unwrap();
+    b.link_refund(r_b, t2_b, 0).unwrap();
+    for v in [&a, &b] {
+        v.db()
+            .unwrap()
+            .execute("UPDATE refund_links SET created_ms=5,changed_ms=5", [])
+            .unwrap();
+    }
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    let share = |v: &Vault, refund: i64, original: i64| {
+        v.refund_links(refund)
+            .unwrap()
+            .originals
+            .iter()
+            .find(|o| o.id == original)
+            .and_then(|o| o.share_cents)
+    };
+    assert_eq!(
+        (share(&a, r_a, t1_a), share(&a, r_a, t2_a)),
+        (share(&b, r_b, t1_b), share(&b, r_b, t2_b))
+    );
+    assert_eq!(share(&a, r_a, t1_a), Some(60));
+}

@@ -374,8 +374,8 @@ impl Drop for Within {
 }
 
 /// What every live link pays back, filled in the order the links were made (links made in the
-/// same millisecond on two devices: by what both devices know of the bookings, not by their
-/// local ids): a link takes at
+/// same millisecond on two devices: by what both devices know of the bookings and their
+/// accounts (the key of `original_key`), not by their local ids): a link takes at
 /// most what the earlier links left of the amount that pays back and of the amount it pays
 /// back (the parts it names, see [`Role`]). A link to the whole of a split booking (it names
 /// no part, or one the booking does not have) uses the parts on that booking's side from the
@@ -396,8 +396,13 @@ fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shar
         .prepare(&format!(
             "SELECT l.refund_id,l.original_id,l.original_part,l.refund_part,r.amount_cents,o.amount_cents,r.currency,o.currency
              FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id
+             JOIN accounts ra ON ra.id=r.account_id LEFT JOIN bank_connections rc ON rc.id=ra.connection_id
+             JOIN accounts oa ON oa.id=o.account_id LEFT JOIN bank_connections oc ON oc.id=oa.connection_id
              WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL{within}
-             ORDER BY l.created_ms,l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,l.refund_id,l.original_id"
+             ORDER BY l.created_ms,l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,
+                      COALESCE(rc.connector,''),COALESCE(rc.login_name,''),COALESCE(rc.bank_code,''),ra.external_ref,
+                      COALESCE(oc.connector,''),COALESCE(oc.login_name,''),COALESCE(oc.bank_code,''),oa.external_ref,
+                      l.refund_id,l.original_id"
         ))?
         .query_map([], |r| {
             Ok((
