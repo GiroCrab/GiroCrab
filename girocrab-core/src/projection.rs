@@ -40,6 +40,7 @@ pub(crate) struct Info {
 }
 
 type ScopedRows = HashMap<Option<Vec<i64>>, Arc<Vec<Row>>>;
+type MatchingIds = HashMap<(Option<i64>, bool, bool, u8, Option<String>), String>;
 
 pub(crate) struct Projection {
     base: Vec<Row>,
@@ -48,6 +49,7 @@ pub(crate) struct Projection {
     parents: HashMap<i64, Option<i64>>,
     refunds: Arc<Refunds>,
     rows: Mutex<ScopedRows>,
+    matching_ids: Mutex<MatchingIds>,
 }
 
 #[derive(Clone, Copy)]
@@ -137,6 +139,7 @@ impl Projection {
                 .collect::<Result<_, _>>()?,
             refunds: refunds.clone(),
             rows: Mutex::new(HashMap::new()),
+            matching_ids: Mutex::new(HashMap::new()),
         };
         let finisher = v.booking_finisher(db)?;
         let live_categories = Vault::category_paths(db)?;
@@ -323,6 +326,65 @@ impl Vault {
         self.projected_selection_impl(db, filter, visible, currency, true)
     }
 
+    pub(crate) fn projected_booking_ids(
+        &self,
+        db: &Connection,
+        filter: &BookingFilter,
+    ) -> CoreResult<String> {
+        let projection = self.financial_projection(db)?;
+        let key = (
+            filter.category_id,
+            filter.include_subcategories,
+            filter.uncategorized_only,
+            filter.scope as u8,
+            filter.merchant_key.clone(),
+        );
+        if let Some(ids) = projection.matching_ids.lock().unwrap().get(&key) {
+            return Ok(ids.clone());
+        }
+        let mut categories = HashSet::new();
+        if let Some(id) = filter.category_id {
+            categories.insert(id);
+            if filter.include_subcategories {
+                for &child in projection.parents.keys() {
+                    let mut current = Some(child);
+                    let mut visited = HashSet::new();
+                    while let Some(c) = current {
+                        if !visited.insert(c) {
+                            break;
+                        }
+                        if c == id {
+                            categories.insert(child);
+                            break;
+                        }
+                        current = projection.parents.get(&c).copied().flatten();
+                    }
+                }
+            }
+        }
+        let ids: HashSet<i64> = projection
+            .rows(None)?
+            .iter()
+            .filter(|r| {
+                (filter.category_id.is_none()
+                    || r.category_id.is_some_and(|c| categories.contains(&c)))
+                    && (!filter.uncategorized_only || r.category_id.is_none())
+                    && keeps(filter, r.flow, &projection.info[&r.booking_id].merchant)
+            })
+            .map(|r| r.booking_id)
+            .collect();
+        let ids = format!(
+            "[{}]",
+            ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+        );
+        projection
+            .matching_ids
+            .lock()
+            .unwrap()
+            .insert(key, ids.clone());
+        Ok(ids)
+    }
+
     fn projected_selection_impl(
         &self,
         db: &Connection,
@@ -338,7 +400,12 @@ impl Vault {
         plain.scope = BookingScope::All;
         plain.direction = BookingDirection::All;
         let (cte, wh, args, _) = self.filter_clauses(db, &plain)?;
-        let ids:HashSet<i64>=db.prepare(&format!("{cte}SELECT t.id FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories cat ON cat.id=t.category_id AND cat.deleted_ms IS NULL WHERE {wh}"))?.query_map(params_from_iter(args.iter().map(|a|a.as_ref())),|r|r.get(0))?.collect::<Result<_,_>>()?;
+        let unfiltered = self.filter_clauses(db, &BookingFilter::default())?.1;
+        let ids: Option<HashSet<i64>> = if wh == unfiltered && args.is_empty() {
+            None
+        } else {
+            Some(db.prepare(&format!("{cte}SELECT t.id FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories cat ON cat.id=t.category_id AND cat.deleted_ms IS NULL WHERE {wh}"))?.query_map(params_from_iter(args.iter().map(|a|a.as_ref())),|r|r.get(0))?.collect::<Result<_,_>>()?)
+        };
         let categories: Option<HashSet<i64>> = if let Some(id) = filter.category_id {
             if filter.include_subcategories {
                 Some(db.prepare("WITH RECURSIVE sub(id) AS (SELECT ?1 UNION SELECT c.id FROM categories c JOIN sub ON c.parent_id=sub.id WHERE c.deleted_ms IS NULL) SELECT id FROM sub")?.query_map([id],|r|r.get(0))?.collect::<Result<_,_>>()?)
@@ -360,7 +427,7 @@ impl Vault {
             .filter(|r| {
                 let info = &projection.info[&r.booking_id];
                 let primary = info.currency.eq_ignore_ascii_case(&primary_currency);
-                ids.contains(&r.booking_id)
+                ids.as_ref().is_none_or(|ids| ids.contains(&r.booking_id))
                     && match filter.direction {
                         BookingDirection::All => true,
                         BookingDirection::Income => info.amount_cents > 0,

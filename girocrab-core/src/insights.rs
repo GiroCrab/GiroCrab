@@ -91,15 +91,18 @@ impl Vault {
         date_from: Option<String>,
         date_to: Option<String>,
     ) -> Result<SelectionFlow, CoreError> {
+        let db = self.db()?;
         Ok(self
-            .list_page(
-                BookingFilter {
+            .projected_totals(
+                &db,
+                &BookingFilter {
                     account_ids,
                     date_from,
                     date_to,
                     ..Default::default()
                 },
-                false,
+                None,
+                crate::projection::CurrencyMode::Primary,
             )?
             .flow)
     }
@@ -115,18 +118,19 @@ impl Vault {
         date_from: Option<String>,
         date_to: Option<String>,
     ) -> Result<SelectionFlow, CoreError> {
-        // rows-free path like `selection_flow`: only the flow is used, so no
-        // booking is enriched or kept
+        let db = self.db()?;
         Ok(self
-            .list_page(
-                BookingFilter {
+            .projected_totals(
+                &db,
+                &BookingFilter {
                     account_ids,
                     date_from,
                     date_to,
                     respect_in_total: true,
                     ..Default::default()
                 },
-                false,
+                None,
+                crate::projection::CurrencyMode::Primary,
             )?
             .flow)
     }

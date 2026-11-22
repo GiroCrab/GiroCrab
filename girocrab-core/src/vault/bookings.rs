@@ -459,23 +459,7 @@ impl Vault {
             || filter.category_id.is_some()
             || filter.scope != BookingScope::All
         {
-            let mut financial_filter = filter.clone();
-            financial_filter.respect_in_total = false;
-            let ids: HashSet<i64> = self
-                .projected_booking_selection(
-                    db,
-                    &financial_filter,
-                    None,
-                    crate::projection::CurrencyMode::All,
-                )?
-                .rows
-                .into_iter()
-                .map(|r| r.booking_id)
-                .collect();
-            args.push(Box::new(format!(
-                "[{}]",
-                ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
-            )));
+            args.push(Box::new(self.projected_booking_ids(db, filter)?));
             wh.push(format!(
                 "t.id IN (SELECT value FROM json_each(?{}))",
                 args.len()
@@ -1240,7 +1224,8 @@ impl Vault {
             }
             let page_ids: Vec<i64> = kept[start..end].iter().map(|(id, _)| *id).collect();
             if !page_ids.is_empty() {
-                let (cte, mut where_sql, mut args, share_sql) = self.filter_clauses(db, filter)?;
+                let (cte, mut where_sql, mut args, share_sql) =
+                    self.filter_clauses(db, &BookingFilter::default())?;
                 // One JSON parameter instead of one per id: no variable limit to hit.
                 let json = format!(
                     "[{}]",
