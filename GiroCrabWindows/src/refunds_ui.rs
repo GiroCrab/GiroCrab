@@ -40,6 +40,10 @@ thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
 }
 
+/// Counts the loads of the dialog: only the newest one may show its result. Not part of `Ui`,
+/// which starts over with every opened dialog while an earlier load may still run.
+static LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
     UI.with(|u| f(&mut u.borrow_mut()))
 }
@@ -60,6 +64,29 @@ fn head(win: &MainWindow) {
     let privacy = privacy_on(win);
     win.set_rf_title(daily::mask(&title, privacy).into());
     win.set_rf_amount(daily::mask(&money(cents, &currency), privacy).into());
+}
+
+/// The bookings were read again (a sync, a merge, an edit): an open dialog takes its booking's
+/// amount and name from the new rows and loads again, so nothing in it is from before.
+pub fn rows_reloaded(win: &MainWindow, v: Arc<Vault>) {
+    if !win.get_refunds_open() {
+        return;
+    }
+    let Some(id) = with_ui(|u| u.booking.as_ref().map(|b| b.0)) else {
+        return;
+    };
+    let row = with_state(|st| {
+        let r = st.rows.iter().find(|r| r.id == id)?;
+        Some((r.counterparty.clone(), r.amount_cents, r.currency.clone()))
+    });
+    if let Some((title, cents, currency)) = row {
+        with_ui(|u| {
+            u.booking = Some((id, cents, currency));
+            u.title = title;
+        });
+        head(win);
+    }
+    refresh(win, v);
 }
 
 /// Privacy mode was switched: an open dialog shows its names and amounts accordingly.
@@ -374,11 +401,13 @@ fn refresh(win: &MainWindow, v: Arc<Vault>) {
         return;
     };
     let weak = win.as_weak();
+    let run = LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     std::thread::spawn(move || {
         let loaded = load(&v, booking, &search, cents, own_part, &currency);
         let _ = weak.upgrade_in_event_loop(move |win| {
-            // an answer for another vault session, an earlier booking, search or part is dropped
-            if !crate::is_current(&v) {
+            // an answer for another vault session, an earlier booking, search or part is dropped,
+            // and so is one a later load of the same request has overtaken (a link was changed)
+            if !crate::is_current(&v) || run != LOADS.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
             let current = with_ui(|u| {
@@ -509,7 +538,11 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
                     refresh(&win, v.clone());
                     // the sign in the rows and the sums: only the assigned part lowers the expenses
                     reload(&win, v.clone());
-                    refresh_dashboard(&win, v);
+                    // one account's cash flow is summed from the loaded rows: there the reload
+                    // refreshes the dashboard itself, with the rows it has read
+                    if !with_state(|st| matches!(st.target, crate::nav::Target::Account(_))) {
+                        refresh_dashboard(&win, v);
+                    }
                 }
                 Err(e) => win.set_rf_status(e.into()),
             });
