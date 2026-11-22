@@ -22,6 +22,12 @@ data class AppUiState(
     val vaultMayHoldRealData: Boolean = false,
     val loading: Boolean = false,
     val privacyMode: Boolean = false,
+    /**
+     * #1428 (2.5): the app left the foreground. The vault stays open and the data stays loaded —
+     * only the window has to be unlocked again. Distinct from [VaultState.Locked], which means
+     * there is no vault content at all.
+     */
+    val backgroundLocked: Boolean = false,
     val data: VaultSnapshot = VaultSnapshot(),
     val scope: Scope = Scope.All,
     val search: String = "",
@@ -105,6 +111,17 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         val own = ownSnapshot
         if (own != null) adoptOwn(own) else bootstrap()
     }
+
+    /**
+     * #1428 (2.5): leaving the foreground locks the window, not the vault. Dropping the snapshot
+     * here would mean reading the whole vault again on every app switch for nothing.
+     */
+    fun lockForBackground() {
+        if (_state.value.vaultState != VaultState.Own) return
+        _state.update { it.copy(backgroundLocked = true) }
+    }
+
+    fun clearBackgroundLock() = _state.update { it.copy(backgroundLocked = false) }
 
     fun lock() {
         ownSnapshot = null

@@ -31,6 +31,12 @@ sealed interface UnlockResult {
      */
     data object Unavailable : UnlockResult
 
+    /**
+     * The window is unlocked again while the vault stayed open (#1428, 2.5): the prompt proved who
+     * is there, nothing was opened and nothing was read a second time.
+     */
+    data object SoftReleased : UnlockResult
+
     /** Aborted, failed, or unusable cipher — nothing was unwrapped. */
     data class Refused(val message: String?) : UnlockResult
 }
@@ -118,6 +124,55 @@ class VaultUnlocker(
             // A prompt that never calls back would block every later attempt.
             prompting = false
             deliver(UnlockResult.Refused("Entsperren nicht möglich (${e.javaClass.simpleName}: ${e.message})"))
+        }
+    }
+
+    /**
+     * Takes the lock off a window whose vault is still open (#1428, 2.5).
+     *
+     * Deliberately not [unlock]: the vault stays open and the loaded snapshot is not read again.
+     * The prompt still has to succeed and the wrapped key still has to unwrap — otherwise a
+     * placeholder screen would stand in front of readable data without anyone proving anything.
+     */
+    fun releaseSoftLock(onResult: (UnlockResult) -> Unit) {
+        if (prompting) return
+        val delivered = AtomicBoolean(false)
+        val deliver: (UnlockResult) -> Unit = { result ->
+            if (delivered.compareAndSet(false, true)) onResult(result)
+        }
+        val cipher = try {
+            keyStore.unlockCipher()
+        } catch (_: Exception) {
+            // Biometrics changed while the app was in the background: the key is gone.
+            return deliver(UnlockResult.KeyInvalidated)
+        }
+        prompting = true
+        try {
+            prompt.authenticate(cipher, title, subtitle) { result ->
+                prompting = false
+                when (result) {
+                    PromptResult.Cancelled -> deliver(UnlockResult.Refused(null))
+                    is PromptResult.Unavailable -> deliver(UnlockResult.Unavailable)
+                    is PromptResult.Failed -> deliver(UnlockResult.Refused(result.message))
+                    is PromptResult.Succeeded -> deliver(proveKey(result.cipher, cipher))
+                }
+            }
+        } catch (e: Exception) {
+            prompting = false
+            deliver(UnlockResult.Refused("Entsperren nicht möglich (${e.javaClass.simpleName}: ${e.message})"))
+        }
+    }
+
+    /** Proves the key is still usable without opening anything: read it, then wipe it. */
+    private fun proveKey(authenticated: Cipher, expected: Cipher): UnlockResult {
+        if (authenticated !== expected) {
+            return UnlockResult.Refused("Der Prompt lieferte einen anderen Cipher als angefordert.")
+        }
+        return try {
+            keyStore.readWrapped(authenticated).fill(0)
+            UnlockResult.SoftReleased
+        } catch (e: Exception) {
+            UnlockResult.Refused("Entsperren fehlgeschlagen (${e.javaClass.simpleName}: ${e.message})")
         }
     }
 

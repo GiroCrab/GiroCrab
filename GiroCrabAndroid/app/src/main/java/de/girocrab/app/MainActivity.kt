@@ -169,8 +169,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Re-lock the own vault when the app leaves the foreground (parity with iOS lock on background).
-        if (!isChangingConfigurations && vm.state.value.vaultState == VaultState.Own) vm.lock()
+        // #1428 (2.5): leaving the foreground locks the window, not the vault. The snapshot stays
+        // loaded, so coming back costs one prompt instead of a full re-read of the vault.
+        if (!isChangingConfigurations) vm.lockForBackground()
     }
 }
 
@@ -189,7 +190,8 @@ fun GiroCrabRoot(
     var tab by rememberSaveable { mutableStateOf(MainTab.Bookings) }
     var lockPreview by rememberSaveable { mutableStateOf(false) }
 
-    val locked = (state.vaultState == VaultState.Locked && !state.loading) || lockPreview
+    val locked =
+        (state.vaultState == VaultState.Locked && !state.loading) || state.backgroundLocked || lockPreview
     LaunchedEffect(state.privacyMode, locked) { setSecure(state.privacyMode) }
 
     // The unlocker owns the Keystore cipher: without an authenticated prompt nothing is unwrapped.
@@ -261,26 +263,40 @@ fun GiroCrabRoot(
             message = unlockMessage,
             onUnlockRequest = {
                 val request = unlocker
-                if (request == null) {
-                    unlockMessage = "Entsperren ist auf diesem Gerät nicht verfügbar."
-                } else {
-                    unlockMessage = null
-                    demoEscape = false
-                    request.unlock { result ->
-                        // Reading the data is the mapper's job (#1429, 3.1); the handle is closed
-                        // as soon as the copy exists, so the ViewModel never holds a native one.
-                        unlockMessage = if (result is UnlockResult.Opened) {
-                            adoptOwnSnapshot(vm, result.vault, "Tresor geöffnet, Inhalt aber nicht lesbar")
-                        } else {
-                            describe(result)
-                        }
+                when {
+                    request == null -> unlockMessage = "Entsperren ist auf diesem Gerät nicht verfügbar."
+                    // #1428 (2.5): the vault never closed, so this is one prompt and no second read.
+                    state.backgroundLocked -> {
+                        unlockMessage = null
                         demoEscape = false
+                        request.releaseSoftLock { result ->
+                            if (result is UnlockResult.SoftReleased) {
+                                unlockMessage = null
+                                vm.clearBackgroundLock()
+                            } else {
+                                unlockMessage = describe(result)
+                            }
+                        }
+                    }
+                    else -> {
+                        unlockMessage = null
+                        demoEscape = false
+                        request.unlock { result ->
+                            // Reading the data is the mapper's job (#1429, 3.1); the handle is
+                            // closed as soon as the copy exists, so the ViewModel holds no handle.
+                            unlockMessage = if (result is UnlockResult.Opened) {
+                                adoptOwnSnapshot(vm, result.vault, "Tresor geöffnet, Inhalt aber nicht lesbar")
+                            } else {
+                                describe(result)
+                            }
+                            demoEscape = false
+                        }
                     }
                 }
             },
             onBackToDemo = { if (lockPreview) lockPreview = false else vm.showDemo() },
             demoEscape = demoEscape,
-            onImportRequest = if (lockPreview) null else {{
+            onImportRequest = if (lockPreview || state.backgroundLocked) null else {{
                 pickBackup.launch(arrayOf("*/*"))
             }},
         )
@@ -573,7 +589,7 @@ private fun describeImport(result: ImportResult): String = when (result) {
     is ImportResult.Failed -> result.message
 }
 
-private fun describe(result: UnlockResult): String = when (result) {
+private fun describe(result: UnlockResult): String? = when (result) {
     is UnlockResult.Opened -> {
         // `accountCount` throws when the handle is unusable, so the handle is closed in `finally`
         // — otherwise a failed read leaks the native handle.
@@ -591,6 +607,8 @@ private fun describe(result: UnlockResult): String = when (result) {
             "Ohne ihn sind die Daten nicht lesbar — spiele eine Sicherung vom Desktop ein."
     UnlockResult.VaultMissing ->
         "Die Tresordatei fehlt auf diesem Gerät. Nur eine Sicherung vom Desktop bringt die Daten zurück."
+    // The soft lock is only a window: no message, the screen simply goes away.
+    UnlockResult.SoftReleased -> null
     UnlockResult.Unavailable -> "Entsperren ist auf diesem Gerät nicht verfügbar."
     is UnlockResult.Refused -> result.message ?: "Entsperren abgebrochen."
 }

@@ -202,6 +202,41 @@ class VaultUnlockerTest {
         opened!!.vault.close()
     }
 
+    /**
+     * #1428 (2.5): the soft lock only takes the window away — the vault is still open. Releasing it
+     * has to prove the key without opening a second vault and without writing anything.
+     */
+    @Test
+    fun softReleaseProvesTheKeyWithoutOpeningTheVault() {
+        storeWrappedKey(createVault = false)
+        var prompted = false
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            prompted = true
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.releaseSoftLock { result = it }
+
+        assertTrue("the prompt has to be shown", prompted)
+        assertEquals("expected the window to open again, was $result", UnlockResult.SoftReleased, result)
+        assertEquals("the soft lock must not create a vault", 0L, vaultBytes())
+    }
+
+    /** A refused prompt leaves the window locked — the vault stays untouched either way. */
+    @Test
+    fun cancelledSoftReleaseKeepsTheWindowLocked() {
+        storeWrappedKey(createVault = true)
+        val before = vaultBytes()
+        val unlocker = unlocker { _, _, _, onResult -> onResult(PromptResult.Cancelled) }
+
+        var result: UnlockResult? = null
+        unlocker.releaseSoftLock { result = it }
+
+        assertTrue("a cancelled prompt is a refusal, was $result", result is UnlockResult.Refused)
+        assertEquals("the vault file must stay as it was", before, vaultBytes())
+    }
+
     // --- helpers ---------------------------------------------------------------------------
 
     private fun unlocker(prompt: CipherPrompt) = VaultUnlocker(
