@@ -1,5 +1,8 @@
 # Architecture notes
 
+The reasons behind lasting decisions (alternatives, accepted trade-offs) are recorded as
+[architecture decision records](adr/README.md).
+
 ## Schema & migrations
 
 The vault is a SQLCipher database. Its schema is versioned in

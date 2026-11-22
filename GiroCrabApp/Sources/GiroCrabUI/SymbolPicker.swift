@@ -51,7 +51,7 @@ enum SymbolCatalog {
         Section(title: "Mobilität", items: [
             i("car", "Auto"), i("fuelpump", "Tanken"), i("bolt.car", "Elektroauto"), i("bus", "Bus"),
             i("tram", "Straßenbahn"), i("train.side.front.car", "Zug"), i("bicycle", "Fahrrad"),
-            i("scooter", "Roller"), i("airplane", "Reisen"), i("ferry", "Fähre"),
+            i("scooter", "Roller"), i("motorcycle", "Motorrad"), i("airplane", "Reisen"), i("ferry", "Fähre"),
             i("parkingsign.circle", "Parken"), i("figure.walk", "Zu Fuß"),
         ]),
         Section(title: "Freizeit", items: [
@@ -59,19 +59,22 @@ enum SymbolCatalog {
             i("theatermasks", "Theater"), i("sportscourt", "Sport"), i("figure.run", "Laufen"),
             i("dumbbell", "Fitness"), i("tent", "Camping"), i("beach.umbrella", "Urlaub"),
             i("camera", "Fotografie"), i("paintpalette", "Kunst"), i("ticket", "Tickets"),
-            i("party.popper", "Feier"),
+            i("party.popper", "Feier"), i("pianokeys", "Musikunterricht"), i("guitars", "Instrument"),
+            i("play.tv", "Streaming"),
         ]),
         Section(title: "Familie", items: [
             i("person", "Person"), i("person.2", "Paar"), i("person.3", "Gruppe"),
             i("figure.and.child.holdinghands", "Familie"), i("figure.2.and.child.holdinghands", "Kinder"),
             i("stroller", "Baby"), i("heart", "Herz"), i("gift", "Geschenk"), i("birthday.cake", "Geburtstag"),
             i("teddybear", "Spielzeug"), i("graduationcap", "Ausbildung"), i("backpack", "Schule"),
-            i("pawprint", "Haustier"),
+            i("pawprint", "Haustier"), i("dog", "Hund"), i("cat", "Katze"), i("fish", "Aquarium"),
         ]),
         Section(title: "Beruf", items: [
             i("briefcase", "Beruf"), i("laptopcomputer", "Computer"), i("printer", "Drucker"),
             i("folder", "Ordner"), i("tray.full", "Ablage"), i("envelope", "Post"), i("calendar", "Kalender"),
             i("hammer", "Werkzeug"), i("signature", "Unterschrift"), i("chart.bar", "Statistik"),
+            i("chevron.left.forwardslash.chevron.right", "Software"), i("checkmark.seal", "Lizenz"),
+            i("shippingbox", "Versand"), i("suitcase.rolling", "Dienstreise"),
         ]),
         Section(title: "Gesundheit", items: [
             i("cross.case", "Apotheke"), i("pills", "Medikamente"), i("stethoscope", "Arzt"),
@@ -80,15 +83,25 @@ enum SymbolCatalog {
             i("shield", "Versicherung"), i("umbrella", "Schutz"),
         ]),
         Section(title: "Sonstiges", items: [
-            i("tshirt", "Kleidung"), i("bag", "Einkaufstasche"), i("tag", "Etikett"), i("star", "Favorit"),
+            i("tshirt", "Kleidung"), i("bag", "Einkaufstasche"), i("tag", "Etikett"),
+            i("tag.fill", "Etikett, gefüllt"), i("star", "Favorit"),
             i("flag", "Flagge"), i("globe", "Welt"), i("cloud", "Cloud"), i("sparkles", "Besonderes"),
-            i("hand.raised", "Spende"), i("ellipsis.circle", "Andere"), i("questionmark.circle", "Unbekannt"),
+            i("hand.raised", "Spende"), i("heart.circle", "Spenden"), i("ellipsis.circle", "Andere"), i("questionmark.circle", "Unbekannt"),
         ]),
     ]
 
     /// Catalogue symbols: known to exist, no image lookup needed (views ask
     /// on every redraw).
     private static let known: Set<String> = Set(sections.flatMap { $0.items.map(\.symbol) })
+
+    /// Symbol of a category without an explicit choice. Must match the core
+    /// default (`create_category`, schema, importers): the outlined tag (#1610).
+    static let defaultCategorySymbol = "tag"
+
+    /// Whether the symbol is offered in the picker's catalogue.
+    static func isListed(_ symbol: String) -> Bool {
+        known.contains(symbol)
+    }
 
     /// Whether the running OS ships this SF Symbol.
     static func exists(_ symbol: String) -> Bool {

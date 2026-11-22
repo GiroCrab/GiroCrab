@@ -315,6 +315,8 @@ fn two_factor(html: &str) -> Option<TwoFactor> {
 #[derive(Debug, Clone, PartialEq)]
 struct Account {
     number: String,
+    /// Empty when the section shows no IBAN of this account (Festgeld lists
+    /// only its number, or the IBAN of its reference account).
     iban: String,
     product: String,
     owner: String,
@@ -323,27 +325,53 @@ struct Account {
     bookings_link: Option<String>,
 }
 
+impl Account {
+    /// `fordmoney:<IBAN>`, or `fordmoney:<number>` without an own IBAN.
+    fn external_ref(&self) -> String {
+        if self.iban.is_empty() {
+            format!("{REF_PREFIX}{}", self.number)
+        } else {
+            format!("{REF_PREFIX}{}", self.iban)
+        }
+    }
+}
+
+/// Structural trace for bug reports (`GIROCRAB_DEPOT_DEBUG=1`): step names
+/// and counts only, never numbers, IBANs or amounts.
+fn trace(msg: &str) {
+    crate::depot_debug::log(&format!("fordmoney {msg}"));
+}
+
 fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
     let mut out = Vec::new();
     for part in html.split("<section class=\"accordion\">").skip(1) {
         let Some(number) = ACCOUNT_NO.captures(part).map(|c| c[1].to_string()) else {
             continue;
         };
-        let labels: HashMap<String, String> = LABEL_VALUE
+        let labels: Vec<(String, String)> = LABEL_VALUE
             .captures_iter(part)
             .map(|c| (text(&c[1]), text(&c[2])))
             .collect();
-        let iban: String = labels
-            .get("IBAN")
-            .map(|v| v.chars().filter(|c| !c.is_whitespace()).collect())
+        // The account's own IBAN ends with its number; a Festgeld section may
+        // show none, or only the IBAN of its reference account.
+        let ibans: Vec<String> = labels
+            .iter()
+            .filter(|(l, _)| l.contains("IBAN"))
+            .map(|(_, v)| v.chars().filter(|c| !c.is_whitespace()).collect())
+            .collect();
+        let iban = ibans
+            .iter()
+            .find(|i| i.len() >= 15 && i.ends_with(&number))
+            .cloned()
             .unwrap_or_default();
-        if iban.len() < 15 || !iban.ends_with(&number) {
+        let Some(balance_cents) = RIGHT_SUM.captures(part).and_then(|c| parse_amount(&c[1])) else {
+            trace(&format!(
+                "account #{}: balance unreadable (sum={})",
+                out.len() + 1,
+                RIGHT_SUM.is_match(part)
+            ));
             return Err(invalid());
-        }
-        let balance_cents = RIGHT_SUM
-            .captures(part)
-            .and_then(|c| parse_amount(&c[1]))
-            .ok_or_else(invalid)?;
+        };
         let bookings_link = A_TAG.captures_iter(part).find_map(|c| {
             let a = attrs(&c[1]);
             let wt = attr(&a, "data-wt")?.to_lowercase();
@@ -354,15 +382,28 @@ fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
                 .captures(attr(&a, "onclick")?)
                 .map(|m| m[1].to_string())
         });
+        let product = PRODUCT
+            .captures(part)
+            .map(|c| text(&c[1]))
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "Tagesgeld".into());
+        trace(&format!(
+            "account #{}: festgeld={} iban_labels={} own_iban={} bookings_link={}",
+            out.len() + 1,
+            product.to_lowercase().contains("festgeld"),
+            ibans.len(),
+            !iban.is_empty(),
+            bookings_link.is_some()
+        ));
         out.push(Account {
             number,
             iban,
-            product: PRODUCT
-                .captures(part)
-                .map(|c| text(&c[1]))
-                .filter(|p| !p.is_empty())
-                .unwrap_or_else(|| "Tagesgeld".into()),
-            owner: labels.get("Kontoinhaber").cloned().unwrap_or_default(),
+            product,
+            owner: labels
+                .iter()
+                .find(|(l, _)| l == "Kontoinhaber")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default(),
             balance_cents,
             bookings_link,
         });
@@ -384,10 +425,13 @@ fn parse_bookings(
         let Some(date) = parse_date(&text(row)) else {
             continue;
         };
-        let amount_cents = AMOUNT
-            .captures(row)
-            .and_then(|c| parse_amount(&c[1]))
-            .ok_or_else(invalid)?;
+        let Some(amount_cents) = AMOUNT.captures(row).and_then(|c| parse_amount(&c[1])) else {
+            trace(&format!(
+                "booking row: amount unreadable (amount_cell={})",
+                AMOUNT.is_match(row)
+            ));
+            return Err(invalid());
+        };
         let kind = KIND.captures(row).map(|c| text(&c[1])).unwrap_or_default();
         let purpose = [
             PURPOSE.captures(row).map(|c| text(&c[1])),
@@ -653,8 +697,11 @@ impl FordMoneyConnector {
         since: &str,
         today: &str,
     ) -> CoreResult<Vec<RemoteTransaction>> {
+        // Festgeld may offer no transaction list: then it has no bookings.
+        let Some(link) = account.bookings_link.as_deref() else {
+            return Ok(Vec::new());
+        };
         let overview = self.overview().await?;
-        let link = account.bookings_link.as_deref().ok_or_else(page_changed)?;
         let form = form_by_id(&overview, "contentForm").ok_or_else(page_changed)?;
         let page = self.post_page(&form.action, &form.clicked(link)).await?;
 
@@ -686,11 +733,18 @@ impl FordMoneyConnector {
                 )
                 .await?;
             let updates = partial_updates(&xml);
-            list = updates
+            let Some(found) = updates
                 .iter()
                 .find(|(id, _)| id.ends_with(":transactionList"))
                 .map(|(_, c)| c.clone())
-                .ok_or_else(invalid)?;
+            else {
+                trace(&format!(
+                    "transaction list missing (partial updates={})",
+                    updates.len()
+                ));
+                return Err(invalid());
+            };
+            list = found;
             let more = updates
                 .iter()
                 .any(|(id, c)| id.ends_with(":showMore") && c.contains("moreTransactions"));
@@ -903,12 +957,13 @@ impl BankConnector for FordMoneyConnector {
         let today = super::today();
         let overview = self.overview().await?;
         let accounts = parse_accounts(&overview)?;
+        trace(&format!("overview: {} accounts", accounts.len()));
         if accounts.is_empty() {
             return Err(page_changed());
         }
         let refs: HashMap<String, String> = accounts
             .iter()
-            .map(|a| (a.number.clone(), format!("{REF_PREFIX}{}", a.iban)))
+            .map(|a| (a.number.clone(), a.external_ref()))
             .collect();
         let mut known = KnownDocuments::from_state(&ctx.state);
 
@@ -925,9 +980,14 @@ impl BankConnector for FordMoneyConnector {
 
         let mut out = FetchResult::default();
         for account in &accounts {
-            let account_ref = format!("{REF_PREFIX}{}", account.iban);
+            let account_ref = account.external_ref();
             let since = ctx.since_for(&account_ref).to_string();
             let bookings = self.bookings(account, &account_ref, &since, &today).await?;
+            trace(&format!(
+                "account #{}: {} bookings",
+                out.accounts.len() + 1,
+                bookings.len()
+            ));
             out.transactions.extend(bookings);
             out.accounts.push(RemoteAccount {
                 external_ref: account_ref,
@@ -1207,12 +1267,66 @@ mod tests {
         );
         assert_eq!(accounts[1].balance_cents, 6_544);
         assert!(parse_accounts("<p>keine Konten</p>").unwrap().is_empty());
+        assert_eq!(a.external_ref(), "fordmoney:DE00123456781000000001");
+        // an IBAN that does not end with the number is never taken as the
+        // account's own (Festgeld shows that of its reference account)
         let foreign =
             overview().replace("DE00 1234 5678 1000 0000 01", "DE00 9999 9999 9999 9999 99");
-        assert!(
-            parse_accounts(&foreign).is_err(),
-            "IBAN must belong to the account number"
+        let accounts = parse_accounts(&foreign).unwrap();
+        assert_eq!(accounts[0].iban, "");
+        assert_eq!(accounts[0].external_ref(), "fordmoney:1000000001");
+    }
+
+    /// #1549: one Tagesgeld and several Festgeld accounts. A Festgeld section
+    /// shows no own IBAN (none, or its reference account's) and no transaction
+    /// list; the sync must read it with its balance instead of failing.
+    #[test]
+    fn festgeld_without_own_iban_or_bookings_link_is_read() {
+        let festgeld = |number: &str, extra: &str, sum: &str| {
+            format!(
+                r##"<section class="accordion">
+              <a class="row accordion-container__header collapsed" data-bs-toggle="collapse" href="#collapse_{number}">
+                <div class="col-sm-10 col-xs-8"><div>Festgeld</div><div class="tg-savings-headline-blue"> {number}</div></div>
+                <div class="col-sm-12 col xs-5 text-right"><span class="content-header__right-sum">{sum}</span></div>
+              </a>
+              <div id="collapse_{number}" class="accordion-container__collapse collapse ">
+                <div class="row eb-row__v-separator-normal">
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-label">Kontoinhaber</div>
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-text">Erika Mustermann</div>
+                </div>{extra}
+              </div>
+            </section>"##
+            )
+        };
+        let reference = r#"
+                <div class="row eb-row__v-separator-small">
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-label">IBAN Referenzkonto</div>
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-text">DE00 1234 5678 1000 0000 01</div>
+                </div>"#;
+        let html = format!(
+            "{}{}{}",
+            account_section(
+                "1000000001",
+                "DE00 1234 5678 1000 0000 01",
+                "1.234,56 €",
+                "contentForm:j_idt331:0:j_idt340"
+            ),
+            festgeld("2000000001", "", "10.000,00 €"),
+            festgeld("2000000002", reference, "5.000,00 €"),
         );
+        let accounts = parse_accounts(&html).unwrap();
+        assert_eq!(accounts.len(), 3);
+        assert_eq!(accounts[0].iban, "DE00123456781000000001");
+        for (a, cents) in accounts[1..].iter().zip([1_000_000, 500_000]) {
+            assert_eq!(a.product, "Festgeld");
+            assert_eq!(a.iban, "", "never the reference account's IBAN");
+            assert_eq!(a.external_ref(), format!("fordmoney:{}", a.number));
+            assert_eq!(a.balance_cents, cents);
+            assert_eq!(a.bookings_link, None);
+        }
+        let refs: std::collections::HashSet<String> =
+            accounts.iter().map(Account::external_ref).collect();
+        assert_eq!(refs.len(), 3, "every account keeps its own ref");
     }
 
     #[test]

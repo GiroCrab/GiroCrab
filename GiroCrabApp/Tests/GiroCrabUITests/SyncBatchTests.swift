@@ -68,6 +68,54 @@ final class SyncBatchTests: XCTestCase {
         XCTAssertNil(model.syncingConnectionID)
     }
 
+    func testSyncAllIncludesManualAndScheduledLoginsAndSkipsNever() async throws {
+        model.bankingPolicy = BankingPolicy(publicKeys: [], store: MemoryBankingPolicyStore(),
+                                            fetcher: nil, bundled: nil, distribution: .developerID,
+                                            bundleVersion: "1")
+        let logins = batch
+        XCTAssertGreaterThanOrEqual(logins.count, 3)
+        guard logins.count >= 3 else { return }
+        let never = logins[0]
+        let manual = logins[1]
+        let scheduled = logins[2]
+        XCTAssertTrue(model.setSyncSchedule(never.id, AutoSync.never))
+        XCTAssertTrue(model.setSyncSchedule(manual.id, 0))
+        XCTAssertTrue(model.setSyncSchedule(scheduled.id, 4))
+
+        model.requestSyncAll()
+        try await waitForChallenge(of: manual)
+        XCTAssertEqual(model.syncBatchProgress?.total, logins.count - 1)
+        model.skipCurrentSync()
+        try await waitForChallenge(of: scheduled)
+
+        model.cancelAllSync()
+        model.requestFullSync(never)
+        try await waitForChallenge(of: never)
+    }
+
+    func testSchedulesAreStoredPerConnectionInItsVault() throws {
+        let defaults = AppDefaults.store
+        let previous = defaults.object(forKey: AutoSync.hoursKey)
+        defer { defaults.set(previous, forKey: AutoSync.hoursKey) }
+        defaults.set(6, forKey: AutoSync.hoursKey)
+
+        let connections = Array(batch.prefix(3))
+        XCTAssertEqual(connections.count, 3)
+        guard connections.count == 3 else { return }
+        let first = connections[0].id
+        let second = connections[1].id
+        let third = connections[2].id
+        XCTAssertEqual(model.syncSchedule(first), 6)
+        XCTAssertTrue(model.setSyncSchedule(first, AutoSync.never))
+        XCTAssertTrue(model.setSyncSchedule(second, 0))
+        let vault = try XCTUnwrap(model.vault)
+        XCTAssertEqual(try vault.getSetting(key: AutoSync.scheduleKey(first)), "-1")
+        XCTAssertEqual(try vault.getSetting(key: AutoSync.scheduleKey(second)), "0")
+        XCTAssertEqual(model.syncSchedule(third), 6)
+        XCTAssertEqual(model.syncSchedule(first), AutoSync.never)
+        XCTAssertEqual(model.syncSchedule(second), 0)
+    }
+
     func testCancelAllEndsTheBatch() async throws {
         let logins = batch
         try XCTSkipIf(logins.count < 2, "demo vault needs at least two logins")

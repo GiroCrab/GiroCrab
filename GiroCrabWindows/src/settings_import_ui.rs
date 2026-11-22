@@ -5,13 +5,12 @@
 //! `upgrade_in_event_loop`.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use girocrab_core::export::{
-    Camt053Request, CamtVersion, ExportCsvBalanceLine, ExportCsvColumns, export_csv,
-};
+use girocrab_core::export::{Camt053Request, CamtVersion, ExportCsvBalanceLine, export_csv};
 use girocrab_core::importers::moneymoney_db::{
     MoneyMoneyDbAccountChoice, MoneyMoneyDbImportOptions, MoneyMoneyDbImportProgress,
     MoneyMoneyImportObserver,
@@ -189,6 +188,47 @@ fn read_bytes(path: &PathBuf) -> Result<Vec<u8>, String> {
 fn write_bytes(path: &PathBuf, data: &[u8]) -> Result<(), String> {
     std::fs::write(path, data)
         .map_err(|e| format!("Die Datei konnte nicht geschrieben werden: {e}"))
+}
+
+/// Writes a new file into `dir` and never replaces one: if `name` was created in the meantime
+/// (by another program), the next free `-N` name is used.
+fn write_new(dir: &std::path::Path, name: &str, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    write_new_with(dir, name, |f| f.write_all(data))
+}
+
+/// `write_new` with the writing step passed in. A failed write removes the file it just created
+/// (no half-written export next to a retry); files that existed before are never touched.
+fn write_new_with(
+    dir: &std::path::Path,
+    name: &str,
+    write: impl Fn(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), String> {
+    let failed = |e: std::io::Error| format!("Die Datei konnte nicht geschrieben werden: {e}");
+    for i in 1..=100 {
+        let path = dir.join(view::numbered_file_name(name, i));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                let written = write(&mut f);
+                // close before removing: Windows cannot delete an open file
+                drop(f);
+                return match written {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&path);
+                        Err(failed(e))
+                    }
+                };
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(failed(e)),
+        }
+    }
+    Err("Im Ordner ist kein freier Dateiname mehr verfügbar.".to_string())
 }
 
 fn file_name(path: &std::path::Path) -> String {
@@ -571,15 +611,67 @@ fn wire_import(win: &MainWindow) {
 
 type Period = (Option<String>, Option<String>);
 
+fn export_period(win: &MainWindow) -> Result<Period, String> {
+    let gs = win.global::<SettingsImportState>();
+    let from = view::parse_day(&gs.get_date_from())?;
+    let to = view::parse_day(&gs.get_date_to())?;
+    Ok((from, to))
+}
+
 fn export_account(win: &MainWindow) -> Result<(i64, Period), String> {
     let gs = win.global::<SettingsImportState>();
     let (id, _) = usize::try_from(gs.get_acc())
         .ok()
         .and_then(|i| with_ui(|u| u.accounts.get(i).cloned()))
         .ok_or("Kein Konto vorhanden.".to_string())?;
-    let from = view::parse_day(&gs.get_date_from())?;
-    let to = view::parse_day(&gs.get_date_to())?;
-    Ok((id, (from, to)))
+    Ok((id, export_period(win)?))
+}
+
+/// One account's bookings in the period as CSV text (built by the core) and their count.
+fn account_csv(
+    v: &Vault,
+    id: i64,
+    (from, to): &Period,
+    opts: view::CsvOptions,
+    with_balance: bool,
+) -> Result<(String, usize), String> {
+    let page = v
+        .list_transactions(BookingFilter {
+            account_ids: vec![id],
+            date_from: from.clone(),
+            date_to: to.clone(),
+            limit: 0,
+            with_balances: opts.running_balance,
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?;
+    let balances: HashMap<i64, i64> = page
+        .running_balances
+        .iter()
+        .map(|b| (b.booking_id, b.balance_cents))
+        .collect();
+    let mut list = page.transactions;
+    list.sort_by(|a, b| a.booking_date.cmp(&b.booking_date).then(a.id.cmp(&b.id)));
+    let balance_lines = if with_balance {
+        v.list_accounts()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|a| a.id == id)
+            .map(|a| ExportCsvBalanceLine {
+                name: a.name,
+                balance_cents: a.balance_cents,
+                currency: a.currency,
+                date: a.balance_date,
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    let rows = view::export_rows(&list, &balances);
+    Ok((
+        export_csv(rows, view::csv_columns(opts), balance_lines),
+        list.len(),
+    ))
 }
 
 fn wire_export(win: &MainWindow) {
@@ -590,56 +682,63 @@ fn wire_export(win: &MainWindow) {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_now()) else {
             return;
         };
-        let (id, (from, to)) = match export_account(&win) {
+        let gs = win.global::<SettingsImportState>();
+        // `None` = one file per account in a chosen folder.
+        let target = if gs.get_per_account() {
+            export_period(&win).map(|p| (None, p))
+        } else {
+            export_account(&win).map(|(id, p)| (Some(id), p))
+        };
+        let (id, period) = match target {
             Ok(x) => x,
             Err(e) => return set_status(&win, e),
         };
-        let gs = win.global::<SettingsImportState>();
-        let columns = ExportCsvColumns {
+        let opts = view::CsvOptions {
             category: gs.get_col_category(),
             note: gs.get_col_note(),
-            daily_balance: false,
-            running_balance: false,
-            iban: false,
-            tags: false,
+            iban: gs.get_col_iban(),
+            running_balance: gs.get_col_running_balance(),
         };
         let with_balance = gs.get_col_balance();
         spawn(
             &win,
             "Wird exportiert …",
             move || {
-                let page = v
-                    .list_transactions(BookingFilter {
-                        account_ids: vec![id],
-                        date_from: from,
-                        date_to: to,
-                        limit: 0,
-                        ..Default::default()
-                    })
-                    .map_err(|e| e.to_string())?;
-                let mut list = page.transactions;
-                list.sort_by(|a, b| a.booking_date.cmp(&b.booking_date).then(a.id.cmp(&b.id)));
-                let balance_lines = if with_balance {
-                    v.list_accounts()
-                        .map_err(|e| e.to_string())?
-                        .into_iter()
-                        .filter(|a| a.id == id)
-                        .map(|a| ExportCsvBalanceLine {
-                            name: a.name,
-                            balance_cents: a.balance_cents,
-                            currency: a.currency,
-                            date: a.balance_date,
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
-                let csv = export_csv(view::export_rows(&list), columns, balance_lines);
-                let name = view::export_file_name("csv", &view::today(now_secs()));
-                let path = save_file("Umsätze exportieren", &name)
+                let today = view::today(now_secs());
+                if let Some(id) = id {
+                    let (csv, n) = account_csv(&v, id, &period, opts, with_balance)?;
+                    let name = view::export_file_name("csv", &today);
+                    let path = save_file("Umsätze exportieren", &name)
+                        .ok_or("Export abgebrochen.".to_string())?;
+                    write_bytes(&path, csv.as_bytes())?;
+                    return Ok(format!("{n} Umsätze exportiert."));
+                }
+                // Current accounts, not the menu cache: an import in this dialog may have
+                // created an archive account since it was opened.
+                let accounts: Vec<(i64, String)> = v
+                    .list_accounts()
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|a| (a.id, a.name))
+                    .collect();
+                if accounts.is_empty() {
+                    return Err("Kein Konto vorhanden.".to_string());
+                }
+                let dir = pick_dir("Ordner für die CSV-Dateien wählen")
                     .ok_or("Export abgebrochen.".to_string())?;
-                write_bytes(&path, csv.as_bytes())?;
-                Ok(format!("{} Umsätze exportiert.", list.len()))
+                let names: Vec<String> = accounts.iter().map(|(_, n)| n.clone()).collect();
+                let files = view::per_account_file_names(&names, &today, |f| dir.join(f).exists());
+                let mut total = 0;
+                for ((id, _), name) in accounts.iter().zip(&files) {
+                    let (csv, n) = account_csv(&v, *id, &period, opts, with_balance)?;
+                    write_new(&dir, name, csv.as_bytes())?;
+                    total += n;
+                }
+                // Counts only: no account names or paths in the status line (privacy mode).
+                Ok(match files.len() {
+                    1 => format!("1 Datei mit {total} Umsätzen gespeichert."),
+                    k => format!("{k} Dateien mit {total} Umsätzen gespeichert."),
+                })
             },
             set_status,
         );
@@ -1065,4 +1164,50 @@ fn wire_news(win: &MainWindow) {
         gs.invoke_tab_changed(5);
         gs.invoke_news_select(0);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{write_new, write_new_with};
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("girocrab-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn failed_write_leaves_no_partial_file() {
+        use std::io::Write;
+        let dir = temp_dir("write-fail");
+        std::fs::write(dir.join("vorher.csv"), b"alt").unwrap();
+        let r = write_new_with(&dir, "a.csv", |f| {
+            f.write_all(b"teil")?;
+            Err(std::io::Error::other("Datenträger voll"))
+        });
+        assert!(r.is_err());
+        assert!(!dir.join("a.csv").exists());
+        assert!(!dir.join("a-2.csv").exists());
+        // files written before stay untouched
+        assert_eq!(std::fs::read(dir.join("vorher.csv")).unwrap(), b"alt");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn per_account_write_never_replaces_a_file() {
+        let dir = temp_dir("write-new");
+        // appeared after the names were planned
+        std::fs::write(dir.join("a.csv"), b"fremd").unwrap();
+        write_new(&dir, "a.csv", b"neu").unwrap();
+        assert_eq!(std::fs::read(dir.join("a.csv")).unwrap(), b"fremd");
+        assert_eq!(std::fs::read(dir.join("a-2.csv")).unwrap(), b"neu");
+        // a free name is written directly
+        write_new(&dir, "b.csv", b"frei").unwrap();
+        assert_eq!(std::fs::read(dir.join("b.csv")).unwrap(), b"frei");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

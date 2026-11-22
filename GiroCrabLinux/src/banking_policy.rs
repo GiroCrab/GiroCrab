@@ -394,6 +394,7 @@ pub fn display_name(id: &str) -> String {
         "equateplus" => "EquatePlus",
         "quirion" => "quirion",
         "uberspace" => "Uberspace",
+        "bitcoincore" => "Bitcoin Core",
         "schwaebischhall" => "Schwäbisch Hall",
         "fin4u" => "Alte Leipziger",
         "ffb" => "FFB",

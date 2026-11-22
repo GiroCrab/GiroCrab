@@ -271,10 +271,13 @@ fn normalize_amount(raw: &str) -> Option<i64> {
     parse_cents(s).ok().filter(|&c| c > 0)
 }
 
-/// [`normalize_amount`] for the platforms (ZUGFeRD amounts): cents, or `None`
-/// when the text is no positive amount.
+/// Invoice amounts for the platforms (ZUGFeRD `xs:decimal` such as "119.000",
+/// or display text such as "1.234,56"): cents, or `None` when the text is no
+/// positive amount.
 pub fn parse_amount_loose(text: String) -> Option<i64> {
-    normalize_amount(&text)
+    crate::money::loose_decimal(&text)
+        .and_then(crate::money::cents)
+        .filter(|&c| c > 0)
 }
 
 // MARK: EPC QR (GiroCode)

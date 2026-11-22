@@ -1,17 +1,20 @@
 import Foundation
 
-/// Interval logic of the scheduled balance fetch (Einstellungen › Allgemein ›
-/// „Automatischer Abruf“, GiroCrab/GiroCrab#546). Pure functions: the loop in
-/// `AppModel.autoSyncTick` only asks them, so the rules are unit-tested.
+/// Interval logic for the scheduled fetch of each bank connection.
 enum AutoSync {
-    /// Hours between two automatic fetches, stored in `UserDefaults` (0 = off).
-    /// Outside the vault on purpose: it is known while the vault is locked and
-    /// right after a relaunch, before anything is unlocked.
+    /// The former global interval, inherited by connections without their own schedule.
     static let hoursKey = "autoSync.hours"
     /// Last automatic attempt per connection (`autoSync.attempt.<id>`, Unix seconds).
     static let attemptKeyPrefix = "autoSync.attempt."
-    /// Offered in the picker; 0 = off (default).
+    /// Offered in the picker; 0 = manual only.
     static let hourOptions = [0, 1, 2, 4, 6, 12, 24]
+
+    /// Schedule stored in the vault under the connection's local ID.
+    /// Positive values are hours, zero is manual only, and -1 excludes the connection.
+    static let never = -1
+    static let scheduleOptions = hourOptions + [never]
+
+    static func scheduleKey(_ connectionID: Int64) -> String { "sync.schedule.\(connectionID)" }
 
     enum Decision: Equatable {
         /// Interval off.
@@ -46,7 +49,8 @@ enum AutoSync {
     /// Picker / menu wording of an interval.
     static func label(_ hours: Int) -> String {
         switch hours {
-        case 0: return String(localized: "Aus")
+        case never: return String(localized: "Nie")
+        case 0: return String(localized: "Nur manuell")
         case 1: return String(localized: "Jede Stunde")
         default: return String(localized: "Alle \(hours) Stunden")
         }

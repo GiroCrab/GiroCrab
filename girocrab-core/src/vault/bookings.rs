@@ -1545,7 +1545,7 @@ mod paging_tests {
     use std::sync::Arc;
 
     fn demo() -> (Arc<Vault>, std::path::PathBuf) {
-        let p = std::env::temp_dir().join(format!("girocrab-page-{}.db", uuid::Uuid::new_v4()));
+        let p = crate::test_support::thread_temp_path("page.db");
         let v = Vault::open(p.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
         v.seed_demo_data().unwrap();
         (v, p)
@@ -2567,6 +2567,8 @@ mod list_cache_tests {
                     BookingDirection::All,
                     min,
                     max,
+                    vec![],
+                    false,
                 )
                 .unwrap())
         };

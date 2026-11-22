@@ -28,7 +28,7 @@ QtObject {
         "square.and.arrow.down.on.square": "document-import",
         "exclamationmark.triangle": "dialog-warning", "exclamationmark.shield": "security-low", "globe": "globe-symbolic",
         "person": "im-user", "tray": "mail-folder-inbox", "chart.bar.xaxis": "office-chart-bar", "chart.bar": "office-chart-bar",
-        "chart.pie": "office-chart-pie", "arrow.down": "view-financial-category-income",
+        "chart.pie": "office-chart-pie", "chart.xyaxis.line": "office-chart-line", "arrow.down": "view-financial-category-income",
         "arrow.left.arrow.right": "exchange-positions", "cart": "view-financial-category-expense",
         "car": "car", "tram": "car", "fuelpump": "car", "fork.knife": "fork", "takeoutbag.and.cup.and.straw": "fork",
         "bag": "view-financial-category-expense", "shippingbox": "package", "gift": "favorite", "sofa": "go-home",
@@ -65,6 +65,9 @@ QtObject {
         "figure.mind.and.body": "games-hint", "bed.double": "weather-clear-night", "scissors": "edit-cut",
         "umbrella": "weather-showers", "tshirt": "view-financial-category-expense", "star": "starred", "flag": "flag",
         "cloud": "weather-overcast", "questionmark.circle": "dialog-question",
+        "motorcycle": "car", "pianokeys": "folder-music", "guitars": "folder-music", "dog": "im-user-online",
+        "cat": "im-user-online", "fish": "im-user-online", "chevron.left.forwardslash.chevron.right": "code-context",
+        "suitcase.rolling": "view-financial-account",
         // rule editor / category menu
         "arrow.turn.down.right": "go-next", "arrow.up.to.line": "go-top", "pause": "media-playback-pause",
         "plus.circle": "list-add",
@@ -76,6 +79,7 @@ QtObject {
         "minus.circle": "list-remove", "arrow.clockwise": "view-refresh", "diamond": "view-financial-account-asset", "creditcard.fill": "view-financial-account-credit-card",
         // filled variants (SyncLog outcome, RecurringSheet): Breeze has no filled circles, same icon as the outline
         "checkmark.circle.fill": "dialog-ok-apply", "exclamationmark.triangle.fill": "dialog-warning", "minus.circle.fill": "list-remove",
+        "exclamationmark.circle.fill": "dialog-information",
         // Tresor sichern (VaultBackupUI), RAH-10 key file (Rah10AddForm)
         "externaldrive.badge.plus": "document-save-all", "doc.badge.key": "document-encrypt",
         // booking list and inspector (tags #228, merchant list #495, category menu #366)

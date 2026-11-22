@@ -69,6 +69,17 @@ enum Theme {
     static let investSpec = ThemeShade(light: "#1F7A5C", dark: "#5EC79F", lightHighContrast: "#176B4F", darkHighContrast: "#86EFAC")
     static let negativeSpec = ThemeShade(light: "#B91C1C", dark: "#F87171", lightHighContrast: "#991B1B", darkHighContrast: "#FCA5A5")
 
+    /// System surfaces for the flat main columns: they follow Light/Dark and
+    /// the user's accent/accessibility settings instead of a hardcoded white.
+    #if os(macOS)
+    static let systemSurface = Color(nsColor: .controlBackgroundColor)
+    static let systemBackground = Color(nsColor: .windowBackgroundColor)
+    static let systemSeparator = Color(nsColor: .separatorColor)
+    #else
+    static let systemSurface = Color(uiColor: .secondarySystemBackground)
+    static let systemBackground = Color(uiColor: .systemBackground)
+    static let systemSeparator = Color(uiColor: .separator)
+    #endif
     static let border = borderSpec.color
     static let text = textSpec.color
     static let secondary = secondarySpec.color
@@ -142,6 +153,29 @@ extension View {
     func card(padding: CGFloat = 16, vertical: CGFloat? = nil) -> some View { modifier(CardBackground(padding: padding, vertical: vertical)) }
 }
 
+/// Flat section of the main columns (overview, KPI bar, analyses, stream and
+/// inspector): the same inset as a card, but without the rounded tile, the
+/// hairline stroke or the shadow. Sections are separated by full-width
+/// `Divider()`s and a clear typographic hierarchy instead.
+struct FlatSectionBackground: ViewModifier {
+    let horizontal: CGFloat
+    let vertical: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, horizontal)
+            .padding(.vertical, vertical)
+    }
+}
+
+extension View {
+    func flatSection(horizontal: CGFloat = ViewLayout.sectionInset,
+                     vertical: CGFloat = ViewLayout.sectionPadding) -> some View {
+        modifier(FlatSectionBackground(horizontal: horizontal, vertical: vertical))
+    }
+}
+
 enum Money {
     private static let currency: NumberFormatter = {
         let f = NumberFormatter()
@@ -186,30 +220,13 @@ enum Money {
         (decimal.string(from: (Decimal(cents) / 100) as NSDecimalNumber) ?? "\(cents)").replacingOccurrences(of: "-", with: "−")
     }
 
-    /// User input -> cents, accepting the user's locale ("280.000,50" in German,
-    /// "280,000.50" in English) as well as plain "280000.5" (Decimal, never Double).
-    /// Both separators present: the last one is the decimal separator. Only one
-    /// kind present: it is a grouping separator if it is the locale's grouping
-    /// separator and every group after it has exactly three digits. The minus sign `plain`
-    /// writes ("−", U+2212) and an en dash count as "-": a field filled with `plain` parses back.
+    /// User input -> cents ("1.234,56", "1,234.56", "1.500"), or nil when it
+    /// is no amount. The core decides, so every amount field reads text alike.
+    /// The minus sign `plain` writes ("−", U+2212) and an en dash count as "-":
+    /// a field filled with `plain` parses back.
     static func parseCents(_ input: String) -> Int64? {
         let t = input.replacingOccurrences(of: "−", with: "-").replacingOccurrences(of: "–", with: "-")
-            .filter { !($0.isCurrencySymbol || $0.isWhitespace || $0 == "'") }
-        guard !t.isEmpty else { return nil }
-        let seps: Set<Character> = [".", ","]
-        let used = Set(t.filter { seps.contains($0) })
-        var normalized = t
-        if used.count == 2, let last = t.last(where: { seps.contains($0) }) {
-            let grouping: Character = last == "," ? "." : ","
-            normalized = t.replacingOccurrences(of: String(grouping), with: "").replacingOccurrences(of: String(last), with: ".")
-        } else if let sep = used.first {
-            let groups = t.split(separator: sep, omittingEmptySubsequences: false)
-            let localeGrouping = Locale.autoupdatingCurrent.groupingSeparator.flatMap(\.first)
-            let isGrouping = (sep == localeGrouping || groups.count > 2) && groups.dropFirst().allSatisfy { $0.count == 3 }
-            normalized = isGrouping ? t.replacingOccurrences(of: String(sep), with: "") : t.replacingOccurrences(of: String(sep), with: ".")
-        }
-        guard let d = Decimal(string: normalized, locale: Locale(identifier: "en_US_POSIX")) else { return nil }
-        return NSDecimalNumber(decimal: d * 100).rounding(accordingToBehavior: nil).int64Value
+        return try? parseAmountToCents(text: t)
     }
 
     static func ink(_ cents: Int64) -> Color { cents > 0 ? Theme.inflow : Theme.outflow }
@@ -502,6 +519,7 @@ extension ConnectorKind {
         case .alteLeipziger: return "Alte Leipziger"
         case .volkswagenBank: return "Volkswagen Bank"
         case .uberspace: return "Uberspace"
+        case .bitcoinCore: return "Bitcoin Core"
         case .schwaebischHall: return "Schwäbisch Hall"
         case .ffb: return "FFB (FIL Fondsbank)"
         case .fordMoney: return "Ford Money"
@@ -537,6 +555,7 @@ extension ConnectorKind {
         case .alteLeipziger: return "#BE0D3E"
         case .volkswagenBank: return "#001E50"
         case .uberspace: return "#2C3E50"
+        case .bitcoinCore: return "#F7931A"
         case .schwaebischHall: return "#004F9F"
         case .ffb: return "#1C5A8C"
         case .fordMoney: return "#20396E"
@@ -579,6 +598,7 @@ extension ConnectorKind {
         case .alteLeipziger: return "AL"
         case .volkswagenBank: return "VW"
         case .uberspace: return "US"
+        case .bitcoinCore: return "BC"
         case .schwaebischHall: return "SH"
         case .ffb: return "FFB"
         case .fordMoney: return "FM"
