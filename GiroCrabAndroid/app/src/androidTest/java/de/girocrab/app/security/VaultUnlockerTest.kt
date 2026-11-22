@@ -178,6 +178,30 @@ class VaultUnlockerTest {
         assertFalse("an invalidated key must not prompt", prompted)
     }
 
+    /**
+     * The catch that guards a prompt which never calls back must not answer on top of an answer:
+     * a caller that throws while handling the result would otherwise receive a refusal instead of
+     * the opened vault, and the lock screen would show the wrong reason.
+     */
+    @Test
+    fun throwingCallerIsAnsweredOnlyOnce() {
+        storeWrappedKey()
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        val results = mutableListOf<UnlockResult>()
+        unlocker.unlock { result ->
+            results += result
+            throw IllegalStateException("Oberfläche scheitert beim Lesen der Kontozahl")
+        }
+
+        assertEquals("exactly one answer, was $results", 1, results.size)
+        val opened = results.single() as? UnlockResult.Opened
+        assertTrue("expected the opened vault, was ${results.single()}", opened != null)
+        opened!!.vault.close()
+    }
+
     // --- helpers ---------------------------------------------------------------------------
 
     private fun unlocker(prompt: CipherPrompt) = VaultUnlocker(
