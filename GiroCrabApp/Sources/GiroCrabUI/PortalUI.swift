@@ -13,7 +13,7 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .sharinbox, .schwaebischHall, .equatePlus].contains(c.connector) { return true }
+        if !isDemo, [.advanzia, .airPlus, .amazonOrders, .fnz, .quirion, .sharinbox, .schwaebischHall, .equatePlus].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         // the card's own application (#824) or the default one
         let app = connectionEnableBankingApp(c.id)
@@ -180,6 +180,7 @@ extension ConnectorKind {
         case .equatePlus: return URL(string: "https://www.equateplus.com/EquatePlusParticipant2/?login")
         case .quirion: return URL(string: "https://banking.quirion.de/login/")
         case .sharinbox: return URL(string: "https://sharinbox.sgmarkets.com/home")
+        case .airPlus: return URL(string: AirPlusScripts.origin + "/")
         case .schwaebischHall: return SchwaebischHallScripts.loginURL
         case .fnz: return URL(string: "https://portal.fnz.de/")
         case .amazonOrders: return URL(string: "https://www.amazon.de/gp/css/order-history")
@@ -207,6 +208,7 @@ extension ConnectorKind {
         case .quirion: return ["banking.quirion.de"]
         // sign-in runs on sso.sgmarkets.com (SG Connect); the data pages are served by sharinbox.*
         case .sharinbox: return ["sharinbox.sgmarkets.com", "sso.sgmarkets.com"]
+        case .airPlus: return ["businesstravelportal.airplus.com", "sso.service.airplus.com"]
         case .schwaebischHall: return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         default: return []
         }

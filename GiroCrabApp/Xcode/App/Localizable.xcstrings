@@ -385,6 +385,17 @@
         }
       }
     },
+    "%@ – AirPlus" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ – AirPlus"
+          }
+        }
+      }
+    },
     "%@ – Amazon-Konto" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3434,6 +3445,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Advanzia: %lld accounts updated, %lld new transactions."
+          }
+        }
+      }
+    },
+    "AirPlus: %u Konten aktualisiert, %u neue Buchungen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AirPlus: %1$u accounts updated, %2$u new transactions."
+          }
+        }
+      }
+    },
+    "AirPlus: Die Portalantwort konnte nicht gelesen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AirPlus: The portal response could not be read."
           }
         }
       }
@@ -22424,6 +22457,17 @@
         }
       }
     },
+    "Melden Sie sich bei AirPlus an, bestätigen Sie die TAN und öffnen Sie die Umsatzübersicht Ihrer Karte." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in to AirPlus, confirm the TAN and open the transaction overview of your card."
+          }
+        }
+      }
+    },
     "Melden Sie sich bei Amazon an (Passwort, Captcha, 2FA wie gewohnt)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23554,6 +23598,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New"
+          }
+        }
+      }
+    },
+    "Neu anmelden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in again"
           }
         }
       }
@@ -31409,6 +31464,17 @@
         }
       }
     },
+    "Umsatzübersicht erkannt – die Umsätze können abgerufen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction overview detected – the transactions can be fetched."
+          }
+        }
+      }
+    },
     "Umstellen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31438,6 +31504,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bookings from the date"
+          }
+        }
+      }
+    },
+    "Umsätze abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch transactions"
+          }
+        }
+      }
+    },
+    "Umsätze abrufen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetching transactions …"
           }
         }
       }

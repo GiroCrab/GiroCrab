@@ -79,6 +79,9 @@ pub enum ConnectorKind {
     HanseaticBank,
     /// Monefit SmartSaver savings account via the web app's JSON API (unofficial).
     Monefit,
+    /// AirPlus Corporate Card (#1143): booked card bookings via the business travel portal,
+    /// authenticated inside the embedded browser (SMS TAN).
+    AirPlus,
 }
 
 impl ConnectorKind {
@@ -116,6 +119,7 @@ impl ConnectorKind {
             ConnectorKind::Kontist => "kontist",
             ConnectorKind::HanseaticBank => "hanseatic",
             ConnectorKind::Monefit => "monefit",
+            ConnectorKind::AirPlus => "airplus",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -182,6 +186,7 @@ impl ConnectorKind {
             ConnectorKind::Finpension,
             ConnectorKind::Kontist,
             ConnectorKind::Monefit,
+            ConnectorKind::AirPlus,
         ]
     }
 }
