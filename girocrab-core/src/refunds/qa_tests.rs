@@ -3,6 +3,7 @@ use super::*;
 use crate::{models::*, offline::ManualBookingSetup, test_support::TempDir};
 #[test]
 fn outgoing_split_credit_repaying_an_income_fee_keeps_flow_attribution() {
+    let date = "2025-02-10";
     for amount in [-5000, 0] {
         let (_d, v, a) = fixture();
         let (expense, credit) = categories(&v);
@@ -14,14 +15,14 @@ fn outgoing_split_credit_repaying_an_income_fee_keeps_flow_attribution() {
             let db = v.db().unwrap();
             db.execute(
                 "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,counterparty,purpose) VALUES (?1,'ZERO',?2,0,'QA vendor','')",
-                params![a, crate::dates::today_iso()],
+                params![a, date],
             )
             .unwrap();
             db.last_insert_rowid()
         } else {
-            booking(&v, a, amount)
+            add(&v, a, amount, date, "QA vendor", "")
         };
-        let income = booking(&v, a, 9500);
+        let income = add(&v, a, 9500, date, "QA vendor", "");
         v.set_transaction_splits(
             refund,
             vec![part(expense, -10000), part(credit, 10000 + amount)],
@@ -55,9 +56,9 @@ fn outgoing_split_credit_repaying_an_income_fee_keeps_flow_attribution() {
                 (flow.income_cents, flow.consumption_cents),
                 (whole.0, -whole.1)
             );
-            let periods = v
-                .cashflow_by_period(PeriodGranularity::Month, 1, None, false)
-                .unwrap();
+            let periods =
+                crate::planning::cashflow_for(&v, PeriodGranularity::Month, 1, &[], 2025, 2, false)
+                    .unwrap();
             assert_eq!(
                 (periods[0].income_cents, periods[0].expense_cents),
                 (whole.0, -whole.1)
