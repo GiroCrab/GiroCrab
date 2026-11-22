@@ -158,7 +158,7 @@ Item {
     try { if (isCard(k)) this.__gcc = String(v); } catch (e) {}
     return oh.apply(this, arguments); };
   XMLHttpRequest.prototype.open = function(m, u) {
-    this.__gcu = u;
+    this.__gcu = u; this.__gcc = undefined;   // a reused request must not keep the previous card's key
     this.addEventListener('load', function() { try { if (this.responseType === '' || this.responseType === 'text') post(this.__gcu, this.responseText, this.__gcc); } catch (e) {} });
     return ox.apply(this, arguments); };
 })();`

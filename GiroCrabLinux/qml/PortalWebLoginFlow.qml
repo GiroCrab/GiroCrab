@@ -78,6 +78,13 @@ WebLoginFlow {
     property string listCard: ""
     /// The card the portal is being switched to, and the card shown before the switch.
     property var expectedCard: null
+    /// When the switch to `expectedCard` began: the round waits for its bookings, at most
+    /// `cardResponseLimit` ms, so a late answer is never stored under the next card's name.
+    property real expectedSince: 0
+    readonly property int cardResponseLimit: 20000
+    /// Cards that could not be opened (selection refused or no answer in time): the round
+    /// says so at its end instead of leaving them out silently.
+    property var failedCards: []
     /// Cards of the switcher still to open; null until the switcher was read.
     property var cardQueue: null
     /// The card the portal is switching to right now ("" = none).
@@ -145,25 +152,42 @@ return true;`
             done(list)
         }, () => done({ current: "", cards: [] }))
     }
+    /// `done(true)` once the portal took the selection, `done(false)` if it refused it.
     function selectAmexCard(name, number, done) {
         expectedCard = { name: name, number: number, previous: listCard }
+        expectedSince = Date.now()
         browser.runAsync(selectAmexCardJS, { number: number }, browser.mainWorld).then(ok => {
             if (ok !== true) expectedCard = null
-            done()
-        }, () => { expectedCard = null; done() })
+            done(ok === true)
+        }, () => { expectedCard = null; done(false) })
     }
     /// PortalWebSheet.openNextCard: switches the portal to the next card not seen yet.
     /// `done(true)` while switching (the caller waits for its bookings), `done(false)` once
     /// every card was opened.
     function openNextCard(done) {
         const next = () => {
-            if (!cardQueue || !cardQueue.length) { loadingCard = ""; done(false); return }
+            if (!cardQueue || !cardQueue.length) {
+                loadingCard = ""
+                if (failedCards.length) {
+                    console.info("portal cards: " + failedCards.length + " not opened")
+                    AppModel.toast = qsTr("Nicht alle Karten ließen sich öffnen – übernommen werden die bisher geladenen Karten.")
+                    failedCards = []
+                }
+                done(false)
+                return
+            }
             const card = cardQueue[0]
             cardQueue = cardQueue.slice(1)
             loadingCard = card.name
-            selectAmexCard(card.name, card.number, () => done(true))
+            // a card the portal does not select is noted and skipped, not waited for
+            selectAmexCard(card.name, card.number, ok => {
+                if (ok) { done(true); return }
+                failedCards = failedCards.concat([card.name])
+                next()
+            })
         }
         if (cardQueue !== null) { next(); return }
+        failedCards = []
         amexCards(list => {
             let queue = list.cards
             const current = list.cards.find(c => c.number === list.current)
@@ -315,7 +339,14 @@ return true;`
         }
         // PortalWebSheet.switchesCard: also while older billing periods are browsed – switching
         // cards neither imports nor closes the sheet (#1010).
-        if (kind === "AmericanExpress" && n > 0 && !away && Date.now() - lastChange > 4000 && !p.cardsOpened) {
+        // The open answer of the card switched to comes first: a late one would otherwise be
+        // stored under the next card. Without an answer in time the card counts as not opened.
+        if (expectedCard !== null && Date.now() - expectedSince > cardResponseLimit) {
+            failedCards = failedCards.concat([expectedCard.name])
+            expectedCard = null
+        }
+        if (kind === "AmericanExpress" && n > 0 && !away && Date.now() - lastChange > 4000 && !p.cardsOpened
+                && expectedCard === null) {
             openNextCard(switching => {
                 if (finished) return
                 if (switching) { lastChange = Date.now(); ticking = false }
