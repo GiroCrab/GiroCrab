@@ -40,7 +40,18 @@ pub(crate) struct Info {
 }
 
 type ScopedRows = HashMap<Option<Vec<i64>>, Arc<Vec<Row>>>;
-type MatchingIds = HashMap<(Option<i64>, bool, bool, u8, Option<String>), String>;
+type MatchingIds = HashMap<
+    (
+        Option<i64>,
+        bool,
+        bool,
+        u8,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+    String,
+>;
 
 pub(crate) struct Projection {
     base: Vec<Row>,
@@ -338,6 +349,8 @@ impl Vault {
             filter.uncategorized_only,
             filter.scope as u8,
             filter.merchant_key.clone(),
+            filter.date_from.clone(),
+            filter.date_to.clone(),
         );
         if let Some(ids) = projection.matching_ids.lock().unwrap().get(&key) {
             return Ok(ids.clone());
@@ -369,6 +382,14 @@ impl Vault {
                 (filter.category_id.is_none()
                     || r.category_id.is_some_and(|c| categories.contains(&c)))
                     && (!filter.uncategorized_only || r.category_id.is_none())
+                    && filter
+                        .date_from
+                        .as_ref()
+                        .is_none_or(|date| projection.info[&r.booking_id].date >= *date)
+                    && filter
+                        .date_to
+                        .as_ref()
+                        .is_none_or(|date| projection.info[&r.booking_id].date <= *date)
                     && keeps(filter, r.flow, &projection.info[&r.booking_id].merchant)
             })
             .map(|r| r.booking_id)

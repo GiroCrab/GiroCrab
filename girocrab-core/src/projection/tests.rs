@@ -4,6 +4,39 @@ use crate::test_support::TempDir;
 use rusqlite::params;
 use serde_json::{Value, json};
 
+#[test]
+fn category_match_cache_separates_date_ranges_and_revisions() {
+    let f = Fixture::new();
+    let first = f.add_on(f.account, -1000, Some(f.cost), "EUR", "2020-01-01");
+    let second = f.add_on(f.account, -2000, Some(f.cost), "EUR", "2020-02-01");
+    let ids = |from: Option<&str>, to: Option<&str>| {
+        let db = f.v.db().unwrap();
+        serde_json::from_str::<Vec<i64>>(
+            &f.v.projected_booking_ids(
+                &db,
+                &BookingFilter {
+                    category_id: Some(f.root),
+                    include_subcategories: true,
+                    date_from: from.map(str::to_string),
+                    date_to: to.map(str::to_string),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<HashSet<_>>()
+    };
+    assert_eq!(ids(None, None), HashSet::from([first, second]));
+    assert_eq!(ids(None, Some("2020-01-31")), HashSet::from([first]));
+    assert_eq!(ids(Some("2020-02-01"), None), HashSet::from([second]));
+    assert!(ids(Some("2021-01-01"), None).is_empty());
+    assert_eq!(ids(None, None), HashSet::from([first, second]));
+    let third = f.add_on(f.account, -3000, Some(f.cost), "EUR", "2020-01-15");
+    assert_eq!(ids(None, Some("2020-01-31")), HashSet::from([first, third]));
+}
+
 struct Fixture {
     _dir: TempDir,
     v: Arc<Vault>,

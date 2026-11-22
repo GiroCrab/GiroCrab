@@ -1122,9 +1122,8 @@ impl Vault {
         self.list_cache.at(self.data_stamp(db)).classes.clone()
     }
 
-    /// `list_transactions`; `with_rows: false` returns the sums and counts without rows
-    /// (`selection_flow`). The sums come from `booking_classes` and an id/amount query,
-    /// and only the returned page is read in full and enriched.
+    /// `list_transactions`; `with_rows: false` returns counts and projected totals
+    /// without enriching proof rows.
     pub(crate) fn list_page(
         &self,
         filter: BookingFilter,
@@ -1159,26 +1158,19 @@ impl Vault {
         with_rows: bool,
     ) -> Result<Option<BookingPage>, CoreError> {
         let classes = self.booking_classes(db)?;
-        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
+        let (cte, where_sql, args, _) = self.filter_clauses(db, filter)?;
         let order = if with_rows {
             " ORDER BY t.booking_date DESC, t.id DESC"
         } else {
             ""
         };
-        let sql = format!(
-            "{cte}SELECT t.id, t.booking_date, t.account_id, {share_sql}, t.currency {BOOKING_FROM_SQL} WHERE {where_sql}{order}"
-        );
+        let sql =
+            format!("{cte}SELECT t.id, t.booking_date {BOOKING_FROM_SQL} WHERE {where_sql}{order}");
         let mut stmt = db.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(args.iter().map(|b| b.as_ref())), |r| {
             // the date only cuts the page: counts and sums skip the String
             let date = if with_rows { r.get(1)? } else { String::new() };
-            Ok((
-                r.get::<_, i64>(0)?,
-                date,
-                r.get::<_, i64>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, String>(4)?,
-            ))
+            Ok((r.get::<_, i64>(0)?, date))
         })?;
         let crate::projection::Totals {
             income_cents: income,
@@ -1191,7 +1183,7 @@ impl Vault {
         let mut kept: Vec<(i64, String)> = Vec::new();
         let mut total = 0u32;
         for row in rows {
-            let (id, date, _, _, _) = row?;
+            let (id, date) = row?;
             let Some(class) = classes.get(&id) else {
                 return Ok(None);
             };
