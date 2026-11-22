@@ -52,13 +52,14 @@ final class AirPlusTests: XCTestCase {
           var body = JSON.parse(b);
           window.fetchCalls.push({url: this.opened, headers: this.sent, body: body});
           var rows = [];
-          var total = 70;
+          var total = window.mockTotal || 70;
           var first = (body.PageIndex - 1) * body.PageSize;
           for (var i = first; i < Math.min(total, first + body.PageSize); i++) {
             rows.push({AuthorizationNo: 'id-' + i, AuthorizationDate: '2026-03-04T00:00:00+00:00',
               SalesDate: '2026-03-03T00:00:00+00:00', MerchantName: 'BEISPIEL ' + i, MerchantCityName: 'MUSTERSTADT',
               SettledAmount: {Value: 10 + i, Currency: {Code: 'EUR'}}, TransactionType: 'HotelStay', CardNumber: 'must-not-leak'});
           }
+          if (window.onReplay) window.onReplay();
           this.status = window.replyStatus || 200;
           this.responseText = JSON.stringify({Item: {Authorizations: rows, TotalRowCount: total}});
           this.onload();
@@ -150,5 +151,34 @@ final class AirPlusTests: XCTestCase {
             "WKJavaScriptExceptionMessage": "AirPlus: Abruf fehlgeschlagen (HTTP 400). Bitte erneut anmelden."])
         XCTAssertEqual(AirPlusWebSheet.message(thrown), "AirPlus: Abruf fehlgeschlagen (HTTP 400). Bitte erneut anmelden.")
         XCTAssertEqual(AirPlusWebSheet.message(NSError(domain: "x", code: 1, userInfo: [NSLocalizedDescriptionKey: "plain"])), "plain")
+    }
+
+    func testStopsWithAnErrorWhenTheListIsLongerThanThePageLimit() {
+        let context = makeContext()
+        portalLoadsBookingList(context)
+        context.evaluateScript("window.mockTotal = 20000;")
+        XCTAssertNil(collect(context))
+        XCTAssertEqual(context.objectForKeyedSubscript("failure").toString(),
+            "AirPlus: Die Umsatzliste ist zu lang und wurde nicht vollständig abgerufen.")
+    }
+
+    func testKeepsTheRequestOfTheCardItStartedWith() throws {
+        let context = makeContext()
+        portalLoadsBookingList(context)
+        // while the pages load the portal sends the list request of another card
+        context.evaluateScript("""
+        window.onReplay = function() {
+          window.onReplay = null;
+          var y = new XMLHttpRequest();
+          y.open('POST', '/call/directive/VbExampleDirective/GetAccountCardTransactionListTransaction');
+          y.setRequestHeader('x-xsrf-token', 'other-token');
+          y.send(JSON.stringify({Card: {CardFinancialAccountId: '999999999999'}, PageIndex: 1, PageSize: 5}));
+          y.listeners.forEach(function(f) { f(); });
+        };
+        """)
+        let snapshot = try XCTUnwrap(collect(context))
+        XCTAssertEqual((snapshot["card"] as? [String: Any])?["id"] as? String, "170000000001")
+        let ids = try XCTUnwrap(context.evaluateScript("JSON.stringify(window.fetchCalls.map(function(c) { return [c.body.Card.CardFinancialAccountId, c.headers['x-xsrf-token']]; }))").toString())
+        XCTAssertEqual(ids, #"[["170000000001","invented-token"],["170000000001","invented-token"]]"#)
     }
 }

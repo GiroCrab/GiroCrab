@@ -49,10 +49,10 @@ enum AirPlusScripts {
       };
       // Replays the portal's own request the way the portal sent it: XMLHttpRequest, same headers,
       // cookies of the page. The original methods are used, so the replay is not captured again.
-      const replay = body => new Promise((resolve, reject) => {
+      const replay = (cap, body) => new Promise((resolve, reject) => {
         const x = new XMLHttpRequest();
-        open.call(x, 'POST', captured.url, true);
-        const headers = Object.assign({'Accept': 'application/json', 'Content-Type': 'application/json'}, captured.headers);
+        open.call(x, 'POST', cap.url, true);
+        const headers = Object.assign({'Accept': 'application/json', 'Content-Type': 'application/json'}, cap.headers);
         for (const name of Object.keys(headers)) setHeader.call(x, name, headers[name]);
         x.timeout = 30000;
         x.onload = () => resolve({status: x.status, text: x.responseText});
@@ -60,11 +60,13 @@ enum AirPlusScripts {
         x.ontimeout = () => reject(new Error('AirPlus: Zeitüberschreitung beim Abruf.'));
         send.call(x, JSON.stringify(body));
       });
-      const page = async (index, size) => {
-        if (location.origin !== origin || !captured || !trusted(captured.url))
+      // `cap` is the request pinned at the start of one collection: a request the portal
+      // sends meanwhile (another card) must not mix into the pages of this one.
+      const page = async (cap, index, size) => {
+        if (location.origin !== origin || !cap || !trusted(cap.url))
           throw new Error('AirPlus: Bitte erneut anmelden und die Umsatzübersicht der Karte öffnen.');
-        const body = Object.assign({}, captured.body, {PageIndex: index, PageSize: size, Skip: (index - 1) * size, Take: size});
-        const r = await replay(body);
+        const body = Object.assign({}, cap.body, {PageIndex: index, PageSize: size, Skip: (index - 1) * size, Take: size});
+        const r = await replay(cap, body);
         if (r.status < 200 || r.status >= 300) {
           if (r.status === 401 || r.status === 403) captured = null;
           throw new Error('AirPlus: Abruf fehlgeschlagen (HTTP ' + r.status + '). Bitte erneut anmelden.');
@@ -79,17 +81,20 @@ enum AirPlusScripts {
       window.__gcAirPlus = {
         ready: () => !!captured,
         collect: async () => {
-          const size = 50;
-          const card = captured?.body?.Card;
+          const size = 50, maxPages = 200;
+          const cap = captured;
+          const card = cap?.body?.Card;
           if (!card?.CardFinancialAccountId) throw new Error('AirPlus: Keine Karte erkannt.');
           const rows = [];
-          for (let index = 1; index <= 200; index++) {
-            const data = await page(index, size);
+          let complete = false;
+          for (let index = 1; index <= maxPages; index++) {
+            const data = await page(cap, index, size);
             if (!Array.isArray(data?.Item?.Authorizations)) throw new Error('AirPlus: Ungültige Umsatzliste.');
             rows.push(...data.Item.Authorizations.map(row));
             const total = data.Item.TotalRowCount;
-            if (data.Item.Authorizations.length < size || (Number.isFinite(total) && rows.length >= total)) break;
+            if (data.Item.Authorizations.length < size || (Number.isFinite(total) && rows.length >= total)) { complete = true; break; }
           }
+          if (!complete) throw new Error('AirPlus: Die Umsatzliste ist zu lang und wurde nicht vollständig abgerufen.');
           const used = card.LimitUsed?.Value;
           return JSON.stringify({
             version: 1,
@@ -182,6 +187,7 @@ struct AirPlusWebSheet: View {
                 progress = String(localized: "Umsätze abrufen …")
                 let snapshot = try await collect()
                 let summary = try await pin.run { try $0.importAirplusSnapshot(connectionId: connectionId, snapshotJson: snapshot) }
+                guard model.isCurrent(pin) else { running = false; return }
                 model.toast = String(localized: "AirPlus: \(summary.accountsUpdated) Konten aktualisiert, \(summary.transactionsImported) neue Buchungen.")
                 close()
             } catch is CancellationError {

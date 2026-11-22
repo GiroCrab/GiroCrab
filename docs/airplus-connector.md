@@ -25,8 +25,8 @@ choose **Umsätze abrufen**.
 The portal is an Angular application that posts JSON to `/call/directive/…` and `/services/…`.
 The page script (`AirPlusScripts.hook`) remembers the portal's own request for the card's booking
 list (`GetAccountCardTransactionListTransaction`: URL, request headers, body) in a JavaScript
-closure and replays it page by page (50 per page) with XMLHttpRequest, like the portal itself. Only whitelisted booking fields and two card
-values (id, used limit) cross the bridge to the core; cookies, the request headers and personal
+closure and replays it page by page (50 per page) with XMLHttpRequest, like the portal itself. Only whitelisted booking fields and the card
+values (id, masked number, currency, used limit, date of the fetch) cross the bridge to the core; cookies, the request headers and personal
 data (name, employer, birth date) stay in the page. The generic portal traffic recorder is off.
 
 Interface: unofficial and undocumented. No FinTS, PSD2 or Enable Banking access to AirPlus cards

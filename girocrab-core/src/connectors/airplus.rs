@@ -62,15 +62,13 @@ fn transactions(root: &Value, account: &RemoteAccount) -> CoreResult<Vec<RemoteT
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(rows.len());
     for t in rows {
+        // every row is validated, also a repeated one: a broken row rejects the whole fetch
         let id = text(t, "id")?;
-        if !seen.insert(id.to_owned()) {
-            continue; // a page boundary may deliver a booking twice
-        }
         let cur = currency(t, "currency")?;
         if cur != account.currency {
             return Err(invalid());
         }
-        out.push(RemoteTransaction {
+        let row = RemoteTransaction {
             account_ref: account.external_ref.clone(),
             external_id: format!("airplus:{id}"),
             booking_date: date(t, "bookingDate")?,
@@ -81,7 +79,10 @@ fn transactions(root: &Value, account: &RemoteAccount) -> CoreResult<Vec<RemoteT
             purpose: optional(t, "city").into(),
             booking_text: optional(t, "type").into(),
             ..Default::default()
-        });
+        };
+        if seen.insert(id.to_owned()) {
+            out.push(row); // a page boundary may deliver a booking twice
+        }
     }
     Ok(out)
 }
@@ -317,5 +318,14 @@ mod tests {
             .unwrap();
         let account = vault.list_accounts().unwrap().remove(0);
         assert_eq!(account.balance_cents, 0, "bookings must not be summed up");
+    }
+
+    #[test]
+    fn a_repeated_row_must_be_valid_too() {
+        let mut f = fixture();
+        let mut broken = f["transactions"][0].clone();
+        broken["bookingDate"] = json!("kein Datum");
+        f["transactions"].as_array_mut().unwrap().push(broken);
+        assert!(snapshot(&f.to_string()).is_err());
     }
 }
