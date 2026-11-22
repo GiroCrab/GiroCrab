@@ -1032,3 +1032,40 @@ fn links_with_equal_stamps_and_twin_bookings_of_two_accounts_are_filled_alike() 
     );
     assert_eq!(share(&a, r_a, t1_a), Some(60));
 }
+
+/// Links to two parts of one booking that end up as one link to the whole booking keep the
+/// place of the earlier one, also when the later part was the first to lose its part.
+#[test]
+fn links_of_two_parts_that_become_one_keep_the_earliest_place() {
+    let d = TempDir::new("refunds-collapse");
+    let v = open(&d, "v");
+    seed(&v);
+    let first = add(&v, -200, "2025-06-01", "Baumarkt", "");
+    let second = add(&v, -150, "2025-06-02", "Baumarkt", "");
+    let refund = add(&v, 270, "2025-06-10", "Baumarkt", "");
+    let part = |amount: i64| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(first, vec![part(-100), part(-100)])
+        .unwrap();
+    v.link_refund(refund, first, 1).unwrap();
+    v.link_refund(refund, second, 0).unwrap();
+    v.link_refund(refund, first, 2).unwrap();
+    let share = |original: i64| -> i64 {
+        part_links(&v, refund)
+            .iter()
+            .filter(|l| l.0 == original)
+            .map(|l| l.2.unwrap_or(0))
+            .sum()
+    };
+    assert_eq!((share(first), share(second)), (120, 150));
+    // part 2 is an incoming part now: its link is one to the whole booking, made last
+    v.set_transaction_splits(first, vec![part(-250), part(50)])
+        .unwrap();
+    // without the split the link of part 1 joins it, and the booking keeps its first place
+    v.set_transaction_splits(first, Vec::new()).unwrap();
+    assert_eq!(part_links(&v, refund).len(), 2);
+    assert_eq!((share(first), share(second)), (200, 70));
+}

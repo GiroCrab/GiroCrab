@@ -1195,10 +1195,14 @@ pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
         } else {
             (part, 0)
         };
-        // a booking linked by several of its parts keeps one link
+        // a booking linked by several of its parts keeps one link, at the place of the
+        // earliest of them (the link to the whole booking may come from a later part)
         conn.execute(
             "INSERT INTO refund_links(refund_id,original_id,original_part,refund_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?4,?5,?6,NULL)
-             ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=NULL WHERE deleted_ms IS NOT NULL",
+             ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET
+                created_ms=CASE WHEN deleted_ms IS NULL THEN MIN(created_ms,excluded.created_ms) ELSE excluded.created_ms END,
+                changed_ms=excluded.changed_ms,deleted_ms=NULL
+             WHERE deleted_ms IS NOT NULL OR excluded.created_ms<created_ms",
             params![refund, original, part, refund_part, created, changed + 1],
         )?;
     }
