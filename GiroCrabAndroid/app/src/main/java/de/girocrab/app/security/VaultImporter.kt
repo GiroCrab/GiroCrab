@@ -1,7 +1,12 @@
 package de.girocrab.app.security
 
+import android.os.Handler
+import android.os.Looper
 import java.io.File
 import java.security.SecureRandom
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 
 /** Outcome of importing a backup. */
@@ -42,9 +47,12 @@ class VaultImporter(
     private val filesDir: File,
     private val title: String = "Tresor einspielen",
     private val subtitle: String = "Bestätige deine Identität, damit der Geräteschlüssel geschützt wird",
+    /** Native restore and file work must not run on the prompt's callback thread (Main). */
+    private val io: Executor = Executors.newSingleThreadExecutor(),
 ) {
     /** One import at a time: two overlapping runs would fight over the same vault file. */
     private var running = false
+    private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
 
     fun import(backupPath: String, password: String, onResult: (ImportResult) -> Unit) {
         if (running) {
@@ -72,11 +80,10 @@ class VaultImporter(
                 ),
             )
         }
-        // Anything else is unusable: a key that the Keystore no longer honours, or a vault file
-        // nobody can open. Both are replaced rather than kept as a trap.
-        if (state != VaultKeyStore.State.NotSetUp) {
-            keyStore.resetForNewSetup()
-        }
+        // Anything else is unusable: a key the Keystore no longer honours, a vault file nobody can
+        // open — or an alias left behind by a cancelled setup. Resetting discards nothing as long
+        // as no wrapped key exists.
+        keyStore.resetForNewSetup()
         if (vaultPath.exists() && !vaultPath.delete()) {
             return onResult(
                 ImportResult.Failed("Reste eines früheren Imports ließen sich nicht entfernen."),
@@ -96,12 +103,14 @@ class VaultImporter(
         }
 
         running = true
-        var finished = false
+        val finished = AtomicBoolean(false)
+        // Delivered on Main: the prompt callback runs there and callers update UI state.
         fun finish(result: ImportResult) {
-            if (finished) return
-            finished = true
-            running = false
-            onResult(result)
+            if (!finished.compareAndSet(false, true)) return
+            mainHandler.post {
+                running = false
+                onResult(result)
+            }
         }
 
         try {
@@ -125,7 +134,10 @@ class VaultImporter(
                             finish(ImportResult.Failed("Der Prompt lieferte einen anderen Cipher als angefordert."))
                             return@authenticate
                         }
-                        restore(result.cipher, key, vaultPath, backupPath, password) { finish(it) }
+                        // The prompt answers on Main; the native work below is blocking.
+                        io.execute {
+                            restore(result.cipher, key, vaultPath, backupPath, password) { finish(it) }
+                        }
                     }
                 }
             }
@@ -144,6 +156,7 @@ class VaultImporter(
         finish: (ImportResult) -> Unit,
     ) {
         var vault: OwnVault? = null
+        val outcome: ImportResult
         try {
             val opened = opener.open(vaultPath.path, key)
                 ?: return finish(ImportResult.Unavailable)
@@ -160,8 +173,7 @@ class VaultImporter(
             // Published only after the data is in place — see the class comment.
             keyStore.storeWrapped(key, authenticated)
             vault = null // ownership moves to the caller
-            // Deliberately after the handler: a throwing caller must not roll back a good import.
-            finish(ImportResult.Imported(opened))
+            outcome = ImportResult.Imported(opened)
         } catch (e: Exception) {
             runCatching { vault?.close() }
             keyStore.clearWrapped()
@@ -171,10 +183,12 @@ class VaultImporter(
             } else {
                 "Import abgebrochen (${e.javaClass.simpleName}: ${e.message})"
             }
-            finish(ImportResult.Failed(reason ?: "Import abgebrochen."))
+            outcome = ImportResult.Failed(reason ?: "Import abgebrochen.")
         } finally {
             key.fill(0)
         }
+        // Outside the rollback scope: a caller that throws must not undo a committed import.
+        finish(outcome)
     }
 
     /** Marks a failure that is already phrased for the lock screen. */

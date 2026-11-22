@@ -3,6 +3,8 @@ package de.girocrab.app.security
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.security.KeyStore
 import java.security.SecureRandom
 import org.junit.After
@@ -60,7 +62,7 @@ class VaultImporterTest {
         assertFalse("vault file has to be gone before the import", vaultPath.exists())
 
         var result: ImportResult? = null
-        importerThatSucceeds().import(backupFile.path, BACKUP_PASSWORD) { result = it }
+        result = runImport(importerThatSucceeds(), backupFile.path, BACKUP_PASSWORD)
 
         val imported = importedOrFail(result)
         try {
@@ -80,7 +82,7 @@ class VaultImporterTest {
         createVaultWithAccountsAndBackup(wipeDevice = true)
 
         var result: ImportResult? = null
-        importerThatSucceeds().import(backupFile.path, "falsches-passwort") { result = it }
+        result = runImport(importerThatSucceeds(), backupFile.path, "falsches-passwort")
 
         assertTrue("import must fail for a wrong password, was $result", result is ImportResult.Failed)
         assertEquals("no usable state may be left", VaultKeyStore.State.NotSetUp, keyStore().state())
@@ -98,7 +100,7 @@ class VaultImporterTest {
             prompt = { _, _, _, onResult -> onResult(PromptResult.Cancelled) },
             filesDir = dir,
         )
-        importer.import(backupFile.path, BACKUP_PASSWORD) { result = it }
+        result = runImport(importer, backupFile.path, BACKUP_PASSWORD)
 
         assertEquals(ImportResult.RefusedByUser, result)
         assertFalse("nothing wrapped after a cancelled prompt", wrappedFile.exists())
@@ -116,7 +118,7 @@ class VaultImporterTest {
         assertEquals(VaultKeyStore.State.Ready, keyStore().state())
 
         var result: ImportResult? = null
-        importerThatSucceeds().import(backupFile.path, BACKUP_PASSWORD) { result = it }
+        result = runImport(importerThatSucceeds(), backupFile.path, BACKUP_PASSWORD)
 
         val imported = importedOrFail(result)
         try {
@@ -134,7 +136,7 @@ class VaultImporterTest {
         assertEquals(VaultKeyStore.State.Invalidated, keyStore().state())
 
         var result: ImportResult? = null
-        importerThatSucceeds().import(backupFile.path, BACKUP_PASSWORD) { result = it }
+        result = runImport(importerThatSucceeds(), backupFile.path, BACKUP_PASSWORD)
 
         val imported = importedOrFail(result)
         try {
@@ -162,7 +164,7 @@ class VaultImporterTest {
             },
             filesDir = dir,
         )
-        importer.import(backupFile.path, BACKUP_PASSWORD) { result = it }
+        result = runImport(importer, backupFile.path, BACKUP_PASSWORD)
 
         assertTrue("must refuse, was $result", result is ImportResult.Failed)
         assertFalse("no prompt for a refused import", prompted)
@@ -172,7 +174,7 @@ class VaultImporterTest {
     @Test
     fun missingBackupFileIsReported() {
         var result: ImportResult? = null
-        importerThatSucceeds().import(File(dir, "gibts-nicht.gcbackup").path, BACKUP_PASSWORD) { result = it }
+        result = runImport(importerThatSucceeds(), File(dir, "gibts-nicht.gcbackup").path, BACKUP_PASSWORD)
 
         assertTrue("missing file must be reported, was $result", result is ImportResult.Failed)
     }
@@ -211,6 +213,21 @@ class VaultImporterTest {
             vaultPath.delete()
             wrappedFile.delete()
         }
+    }
+
+    /**
+     * The importer delivers on Main and does the native work on its own thread, so the test has to
+     * wait for the result instead of reading it right after the call.
+     */
+    private fun runImport(importer: VaultImporter, path: String, password: String): ImportResult? {
+        val latch = CountDownLatch(1)
+        var result: ImportResult? = null
+        importer.import(path, password) {
+            result = it
+            latch.countDown()
+        }
+        assertTrue("Import lieferte kein Ergebnis", latch.await(60, TimeUnit.SECONDS))
+        return result
     }
 
     private fun importedOrFail(result: ImportResult?): ImportResult.Imported =
