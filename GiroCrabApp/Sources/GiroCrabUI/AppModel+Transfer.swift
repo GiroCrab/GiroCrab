@@ -8,6 +8,25 @@ extension AppModel {
     /// Checking accounts that are connected via FinTS (HKCCS-capable banks).
     var transferAccounts: [Account] { sendableAccounts(of: .checking) }
 
+    /// What the TAN sheet asks the user to compare (#949): only for the TAN of a single transfer that
+    /// was sent, never for its login SCA or a sync's challenge, and always the values sent to the bank.
+    var tanComparison: TanComparison? {
+        Self.visibleTanComparison(
+            snapshot: activeTransferComparison,
+            orderApproval: activeChallenge?.orderApproval == true,
+            isBatch: activeTransferIsBatch,
+            isStanding: activeTransferIsStanding,
+            isDebit: activeTransferIsDebit
+        )
+    }
+
+    static func visibleTanComparison(
+        snapshot: TanComparison?, orderApproval: Bool, isBatch: Bool, isStanding: Bool, isDebit: Bool
+    ) -> TanComparison? {
+        guard orderApproval, !isBatch, !isStanding, !isDebit else { return nil }
+        return snapshot
+    }
+
     /// Savings accounts (Tagesgeld) the bank lets us book from, but only as an
     /// internal transfer (Umbuchung) to an own account (GitHub #582). Kept apart
     /// from `transferAccounts` so standing orders, batches and direct debits
@@ -15,6 +34,9 @@ extension AppModel {
     var savingsTransferSources: [Account] { sendableAccounts(of: .savings) }
 
     /// Accounts of `kind` with an IBAN that a connected, write-capable bank can send from.
+    ///
+    /// A fixed-term deposit (`.timeDeposit`, #1002) is never offered: its money is tied up,
+    /// so no transfer goes out of it.
     private func sendableAccounts(of kind: AccountKind) -> [Account] {
         let readOnly = Set(connections.filter { usesRah10($0) }.map(\.id))
         return allAccounts.filter {
@@ -103,11 +125,63 @@ extension AppModel {
         presentTransfer()
     }
 
+    // MARK: Überweisungs-Link (girocrab://transfer, docs/payment-link.md)
+
+    /// A `girocrab://` link opened from another app or a web page. A transfer link fills a new
+    /// form (never sends); while the form cannot open it waits (`pendingPaymentLink`).
+    func openLink(_ url: URL) {
+        guard PaymentLink.handles(url) else { return }
+        switch PaymentLink.payment(from: url) {
+        case .failure(let failure):
+            showError(String(localized: "Link nicht übernommen"), failure.message)
+        case .success(let payment):
+            // A newer link replaces one still waiting: the last one opened is what the user
+            // asked for, and nothing of the earlier one was shown yet.
+            pendingPaymentLink = payment
+            presentPendingPaymentLink()
+        }
+    }
+
+    /// Opens the form for `pendingPaymentLink` once the vault is open, its accounts are loaded,
+    /// no sync or bank order is running and no form is open (also not one on its result step:
+    /// the link waits until it is closed, never replaces it). Later events retry (`resumePaymentLink`).
+    func presentPendingPaymentLink() {
+        // `vaultState`, not only `vault`: the lock-screen preview keeps the demo vault loaded.
+        guard let payment = pendingPaymentLink, vault != nil, vaultState == .open, accountsLoaded,
+              syncingConnectionID == nil, activeTransfer == nil, !transferKindSwitching,
+              !showTransferSheet, !showBatchSheet, !showStandingSheet else { return }
+        pendingPaymentLink = nil
+        // The link names a recipient, and a savings account books only to own accounts:
+        // without a checking account to send from, the link's recipient would be lost.
+        guard canTransfer, let checking = (transferAccounts + giroCodeAccounts).first else {
+            showError(String(localized: "Link nicht übernommen"),
+                      String(localized: "Es gibt kein Girokonto mit IBAN, von dem aus überwiesen werden kann."))
+            return
+        }
+        transferDraft = TransferDraft(accountID: transferDraft.accountID)
+        presentTransfer()
+        if allAccounts.first(where: { $0.id == transferDraft.accountID })?.kind == .savings {
+            transferDraft.accountID = checking.id
+        }
+        fillTransferDraft(payment)
+        transferDraft.fromLink = true
+    }
+
+    /// After unlocking, a sync, a bank order or a closed form: a link that came meanwhile
+    /// (later, so the rest of that change is in place before the form picks its account).
+    func resumePaymentLink() {
+        guard pendingPaymentLink != nil else { return }
+        Task { @MainActor [weak self] in self?.presentPendingPaymentLink() }
+    }
+
     /// A template, a paste or an invoice names a recipient: that is a transfer to
     /// someone else, so it leaves Umbuchung first (#881); the form would otherwise
     /// show an own account while the order goes to this IBAN. A savings account
     /// may only book to own accounts: from there only amount and purpose are taken.
     func fillTransferDraft(_ p: ParsedPayment, onlyEmpty: Bool = false) {
+        // a running order keeps its form: the TAN card shows the sent values anyway, and a late
+        // invoice import must not change what the user sees while approving (#949)
+        guard activeTransfer == nil else { return }
         let savings = allAccounts.first { $0.id == transferDraft.accountID }?.kind == .savings
         if savings {
             if let amount = p.amountText, !onlyEmpty || transferDraft.amountText.isEmpty {
@@ -179,6 +253,7 @@ extension AppModel {
             transferBusy = true
             showTransferSheet = false
             activeTransfer = session
+            activeTransferComparison = TanComparison(iban: request.recipientIban, amountCents: cents)
             Task {
                 do {
                     self.handleTransfer(try await session.start(), connection: connection)
@@ -200,6 +275,7 @@ extension AppModel {
             payeeCheck = PendingPayeeCheck(connection: connection, check: check)
         case .needsChallenge(let c):
             activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: false)
+            activeChallenge?.orderApproval = activeTransfer?.awaitsOrderApproval() == true
             if c.kind == .decoupledPush || c.kind == .progress { schedulePoll(connection: connection, interval: c.pollIntervalSeconds) }
         case .stillWaiting(let c):
             if activeChallenge == nil {
@@ -208,6 +284,7 @@ extension AppModel {
                 activeChallenge?.waiting = true
                 activeChallenge?.busy = false
             }
+            activeChallenge?.orderApproval = activeTransfer?.awaitsOrderApproval() == true
             schedulePoll(connection: connection, interval: c.pollIntervalSeconds)
         case .finished(let outcome):
             // Executed but not stored: still finish as sent (no resend), then warn.

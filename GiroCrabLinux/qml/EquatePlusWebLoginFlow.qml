@@ -400,7 +400,7 @@ WebLoginFlow {
             })
             .then(() => {
                 const message = open === 0 ? qsTr("EquatePlus: Keine neuen Dokumente.")
-                    : qsTr("EquatePlus: %1 neue PDFs in „Belege & PostBox“.").arg(downloaded)
+                    : qsTr("EquatePlus: %1 neue PDFs in „Belege & Postbox“.").arg(downloaded)
                 AppModel.toast = message
                 finish(false)
                 if (failed === 0) { close(true); return }
@@ -433,7 +433,7 @@ WebLoginFlow {
         Text {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: qsTr("Dokumente werden unter „Belege & PostBox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto.")
+            text: qsTr("Dokumente werden unter „Belege & Postbox“ abgelegt (Suche: equateplus) und nicht automatisch Umsätzen oder Aktivitäten zugeordnet. Nur wenn der Programmname im Dokument zu einem Programm passt, steht es auch bei dessen Konto.")
             font.pixelSize: Theme.caption - 1; color: Theme.secondary
         }
         RowLayout {

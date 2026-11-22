@@ -1422,7 +1422,7 @@ QtObject {
         if (sel === "newBookings") return qsTr("Neue Umsätze")
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.name : qsTr("Bank") }
         if (sel === "uncategorized") return SidebarModel.uncategorizedLabel
-        if (sel === "documents") return qsTr("Belege & PostBox")
+        if (sel === "documents") return qsTr("Belege & Postbox")
         if (sel === "wealth") return qsTr("Vermögen")
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.name : qsTr("Gruppe") }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? g.name : qsTr("Gruppe") }
@@ -1902,7 +1902,7 @@ QtObject {
             || quietSyncConnectionID === connection.id)
             statementsAccountID = null
         const statementsFor = statementsAccountID
-        // "PostBox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
+        // "Postbox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
         if (postboxConnectionID !== connection.id || quietSyncConnectionID === connection.id) postboxConnectionID = null
         const postboxNow = postboxConnectionID !== null
         const quiet = quietSyncConnectionID === connection.id
@@ -1917,7 +1917,7 @@ QtObject {
             }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
         }
         if (quiet) {
-            // no new approval in the background (e.g. the comdirect PostBox, #838); prepared
+            // no new approval in the background (e.g. the comdirect Postbox, #838); prepared
             // off the GUI thread like the rest of the automatic fetch
             coreAsync("begin_quiet_sync", { connection_id: connection.id, secret: secret, demo: isDemo }, id => {
                 if (gen !== syncGeneration) { coreAsync("session_cancel", { session: id }, null, () => {}); return }
@@ -2525,10 +2525,10 @@ QtObject {
     /// Bumped whenever documents change, so lists re-read them.
     property int documentsVersion: 0
     property var documentsAccountFilter: null
-    /// `documentsAccountFilter` value for documents without an account (e.g. PostBox, #838).
+    /// `documentsAccountFilter` value for documents without an account (e.g. Postbox, #838).
     readonly property int documentsWithoutAccount: -1
     property var statementsAccountID: null
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     property var postboxConnectionID: null
     property int statementsCountBefore: 0
     property var accountDocumentsFor: null      // AccountDocumentsSheet
@@ -2613,7 +2613,7 @@ QtObject {
         let unmatched = 0
         const finish = () => {
             if (linked.length) toast = qsTr("Beleg zugeordnet: %1").arg(linked.join(", "))
-            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
+            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             documentsChanged()
         }
         const next = i => {
@@ -2642,21 +2642,21 @@ QtObject {
     }
     function autoStatements(a) { return run(() => core("auto_statements_enabled", { account_id: a.id })) || false }
     function setAutoStatements(a, on) { run(() => core("set_auto_statements", { account_id: a.id, enabled: on })) }
-    /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
+    /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     function comdirectPostbox(id) { return run(() => core("comdirect_postbox_enabled", { connection_id: id })) || false }
     function setComdirectPostbox(id, on) { run(() => core("set_comdirect_postbox", { connection_id: id, enabled: on })) }
-    /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
+    /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     function fetchComdirectPostbox(c) {
         if (syncingConnectionID !== null) return
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect PostBox.
+    /// Toast suffix of a sync with the comdirect Postbox.
     function postboxNote(s) {
         if (s.postbox_documents === null || s.postbox_documents === undefined)
-            return qsTr("PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
-        return s.postbox_documents === 0 ? qsTr("keine neuen PostBox-Dokumente")
-            : qsTr("%1 neue PostBox-Dokumente").arg(s.postbox_documents)
+            return qsTr("Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
+        return s.postbox_documents === 0 ? qsTr("keine neuen Postbox-Dokumente")
+            : qsTr("%1 neue Postbox-Dokumente").arg(s.postbox_documents)
     }
     function docSymbol(d) {
         switch (d.doc_type) {
@@ -2831,7 +2831,7 @@ QtObject {
     }
     /// AccountKind.importChoices with their labels.
     readonly property var accountKindChoices: [
-        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") },
+        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") }, { id: "TimeDeposit", text: qsTr("Festgeld") },
         { id: "CreditCard", text: qsTr("Kreditkarte") }, { id: "PaymentService", text: qsTr("Zahlungsdienst") },
         { id: "Brokerage", text: qsTr("Depot") }, { id: "Cash", text: qsTr("Bargeld") }, { id: "Loan", text: qsTr("Darlehen") }
     ]

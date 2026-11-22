@@ -39,7 +39,12 @@ public final class AppModel {
     @ObservationIgnored let offlineStore = OfflineStore()
     var vaultState: VaultState = .locked {
         // The external analysis serves only while the own vault is shown (#136).
-        didSet { if oldValue != vaultState { reconcileLocalApiServer() } }
+        didSet {
+            guard oldValue != vaultState else { return }
+            reconcileLocalApiServer()
+            // A link held on the lock screen or while unlocking (docs/payment-link.md).
+            if vaultState == .open { resumePaymentLink() }
+        }
     }
     /// The vault is open and the lock screen shows the crab's unlock hop for a moment.
     var unlockCelebrating = false
@@ -483,6 +488,9 @@ public final class AppModel {
             }
         }
     }
+    /// Bumped when a keyboard move keeps the selected row (Pos1 on the first row, Ende/Bild↓ on
+    /// the last): `selectedBookingID` does not change then, so `SelectionScroller` scrolls on this.
+    var keyboardScrollToken = 0
     var autoReviewDelay: AutoReviewDelay = .stored {
         didSet {
             AppDefaults.store.set(autoReviewDelay.rawValue, forKey: AutoReviewDelay.defaultsKey)
@@ -554,11 +562,11 @@ public final class AppModel {
     var iconColorTarget: IconColorTarget?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
-    /// "Belege & PostBox" filtered to one account (#172); nil = all accounts,
-    /// `documentsWithoutAccount` = documents without an account (e.g. PostBox, #838).
+    /// "Belege & Postbox" filtered to one account (#172); nil = all accounts,
+    /// `documentsWithoutAccount` = documents without an account (e.g. Postbox, #838).
     var documentsScope: DocumentsScope = .all
     var documentsAccountFilter: Int64?
-    /// "Belege & PostBox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
+    /// "Belege & Postbox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
     /// documents without an account (they have no bank connection). Set it with `selectDocumentsConnection`.
     var documentsConnectionFilter: Int64?
     static let documentsWithoutAccount: Int64 = -1
@@ -574,7 +582,7 @@ public final class AppModel {
     /// Sidebar badges: scheduled payments / active mandates over all accounts (SQL counts).
     var plannedCount = 0
     var mandateCount = 0
-    /// Unread documents (badge of „Belege & PostBox“), a partial-index COUNT.
+    /// Unread documents (badge of „Belege & Postbox“), a partial-index COUNT.
     var unseenDocumentCount = 0
     /// Counts the sidebar badge reads: an older read that finishes late must not overwrite a newer one.
     @ObservationIgnored var sidebarCountsGeneration = 0
@@ -706,7 +714,11 @@ public final class AppModel {
     @ObservationIgnored var localApiJobs = 0
     var activeChallenge: ActiveChallenge?
     var payeeCheck: PendingPayeeCheck?
-    var syncingConnectionID: Int64?
+    var syncingConnectionID: Int64? { didSet { if syncingConnectionID == nil { resumePaymentLink() } } }
+    /// The one account the running sync of `syncingConnectionID` covers
+    /// ("<Konto> abrufen", statements), nil for the whole login. Set with it by
+    /// `startSync`; read only through `isSyncing(_:)` (#1572).
+    var syncingAccountID: Int64?
     var toast: String?
     /// Text of the error alert. Clearing it also clears title and retry.
     var errorMessage: String? {
@@ -751,14 +763,24 @@ public final class AppModel {
     }
 
     var activeSession: SyncSession?
-    var activeTransfer: TransferSession?
-    var showTransferSheet = false
+    var activeTransfer: TransferSession? {
+        // the frozen order data belongs to one session: a new one, the end, a cancel or the lock clears it
+        didSet {
+            if activeTransfer !== oldValue { activeTransferComparison = nil }
+            if activeTransfer == nil { resumePaymentLink() }
+        }
+    }
+    /// Recipient IBAN and amount of the single transfer as handed to the bank (#949), frozen when it
+    /// starts: the TAN card never follows later edits of `transferDraft`. Nil for batch, standing order, debit.
+    var activeTransferComparison: TanComparison?
+    // A transfer link waits while a form is open, also on its result step (`pendingPaymentLink`).
+    var showTransferSheet = false { didSet { if !showTransferSheet { resumePaymentLink() } } }
     /// Batch transfer (#240): sheet, the rows being edited, and whether the running session is one.
-    var showBatchSheet = false
+    var showBatchSheet = false { didSet { if !showBatchSheet { resumePaymentLink() } } }
     var batchDraft = BatchDraft()
     var activeTransferIsBatch = false
     /// Standing orders (#496): sheet, the order being edited, the bank's orders, and whether the running session is one.
-    var showStandingSheet = false
+    var showStandingSheet = false { didSet { if !showStandingSheet { resumePaymentLink() } } }
     var standingDraft = StandingDraft()
     var standingOrders: [StandingOrderInfo] = []
     /// What the bank of the order being edited allows (nil = unknown, the form offers everything).
@@ -780,6 +802,15 @@ public final class AppModel {
     /// Print dialog (GitHub #53).
     var showPrintSheet = false
     var transferDraft = TransferDraft()
+    /// A `girocrab://transfer` link that came while the form could not open (vault locked,
+    /// accounts still loading, a sync running): shown once that is over (`presentPendingPaymentLink`).
+    var pendingPaymentLink: ParsedPayment?
+    /// The open vault's accounts have been loaded once (`applyAccountGroups`): an empty list then
+    /// means no accounts, not "not loaded yet". Reset with the vault (`releaseVaultState`, `useVault`).
+    @ObservationIgnored var accountsLoaded = false
+    /// A transfer form is being swapped for the batch form or back: closing the one must not let a
+    /// waiting link take the form before the other opens (`switchToBatchTransfer`, `switchToSingleTransfer`).
+    @ObservationIgnored var transferKindSwitching = false
     /// Opt-in clipboard check (#663): pasteboard `changeCount` last looked at, so the same
     /// content is offered once. Never the content itself; in memory only.
     var clipboardChangeCountHandled: Int?
@@ -874,7 +905,7 @@ public final class AppModel {
     /// Account whose statements (HKEKA) are being fetched by the running session.
     var statementsAccountID: Int64?
     var statementsCountBefore = 0
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     var postboxConnectionID: Int64?
     /// Account whose login syncs only it ("<Konto> abrufen", #1124). Set by
     /// `requestSyncAccount`, kept through prompts and retries, cleared by a
@@ -960,6 +991,7 @@ public final class AppModel {
             case "sparplaene", "sparpläne", "investments": scope = .investments
             case "belege", "documents": sidebarSelection = .documents
             case "geplant", "planned": sidebarSelection = .planned
+            case "neu", "new": sidebarSelection = .newBookings
             case "lastschriften", "debits": sidebarSelection = .directDebits
             case "vermoegen", "vermögen", "wealth": sidebarSelection = .wealth
             case "vermoegen-cash": sidebarSelection = .wealth; wealthScope = .cash
@@ -1485,13 +1517,15 @@ public final class AppModel {
                 let cloud = CloudSyncManager.shared
                 await cloud.sync(vault: v, remoteKey: pasted, mergeOnly: true)
                 if let e = cloud.lastError { self.keyAdoption = .failed(e); self.toast = e; return }
+                // Also with the device's own key (#1503): nothing found and nothing here
+                // means the other device syncs elsewhere, not „done“.
+                let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
+                if !cloud.lastMergeFoundSnapshot && !hasData {
+                    // Name the place and offer another folder (#1503): the sheet stays open.
+                    self.keyAdoption = .notFound(KeyAdoptionState.notFoundMessage(location: cloud.location), searched: cloud.folderName)
+                    return
+                }
                 if pasted != current {
-                    let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
-                    if !cloud.lastMergeFoundSnapshot && !hasData {
-                        let msg = String(localized: "Noch kein iCloud-Tresor gefunden. Aktivieren Sie iCloud Sync auf dem anderen Gerät, warten Sie auf den ersten Upload und versuchen Sie es erneut.")
-                        self.keyAdoption = .failed(msg); self.toast = msg
-                        return
-                    }
                     try v.rekey(newKey: pasted)
                     do {
                         // On failure importKey writes `current` back into the keychain.
@@ -1509,6 +1543,26 @@ public final class AppModel {
             } catch {
                 self.keyAdoption = .failed(describe(error)); self.toast = describe(error)
             }
+        }
+    }
+
+    /// „Ordner wählen …“ in the paste sheet after no vault was found (#1503):
+    /// syncs via the picked folder from now on and adopts the pasted key there.
+    /// A folder without a vault is refused, so adopting never starts a new vault.
+    func adoptSyncKey(_ text: String, folder url: URL, wait: TimeInterval = 6) {
+        guard keyAdoption != .working else { return }
+        keyAdoption = .working
+        Task {
+            let picked = await ICloudFolderMigration.inspectPicked(url, wait: wait)
+            if let message = KeyAdoptionState.pickedFolderMessage(picked) {
+                // names the folder just picked, not the one still configured
+                self.keyAdoption = .notFound(message, searched: ICloudFolderMigration.displayName(for: url)); return
+            }
+            do { try CloudSyncManager.shared.setFolder(url, chosen: true) } catch {
+                self.keyAdoption = .failed(describe(error)); return
+            }
+            self.keyAdoption = .idle
+            self.adoptSyncKey(text)
         }
     }
 
@@ -1584,6 +1638,9 @@ public final class AppModel {
     func useVault(_ v: Vault, demo: Bool) {
         vault = v
         demoActive = demo
+        // The accounts loaded so far are the previous vault's (demo ↔ own): a waiting link
+        // waits for this vault's (`applyAccountGroups`).
+        accountsLoaded = false
         if !demo { AppDefaults.store.set(true, forKey: Self.realDataKey) }
         vaultState = .open
         selectedBookingID = nil
@@ -1668,6 +1725,7 @@ public final class AppModel {
 
     /// Cancels every task, drops the vault and clears what it loaded (shared by `lock()` and the app reset).
     func releaseVaultState() {
+        newCategoryRequest = nil
         reportPick = nil
         scopeLoadTask?.cancel()
         categoryRefreshTask?.cancel()
@@ -1689,6 +1747,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
+        accountsLoaded = false
         groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; tagFilter = BookingTagFilter(); showTagFilter = false; showTagManager = false; tagDraft = TagDraft(); connections = []; settings = []
         page = nil; listBalances = ListBalances(); dashboard = nil; merchantStats = nil; merchantAccountStats = nil; categorySuggestion = nil; listSuggestions = [:]; logoCache = [:]
     }

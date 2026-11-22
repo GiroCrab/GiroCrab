@@ -426,15 +426,17 @@ pub(crate) fn store_fetch(
                     // first stored as checking (e.g. C24 PocketZINS, typed by product).
                     // Loan: a Schwäbisch Hall Bausparvertrag moving on to its loan phase
                     // (same contract id), which must not stay a savings account.
+                    // A stored Festgeld stays one when the bank reports Savings (#1002).
                     if acc.kind == AccountKind::Brokerage
                         || acc.kind == AccountKind::Savings
+                        || acc.kind == AccountKind::TimeDeposit
                         || (acc.kind == AccountKind::Loan && kind == ConnectorKind::SchwaebischHall)
                     {
                         let (group, sym, order) = group_for(acc.kind);
                         let gid = Vault::ensure_group(&tx, group, sym, order)?;
                         let changed = tx.execute(
                             // a symbol the user picked (symbol_ms > 0) stays
-                            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3 WHERE id = ?4 AND kind <> ?1",
+                            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3 WHERE id = ?4 AND kind <> ?1 AND NOT (?1 = 'savings' AND kind = 'time_deposit')",
                             params![acc.kind.as_str(), acc.kind.sf_symbol(), gid, id],
                         )?;
                         if changed > 0 {
@@ -643,6 +645,9 @@ pub(crate) fn store_fetch(
                     params![tx.last_insert_rowid(),remote.classification.asset_class.map(|a|a.as_str()),remote.classification.instrument.map(|a|a.as_str()),remote.direct_crypto])?;
             }
         }
+        let match_rules = super::document_matching::rules_for_connection(&tx, connection_id, kind)?;
+        let mut new_booking_ids = HashSet::new();
+        let mut changed_document_ids = HashSet::new();
         let mut imported = 0u32;
         let mut skipped_archived = 0u32;
         {
@@ -726,6 +731,9 @@ pub(crate) fn store_fetch(
                                 t.creditor_id,
                                 t.item_refs
                             ])?;
+                            if match_rules.is_some() && !hold {
+                                new_booking_ids.insert(tx.last_insert_rowid());
+                            }
                             imported += 1;
                             if data.adjust_balances {
                                 tx.prepare_cached(
@@ -733,6 +741,10 @@ pub(crate) fn store_fetch(
                                 )?
                                 .execute(params![t.amount_cents, t.booking_date, acc_id])?;
                             }
+                        } else if match_rules.is_some()
+                            && let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)?
+                        {
+                            new_booking_ids.insert(adopted.id);
                         }
                     }
                 }
@@ -902,6 +914,22 @@ pub(crate) fn store_fetch(
                     .optional()?,
                 _ => None,
             };
+            // A Trade Republic PDF can be filed at its depot while the booking lives at tr:cash.
+            let booking_id = match (booking_id, &d.booking_external_id) {
+                (None, Some(ext))
+                    if kind == ConnectorKind::TradeRepublic && d.account_ref == "tr:depot" =>
+                {
+                    tx.query_row(
+                        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+                          WHERE a.connection_id = ?1 AND a.external_ref = 'tr:cash'
+                            AND t.external_id = ?2",
+                        params![connection_id, ext],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                }
+                (booking, _) => booking,
+            };
             // without bytes (download failed) only a stored copy gets its account
             let added = if d.bytes.is_empty() {
                 Ok(None)
@@ -919,8 +947,11 @@ pub(crate) fn store_fetch(
                     &d.date,
                 )
             };
-            if matches!(added, Ok(Some(_))) {
+            if let Ok(Some(id)) = &added {
                 documents_stored += 1;
+                if match_rules.is_some() && booking_id.is_none() && acc_id.is_some() {
+                    changed_document_ids.insert(*id);
+                }
             }
             match (added, acc_id) {
                 (Ok(Some(_)), _)
@@ -932,11 +963,20 @@ pub(crate) fn store_fetch(
                 }
                 // stored before without an account: it gets the one found now
                 (Ok(None), Some(acc_id)) if !d.source_url.is_empty() => {
-                    tx.execute(
-                        "UPDATE booking_documents SET account_id = ?1
-                          WHERE source_url = ?2 AND account_id IS NULL AND booking_id IS NULL",
-                        params![acc_id, d.source_url],
-                    )?;
+                    let assigned: Option<i64> = tx
+                        .query_row(
+                            "UPDATE booking_documents SET account_id = ?1
+                              WHERE source_url = ?2 AND account_id IS NULL AND booking_id IS NULL
+                              RETURNING id",
+                            params![acc_id, d.source_url],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    if match_rules.is_some()
+                        && let Some(id) = assigned
+                    {
+                        changed_document_ids.insert(id);
+                    }
                 }
                 _ => {}
             }
@@ -995,6 +1035,18 @@ pub(crate) fn store_fetch(
         }
         if kind == ConnectorKind::Advanzia {
             super::advanzia::settle_holds(&tx, &account_ids, &mut data)?;
+        }
+        // Repeated deliveries alone cannot re-create a link that the user removed.
+        if let Some(rules) = match_rules
+            && (!changed_document_ids.is_empty() || !new_booking_ids.is_empty())
+        {
+            super::document_matching::link_unlinked_by_content(
+                &tx,
+                connection_id,
+                &rules,
+                &changed_document_ids,
+                &new_booking_ids,
+            )?;
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = &data.state {
@@ -1064,16 +1116,18 @@ pub(crate) fn store_fetch(
     }
 }
 
-/// Sidebar sections (fixed order).
+/// Sidebar sections of the "by kind" view (fixed order): one per account kind (#1003).
+/// Step 37 of `schema.rs` moves old vaults to these; its sections must match.
 pub(crate) fn group_for(kind: AccountKind) -> (&'static str, &'static str, i32) {
     match kind {
-        AccountKind::Checking
-        | AccountKind::Savings
-        | AccountKind::Cash
-        | AccountKind::PaymentService => ("Giro & Tagesgeld", "building.columns", 1),
-        AccountKind::CreditCard => ("Kreditkarten", "creditcard", 2),
-        AccountKind::Brokerage => ("Depots & ETFs", "chart.pie", 3),
-        AccountKind::Loan => ("Darlehen & Kredite", "house", 4),
+        AccountKind::Checking => ("Girokonten", "building.columns", 1),
+        AccountKind::Savings => ("Tagesgeld / Sparen", "banknote", 2),
+        AccountKind::TimeDeposit => ("Festgeld", "lock", 3),
+        AccountKind::Cash => ("Bargeld", "eurosign.circle", 4),
+        AccountKind::PaymentService => ("Zahlungsdienste", "wallet.pass", 5),
+        AccountKind::CreditCard => ("Kreditkarten", "creditcard", 6),
+        AccountKind::Brokerage => ("Depots & ETFs", "chart.pie", 7),
+        AccountKind::Loan => ("Darlehen & Kredite", "house", 8),
     }
 }
 
@@ -1152,7 +1206,7 @@ pub(crate) enum PostboxMode {
     Off,
     /// When it is on for the login and due.
     Due,
-    /// Now ("PostBox jetzt abrufen").
+    /// Now ("Postbox jetzt abrufen").
     Now,
 }
 
@@ -1247,7 +1301,7 @@ impl Vault {
         }
         if !is_comdirect_fints(&key) {
             return Err(CoreError::invalid(tr(
-                "Die PostBox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
+                "Die Postbox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen.",
             )));
         }
         for k in ["comdirect.client_id", "comdirect.client_secret"] {
@@ -1280,7 +1334,7 @@ impl Vault {
     ) -> Result<Arc<SyncSession>, CoreError> {
         if !self.comdirect_postbox_enabled(connection_id)? {
             return Err(CoreError::invalid(tr(
-                "Der PostBox-Abruf ist für diesen Zugang nicht eingeschaltet.",
+                "Der Postbox-Abruf ist für diesen Zugang nicht eingeschaltet.",
             )));
         }
         if !documents_fetch_on(&*self.db()?, connection_id)? {
@@ -1730,7 +1784,7 @@ impl Vault {
 }
 
 /// Is `key` a comdirect login via FinTS?
-fn is_comdirect_fints(key: &str) -> bool {
+pub(super) fn is_comdirect_fints(key: &str) -> bool {
     ConnectorKind::fints_blz(key)
         .is_some_and(|b| super::fints_directory::COMDIRECT_BLZ.contains(&b))
 }
@@ -2531,7 +2585,8 @@ fn adopt_past_deleted_twin(
 
 /// Links an unconnected stored account to `connection_id` when it matches the
 /// remote one by account number / IBAN (ignoring spaces and leading zeros) or is
-/// the single unlinked depot of the same bank. Sets `connection_id`, `external_ref`, `kind`.
+/// the single unlinked depot of the same bank. Sets `connection_id`, `external_ref`, `kind`
+/// (a stored Festgeld stays one when the bank reports Savings, #1002).
 fn adopt_unlinked(
     tx: &rusqlite::Connection,
     connection_id: i64,
@@ -2589,7 +2644,11 @@ fn adopt_unlinked(
             return Ok(found);
         }
         tx.execute(
-            "UPDATE accounts SET connection_id = ?1, external_ref = ?2, kind = ?3 WHERE id = ?4",
+            // a stored Festgeld stays one when the bank reports Savings (#1002),
+            // like in the update of linked accounts in `store_fetch`
+            "UPDATE accounts SET connection_id = ?1, external_ref = ?2,
+                    kind = CASE WHEN ?3 = 'savings' AND kind = 'time_deposit' THEN kind ELSE ?3 END
+             WHERE id = ?4",
             params![connection_id, acc.external_ref, acc.kind.as_str(), id],
         )?;
     }

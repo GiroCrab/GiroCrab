@@ -160,7 +160,6 @@
   "Passwort der Schlüsseldatei": "Key file password",
   "Passwort der Schlüsseldatei (leer = unverändert)": "Key file password (empty = unchanged)",
   "Passwort und Schlüsseldatei geprüft": "Password and key file checked",
-  "PostBox · %1": "PostBox · %1",
   "Privater Schlüssel (*.pem *.key *.txt)": "Private key (*.pem *.key *.txt)",
   "Privatmodus beenden (Strg+Umschalt+H)": "Exit Privacy Mode (Ctrl+Shift+H)",
   "Privatmodus: Beträge ausblenden (Strg+Umschalt+H)": "Privacy Mode: Hide amounts (Ctrl+Shift+H)",

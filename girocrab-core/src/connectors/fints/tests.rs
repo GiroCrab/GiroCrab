@@ -100,6 +100,8 @@ fn mock_bank(
 const REJECT_9010: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Der Dialog wurde abgebrochen.'HIRMS:3:2:3+9010::Ungültiger Signaturaufbau: Fehler im Segmentaufbau.'";
 const ACCEPT: &str =
     "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'";
+/// Booked balance 1234,56 EUR (HKSAL).
+const BALANCE: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:7:3+X+Girokonto+EUR+C:1234,56:EUR:20250102'";
 const STALE_SYSTEM_ID: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::abgebrochen.'HIRMS:3:2:3+9931::Anmeldename falsch.'HIRMS:4:2:3+9010::Fehler.'";
 
 fn two_step_connector(url: &str, state: serde_json::Value) -> FinTsConnector {
@@ -1216,14 +1218,82 @@ fn match_with_3091_needs_no_hkvpa() {
     assert!(!c.vop_with_tan);
 }
 
+/// HKVPP + HKCCS + HKTAN answered with 3091 (no HKVPA needed) and 3955
+/// (approval in the app); HIVPP carries only the VOP-ID (#1507).
+const APP_APPROVAL_3091: &[u8] = b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3091::VOP-Ausfuehrungsauftrag nicht benoetigt.'HIRMS:4:2:5+3955::Auftrag empfangen - Bitte Auftrag in Ihrer App freigeben.'HIVPP:5:1:3+@8@VOPID123'";
+
+#[test]
+fn a_3091_without_result_reports_no_deviation() {
+    // FinTS VOP 1.02, E.8.1: a deviation always comes with 3945 (and 3090), and
+    // 3091 means no HKVPA is needed. HIVPP without a result is allowed
+    // (C.10.7.1.1). So: no name-check dialog, the order's challenge is answered.
+    let r = reply(APP_APPROVAL_3091);
+    assert!(reports_no_deviation(&r));
+    let mut c = FinTsConnector::new("20041111");
+    order_for(&mut c);
+    assert!(c.evaluate_payee(&r).is_none());
+    assert!(!c.vop_with_tan);
+    assert_eq!(c.vop_id.as_deref(), Some(&b"VOPID123"[..]));
+}
+
+#[test]
+fn a_missing_result_without_3091_still_asks_the_user() {
+    // No 3091: the bank has not said that nothing is needed.
+    let r = reply(b"HIRMG:2:2+3060::Hinweise.'HIRMS:4:2:5+3955::Bitte in der App freigeben.'HIVPP:5:1:3+@8@VOPID123'");
+    assert!(!reports_no_deviation(&r));
+    let mut c = FinTsConnector::new("20041111");
+    order_for(&mut c);
+    let check = c.evaluate_payee(&r).unwrap();
+    assert_eq!(check.result, PayeeMatch::NotPossible);
+}
+
+#[test]
+fn a_missing_result_with_3945_or_3090_still_asks_the_user() {
+    // 3945: the bank wants the confirmation, whatever HIVPP says.
+    let with_3945 = reply(
+        b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3945::Freigabe ohne VOP-Bestaetigung nicht moeglich.+3091::nicht benoetigt.'HIRMS:4:2:5+3955::Bitte in der App freigeben.'HIVPP:5:1:3+@8@VOPID123'",
+    );
+    assert!(!reports_no_deviation(&with_3945));
+    let mut c = FinTsConnector::new("20041111");
+    order_for(&mut c);
+    assert_eq!(
+        c.evaluate_payee(&with_3945).unwrap().result,
+        PayeeMatch::NotPossible
+    );
+
+    // 3090 ("check the result") with the explanatory text, which must be shown.
+    let with_3090 = reply(
+        b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3090::Ergebnis Namensabgleich pruefen.+3091::nicht benoetigt.'HIRMS:4:2:5+3955::Bitte in der App freigeben.'HIVPP:5:1:3+@8@VOPID123++++++Bitte pruefen'",
+    );
+    assert!(!reports_no_deviation(&with_3090));
+    let mut c = FinTsConnector::new("20041111");
+    order_for(&mut c);
+    let check = c.evaluate_payee(&with_3090).unwrap();
+    assert_eq!(check.result, PayeeMatch::NotPossible);
+    assert_eq!(check.notice.as_deref(), Some("Bitte pruefen"));
+}
+
+#[test]
+fn a_reported_result_next_to_3091_still_asks_the_user() {
+    // A result the bank does report is never skipped because of 3091.
+    for code in ["RVNA", "RVMC", "RVNM", "PDNG"] {
+        let raw = format!(
+            "HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3091::nicht benoetigt.'HIRMS:4:2:5+3955::Bitte in der App freigeben.'HIVPP:5:1:3+@8@VOPID123+++++DE89370400440532013000::::{code}'"
+        );
+        let r = reply(raw.as_bytes());
+        let mut c = FinTsConnector::new("20041111");
+        order_for(&mut c);
+        assert!(c.evaluate_payee(&r).is_some(), "{code}");
+    }
+}
+
 #[tokio::test]
-async fn confirming_without_a_name_check_result_after_3091_resends_nothing() {
-    // Berliner Sparkasse: HKVPP + HKCCS + HKTAN is answered with 3091 (no HKVPA
-    // needed) and 3955 (approval in the app); HIVPP carries no result. The
-    // order is already with the bank: "send anyway" must continue that
-    // challenge. HKVPA + HKCCS + HKTAN again was rejected with 9010 on the order.
+async fn confirming_a_negative_result_after_3091_resends_nothing() {
+    // The order is already with the bank (3091 + 3955): "send anyway" must
+    // continue that challenge. HKVPA + HKCCS + HKTAN again was rejected with
+    // 9010 on the order.
     let r = reply(
-        b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3091::VOP-Ausfuehrungsauftrag nicht benoetigt.'HIRMS:4:2:5+3955::Auftrag empfangen - Bitte Auftrag in Ihrer App freigeben.'HIVPP:5:1:3+@8@VOPID123'",
+        b"HIRMG:2:2+3060::Hinweise.'HIRMS:3:2:3+3091::VOP-Ausfuehrungsauftrag nicht benoetigt.'HIRMS:4:2:5+3955::Auftrag empfangen - Bitte Auftrag in Ihrer App freigeben.'HIVPP:5:1:3+@8@VOPID123+++++DE89370400440532013000::::RVNA'",
     );
     let mut c = FinTsConnector::new("20041111");
     order_for(&mut c);
@@ -1482,12 +1552,65 @@ async fn order_source_account_without_upd_restrictions_allows_every_order() {
     }
 }
 
+/// One savings account that allows only HKSAL, against a bank answering `hksal`.
+async fn fetch_savings(hksal: &'static str) -> FetchResult {
+    let (url, _) = mock_bank(vec![hksal]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7]}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    let mut savings = upd_acc("0532013000", "", IBAN_A, "Tagesgeld", &["HKSAL"]);
+    savings.kind_code = 10;
+    c.upd = vec![savings];
+    c.fetch(&test_ctx()).await.unwrap()
+}
+
+#[tokio::test]
+async fn a_balance_the_bank_did_not_send_is_unknown_not_zero() {
+    // #998: no HISAL and no statement to take a closing balance from: the stored
+    // balance must stay, the 0 in `balance_cents` is only a placeholder.
+    let r = fetch_savings(ACCEPT).await;
+    assert_eq!(r.accounts.len(), 1);
+    assert_eq!(r.accounts[0].kind, AccountKind::Savings);
+    assert_eq!(r.balances_unknown, vec![r.accounts[0].external_ref.clone()]);
+
+    let r = fetch_savings(
+        "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:7:3+DE89370400440532013000+Tagesgeld+EUR+C:1234,56:EUR:20261118'",
+    )
+    .await;
+    assert_eq!(r.accounts[0].balance_cents, 123_456);
+    assert!(r.balances_unknown.is_empty());
+}
+
+#[test]
+fn own_account_transfer_from_savings_uses_hkcum() {
+    // #1513: the savings account allows only SEPA-Umbuchung, the current account both.
+    let mut c = FinTsConnector::new("37040044");
+    c.upd = vec![
+        upd_acc("0532013000", "", IBAN_A, "Tagesgeld", &["HKSAL", "HKCUM"]),
+        upd_acc(
+            "0000202051",
+            "",
+            IBAN_B,
+            "Girokonto",
+            &["HKSAL", "HKCCS", "HKCUM"],
+        ),
+    ];
+    // Savings → own current account: Umbuchung, also with spaces in the IBAN.
+    assert!(c.is_upd_internal_transfer(IBAN_A, IBAN_B));
+    assert!(c.is_upd_internal_transfer("DE89 3704 0044 0532 0130 00", IBAN_B));
+    // A source that allows HKCCS keeps the regular transfer.
+    assert!(!c.is_upd_internal_transfer(IBAN_B, IBAN_A));
+    // A recipient outside this login is never an Umbuchung.
+    assert!(!c.is_upd_internal_transfer(IBAN_A, "DE75512108001245126199"));
+    // Without an explicit HKCUM in the UPD nothing changes.
+    c.upd[0] = upd_acc("0532013000", "", IBAN_A, "Tagesgeld", &["HKSAL"]);
+    assert!(!c.is_upd_internal_transfer(IBAN_A, IBAN_B));
+}
+
 #[tokio::test]
 async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
     // #1083 (flatex): the camt request gets 0030, a TAN the running fetch cannot
     // ask for. MT940 would only send the next TAN to the app; the other
     // account's balance is stored and the failure reported with the sync.
-    const BALANCE: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:7:3+X+Girokonto+EUR+C:1234,56:EUR:20250102'";
     const TAN: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:4+0030::Auftrag empfangen - TAN erforderlich.'HITAN:4:6:4+4++TASK1+TAN eingeben'";
     let (url, seen) = mock_bank(vec![BALANCE, TAN]);
     let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKCAZ": [1], "HKKAZ": [7]}, "tan_required": {"HKCAZ": true, "HKKAZ": true}, "camt_formats": ["urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"]});
@@ -1529,4 +1652,25 @@ fn hispas_advertises_pain_001_09_for_hkccs() {
         b"HICCSS:10:1:3+1+1+0'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.008.001.08'",
     ));
     assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V09));
+}
+
+#[tokio::test]
+async fn a_rejected_account_list_is_no_warning_when_the_upd_lists_the_accounts() {
+    // #1083 (flatex): HKSPA is answered with 9380 on every sync; the UPD lists
+    // every account, so the sync is complete and must not say otherwise.
+    const NO_PERMISSION: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+9050::Teilweise fehlerhaft.'HIRMS:3:2:3+9380::Benutzer hat keine Auftragsberechtigung.'";
+    let (url, _) = mock_bank(vec![NO_PERMISSION, BALANCE]);
+    let mut c = order_connector(&url);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd = vec![upd_acc("0532013000", "", IBAN_A, "Girokonto", &["HKSAL"])];
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    // the sync went on after the rejection: the balance was read
+    assert_eq!(r.accounts.len(), 1);
+    assert_eq!(r.accounts[0].balance_cents, 123_456);
+
+    // Without UPD accounts the rejection is the reason nothing came: still reported.
+    let (url, _) = mock_bank(vec![NO_PERMISSION]);
+    let e = order_connector(&url).fetch(&test_ctx()).await.unwrap_err();
+    assert!(e.to_string().contains("HKSPA"), "{e}");
 }

@@ -110,6 +110,11 @@ fn bic_for_iban(iban: String) -> Option<String> {
 }
 
 #[uniffi::export]
+fn bank_name_for_iban(iban: String) -> Option<String> {
+    crate::connectors::fints_directory::bank_name_for_iban(iban)
+}
+
+#[uniffi::export]
 fn validate_iban(iban: String) -> bool {
     crate::connectors::validate_iban(iban)
 }

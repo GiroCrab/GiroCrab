@@ -68,6 +68,16 @@ use templates::SrcTemplate;
 /// `accounts.external_ref` prefix of accounts created by this importer.
 const EXT_PREFIX: &str = "moneymoney-db:";
 
+/// Bit of `accounts.refresh` that MoneyMoney sets for a closed account
+/// (found with a real database: ticking and unticking the checkbox flips only it).
+const MM_CLOSED: i64 = 16;
+
+/// Archives an account closed in MoneyMoney (offline, stays readable).
+fn archive_closed(conn: &Connection, account_id: i64) -> CoreResult<()> {
+    crate::user_groups::set_archived_inner(conn, account_id, true)?;
+    Ok(())
+}
+
 // ------------------------------------------------------------------ FFI types
 
 /// One MoneyMoney account as found in the database.
@@ -459,9 +469,10 @@ struct SrcAccount {
     /// Balance MoneyMoney displays (`accounts.balances` blob): (cents, currency).
     shown_balance: Option<(i64, String)>,
     balance_ts: Option<i64>,
-    /// `accounts.cancel_tsp`: when the account was deactivated/closed in MoneyMoney
-    /// (Unix seconds); `None` = still active.
-    cancelled_ts: Option<i64>,
+    /// "Account is closed" in MoneyMoney's account settings: bit 16 of
+    /// `accounts.refresh` (the low bits are its refresh settings). MoneyMoney
+    /// keeps no date for it. Not `cancel_tsp`, a cancelled refresh (#998).
+    closed: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -604,26 +615,9 @@ fn get(r: &Row, i: usize) -> rusqlite::Result<Value> {
 /// MoneyMoney stores amounts as REAL. Converted via the shortest decimal
 /// representation, rounded half away from zero (0.285 → 29 cents, not 28).
 pub(crate) fn real_to_cents(x: f64) -> Option<i64> {
-    if !x.is_finite() {
-        return None;
-    }
-    let s = format!("{}", x.abs());
-    let (int, frac) = s.split_once('.').unwrap_or((s.as_str(), ""));
-    let d: Vec<i64> = frac
-        .bytes()
-        .chain(std::iter::repeat(b'0'))
-        .take(3)
-        .map(|b| (b - b'0') as i64)
-        .collect();
-    let mut cents = int
-        .parse::<i64>()
-        .ok()?
-        .checked_mul(100)?
-        .checked_add(d[0] * 10 + d[1])?;
-    if d[2] >= 5 {
-        cents += 1;
-    }
-    Some(if x < 0.0 { -cents } else { cents })
+    // f64 `Display` prints the shortest round-trip form and never an exponent;
+    // NaN and infinities are no decimal.
+    crate::money::decimal(&x.to_string(), '.').and_then(crate::money::cents_rounded)
 }
 
 /// MoneyMoney dates are Unix seconds at 12:00 UTC → `YYYY-MM-DD` (UTC).
@@ -756,6 +750,9 @@ fn suggest_kind(a: &SrcAccount, bank: Option<&SrcBank>) -> AccountKind {
     let both = format!("{name} {}", bank_name.to_lowercase());
     if a.portfolio {
         AccountKind::Brokerage
+    } else if has_any(&name, &["festgeld", "termingeld", "time deposit"]) {
+        // before the card words, which are also searched in the bank name (#1002)
+        AccountKind::TimeDeposit
     } else if bank.is_some_and(SrcBank::card_only)
         || has_any(
             &both,
@@ -779,7 +776,6 @@ fn suggest_kind(a: &SrcAccount, bank: Option<&SrcBank>) -> AccountKind {
             "tagesgeld",
             "sparkonto",
             "sparbuch",
-            "festgeld",
             "geldmarkt",
             "savings",
             "extra-konto",
@@ -1242,7 +1238,7 @@ fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
             "balances",
             "balance_tsp",
             "bic",
-            "cancel_tsp",
+            "refresh",
         ],
         "ORDER BY sort, rowid",
     )?;
@@ -1266,7 +1262,7 @@ fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
             shown_balance: parse_balances_blob(get(r, 11)?),
             balance_ts: vint(get(r, 12)?).filter(|t| *t > 0),
             bic: vtext(get(r, 13)?),
-            cancelled_ts: vint(get(r, 14)?).filter(|t| *t > 0),
+            closed: vint(get(r, 14)?).is_some_and(|f| f & MM_CLOSED != 0),
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -2232,6 +2228,19 @@ fn into_split(row: &mut MmRow, parts: Vec<MmRow>) -> Result<(), Vec<MmRow>> {
 
 // ------------------------------------------------------------------ vault side
 
+/// The account an earlier import of `a` created (soft-deleted ones too: the import revives
+/// them), or the bank account a twin of it was folded into: where a target of `None` goes.
+fn reused_account(conn: &Connection, a: &SrcAccount) -> CoreResult<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
+        [ext_ref(a)],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()?
+    .map(|id| crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id)))
+    .transpose()
+}
+
 /// The vault account each MoneyMoney account is merged into, keyed by its
 /// MoneyMoney rowid. A vault account is claimed at most once: MoneyMoney keeps
 /// closed / duplicate accounts with the same IBAN (issue #94), and without this
@@ -2245,30 +2254,12 @@ fn find_existing_accounts(
     let mut out: HashMap<i64, (i64, String)> = HashMap::new();
     let mut claimed: HashSet<i64> = HashSet::new();
     for a in accounts {
-        let by_ref: Option<(i64, String)> = conn
-            .query_row(
-                // includes soft-deleted rows: the import revives a deleted account
-                "SELECT id, name FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
-                [ext_ref(a)],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        // a twin folded into its bank account: the import goes there
-        let by_ref = match by_ref {
-            Some((id, name)) => match crate::sync_merge::twins::folded_into(conn, id)? {
-                Some(bank) => Some((
-                    bank,
-                    conn.query_row("SELECT name FROM accounts WHERE id = ?1", [bank], |r| {
-                        r.get(0)
-                    })?,
-                )),
-                None => Some((id, name)),
-            },
-            None => None,
-        };
-        if let Some(found) = by_ref {
-            claimed.insert(found.0);
-            out.insert(a.id, found);
+        if let Some(id) = reused_account(conn, a)? {
+            let name = conn.query_row("SELECT name FROM accounts WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })?;
+            claimed.insert(id);
+            out.insert(a.id, (id, name));
         }
     }
     for a in accounts.iter().filter(|a| !a.iban.is_empty()) {
@@ -3164,21 +3155,15 @@ impl ImportCtx<'_> {
         let kind = choice.kind;
         let target = match choice.target_account_id {
             Some(id) => Some(id),
-            None => conn
-                .query_row(
-                    // includes soft-deleted rows: revived below
-                    "SELECT id FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
-                    [&ext],
-                    |r| r.get::<_, i64>(0),
-                )
-                .optional()?
-                .map(|id| {
-                    crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id))
-                })
-                .transpose()?,
+            // revived below when it was deleted
+            None => reused_account(conn, a)?,
         };
         if let Some(id) = target {
-            crate::sync_merge::revive_account_if_deleted(conn, id)?;
+            // Nobody chose the archive state of a revived account (it comes back
+            // active): MoneyMoney's applies.
+            if crate::sync_merge::revive_account_if_deleted(conn, id)? && a.closed {
+                archive_closed(conn, id)?;
+            }
             let cur: String = conn
                 .query_row("SELECT currency FROM accounts WHERE id = ?1", [id], |r| {
                     r.get(0)
@@ -3217,11 +3202,17 @@ impl ImportCtx<'_> {
             ],
         )?;
         self.res.accounts_created += 1;
-        Ok((conn.last_insert_rowid(), a.currency.clone()))
+        let id = conn.last_insert_rowid();
+        // Closed in MoneyMoney: archived here. Only a new account: a re-import
+        // leaves the archive state the user set (#890).
+        if a.closed {
+            archive_closed(conn, id)?;
+        }
+        Ok((id, a.currency.clone()))
     }
 
-    /// An account the importer owns takes MoneyMoney's kind, balance, archive
-    /// state, opening balance and positions.
+    /// An account the importer owns takes MoneyMoney's kind, balance, opening
+    /// balance and positions.
     fn follow_moneymoney(
         &mut self,
         account_id: i64,
@@ -3238,14 +3229,6 @@ impl ImportCtx<'_> {
         )?;
         if kind == AccountKind::Loan {
             Vault::derive_initial_balance(conn, account_id)?;
-        }
-        // Deactivated in MoneyMoney: archived here too (offline account that
-        // stays readable). Never un-archives what the user archived.
-        if let Some(ts) = a.cancelled_ts {
-            conn.execute(
-                "UPDATE accounts SET archived_unix = ?1, archived_ms = ?2 WHERE id = ?3 AND archived_unix IS NULL",
-                params![ts, now_ms(), account_id],
-            )?;
         }
         // #212: MoneyMoney's opening balance becomes the account's. MoneyMoney
         // has no cut-off date: the Startsaldo applies before the first
@@ -3632,39 +3615,3 @@ fn statement_files(explicit: Option<String>, found: Option<PathBuf>) -> Option<S
 
 #[cfg(test)]
 pub(crate) mod tests;
-
-#[cfg(test)]
-mod inactive_account_tests {
-    use super::tests::{PW, fake_db, options_from};
-    use super::*;
-
-    #[test]
-    fn inactive_moneymoney_account_is_imported_archived() {
-        let path = fake_db();
-        {
-            let c = Connection::open(&path).unwrap();
-            c.execute_batch(&format!("PRAGMA key = '{}';", PW.replace('\'', "''")))
-                .unwrap();
-            c.execute_batch("UPDATE accounts SET cancel_tsp = 1700000000 WHERE rowid = 2;")
-                .unwrap();
-        }
-        let v = Vault::open(
-            crate::test_support::thread_temp_path("mmdb-inactive-vault.db")
-                .to_string_lossy()
-                .to_string(),
-            vec![7u8; 32],
-        )
-        .unwrap();
-        let p = v
-            .preview_moneymoney_database(path.clone(), PW.into(), None)
-            .unwrap();
-        v.import_moneymoney_database(path, PW.into(), options_from(&p, false))
-            .unwrap();
-        let accounts = v.list_accounts().unwrap();
-        let find = |name: &str| accounts.iter().find(|a| a.name == name).unwrap();
-        let card = find("Visa-Karte");
-        assert!(card.archived_unix.is_some());
-        assert_eq!(card.archived_unix, Some(1_700_000_000));
-        assert!(find("Girokonto").archived_unix.is_none());
-    }
-}

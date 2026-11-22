@@ -897,6 +897,127 @@ fn automatic_names_and_bank_name_are_updated_user_names_kept() {
     std::fs::remove_file(path).ok();
 }
 
+/// #1002: a stored Festgeld stays one when a later retrieval reports the account as Savings.
+#[test]
+fn stored_time_deposit_is_not_turned_back_into_savings() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "Bank".into())
+        .unwrap();
+    let acc = |kind| RemoteAccount {
+        external_ref: "F".into(),
+        name: "Festgeld".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind,
+        balance_cents: 0,
+        balance_date: "2026-11-11".into(),
+    };
+    let fetch = |kind| {
+        store_fetch(
+            &v,
+            ConnectorKind::EnableBanking,
+            conn,
+            FetchResult {
+                accounts: vec![acc(kind)],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    };
+    let kind = || -> String {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT kind FROM accounts WHERE external_ref = 'F'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    fetch(AccountKind::TimeDeposit);
+    assert_eq!(kind(), "time_deposit");
+    fetch(AccountKind::Savings);
+    assert_eq!(kind(), "time_deposit");
+    std::fs::remove_file(path).ok();
+}
+
+/// #1002: an unlinked Festgeld that a Savings fetch adopts by IBAN is linked,
+/// but keeps its kind, symbol and group.
+#[test]
+fn unlinked_time_deposit_adopted_by_savings_fetch_keeps_kind() {
+    let (v, path) = demo_vault();
+    let iban = "DE02120300000000202051";
+    let id = v
+        .create_offline_account("Festgeld".into(), AccountKind::TimeDeposit, "EUR".into(), 0)
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET iban = ?1 WHERE id = ?2",
+            rusqlite::params![iban, id],
+        )
+        .unwrap();
+    let state = || -> (Option<i64>, String, Option<String>, Option<i64>) {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT connection_id, kind, sf_symbol, group_id FROM accounts WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+    };
+    let (linked, kind, symbol, group) = state();
+    assert_eq!(linked, None);
+    assert_eq!(kind, "time_deposit");
+
+    let conn = v
+        .add_bank_connection(ConnectorKind::EnableBanking, String::new(), "Bank".into())
+        .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::EnableBanking,
+        conn,
+        FetchResult {
+            accounts: vec![RemoteAccount {
+                external_ref: "FG-1".into(),
+                name: "Festgeld".into(),
+                owner: String::new(),
+                iban: iban.into(),
+                account_number: String::new(),
+                currency: "EUR".into(),
+                kind: AccountKind::Savings,
+                balance_cents: 0,
+                balance_date: "2026-11-11".into(),
+            }],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let live: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE iban = ?1 AND deleted_ms IS NULL",
+            [iban],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        live, 1,
+        "the stored account is adopted, no second one created"
+    );
+    assert_eq!(
+        state(),
+        (Some(conn), "time_deposit".to_string(), symbol, group)
+    );
+    std::fs::remove_file(path).ok();
+}
+
 #[test]
 fn complete_account_list_marks_the_missing_ones() {
     let (v, path) = demo_vault();
@@ -1777,6 +1898,7 @@ mod batch_transfer;
 mod body_limit;
 mod content_id;
 mod direct_debit;
+mod document_matching;
 mod import_takeover;
 mod payment_method;
 mod postbox;
@@ -1869,6 +1991,51 @@ fn fetch_with_document() -> FetchResult {
         }],
         ..Default::default()
     }
+}
+
+#[test]
+fn comdirect_keeps_an_ambiguous_postbox_document_without_an_account() {
+    let dir = crate::test_support::TempDir::new("girocrab-comdirect-ambiguous-postbox");
+    let v = Vault::open(
+        dir.join("v.db").to_string_lossy().into_owned(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let kind = ConnectorKind::Comdirect;
+    let conn = v
+        .add_bank_connection(kind, String::new(), "login".into())
+        .unwrap();
+    let mut fetched = fetch_with_document();
+    let first = &mut fetched.accounts[0];
+    first.external_ref = "giro-1".into();
+    first.name = "Girokonto 1".into();
+    first.iban = "DE75200411550765432100".into();
+    fetched.accounts.push(RemoteAccount {
+        external_ref: "giro-2".into(),
+        name: "Girokonto 2".into(),
+        iban: "DE61200411550876543210".into(),
+        ..fetched.accounts[0].clone()
+    });
+    let notice = &mut fetched.documents[0];
+    notice.account_ref.clear();
+    notice.title = "Kundeninformation".into();
+    notice.source_url = "comdirect:postbox:ambiguous".into();
+    comdirect_postbox::assign_documents(
+        &mut fetched.documents,
+        &fetched.accounts.iter().collect::<Vec<_>>(),
+    );
+    assert!(fetched.documents[0].account_ref.is_empty());
+    store_fetch(&v, kind, conn, fetched).unwrap();
+    let account_id: Option<i64> = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT account_id FROM booking_documents WHERE source_url = ?1",
+            ["comdirect:postbox:ambiguous"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(account_id, None);
 }
 
 #[test]

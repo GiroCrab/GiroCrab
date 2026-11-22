@@ -11,7 +11,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 use crate::iban::normalize_iban;
 use crate::models::AccountKind;
-use crate::money::parse_cents;
+use crate::money::{cents, decimal};
 
 pub(super) fn kind_from_code(code: u32) -> AccountKind {
     // FinTS Kontoart: 1-9 Kontokorrent, 10-19 Sparkonto, 20-29 Festgeld,
@@ -125,12 +125,13 @@ pub(super) fn account_label(acc: &SepaAccount) -> String {
 }
 
 impl FinTsConnector {
-    /// Accounts from UPD merged with HKSPA (BIC/IBAN). Returns (account, upd).
+    /// Accounts from UPD merged with HKSPA (BIC/IBAN) as (account, upd), and why
+    /// HKSPA failed, if it did: whether that matters is the caller's to judge.
     pub(super) async fn account_list(
         &mut self,
         ctx: &ConnectContext,
-        errors: &mut Vec<String>,
-    ) -> Vec<(SepaAccount, Option<UpdAccount>)> {
+    ) -> (Vec<(SepaAccount, Option<UpdAccount>)>, Option<String>) {
+        let mut error = None;
         let mut sepa: Vec<SepaAccount> = Vec::new();
         if self.bank_supports("HKSPA") {
             let v = self.version("HKSPA");
@@ -156,10 +157,10 @@ impl FinTsConnector {
                         }
                     }
                 }
-                Err(e) => errors.push(trf("Kontenliste (HKSPA) – {0}", &[&e])),
+                Err(e) => error = Some(trf("Kontenliste (HKSPA) – {0}", &[&e])),
             }
         }
-        merge_upd_with_sepa(&self.upd, sepa, &self.blz)
+        (merge_upd_with_sepa(&self.upd, sepa, &self.blz), error)
     }
 
     /// The order's source account from the bank's account list. `None` when the
@@ -170,24 +171,33 @@ impl FinTsConnector {
         iban: &str,
         seg_id: &str,
     ) -> CoreResult<Option<SepaAccount>> {
-        let mut errors = Vec::new();
-        let accounts = self.account_list(ctx, &mut errors).await;
+        let (accounts, list_error) = self.account_list(ctx).await;
         let want = normalize_iban(iban);
         let Some((acc, upd)) = accounts
             .into_iter()
             .find(|(a, _)| normalize_iban(&a.iban) == want)
         else {
             // A failed HKSPA is the likely reason the account is missing.
-            let reason = if errors.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", errors.join(" / "))
-            };
+            let reason = list_error.map(|e| format!(" ({e})")).unwrap_or_default();
             return Err(CoreError::NotFound {
                 what: trf("Konto {0} bei der Bank{1}", &[&iban, &reason]),
             });
         };
         Ok(upd.is_none_or(|u| u.allows(seg_id)).then_some(acc))
+    }
+
+    /// #1513: a transfer to another account of this login from a source whose
+    /// UPD refuses HKCCS but lists HKCUM (typical for savings accounts) goes
+    /// out as SEPA-Umbuchung. Only an explicit UPD entry counts.
+    pub(super) fn is_upd_internal_transfer(&self, source_iban: &str, recipient_iban: &str) -> bool {
+        let find = |iban: &str| {
+            let want = normalize_iban(iban);
+            self.upd.iter().find(|u| normalize_iban(&u.iban) == want)
+        };
+        let (Some(src), Some(_)) = (find(source_iban), find(recipient_iban)) else {
+            return false;
+        };
+        !src.allows("HKCCS") && src.allowed.contains("HKCUM")
     }
 
     pub(super) async fn balance(
@@ -213,7 +223,7 @@ impl FinTsConnector {
             .await?;
         Ok(r.first("HISAL").and_then(|s| {
             // element 4: booked balance  C|D : amount : currency : date
-            let c = parse_cents(s.get(4, 1)).ok()?;
+            let c = decimal(s.get(4, 1), ',').and_then(cents)?;
             let sign = if s.get(4, 0) == "D" { -1 } else { 1 };
             let cur = if s.get(4, 2).is_empty() {
                 "EUR".to_string()

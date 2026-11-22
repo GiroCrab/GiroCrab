@@ -608,7 +608,7 @@ fn split_booking_goes_onto_a_bank_booking_already_there() {
     let v = vault();
     let acc = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
@@ -830,7 +830,7 @@ fn a_bank_booking_like_a_part_does_not_take_the_split_apart() {
     let v = vault();
     let acc = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
@@ -865,7 +865,7 @@ fn iban_match_merges_into_existing_synced_account() {
         .unwrap();
     let existing = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (?1, ?2, 'abc-123', 'Mein Giro', 'DE89 3704 0044 0532 0130 00', 'EUR', 'checking', 123456)",
@@ -3577,7 +3577,7 @@ fn accounts_sharing_an_iban_are_merged_into_different_vault_accounts() {
     let v = vault();
     let existing = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (NULL, ?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
@@ -3655,7 +3655,7 @@ fn import_goes_to_the_bank_account_a_twin_was_folded_into() {
     let mut ids = Vec::new();
     {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         for r in ["API1", ext.as_str()] {
             db.execute(
                 "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
@@ -4086,28 +4086,26 @@ fn a_database_without_value_history_imports_as_before() {
     assert_eq!(r.value_history_imported, 0);
 }
 
-#[test]
-fn portal_sync_adopts_the_active_card_next_to_closed_ones() {
-    // #816: two cards closed in MoneyMoney (archived on import) next to the
-    // active one under one Amex login; the first portal sync takes the active
-    // card over instead of adding a fourth account.
-    let extra = "
+/// Two old Amex cards and the active one under one login, imported with the old
+/// cards' `refresh` value (16 and up: closed in MoneyMoney); `prepare` runs before
+/// the first portal sync. That sync must take the active card over instead of
+/// adding a fourth account.
+fn amex_portal_sync_adopts_the_active_card(old_refresh: i64, prepare: impl FnOnce(&Vault)) {
+    let extra = format!(
+        "
 INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage) VALUES
   (30, 'DE', '', 'amex-login', '', 'GEHEIM-30', 'American Express', 'SYS', 'LS');
-INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred, cancel_tsp) VALUES
-  (30, 30, 'xxxx-11001', '', 0, '', 'EUR', 'Amex Alt 1', 'Max Mustermann', 0, 3, 30, 0, 1, 'GEHEIM', 1500000000),
-  (31, 30, 'xxxx-21002', '', 0, '', 'EUR', 'Amex Alt 2', 'Max Mustermann', 0, 3, 31, 0, 1, 'GEHEIM', 1600000000),
-  (32, 30, 'xxxx-31003', '', 0, '', 'EUR', 'Amex Aktiv', 'Max Mustermann', 0, 3, 32, 0, 1, 'GEHEIM', NULL);
-";
+INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred, refresh) VALUES
+  (30, 30, 'xxxx-11001', '', 0, '', 'EUR', 'Amex Alt 1', 'Max Mustermann', 0, 3, 30, 0, 1, 'GEHEIM', {old_refresh}),
+  (31, 30, 'xxxx-21002', '', 0, '', 'EUR', 'Amex Alt 2', 'Max Mustermann', 0, 3, 31, 0, 1, 'GEHEIM', {old_refresh}),
+  (32, 30, 'xxxx-31003', '', 0, '', 'EUR', 'Amex Aktiv', 'Max Mustermann', 0, 3, 32, 0, 1, 'GEHEIM', 3);
+"
+    );
     let v = vault();
-    let path = fake_db_with(false, extra);
-    let p = v
-        .preview_moneymoney_database(path.clone(), PW.into(), None)
-        .unwrap();
-    v.import_moneymoney_database(path, PW.into(), options_from(&p, true))
-        .unwrap();
-    assert!(account_by_name(&v, "Amex Alt 1").archived_unix.is_some());
-    assert!(account_by_name(&v, "Amex Alt 2").archived_unix.is_some());
+    import_with(&v, &fake_db_with(false, &extra), |o| {
+        o.create_connections = true
+    });
+    prepare(&v);
     let active = account_by_name(&v, "Amex Aktiv");
     let conn = active.connection_id.unwrap();
     let before = v.list_accounts().unwrap().len();
@@ -4117,6 +4115,16 @@ INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, curre
         .unwrap();
     assert_eq!(v.list_accounts().unwrap().len(), before);
     assert_eq!(bookings(&v, active.id).len(), 1);
+}
+
+#[test]
+fn portal_sync_adopts_the_active_card_next_to_closed_ones() {
+    // #816: the cards closed in MoneyMoney are archived on import
+    amex_portal_sync_adopts_the_active_card(19, |v| {
+        for name in ["Amex Alt 1", "Amex Alt 2"] {
+            assert!(account_by_name(v, name).archived_unix.is_some(), "{name}");
+        }
+    });
 }
 
 #[test]
@@ -4173,4 +4181,141 @@ fn adopt_account_reuses_imported_trade_republic_checking_account_without_iban() 
             .unwrap();
         assert_eq!(ext, "tr:cash");
     }
+}
+
+/// Visa-Karte closed in MoneyMoney (bit 16 of `refresh`, the low bits are its
+/// refresh settings), Girokonto open.
+const CARD_CLOSED: &str = "UPDATE accounts SET refresh = 19 WHERE rowid = 2;
+     UPDATE accounts SET refresh = 3 WHERE rowid = 1;";
+
+#[test]
+fn account_with_a_cancelled_refresh_is_imported_active() {
+    // #998: `cancel_tsp` is when MoneyMoney's last refresh of the account was
+    // cancelled (next to `error_tsp`, `balance_tsp` …), e.g. a TAN not confirmed
+    // after the start-up refresh. Such an account is in use, not closed.
+    let v = vault();
+    import_with(
+        &v,
+        &fake_db_with(
+            false,
+            "UPDATE accounts SET cancel_tsp = 1700000000 WHERE rowid IN (1, 2);",
+        ),
+        |_| {},
+    );
+    for name in ["Girokonto", "Visa-Karte"] {
+        let a = account_by_name(&v, name);
+        assert!(a.archived_unix.is_none(), "{name}");
+        assert!(a.in_total, "{name}");
+    }
+}
+
+#[test]
+fn account_closed_in_moneymoney_is_imported_archived() {
+    let v = vault();
+    import_with(&v, &fake_db_with(false, CARD_CLOSED), |_| {});
+    let card = account_by_name(&v, "Visa-Karte");
+    assert!(card.archived_unix.is_some());
+    assert!(!card.in_total);
+    assert!(!bookings(&v, card.id).is_empty(), "bookings imported");
+    assert!(account_by_name(&v, "Girokonto").archived_unix.is_none());
+    // time and stamp from the same second, like an archive in the app: the import of
+    // v0.8.5 left an older time next to a newer stamp (#998)
+    let (unix, ms): (i64, i64) = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT archived_unix, archived_ms FROM accounts WHERE id = ?1",
+            [card.id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(unix, ms / 1000, "{unix} {ms}");
+}
+
+#[test]
+fn reimport_keeps_the_archive_state_of_existing_accounts() {
+    // #890: the state in GiroCrab is the user's choice, whatever MoneyMoney says
+    let v = vault();
+    import_with(&v, &fake_db(), |_| {});
+    let card = account_by_name(&v, "Visa-Karte").id;
+    v.set_account_archived(account_by_name(&v, "Girokonto").id, true)
+        .unwrap();
+    import_with(&v, &fake_db_with(false, CARD_CLOSED), |_| {});
+    let again = account_by_name(&v, "Visa-Karte");
+    assert_eq!(again.id, card);
+    assert!(again.archived_unix.is_none());
+    assert!(account_by_name(&v, "Girokonto").archived_unix.is_some());
+}
+
+#[test]
+fn deleted_closed_account_comes_back_archived() {
+    // archived, deleted and imported again: revived, but still closed in MoneyMoney
+    let v = vault();
+    import_with(&v, &fake_db_with(false, CARD_CLOSED), |_| {});
+    let card = account_by_name(&v, "Visa-Karte").id;
+    v.delete_account(card).unwrap();
+    import_with(&v, &fake_db_with(false, CARD_CLOSED), |_| {});
+    let revived = account_by_name(&v, "Visa-Karte");
+    assert_eq!(revived.id, card);
+    assert!(revived.archived_unix.is_some());
+    assert!(!bookings(&v, card).is_empty());
+}
+
+#[test]
+fn archiving_an_archived_account_keeps_its_time_and_stamp() {
+    // otherwise the old time next to a new stamp looks like the #998 pattern
+    let v = vault();
+    import_with(&v, &fake_db(), |_| {});
+    let card = account_by_name(&v, "Visa-Karte").id;
+    let pair = || -> (Option<i64>, i64) {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT archived_unix, archived_ms FROM accounts WHERE id = ?1",
+                [card],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    };
+    v.set_account_archived(card, true).unwrap();
+    // an archive from a minute ago
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET archived_unix = archived_unix - 60, archived_ms = archived_ms - 60000 WHERE id = ?1",
+            [card],
+        )
+        .unwrap();
+    let first = pair();
+    assert!(first.0.is_some());
+    v.set_account_archived(card, true).unwrap();
+    assert_eq!(pair(), first);
+    v.set_account_archived(card, false).unwrap();
+    assert_eq!(pair().0, None);
+    assert!(pair().1 >= first.1);
+}
+
+/// #1002: a fixed-term deposit is told from a savings account by its name.
+#[test]
+fn suggests_time_deposit_for_festgeld_names() {
+    let bank_named = |name: &str| SrcBank {
+        name: name.into(),
+        ..SrcBank::default()
+    };
+    let kind = |name: &str| {
+        let mut a = src_acc(1, "123", "50050201", "", "EUR");
+        a.name = name.into();
+        suggest_kind(&a, Some(&bank_named("Testbank")))
+    };
+    assert_eq!(kind("Festgeld 12 Monate"), AccountKind::TimeDeposit);
+    assert_eq!(kind("Termingeldkonto"), AccountKind::TimeDeposit);
+    assert_eq!(kind("Tagesgeld"), AccountKind::Savings);
+    // the bank name must not turn a Festgeld into a card
+    let mut a = src_acc(1, "123", "50050201", "", "EUR");
+    a.name = "Festgeld 12 Monate".into();
+    assert_eq!(
+        suggest_kind(&a, Some(&bank_named("American Express"))),
+        AccountKind::TimeDeposit
+    );
+    assert_eq!(kind("Girokonto"), AccountKind::Checking);
 }

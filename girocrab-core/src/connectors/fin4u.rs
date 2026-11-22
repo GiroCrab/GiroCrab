@@ -351,7 +351,8 @@ pub(crate) fn account_kind(category: &str) -> AccountKind {
         "KREDITKARTENKONTO" | "VISA" | "MASTERCARD" | "AMERICANEXPRESS" | "DINERSCLUB"
         | "SONSTIGEKARTE" => AccountKind::CreditCard,
         "KREDITKONTO" => AccountKind::Loan,
-        "BAUSPARVERTRAG" | "TAGESGELDKONTO" | "SPARKONTO" | "FESTGELDKONTO" => AccountKind::Savings,
+        "BAUSPARVERTRAG" | "TAGESGELDKONTO" | "SPARKONTO" => AccountKind::Savings,
+        "FESTGELDKONTO" => AccountKind::TimeDeposit,
         _ => AccountKind::Checking,
     }
 }
@@ -919,6 +920,12 @@ mod tests {
                  "iban": "DE89 3704 0044 0532 0130 00", "balance": 99.5, "tenantDelivered": false}
             ]
         })
+    }
+
+    #[test]
+    fn maps_festgeldkonto_to_time_deposit() {
+        assert_eq!(account_kind("FESTGELDKONTO"), AccountKind::TimeDeposit);
+        assert_eq!(account_kind("TAGESGELDKONTO"), AccountKind::Savings);
     }
 
     #[test]

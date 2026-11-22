@@ -1,5 +1,5 @@
 //! Wires the sidebar navigation and the views behind it (depot / Sachwerte, Vermögen, Geplant,
-//! Lastschriften, Belege & PostBox, rules dialog) to the window. Every vault call runs on a
+//! Lastschriften, Belege & Postbox, rules dialog) to the window. Every vault call runs on a
 //! worker thread; results are applied on the UI thread and dropped when a newer load started.
 //! The logic itself lives in `nav`, `portfolio` and `lists` (pure, unit-tested).
 
@@ -69,11 +69,22 @@ struct Ui {
     docs: Vec<DocumentInfo>,
     /// Document ids by table row of the Belege view.
     doc_rows: Vec<i64>,
+    /// Unread document ids of the shown Belege list ("Alle als gelesen markieren").
+    doc_unread: Vec<i64>,
     selected_doc: Option<i64>,
     link_ids: Vec<i64>,
     rules: Vec<Rule>,
     rule_categories: Vec<Category>,
     rule_gate: DeleteGate,
+}
+
+impl Ui {
+    /// The shown table was emptied: "Alle als gelesen markieren" only ever takes ids of the
+    /// displayed list. The selection stays, so "Nur ungelesene" keeps the open document after
+    /// the reload that follows "Als gelesen markieren".
+    fn forget_shown_list(&mut self) {
+        self.doc_unread.clear();
+    }
 }
 
 thread_local! {
@@ -408,6 +419,7 @@ fn to_table(rows: Vec<Cells>) -> Vec<TableRow> {
             c3: r.cells[3].clone().into(),
             c4: r.cells[4].clone().into(),
             negative: r.negative,
+            unread: r.unread,
         })
         .collect()
 }
@@ -427,6 +439,9 @@ fn clear_table(win: &MainWindow, empty: &str) {
     win.set_kpis(ModelRc::new(VecModel::from(Vec::<KpiTile>::new())));
     win.set_shares(ModelRc::new(VecModel::from(Vec::<ShareBar>::new())));
     win.set_view_note(SharedString::new());
+    // The next render_view restores both from the list it shows.
+    with_ui(Ui::forget_shown_list);
+    win.set_doc_unread_any(false);
 }
 
 fn set_shares(win: &MainWindow, shares: &[portfolio::Share]) {
@@ -542,8 +557,8 @@ pub fn render_view(win: &MainWindow) {
             set_rows(win, rows, "Keine Lastschrift-Mandate");
         }
         MODE_DOCUMENTS => {
-            win.set_view_title("Belege & PostBox".into());
-            let (mut rows, accounts) = with_ui(|u| {
+            win.set_view_title("Belege & Postbox".into());
+            let (rows, accounts) = with_ui(|u| {
                 (
                     lists::document_rows(&u.docs, &date),
                     u.accounts
@@ -553,6 +568,13 @@ pub fn render_view(win: &MainWindow) {
                         .collect::<Vec<_>>(),
                 )
             });
+            let keep = with_ui(|u| u.selected_doc);
+            let rows = lists::unread_only(rows, win.get_docs_unseen_only(), keep);
+            let unread = lists::unread_ids(&rows);
+            win.set_doc_unread_any(!unread.is_empty());
+            win.set_doc_seen(!keep.is_some_and(|id| unread.contains(&id)));
+            with_ui(|u| u.doc_unread = unread);
+            let mut rows = rows;
             for r in &mut rows {
                 r.mask(&[0, 3], privacy);
             }
@@ -739,6 +761,20 @@ fn reload_docs(win: &MainWindow, vault: &Arc<Vault>, status: String) {
     win.set_view_status(status.into());
 }
 
+/// The vault part of "Als gelesen markieren" / "Alle als gelesen markieren": one UPDATE per id,
+/// so it runs on a worker thread (`run_doc_job`). An empty message keeps the status line clear.
+fn mark_seen_job(vault: &Vault, ids: Vec<i64>, seen: bool) -> Result<String, String> {
+    vault
+        .mark_documents_seen(ids, seen)
+        .map(|_| String::new())
+        .map_err(|e| e.to_string())
+}
+
+/// Marks documents read or unread on a worker thread; the list reloads afterwards.
+fn mark_seen(win: &MainWindow, vault: &Arc<Vault>, ids: Vec<i64>, seen: bool) {
+    run_doc_job(win, vault, move |vault| mark_seen_job(vault, ids, seen));
+}
+
 fn run_doc_job(
     win: &MainWindow,
     vault: &Arc<Vault>,
@@ -765,8 +801,17 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         let _ = &slot2;
         let doc = with_ui(|u| u.doc_rows.get(i as usize).copied());
         with_ui(|u| u.selected_doc = doc);
+        if win.get_view_mode() == MODE_DOCUMENTS && win.get_docs_unseen_only() {
+            // "Nur ungelesene" keeps the open document: rebuild the rows for the new selection,
+            // so a read document kept for the previous one disappears.
+            render_view(&win);
+            return;
+        }
         win.set_table_selected(if doc.is_some() { i } else { -1 });
         set_doc_flags(&win);
+        win.set_doc_seen(!with_ui(|u| {
+            u.selected_doc.is_some_and(|id| u.doc_unread.contains(&id))
+        }));
     });
 
     let (weak, slot2) = (win.as_weak(), slot.clone());
@@ -866,6 +911,35 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         });
     });
 
+    let weak = win.as_weak();
+    win.on_docs_filter_changed(move || {
+        if let Some(win) = weak.upgrade() {
+            render_view(&win);
+        }
+    });
+
+    let (weak, slot2) = (win.as_weak(), slot.clone());
+    win.on_doc_mark_seen(move |seen| {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+            return;
+        };
+        let Some(id) = with_ui(|u| u.selected_doc) else {
+            return;
+        };
+        mark_seen(&win, &v, vec![id], seen);
+    });
+
+    let (weak, slot2) = (win.as_weak(), slot.clone());
+    win.on_doc_mark_all_seen(move || {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+            return;
+        };
+        let ids = with_ui(|u| u.doc_unread.clone());
+        if !ids.is_empty() {
+            mark_seen(&win, &v, ids, true);
+        }
+    });
+
     let (weak, slot2) = (win.as_weak(), slot.clone());
     win.on_doc_link_open(move || {
         let Some(win) = weak.upgrade() else { return };
@@ -936,6 +1010,7 @@ fn search_bookings(win: &MainWindow, vault: &Arc<Vault>, query: String) {
                             String::new(),
                         ],
                         negative: b.amount_cents < 0,
+                        unread: false,
                     })
                     .collect();
                 with_ui(|u| u.link_ids = rows.iter().map(|r| r.id).collect());
@@ -1379,6 +1454,36 @@ mod tests {
                 categories.len()
             );
         }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn emptied_table_drops_mark_all_ids_but_keeps_the_selection() {
+        let mut u = Ui {
+            doc_unread: vec![4, 6],
+            selected_doc: Some(6),
+            ..Ui::default()
+        };
+        u.forget_shown_list();
+        assert!(u.doc_unread.is_empty());
+        assert_eq!(u.selected_doc, Some(6));
+    }
+
+    #[test]
+    fn mark_seen_job_writes_the_read_status_without_a_status_text() {
+        let (vault, path) = demo_vault();
+        let ids: Vec<i64> = vault
+            .list_all_documents(DocumentFilter::default())
+            .unwrap()
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        // Mark all, then back to unread, then again: every round trip succeeds quietly.
+        assert_eq!(mark_seen_job(&vault, ids.clone(), true), Ok(String::new()));
+        assert_eq!(mark_seen_job(&vault, ids.clone(), false), Ok(String::new()));
+        assert_eq!(mark_seen_job(&vault, ids, true), Ok(String::new()));
+        // An id that no longer exists (deleted meanwhile) changes nothing and is no error.
+        assert_eq!(mark_seen_job(&vault, vec![-1], true), Ok(String::new()));
         let _ = std::fs::remove_file(&path);
     }
 

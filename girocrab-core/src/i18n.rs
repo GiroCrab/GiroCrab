@@ -174,8 +174,12 @@ pub fn display_path_in(lang: Lang, path: &str) -> String {
 /// the vault.
 fn default_name_en(de: &str) -> Option<&'static str> {
     Some(match de {
-        // Account groups (sidebar sections).
-        "Giro & Tagesgeld" => "Checking & savings",
+        // Account groups (sidebar sections). "Bargeld" is the same word
+        // as a starter category below and shares its translation.
+        "Girokonten" => "Checking accounts",
+        "Tagesgeld / Sparen" => "Savings",
+        "Festgeld" => "Time deposits",
+        "Zahlungsdienste" => "Payment services",
         "Kreditkarten" => "Credit cards",
         "Depots & ETFs" => "Portfolios & ETFs",
         "Darlehen & Kredite" => "Loans",
@@ -398,8 +402,8 @@ fn english(de: &str) -> Option<&'static str> {
         "Bitte bei EquatePlus im Browserfenster anmelden und die Bestände abrufen." => {
             "Please sign in to EquatePlus in the browser window and fetch your holdings."
         }
-        "Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet." => {
-            "Employee share plans with available and restricted holdings. Sign in in the browser window with EquateAccess or SMS. Unofficial portal interface; subject to change and restrictions under the terms of use. PDF documents can optionally be loaded; they are kept under “Belege & PostBox” and are not assigned to bookings or activities automatically."
+        "Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & Postbox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet." => {
+            "Employee share plans with available and restricted holdings. Sign in in the browser window with EquateAccess or SMS. Unofficial portal interface; subject to change and restrictions under the terms of use. PDF documents can optionally be loaded; they are kept under “Documents & Postbox” and are not assigned to bookings or activities automatically."
         }
         "quirion: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
             "quirion: Incomplete or invalid portal response. No data was imported."
@@ -767,7 +771,7 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Umsätze (HKCAZ/camt.052) – {1}" => "{0}: transactions (HKCAZ/camt.052) – {1}",
         "{0}: Umsätze (HKKAZ/MT940) – {1}" => "{0}: transactions (HKKAZ/MT940) – {1}",
         "{0}: Kartenumsätze ({1}) – {2}" => "{0}: card transactions ({1}) – {2}",
-        "PostBox" => "PostBox",
+        "Postbox" => "Postbox",
         "Online-Archiv" => "Online archive",
         "QR-Code mit dem TAN-Generator scannen" => "Scan the QR code with the TAN generator",
         "Scannen Sie den QR-Code mit dem SecurePlus Generator und geben Sie die angezeigte TAN ein. GiroCrab lädt danach die Dokumente aus dem Online-Archiv." => {
@@ -802,11 +806,11 @@ fn english(de: &str) -> Option<&'static str> {
         "Freigabe erhalten. {0} von {1} Dokumenten geladen, danach folgt der Abruf der Konten." => {
             "Approved. {0} of {1} documents loaded, then the accounts are fetched."
         }
-        "Die PostBox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen." => {
-            "The PostBox can only be fetched additionally for comdirect logins via FinTS."
+        "Die Postbox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen." => {
+            "The Postbox can only be fetched additionally for comdirect logins via FinTS."
         }
-        "Der PostBox-Abruf ist für diesen Zugang nicht eingeschaltet." => {
-            "Fetching the PostBox is not switched on for this login."
+        "Der Postbox-Abruf ist für diesen Zugang nicht eingeschaltet." => {
+            "Fetching the Postbox is not switched on for this login."
         }
         "{0}: Die Freigabe in der Banking-App ist nicht rechtzeitig erfolgt. Bitte erneut abrufen und in der App bestätigen." => {
             "{0}: the approval in the banking app did not arrive in time. Please fetch again and confirm in the app."
@@ -2047,10 +2051,7 @@ mod tests {
 
     #[test]
     fn default_names_translate() {
-        assert_eq!(
-            display_name_in(Lang::En, "Giro & Tagesgeld"),
-            "Checking & savings"
-        );
+        assert_eq!(display_name_in(Lang::En, "Girokonten"), "Checking accounts");
         assert_eq!(display_name_in(Lang::En, "Lebensmittel"), "Food");
         assert_eq!(
             display_name_in(Lang::En, "Meine Kategorie"),

@@ -10,7 +10,7 @@ struct BatchRow: Identifiable {
     var purpose = ""
 
     var cents: Int64? {
-        guard let c = try? parseAmountToCents(text: amountText), c > 0 else { return nil }
+        guard let c = Money.parseCents(amountText), c > 0 else { return nil }
         return c
     }
     var ibanValid: Bool { validateIban(iban: iban) }

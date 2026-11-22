@@ -80,6 +80,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/arrayvec/arrayvec-0.7.8.crate",
+        "sha256": "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56",
+        "dest": "cargo/vendor/arrayvec-0.7.8"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56\", \"files\": {}}",
+        "dest": "cargo/vendor/arrayvec-0.7.8",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/askama/askama-0.16.1.crate",
         "sha256": "6024d73179f43f15ccd2b881bfea6fee7f3a46ec53f33b52210dea749ebebaa4",
         "dest": "cargo/vendor/askama-0.16.1"
@@ -452,6 +465,32 @@
         "type": "inline",
         "contents": "{\"package\": \"a70e4329df6cb94385eed412ec92375c3cdd8a6e502493d1229b6414e4036dfa\", \"files\": {}}",
         "dest": "cargo/vendor/blocking-1.7.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/borsh/borsh-1.8.1.crate",
+        "sha256": "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a",
+        "dest": "cargo/vendor/borsh-1.8.1"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a\", \"files\": {}}",
+        "dest": "cargo/vendor/borsh-1.8.1",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/borsh-derive/borsh-derive-1.8.1.crate",
+        "sha256": "12cdfe656708a01f89b451a7d36466e6fe6c414de0aa18fc54f864f6f9ca9f56",
+        "dest": "cargo/vendor/borsh-derive-1.8.1"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"12cdfe656708a01f89b451a7d36466e6fe6c414de0aa18fc54f864f6f9ca9f56\", \"files\": {}}",
+        "dest": "cargo/vendor/borsh-derive-1.8.1",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -3572,6 +3611,19 @@
         "type": "inline",
         "contents": "{\"package\": \"a4edff0039f148731aee2fd80f76dbfeb12d204ab3d1c544838d34e02151049b\", \"files\": {}}",
         "dest": "cargo/vendor/rusqlite-0.42.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/rust_decimal/rust_decimal-1.43.0.crate",
+        "sha256": "7653272e75dcac41dc199fbea6f5797633994fafd339943c06c9af16bf29cd3a",
+        "dest": "cargo/vendor/rust_decimal-1.43.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"7653272e75dcac41dc199fbea6f5797633994fafd339943c06c9af16bf29cd3a\", \"files\": {}}",
+        "dest": "cargo/vendor/rust_decimal-1.43.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {

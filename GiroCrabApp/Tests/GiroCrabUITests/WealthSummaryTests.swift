@@ -11,7 +11,7 @@ final class WealthSummaryTests: XCTestCase {
         XCTAssertEqual(s.netCents, s.cashCents + s.assetsCents + s.creditCents + s.liabilitiesCents)
         let included = s.cash + s.depots + s.liabilities
         XCTAssertTrue(included.allSatisfy { $0.archivedUnix == nil && $0.inTotal && $0.currency == "EUR" })
-        XCTAssertTrue(s.cash.allSatisfy { [.checking, .savings, .cash, .paymentService].contains($0.kind) })
+        XCTAssertTrue(s.cash.allSatisfy { [.checking, .savings, .timeDeposit, .cash, .paymentService].contains($0.kind) })
         XCTAssertTrue(s.depots.allSatisfy { $0.kind == .brokerage })
         XCTAssertTrue(s.liabilities.allSatisfy { $0.kind == .creditCard || $0.kind == .loan })
     }
@@ -81,6 +81,38 @@ final class WealthSummaryTests: XCTestCase {
         XCTAssertEqual(WealthPosition.aggregate([[h]]).first?.gainCents, 200)
         let none = Holding(isin: "B", wkn: "", name: "B", quantity: 10, currentPriceCents: 120, purchasePriceCents: 0, valueCents: 1200)
         XCTAssertNil(WealthPosition.aggregate([[none]]).first?.gainCents) // no cost price: stays unknown
+    }
+
+    func testCashIsGroupedByKindWithSubtotals() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let base = try XCTUnwrap(model.allAccounts.first {
+            $0.kind == .checking && $0.inTotal && $0.archivedUnix == nil && $0.currency == "EUR"
+        })
+        func account(_ id: Int64, _ kind: AccountKind, _ cents: Int64) -> Account {
+            var a = base
+            a.id = id
+            a.kind = kind
+            a.balanceCents = cents
+            return a
+        }
+        let s = WealthSummary(accounts: [
+            account(1, .checking, 1_000), account(2, .timeDeposit, 5_000), account(3, .checking, 2_000),
+            account(7, .paymentService, 3_000), account(4, .savings, 3_000), account(5, .cash, 3_000),
+            account(6, .brokerage, 9_999),
+        ])
+        let groups = s.cashByKind
+        // largest subtotal first, equal ones in the order of the "Kontoart" sidebar sections (#1620):
+        // Bargeld before Zahlungsdienste; the depot is no cash
+        XCTAssertEqual(groups.map(\.kind), [.timeDeposit, .checking, .savings, .cash, .paymentService])
+        XCTAssertEqual(groups.map(\.cents), [5_000, 3_000, 3_000, 3_000, 3_000])
+        // headings for several accounts, as the sidebar sections name them (#1620)
+        XCTAssertEqual(groups.first { $0.kind == .checking }?.title, String(localized: "Girokonten"))
+        XCTAssertEqual(groups.first { $0.kind == .paymentService }?.title, String(localized: "Zahlungsdienste"))
+        XCTAssertEqual(groups.first { $0.kind == .savings }?.title, AccountKind.savings.label)
+        XCTAssertEqual(groups.first { $0.kind == .checking }?.accounts.map(\.id).sorted(), [1, 3])
+        XCTAssertEqual(groups.reduce(0) { $0 + $1.cents }, s.cashCents)
+        XCTAssertEqual(Set(groups.map(\.id)).count, groups.count)
+        XCTAssertTrue(WealthSummary(accounts: []).cashByKind.isEmpty)
     }
 
     func testPositiveCardBalanceStaysAnAssetWhenDebtsAreLeftOut() throws {

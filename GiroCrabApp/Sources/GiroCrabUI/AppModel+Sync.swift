@@ -94,11 +94,21 @@ extension AppModel {
     func requestSyncAccount(_ account: Account) {
         guard syncingConnectionID == nil, !account.isArchived, let cid = account.connectionId,
               let connection = connections.first(where: { $0.id == cid }) else { return }
-        // logins with their own flow (web portal, file import, Advanzia) fetch everything
-        if !usesPortal(connection), !usesFileImport(connection), connection.connector != .advanzia {
-            syncAccountID = account.id
-        }
+        if supportsAccountSync(connection) { syncAccountID = account.id }
         requestSync(connection)
+    }
+
+    /// Logins with their own flow (web portal, file import, Advanzia) fetch
+    /// everything, also for "<Konto> abrufen".
+    func supportsAccountSync(_ connection: BankConnection) -> Bool {
+        !usesPortal(connection) && !usesFileImport(connection) && connection.connector != .advanzia
+    }
+
+    /// Whether the sidebar shows `account` as being fetched: its login syncs,
+    /// and the sync is not limited to another of its accounts (#1572).
+    func isSyncing(_ account: Account) -> Bool {
+        guard let cid = syncingConnectionID, cid == account.connectionId else { return false }
+        return syncingAccountID == nil || syncingAccountID == account.id
     }
 
     func requestSyncAll() {
@@ -315,7 +325,7 @@ extension AppModel {
         }
     }
 
-    /// Toast suffix of a sync with the comdirect PostBox (#838) or the
+    /// Toast suffix of a sync with the comdirect Postbox (#838) or the
     /// Consorsbank Online-Archiv (#1024).
     static func postboxNote(_ s: SyncSummary, _ c: BankConnection) -> String {
         if c.connector == .finTsGeneric, c.bankCode == "76030080" {
@@ -327,11 +337,11 @@ extension AppModel {
                 : String(localized: "\(n) neue Dokumente aus dem Online-Archiv")
         }
         guard let n = s.postboxDocuments else {
-            return String(localized: "PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
+            return String(localized: "Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
         }
         return n == 0
-            ? String(localized: "keine neuen PostBox-Dokumente")
-            : String(localized: "\(n) neue PostBox-Dokumente")
+            ? String(localized: "keine neuen Postbox-Dokumente")
+            : String(localized: "\(n) neue Postbox-Dokumente")
     }
 
     /// Toast suffix: new bookings the bank delivered for archived accounts (not stored).
@@ -362,7 +372,7 @@ extension AppModel {
     }
 
     /// Forgets what the next sync was asked to fetch besides (or instead of)
-    /// the login's bookings: statements, PostBox, one account.
+    /// the login's bookings: statements, Postbox, one account.
     func clearSyncTargets() {
         statementsAccountID = nil
         postboxConnectionID = nil
@@ -390,7 +400,7 @@ extension AppModel {
         // would hand this login's PIN to another bank.
         if ownAccount(statementsAccountID, of: connection) == nil { statementsAccountID = nil }
         let statementsFor = statementsAccountID
-        // "PostBox jetzt abrufen" only for exactly this login, never in an automatic sync
+        // "Postbox jetzt abrufen" only for exactly this login, never in an automatic sync
         if postboxConnectionID != connection.id || quietSyncConnectionID == connection.id {
             postboxConnectionID = nil
         }
@@ -399,6 +409,7 @@ extension AppModel {
         let accountOnly = ownAccount(syncAccountID, of: connection)
         let quiet = quietSyncConnectionID == connection.id
         syncingConnectionID = connection.id
+        syncingAccountID = statementsFor ?? accountOnly
         syncGeneration &+= 1
         Task {
             var started: SyncSession?
@@ -411,7 +422,7 @@ extension AppModel {
                 } else if let accountID = accountOnly {
                     session = try vault.beginAccountSync(accountId: accountID, secret: secret, demo: isDemo)
                 } else if quiet {
-                    // no new approval in the background (e.g. the comdirect PostBox, #838)
+                    // no new approval in the background (e.g. the comdirect Postbox, #838)
                     session = try vault.beginQuietSync(connectionId: connection.id, secret: secret, demo: isDemo)
                 } else {
                     session = try vault.beginSync(connectionId: connection.id, secret: secret, demo: isDemo)

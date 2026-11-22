@@ -40,7 +40,7 @@ use crate::asset_classification::{AssetClass, ClassificationValues, InstrumentKi
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::{AccountKind, Holding};
-use crate::money::json_number_to_cents;
+use crate::money::{json_number_to_cents_rounded, parse_cents, parse_cents_rounded};
 use crate::secret::{SecretJson, SecretString};
 
 const API: &str = "https://api.traderepublic.com";
@@ -127,8 +127,7 @@ fn snippet(body: &str) -> String {
 
 /// Amounts arrive as JSON numbers that may carry float noise (-4.040000000000001).
 fn amount_cents(v: &Value) -> i64 {
-    json_number_to_cents(v)
-        .unwrap_or_else(|_| v.as_f64().map(|f| (f * 100.0).round() as i64).unwrap_or(0))
+    json_number_to_cents_rounded(v).unwrap_or(0)
 }
 
 /// A number in a detail text such as "1.234,56 €", "0,5" or "12.5": German
@@ -224,7 +223,6 @@ fn parse_trade_detail(item_icon: &str, detail: &Value) -> TradeDetail {
             });
         }
     }
-    let cents = |t: &str| parse_decimal_text(t).map(|f| (f * 100.0).round() as i64);
     walk_rows(detail, &mut |title, text| {
         match title {
             "Aktien" | "Anteile" | "Shares" | "Aktien hinzugefügt" | "Aktien entfernt"
@@ -233,13 +231,13 @@ fn parse_trade_detail(item_icon: &str, detail: &Value) -> TradeDetail {
                 d.quantity = parse_decimal_text(text).map(f64::abs);
             }
             "Preis" | "Kurs" | "Aktienkurs" | "Quotation" | "Price" if d.price_cents.is_none() => {
-                d.price_cents = cents(text).map(i64::abs);
+                d.price_cents = parse_cents_rounded(text).ok().map(i64::abs);
             }
             "Gebühr" | "Gebühren" | "Fee" if d.fees_cents.is_none() => {
-                d.fees_cents = cents(text).map(i64::abs);
+                d.fees_cents = parse_cents(text).ok().map(i64::abs);
             }
             "Steuer" | "Steuern" | "Tax" if d.taxes_cents.is_none() => {
-                d.taxes_cents = cents(text).map(i64::abs);
+                d.taxes_cents = parse_cents(text).ok().map(i64::abs);
             }
             _ => {}
         };
@@ -256,6 +254,149 @@ struct TradeRow {
     amount_cents: i64,
     currency: String,
     icon: String,
+}
+
+struct DocumentCandidate {
+    id: String,
+    date: String,
+    title: String,
+    event_context: String,
+}
+
+impl DocumentCandidate {
+    fn from_timeline_item(item: &Value, id: String, date: String) -> Self {
+        let subtitle = item["subtitle"].as_str().unwrap_or_default();
+        let event_type = item["eventType"].as_str().unwrap_or_default();
+        Self {
+            id,
+            date,
+            title: item["title"].as_str().unwrap_or_default().into(),
+            event_context: format!("{subtitle} {event_type}").to_lowercase(),
+        }
+    }
+
+    fn classify(&self, title: &str) -> (&'static str, &'static str) {
+        let lower = title.to_lowercase();
+        let doc_type = refine_document_type(
+            crate::documents::type_from_title(&lower),
+            &self.event_context,
+        );
+        let account_hint =
+            if doc_type != "steuer" && matches!(lower.as_str(), "dokumente" | "dokument") {
+                &self.event_context
+            } else {
+                &lower
+            };
+        let account_ref = document_account_ref(account_hint, doc_type).unwrap_or("tr:cash");
+        (doc_type, account_ref)
+    }
+}
+
+/// How Trade Republic documents are matched to bookings by content (`document_matching`): they
+/// use bookings on the cash account. The security is the part after the dash of the stored title
+/// (`"<Dokument> – <Eintrag>"`), statements and tax papers are left out.
+pub(crate) const DOCUMENT_MATCH: crate::connectors::document_matching::DocumentMatchRules =
+    crate::connectors::document_matching::DocumentMatchRules {
+        booking_account: |external_ref, _| external_ref == "tr:cash",
+        subjects: |title, _| {
+            title
+                .split_once(" \u{2013} ")
+                .map(|(_, subject)| vec![subject.to_owned()])
+                .unwrap_or_default()
+        },
+        subjects_from_text: false,
+        link_types: &["abrechnung", "beleg"],
+        direction_required: false,
+        account_from_text: false,
+        amount_labels: &[],
+        slack_days: 5,
+        inflow: document_inflow,
+    };
+
+/// Infers direction from the document-type title and the start of the PDF text. The
+/// security name after the title separator does not influence direction.
+fn document_inflow(title: &str, text: &str) -> Option<bool> {
+    let event = title
+        .split_once(" \u{2013} ")
+        .map_or(title, |(event, _)| event);
+    crate::connectors::document_matching::inflow_in(event, text, 400)
+}
+
+/// The account a Trade Republic document belongs to (`tr:depot` or `tr:cash`), decided by what the
+/// document is, never by the way it arrived (a booking's detail screen or the activity list): a
+/// confirmation or credit for a security (trade, savings plan, dividend, corporate action, the
+/// depot statement) belongs to the depot and documents a booking of the settlement account; account
+/// statements, interest and fees belong to the settlement account. `None`: nothing says so, the
+/// document stays where it is (tax papers, general information, an older document just called
+/// "Dokumente" whose event is not known).
+///
+/// `head` is the lower-cased document title or the timeline context for a generic title.
+fn document_account_ref(head: &str, doc_type: &str) -> Option<&'static str> {
+    if doc_type == "kontoauszug" {
+        return Some(if head.contains("depot") {
+            "tr:depot"
+        } else {
+            "tr:cash"
+        });
+    }
+    // interest and fees of the settlement account (a dividend is no interest)
+    if !head.contains("dividende")
+        && (["zins", "gebühr", "kontoführung"]
+            .iter()
+            .any(|k| head.contains(k))
+            || head
+                .split_whitespace()
+                .any(|word| matches!(word, "interest" | "fee" | "fees") || word.ends_with("_fee")))
+    {
+        return Some("tr:cash");
+    }
+    if is_securities_notice(head) || doc_type == "abrechnung" {
+        return Some("tr:depot");
+    }
+    None
+}
+
+/// Trade Republic names older documents just "Dokumente": what they are follows from the event of
+/// the timeline entry they belong to (a dividend, a savings plan execution, a tax booking).
+fn refine_document_type(doc_type: &'static str, event_text: &str) -> &'static str {
+    if doc_type != "beleg" || event_text.is_empty() {
+        return doc_type;
+    }
+    let has = |k: &str| event_text.contains(k);
+    if has("steuer") || has("tax") {
+        "steuer"
+    } else if has("dividend")
+        || has("ausschüttung")
+        || has("sparplan")
+        || has("savings_plan")
+        || has("kauf")
+        || has("trade")
+        || has("order")
+    {
+        "abrechnung"
+    } else {
+        doc_type
+    }
+}
+
+/// An account-level notice about a security (dividend election, corporate action):
+/// it belongs to the depot, not to the settlement account.
+fn is_securities_notice(lower_title: &str) -> bool {
+    [
+        "dividende",
+        "wahlweise",
+        "kapitalmaßnahme",
+        "corporate_action",
+        "split",
+        "umtausch",
+        "spin-off",
+        "fusion",
+        "hauptversammlung",
+        "rückkaufangebot",
+        "prospekt",
+    ]
+    .iter()
+    .any(|k| lower_title.contains(k))
 }
 
 fn is_trade_kind(kind_text: &str) -> bool {
@@ -1468,7 +1609,7 @@ impl BankConnector for TradeRepublicConnector {
 
         let mut cursor: Option<String> = None;
         let mut sub_id = 2u32;
-        let mut doc_candidates: Vec<(String, String, String)> = Vec::new();
+        let mut doc_candidates = Vec::new();
         let mut trade_rows: Vec<TradeRow> = Vec::new();
         // After document retrieval was switched on again: reach back to the day it was switched off.
         let cutoff = ctx
@@ -1529,10 +1670,10 @@ impl BankConnector for TradeRepublicConnector {
                     .iter()
                     .any(|k| kind_text.contains(k))
                 {
-                    doc_candidates.push((
+                    doc_candidates.push(DocumentCandidate::from_timeline_item(
+                        &item,
                         item_id.clone(),
                         date.clone(),
-                        item["title"].as_str().unwrap_or_default().to_string(),
                     ));
                 }
                 if !item_id.is_empty() && is_trade_kind(&kind_text) {
@@ -1585,7 +1726,8 @@ impl BankConnector for TradeRepublicConnector {
         let mut details: std::collections::HashMap<String, Value> = Default::default();
         // Documents not looked at (more than one pass takes, a failed request): a catch-up goes on.
         let mut docs_incomplete = doc_candidates.len() > 40;
-        for (item_id, date, title) in doc_candidates.into_iter().take(40) {
+        for candidate in doc_candidates.into_iter().take(40) {
+            let item_id = &candidate.id;
             sub_id += 2;
             let Ok(detail) = request(
                 &mut ws,
@@ -1643,24 +1785,17 @@ impl BankConnector for TradeRepublicConnector {
                         continue;
                     }
                     let doc_title = d["title"].as_str().unwrap_or("Dokument").to_string();
-                    let lower = doc_title.to_lowercase();
-                    let doc_type = if lower.contains("steuer") {
-                        "steuer"
-                    } else if lower.contains("abrechnung") || lower.contains("bestätigung") {
-                        "abrechnung"
-                    } else {
-                        "beleg"
-                    };
+                    let (doc_type, account_ref) = candidate.classify(&doc_title);
                     let doc_date = d["detail"]
                         .as_str()
                         .and_then(|s| crate::documents::dates_in(s).into_iter().next())
-                        .unwrap_or_else(|| date.clone());
+                        .unwrap_or_else(|| candidate.date.clone());
                     // strip the presigned query part for a stable de-dup key
                     let stable = url.split('?').next().unwrap_or(&url).to_string();
                     out.documents.push(crate::documents::RemoteDocument {
-                        account_ref: "tr:cash".into(),
+                        account_ref: account_ref.into(),
                         booking_external_id: Some(item_id.clone()),
-                        title: format!("{doc_title} – {title}"),
+                        title: format!("{doc_title} – {}", candidate.title),
                         doc_type: doc_type.into(),
                         mime_type: "application/pdf".into(),
                         file_name: format!("{}_{}.pdf", doc_date, doc_title.replace(' ', "_")),
@@ -1670,7 +1805,7 @@ impl BankConnector for TradeRepublicConnector {
                     });
                 }
             }
-            self.session.doc_items.push(item_id);
+            self.session.doc_items.push(candidate.id);
         }
         out.documents_incomplete = docs_incomplete;
         // --- Wertpapierseite (#314): units, price, fees and taxes of the newest
@@ -1708,39 +1843,54 @@ impl BankConnector for TradeRepublicConnector {
             }
         }
         let portfolio = fetch_portfolio(&mut ws, &mut sub_id, token, &trade_names).await;
-        let has_depot = portfolio.as_ref().is_some_and(|h| !h.is_empty())
-            || !out.security_transactions.is_empty()
-            || ctx.since_by_account.contains_key(DEPOT_REF);
-        if has_depot {
-            let balance_cents = match portfolio {
-                Some(holdings) => {
-                    let total = holdings.iter().map(|h| h.holding.value_cents).sum();
-                    out.holdings = holdings;
-                    out.holdings_fetched.push(DEPOT_REF.into());
-                    total
-                }
-                None => {
-                    // not read: the stored positions and the depot value stay
-                    out.balances_unknown.push(DEPOT_REF.into());
-                    0
-                }
-            };
-            out.accounts.push(RemoteAccount {
-                external_ref: DEPOT_REF.into(),
-                name: "Depot".into(),
-                owner: String::new(),
-                iban: String::new(),
-                // no phone number here: it would show up as an account number
-                account_number: String::new(),
-                currency: "EUR".into(),
-                kind: AccountKind::Brokerage,
-                balance_cents,
-                balance_date: super::today(),
-            });
-        }
+        add_depot_account(
+            &mut out,
+            portfolio,
+            ctx.since_by_account.contains_key(DEPOT_REF),
+        );
         let _ = ws.close(None).await;
         out.state = self.state();
         Ok(out)
+    }
+}
+
+fn add_depot_account(
+    out: &mut FetchResult,
+    portfolio: Option<Vec<RemoteHolding>>,
+    known_depot: bool,
+) {
+    let has_depot = portfolio.as_ref().is_some_and(|h| !h.is_empty())
+        || !out.security_transactions.is_empty()
+        || known_depot
+        // A document filed at the depot is evidence of the account even if the bank did
+        // not return positions or security transactions on this fetch.
+        || out.documents.iter().any(|d| d.account_ref == DEPOT_REF);
+    if has_depot {
+        let balance_cents = match portfolio {
+            Some(holdings) => {
+                let total = holdings.iter().map(|h| h.holding.value_cents).sum();
+                out.holdings = holdings;
+                out.holdings_fetched.push(DEPOT_REF.into());
+                total
+            }
+            None => {
+                // not read: the stored positions and the depot value stay
+                out.balances_unknown.push(DEPOT_REF.into());
+                0
+            }
+        };
+        out.accounts.push(RemoteAccount {
+            external_ref: DEPOT_REF.into(),
+            name: "Depot".into(),
+            owner: String::new(),
+            iban: String::new(),
+            // no phone number here: it would show up as an account number
+            account_number: String::new(),
+            currency: "EUR".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents,
+            balance_date: super::today(),
+        });
     }
 }
 
@@ -1757,6 +1907,117 @@ fn is_trade_republic_host(url: &reqwest::Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_document_uses_the_event_to_determine_its_account() {
+        for (event, expected) in [
+            ("kapitalmaßnahme corporate_action apple", DEPOT_REF),
+            ("corporate_action apple", DEPOT_REF),
+            ("kauf trade apple", DEPOT_REF),
+            ("zinsen interest", "tr:cash"),
+            ("gebühren", "tr:cash"),
+            ("order fee", "tr:cash"),
+            ("steuer dividende apple", "tr:cash"),
+        ] {
+            let candidate = DocumentCandidate {
+                id: "evt-1".into(),
+                date: "2026-11-21".into(),
+                title: "Apple".into(),
+                event_context: event.into(),
+            };
+            assert_eq!(candidate.classify("Dokumente").1, expected, "{event}");
+        }
+    }
+
+    #[test]
+    fn an_instrument_name_cannot_route_a_purchase_to_the_cash_account() {
+        for title in ["Interest Rate Hedged Bond ETF", "Deka Zins Plus"] {
+            let candidate = DocumentCandidate::from_timeline_item(
+                &json!({"title": title, "subtitle": "Kauf", "eventType": "trade"}),
+                "evt-1".into(),
+                "2026-11-21".into(),
+            );
+            assert_eq!(candidate.title, title);
+            assert_eq!(candidate.classify("Dokumente"), ("abrechnung", DEPOT_REF));
+        }
+    }
+
+    #[test]
+    fn first_fetch_files_a_generic_trade_pdf_at_the_depot_without_a_portfolio() {
+        use super::super::store_fetch;
+        use crate::{models::ConnectorKind, vault::Vault};
+
+        let dir = crate::test_support::TempDir::new("girocrab-tr-document-import");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().into_owned(),
+            vec![3u8; 32],
+        )
+        .unwrap();
+        let kind = ConnectorKind::TradeRepublic;
+        let conn = v
+            .add_bank_connection(kind, String::new(), "login".into())
+            .unwrap();
+        let cash = RemoteAccount {
+            external_ref: "tr:cash".into(),
+            name: "Verrechnungskonto".into(),
+            kind: AccountKind::Checking,
+            currency: "EUR".into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: String::new(),
+            balance_cents: 0,
+            balance_date: "2025-12-04".into(),
+        };
+        let candidate = DocumentCandidate {
+            id: "trade-1".into(),
+            date: "2025-12-04".into(),
+            title: "Apple".into(),
+            event_context: "kauf trade".into(),
+        };
+        let (doc_type, account_ref) = candidate.classify("Dokumente");
+        assert_eq!((doc_type, account_ref), ("abrechnung", DEPOT_REF));
+        let transaction = RemoteTransaction {
+            account_ref: "tr:cash".into(),
+            external_id: "trade-1".into(),
+            booking_date: "2025-12-04".into(),
+            value_date: "2025-12-04".into(),
+            amount_cents: -100_00,
+            currency: "EUR".into(),
+            ..Default::default()
+        };
+        let mut fetched = FetchResult {
+            accounts: vec![cash],
+            transactions: vec![transaction],
+            documents: vec![crate::documents::RemoteDocument {
+                account_ref: account_ref.into(),
+                booking_external_id: Some(candidate.id),
+                doc_type: doc_type.into(),
+                title: "Dokumente – Apple".into(),
+                mime_type: "application/pdf".into(),
+                file_name: "beleg.pdf".into(),
+                source_url: "https://example.invalid/beleg.pdf".into(),
+                date: candidate.date,
+                bytes: crate::documents::simple_pdf(&["Wertpapierabrechnung".into()]),
+            }],
+            ..Default::default()
+        };
+        add_depot_account(&mut fetched, None, false);
+        assert_eq!(fetched.balances_unknown, [DEPOT_REF]);
+        assert!(fetched.holdings_fetched.is_empty());
+        store_fetch(&v, kind, conn, fetched).unwrap();
+        let refs: (String, String) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT depot.external_ref, cash.external_ref
+               FROM booking_documents d JOIN accounts depot ON depot.id = d.account_id
+               JOIN transactions t ON t.id = d.booking_id JOIN accounts cash ON cash.id = t.account_id",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(refs, ("tr:depot".into(), "tr:cash".into()));
+    }
 
     #[test]
     fn stored_session_keeps_its_json_shape() {

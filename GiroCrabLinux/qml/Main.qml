@@ -330,7 +330,7 @@ ApplicationWindow {
                 onActivated: id => AppModel.wealthScope = id
                 Accessible.name: qsTr("Ansicht")
             }
-            // DocumentsScopePicker (DocumentsUI.swift, #526) in „Belege & PostBox“
+            // DocumentsScopePicker (DocumentsUI.swift, #526) in „Belege & Postbox“
             Segmented {
                 visible: AppModel.sidebarSelection === "documents"
                 options: DocumentsScope.options

@@ -186,30 +186,13 @@ enum Money {
         (decimal.string(from: (Decimal(cents) / 100) as NSDecimalNumber) ?? "\(cents)").replacingOccurrences(of: "-", with: "−")
     }
 
-    /// User input -> cents, accepting the user's locale ("280.000,50" in German,
-    /// "280,000.50" in English) as well as plain "280000.5" (Decimal, never Double).
-    /// Both separators present: the last one is the decimal separator. Only one
-    /// kind present: it is a grouping separator if it is the locale's grouping
-    /// separator and every group after it has exactly three digits. The minus sign `plain`
-    /// writes ("−", U+2212) and an en dash count as "-": a field filled with `plain` parses back.
+    /// User input -> cents ("1.234,56", "1,234.56", "1.500"), or nil when it
+    /// is no amount. The core decides, so every amount field reads text alike.
+    /// The minus sign `plain` writes ("−", U+2212) and an en dash count as "-":
+    /// a field filled with `plain` parses back.
     static func parseCents(_ input: String) -> Int64? {
         let t = input.replacingOccurrences(of: "−", with: "-").replacingOccurrences(of: "–", with: "-")
-            .filter { !($0.isCurrencySymbol || $0.isWhitespace || $0 == "'") }
-        guard !t.isEmpty else { return nil }
-        let seps: Set<Character> = [".", ","]
-        let used = Set(t.filter { seps.contains($0) })
-        var normalized = t
-        if used.count == 2, let last = t.last(where: { seps.contains($0) }) {
-            let grouping: Character = last == "," ? "." : ","
-            normalized = t.replacingOccurrences(of: String(grouping), with: "").replacingOccurrences(of: String(last), with: ".")
-        } else if let sep = used.first {
-            let groups = t.split(separator: sep, omittingEmptySubsequences: false)
-            let localeGrouping = Locale.autoupdatingCurrent.groupingSeparator.flatMap(\.first)
-            let isGrouping = (sep == localeGrouping || groups.count > 2) && groups.dropFirst().allSatisfy { $0.count == 3 }
-            normalized = isGrouping ? t.replacingOccurrences(of: String(sep), with: "") : t.replacingOccurrences(of: String(sep), with: ".")
-        }
-        guard let d = Decimal(string: normalized, locale: Locale(identifier: "en_US_POSIX")) else { return nil }
-        return NSDecimalNumber(decimal: d * 100).rounding(accordingToBehavior: nil).int64Value
+        return try? parseAmountToCents(text: t)
     }
 
     static func ink(_ cents: Int64) -> Color { cents > 0 ? Theme.inflow : Theme.outflow }

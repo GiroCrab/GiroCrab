@@ -41,7 +41,7 @@ fn number(v: &Value, key: &str) -> CoreResult<f64> {
 // The portal returns binary-float artefacts (e.g. 8398.279999999999).
 // Round monetary values once at the boundary, never quantities.
 fn cents(v: &Value, key: &str) -> CoreResult<i64> {
-    Ok((number(v, key)? * 100.0).round() as i64)
+    crate::money::json_number_to_cents_rounded(&v[key]).map_err(|_| invalid())
 }
 
 fn id(v: &Value, key: &str) -> CoreResult<String> {
@@ -332,7 +332,7 @@ impl Vault {
             None,
             Some(account_id),
             title,
-            "postbox",
+            crate::documents::account_document_type(title),
             "application/pdf",
             &format!("quirion_{}.pdf", URL_SAFE_NO_PAD.encode(key)),
             &bytes,

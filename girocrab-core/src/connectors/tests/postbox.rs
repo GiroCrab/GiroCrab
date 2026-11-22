@@ -70,7 +70,7 @@ fn postbox_needs_comdirect_fints_and_api_credentials() {
     v.set_comdirect_postbox(c, false).unwrap();
     assert!(!v.comdirect_postbox_enabled(c).unwrap());
     assert_eq!(v.get_setting(postbox_last_key(c)).unwrap(), None);
-    // "PostBox jetzt abrufen" only when it is on
+    // "Postbox jetzt abrufen" only when it is on
     assert!(
         v.clone()
             .fetch_comdirect_postbox(c, String::new(), false)
