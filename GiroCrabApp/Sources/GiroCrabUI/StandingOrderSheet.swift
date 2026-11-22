@@ -59,8 +59,7 @@ struct StandingOrderSheet: View {
     /// Takes name and IBAN of a known recipient and closes the list.
     private func pick(_ r: KnownRecipient) {
         suggestions.take(r)
-        model.standingDraft.name = r.name
-        model.standingDraft.iban = BatchRow.grouped(r.iban)
+        model.standingDraft.takeRecipient(name: r.name, iban: r.iban)
     }
 
     private var editing: Bool { !reviewing && !isDelete }
@@ -395,6 +394,7 @@ struct StandingOrderSheet: View {
         } else {
             Button("Weiter") {
                 model.transferError = nil
+                model.invalidateStandingImports()  // an invoice still being read must not change what is under review
                 reviewing = true
             }
                 .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!draft.isValid)

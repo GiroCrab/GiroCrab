@@ -69,6 +69,9 @@ extension AppModel {
     /// Identifies the open sheet; a late result for an earlier one is dropped (`fillStandingDraft(_:ifToken:)`).
     var standingImportToken: UUID { standingDraftToken }
 
+    /// The form goes to the review: results of imports that are still running are dropped from now on.
+    func invalidateStandingImports() { standingDraftToken = UUID() }
+
     func fillStandingDraft(_ p: ParsedPayment, ifToken token: UUID) -> Bool {
         guard token == standingDraftToken, showStandingSheet else { return false }
         fillStandingDraft(p)

@@ -24,6 +24,15 @@ struct StandingDraft {
     var execDay = 1
     var pin = ""
 
+    /// A recipient picked from the suggestions: name and IBAN, and no BIC of the one before (it belongs
+    /// to the other bank). The same recipient keeps its BIC.
+    mutating func takeRecipient(name newName: String, iban newIban: String) {
+        func key(_ s: String) -> String { s.filter { !$0.isWhitespace }.uppercased() }
+        if key(newIban) != key(iban) { bic = "" }
+        name = newName
+        iban = BatchRow.grouped(newIban)
+    }
+
     static var tomorrow: Date { Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date() }
 
     var cents: Int64? {

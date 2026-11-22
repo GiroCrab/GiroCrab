@@ -147,4 +147,33 @@ final class OwnTransferTargetsTests: XCTestCase {
         XCTAssertFalse(model.fillStandingDraft(p, ifToken: token))
         XCTAssertNotEqual(model.standingDraft.name, "Alt")
     }
+
+    /// Picking another recipient drops the BIC of the one before; the same recipient keeps it.
+    func testPickingARecipientClearsTheBICOfTheOneBefore() {
+        var d = StandingDraft()
+        d.name = "Alt"
+        d.iban = "DE89 3704 0044 0532 0130 00"
+        d.bic = "COBADEFFXXX"
+        d.takeRecipient(name: "Neu", iban: "DE02120300000000202051")
+        XCTAssertEqual(d.name, "Neu")
+        XCTAssertEqual(d.iban, "DE02 1203 0000 0000 2020 51")
+        XCTAssertEqual(d.bic, "")
+        d.bic = "BYLADEM1001"
+        d.takeRecipient(name: "Neu GmbH", iban: "de02 1203 0000 0000 2020 51")
+        XCTAssertEqual(d.bic, "BYLADEM1001")
+    }
+
+    /// An invoice still being read must not change the draft once the review has begun.
+    func testImportStartedBeforeTheReviewIsDropped() {
+        model.showStandingSheet = true
+        let token = model.standingImportToken
+        model.invalidateStandingImports()
+        var p = ParsedPayment()
+        p.name = "Spät"
+        XCTAssertFalse(model.fillStandingDraft(p, ifToken: token))
+        XCTAssertNotEqual(model.standingDraft.name, "Spät")
+        // an import started in the editor afterwards still works
+        XCTAssertTrue(model.fillStandingDraft(p, ifToken: model.standingImportToken))
+        XCTAssertEqual(model.standingDraft.name, "Spät")
+    }
 }
