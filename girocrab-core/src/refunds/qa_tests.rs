@@ -277,8 +277,10 @@ fn api(v: &Vault, method: &str, params: serde_json::Value) -> serde_json::Value 
 fn qa_split_refund_insights_cashflow_api_and_category_sums() {
     let (_d, v, a) = fixture();
     let (ca, cb) = categories(&v);
-    let r = booking(&v, a, 10000);
-    let o = booking(&v, a, -3000);
+    // one date for the bookings and the request below: midnight may pass in between
+    let today = crate::dates::today_iso();
+    let r = add(&v, a, 10000, &today, "QA vendor", "");
+    let o = add(&v, a, -3000, &today, "QA vendor", "");
     split(&v, r, ca, cb, 1);
     v.link_refund(r, o, 0).unwrap();
     let f = v.selection_flow(vec![a], None, None).unwrap();
@@ -303,7 +305,6 @@ fn qa_split_refund_insights_cashflow_api_and_category_sums() {
         ..Default::default()
     })
     .unwrap();
-    let today = crate::dates::today_iso();
     let s = api(
         &v,
         "summary",
@@ -312,15 +313,19 @@ fn qa_split_refund_insights_cashflow_api_and_category_sums() {
     assert_eq!(s["result"]["totals"][0]["income_cents"], 7000, "{s}");
     assert_eq!(s["result"]["totals"][0]["expense_cents"], 0, "{s}");
     println!("split refund API/category evidence: {s}");
+    // a pair that could be linked: the request fails for the method, not for its arguments
+    let (r2, o2) = (booking(&v, a, 500), booking(&v, a, -500));
     let rejected = api(
         &v,
         "link_refund",
-        serde_json::json!({"refund_id":r,"original_id":o}),
+        serde_json::json!({"refund_id":r2,"original_id":o2,"original_part":0}),
     );
     assert!(
         rejected.get("error").is_some(),
         "local API is read-only: {rejected}"
     );
+    assert!(v.refund_links(o2).unwrap().refunds.is_empty());
+    v.link_refund(r2, o2, 0).unwrap();
 }
 
 #[test]
@@ -333,16 +338,30 @@ fn qa_merge_conflicting_order_preserves_capacity_and_converges() {
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
     a.link_refund(r, x, 0).unwrap();
     a.link_refund(r, y, 0).unwrap();
-    let list = page(&b, None).transactions;
-    let br = list.iter().find(|t| t.amount_cents == 10000).unwrap().id;
-    let mut originals = list
-        .iter()
-        .filter(|t| t.amount_cents == -6000)
-        .map(|t| t.id)
-        .collect::<Vec<_>>();
-    originals.sort_unstable();
-    b.link_refund(br, originals[1], 0).unwrap();
-    b.link_refund(br, originals[0], 0).unwrap();
+    // the same bookings on the other device, by the id both know them by: linked the other
+    // way round there
+    let on_b = |id: i64| -> i64 {
+        let key: String = a
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT external_id FROM transactions WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        b.db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE external_id=?1",
+                [key],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let (br, bx, by) = (on_b(r), on_b(x), on_b(y));
+    b.link_refund(br, by, 0).unwrap();
+    b.link_refund(br, bx, 0).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
     // per original, by the id both devices know it by: the same shares the other way
@@ -1323,6 +1342,7 @@ fn views_agree_for_generated_links_and_splits() {
             }
         }
         let unlinked = figures(&v, &cats);
+        let split_before = log.len();
         let total: i64 = ids.iter().map(|(_, amount)| amount).sum();
         // the links as they are now: a split edit may have moved one to another part
         let live = |v: &Vault| -> Vec<(i64, u32, i64, u32)> {
@@ -1437,7 +1457,8 @@ fn views_agree_for_generated_links_and_splits() {
             );
         }
         assert_eq!(plain[0], sums(&page(&v, None)));
-        if log
+        // the splits are those of the figures taken before the first link
+        if log[split_before..]
             .iter()
             .all(|l| l.starts_with("link") || l.starts_with("unlink"))
         {

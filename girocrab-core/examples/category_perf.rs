@@ -180,8 +180,10 @@ fn main() {
     let b = all.transactions[0].clone();
     let (c1, c2) = (cats[3].id, cats[5].id);
     let refunds = env_usize("REFUNDS", 0);
-    if refunds > 0 {
-        refund_links(&vault, &all.transactions, refunds);
+    if refunds > 0 && !refund_links(&vault, &all.transactions, refunds) {
+        drop(vault);
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::process::exit(1);
     }
 
     // The UI's list filter: newest 3000 bookings, all accounts, current period.
@@ -454,8 +456,9 @@ fn main() {
 }
 
 /// REFUNDS=n links n incoming bookings to an outgoing one each (#714), before every other
-/// timing: the list and the category sums then read those links.
-fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize) {
+/// timing: the list and the category sums then read those links. `false` when the vault has
+/// fewer pairs than that.
+fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize) -> bool {
     let incoming = all.iter().filter(|t| t.amount_cents > 0);
     let outgoing = all.iter().filter(|t| t.amount_cents < 0);
     let pairs: Vec<(i64, i64)> = incoming.zip(outgoing).map(|(r, o)| (r.id, o.id)).collect();
@@ -476,10 +479,10 @@ fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize)
             "REFUNDS={n}: the vault has only {} pairs to link; raise COPIES",
             linked.len()
         );
-        std::process::exit(1);
+        return false;
     }
     let Some(&(r, o)) = linked.first() else {
-        return;
+        return true;
     };
     time("refunds: refund_links (inspector)", || {
         vault.refund_links(r).unwrap()
@@ -497,6 +500,7 @@ fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize)
         vault.list_category_expenses(None, None, vec![]).unwrap()
     });
     println!();
+    true
 }
 
 /// Calls that return a handful of bookings or only sums.

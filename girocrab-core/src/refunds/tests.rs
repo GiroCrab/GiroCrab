@@ -250,9 +250,10 @@ fn unlink_survives_older_peer_and_relink_revives() {
     );
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
     assert!(originals(&b, bb[2]).is_empty());
-    b.link_refund(bb[2], bb[1], 0).unwrap();
+    // the same pair again: the tombstone both devices hold comes back to life
+    b.link_refund(bb[2], bb[0], 0).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
-    assert_eq!(originals(&a, aa[2]), vec![aa[1]]);
+    assert_eq!(originals(&a, aa[2]), vec![aa[0]]);
 }
 
 /// An unlink from the other device reaches the link of a booking that is deleted here, so
@@ -405,7 +406,7 @@ fn repeated_unlink_keeps_the_stamp_and_rows_carry_texts() {
 fn error_texts_have_english() {
     for de in [
         "Die Buchung existiert nicht oder wurde gelöscht.",
-        "Eine Erstattung muss positiv und die ursprüngliche Buchung negativ sein.",
+        "Der gewählte Erstattungsbetrag muss positiv und der gewählte ursprüngliche Betrag negativ sein.",
         "Erstattungen dürfen nicht miteinander verkettet werden.",
     ] {
         assert_ne!(crate::i18n::tr_in(crate::i18n::Lang::En, de), de);
