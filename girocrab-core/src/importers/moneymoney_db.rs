@@ -2349,6 +2349,9 @@ fn find_connection(
 /// imported accounts of that kind linked to this bank login, else only when
 /// exactly one of them is. `fetched_cards`: the numbers of every card in this
 /// fetch, so the fallback never takes a card another fetched card matches.
+/// Without an IBAN the imported accounts of a never-synced login of the same
+/// institution count too (#834: PayPal imported as a direct login, then set up
+/// through Enable Banking), and a different currency never matches.
 pub(crate) fn adopt_account(
     conn: &Connection,
     connection_id: i64,
@@ -2384,11 +2387,17 @@ pub(crate) fn adopt_account(
              FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
                AND kind = ?2 AND archived_unix IS NULL",
         )?;
-        let rows: Vec<(i64, String, bool, String)> = st
-            .query_map(params![connection_id, kind.as_str()], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-            })?
-            .collect::<Result<_, _>>()?;
+        let mut rows: Vec<(i64, String, bool, String)> = Vec::new();
+        for login in
+            std::iter::once(connection_id).chain(unsynced_twin_logins(conn, connection_id)?)
+        {
+            let found = st
+                .query_map(params![login, kind.as_str()], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.extend(found);
+        }
         // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade
         // Republic clearing account) may still adopt a single imported account
         // of the same kind and currency on this login (#1114); an account with
@@ -2400,6 +2409,11 @@ pub(crate) fn adopt_account(
             .filter(|(_, _, has_iban, _)| widen || !has_iban)
             .collect();
         let currency = currency.trim().to_uppercase();
+        // one account per currency (PayPal EUR/USD): another currency is never the same account
+        let rows: Vec<_> = rows
+            .into_iter()
+            .filter(|(_, _, _, cur)| currency.is_empty() || cur.is_empty() || *cur == currency)
+            .collect();
         let card = kind == AccountKind::CreditCard;
         // the other way reports a marked account under another reference
         // (FinTS `<number>-Depot`, REST its depot id): the only live one of
@@ -2520,6 +2534,45 @@ pub(crate) fn adopt_account(
         )?;
     }
     Ok(id)
+}
+
+/// Other logins of the same institution that never synced, e.g. the direct
+/// PayPal login the import created next to a PayPal login through Enable
+/// Banking (#834). Their imported accounts are not in use yet, so the first
+/// fetch of the other way may take them over.
+fn unsynced_twin_logins(conn: &Connection, connection_id: i64) -> CoreResult<Vec<i64>> {
+    let own: Option<String> = conn
+        .query_row(
+            "SELECT connector FROM bank_connections WHERE id = ?1",
+            [connection_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(own) = own.as_deref().and_then(institution) else {
+        return Ok(Vec::new());
+    };
+    let mut st = conn.prepare(
+        "SELECT id, connector FROM bank_connections
+          WHERE id <> ?1 AND deleted_ms IS NULL AND last_sync_unix IS NULL ORDER BY id",
+    )?;
+    let others: Vec<(i64, String)> = st
+        .query_map([connection_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(others
+        .into_iter()
+        .filter(|(_, key)| institution(key).as_deref() == Some(own.as_str()))
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// The institution behind a connector key, for logins that reach the same
+/// bank by different ways: Enable Banking keys by their bank name, PayPal's
+/// own API as "paypal". `None` for keys without such a twin.
+fn institution(key: &str) -> Option<String> {
+    if let Some((_, name)) = ConnectorKind::enable_banking_target(key) {
+        return Some(name.trim().to_lowercase());
+    }
+    (key == ConnectorKind::PayPal.as_str()).then(|| "paypal".to_string())
 }
 
 /// Whether a stored card number hides digits (`5232 •••• •••• 1234`).
