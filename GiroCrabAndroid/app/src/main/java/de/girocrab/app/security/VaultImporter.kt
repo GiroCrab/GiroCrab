@@ -52,6 +52,14 @@ class VaultImporter(
 ) {
     /** One import at a time: two overlapping runs would fight over the same vault file. */
     private var running = false
+
+    private companion object {
+        /**
+         * One import at a time across instances: a rotation or a language change rebuilds the
+         * Activity and with it the importer, whose own `running` would be false again (#1429).
+         */
+        val busy = AtomicBoolean(false)
+    }
     private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
 
     fun import(backupPath: String, password: String, onResult: (ImportResult) -> Unit) {
@@ -83,7 +91,16 @@ class VaultImporter(
         // Anything else is unusable: a key the Keystore no longer honours, a vault file nobody can
         // open — or an alias left behind by a cancelled setup. Resetting discards nothing as long
         // as no wrapped key exists.
-        keyStore.resetForNewSetup()
+        try {
+            keyStore.resetForNewSetup()
+        } catch (e: Exception) {
+            // The Keystore deletion throws by contract; without a result the caller waits forever.
+            return onResult(
+                ImportResult.Failed(
+                    "Geräteschlüssel ließ sich nicht zurücksetzen (${e.javaClass.simpleName}: ${e.message}).",
+                ),
+            )
+        }
         if (vaultPath.exists() && !vaultPath.delete()) {
             return onResult(
                 ImportResult.Failed("Reste eines früheren Imports ließen sich nicht entfernen."),
@@ -102,6 +119,11 @@ class VaultImporter(
             )
         }
 
+        // The prompt-and-write phase runs once on the device, not once per importer instance.
+        if (!busy.compareAndSet(false, true)) {
+            key.fill(0)
+            return onResult(ImportResult.Failed("Es läuft bereits ein Import."))
+        }
         running = true
         val finished = AtomicBoolean(false)
         // Delivered on Main: the prompt callback runs there and callers update UI state.
@@ -109,6 +131,7 @@ class VaultImporter(
             if (!finished.compareAndSet(false, true)) return
             mainHandler.post {
                 running = false
+                busy.set(false)
                 onResult(result)
             }
         }

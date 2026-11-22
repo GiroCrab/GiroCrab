@@ -100,14 +100,18 @@ class VaultUnlocker(
         }
         // Android never creates a vault on its own (#1459, Import-only): without a file there is
         // nothing to open, and the only way back is a backup from the desktop.
-        if (!File(opener.defaultVaultPath(filesDir)).isFile) {
-            return onResult(UnlockResult.VaultMissing)
+        // A zero-byte file is not a vault: the core would initialise an empty database there and the
+        // screen would look unlocked with nothing behind it. Same answer as a missing file.
+        val vaultFile = File(opener.defaultVaultPath(filesDir))
+        if (!vaultFile.isFile || vaultFile.length() == 0L) {
+            return deliver(UnlockResult.VaultMissing)
         }
         val cipher = try {
             keyStore.unlockCipher()
-        } catch (_: Exception) {
-            // Key invalidated between state() and here: same answer, the key is unusable.
-            return deliver(UnlockResult.KeyInvalidated)
+        } catch (e: Exception) {
+            // A read error is not an invalid key — only a missing entry is. Calling both invalid
+            // would push the user towards importing a backup for a key that still works.
+            return deliver(unreadableKey(e))
         }
         prompting = true
         try {
@@ -142,9 +146,10 @@ class VaultUnlocker(
         }
         val cipher = try {
             keyStore.unlockCipher()
-        } catch (_: Exception) {
-            // Biometrics changed while the app was in the background: the key is gone.
-            return deliver(UnlockResult.KeyInvalidated)
+        } catch (e: Exception) {
+            // Biometrics may have changed while the app was in the background — or the Keystore
+            // just failed to read. Only the first case is "the key is gone".
+            return deliver(unreadableKey(e))
         }
         prompting = true
         try {
@@ -160,6 +165,16 @@ class VaultUnlocker(
         } catch (e: Exception) {
             prompting = false
             deliver(UnlockResult.Refused("Entsperren nicht möglich (${e.javaClass.simpleName}: ${e.message})"))
+        }
+    }
+
+    /** Distinguishes a missing key from a Keystore that merely failed to hand it over. */
+    private fun unreadableKey(cause: Exception): UnlockResult {
+        val gone = runCatching { keyStore.state() }.getOrNull() == VaultKeyStore.State.NotSetUp
+        return if (gone) {
+            UnlockResult.KeyInvalidated
+        } else {
+            UnlockResult.Refused("Entsperren nicht möglich (${cause.javaClass.simpleName}: ${cause.message})")
         }
     }
 

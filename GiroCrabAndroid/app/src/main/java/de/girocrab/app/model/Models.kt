@@ -25,6 +25,8 @@ data class Account(
     val balanceCents: Long,
     val currency: String = "EUR",
     val hidden: Boolean = false,
+    /** The core's `inTotal`: false = the account is excluded from overall sums. */
+    val includeInTotal: Boolean = true,
     /** Account holder (#587). */
     val holder: String = "",
 )
@@ -149,7 +151,9 @@ data class Holding(
     val fxRateToEur: Double = 1.0,
 ) {
     /** Current value in EUR cents. */
-    val valueCents get() = (quantity * priceCents * fxRateToEur).toLong()
+    // Rounded, not truncated: a derived rate (see the mapper) lands on x.9999… often enough that
+    // truncating would lose a cent per position (#1429).
+    val valueCents get() = kotlin.math.round(quantity * priceCents * fxRateToEur).toLong()
     val gainCents get() = valueCents - costBasisCents
     val gainPct get() = if (costBasisCents > 0) gainCents * 100.0 / costBasisCents else 0.0
     /** Average purchase price per unit in the native currency (cents). */
@@ -173,6 +177,8 @@ data class TangibleAsset(
     val valueCents: Long,
     val acquiredDate: LocalDate,
     val note: String = "",
+    /** The account the asset sits in — its balance already contains the value. */
+    val accountId: String = "",
 )
 
 data class Announcement(
@@ -208,6 +214,8 @@ data class BookingFilter(
 /** Everything a vault (demo or own) provides. */
 data class VaultSnapshot(
     val groups: List<AccountGroup> = emptyList(),
+    /** How many bookings the core holds in total; more than [bookings] means a truncated page. */
+    val bookingsTotal: Int = 0,
     val accounts: List<Account> = emptyList(),
     val bookings: List<Booking> = emptyList(),
     val categories: List<Category> = emptyList(),

@@ -222,9 +222,12 @@ fun GiroCrabRoot(
         }
     }
     var pendingBackup by remember { mutableStateOf<File?>(null) }
+    // Counts selections: a slow copy must not replace the backup the user picked afterwards.
+    val backupGeneration = remember { java.util.concurrent.atomic.AtomicInteger(0) }
     val scope = rememberCoroutineScope()
     val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
+        val mine = backupGeneration.incrementAndGet()
         // A slow provider must not block the lock screen: copy off the main thread, publish on it.
         scope.launch {
             // One file per selection: a second choice must not truncate the file the dialog reads.
@@ -241,6 +244,11 @@ fun GiroCrabRoot(
                         target.outputStream().use { output -> input.copyTo(output) }
                     } ?: error("no stream")
                 }.isSuccess
+            }
+            // Another selection was made while this one copied: its result wins, this one goes.
+            if (mine != backupGeneration.get()) {
+                target.delete()
+                return@launch
             }
             if (copied) {
                 pendingBackup?.delete()
@@ -554,10 +562,6 @@ private fun GiroCrabIntro(skip: Boolean) {
 }
 
 /**
- * Message for the lock screen. Opening the vault is proven by the account count — the data itself
- * still comes from the mapper in #1429 (3.1), so the handle is closed again right here.
- */
-/**
  * Reads the vault into the snapshot the screens show (#1429, 3.1) and closes the handle in the same
  * breath: the ViewModel keeps data, never a native handle. A failure after a successful open is
  * reported as exactly that — the vault did open, only reading it back did not work.
@@ -582,7 +586,7 @@ private fun describeImport(result: ImportResult): String = when (result) {
         } finally {
             result.vault.close()
         }
-        "Sicherung eingespielt: $count Konten. Anzeige folgt mit dem Mapper (#1429)."
+        "Sicherung eingespielt: $count Konten."
     }
     ImportResult.RefusedByUser -> "Import abgebrochen — es wurde nichts geschrieben."
     ImportResult.Unavailable -> "Import ist auf diesem Gerät nicht verfügbar."
@@ -598,7 +602,7 @@ private fun describe(result: UnlockResult): String? = when (result) {
         } finally {
             result.vault.close()
         }
-        "Tresor geöffnet: $count Konten. Die Anzeige folgt mit dem Mapper (#1429)."
+        "Tresor geöffnet: $count Konten."
     }
     UnlockResult.NoVaultOnDevice ->
         "Auf diesem Gerät liegt noch kein Tresor. Spiele eine Sicherung vom Desktop ein — dort über „Tresor sichern“ erzeugt."

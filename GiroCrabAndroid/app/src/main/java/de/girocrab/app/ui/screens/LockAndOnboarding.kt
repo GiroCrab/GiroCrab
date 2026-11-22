@@ -35,6 +35,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -289,6 +291,9 @@ fun ImportPasswordDialog(
                     value = password,
                     onValueChange = { password = it },
                     singleLine = true,
+                    // A password keyboard keeps the backup password out of the keyboard's learned
+                    // words and its suggestions (#1429).
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     label = { Text("Passwort") },
                     visualTransformation = if (reveal) androidx.compose.ui.text.input.VisualTransformation.None
                     else PasswordVisualTransformation(),
