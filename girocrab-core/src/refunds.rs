@@ -1171,8 +1171,8 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
         {
             continue;
         }
-        // a link the bookings here do not fit (their sides or parts differ for now) is kept:
-        // it counts for nothing (`shares`) until they do, and the devices stay alike
+        // a link the bookings here do not fit (their sides differ for now) is kept: it counts
+        // for nothing (`shares`) until they do, and the devices stay alike
         if r == o {
             continue;
         }
@@ -1181,6 +1181,23 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
              ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=excluded.deleted_ms",
             params![r,o,created,changed,deleted,part,refund_part],
         )?;
+    }
+    // two devices that each removed the split of one end leave two links of one pair (one
+    // names the gone part of the refund, one that of the original): what a split edit here
+    // does to such a link (`split_changed`) makes them one again
+    let ends: Vec<i64> = conn
+        .prepare(
+            "SELECT original_id FROM refund_links WHERE deleted_ms IS NULL AND original_part>0
+             UNION SELECT refund_id FROM refund_links WHERE deleted_ms IS NULL AND refund_part>0
+             ORDER BY 1",
+        )?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    if !ends.is_empty() {
+        let parts = split_parts(conn)?;
+        for id in ends {
+            widen_gone_parts(conn, &parts, id)?;
+        }
     }
     Ok(())
 }
@@ -1194,6 +1211,29 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
 /// keeps `created_ms`, the stamp of when the link was made, which is what the shares are filled
 /// by: a link keeps its place among a refund's other links.
 pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
+    let parts = split_parts(conn)?;
+    widen_gone_parts(conn, &parts, id)?;
+    // without the part that paid back or was paid back the booking may have no amount on that
+    // side any more (store credit in a purchase that is not split any more): that link goes
+    let amount = live(conn, id)?;
+    for role in [Role::Refund, Role::Original] {
+        if Shares::total(&parts, id, amount, role) == 0 {
+            let changed = next_change(conn)?;
+            conn.execute(
+                match role {
+                    Role::Refund => "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE deleted_ms IS NULL AND refund_id=?1",
+                    Role::Original => "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE deleted_ms IS NULL AND original_id=?1",
+                },
+                params![id, changed],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The links of `id` that name a part it has no more become links to the whole booking
+/// (`split_changed`).
+fn widen_gone_parts(conn: &Connection, parts: &HashMap<i64, Vec<Part>>, id: i64) -> CoreResult<()> {
     let links: Vec<(i64, i64, i64, i64, i64)> = conn
         .prepare(
             "SELECT refund_id,original_id,original_part,refund_part,created_ms FROM refund_links
@@ -1204,14 +1244,13 @@ pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?
         .collect::<Result<_, _>>()?;
-    let parts = split_parts(conn)?;
     for (refund, original, part, refund_part, created) in links {
         let (own, role) = if original == id {
             (part, Role::Original)
         } else {
             (refund_part, Role::Refund)
         };
-        if named(&parts, id, own, role).is_some() {
+        if named(parts, id, own, role).is_some() {
             continue;
         }
         let changed = next_change(conn)?;
@@ -1234,21 +1273,6 @@ pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
              WHERE deleted_ms IS NOT NULL OR excluded.created_ms<created_ms",
             params![refund, original, part, refund_part, created, changed + 1],
         )?;
-    }
-    // without the part that paid back or was paid back the booking may have no amount on that
-    // side any more (store credit in a purchase that is not split any more): that link goes
-    let amount = live(conn, id)?;
-    for role in [Role::Refund, Role::Original] {
-        if Shares::total(&parts, id, amount, role) == 0 {
-            let changed = next_change(conn)?;
-            conn.execute(
-                match role {
-                    Role::Refund => "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE deleted_ms IS NULL AND refund_id=?1",
-                    Role::Original => "UPDATE refund_links SET deleted_ms=?2,changed_ms=?2 WHERE deleted_ms IS NULL AND original_id=?1",
-                },
-                params![id, changed],
-            )?;
-        }
     }
     Ok(())
 }
