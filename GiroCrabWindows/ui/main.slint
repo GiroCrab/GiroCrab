@@ -1961,7 +1961,8 @@ export component MainWindow inherits Window {
                     color: Theme.muted; font-size: 11px; wrap: word-wrap;
                 }
                 if root.transfer-status != "": Text { text: root.transfer-status; color: Theme.negative; font-size: 12px; wrap: word-wrap; }
-                if root.girocode-open: VerticalLayout {
+                // The QR image shows name, IBAN and amount: hidden in privacy mode and while locked.
+                if root.girocode-open && !root.privacy && root.unlocked: VerticalLayout {
                     spacing: 6px;
                     Rectangle {
                         height: 232px;
@@ -1973,10 +1974,12 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Button {
                             text: "Bild kopieren";
+                            enabled: !root.privacy && root.unlocked;
                             clicked => { root.transfer-girocode-copy(); }
                         }
                         Button {
                             text: "Als PNG speichern…";
+                            enabled: !root.privacy && root.unlocked;
                             clicked => { root.transfer-girocode-save(); }
                         }
                     }
@@ -1989,7 +1992,11 @@ export component MainWindow inherits Window {
                     alignment: end;
                     spacing: 8px;
                     Button { text: "Abbrechen"; clicked => { root.transfer-open = false; } }
-                    Button { text: "Als GiroCode anzeigen"; clicked => { root.transfer-girocode(); } }
+                    Button {
+                        text: "Als GiroCode anzeigen";
+                        enabled: !root.privacy && root.unlocked;
+                        clicked => { root.transfer-girocode(); }
+                    }
                     Button {
                         text: "Senden";
                         primary: true;
