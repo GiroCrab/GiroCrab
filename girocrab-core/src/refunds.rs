@@ -289,8 +289,7 @@ impl Shares {
             Some(own) => own
                 .iter()
                 .filter(|p| p.amount.signum() == role.sign())
-                .map(|p| p.amount.saturating_abs())
-                .sum(),
+                .fold(0i64, |sum, p| sum.saturating_add(p.amount.saturating_abs())),
             None if amount.signum() == role.sign() => amount.saturating_abs(),
             None => 0,
         }
@@ -302,8 +301,9 @@ impl Shares {
             Some(own) => (1i64..)
                 .zip(own)
                 .filter(|(_, p)| p.amount.signum() == role.sign())
-                .map(|(n, p)| self.left(id, n, p.amount))
-                .sum(),
+                .fold(0i64, |sum, (n, p)| {
+                    sum.saturating_add(self.left(id, n, p.amount))
+                }),
             None if amount.signum() == role.sign() => self.left(id, 0, amount),
             None => 0,
         }
@@ -422,7 +422,7 @@ fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shar
              JOIN accounts ra ON ra.id=r.account_id LEFT JOIN bank_connections rc ON rc.id=ra.connection_id
              JOIN accounts oa ON oa.id=o.account_id LEFT JOIN bank_connections oc ON oc.id=oa.connection_id
              WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL{within}
-             ORDER BY l.created_ms,l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,
+             ORDER BY l.created_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,
                       COALESCE(rc.connector,''),COALESCE(rc.login_name,''),COALESCE(rc.bank_code,''),ra.external_ref,
                       COALESCE(oc.connector,''),COALESCE(oc.login_name,''),COALESCE(oc.bank_code,''),oa.external_ref,
                       l.refund_id,l.original_id"
@@ -1078,7 +1078,7 @@ fn currency_code(c: &str) -> String {
 /// amounts (digits and dots only) are no reference.
 fn reference_tokens(text: &str) -> std::collections::HashSet<String> {
     text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')' | '+'))
-        .filter(|w| !w.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .filter(|w| !w.chars().all(|c| c.is_ascii_digit() || c == '.') && !is_date(w))
         .map(|w| {
             w.chars()
                 .filter(|c| c.is_alphanumeric())
@@ -1089,6 +1089,21 @@ fn reference_tokens(text: &str) -> std::collections::HashSet<String> {
             w.chars().count() >= 6 && w.chars().any(|c| c.is_ascii_digit()) && w != "NOTPROVIDED"
         })
         .collect()
+}
+
+/// `2026-10-31`, `31-10-2026`, `31/10/26`: a date two bookings share says nothing about them.
+fn is_date(word: &str) -> bool {
+    let word = word.trim_matches(|c: char| !c.is_alphanumeric());
+    let fields: Vec<&str> = word.split(['-', '/', '.']).collect();
+    let digits = |f: &str, n: usize| f.len() == n && f.bytes().all(|b| b.is_ascii_digit());
+    match fields[..] {
+        [a, b, c] => {
+            digits(b, 2)
+                && ((digits(a, 4) && digits(c, 2))
+                    || (digits(a, 2) && (digits(c, 4) || digits(c, 2))))
+        }
+        _ => false,
+    }
 }
 
 fn days_between(a: &str, b: &str) -> Option<i64> {
@@ -1199,6 +1214,27 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
             widen_gone_parts(conn, &parts, id)?;
         }
     }
+    // one device removed the split (the link to the part became one to the whole booking, with
+    // the stamp it was made at), the other removed the link to the part after that: the link
+    // is gone under both keys, with the stamp of the removal on both devices
+    conn.execute(
+        "UPDATE refund_links AS w SET deleted_ms=t.changed,changed_ms=t.changed
+         FROM (SELECT w.rowid AS row,MAX(t.changed_ms) AS changed
+               FROM refund_links w JOIN refund_links t
+                 ON t.refund_id=w.refund_id AND t.original_id=w.original_id
+                AND t.deleted_ms IS NOT NULL AND t.created_ms=w.created_ms AND t.changed_ms>w.changed_ms
+                AND (w.original_part=0 OR w.original_part=t.original_part)
+                AND (w.refund_part=0 OR w.refund_part=t.refund_part)
+                AND (w.original_part<>t.original_part OR w.refund_part<>t.refund_part)
+                -- a row a split edit retired has its successor at the next stamp: no removal
+                AND NOT EXISTS(SELECT 1 FROM refund_links x
+                               WHERE x.refund_id=t.refund_id AND x.original_id=t.original_id
+                                 AND x.changed_ms=t.changed_ms+1 AND x.created_ms<=t.created_ms
+                                 AND (x.original_part<>t.original_part OR x.refund_part<>t.refund_part))
+               WHERE w.deleted_ms IS NULL GROUP BY w.rowid) t
+         WHERE w.rowid=t.row",
+        [],
+    )?;
     Ok(())
 }
 
@@ -1265,12 +1301,13 @@ fn widen_gone_parts(conn: &Connection, parts: &HashMap<i64, Vec<Part>>, id: i64)
         };
         // a booking linked by several of its parts keeps one link, at the place of the
         // earliest of them (the link to the whole booking may come from a later part)
+        // (it always gets the stamp after the retired row's: that is how `merge` tells a
+        // retired row from a removed link)
         conn.execute(
             "INSERT INTO refund_links(refund_id,original_id,original_part,refund_part,created_ms,changed_ms,deleted_ms) VALUES (?1,?2,?3,?4,?5,?6,NULL)
              ON CONFLICT(refund_id,original_id,original_part,refund_part) DO UPDATE SET
                 created_ms=CASE WHEN deleted_ms IS NULL THEN MIN(created_ms,excluded.created_ms) ELSE excluded.created_ms END,
-                changed_ms=excluded.changed_ms,deleted_ms=NULL
-             WHERE deleted_ms IS NOT NULL OR excluded.created_ms<created_ms",
+                changed_ms=excluded.changed_ms,deleted_ms=NULL",
             params![refund, original, part, refund_part, created, changed + 1],
         )?;
     }
@@ -1599,10 +1636,13 @@ impl Vault {
         }
         let linked: std::collections::HashSet<(i64, u32)> = db
             .prepare(match role {
-                Role::Refund => "SELECT original_id,original_part FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL",
-                Role::Original => "SELECT refund_id,refund_part FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",
+                // of one part only its own links: another part may still link the same booking
+                Role::Refund => "SELECT original_id,original_part FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL AND (?2=0 OR refund_part=?2)",
+                Role::Original => "SELECT refund_id,refund_part FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL AND (?2=0 OR original_part=?2)",
             })?
-            .query_map([transaction_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .query_map(params![transaction_id, own_part], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
             .collect::<Result<_, _>>()?;
         // the amounts of the booking that can be linked: all of it, or one of its parts
         let parts = split_parts(db)?;

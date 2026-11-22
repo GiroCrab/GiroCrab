@@ -1324,7 +1324,19 @@ fn views_agree_for_generated_links_and_splits() {
         }
         let unlinked = figures(&v, &cats);
         let total: i64 = ids.iter().map(|(_, amount)| amount).sum();
-        let mut links: Vec<(i64, u32, i64, u32)> = Vec::new();
+        // the links as they are now: a split edit may have moved one to another part
+        let live = |v: &Vault| -> Vec<(i64, u32, i64, u32)> {
+            ids.iter()
+                .flat_map(|(id, _)| {
+                    v.refund_links(*id)
+                        .unwrap()
+                        .originals
+                        .into_iter()
+                        .map(|o| (*id, o.refund_part, o.id, o.part))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
         for step in 0..14 {
             let (r, o) = (ids[rng.next(6) as usize].0, ids[rng.next(6) as usize].0);
             let (rp, op) = (rng.next(4) as u32, rng.next(4) as u32);
@@ -1338,14 +1350,15 @@ fn views_agree_for_generated_links_and_splits() {
                         log.push(split(&v, &mut rng, booking));
                     }
                 }
-                1 if !links.is_empty() => {
-                    let (r, rp, o, op) = links.remove(rng.next(links.len() as u64) as usize);
+                1 if !live(&v).is_empty() => {
+                    let links = live(&v);
+                    let (r, rp, o, op) = links[rng.next(links.len() as u64) as usize];
                     v.unlink_refund_parts(r, rp, o, op).unwrap();
+                    assert!(!live(&v).contains(&(r, rp, o, op)));
                     log.push(format!("unlink {r}.{rp} -> {o}.{op}"));
                 }
                 _ => {
                     if v.link_refund_parts(r, rp, o, op).is_ok() {
-                        links.push((r, rp, o, op));
                         log.push(format!("link {r}.{rp} -> {o}.{op}"));
                     }
                 }
@@ -1412,18 +1425,7 @@ fn views_agree_for_generated_links_and_splits() {
             }
         }
         // without the links (the splits as they are now) nothing of them is left in the figures
-        let ends: Vec<(i64, u32, i64, u32)> = ids
-            .iter()
-            .flat_map(|(id, _)| {
-                v.refund_links(*id)
-                    .unwrap()
-                    .originals
-                    .into_iter()
-                    .map(|o| (*id, o.refund_part, o.id, o.part))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        for (r, rp, o, op) in ends {
+        for (r, rp, o, op) in live(&v) {
             v.unlink_refund_parts(r, rp, o, op).unwrap();
         }
         let plain = figures(&v, &cats);

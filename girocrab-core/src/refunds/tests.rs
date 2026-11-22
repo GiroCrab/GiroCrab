@@ -422,6 +422,126 @@ fn add(v: &Vault, amount: i64, date: &str, cp: &str, purpose: &str) -> i64 {
     db.last_insert_rowid()
 }
 
+/// One device removes the split (its link to the part becomes one to the whole booking), the
+/// other removes the link to that part afterwards: the link stays removed on both.
+#[test]
+fn unlink_of_a_part_reaches_the_link_the_other_device_widened() {
+    let d = TempDir::new("refunds-unlink-widened");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    let part = |amount: i64| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    a.set_transaction_splits(aa[1], vec![part(-150), part(-50)])
+        .unwrap();
+    a.link_refund(aa[2], aa[1], 2).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(part_links(&b, bb[2]), vec![(bb[1], 2, Some(50))]);
+
+    b.set_transaction_splits(bb[1], Vec::new()).unwrap();
+    assert_eq!(part_links(&b, bb[2]), vec![(bb[1], 0, Some(50))]);
+    a.unlink_refund(aa[2], aa[1], 2).unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert!(part_links(&a, aa[2]).is_empty());
+    assert!(part_links(&b, bb[2]).is_empty());
+    // without the removal the widened link stays
+    let d = TempDir::new("refunds-widened-kept");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    a.set_transaction_splits(aa[1], vec![part(-150), part(-50)])
+        .unwrap();
+    a.link_refund(aa[2], aa[1], 2).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    b.set_transaction_splits(bb[1], Vec::new()).unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(part_links(&a, aa[2]), vec![(aa[1], 0, Some(50))]);
+    assert_eq!(part_links(&b, bb[2]), vec![(bb[1], 0, Some(50))]);
+}
+
+/// Removing a split changes the link's stamp, not its place among links made at the same time.
+#[test]
+fn widened_link_keeps_its_place_among_links_of_one_stamp() {
+    let d = TempDir::new("refunds-widen-place");
+    let v = open(&d, "v");
+    let b = seed(&v);
+    let part = |amount: i64| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(b[0], vec![part(-60), part(-40)])
+        .unwrap();
+    v.link_refund(b[2], b[0], 2).unwrap();
+    v.link_refund(b[2], b[1], 0).unwrap();
+    v.db()
+        .unwrap()
+        .execute("UPDATE refund_links SET created_ms=5,changed_ms=5", [])
+        .unwrap();
+    let shares = |v: &Vault| {
+        let mut all = part_links(v, b[2]);
+        all.sort();
+        all
+    };
+    assert_eq!(shares(&v), vec![(b[0], 2, Some(40)), (b[1], 0, Some(10))]);
+    v.set_transaction_splits(b[0], Vec::new()).unwrap();
+    assert_eq!(shares(&v), vec![(b[0], 0, Some(50)), (b[1], 0, Some(0))]);
+}
+
+/// Each part of a split refund has its own links: what one part links is still suggested to
+/// the other.
+#[test]
+fn suggestions_leave_out_only_the_links_of_the_selected_part() {
+    let d = TempDir::new("refunds-part-suggestions");
+    let v = open(&d, "v");
+    let b = seed(&v);
+    let part = |amount: i64| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(b[2], vec![part(30), part(20)])
+        .unwrap();
+    let suggested = |own: u32| -> Vec<i64> {
+        v.refund_part_suggestions(b[2], true, own)
+            .unwrap()
+            .iter()
+            .map(|s| s.booking.id)
+            .collect()
+    };
+    assert!(suggested(1).contains(&b[0]));
+    v.link_refund_parts(b[2], 1, b[0], 0).unwrap();
+    assert!(!suggested(1).contains(&b[0]));
+    assert!(suggested(2).contains(&b[0]));
+}
+
+/// A date both purposes carry is no shared reference.
+#[test]
+fn a_shared_date_is_no_reference() {
+    let d = TempDir::new("refunds-date");
+    let v = open(&d, "v");
+    seed(&v);
+    let refund = add(&v, 4_990, "2025-06-20", "A", "Gutschrift vom 2025-05-31");
+    add(&v, -9_900, "2025-02-01", "B", "Rechnung 2025-05-31");
+    let with_ref = add(&v, -8_800, "2025-02-02", "C", "RE-2025/7781 vom 31/05/2025");
+    assert!(v.refund_suggestions(refund).unwrap().is_empty());
+    let refund = add(&v, 1_000, "2025-06-21", "D", "zu RE-2025/7781, 31/05/2025");
+    let found: Vec<i64> = v
+        .refund_suggestions(refund)
+        .unwrap()
+        .iter()
+        .map(|s| s.booking.id)
+        .collect();
+    assert_eq!(found, vec![with_ref]);
+}
+
 #[test]
 fn suggestions_fill_amount_then_merchant_then_reference() {
     let d = TempDir::new("refunds");
