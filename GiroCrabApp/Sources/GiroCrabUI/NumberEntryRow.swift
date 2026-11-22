@@ -40,7 +40,12 @@ struct NumberEntryRow: View {
 
     /// One step up or down: to the next value the bank allows, else by 1, never out of the range.
     static func step(_ n: Int, by d: Int, range: ClosedRange<Int>, allowed: [Int]) -> Int {
-        guard !allowed.isEmpty else { return min(max(n + d, range.lowerBound), range.upperBound) }
+        guard !allowed.isEmpty else {
+            if range.contains(n) { return min(max(n + d, range.lowerBound), range.upperBound) }
+            // a value the bank holds outside the range (a day 99) is not moved into it by going further out;
+            // going back moves to the nearest end of the range
+            return n > range.upperBound ? (d > 0 ? n : range.upperBound) : (d < 0 ? n : range.lowerBound)
+        }
         let inRange = allowed.filter { range.contains($0) }.sorted()
         let next = d > 0 ? inRange.first { $0 > n } : inRange.last { $0 < n }
         return next ?? (inRange.isEmpty ? n : (d > 0 ? inRange.last! : inRange.first!))
@@ -60,8 +65,15 @@ struct NumberEntryRow: View {
         text = String(value)
     }
 
+    /// The value after the field was left: what was typed moved into the range and onto an allowed value;
+    /// an unchanged text keeps the value, also one the bank holds outside the range.
+    static func committed(text: String, value: Int, range: ClosedRange<Int>, allowed: [Int]) -> Int {
+        guard let n = Int(text), n != value else { return value }
+        return nearest(n, range: range, allowed: allowed)
+    }
+
     private func commit() {
-        if let n = Int(text) { value = Self.nearest(n, range: range, allowed: allowed) }
+        value = Self.committed(text: text, value: value, range: range, allowed: allowed)
         text = String(value)
     }
 

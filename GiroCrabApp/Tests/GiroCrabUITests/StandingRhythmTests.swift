@@ -64,11 +64,55 @@ final class StandingRhythmTests: XCTestCase {
         var d = StandingDraft()
         d.unit = "W"
         d.interval = 4
-        XCTAssertTrue(d.rhythmChoices(nil, keeping: held).contains(held))
+        d.heldRhythm = held
+        XCTAssertTrue(d.rhythmChoices(nil).contains(held))
         d.unit = "M"
         d.interval = 1
-        XCTAssertTrue(d.rhythmChoices(nil, keeping: held).contains(held))
+        XCTAssertTrue(d.rhythmChoices(nil).contains(held))
+        d.heldRhythm = nil
         XCTAssertFalse(d.rhythmChoices(nil).contains(held))
         XCTAssertEqual(d.rhythmText(of: StandingRhythm(unit: "M", interval: 3)), "vierteljährlich")
+    }
+
+    /// W4 held, the bank reports weeks 1 and 2: choosing M1 and then W4 again keeps W4 (the unit change conforms
+    /// the draft), while a rhythm that is not held is still moved to one the bank lists.
+    func testConformKeepsTheHeldRhythm() {
+        let limits = StandingOrderLimits(
+            minDaysAhead: 0, maxDaysAhead: 0, months: [1, 3], weeks: [1, 2], daysOfMonth: [], weekdays: [])
+        var d = StandingDraft()
+        d.heldRhythm = StandingRhythm(unit: "W", interval: 4)
+        d.unit = "M"
+        d.interval = 1
+        d.unit = "W"
+        d.interval = 4
+        d.conform(to: limits)
+        XCTAssertEqual(d.interval, 4)
+        d.interval = 3  // not held, not listed
+        d.conform(to: limits)
+        XCTAssertEqual(d.interval, 1)
+    }
+
+    /// An order opened for change or delete holds its rhythm; a new one holds none.
+    func testDraftFromAnOrderHoldsItsRhythm() {
+        let order = StandingOrderInfo(
+            id: 7, accountId: 1, accountName: "Giro", orderId: "A1", recipientName: "Vermieter GmbH",
+            recipientIban: "DE89370400440532013000", amountCents: 85_000, purpose: "Miete",
+            firstDate: "2026-01-01", lastDate: nil, timeUnit: "W", interval: 4, execDay: 3,
+            canChange: true, canDelete: true)
+        XCTAssertEqual(StandingDraft(order: order, action: .change).heldRhythm, StandingRhythm(unit: "W", interval: 4))
+        XCTAssertNil(StandingDraft().heldRhythm)
+    }
+
+    /// A day the bank holds outside the range stays when the field is left unchanged and is not moved by going
+    /// further out; typed values are still moved into the range.
+    func testValueOutsideTheRangeIsKeptUntilEdited() {
+        XCTAssertEqual(NumberEntryRow.committed(text: "99", value: 99, range: 1...31, allowed: []), 99)
+        XCTAssertEqual(NumberEntryRow.committed(text: "99", value: 20, range: 1...31, allowed: []), 31)
+        XCTAssertEqual(NumberEntryRow.committed(text: "", value: 99, range: 1...31, allowed: []), 99)
+        XCTAssertEqual(NumberEntryRow.step(99, by: 1, range: 1...31, allowed: []), 99)
+        XCTAssertEqual(NumberEntryRow.step(99, by: -1, range: 1...31, allowed: []), 31)
+        XCTAssertEqual(NumberEntryRow.step(0, by: -1, range: 1...31, allowed: []), 0)
+        XCTAssertEqual(NumberEntryRow.step(0, by: 1, range: 1...31, allowed: []), 1)
+        XCTAssertEqual(NumberEntryRow.step(30, by: 1, range: 1...31, allowed: []), 31)
     }
 }

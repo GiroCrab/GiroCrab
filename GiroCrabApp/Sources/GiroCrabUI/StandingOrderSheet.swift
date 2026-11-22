@@ -11,8 +11,6 @@ struct StandingOrderSheet: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #endif
     @State private var reviewing = false
-    /// The rhythm the order had when the form opened (change/delete); it stays in the picker after another one was chosen.
-    @State private var heldRhythm: StandingRhythm?
 
     private var draft: StandingDraft { model.standingDraft }
     private var isDelete: Bool { draft.action == .delete }
@@ -63,7 +61,6 @@ struct StandingOrderSheet: View {
         .frame(width: 520 * textScale)
         #endif
         .task {
-            heldRhythm = draft.action == .create ? nil : draft.rhythm  // the order's own stays offered
             reviewing = reviewing || isDelete
             if model.options.demoSheet == "standing-order-confirm" { reviewing = true } // screenshots
         }
@@ -71,7 +68,7 @@ struct StandingOrderSheet: View {
 
     // MARK: editor
 
-    private var rhythmChoices: [StandingRhythm] { draft.rhythmChoices(model.standingLimits, keeping: heldRhythm) }
+    private var rhythmChoices: [StandingRhythm] { draft.rhythmChoices(model.standingLimits) }
 
     private var editor: some View {
         @Bindable var model = model
