@@ -119,7 +119,8 @@ class VaultUnlockerTest {
 
     @Test
     fun authenticatedPromptOpensTheVault() {
-        storeWrappedKey()
+        val key = storeWrappedKey()
+        createVaultFile(key)
         val unlocker = unlocker { cipher, _, _, onResult ->
             onResult(PromptResult.Succeeded(cipher))
         }
@@ -161,7 +162,8 @@ class VaultUnlockerTest {
      */
     @Test
     fun throwingCallerIsAnsweredOnlyOnce() {
-        storeWrappedKey()
+        val key = storeWrappedKey()
+        createVaultFile(key)
         val unlocker = unlocker { cipher, _, _, onResult ->
             onResult(PromptResult.Succeeded(cipher))
         }
@@ -178,7 +180,26 @@ class VaultUnlockerTest {
         opened!!.vault.close()
     }
 
+    @Test
+    fun storedKeyWithoutVaultFileIsNoVaultOnDevice() {
+        storeWrappedKey()
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.NoVaultOnDevice, result)
+        assertFalse("no vault may be created", vaultFile.exists())
+    }
+
     // --- helpers ---------------------------------------------------------------------------
+
+    private fun createVaultFile(key: ByteArray) {
+        val vault = opener.open(opener.defaultVaultPath(testDir), key.copyOf())
+        checkNotNull(vault) { "native core not linked" }.close()
+    }
 
     private fun unlocker(prompt: CipherPrompt) = VaultUnlocker(
         keyStore = keyStore(),
@@ -191,7 +212,7 @@ class VaultUnlockerTest {
      * Stores a key and proves the plain round-trip first. If the unlocker test fails afterwards,
      * the defect is in the unlocker, not in the store — otherwise both look identical in the log.
      */
-    private fun storeWrappedKey() {
+    private fun storeWrappedKey(): ByteArray {
         val key = ByteArray(VaultKeyStore.VAULT_KEY_BYTES) { (it + 11).toByte() }
         val store = keyStore()
         store.storeWrapped(key, store.setupCipher())
@@ -201,6 +222,7 @@ class VaultUnlockerTest {
             key,
             store.readWrapped(store.unlockCipher()),
         )
+        return key
     }
 
     private fun deleteAlias() {
