@@ -107,10 +107,7 @@ pub(crate) fn merge_attached(conn: &Connection, bookings: &HashMap<i64, i64>) ->
     };
     let rows = load_rows(conn, "other")?.into_iter().filter_map(|mut row| {
         row.key = remap(row.key)?;
-        row.moved_from = match row.moved_from {
-            Some(source) => Some(remap(source)?),
-            None => None,
-        };
+        row.moved_from = row.moved_from.and_then(remap);
         Some(row)
     });
     merge_rows(conn, rows)

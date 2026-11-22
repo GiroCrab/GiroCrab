@@ -1,3 +1,653 @@
+mod review_round3 {
+    use super::super::{Endpoint, Key, State, store};
+    #[cfg(unix)]
+    use crate::local_api::ShareScope;
+    use crate::models::{AccountKind, TransactionSplitInput};
+    use crate::offline::ManualBookingSetup;
+    use crate::vault::Vault;
+    #[cfg(unix)]
+    use serde_json::{Value, json};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn vault() -> Arc<Vault> {
+        let path =
+            crate::test_support::thread_temp_path(&format!("review4-{}", uuid::Uuid::new_v4()));
+        Vault::open(path.to_string_lossy().into(), vec![7; 32]).unwrap()
+    }
+
+    fn setup(amount_cents: i64) -> ManualBookingSetup {
+        ManualBookingSetup {
+            booking_date: "2026-01-01".into(),
+            amount_cents,
+            counterparty: "Review".into(),
+            purpose: String::new(),
+            category_id: None,
+            note: String::new(),
+        }
+    }
+
+    fn part(uuid: Option<String>, amount_cents: i64) -> TransactionSplitInput {
+        TransactionSplitInput {
+            uuid,
+            amount_cents,
+            category_id: None,
+            note: String::new(),
+        }
+    }
+
+    fn seed() -> (Arc<Vault>, i64, i64, i64) {
+        let v = vault();
+        let account = v
+            .create_offline_account("Visible".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let o = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        let r = v.save_manual_booking(account, None, setup(2000)).unwrap();
+        (v, account, o, r)
+    }
+
+    fn merge(into: &Vault, from: &Vault) {
+        into.merge_other_vault(from.file_path(), vec![7; 32])
+            .unwrap();
+    }
+
+    fn peer_id(peer: &Vault, source: &Vault, id: i64) -> i64 {
+        let ext: String = source
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT external_id FROM transactions WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        peer.db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE external_id=?1",
+                [ext],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn number(v: &Vault, query: &str) -> i64 {
+        v.db().unwrap().query_row(query, [], |r| r.get(0)).unwrap()
+    }
+
+    fn sql(v: &Vault, query: &str) {
+        v.db().unwrap().execute_batch(query).unwrap();
+    }
+
+    fn parts(v: &Vault, id: i64) -> Vec<(String, i64)> {
+        v.list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.uuid, p.amount_cents))
+            .collect()
+    }
+
+    fn live(v: &Vault, r: i64) -> Vec<(String, String, i64)> {
+        let mut rows: Vec<_> = v
+            .refund_links(r)
+            .unwrap()
+            .into_iter()
+            .filter(|l| !l.inactive && l.allocated_cents > 0)
+            .map(|l| {
+                let ext: String = v
+                    .db()
+                    .unwrap()
+                    .query_row(
+                        "SELECT external_id FROM transactions WHERE id=?1",
+                        [l.original_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                (
+                    ext,
+                    l.resolved_original_part.unwrap_or_default(),
+                    l.allocated_cents,
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    fn sync(a: &Vault, b: &Vault, a_first: bool) {
+        if a_first {
+            merge(a, b);
+            merge(b, a);
+        } else {
+            merge(b, a);
+            merge(a, b);
+        }
+    }
+
+    fn split_seed() -> (Arc<Vault>, i64, i64, i64, Vec<(String, i64)>) {
+        let (v, account, o, r) = seed();
+        v.set_transaction_splits(o, vec![part(None, -3000), part(None, -2000)])
+            .unwrap();
+        let p = parts(&v, o);
+        v.link_refund(r, String::new(), o, p[1].0.clone()).unwrap();
+        (v, account, o, r, p)
+    }
+    type LegacyRow = (i64, String, i64, String, i64, i64, i64, i64, Option<i64>);
+    fn legacy_rows(db: &rusqlite::Connection) -> Vec<LegacyRow> {
+        db.prepare("SELECT refund_id,refund_part,original_id,original_part,refund_cents,original_cents,created_ms,changed_ms,deleted_ms FROM refund_links ORDER BY refund_id,original_id").unwrap().query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?))).unwrap().collect::<Result<_,_>>().unwrap()
+    }
+    #[cfg(unix)]
+    fn api(v: &Vault, method: &str, token: &str) -> Value {
+        let params = if method == "summary" {
+            json!({"date_from":"2026-01-01","date_to":"2026-01-31"})
+        } else {
+            json!({})
+        };
+        let response: Value = serde_json::from_str(&v.local_api_socket_request(
+            &json!({"v":1,"token":token,"method":method,"params":params}).to_string(),
+        ))
+        .unwrap();
+        assert!(response.get("error").is_none(), "{response}");
+        response["result"].clone()
+    }
+    #[cfg(unix)]
+    fn scope(v: &Vault, ids: Vec<i64>) {
+        v.set_local_api_scope(ShareScope {
+            enabled: true,
+            account_ids: ids,
+            ..Default::default()
+        })
+        .unwrap();
+    }
+    #[test]
+    fn n1_sync_in_both_orders_does_not_revive_dead_link() {
+        for a_first in [true, false] {
+            let (a, account, o, r, p) = split_seed();
+            let o3 = a.save_manual_booking(account, None, setup(-2000)).unwrap();
+            let b = vault();
+            merge(&b, &a);
+            let br = peer_id(&b, &a, r);
+            a.set_transaction_splits(
+                o,
+                vec![
+                    part(Some(p[0].0.clone()), -3000),
+                    part(None, -1000),
+                    part(None, -1000),
+                ],
+            )
+            .unwrap();
+            assert!(live(&a, r).is_empty());
+            a.link_refund(r, String::new(), o3, String::new()).unwrap();
+            a.set_transaction_splits(
+                o,
+                vec![part(Some(p[0].0.clone()), -3000), part(None, -2000)],
+            )
+            .unwrap();
+            let expected = live(&a, r);
+            assert_eq!(expected.iter().map(|x| x.2).sum::<i64>(), 2000);
+            assert_eq!(
+                expected[0].0,
+                a.db()
+                    .unwrap()
+                    .query_row(
+                        "SELECT external_id FROM transactions WHERE id=?1",
+                        [o3],
+                        |r| r.get::<_, String>(0)
+                    )
+                    .unwrap()
+            );
+            sync(&a, &b, a_first);
+            println!(
+                "N1 sync a_first={a_first}: A={:?}; B={:?}",
+                live(&a, r),
+                live(&b, br)
+            );
+            assert_eq!(live(&a, r), expected);
+            assert_eq!(live(&b, br), expected);
+        }
+    }
+
+    #[test]
+    fn n2_sync_in_both_orders_preserves_equal_imported_parts() {
+        for a_first in [true, false] {
+            let (a, account, bank, r1) = seed();
+            let p1 = a.save_manual_booking(account, None, setup(-2500)).unwrap();
+            let p2 = a.save_manual_booking(account, None, setup(-2500)).unwrap();
+            a.save_manual_booking(account, Some(r1), setup(2500))
+                .unwrap();
+            let r2 = a.save_manual_booking(account, None, setup(2500)).unwrap();
+            sql(
+                &a,
+                &format!(
+                    "UPDATE transactions SET external_id='id:REVIEW123456---bank' WHERE id={bank}; UPDATE transactions SET external_id='mm-part1',purpose='EREF: REVIEW123456' WHERE id={p1}; UPDATE transactions SET external_id='mm-part2',purpose='EREF: REVIEW123456' WHERE id={p2};"
+                ),
+            );
+            a.link_refund(r1, String::new(), p1, String::new()).unwrap();
+            a.link_refund(r2, String::new(), p2, String::new()).unwrap();
+            let b = vault();
+            merge(&b, &a);
+            let br1 = peer_id(&b, &a, r1);
+            let br2 = peer_id(&b, &a, r2);
+            assert_eq!(
+                crate::importers::portal_import::merge_imported_split_parts(
+                    &a.db().unwrap(),
+                    account
+                )
+                .unwrap(),
+                1
+            );
+            sync(&a, &b, a_first);
+            for (ar, br) in [(r1, br1), (r2, br2)] {
+                let (aa, bb) = (live(&a, ar), live(&b, br));
+                println!("N2 sync a_first={a_first}: A={aa:?}; B={bb:?}");
+                assert_eq!(aa, bb);
+                assert_eq!(aa.iter().map(|x| x.2).sum::<i64>(), 2500);
+            }
+        }
+    }
+
+    #[test]
+    fn r1b_concurrent_split_edits_converge_in_both_orders() {
+        for a_first in [true, false] {
+            let (a, _, o, r, p) = split_seed();
+            let b = vault();
+            merge(&b, &a);
+            let bo = peer_id(&b, &a, o);
+            let br = peer_id(&b, &a, r);
+            a.set_transaction_splits(
+                o,
+                vec![part(Some(p[0].0.clone()), -3000), part(None, -2000)],
+            )
+            .unwrap();
+            b.set_transaction_splits(
+                bo,
+                vec![part(Some(p[0].0.clone()), -2500), part(None, -2500)],
+            )
+            .unwrap();
+            let stamp = number(
+                &a,
+                &format!("SELECT splits_ms+1000 FROM transactions WHERE id={o}"),
+            );
+            sql(
+                &b,
+                &format!("UPDATE transactions SET splits_ms={stamp} WHERE id={bo}"),
+            );
+            sync(&a, &b, a_first);
+            let (aa, bb) = (live(&a, r), live(&b, br));
+            println!("R1b a_first={a_first}: A={aa:?}; B={bb:?}");
+            assert_eq!(parts(&a, o), parts(&b, bo), "split unit must converge");
+            assert_eq!(aa, bb, "allocation must converge");
+        }
+    }
+
+    #[test]
+    fn r2_v38_live_and_tombstoned_links_survive_v39_and_sync() {
+        for a_first in [true, false] {
+            let path = crate::test_support::thread_temp_path(&format!(
+                "review4-v38-{}",
+                uuid::Uuid::new_v4()
+            ));
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/vault-v38.girocrab"),
+                &path,
+            )
+            .unwrap();
+            let before = {
+                let db = rusqlite::Connection::open(&path).unwrap();
+                db.execute_batch(&format!("PRAGMA key = \"x'{}'\";", hex::encode([0x47; 32])))
+                    .unwrap();
+                assert_eq!(
+                    db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                        .unwrap(),
+                    38
+                );
+                db.execute_batch("INSERT INTO transactions(id,account_id,external_id,booking_date,amount_cents) VALUES
+                (91001,(SELECT MIN(id) FROM accounts),'review4-legacy-o','2026-01-01',-5000),
+                (91002,(SELECT MIN(id) FROM accounts),'review4-legacy-r','2026-01-01',2000),
+                (91003,(SELECT MIN(id) FROM accounts),'review4-legacy-dead-r','2026-01-01',1000);
+                INSERT INTO refund_links(refund_id,original_id,refund_cents,original_cents,created_ms,changed_ms,deleted_ms) VALUES
+                (91002,91001,2000,-5000,10,10,NULL),(91003,91001,1000,-5000,20,30,30);").unwrap();
+                legacy_rows(&db)
+            };
+            let peer_path = crate::test_support::thread_temp_path(&format!(
+                "review4-v38-peer-{}",
+                uuid::Uuid::new_v4()
+            ));
+            std::fs::copy(&path, &peer_path).unwrap();
+            let a = Vault::open(path.to_string_lossy().into(), vec![0x47; 32]).unwrap();
+            let b = Vault::open(peer_path.to_string_lossy().into(), vec![0x47; 32]).unwrap();
+            for v in [&a, &b] {
+                assert_eq!(number(v, "PRAGMA user_version"), 39);
+                assert_eq!(legacy_rows(&v.db().unwrap()), before);
+                assert_eq!(
+                    number(
+                        v,
+                        "SELECT COUNT(*) FROM refund_links WHERE moved=0 AND moved_from_refund_id IS NULL AND moved_from_original_id IS NULL AND moved_from_key=''"
+                    ),
+                    2
+                );
+                assert_eq!(live(v, 91002).iter().map(|x| x.2).sum::<i64>(), 2000);
+                assert!(live(v, 91003).is_empty());
+            }
+            a.link_refund(91003, String::new(), 91001, String::new())
+                .unwrap();
+            let merge_legacy = |into: &Vault, from: &Vault| {
+                into.merge_other_vault(from.file_path(), vec![0x47; 32])
+                    .unwrap();
+            };
+            if a_first {
+                merge_legacy(&a, &b);
+                merge_legacy(&b, &a);
+            } else {
+                merge_legacy(&b, &a);
+                merge_legacy(&a, &b);
+            }
+            assert_eq!(legacy_rows(&a.db().unwrap()), legacy_rows(&b.db().unwrap()));
+            for r in [91002, 91003] {
+                assert_eq!(live(&a, r), live(&b, r));
+            }
+            println!(
+                "R2 a_first={a_first}: preserved v38 rows={before:?}; final allocations={:?}/{:?}",
+                live(&a, 91002),
+                live(&a, 91003)
+            );
+        }
+    }
+
+    #[test]
+    fn r3_moved_tombstone_cannot_undo_later_unlink_but_relink_works() {
+        for a_first in [true, false] {
+            let (a, account, o, r) = seed();
+            let o2 = a.save_manual_booking(account, None, setup(-5000)).unwrap();
+            a.link_refund(r, String::new(), o, String::new()).unwrap();
+            crate::importers::portal_import::hand_over(&a.db().unwrap(), o, o2).unwrap();
+            let token = number(
+                &a,
+                &format!("SELECT changed_ms FROM refund_links WHERE original_id={o} AND moved=1"),
+            );
+            assert_eq!(
+                number(
+                    &a,
+                    &format!(
+                        "SELECT COUNT(*) FROM refund_links WHERE original_id={o2} AND moved_from_original_id={o} AND moved_from_key!=''"
+                    )
+                ),
+                1
+            );
+            let b = vault();
+            merge(&b, &a);
+            let br = peer_id(&b, &a, r);
+            let bo2 = peer_id(&b, &a, o2);
+            b.unlink_refund(br, String::new(), bo2, String::new())
+                .unwrap();
+            let undo = a.restore_refund(r, String::new(), o, String::new(), token);
+            assert!(
+                undo.is_err(),
+                "a move tombstone is not an undoable user unlink"
+            );
+            sync(&a, &b, a_first);
+            assert!(
+                live(&a, r).is_empty() && live(&b, br).is_empty(),
+                "later destination unlink must survive stale source undo"
+            );
+            a.link_refund(r, String::new(), o2, String::new()).unwrap();
+            sync(&a, &b, a_first);
+            let (aa, bb) = (live(&a, r), live(&b, br));
+            println!("R3 a_first={a_first}: stale undo rejected; after re-link A={aa:?}; B={bb:?}");
+            assert_eq!(aa, bb);
+            assert_eq!(aa.iter().map(|x| x.2).sum::<i64>(), 2000);
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn r4_scoped_api_is_independent_of_global_cache_warm_order() {
+        for global_first in [true, false] {
+            let (v, visible, o, r) = seed();
+            let hidden = v
+                .create_offline_account(
+                    "HIDDEN_ACCOUNT_SENTINEL".into(),
+                    AccountKind::Cash,
+                    "EUR".into(),
+                    0,
+                )
+                .unwrap();
+            let category = v
+                .create_category(
+                    "HIDDEN_CATEGORY_SENTINEL".into(),
+                    None,
+                    "tag".into(),
+                    "#ff0000".into(),
+                )
+                .unwrap();
+            let mut hidden_setup = setup(-5000);
+            hidden_setup.category_id = Some(category);
+            hidden_setup.counterparty = "HIDDEN_BOOKING_SENTINEL".into();
+            let hidden_o = v.save_manual_booking(hidden, None, hidden_setup).unwrap();
+            let token = v.create_local_api_token().unwrap();
+            scope(&v, vec![visible]);
+            let baseline = api(&v, "summary", &token);
+            assert_eq!(baseline["totals"][0]["income_cents"], 2000);
+            assert_eq!(baseline["totals"][0]["expense_cents"], 5000);
+            v.link_refund(r, String::new(), hidden_o, String::new())
+                .unwrap();
+            if global_first {
+                v.list_categories(None, None).unwrap();
+            }
+            assert_eq!(api(&v, "summary", &token), baseline);
+            v.list_categories(None, None).unwrap();
+            assert_eq!(api(&v, "summary", &token), baseline);
+            let calls = if global_first {
+                vec![false, true, false, true]
+            } else {
+                vec![true, false, true, false, true]
+            };
+            for scoped in calls {
+                scope(&v, if scoped { vec![visible] } else { Vec::new() });
+                let summary = api(&v, "summary", &token);
+                v.list_categories(None, None).unwrap();
+                if scoped {
+                    assert_eq!(
+                        summary, baseline,
+                        "scoped totals/category totals changed; global_first={global_first}"
+                    );
+                    for method in ["summary", "accounts", "transactions"] {
+                        let response = api(&v, method, &token);
+                        if method == "summary" {
+                            assert_eq!(
+                                response, baseline,
+                                "global cache warmup changed scoped totals"
+                            );
+                        }
+                        let response = response.to_string();
+                        assert!(
+                            !response.contains("HIDDEN_"),
+                            "hidden account/booking/category leaked via {method}: {response}"
+                        );
+                        assert!(
+                            !response.contains("refund_cents") && !response.contains("original_id"),
+                            "refund endpoint data leaked: {response}"
+                        );
+                    }
+                } else {
+                    assert_ne!(
+                        summary, baseline,
+                        "unscoped request must actually include hidden booking"
+                    );
+                }
+            }
+            assert!(
+                number(
+                    &v,
+                    &format!("SELECT COUNT(*) FROM transactions WHERE id={o}")
+                ) > 0
+            );
+            println!(
+                "R4 global_first={global_first}: scoped summary/category totals unchanged: {baseline}"
+            );
+        }
+    }
+
+    #[test]
+    fn r5_deleted_account_hold_and_brokerage_sources_remain_mappable() {
+        for case in ["deleted-account", "pending-hold", "brokerage"] {
+            for a_first in [true, false] {
+                let (a, source_account, o, _) = seed();
+                let target_account = a
+                    .create_offline_account("Target".into(), AccountKind::Cash, "EUR".into(), 0)
+                    .unwrap();
+                let target = a
+                    .save_manual_booking(target_account, None, setup(-5000))
+                    .unwrap();
+                let r = a
+                    .save_manual_booking(target_account, None, setup(2000))
+                    .unwrap();
+                if case == "pending-hold" {
+                    sql(
+                        &a,
+                        &format!(
+                            "UPDATE transactions SET external_id='pending-hold-review4' WHERE id={o}"
+                        ),
+                    );
+                }
+                if case == "brokerage" {
+                    sql(
+                        &a,
+                        &format!("UPDATE accounts SET kind='brokerage' WHERE id={source_account}"),
+                    );
+                }
+                a.link_refund(r, String::new(), o, String::new()).unwrap();
+                let b = vault();
+                merge(&b, &a);
+                let br = peer_id(&b, &a, r);
+                crate::importers::portal_import::hand_over(&a.db().unwrap(), o, target).unwrap();
+                if case == "deleted-account" {
+                    a.set_account_archived(source_account, true).unwrap();
+                    a.delete_account(source_account).unwrap();
+                }
+                let expected = live(&a, r);
+                assert_eq!(expected.iter().map(|x| x.2).sum::<i64>(), 2000);
+                sync(&a, &b, a_first);
+                println!(
+                    "R5 case={case} a_first={a_first}: A={:?}; B={:?}",
+                    live(&a, r),
+                    live(&b, br)
+                );
+                assert_eq!(live(&a, r), expected);
+                assert_eq!(live(&b, br), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn merge_attached_keeps_rows_when_only_provenance_is_unmapped() {
+        let (v, account, old_original, old_refund) = seed();
+        let new_original = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        let new_refund = v.save_manual_booking(account, None, setup(2000)).unwrap();
+        let local_original = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        let local_refund = v.save_manual_booking(account, None, setup(2000)).unwrap();
+        v.link_refund(old_refund, String::new(), old_original, String::new())
+            .unwrap();
+        let db = v.db().unwrap();
+        store::move_endpoints(
+            &db,
+            &HashMap::from([
+                (
+                    Endpoint(old_refund, String::new()),
+                    Endpoint(new_refund, String::new()),
+                ),
+                (
+                    Endpoint(old_original, String::new()),
+                    Endpoint(new_original, String::new()),
+                ),
+            ]),
+        )
+        .unwrap();
+        let expected = State::load(&db)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.key.refund.0 == new_refund)
+            .unwrap();
+        assert!(expected.moved_from.is_some());
+        assert!(!expected.moved_from_key.is_empty());
+        db.execute_batch(
+            "ATTACH DATABASE ':memory:' AS other;
+        CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;",
+        )
+        .unwrap();
+        for (map_refund, map_original) in
+            [(true, true), (true, false), (false, true), (false, false)]
+        {
+            db.execute("DELETE FROM main.refund_links", []).unwrap();
+            let mut map =
+                HashMap::from([(new_refund, local_refund), (new_original, local_original)]);
+            if map_refund {
+                map.insert(old_refund, old_refund);
+            }
+            if map_original {
+                map.insert(old_original, old_original);
+            }
+            store::merge_attached(&db, &map).unwrap();
+            let rows = State::load(&db).unwrap().rows;
+            let row = rows
+                .iter()
+                .find(|r| r.key.refund.0 == local_refund)
+                .expect("mapped current endpoints survive missing provenance");
+            assert_eq!(
+                row.key,
+                Key {
+                    refund: Endpoint(local_refund, String::new()),
+                    original: Endpoint(local_original, String::new())
+                }
+            );
+            assert_eq!(
+                row.moved_from,
+                if map_refund && map_original {
+                    expected.moved_from.clone()
+                } else {
+                    None
+                }
+            );
+            assert_eq!(
+                (
+                    row.refund_cents,
+                    row.original_cents,
+                    row.created_ms,
+                    row.changed_ms,
+                    row.deleted_ms,
+                    row.moved,
+                    &row.moved_from_key
+                ),
+                (
+                    expected.refund_cents,
+                    expected.original_cents,
+                    expected.created_ms,
+                    expected.changed_ms,
+                    expected.deleted_ms,
+                    expected.moved,
+                    &expected.moved_from_key
+                )
+            );
+        }
+        db.execute("DELETE FROM main.refund_links", []).unwrap();
+        store::merge_attached(&db, &HashMap::from([(new_refund, local_refund)])).unwrap();
+        assert!(
+            State::load(&db).unwrap().rows.is_empty(),
+            "unmapped current endpoints are still rejected"
+        );
+        db.execute("DELETE FROM other.refund_links", []).unwrap();
+        store::merge_attached(&db, &HashMap::new()).unwrap();
+        assert!(State::load(&db).unwrap().rows.is_empty());
+        db.execute_batch("DETACH DATABASE other").unwrap();
+        assert!(
+            store::merge_attached(&db, &HashMap::new()).is_err(),
+            "attachment errors are not silently ignored"
+        );
+    }
+}
+
 mod review_round2 {
     use crate::models::{AccountKind, TransactionSplitInput};
     use crate::offline::ManualBookingSetup;
