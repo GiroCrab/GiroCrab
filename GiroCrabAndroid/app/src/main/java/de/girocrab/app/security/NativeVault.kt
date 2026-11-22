@@ -1,8 +1,15 @@
 package de.girocrab.app.security
 
+import de.girocrab.app.model.VaultSnapshot
+import de.girocrab.app.model.VaultSnapshotMapper
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
+import uniffi.girocrab_core.Account as CoreAccount
+import uniffi.girocrab_core.AccountGroup as CoreGroup
+import uniffi.girocrab_core.BookingPage as CorePage
+import uniffi.girocrab_core.Category as CoreCategory
+import uniffi.girocrab_core.Tag as CoreTag
 
 /**
  * Handle on an open vault of `girocrab-core`, reached through the UniFFI bindings.
@@ -31,6 +38,15 @@ interface OwnVault : AutoCloseable {
      * `CREDIT_CARD`, `PAYMENT_SERVICE`, `BROKERAGE`, `CASH`, `LOAN`.
      */
     fun createOfflineAccount(name: String, kind: String, currency: String, openingCents: Long): Long
+
+    /**
+     * Reads the whole vault into the app's snapshot format (#1429, 3.1).
+     *
+     * The handle may be closed right after: the snapshot is a plain Kotlin copy and the core keeps
+     * nothing back. Every call throws when the binding or the core cannot answer — an empty list
+     * would make "this vault has no accounts" indistinguishable from "the mapper never ran".
+     */
+    fun snapshot(): VaultSnapshot
 }
 
 /**
@@ -130,6 +146,23 @@ class NativeVaultOpener {
             val raw = callWith("createOfflineAccount", name, value, currency, openingCents)
             return (raw as? Number)?.toLong()
                 ?: throw IllegalStateException("createOfflineAccount did not return an id")
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        override fun snapshot(): VaultSnapshot {
+            val groups = callNoArgs("listAccountGroups") as? List<CoreGroup>
+                ?: throw IllegalStateException("listAccountGroups did not return a list")
+            val accounts = callNoArgs("listAccounts") as? List<CoreAccount>
+                ?: throw IllegalStateException("listAccounts did not return a list")
+            val page = callWith("listTransactions", VaultSnapshotMapper.firstPageFilter()) as? CorePage
+                ?: throw IllegalStateException("listTransactions did not return a page")
+            // The core wants both bounds explicitly; `null` means "no limit", not "today".
+            val noDate: String? = null
+            val categories = callWith("listCategories", noDate, noDate) as? List<CoreCategory>
+                ?: throw IllegalStateException("listCategories did not return a list")
+            val tags = callNoArgs("listTags") as? List<CoreTag>
+                ?: throw IllegalStateException("listTags did not return a list")
+            return VaultSnapshotMapper.map(groups, accounts, page, categories, tags)
         }
 
         /**
