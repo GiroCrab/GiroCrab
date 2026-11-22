@@ -31,6 +31,11 @@ enum ViewLayout {
     static let cardSpacing: CGFloat = 8
     /// Outer gap between the stacked cards above the booking list (demo banner, header, cashflow, budgets, first day).
     static let cardGap: CGFloat = 4
+    /// Gap between the blocks of an asset account view (header, metrics, analysis, content).
+    static let assetBlockSpacing: CGFloat = 14
+    /// Bottom padding for the demo banner inside a stack with `stackSpacing`, so the
+    /// banner sits `cardGap` above the next card in every view (#1538).
+    static func demoBannerBottomPadding(stackSpacing: CGFloat) -> CGFloat { cardGap - stackSpacing }
     /// Top/bottom inset of a folded card: one compact row.
     static let collapsedCardVerticalPadding: CGFloat = 4
     static func cardVerticalPadding(collapsed: Bool) -> CGFloat { collapsed ? collapsedCardVerticalPadding : cardPadding }

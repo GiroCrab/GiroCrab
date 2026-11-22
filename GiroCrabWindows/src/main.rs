@@ -1438,16 +1438,29 @@ fn save_png_file(name: &str) -> Option<PathBuf> {
 }
 
 /// Puts the image on the clipboard as registered "PNG" and as `CF_DIB`.
+///
+/// The clipboard is opened for the UI thread's active window: `EmptyClipboard` on a clipboard
+/// opened without an owner sets the owner to NULL, and `SetClipboardData` may then fail.
+/// Opening (busy) and writing fail with different status texts.
 #[cfg(windows)]
 fn copy_image_to_clipboard(png: &[u8], dib: &[u8]) -> Result<(), String> {
     use clipboard_win::{Clipboard, raw, register_format};
     const CF_DIB: u32 = 8;
-    let busy = |_| "Die Zwischenablage ist gerade belegt; bitte erneut versuchen.".to_string();
-    let _open = Clipboard::new_attempts(10).map_err(busy)?;
-    raw::empty().map_err(busy)?;
-    raw::set_without_clear(CF_DIB, dib).map_err(busy)?;
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetActiveWindow() -> *mut std::ffi::c_void;
+    }
+    // SAFETY: takes no arguments and only returns the calling thread's active window handle
+    // (NULL if there is none); the handle is passed on, never dereferenced.
+    let owner = unsafe { GetActiveWindow() };
+    // A NULL owner behaves exactly like `Clipboard::new_attempts(10)`.
+    let _open = Clipboard::new_attempts_for(owner, 10)
+        .map_err(|_| "Die Zwischenablage ist gerade belegt; bitte erneut versuchen.".to_string())?;
+    let write = |_| "Das Bild konnte nicht in die Zwischenablage geschrieben werden.".to_string();
+    raw::empty().map_err(write)?;
+    raw::set_without_clear(CF_DIB, dib).map_err(write)?;
     if let Some(format) = register_format("PNG") {
-        raw::set_without_clear(format.get(), png).map_err(busy)?;
+        raw::set_without_clear(format.get(), png).map_err(write)?;
     }
     Ok(())
 }
@@ -2233,6 +2246,12 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = win.as_weak();
         win.on_transfer_girocode(move || {
             let Some(win) = weak.upgrade() else { return };
+            // Privacy first: the fields are not read in privacy mode or while locked.
+            if let Err(e) = girocode::girocode_allowed(privacy_on(&win)) {
+                win.set_girocode_open(false);
+                win.set_transfer_status(e.into());
+                return;
+            }
             match girocode_fields(&win).and_then(|f| girocode::girocode_image(&f)) {
                 Ok(img) => {
                     win.set_girocode_image(img);
@@ -2250,6 +2269,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = win.as_weak();
         win.on_transfer_girocode_copy(move || {
             let Some(win) = weak.upgrade() else { return };
+            // Privacy first: the fields are not read in privacy mode or while locked.
+            if let Err(e) = girocode::girocode_allowed(privacy_on(&win)) {
+                win.set_transfer_status(e.into());
+                return;
+            }
             // Status texts never contain the name, IBAN or amount.
             let status = girocode_fields(&win)
                 .and_then(|f| girocode::girocode_clipboard_images(&f))
@@ -2263,6 +2287,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = win.as_weak();
         win.on_transfer_girocode_save(move || {
             let Some(win) = weak.upgrade() else { return };
+            // Privacy first: the fields are not read in privacy mode or while locked.
+            if let Err(e) = girocode::girocode_allowed(privacy_on(&win)) {
+                win.set_transfer_status(e.into());
+                return;
+            }
             let f = match girocode_fields(&win) {
                 Ok(f) => f,
                 Err(e) => {

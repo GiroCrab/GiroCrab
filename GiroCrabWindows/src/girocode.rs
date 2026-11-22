@@ -183,6 +183,21 @@ pub fn girocode_png_file_name(recipient: &str) -> String {
     }
 }
 
+/// Status text shown instead of the GiroCode in privacy mode or while the vault is locked
+/// (`privacy` = `daily::effective_privacy`). Neutral: it names no recipient, IBAN or amount.
+pub const GIROCODE_BLOCKED: &str =
+    "Im Privatmodus und bei gesperrtem Tresor lässt sich kein GiroCode anzeigen oder exportieren.";
+
+/// Gate for showing, copying and saving the GiroCode. Callers check it BEFORE reading any field,
+/// so nothing personal is touched while privacy applies.
+pub fn girocode_allowed(privacy: bool) -> Result<(), String> {
+    if privacy {
+        Err(GIROCODE_BLOCKED.into())
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +365,42 @@ mod tests {
         assert_eq!(&dib[40..44], &[255, 255, 255, 255]);
         assert_eq!(&dib[48..52], &[0, 0, 0, 255]);
         assert!(girocode_clipboard_images(&Fields::default()).is_err());
+    }
+
+    #[test]
+    fn girocode_blocked_in_privacy_mode_and_when_locked() {
+        use crate::daily::effective_privacy;
+        // (toggle, unlocked): privacy on, locked, both.
+        for (toggle, unlocked) in [(true, true), (false, false), (true, false)] {
+            assert_eq!(
+                girocode_allowed(effective_privacy(toggle, unlocked)),
+                Err(GIROCODE_BLOCKED.to_string()),
+                "toggle={toggle} unlocked={unlocked}"
+            );
+        }
+    }
+
+    #[test]
+    fn girocode_allowed_when_unlocked_and_privacy_off() {
+        assert_eq!(
+            girocode_allowed(crate::daily::effective_privacy(false, true)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn blocked_status_is_neutral() {
+        let msg = girocode_allowed(true).unwrap_err();
+        assert!(!msg.is_empty());
+        // No amount, IBAN or other digits can end up in the status line.
+        assert!(!msg.contains(|c: char| c.is_ascii_digit()), "{msg}");
+        assert!(!msg.contains(crate::daily::MASK));
+    }
+
+    #[test]
+    fn blocked_status_differs_from_missing_field_texts() {
+        // The user must be able to tell "blocked" from "something is missing".
+        let missing = girocode_payload_for(&Fields::default()).unwrap_err();
+        assert_ne!(girocode_allowed(true).unwrap_err(), missing);
     }
 }

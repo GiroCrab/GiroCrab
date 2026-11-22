@@ -5077,6 +5077,17 @@
         }
       }
     },
+    "Anteil in Prozent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share in percent"
+          }
+        }
+      }
+    },
     "Anteile" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21259,6 +21270,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pie"
+          }
+        }
+      }
+    },
+    "Kreis zeigt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pie shows"
           }
         }
       }
