@@ -168,13 +168,13 @@ fn signin_form(html: &str, page: &url::Url) -> Option<PageForm> {
 }
 
 /// Booking text and sign for a statement `Type`.
-fn classify(kind: &str) -> (i64, String) {
+fn classify(kind: &str) -> Option<(i64, String)> {
     match kind {
-        "Return" => (1, tr("Zinsen").into()),
-        "Deposit" => (1, tr("Einzahlung").into()),
-        "Withdrawal" | "WithdrawalRequest" | "PartialPayout" => (-1, tr("Auszahlung").into()),
-        "Fee" => (-1, tr("Gebühr").into()),
-        other => (1, other.to_string()),
+        "Return" => Some((1, tr("Zinsen").into())),
+        "Deposit" => Some((1, tr("Einzahlung").into())),
+        "Withdrawal" | "WithdrawalRequest" | "PartialPayout" => Some((-1, tr("Auszahlung").into())),
+        "Fee" => Some((-1, tr("Gebühr").into())),
+        _ => None,
     }
 }
 
@@ -184,7 +184,7 @@ fn parse_statement(t: &Value, account_ref: &str) -> Option<RemoteTransaction> {
     let date = t["Date"].as_str()?.get(..10)?;
     crate::dates::parse_iso(date)?;
     let kind = t["Type"].as_str().unwrap_or_default();
-    let (sign, booking_text) = classify(kind);
+    let (sign, booking_text) = classify(kind)?;
     let amount_cents = sign * json_number_to_cents_rounded(&t["Amount"]).ok()?.abs();
     let description = t["Description"].as_str().map(str::trim).unwrap_or_default();
     Some(RemoteTransaction {
@@ -514,6 +514,8 @@ mod tests {
         );
         assert!(parse_statement(&json!({"Type": "Return", "Amount": 1}), r).is_none());
         assert!(parse_statement(&json!({"Type": "Return", "Date": "2026-07-09"}), r).is_none());
+        assert!(parse_statement(&json!({"Amount": 1, "Date": "2026-07-09"}), r).is_none());
+        assert!(parse_statement(&json!({"Type": "Mystery", "Amount": 1, "Date": "2026-07-09"}), r).is_none());
     }
 
     #[test]

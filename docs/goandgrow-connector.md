@@ -47,7 +47,7 @@ Die Schnittstelle authentifiziert allein über die Cookies, ohne `Authorization`
   Passwort und Cookies erreichen keinen anderen Host; Formulare mit `GET` werden abgelehnt.
 * Nennt eine Weiterleitung einen dieser Hosts mit `http` (die App steht hinter einem Proxy),
   wird sie als `https` aufgerufen; unverschlüsselt geht nichts hinaus.
-* Eine Buchung ohne lesbares Datum oder ohne lesbaren Betrag verwirft den ganzen Abruf, ebenso eine Antwort, die keine Liste ist.
+* Eine Buchung ohne lesbares Datum, ohne lesbaren Betrag oder mit unbekanntem Typ verwirft den ganzen Abruf, ebenso eine Antwort, die keine Liste ist.
 
 ## Offene Punkte
 
