@@ -412,6 +412,55 @@ pub(crate) fn tag_by_rules(
     Ok(changed)
 }
 
+/// Adds the tags named `add` (created when missing) to `booking_ids` and
+/// removes the live tags named `remove` (unknown names are ignored), for the
+/// local API's `set_tags`. The caller passes live bookings and owns the
+/// transaction. Returns the names of the tags it created and the bookings
+/// whose tag set changed (stamped as edited now).
+pub(crate) fn edit_tags_by_name(
+    conn: &Connection,
+    booking_ids: &[i64],
+    add: &[String],
+    remove: &[String],
+) -> CoreResult<(Vec<String>, HashSet<i64>)> {
+    let mut created = Vec::new();
+    let mut add_ids = Vec::new();
+    for name in add {
+        let clean = clean_name(name)?;
+        if live_by_name(conn, &clean)?.is_none() {
+            created.push(clean.clone());
+        }
+        add_ids.push(Vault::ensure_tag(conn, &clean)?);
+    }
+    let mut remove_ids = Vec::new();
+    for name in remove {
+        if let Some(id) = live_by_name(conn, &clean_name(name)?)? {
+            remove_ids.push(id);
+        }
+    }
+    let mut changed = HashSet::new();
+    let mut ins = conn.prepare(
+        "INSERT OR IGNORE INTO transaction_tags(transaction_id, tag_id) VALUES (?1, ?2)",
+    )?;
+    let mut del =
+        conn.prepare("DELETE FROM transaction_tags WHERE transaction_id = ?1 AND tag_id = ?2")?;
+    for &id in booking_ids {
+        for &tag in &add_ids {
+            if ins.execute(params![id, tag])? > 0 {
+                changed.insert(id);
+            }
+        }
+        for &tag in &remove_ids {
+            if del.execute(params![id, tag])? > 0 {
+                changed.insert(id);
+            }
+        }
+    }
+    let ids: Vec<i64> = changed.iter().copied().collect();
+    stamp_bookings(conn, &ids, now_ms())?;
+    Ok((created, changed))
+}
+
 impl Vault {
     /// The id of the live tag named `name`, created if missing; for importers
     /// and the "new tag" field of the booking detail.

@@ -32,6 +32,7 @@ fn serve(dir: &ShortDir) -> App {
         .set_local_api_scope(ShareScope {
             enabled: true,
             account_ids: vec![shared_account],
+            allow_edits: true,
             ..Default::default()
         })
         .unwrap();
@@ -89,6 +90,76 @@ fn tools_read_what_the_user_shares_and_stop_with_the_app() {
 }
 
 #[test]
+fn categories_and_tags_are_set_only_while_edits_are_allowed() {
+    let dir = ShortDir::new();
+    let app = serve(&dir);
+    let mut mcp = adapter_at(&app.socket, Ok(app.token.clone()));
+    let page = call(
+        &mut mcp,
+        "list_transactions",
+        json!({ "uncategorized_only": true, "limit": 1 }),
+    );
+    let booking = &page["structuredContent"]["transactions"][0];
+    assert_eq!(booking["category_source"], "none");
+    let id = booking["id"].clone();
+    let categories = call(&mut mcp, "list_categories", json!({}));
+    let category = categories["structuredContent"]["items"][0]["id"].clone();
+
+    let set = call(
+        &mut mcp,
+        "set_category",
+        json!({ "transaction_ids": [id], "category_id": category }),
+    );
+    assert_eq!(set["isError"], false, "{}", text(&set));
+    assert_eq!(set["structuredContent"]["results"][0]["status"], "changed");
+    let tagged = call(
+        &mut mcp,
+        "set_tags",
+        json!({ "transaction_ids": [id], "add": ["Dienstreise"] }),
+    );
+    assert_eq!(
+        tagged["structuredContent"]["created_tags"][0],
+        "Dienstreise"
+    );
+    let tags = call(&mut mcp, "list_tags", json!({}));
+    let tag = tags["structuredContent"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "Dienstreise")
+        .expect("the new tag is listed")
+        .clone();
+    assert_eq!(tag["booking_count"], 1);
+    let page = call(&mut mcp, "list_transactions", json!({ "limit": 500 }));
+    let booking = page["structuredContent"]["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == id)
+        .unwrap()
+        .clone();
+    assert_eq!(booking["category_id"], category);
+    assert_eq!(booking["category_source"], "manual");
+    assert_eq!(booking["tags"], json!(["Dienstreise"]));
+
+    let scope = app.vault.local_api_scope().unwrap();
+    app.vault
+        .set_local_api_scope(ShareScope {
+            allow_edits: false,
+            ..scope
+        })
+        .unwrap();
+    let refused = call(
+        &mut mcp,
+        "set_tags",
+        json!({ "transaction_ids": [id], "remove": ["Dienstreise"] }),
+    );
+    assert_eq!(refused["isError"], true);
+    assert!(text(&refused).contains("turned off"), "{}", text(&refused));
+    app.server.stop();
+}
+
+#[test]
 fn the_adapter_speaks_the_cores_protocol() {
     assert_eq!(girocrab_mcp::API_VERSION, API_VERSION);
     let dir = ShortDir::new();
@@ -101,8 +172,16 @@ fn the_adapter_speaks_the_cores_protocol() {
         .handle(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
         .unwrap()["result"]["tools"]
         .clone();
+    let categories: Value = serde_json::from_str(
+        &app.vault
+            .local_api_request(r#"{"v":1,"method":"categories"}"#),
+    )
+    .unwrap();
+    let category = categories["result"][0]["id"].clone();
     let sample = |name: &str, schema: &Value| -> Value {
         match name {
+            "category_id" => category.clone(),
+            "add" | "remove" => json!(["Probe"]),
             "date_from" => json!("2026-01-01"),
             "date_to" => json!("2026-06-30"),
             "direction" => json!("all"),

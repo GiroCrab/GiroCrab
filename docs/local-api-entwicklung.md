@@ -1,6 +1,6 @@
 # Externe Analyse und MCP-Adapter: Entwicklung (#136)
 
-Für Entwicklerinnen und Entwickler: wie die lesende Schnittstelle und der MCP-Adapter zusammenhängen, wie der
+Für Entwicklerinnen und Entwickler: wie die Schnittstelle und der MCP-Adapter zusammenhängen, wie der
 Adapter in die App kommt und wie man alles lokal testet. Protokoll, Methoden und Einrichtung für Nutzer stehen
 in [local-api.md](local-api.md).
 
@@ -20,17 +20,22 @@ LocalApiServer im Core (läuft im App-Prozess)  →  Vault::local_api_socket_req
 
 - **Core** (`girocrab-core/src/local_api.rs`): Freigabeumfang (`ShareScope`), Schlüssel (nur SHA-256 gespeichert),
   die Methoden `info`, `accounts`, `categories`, `transactions`, `summary` und die Maskierung (`shared_text`).
+  Schreibend nur `local_api/edit.rs`: `tags`, `set_category`, `set_tags`, abgesichert durch
+  `ShareScope::allow_edits` (sonst `read_only`).
 - **Socket-Server** (`girocrab-core/src/local_api/server.rs`): `LocalApiServer` mit Lock-Datei
   (`girocrab.sock.lock`), Peer-UID-Prüfung, Grenzen (4 Verbindungen, 64 KiB, 10 s je Anfrage, 60 s Leerlauf) und
-  Takt. Hält den Tresor nur `Weak`; nach `stop()` geht keine Antwort mehr raus.
+  Takt. Hält den Tresor nur `Weak`; nach `stop()` geht keine Antwort mehr raus. Hat eine Anfrage Buchungen
+  geändert, meldet er das nach der Antwort an den `LocalApiListener` der App (`set_listener`).
 - **App** (`GiroCrabApp/Sources/GiroCrabUI/AppModel+LocalApi.swift`): startet und stoppt den Server.
   `localApiTarget` legt fest, wann er laufen darf: eigener Tresor, entsperrt, angezeigt, nur macOS.
-  Ausgelöst durch die `didSet` von `ownVault`, `demoActive` und `vaultState` (`reconcileLocalApiServer`). Alle
+  Ausgelöst durch die `didSet` von `ownVault`, `demoActive` und `vaultState` (`reconcileLocalApiServer`).
+  Meldet der Server Änderungen (`LocalApiChangeListener` in `AppModelTypes.swift`), lädt
+  `localApiChangedBookings` höchstens einmal je 300 ms neu (`reloadAllInBackground`). Alle
   Einstellungs- und Schlüsselaufrufe laufen über eine Warteschlange (`localApiJob`). Oberfläche:
   `ExternalAccessSettings.swift` (Einstellungen › Analyse).
 - **MCP-Adapter** (`girocrab-mcp/`): eigenes Crate, hängt zur Laufzeit nur von `serde_json` ab (der Core ist
   nur Dev-Abhängigkeit für Tests).
-  - `src/lib.rs`: Protokoll (`initialize`, `ping`, `tools/list`, `tools/call`), die fünf Tools mit
+  - `src/lib.rs`: Protokoll (`initialize`, `ping`, `tools/list`, `tools/call`), die acht Tools mit
     Eingabeschemas (`TOOLS`), Fehlerarten (`Problem`), Verbindung zum Socket (`exchange`, Wiederholung bei
     `busy` und abgebrochener Verbindung).
   - `src/main.rs`: stdio-Schleife, Argumente, Schlüssel aus `GIROCRAB_API_TOKEN` oder `--token-file`, `--check`.
@@ -42,8 +47,11 @@ LocalApiServer im Core (läuft im App-Prozess)  →  Vault::local_api_socket_req
 | `list_categories` | `categories` |
 | `list_transactions` | `transactions` |
 | `get_summary` | `summary` |
+| `list_tags` | `tags` |
+| `set_category` | `set_category` |
+| `set_tags` | `set_tags` |
 
-Fehler des Sockets (`locked`, `disabled`, `unauthorized`, `busy`, …) werden zu Tool-Ergebnissen mit `isError`
+Fehler des Sockets (`locked`, `disabled`, `unauthorized`, `busy`, `read_only`, …) werden zu Tool-Ergebnissen mit `isError`
 und einem Text, den der Assistent weitergeben kann. Ein unbekanntes Tool ist ein JSON-RPC-Fehler (-32602).
 Unterstützte MCP-Versionen: 2025-06-18, 2025-03-26, 2024-11-05. Aktuelle Clients bieten zusätzlich 2025-11-25
 an und akzeptieren 2025-06-18 als Antwort. Ein Client, der zuerst `server/discover` probiert (MCP 2026-07-28),

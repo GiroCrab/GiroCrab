@@ -1,4 +1,4 @@
-//! MCP adapter for GiroCrab's read-only local interface (#136, PoC part 3).
+//! MCP adapter for GiroCrab's local analysis interface (#136, PoC part 3).
 //!
 //! An MCP client starts `girocrab-mcp` and speaks JSON-RPC 2.0 over stdio, one
 //! message per line. Each tool call becomes one request on the socket the app
@@ -6,7 +6,10 @@
 //! forwards, and whatever the socket refuses (locked, turned off, wrong key)
 //! comes back as a tool error the assistant can explain to the user.
 //!
-//! Only the subset of MCP a read-only tool server needs: `initialize`, `ping`,
+//! Read-only, except `set_category` and `set_tags`, which the app answers only
+//! while the user allows edits (else `read_only`).
+//!
+//! Only the subset of MCP a tool server needs: `initialize`, `ping`,
 //! `tools/list`, `tools/call`; notifications are accepted and ignored.
 
 use serde_json::{Map, Value, json};
@@ -27,7 +30,8 @@ const STRUCTURED_FROM: &str = "2025-06-18";
 /// core's by a test.
 pub const API_VERSION: u32 = 1;
 /// `busy` or no answer (app at its connection limit, closing): tries after
-/// the first. Every call is read-only, so asking again is harmless.
+/// the first. Asking again is harmless: `busy` comes before the request is
+/// read, and the two edits are idempotent (a repeat reads `unchanged`).
 const RETRIES: u32 = 3;
 const RETRY_WAIT: Duration = Duration::from_millis(250);
 /// One request on the socket, also while the app paces requests.
@@ -54,6 +58,8 @@ struct Tool {
     method: &'static str,
     description: &'static str,
     schema: fn() -> Value,
+    /// Changes bookings (category, tags); announced without `readOnlyHint`.
+    writes: bool,
 }
 
 const TOOLS: &[Tool] = &[
@@ -63,6 +69,7 @@ const TOOLS: &[Tool] = &[
         description: "What GiroCrab shares: API version, number of shared accounts, which \
             text fields are shared, and the time of the last bank sync (Unix seconds).",
         schema: no_arguments,
+        writes: false,
     },
     Tool {
         name: "list_accounts",
@@ -71,6 +78,7 @@ const TOOLS: &[Tool] = &[
             (balance_cents) and its date, and the last sync. IBAN and account number only \
             when the user shares them.",
         schema: no_arguments,
+        writes: false,
     },
     Tool {
         name: "list_categories",
@@ -78,6 +86,7 @@ const TOOLS: &[Tool] = &[
         description: "The category tree: id, parent_id, name, full path (\"Housing › Rent\") \
             and depth. Bookings refer to categories by id.",
         schema: no_arguments,
+        writes: false,
     },
     Tool {
         name: "list_transactions",
@@ -89,6 +98,7 @@ const TOOLS: &[Tool] = &[
             masked unless account numbers are shared. search needs payees, purposes and \
             account numbers to be shared.",
         schema: transaction_schema,
+        writes: false,
     },
     Tool {
         name: "get_summary",
@@ -99,6 +109,40 @@ const TOOLS: &[Tool] = &[
             by_category: net sum per category like the app's category list (transfers and \
             loan payments included).",
         schema: summary_schema,
+        writes: false,
+    },
+    Tool {
+        name: "list_tags",
+        method: "tags",
+        description: "The user's tags: id, name and how many bookings carry each.",
+        schema: no_arguments,
+        writes: false,
+    },
+    Tool {
+        name: "set_category",
+        method: "set_category",
+        description: "Sets the category of bookings (ids from list_transactions, at most 500), \
+            or removes it with category_id null. Only works while the user allows edits in \
+            GiroCrab. list_transactions shows who set a category (category_source): rule = an \
+            auto-categorisation rule, manual = the user. Categories the user set by hand are \
+            kept (status skipped_manual) unless overwrite_manual is true; only overwrite them \
+            when the user asked for it. A category set here counts as set by hand, so rules no \
+            longer change it. The result lists each booking with status changed, unchanged, \
+            skipped_manual, split (the category belongs to its parts) or not_found, and the \
+            previous category and source.",
+        schema: set_category_schema,
+        writes: true,
+    },
+    Tool {
+        name: "set_tags",
+        method: "set_tags",
+        description: "Adds tags to bookings and removes tags from them by name (ids from \
+            list_transactions, at most 500). A tag in add that does not exist yet is created \
+            (created_tags); names are matched without regard to case. Only works while the \
+            user allows edits in GiroCrab. The result lists each booking with status changed, \
+            unchanged or not_found.",
+        schema: set_tags_schema,
+        writes: true,
     },
 ];
 
@@ -147,6 +191,47 @@ fn summary_schema() -> Value {
             "account_ids": account_ids()
         },
         "required": ["date_from", "date_to"],
+        "additionalProperties": false
+    })
+}
+
+fn transaction_ids() -> Value {
+    json!({
+        "type": "array", "items": { "type": "integer" }, "minItems": 1, "maxItems": 500,
+        "description": "Ids of bookings on shared accounts (from list_transactions)"
+    })
+}
+
+fn set_category_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "transaction_ids": transaction_ids(),
+            "category_id": {
+                "type": ["integer", "null"],
+                "description": "Category from list_categories; null removes the category"
+            },
+            "overwrite_manual": {
+                "type": "boolean",
+                "description": "Also replace categories the user set by hand (default false)"
+            }
+        },
+        "required": ["transaction_ids", "category_id"],
+        "additionalProperties": false
+    })
+}
+
+fn set_tags_schema() -> Value {
+    let names =
+        |what: &str| json!({ "type": "array", "items": { "type": "string" }, "description": what });
+    json!({
+        "type": "object",
+        "properties": {
+            "transaction_ids": transaction_ids(),
+            "add": names("Tag names to add; missing tags are created"),
+            "remove": names("Tag names to remove; unknown names are ignored")
+        },
+        "required": ["transaction_ids"],
         "additionalProperties": false
     })
 }
@@ -236,6 +321,13 @@ fn api_error(code: &str, message: &str) -> ToolError {
         "busy" => (
             Problem::Busy,
             "GiroCrab is busy with other programs. Try again shortly.".into(),
+        ),
+        "read_only" => (
+            Problem::Other,
+            format!(
+                "Changing categories and tags is turned off in GiroCrab. The user can allow \
+                 it there ({SETTINGS}, \"Allow changing categories and tags\")."
+            ),
         ),
         _ => (Problem::Other, format!("{code}: {message}")),
     };
@@ -477,10 +569,12 @@ fn initialize(params: &Value) -> (Value, &'static str) {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": "girocrab-mcp", "title": "GiroCrab", "version": env!("CARGO_PKG_VERSION") },
-        "instructions": "Read-only access to the accounts, bookings, categories and totals the \
-            user shares in GiroCrab. Nothing can be changed or paid. Amounts are in cents. \
-            If a tool reports that GiroCrab is locked or not reachable, ask the user to \
-            unlock or start GiroCrab."
+        "instructions": "Access to the accounts, bookings, categories, tags and totals the \
+            user shares in GiroCrab. Reading only, except set_category and set_tags, which \
+            work only while the user allows edits; nothing else can be changed, and nothing \
+            can be paid. Keep categories the user set by hand (category_source manual) unless \
+            asked to change them. Amounts are in cents. If a tool reports that GiroCrab is \
+            locked or not reachable, ask the user to unlock or start GiroCrab."
     });
     (result, version)
 }
@@ -493,7 +587,12 @@ fn tools_list() -> Value {
                 "name": t.name,
                 "description": t.description,
                 "inputSchema": (t.schema)(),
-                "annotations": { "readOnlyHint": true, "openWorldHint": false }
+                "annotations": if t.writes {
+                    json!({ "readOnlyHint": false, "destructiveHint": false,
+                            "idempotentHint": true, "openWorldHint": false })
+                } else {
+                    json!({ "readOnlyHint": true, "openWorldHint": false })
+                }
             })
         })
         .collect();

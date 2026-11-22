@@ -1,4 +1,4 @@
-//! Local socket for the read-only interface (#136): a Unix domain socket, no
+//! Local socket for the analysis interface (#136): a Unix domain socket, no
 //! network port. One JSON request per line, one JSON response per line.
 //!
 //! - The socket lives in a directory only the user can enter (0700: created so
@@ -17,6 +17,8 @@
 //!   out at once), so the app gets the vault at least half the time.
 //! - No polling: threads sleep in `poll(2)` on their socket and a stop pipe.
 //!   `stop()` never waits: it wakes them, removes the socket file and returns.
+//! - A request that changed bookings (`set_category`, `set_tags`) is reported to
+//!   the app's [`LocalApiListener`] after its answer went out, so the app reloads.
 //! - Several instances (a debug build next to the app): a lock file next to the
 //!   socket (`<socket>.lock`, `flock`) decides who serves, and a server only removes the socket
 //!   file it created itself.
@@ -52,9 +54,20 @@ const MAX_PAUSE: Duration = Duration::from_millis(250);
 /// After a failed `accept()` (e.g. no descriptors left).
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
+/// Told on a server thread when a request changed bookings (their category
+/// or tags), after the answer went out. The app reloads on its main thread.
+#[uniffi::export(with_foreign)]
+pub trait LocalApiListener: Send + Sync {
+    fn bookings_changed(&self);
+}
+
+/// The listener the threads report to; set and cleared by the app.
+type ListenerSlot = Arc<Mutex<Option<Arc<dyn LocalApiListener>>>>;
+
 /// The running socket; `stop()` (or dropping it) closes it and removes the file.
 #[derive(uniffi::Object)]
 pub struct LocalApiServer {
+    listener: ListenerSlot,
     path: PathBuf,
     /// (device, inode) of the socket file this server created.
     file_id: (u64, u64),
@@ -76,22 +89,30 @@ impl LocalApiServer {
         let stopper = Stopper::new().map_err(io_error)?;
         let (listener, file_id, lock) = bind(&path)?;
         let vault = Arc::downgrade(&vault);
+        let changes: ListenerSlot = Arc::new(Mutex::new(None));
         {
             let stopper = stopper.clone();
+            let changes = changes.clone();
             if let Err(e) = std::thread::Builder::new()
                 .name("girocrab-local-api".into())
-                .spawn(move || accept_loop(listener, vault, stopper))
+                .spawn(move || accept_loop(listener, vault, stopper, changes))
             {
                 remove_own_socket(&path, file_id);
                 return Err(io_error(e));
             }
         }
         Ok(Arc::new(Self {
+            listener: changes,
             path,
             file_id,
             stopper,
             lock: Mutex::new(Some(lock)),
         }))
+    }
+
+    /// Who is told when a request changed bookings; `None` = nobody.
+    pub fn set_listener(&self, listener: Option<Arc<dyn LocalApiListener>>) {
+        *self.listener.lock().unwrap_or_else(|e| e.into_inner()) = listener;
     }
 
     /// Wakes the threads (they end at once, a request still being written
@@ -299,7 +320,12 @@ impl Drop for ClientSlot {
     }
 }
 
-fn accept_loop(listener: UnixListener, vault: Weak<Vault>, stopper: Arc<Stopper>) {
+fn accept_loop(
+    listener: UnixListener,
+    vault: Weak<Vault>,
+    stopper: Arc<Stopper>,
+    changes: ListenerSlot,
+) {
     let clients = Arc::new(AtomicUsize::new(0));
     // One request at a time across all connections, and when the next may start (see `serve`).
     let turn = Arc::new(Mutex::new(Instant::now()));
@@ -332,13 +358,18 @@ fn accept_loop(listener: UnixListener, vault: Weak<Vault>, stopper: Arc<Stopper>
             continue;
         }
         let slot = ClientSlot::take(&clients);
-        let (vault, stopper, turn) = (vault.clone(), stopper.clone(), turn.clone());
+        let (vault, stopper, turn, changes) = (
+            vault.clone(),
+            stopper.clone(),
+            turn.clone(),
+            changes.clone(),
+        );
         // On a spawn error the closure (and with it `slot`) is dropped.
         let _ = std::thread::Builder::new()
             .name("girocrab-local-api-client".into())
             .spawn(move || {
                 let _slot = slot;
-                serve(stream, &vault, &stopper, &turn);
+                serve(stream, &vault, &stopper, &turn, &changes);
             });
     }
 }
@@ -351,7 +382,13 @@ fn same_user(stream: &UnixStream) -> bool {
 
 /// Answers the requests of one connection until EOF, an error, a request over
 /// `MAX_LINE` or slower than `REQUEST_DEADLINE`, `IDLE` without a request or `stop`.
-fn serve(stream: UnixStream, vault: &Weak<Vault>, stopper: &Stopper, turn: &Mutex<Instant>) {
+fn serve(
+    stream: UnixStream,
+    vault: &Weak<Vault>,
+    stopper: &Stopper,
+    turn: &Mutex<Instant>,
+    changes: &ListenerSlot,
+) {
     let Ok(mut out) = stream.try_clone() else {
         return;
     };
@@ -414,10 +451,20 @@ fn serve(stream: UnixStream, vault: &Weak<Vault>, stopper: &Stopper, turn: &Mute
             answer
         };
         // Stopped (locked) meanwhile: nothing more goes out.
-        let Some(answer) = answer else { return };
+        let Some((answer, changed)) = answer else {
+            return;
+        };
         line.clear();
         deadline = Instant::now() + IDLE;
-        if writeln!(out, "{answer}").is_err() {
+        let written = writeln!(out, "{answer}").is_ok();
+        // Committed either way: the app reloads even if the client went away.
+        if changed {
+            let listener = changes.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if let Some(listener) = listener {
+                listener.bookings_changed();
+            }
+        }
+        if !written {
             return;
         }
     }
@@ -425,23 +472,34 @@ fn serve(stream: UnixStream, vault: &Weak<Vault>, stopper: &Stopper, turn: &Mute
 
 /// None once `stop()` ran: checked after taking the vault and again after the
 /// request, so an answer computed while the app locked is never sent.
-fn answer(vault: &Weak<Vault>, stopper: &Stopper, line: &[u8]) -> Option<String> {
+/// The flag tells whether the request changed bookings.
+fn answer(vault: &Weak<Vault>, stopper: &Stopper, line: &[u8]) -> Option<(String, bool)> {
     let stopped = || stopper.stopped.load(Ordering::SeqCst);
     if stopped() {
         return None;
     }
     // The vault is held only for this one request.
     let Some(vault) = vault.upgrade() else {
-        return Some(response(Err(ApiError::new(
-            ApiErrorCode::Locked,
-            "GiroCrab is locked",
-        ))));
+        return Some((
+            response(Err(ApiError::new(
+                ApiErrorCode::Locked,
+                "GiroCrab is locked",
+            ))),
+            false,
+        ));
     };
     let answer = match std::str::from_utf8(line) {
         Ok(text) => vault.local_api_socket_request(text.trim_end_matches('\r')),
-        Err(_) => response(Err(ApiError::invalid("request is not UTF-8"))),
+        Err(_) => (
+            response(Err(ApiError::invalid("request is not UTF-8"))),
+            false,
+        ),
     };
-    (!stopped()).then_some(answer)
+    // Not reported either: the app locked meanwhile and loads afresh on unlock.
+    if stopped() {
+        return None;
+    }
+    Some(answer)
 }
 
 #[cfg(test)]
@@ -824,6 +882,62 @@ mod tests {
         assert_eq!(mode(&d.0), 0o700, "a created parent too");
         assert_eq!(mode(d.socket().parent().unwrap()), 0o700);
         assert!(lock_path(&d.socket()).ends_with("s.sock.lock"));
+        server.stop();
+    }
+
+    /// Counts `bookings_changed` calls.
+    #[derive(Default)]
+    struct Changes(AtomicUsize);
+
+    impl LocalApiListener for Changes {
+        fn bookings_changed(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn the_app_is_told_about_edits_only() {
+        let d = ShortDir::new();
+        let (_v, vault, token) = vault();
+        let scope = vault.local_api_scope().unwrap();
+        vault
+            .set_local_api_scope(ShareScope {
+                allow_edits: true,
+                ..scope
+            })
+            .unwrap();
+        let server = start(&d, &vault);
+        let changes = Arc::new(Changes::default());
+        server.set_listener(Some(changes.clone()));
+        let mut c = Client::connect(&d.socket());
+        let page = c.send_raw(
+            &json!({ "v": 1, "token": token, "method": "transactions",
+                     "params": { "uncategorized_only": true, "limit": 1 } })
+            .to_string(),
+        );
+        let id = page["result"]["transactions"][0]["id"].as_i64().unwrap();
+        let tag = |c: &mut Client, add: &str| {
+            c.send_raw(
+                &json!({ "v": 1, "token": token, "method": "set_tags",
+                         "params": { "transaction_ids": [id], "add": [add] } })
+                .to_string(),
+            )
+        };
+        assert_eq!(
+            tag(&mut c, "Probe")["result"]["results"][0]["status"],
+            "changed"
+        );
+        assert_eq!(changes.0.load(Ordering::SeqCst), 1);
+        // reads and edits that change nothing are not reported
+        assert_eq!(
+            tag(&mut c, "Probe")["result"]["results"][0]["status"],
+            "unchanged"
+        );
+        assert!(c.call(&token, "info")["result"].is_object());
+        assert_eq!(changes.0.load(Ordering::SeqCst), 1);
+        server.set_listener(None);
+        assert_eq!(tag(&mut c, "Andere")["result"]["created_tags"][0], "Andere");
+        assert_eq!(changes.0.load(Ordering::SeqCst), 1);
         server.stop();
     }
 }

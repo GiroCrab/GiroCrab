@@ -2,10 +2,11 @@
 import SwiftUI
 import GiroCrabCore
 
-/// Einstellungen › Externe Analyse (#136): read-only access for local programs
-/// (analysis tools, AI assistants) over a local socket. Off by default; accounts
-/// are an explicit selection, IBANs/account numbers and notes stay hidden unless
-/// switched on. The access token is shown once, only its hash is stored.
+/// Einstellungen › Externe Analyse (#136): access for local programs (analysis
+/// tools, AI assistants) over a local socket, read-only unless the user also
+/// allows setting categories and tags. Off by default; accounts are an explicit
+/// selection, IBANs/account numbers and notes stay hidden unless switched on.
+/// The access token is shown once, only its hash is stored.
 struct ExternalAccessSettings: View {
     @Environment(AppModel.self) private var model
     @State private var confirmRevoke = false
@@ -32,6 +33,7 @@ struct ExternalAccessSettings: View {
                 if scope.enabled {
                     accountsSection
                     fieldsSection
+                    editsSection
                     tokenSection
                     if hasToken { assistantSection }
                 }
@@ -61,7 +63,7 @@ struct ExternalAccessSettings: View {
     private func accessSection(_ scope: ShareScope) -> some View {
         Section {
             Toggle("Lesenden Zugriff für Programme auf diesem Mac erlauben", isOn: field(\.enabled))
-            Text("Programme auf diesem Mac, die Sie einrichten, können ausgewählte Konten, Buchungen, Kategorien und Summen lesen. Sie können nichts ändern, keine Zahlungen auslösen und sehen keine Zugangsdaten. Der Zugriff besteht nur, solange GiroCrab läuft und der Tresor entsperrt ist.")
+            Text("Programme auf diesem Mac, die Sie einrichten, können ausgewählte Konten, Buchungen, Kategorien und Summen lesen. Sie können nichts ändern (außer Kategorien und Tags, wenn Sie das unten erlauben), keine Zahlungen auslösen und sehen keine Zugangsdaten. Der Zugriff besteht nur, solange GiroCrab läuft und der Tresor entsperrt ist.")
                 .appFont(.callout).foregroundStyle(.secondary)
             Label("Programme wie KI-Assistenten können die geteilten Daten an einen Cloud-Dienst übertragen. Teilen Sie nur, was dort verarbeitet werden darf.", systemImage: "exclamationmark.triangle")
                 .appFont(.callout)
@@ -99,6 +101,14 @@ struct ExternalAccessSettings: View {
             Text("Beträge, Daten, Kategorien und Salden werden immer geteilt. Ohne IBANs und Kontonummern werden auch lange Ziffernfolgen in Texten unkenntlich gemacht. Die Suche steht nur zur Verfügung, wenn die ersten drei Felder geteilt sind.")
                 .appFont(.callout).foregroundStyle(.secondary)
         } header: { Text("Geteilte Felder").appSectionHeader() }
+    }
+
+    private var editsSection: some View {
+        Section {
+            Toggle("Kategorien und Tags ändern erlauben", isOn: field(\.allowEdits))
+            Text("Programme können dann Buchungen der geteilten Konten eine Kategorie zuweisen und Tags hinzufügen oder entfernen, auch neue Tags anlegen. So gesetzte Kategorien gelten als von Ihnen gesetzt: Regeln ändern sie nicht mehr. Kategorien, die Sie selbst gesetzt haben, bleiben, außer das Programm verlangt ausdrücklich das Überschreiben. Beträge, Texte, Konten und Regeln bleiben unverändert.")
+                .appFont(.callout).foregroundStyle(.secondary)
+        } header: { Text("Änderungen").appSectionHeader() }
     }
 
     private var tokenSection: some View {
