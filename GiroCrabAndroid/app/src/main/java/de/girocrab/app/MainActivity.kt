@@ -224,7 +224,8 @@ fun GiroCrabRoot(
         if (uri == null) return@rememberLauncherForActivityResult
         // A slow provider must not block the lock screen: copy off the main thread, publish on it.
         scope.launch {
-            val target = File(context.cacheDir, "import.gcbackup")
+            // One file per selection: a second choice must not truncate the file the dialog reads.
+            val target = File.createTempFile("import-", ".gcbackup", context.cacheDir)
             val copied = withContext(Dispatchers.IO) {
                 runCatching {
                     context.contentResolver.openInputStream(uri)?.use { input ->
@@ -232,7 +233,13 @@ fun GiroCrabRoot(
                     } ?: error("no stream")
                 }.isSuccess
             }
-            if (copied) pendingBackup = target else unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+            if (copied) {
+                pendingBackup?.delete()
+                pendingBackup = target
+            } else {
+                target.delete()
+                unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+            }
         }
     }
 
@@ -288,7 +295,10 @@ fun GiroCrabRoot(
                         }
                     }
                 },
-                onDismiss = { pendingBackup = null },
+                onDismiss = {
+                    pendingBackup?.delete()
+                    pendingBackup = null
+                },
             )
         }
         return
