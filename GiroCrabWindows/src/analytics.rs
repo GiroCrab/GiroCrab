@@ -29,7 +29,11 @@ pub fn expense_accounts(
 }
 
 /// Like the account expense pie on macOS: top-level net expenses, including children.
-pub fn net_expenses(categories: &[girocrab_core::Category], n: usize) -> Vec<Slice> {
+pub fn net_expenses(
+    categories: &[girocrab_core::Category],
+    uncategorized: (i64, usize),
+    n: usize,
+) -> Vec<Slice> {
     let slices = categories
         .iter()
         .filter(|c| c.depth == 0 && c.total_cents < 0)
@@ -42,14 +46,31 @@ pub fn net_expenses(categories: &[girocrab_core::Category], n: usize) -> Vec<Sli
         })
         .collect();
     let mut slices = finish(slices, usize::MAX);
-    if n > 0 && slices.len() > n {
-        let rest = slices.split_off(n - 1);
+    let (uncategorized_cents, uncategorized_count) = uncategorized;
+    let limit = n
+        .saturating_sub(usize::from(uncategorized_cents > 0))
+        .max(1);
+    if n > 0 && slices.len() > limit {
+        let rest = slices.split_off(limit - 1);
         slices.push(Slice {
             name: "Sonstige".into(),
             color_hex: "#8e8e93".into(),
             cents: rest.iter().map(|s| s.cents).sum(),
             count: rest.iter().map(|s| s.count).sum(),
             share: rest.iter().map(|s| s.share).sum(),
+        });
+    }
+    if uncategorized_cents > 0 {
+        let total = slices.iter().map(|s| s.cents).sum::<i64>() + uncategorized_cents;
+        for slice in &mut slices {
+            slice.share = slice.cents as f32 / total as f32;
+        }
+        slices.push(Slice {
+            name: "Ohne Kategorie".into(),
+            color_hex: "#94A3B8".into(),
+            cents: uncategorized_cents,
+            count: uncategorized_count,
+            share: uncategorized_cents as f32 / total as f32,
         });
     }
     slices
@@ -244,12 +265,18 @@ mod tests {
             cat(5, 0, 50),
             cat(6, 0, 0),
         ];
-        let slices = net_expenses(&cats, 2);
+        let slices = net_expenses(&cats, (0, 0), 2);
         assert_eq!(slices.len(), 2);
         assert_eq!(slices[0].cents, 600);
         assert_eq!(slices[1].name, "Sonstige");
         assert_eq!(slices[1].cents, 400);
         assert!((slices.iter().map(|s| s.share).sum::<f32>() - 1.0).abs() < 1e-6);
-        assert!(net_expenses(&[], 6).is_empty());
+        assert!(net_expenses(&[], (0, 0), 6).is_empty());
+        let slices = net_expenses(&cats, (20, 2), 3);
+        assert_eq!(slices.len(), 3);
+        assert_eq!(slices[2].name, "Ohne Kategorie");
+        assert_eq!(slices[2].count, 2);
+        assert!((slices[2].share - 20.0 / 1020.0).abs() < 1e-6);
+        assert!((slices.iter().map(|s| s.share).sum::<f32>() - 1.0).abs() < 1e-6);
     }
 }

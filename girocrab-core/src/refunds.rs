@@ -756,8 +756,8 @@ pub(crate) fn covered(conn: &Connection) -> CoreResult<Covered> {
 /// (`Shares::place`); what is left of the refund stays where it is.
 #[derive(Default)]
 pub(crate) struct Moved {
-    /// (refund, category it counts in, cents, whether it pays back an outgoing booking).
-    into: Vec<(i64, Option<i64>, i64, bool)>,
+    /// (refund, original, category it counts in, cents, whether it pays back an outgoing booking).
+    into: Vec<(i64, i64, Option<i64>, i64, bool)>,
     /// What leaves a refund without parts: (refund, cents).
     paid: HashMap<i64, i64>,
     /// What leaves the parts of a split refund: (refund, row id of the part in
@@ -792,13 +792,15 @@ pub(crate) fn moves(conn: &Connection) -> CoreResult<Moved> {
             Some(_) => {
                 for (n, cents) in shares.into.get(link).into_iter().flatten() {
                     if let Some(p) = part_of(&parts, original, *n) {
-                        out.into.push((refund, p.category, *cents, expense));
+                        out.into
+                            .push((refund, original, p.category, *cents, expense));
                     }
                 }
             }
             None => {
                 if let Some(category) = own.get(&original) {
-                    out.into.push((refund, *category, *share, expense));
+                    out.into
+                        .push((refund, original, *category, *share, expense));
                 }
             }
         }
@@ -824,7 +826,7 @@ pub(crate) fn moves(conn: &Connection) -> CoreResult<Moved> {
 
 /// [`Moved`] as table expressions for SQL sums.
 pub(crate) struct MovedSql {
-    /// (refund_id, category_id, amount_cents, expense): what counts where the paid-back
+    /// (refund_id, original_id, category_id, amount_cents, expense): what counts where the paid-back
     /// booking is; `expense` 1 when that is an outgoing booking.
     pub(crate) into: String,
     /// (refund_id, cents): what leaves a refund without parts.
@@ -861,13 +863,22 @@ pub(crate) fn moves_sql(conn: &Connection) -> CoreResult<Option<MovedSql>> {
     paid.sort_unstable();
     Ok(Some(MovedSql {
         into: table(
-            &["refund_id", "category_id", "amount_cents", "expense"],
+            &[
+                "refund_id",
+                "original_id",
+                "category_id",
+                "amount_cents",
+                "expense",
+            ],
             moved
                 .into
                 .iter()
-                .map(|(refund, category, cents, expense)| {
+                .map(|(refund, original, category, cents, expense)| {
                     let category = category.map_or("NULL".to_string(), |c| c.to_string());
-                    format!("({refund},{category},{cents},{})", i32::from(*expense))
+                    format!(
+                        "({refund},{original},{category},{cents},{})",
+                        i32::from(*expense)
+                    )
                 })
                 .collect(),
         ),
@@ -912,7 +923,7 @@ impl CategoryRefunds {
             into: HashMap::new(),
             out_of: HashMap::new(),
         };
-        for (refund, category, cents, expense) in moved.into {
+        for (refund, _, category, cents, expense) in moved.into {
             *out.assigned.entry(refund).or_default() += cents;
             if categories.contains(&category) {
                 let into = out.into.entry(refund).or_default();

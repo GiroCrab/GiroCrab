@@ -83,6 +83,35 @@ pub(crate) fn effective_sql_own(
     condition: &str,
     expenses: bool,
 ) -> Result<String, CoreError> {
+    effective_rows_sql(db, extra, condition, expenses, false)
+}
+
+/// Expense rows with the booking that supplies the amount and its original (the same
+/// booking for a debit), so callers can apply enriched flow filters to both ends.
+pub(crate) fn expense_rows_with_source(
+    db: &rusqlite::Connection,
+    condition: &str,
+) -> Result<String, CoreError> {
+    effective_rows_sql(db, ", t.id AS booking_id", condition, true, true)
+}
+
+fn effective_rows_sql(
+    db: &rusqlite::Connection,
+    extra: &str,
+    condition: &str,
+    expenses: bool,
+    with_source: bool,
+) -> Result<String, CoreError> {
+    let source = if with_source {
+        ", t.id AS source_id"
+    } else {
+        ""
+    };
+    let moved_source = if with_source {
+        ", m.original_id AS source_id"
+    } else {
+        ""
+    };
     let own = if expenses {
         " AND +t.amount_cents < 0"
     } else {
@@ -91,12 +120,12 @@ pub(crate) fn effective_sql_own(
     let Some(moves) = crate::refunds::moves_sql(db)? else {
         return Ok(format!(
             "(
-    SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}
+    SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}{source}
       FROM transactions t
      WHERE t.deleted_ms IS NULL{condition}{own}
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
-    SELECT s.category_id, s.amount_cents, t.booking_date{extra}
+    SELECT s.category_id, s.amount_cents, t.booking_date{extra}{source}
       FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
      WHERE t.deleted_ms IS NULL{condition}{own}
 )"
@@ -111,28 +140,28 @@ pub(crate) fn effective_sql_own(
     // the category sums slow with many links (bookings × links, `examples/category_perf`).
     Ok(format!(
         "(
-    SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}
+    SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}{source}
       FROM transactions t
      WHERE t.deleted_ms IS NULL{condition}{own}
        AND t.id NOT IN (SELECT refund_id FROM {paid})
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
-    SELECT t.category_id, t.amount_cents - paid.cents, t.booking_date{extra}
+    SELECT t.category_id, t.amount_cents - paid.cents, t.booking_date{extra}{source}
       FROM {paid} paid CROSS JOIN transactions t ON t.id = paid.refund_id
      WHERE t.deleted_ms IS NULL{condition}{own}
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
-    SELECT s.category_id, s.amount_cents, t.booking_date{extra}
+    SELECT s.category_id, s.amount_cents, t.booking_date{extra}{source}
       FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
      WHERE t.deleted_ms IS NULL{condition}{own}
        AND s.id NOT IN (SELECT split_id FROM {drawn})
     UNION ALL
-    SELECT s.category_id, s.amount_cents - drawn.cents, t.booking_date{extra}
+    SELECT s.category_id, s.amount_cents - drawn.cents, t.booking_date{extra}{source}
       FROM {drawn} drawn CROSS JOIN transaction_splits s ON s.id = drawn.split_id
       JOIN transactions t ON t.id = s.transaction_id
      WHERE t.deleted_ms IS NULL{condition}{own}
     UNION ALL
-    SELECT m.category_id, m.amount_cents, t.booking_date{extra}
+    SELECT m.category_id, m.amount_cents, t.booking_date{extra}{moved_source}
       FROM {into} m CROSS JOIN transactions t ON t.id = m.refund_id
      WHERE t.deleted_ms IS NULL{condition}{paid_back}
 )"

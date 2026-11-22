@@ -274,6 +274,8 @@ struct State {
     analytics_vault: Option<Arc<Vault>>,
     expense_scope: Option<(Target, String, u64)>,
     expense_categories: Vec<Category>,
+    expense_uncategorized: (i64, usize),
+    expense_currency: String,
     rows: Vec<Row>,
     shown: Vec<usize>,
     categories: Vec<Category>,
@@ -419,6 +421,8 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
         }
         st.expense_scope = Some(key.clone());
         st.expense_categories.clear();
+        st.expense_uncategorized = (0, 0);
+        st.expense_currency.clear();
         Some((st.analytics_vault.clone()?, key))
     });
     if let Some((vault, key)) = request {
@@ -426,11 +430,21 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
         std::thread::spawn(move || {
             let from = (!key.1.is_empty()).then(|| key.1.clone());
             let result = vault.list_accounts().and_then(|accounts| {
-                vault.list_category_expenses(
-                    from,
-                    None,
-                    analytics::expense_accounts(&accounts, key.0),
-                )
+                let ids = analytics::expense_accounts(&accounts, key.0);
+                let currency = match ids.as_slice() {
+                    [id] => accounts
+                        .iter()
+                        .find(|a| a.id == *id)
+                        .map(|a| a.currency.clone()),
+                    _ => None,
+                };
+                let categories = vault.list_category_expenses(from.clone(), None, ids.clone())?;
+                let uncategorized = vault.uncategorized_expenses(from, None, &ids)?;
+                Ok((
+                    categories,
+                    uncategorized,
+                    currency.unwrap_or_else(|| "EUR".into()),
+                ))
             });
             let _ = weak.upgrade_in_event_loop(move |win| {
                 if !is_current(&vault) || !with_state(|st| st.expense_scope.as_ref() == Some(&key))
@@ -438,8 +452,12 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
                     return;
                 }
                 match result {
-                    Ok(cats) => {
-                        with_state(|st| st.expense_categories = cats);
+                    Ok((categories, uncategorized, currency)) => {
+                        with_state(|st| {
+                            st.expense_categories = categories;
+                            st.expense_uncategorized = uncategorized;
+                            st.expense_currency = currency;
+                        });
                         render_analytics(&win, privacy_on(&win));
                     }
                     Err(e) => win.set_analytics_summary(
@@ -449,21 +467,23 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
             });
         });
     }
-    let (inc, exp, exp_cats, inc_cats, tags) = with_state(|st| {
+    let (inc, exp, exp_cats, exp_currency, inc_cats, tags) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
         // both sums from the filtered rows; the expense chart is the account's, whatever
         // the search, status and tag filters leave of it
         let (inc, exp, _) = analytics::totals(&shown);
-        let expense_cats = analytics::net_expenses(&st.expense_categories, 6);
+        let expense_cats =
+            analytics::net_expenses(&st.expense_categories, st.expense_uncategorized, 6);
         (
             inc,
             exp,
             expense_cats,
+            st.expense_currency.clone(),
             analytics::categories(&shown, false, 6),
             analytics::tags(&shown, 8),
         )
     });
-    let lines = |v: Vec<analytics::Slice>| -> ModelRc<BudgetLine> {
+    let lines = |v: Vec<analytics::Slice>, currency: &str| -> ModelRc<BudgetLine> {
         ModelRc::new(VecModel::from(
             v.into_iter()
                 .map(|s| {
@@ -473,7 +493,7 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
                         amount: daily::mask(
                             &format!(
                                 "{} · {} Buch. · {:.0} %",
-                                money(cents, "EUR"),
+                                money(cents, currency),
                                 s.count,
                                 s.share * 100.0
                             ),
@@ -488,9 +508,9 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
                 .collect::<Vec<_>>(),
         ))
     };
-    win.set_analytics_expense_cats(lines(exp_cats));
-    win.set_analytics_income_cats(lines(inc_cats));
-    win.set_analytics_tags(lines(tags));
+    win.set_analytics_expense_cats(lines(exp_cats, &exp_currency));
+    win.set_analytics_income_cats(lines(inc_cats, "EUR"));
+    win.set_analytics_tags(lines(tags, "EUR"));
     win.set_analytics_summary(
         daily::mask(
             &format!(

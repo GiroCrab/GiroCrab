@@ -27,6 +27,50 @@ fn seed(v: &Vault) -> Vec<i64> {
 }
 
 #[test]
+fn uncategorized_expenses_exclude_non_expense_flows_and_net_only_uncategorized_parts() {
+    let d = TempDir::new("uncategorized-expenses");
+    let v = open(&d, "v");
+    let ids = seed(&v);
+    let db = v.db().unwrap();
+    db.execute_batch(
+        "INSERT INTO accounts(group_id, external_ref, name, kind) VALUES (1, 'LOAN', 'Loan', 'loan');
+         UPDATE transactions SET booking_text = 'Umbuchung' WHERE external_id = 'T5';
+         INSERT INTO loan_links(transaction_id, loan_account_id)
+              SELECT t.id, a.id FROM transactions t CROSS JOIN accounts a
+               WHERE t.external_id = 'T1' AND a.external_ref = 'LOAN';",
+    ).unwrap();
+    drop(db);
+    let category = v
+        .create_category("Other".into(), None, "tag".into(), "#112233".into())
+        .unwrap();
+    v.set_transaction_splits(
+        ids[0],
+        vec![
+            crate::models::TransactionSplitInput {
+                category_id: None,
+                amount_cents: -60,
+                note: String::new(),
+            },
+            crate::models::TransactionSplitInput {
+                category_id: Some(category),
+                amount_cents: -40,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    v.link_refund(ids[2], ids[0], 1).unwrap();
+    v.link_refund(ids[3], ids[1], 0).unwrap();
+    assert_eq!(v.uncategorized_expenses(None, None, &[1]).unwrap(), (10, 2));
+    assert_eq!(
+        v.uncategorized_expenses(None, Some("2025-01-01".into()), &[1])
+            .unwrap(),
+        (60, 1)
+    );
+    assert_eq!(v.uncategorized_expenses(None, None, &[-1]).unwrap(), (0, 0));
+}
+
+#[test]
 fn validation_replace_unlink_and_markers() {
     let d = TempDir::new("refunds");
     let v = open(&d, "v");

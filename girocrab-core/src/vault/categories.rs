@@ -589,6 +589,43 @@ mod reorder_tests;
 mod role_tests;
 
 impl Vault {
+    /// The uncategorized part of the expense chart, in its account and date scope.
+    /// Expenses and their refunds follow the same split and date rules as the categories,
+    /// but internal transfers and loan payments are excluded using the booking-list flow.
+    pub fn uncategorized_expenses(
+        &self,
+        date_from: Option<String>,
+        date_to: Option<String>,
+        account_ids: &[i64],
+    ) -> Result<(i64, usize), CoreError> {
+        use crate::merchants::FlowKind;
+        let db = self.db()?;
+        let classes = self.booking_classes(&db)?;
+        let excluded: Vec<_> = classes
+            .iter()
+            .filter_map(|(&id, class)| {
+                matches!(class.flow, FlowKind::Transfer | FlowKind::Loan).then_some(id)
+            })
+            .collect();
+        let excluded = serde_json::to_string(&excluded).expect("integer booking ids");
+        let accounts =
+            Self::category_condition(account_ids, BookingDirection::All, None, None, &[], false);
+        let currency = crate::planning::sums_condition(account_ids.len());
+        let condition = format!(
+            "{accounts}{currency} AND (?1 IS NULL OR t.booking_date >= ?1)
+                                  AND (?2 IS NULL OR t.booking_date <= ?2)"
+        );
+        let rows = crate::planning::expense_rows_with_source(&db, &condition)?;
+        Ok(db.query_row(
+            &format!("WITH excluded(id) AS (SELECT value FROM json_each(?3))
+                SELECT MAX(0, -COALESCE(SUM(amount_cents), 0)), COUNT(DISTINCT booking_id)
+                  FROM {rows}
+                 WHERE category_id IS NULL AND booking_id NOT IN excluded AND source_id NOT IN excluded"),
+            params![date_from, date_to, excluded],
+            |r| Ok((r.get(0)?, r.get::<_, u32>(1)? as usize)),
+        )?)
+    }
+
     /// Conditions on `t` shared by the category totals and their "other currencies": accounts,
     /// direction, amount range (#357) and tags (#1469). Ids and amounts are integers, so inlining them cannot inject anything.
     fn category_condition(

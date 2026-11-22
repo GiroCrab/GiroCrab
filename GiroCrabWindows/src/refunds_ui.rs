@@ -712,6 +712,7 @@ mod tests {
         let total = || {
             crate::analytics::net_expenses(
                 &v.list_category_expenses(None, None, vec![]).unwrap(),
+                (0, 0),
                 6,
             )
             .iter()
