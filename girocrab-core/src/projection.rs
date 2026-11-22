@@ -42,6 +42,7 @@ pub(crate) struct Info {
 type ScopedRows = HashMap<Option<Vec<i64>>, Arc<Vec<Row>>>;
 type MatchingIds = HashMap<
     (
+        Option<Vec<i64>>,
         Option<i64>,
         bool,
         bool,
@@ -342,8 +343,24 @@ impl Vault {
         db: &Connection,
         filter: &BookingFilter,
     ) -> CoreResult<String> {
+        self.projected_booking_ids_visible(db, filter, None)
+    }
+
+    pub(crate) fn projected_booking_ids_visible(
+        &self,
+        db: &Connection,
+        filter: &BookingFilter,
+        visible: Option<&[i64]>,
+    ) -> CoreResult<String> {
         let projection = self.financial_projection(db)?;
+        let scope = visible.map(|accounts| {
+            let mut accounts = accounts.to_vec();
+            accounts.sort_unstable();
+            accounts.dedup();
+            accounts
+        });
         let key = (
+            scope.clone(),
             filter.category_id,
             filter.include_subcategories,
             filter.uncategorized_only,
@@ -376,7 +393,7 @@ impl Vault {
             }
         }
         let ids: HashSet<i64> = projection
-            .rows(None)?
+            .rows(scope.as_deref())?
             .iter()
             .filter(|r| {
                 (filter.category_id.is_none()

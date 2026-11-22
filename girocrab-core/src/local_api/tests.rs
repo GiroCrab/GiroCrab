@@ -14,6 +14,140 @@ fn demo() -> (TempDir, Arc<Vault>) {
     (dir, v)
 }
 
+#[test]
+fn refund_link_to_an_unshared_account_changes_nothing() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    let all = v.list_transactions(BookingFilter::default()).unwrap();
+    let refund = all
+        .transactions
+        .iter()
+        .find(|t| t.account_id == giro && t.amount_cents > 0 && t.currency == "EUR")
+        .unwrap();
+    let private = all
+        .transactions
+        .iter()
+        .find(|t| {
+            t.account_id != giro
+                && t.amount_cents < 0
+                && t.currency == "EUR"
+                && t.category_id.is_some()
+                && t.category_id != refund.category_id
+        })
+        .unwrap();
+    let (from, to) = summary_range();
+    let params = json!({"account_ids":[giro], "date_from":from, "date_to":to});
+    share(&v, &[giro], |_| {});
+    let in_category = || {
+        all_pages(&v, json!({"account_ids":[giro], "category_id":private.category_id, "include_subcategories":false}), 200).iter().map(|row| row["id"].as_i64().unwrap()).collect::<Vec<_>>()
+    };
+    let before_rows = in_category();
+    assert!(
+        !before_rows.contains(&refund.id),
+        "fixture refund already belongs to the original's category"
+    );
+    let before = ok(&v, "summary", params.clone());
+    v.link_refund(refund.id, String::new(), private.id, String::new())
+        .unwrap();
+    let app_rows = || {
+        v.list_transactions(BookingFilter {
+            account_ids: vec![giro],
+            category_id: private.category_id,
+            include_subcategories: false,
+            ..Default::default()
+        })
+        .unwrap()
+        .transactions
+        .into_iter()
+        .map(|row| row.id)
+        .collect::<Vec<_>>()
+    };
+    assert!(app_rows().contains(&refund.id));
+    assert_eq!(ok(&v, "summary", params.clone()), before);
+    assert_eq!(
+        in_category(),
+        before_rows,
+        "a hidden original must not change shared category-filtered rows; refund={}",
+        refund.id
+    );
+    assert!(app_rows().contains(&refund.id));
+    share(&v, &[giro, private.account_id], |_| {});
+    assert_ne!(ok(&v, "summary", params), before);
+    assert_eq!(in_category().len(), before_rows.len() + 1);
+    assert_eq!(
+        v.refund_links(refund.id)
+            .unwrap()
+            .iter()
+            .filter(|l| !l.inactive)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn request_before_the_app_reads_leaves_the_app_every_refund_link() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    let all = v.list_transactions(BookingFilter::default()).unwrap();
+    let refund = all
+        .transactions
+        .iter()
+        .find(|t| t.account_id == giro && t.amount_cents > 0 && t.currency == "EUR")
+        .unwrap();
+    let private = all
+        .transactions
+        .iter()
+        .find(|t| {
+            t.account_id != giro && t.amount_cents < -refund.amount_cents && t.currency == "EUR"
+        })
+        .unwrap();
+    share(&v, &[giro], |_| {});
+    v.link_refund(refund.id, String::new(), private.id, String::new())
+        .unwrap();
+    let (from, to) = summary_range();
+    ok(
+        &v,
+        "summary",
+        json!({ "account_ids": [giro], "date_from": from, "date_to": to }),
+    );
+    all_pages(&v, json!({ "account_ids": [giro] }), 200);
+    all_pages(
+        &v,
+        json!({ "account_ids": [giro], "category_id": private.category_id }),
+        200,
+    );
+    assert!(
+        v.list_transactions(BookingFilter {
+            account_ids: vec![giro],
+            category_id: private.category_id,
+            ..Default::default()
+        })
+        .unwrap()
+        .transactions
+        .iter()
+        .any(|row| row.id == refund.id)
+    );
+    let shown = v.list_transactions(BookingFilter::default()).unwrap();
+    assert_eq!(
+        shown
+            .transactions
+            .iter()
+            .find(|t| t.id == private.id)
+            .unwrap()
+            .refunded_cents,
+        refund.amount_cents
+    );
+    assert_eq!(
+        shown
+            .transactions
+            .iter()
+            .find(|t| t.id == refund.id)
+            .unwrap()
+            .refund_cents,
+        refund.amount_cents
+    );
+}
+
 fn account_id(v: &Vault, name: &str) -> i64 {
     v.list_accounts()
         .unwrap()

@@ -399,6 +399,16 @@ impl Vault {
         db: &rusqlite::Connection,
         filter: &BookingFilter,
     ) -> Result<(String, String, Vec<Box<dyn ToSql>>, String), CoreError> {
+        self.filter_clauses_visible(db, filter, None)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn filter_clauses_visible(
+        &self,
+        db: &rusqlite::Connection,
+        filter: &BookingFilter,
+        visible: Option<&[i64]>,
+    ) -> Result<(String, String, Vec<Box<dyn ToSql>>, String), CoreError> {
         let mut wh: Vec<String> = vec![LIVE_BOOKINGS_SQL.into()];
         let mut args: Vec<Box<dyn ToSql>> = vec![];
         let cte = String::new();
@@ -459,7 +469,10 @@ impl Vault {
             || filter.category_id.is_some()
             || filter.scope != BookingScope::All
         {
-            args.push(Box::new(self.projected_booking_ids(db, filter)?));
+            args.push(Box::new(match visible {
+                Some(accounts) => self.projected_booking_ids_visible(db, filter, Some(accounts))?,
+                None => self.projected_booking_ids(db, filter)?,
+            }));
             wh.push(format!(
                 "t.id IN (SELECT value FROM json_each(?{}))",
                 args.len()
@@ -643,7 +656,8 @@ impl Vault {
         if only_accounts.is_empty() {
             return Ok(Vec::new());
         }
-        let (cte, mut where_sql, mut args, share_sql) = self.filter_clauses(db, filter)?;
+        let (cte, mut where_sql, mut args, share_sql) =
+            self.filter_clauses_visible(db, filter, Some(visible))?;
         let ph: Vec<String> = only_accounts
             .iter()
             .map(|id| {
