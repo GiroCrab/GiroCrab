@@ -5364,6 +5364,17 @@
         }
       }
     },
+    "Aquarium" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aquarium"
+          }
+        }
+      }
+    },
     "Archivieren" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11815,6 +11826,17 @@
         }
       }
     },
+    "Dienstreise" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Business trip"
+          }
+        }
+      }
+    },
     "Diese Angaben braucht GiroCrab einmalig, danach gelten sie für alle Banken dieser Art." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17275,6 +17297,17 @@
         }
       }
     },
+    "Hund" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dog"
+          }
+        }
+      }
+    },
     "Händler" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18960,6 +18993,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Categorization Rules… (⌥⌘K)"
+          }
+        }
+      }
+    },
+    "Katze" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cat"
           }
         }
       }
@@ -21720,6 +21764,17 @@
         }
       }
     },
+    "Lizenz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Licence"
+          }
+        }
+      }
+    },
     "Logo laden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22739,6 +22794,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Music"
+          }
+        }
+      }
+    },
+    "Musikunterricht" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Music lessons"
           }
         }
       }
@@ -28521,6 +28587,17 @@
         }
       }
     },
+    "Software" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Software"
+          }
+        }
+      }
+    },
     "Sollzins %@ % · Zinsen seit Stichtag %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28732,6 +28809,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Donation"
+          }
+        }
+      }
+    },
+    "Spenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Donations"
           }
         }
       }
@@ -31675,6 +31763,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total assets"
+          }
+        }
+      }
+    },
+    "Versand" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shipping"
           }
         }
       }
