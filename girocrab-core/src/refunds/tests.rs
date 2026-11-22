@@ -96,6 +96,63 @@ fn validation_replace_unlink_and_markers() {
 }
 
 #[test]
+fn restore_unlink_keeps_allocation_position_and_syncs() {
+    let d = TempDir::new("refunds-restore");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    let allocations = |v: &Vault, refund| {
+        v.refund_links(refund)
+            .unwrap()
+            .originals
+            .iter()
+            .map(|o| (o.id, o.share_cents.unwrap()))
+            .collect::<Vec<_>>()
+    };
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET amount_cents=-20 WHERE id=?1",
+            [aa[0]],
+        )
+        .unwrap();
+    b.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET amount_cents=-20 WHERE id=?1",
+            [bb[0]],
+        )
+        .unwrap();
+    a.restore_refund_parts(aa[2], 0, aa[0], 0).unwrap();
+    assert!(allocations(&a, aa[2]).is_empty());
+    a.link_refund(aa[2], aa[0], 0).unwrap();
+    a.link_refund(aa[2], aa[1], 0).unwrap();
+    let before = allocations(&a, aa[2]);
+    assert_eq!(before, vec![(aa[0], 20), (aa[1], 30)]);
+    a.unlink_refund_parts(aa[2], 0, aa[0], 0).unwrap();
+    assert_eq!(allocations(&a, aa[2]), vec![(aa[1], 50)]);
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(allocations(&b, bb[2]), vec![(bb[1], 50)]);
+    a.restore_refund_parts(aa[2], 0, aa[0], 0).unwrap();
+    assert_eq!(allocations(&a, aa[2]), before);
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(allocations(&b, bb[2]), vec![(bb[0], 20), (bb[1], 30)]);
+
+    a.unlink_refund_parts(aa[2], 0, aa[0], 0).unwrap();
+    assert!(a.link_refund(aa[2], aa[0], 0).is_err());
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET amount_cents=-35 WHERE id=?1",
+            [aa[1]],
+        )
+        .unwrap();
+    a.link_refund(aa[2], aa[0], 0).unwrap();
+    assert_eq!(allocations(&a, aa[2]), vec![(aa[1], 35), (aa[0], 15)]);
+}
+
+#[test]
 fn cascade_and_no_chains() {
     let d = TempDir::new("refunds");
     let v = open(&d, "v");

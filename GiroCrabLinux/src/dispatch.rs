@@ -1603,6 +1603,7 @@ vault_methods! {
     link_refund(refund_id, original_id, original_part) unlink_refund(refund_id, original_id, original_part)
     link_refund_parts(refund_id, refund_part, original_id, original_part)
     unlink_refund_parts(refund_id, refund_part, original_id, original_part)
+    restore_refund_parts(refund_id, refund_part, original_id, original_part)
     refund_links(transaction_id) refund_suggestions(transaction_id)
     refund_candidates(transaction_id, query, limit)
     refund_part_suggestions(transaction_id, pays_back, own_part)
@@ -1754,12 +1755,14 @@ mod tests {
                 .unwrap()
                 .is_err()
         );
-        call("unlink_refund_parts", pair);
-        assert_eq!(total(range), -10000);
+        call("unlink_refund_parts", pair.clone());
+        assert_eq!(total(range.clone()), -10000);
         assert_eq!(
             call("refund_links", json!({ "transaction_id": refund }))["originals"],
             json!([])
         );
+        call("restore_refund_parts", pair);
+        assert_eq!(total(range), -6000);
         drop(v);
         let _ = std::fs::remove_file(path);
     }

@@ -15,10 +15,36 @@ use crate::{
 };
 
 type VaultSlot = Arc<Mutex<Option<Arc<Vault>>>>;
+type Link = (i64, u32, i64, u32);
+
+#[derive(Clone, Copy)]
+enum LinkEdit {
+    Link,
+    Unlink,
+    Restore,
+}
+
+impl LinkEdit {
+    fn apply(
+        self,
+        vault: &Vault,
+        (refund, refund_part, original, part): Link,
+    ) -> Result<(), String> {
+        match self {
+            Self::Link => vault.link_refund_parts(refund, refund_part, original, part),
+            Self::Unlink => vault.unlink_refund_parts(refund, refund_part, original, part),
+            Self::Restore => vault.restore_refund_parts(refund, refund_part, original, part),
+        }
+        .map_err(|e| e.to_string())
+    }
+}
 
 /// Dialog state on the UI thread.
 #[derive(Default)]
 struct Ui {
+    generation: u64,
+    pending: bool,
+    undo_unlink: Option<Link>,
     /// The booking the dialog is open for: (id, amount in cents, currency).
     booking: Option<(i64, i64, String)>,
     /// Its counterparty, for the dialog's title.
@@ -397,6 +423,55 @@ fn refresh(win: &MainWindow, v: Arc<Vault>) {
     });
 }
 
+fn edit_link(win: &MainWindow, v: Arc<Vault>, edit: LinkEdit, link: Link) {
+    let Some(generation) = with_ui(|u| {
+        if u.pending {
+            return None;
+        }
+        u.pending = true;
+        Some(u.generation)
+    }) else {
+        return;
+    };
+    win.set_rf_edit_pending(true);
+    let weak = win.as_weak();
+    std::thread::spawn(move || {
+        let done = edit.apply(&v, link);
+        let _ = weak.upgrade_in_event_loop(move |win| {
+            if !crate::is_current(&v) {
+                return;
+            }
+            let sheet = with_ui(|u| {
+                if u.generation != generation {
+                    return None;
+                }
+                u.pending = false;
+                if done.is_ok() {
+                    u.undo_unlink = match edit {
+                        LinkEdit::Unlink => Some(link),
+                        LinkEdit::Link => u.undo_unlink.filter(|&old| old != link),
+                        LinkEdit::Restore => None,
+                    };
+                }
+                Some(u.undo_unlink.is_some())
+            });
+            if let Some(can_undo) = sheet {
+                win.set_rf_can_undo(can_undo);
+                win.set_rf_edit_pending(false);
+                match &done {
+                    Ok(()) if win.get_refunds_open() => refresh(&win, v.clone()),
+                    Err(e) => win.set_rf_status(e.as_str().into()),
+                    _ => (),
+                }
+            }
+            if done.is_ok() {
+                reload(&win, v.clone());
+                refresh_dashboard(&win, v);
+            }
+        });
+    });
+}
+
 pub fn wire(win: &MainWindow, slot: VaultSlot) {
     let vault_of = move || slot.lock().unwrap().clone();
 
@@ -434,10 +509,13 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         win.set_rf_sums(SharedString::new());
         win.set_rf_hint(SharedString::new());
         win.set_rf_status(SharedString::new());
+        win.set_rf_can_undo(false);
+        win.set_rf_edit_pending(false);
         win.set_rf_rows(ModelRc::new(VecModel::from(Vec::<RefundRow>::new())));
         win.set_rf_parts(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
         with_ui(|u| {
             *u = Ui {
+                generation: u.generation.wrapping_add(1),
                 booking: Some((id, cents, currency)),
                 title,
                 ..Ui::default()
@@ -457,7 +535,7 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         refresh(&win, v);
     });
 
-    let (weak, vault) = (win.as_weak(), vault_of);
+    let (weak, vault) = (win.as_weak(), vault_of.clone());
     win.on_refund_toggle(move |other, part, refund_part| {
         let (Some(win), Some(v)) = (weak.upgrade(), vault()) else {
             return;
@@ -484,31 +562,23 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         } else {
             (other, booking)
         };
-        let weak = win.as_weak();
-        std::thread::spawn(move || {
-            let (part, refund_part) = if unlink {
-                (part, refund_part)
-            } else if from_refund {
-                (part, own_part)
-            } else {
-                (own_part, refund_part)
-            };
-            let done = if unlink {
-                v.unlink_refund_parts(refund, refund_part, original, part)
-            } else {
-                v.link_refund_parts(refund, refund_part, original, part)
-            }
-            .map_err(|e| e.to_string());
-            let _ = weak.upgrade_in_event_loop(move |win| match done {
-                Ok(()) => {
-                    refresh(&win, v.clone());
-                    // the sign in the rows and the sums: only the assigned part lowers the expenses
-                    reload(&win, v.clone());
-                    refresh_dashboard(&win, v);
-                }
-                Err(e) => win.set_rf_status(e.into()),
-            });
-        });
+        let (edit, part, refund_part) = if unlink {
+            (LinkEdit::Unlink, part, refund_part)
+        } else if from_refund {
+            (LinkEdit::Link, part, own_part)
+        } else {
+            (LinkEdit::Link, own_part, refund_part)
+        };
+        edit_link(&win, v, edit, (refund, refund_part, original, part));
+    });
+
+    let weak = win.as_weak();
+    win.on_refund_undo_unlink(move || {
+        if let (Some(win), Some(v), Some(link)) =
+            (weak.upgrade(), vault_of(), with_ui(|u| u.undo_unlink))
+        {
+            edit_link(&win, v, LinkEdit::Restore, link);
+        }
     });
 }
 

@@ -422,7 +422,7 @@ fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shar
              JOIN accounts ra ON ra.id=r.account_id LEFT JOIN bank_connections rc ON rc.id=ra.connection_id
              JOIN accounts oa ON oa.id=o.account_id LEFT JOIN bank_connections oc ON oc.id=oa.connection_id
              WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL{within}
-             ORDER BY l.created_ms,l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,
+             ORDER BY l.created_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,
                       COALESCE(rc.connector,''),COALESCE(rc.login_name,''),COALESCE(rc.bank_code,''),ra.external_ref,
                       COALESCE(oc.connector,''),COALESCE(oc.login_name,''),COALESCE(oc.bank_code,''),oa.external_ref,
                       l.refund_id,l.original_id"
@@ -532,10 +532,32 @@ fn validate(
     Ok(())
 }
 
-/// [`validate`] for a link the user makes here: of a split booking a part is linked (an
-/// outgoing one is paid back, an incoming one pays back; a split incoming booking may also pay
-/// back as a whole, `refund_part` 0), and an amount that is used up takes no further link.
-/// Links arriving from another device are not held to this; they get a share of 0.
+fn validate_link_parts(
+    conn: &Connection,
+    parts: &HashMap<i64, Vec<Part>>,
+    refund: i64,
+    original: i64,
+    part: i64,
+    refund_part: i64,
+) -> CoreResult<(i64, i64)> {
+    validate(conn, parts, refund, original, part, refund_part)?;
+    let (r, o) = (live(conn, refund)?, live(conn, original)?);
+    let fits = match parts.get(&original) {
+        Some(_) => named(parts, original, part, Role::Original).is_some(),
+        None => part == 0,
+    } && if refund_part == 0 {
+        r > 0
+    } else {
+        named(parts, refund, refund_part, Role::Refund).is_some()
+    };
+    if !fits {
+        return Err(CoreError::invalid(tr(
+            "Bei einer geteilten Buchung wird ein Teil verknüpft.",
+        )));
+    }
+    Ok((r, o))
+}
+
 fn validate_new(
     conn: &Connection,
     refund: i64,
@@ -544,21 +566,7 @@ fn validate_new(
     refund_part: i64,
 ) -> CoreResult<()> {
     let parts = split_parts(conn)?;
-    validate(conn, &parts, refund, original, part, refund_part)?;
-    let (r, o) = (live(conn, refund)?, live(conn, original)?);
-    let fits = match parts.get(&original) {
-        Some(_) => named(&parts, original, part, Role::Original).is_some(),
-        None => part == 0,
-    } && if refund_part == 0 {
-        r > 0
-    } else {
-        named(&parts, refund, refund_part, Role::Refund).is_some()
-    };
-    if !fits {
-        return Err(CoreError::invalid(tr(
-            "Bei einer geteilten Buchung wird ein Teil verknüpft.",
-        )));
-    }
+    let (r, o) = validate_link_parts(conn, &parts, refund, original, part, refund_part)?;
     let linked: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND refund_id=?1 AND original_id=?2 AND original_part=?3 AND refund_part=?4)",
         params![refund, original, part, refund_part],
@@ -1345,6 +1353,40 @@ impl Vault {
         )?;
         Ok(())
     }
+    /// Undoes an unlink of this exact pair of parts, retaining its original allocation position.
+    /// A missing or already live link is unchanged. Unlike a new link, the restored link can
+    /// reclaim an amount now allocated to links that were made later.
+    pub fn restore_refund_parts(
+        &self,
+        refund_id: i64,
+        refund_part: u32,
+        original_id: i64,
+        original_part: u32,
+    ) -> CoreResult<()> {
+        let db = self.db()?;
+        let deleted: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM refund_links WHERE refund_id=?1 AND original_id=?2 AND original_part=?3 AND refund_part=?4 AND deleted_ms IS NOT NULL)",
+            params![refund_id, original_id, original_part, refund_part],
+            |r| r.get(0),
+        )?;
+        if !deleted {
+            return Ok(());
+        }
+        validate_link_parts(
+            &db,
+            &split_parts(&db)?,
+            refund_id,
+            original_id,
+            i64::from(original_part),
+            i64::from(refund_part),
+        )?;
+        let changed = next_change(&db)?;
+        db.execute(
+            "UPDATE refund_links SET changed_ms=?3,deleted_ms=NULL WHERE refund_id=?1 AND original_id=?2 AND original_part=?4 AND refund_part=?5",
+            params![refund_id, original_id, changed, original_part, refund_part],
+        )?;
+        Ok(())
+    }
     /// The live links of one booking; deleted bookings are left out. `originals`: what it pays
     /// back, `refunds`: what pays it back. A split booking with parts on both sides can have
     /// both.
@@ -1356,7 +1398,7 @@ impl Vault {
             rows(
                 &db,
                 &format!(
-                    "{} JOIN refund_links l ON l.{other}=t.id AND l.{own}=?1 AND l.deleted_ms IS NULL WHERE t.deleted_ms IS NULL ORDER BY l.created_ms,l.changed_ms,t.id,l.original_part,l.refund_part",
+                    "{} JOIN refund_links l ON l.{other}=t.id AND l.{own}=?1 AND l.deleted_ms IS NULL WHERE t.deleted_ms IS NULL ORDER BY l.created_ms,t.id,l.original_part,l.refund_part",
                     ROWS.replace("{part}", "l.original_part")
                         .replace("{refund_part}", "l.refund_part")
                 ),

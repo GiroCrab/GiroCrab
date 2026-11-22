@@ -18,12 +18,15 @@ export component RefundsPanel inherits VerticalLayout {
     in property <string> sums;
     in property <string> hint;
     in property <string> status;
+    in property <bool> can-undo;
+    in property <bool> edit-pending;
     in property <[RefundRow]> rows;
     callback search(string);
     in property <[string]> parts;
     in-out property <int> part-index;
     callback part-picked(int);
     callback toggle(int, int, int);
+    callback undo-unlink();
     callback close();
     spacing: 10px;
     Text { text: root.from-refund ? "Ursprüngliche Buchung zuordnen" : "Erstattung zuordnen"; color: root.ink; font-size: 18px; font-weight: 700; }
@@ -50,7 +53,7 @@ export component RefundsPanel inherits VerticalLayout {
                 background: touch.has-hover && r.kind != 0 && r.blocked == "" ? root.line.with-alpha(0.35) : transparent;
                 // the circle is part of the row: one click selects
                 touch := TouchArea {
-                    enabled: r.kind != 0 && r.blocked == "";
+                    enabled: !root.edit-pending && r.kind != 0 && r.blocked == "";
                     clicked => { root.toggle(r.id, r.part, r.refund-part); }
                 }
                 if r.kind == 0: Text { x: 10px; text: r.title; color: root.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
@@ -77,6 +80,7 @@ export component RefundsPanel inherits VerticalLayout {
     }
     if root.status != "": Text { text: root.status; color: root.negative; font-size: 12px; wrap: word-wrap; }
     HorizontalLayout {
+        if root.can-undo: Button { text: "Aufheben rückgängig"; enabled: !root.edit-pending; clicked => { root.undo-unlink(); } }
         Rectangle { horizontal-stretch: 1; }
         Button { text: "Fertig"; primary: true; clicked => { root.close(); } }
     }
