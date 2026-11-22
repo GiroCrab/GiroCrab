@@ -27,6 +27,9 @@ struct Ui {
     linked: Vec<(i64, u32, u32)>,
     parts: Vec<u32>,
     own_part: u32,
+    /// The part the rows and the side on screen were loaded for: while it is not `own_part`
+    /// (a part was just picked), a click on a row would mix the new part with the old side.
+    shown_part: u32,
     /// The side of the selected part, else of the booking (`Loaded::from_refund`).
     from_refund: bool,
 }
@@ -290,6 +293,7 @@ fn show(win: &MainWindow, loaded: Loaded) {
             .collect();
         u.parts = loaded.parts.iter().map(|p| p.0).collect();
         u.own_part = loaded.own_part;
+        u.shown_part = loaded.own_part;
         u.from_refund = from_refund;
         u.parts.iter().position(|p| *p == u.own_part).unwrap_or(0)
     });
@@ -436,6 +440,9 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         let refund_part = u32::try_from(refund_part).unwrap_or(0);
         let Some((booking, from_refund, unlink, own_part)) = with_ui(|u| {
             let b = u.booking.as_ref()?;
+            if u.own_part != u.shown_part {
+                return None;
+            }
             Some((
                 b.0,
                 u.from_refund,
