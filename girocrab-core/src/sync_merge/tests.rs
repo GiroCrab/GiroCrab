@@ -4436,6 +4436,65 @@ fn folded_twin_hands_over_refund_links() {
 }
 
 #[test]
+fn folded_twin_followers_use_the_same_one_to_one_fingerprint_matches() {
+    let dir = temp_dir("twin-identical-followers");
+    let v = open(&dir, "a.db");
+    let c = comdirect(&v);
+    let bank = giro(&v, c, "API1", &["bank-b", "bank-a", "original"]);
+    let twin = giro(&v, c, MM_GIRO, &["mm-a", "mm-b", "original"]);
+    exec(&v, &format!(
+        "UPDATE transactions SET amount_cents = 25, import_fp = 'duplicate'
+           WHERE external_id != 'original';
+         INSERT INTO accounts(group_id, external_ref, name, kind) VALUES (1, 'L1', 'Loan', 'loan');
+         INSERT INTO booking_documents(booking_id, account_id, pdf_bytes)
+              SELECT id, {twin}, CAST(external_id AS BLOB) FROM transactions
+               WHERE account_id = {twin} AND external_id != 'original';
+         INSERT INTO loan_links(transaction_id, loan_account_id)
+              SELECT t.id, a.id FROM transactions t CROSS JOIN accounts a
+               WHERE t.account_id = {twin} AND t.external_id != 'original' AND a.external_ref = 'L1';
+         INSERT INTO refund_links(refund_id, original_id, created_ms, changed_ms)
+              SELECT r.id, o.id, 1, 1 FROM transactions r CROSS JOIN transactions o
+               WHERE r.account_id = {twin} AND o.account_id = {twin}
+                 AND r.external_id != 'original' AND o.external_id = 'original';
+         INSERT INTO security_transactions(account_id, external_id, booking_date, cash_transaction_id)
+              SELECT {twin}, external_id, booking_date, id FROM transactions
+               WHERE account_id = {twin} AND external_id != 'original';"
+    ));
+    drop(v);
+    let v = open(&dir, "a.db");
+    for (table, col) in [
+        ("booking_documents", "booking_id"),
+        ("loan_links", "transaction_id"),
+        ("refund_links", "refund_id"),
+        ("security_transactions", "cash_transaction_id"),
+    ] {
+        assert_eq!(
+            text(
+                &v,
+                &format!(
+                    "SELECT group_concat(external_id, ',') FROM (
+                 SELECT t.external_id FROM {table} f JOIN transactions t ON t.id = f.{col}
+                  WHERE t.account_id = {bank} ORDER BY t.external_id
+             )"
+                )
+            ),
+            "bank-a,bank-b",
+            "{table}"
+        );
+    }
+    assert_eq!(
+        text(
+            &v,
+            "SELECT group_concat(pair, ',') FROM (
+             SELECT CAST(d.pdf_bytes AS TEXT) || '>' || t.external_id AS pair
+               FROM booking_documents d JOIN transactions t ON t.id = d.booking_id ORDER BY pair
+         )"
+        ),
+        "mm-a>bank-a,mm-b>bank-b"
+    );
+}
+
+#[test]
 fn folded_twin_hands_over_rules_documents_and_loan_links() {
     let dir = temp_dir("twin-extras");
     let v = open(&dir, "a.db");

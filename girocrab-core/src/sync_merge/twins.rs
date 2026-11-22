@@ -379,7 +379,7 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     let rule_map = identity("rules")?;
     let acc_map = HashMap::from([(twin, bank)]);
     let mut stats = crate::vault::MergeStats::default();
-    super::merge_bookings(conn, &acc_map, &cat_map, &rule_map, &mut stats)?;
+    let booking_ids = super::merge_bookings(conn, &acc_map, &cat_map, &rule_map, &mut stats)?;
     // stamped: a device still holding the rule on the twin's key loses
     conn.execute(
         "UPDATE rules SET account_id = ?2, updated_ms = max(updated_ms + 1, ?3) WHERE account_id = ?1",
@@ -390,56 +390,31 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
         params![twin, bank],
     )?;
     conn.execute("DELETE FROM rule_accounts WHERE account_id = ?1", [twin])?;
-    // documents and manual loan links follow each booking to the bank
-    // account's copy (same external id, else import fingerprint)
-    let counterpart = "(SELECT b.id FROM transactions b, transactions m
-                         WHERE m.id = {col} AND b.account_id = ?2
-                           AND (b.external_id = m.external_id
-                                OR (m.import_fp != '' AND b.import_fp = m.import_fp))
-                         ORDER BY b.external_id = m.external_id DESC, b.deleted_ms IS NOT NULL, b.id
-                         LIMIT 1)";
-    conn.execute(
-        &format!(
-            "UPDATE booking_documents SET booking_id = IFNULL({}, booking_id)
-              WHERE booking_id IN (SELECT id FROM transactions WHERE account_id = ?1)",
-            counterpart.replace("{col}", "booking_documents.booking_id")
-        ),
-        params![twin, bank],
-    )?;
-    conn.execute(
-        "UPDATE booking_documents SET account_id = ?2 WHERE account_id = ?1",
-        params![twin, bank],
-    )?;
-    conn.execute(
-        &format!(
-            "UPDATE OR IGNORE loan_links SET transaction_id = {}
-              WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?1)
-                AND {} IS NOT NULL",
-            counterpart.replace("{col}", "loan_links.transaction_id"),
-            counterpart.replace("{col}", "loan_links.transaction_id")
-        ),
-        params![twin, bank],
-    )?;
-    // refund links (#714) follow both of their bookings the same way; a link the bank
-    // account's copy already has stays
-    for col in ["refund_id", "original_id"] {
-        let copy = counterpart.replace("{col}", &format!("refund_links.{col}"));
+    let pairs: Vec<_> = booking_ids.into_iter().collect();
+    let pairs = serde_json::to_string(&pairs).expect("integer booking ids");
+    // Use exactly the matches chosen by the booking merge, including its one-to-one
+    // pairing of identical fingerprints. Existing bank-side links still win.
+    for (table, col, conflict) in [
+        ("booking_documents", "booking_id", ""),
+        ("loan_links", "transaction_id", "OR IGNORE"),
+        ("refund_links", "refund_id", "OR IGNORE"),
+        ("refund_links", "original_id", "OR IGNORE"),
+        ("security_transactions", "cash_transaction_id", ""),
+    ] {
         conn.execute(
             &format!(
-                "UPDATE OR IGNORE refund_links SET {col} = {copy}
-                  WHERE {col} IN (SELECT id FROM transactions WHERE account_id = ?1)
-                    AND {copy} IS NOT NULL"
+                "WITH pairs AS (
+                     SELECT json_extract(value, '$[0]') AS old, json_extract(value, '$[1]') AS new
+                       FROM json_each(?1)
+                 )
+                 UPDATE {conflict} {table} AS follower SET {col} = pairs.new
+                   FROM pairs WHERE follower.{col} = pairs.old"
             ),
-            params![twin, bank],
+            [&pairs],
         )?;
     }
-    // so do securities transactions paid from one of its bookings (#1463 review)
     conn.execute(
-        &format!(
-            "UPDATE security_transactions SET cash_transaction_id = IFNULL({}, cash_transaction_id)
-              WHERE cash_transaction_id IN (SELECT id FROM transactions WHERE account_id = ?1)",
-            counterpart.replace("{col}", "security_transactions.cash_transaction_id")
-        ),
+        "UPDATE booking_documents SET account_id = ?2 WHERE account_id = ?1",
         params![twin, bank],
     )?;
     // asked before the history moves: the twin's may hold fetches too
