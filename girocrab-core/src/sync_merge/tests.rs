@@ -4735,6 +4735,60 @@ fn a_late_reference_follows_the_folds_pairing_not_todays_rank() {
     }
 }
 
+/// Bookings that reach the twin after the fold can make it stop looking like
+/// one (`twin_score` counts them). What the fold recorded still holds: a
+/// late reference reaches the copy, and takes its account. An account that
+/// is live again keeps its references.
+#[test]
+fn a_late_reference_follows_the_pairing_when_the_twin_no_longer_looks_like_one() {
+    for live_again in [false, true] {
+        let dir = temp_dir("twin-link-outgrown");
+        let a = open(&dir, "a.db");
+        let c = comdirect(&a);
+        giro(&a, c, "API1", &["mm-1", "mm-2"]);
+        let twin_a = giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+        drop(a);
+        let a = open(&dir, "a.db"); // folds the twin: 2 of 2 found
+
+        let b = open(&dir, "b.db");
+        let cb = comdirect(&b);
+        // two more the bank never had: 2 of 4 is not "most"
+        let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2", "mm-7", "mm-8"]);
+        let booking = n(
+            &b,
+            &format!(
+                "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-1'"
+            ),
+        );
+        b.attach_document_link(booking, "https://archiv.example/3".into(), "Bon".into())
+            .unwrap();
+        if live_again {
+            exec(
+                &a,
+                &format!(
+                    "UPDATE accounts SET deleted_ms = NULL, created_ms = 9000000000000 WHERE id = {twin_a}"
+                ),
+            );
+        }
+
+        merge(&a, &b);
+        let target = text(
+            &a,
+            "SELECT a.external_ref || ':' || t.external_id
+               FROM document_links l JOIN transactions t ON t.id = l.booking_id
+               JOIN accounts a ON a.id = t.account_id",
+        );
+        if live_again {
+            assert_ne!(target, "API1:mm-1", "a live account keeps its references");
+            continue;
+        }
+        assert_eq!(target, "API1:mm-1");
+        assert_eq!(link_target(&a), "API1:mm-1:1", "with the copy's account");
+        both_ways(&a, &b);
+        assert_eq!(link_target(&a), "API1:mm-1:1");
+    }
+}
+
 /// A device without the fold's record of the pairing does not guess between
 /// identical bookings: the reference stays with the bank account, without a
 /// booking, to be linked again.

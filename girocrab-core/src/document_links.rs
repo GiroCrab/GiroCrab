@@ -524,6 +524,15 @@ impl Row {
         {
             moved |= copy != b;
             self.booking = Some(copy);
+            // its account is the copy's: the twin may no longer tell which
+            let of_copy: i64 = conn.query_row(
+                // includes soft-deleted rows: a deleted copy keeps the reference
+                "SELECT account_id FROM transactions WHERE id = ?1",
+                [copy],
+                |r| r.get(0),
+            )?;
+            moved |= self.account != Some(of_copy);
+            self.account = Some(of_copy);
         }
         if let Some(a) = self.account
             && let Some(bank) = crate::sync_merge::twins::folded_account(conn, a, folded)?

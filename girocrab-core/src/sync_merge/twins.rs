@@ -376,21 +376,27 @@ pub(crate) fn folded_booking(
     let Some((account, ext, own)) = row else {
         return Ok(None);
     };
-    let Some(bank) = folded_account(conn, account, seen)? else {
-        return Ok(None);
-    };
+    // What the fold recorded comes first, whether or not the twin still
+    // looks like one: bookings that reached it later count in `twin_score`.
+    // It holds while the twin is deleted and the copy's account lives.
     let paired: Option<i64> = conn
         .query_row(
             // includes soft-deleted rows: a deleted copy keeps the reference
-            "SELECT t.id FROM folded_bookings f JOIN transactions t ON t.id = f.copy_id
-              WHERE f.booking_id = ?1 AND t.account_id = ?2",
-            [booking, bank],
+            "SELECT t.id FROM folded_bookings f
+               JOIN transactions t ON t.id = f.copy_id
+               JOIN accounts copy ON copy.id = t.account_id AND copy.deleted_ms IS NULL
+               JOIN accounts twin ON twin.id = ?2 AND twin.deleted_ms IS NOT NULL
+              WHERE f.booking_id = ?1",
+            [booking, account],
             |r| r.get(0),
         )
         .optional()?;
     if paired.is_some() {
         return Ok(paired);
     }
+    let Some(bank) = folded_account(conn, account, seen)? else {
+        return Ok(None);
+    };
     let by_key: Option<i64> = conn
         .query_row(
             // includes soft-deleted rows: a deleted copy keeps the reference
