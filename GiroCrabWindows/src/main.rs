@@ -23,6 +23,7 @@ mod policy;
 mod portfolio;
 mod recurring_ui;
 mod recurring_view;
+mod refunds_ui;
 mod settings_import;
 mod settings_import_ui;
 mod sync_flow;
@@ -350,6 +351,12 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
     };
     BookingRow {
         id: b.id as i32,
+        refund_linked: b.refund_linked,
+        refund: if b.refund_cents > 0 {
+            daily::mask(&money(b.refund_cents, &b.currency), privacy).into()
+        } else {
+            SharedString::new()
+        },
         counterparty: daily::mask(&b.counterparty, privacy).into(),
         account: b.account_name.clone().into(),
         category: if b.category_name.is_empty() {
@@ -497,11 +504,20 @@ fn render_analytics(win: &MainWindow) {
 }
 
 fn render_bookings(win: &MainWindow) {
+    if let Some(v) = with_state(|st| st.vault.upgrade()) {
+        refunds_ui::refresh(win, v);
+    }
     render_analytics(win);
     render_booking_rows(win);
 }
 
 fn render_booking_rows(win: &MainWindow) {
+    win.set_rf_can_open(with_state(|st| {
+        st.rows
+            .iter()
+            .find(|r| Some(r.id) == st.selected_booking)
+            .is_some_and(|r| refunds_ui::can_open(r.amount_cents, r.split_count))
+    }));
     let privacy = privacy_on(win);
     let (count, tags) = with_state(|st| (st.shown.len(), tag_names(&st.rows)));
     win.set_booking_count(format!("{count} Buchungen").into());
@@ -784,6 +800,10 @@ fn apply_filter(win: &MainWindow) {
 
 /// Loads the bookings of the current account scope on a worker thread, then redraws.
 fn reload(win: &MainWindow, vault: Arc<Vault>) {
+    if !is_current(&vault) {
+        return;
+    }
+    views_ui::refresh_sidebar(win, &vault);
     let target = with_state(|st| st.target);
     let generation = with_state(|st| {
         st.vault = Arc::downgrade(&vault);
@@ -1243,9 +1263,16 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     if !is_current(vault) {
         return;
     }
-    // Privacy follows `toggle || !unlocked`: unlock first and start with the toggle off, so the
-    // first paint shows real balances instead of masks.
-    win.set_privacy(false);
+    if with_state(|st| !std::ptr::eq(st.vault.as_ptr(), Arc::as_ptr(vault))) {
+        with_state(|st| {
+            st.vault = Arc::downgrade(vault);
+            st.monthly = None;
+            st.analytics_generation += 1;
+            st.dashboard_generation += 1;
+        });
+        win.set_privacy(false);
+        win.set_busy(false);
+    }
     win.set_unlocked(true);
     match render_header(win, vault, selected) {
         Ok(sel) => {
@@ -1735,6 +1762,9 @@ for w in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnl
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    if let Ok(code) = std::env::var("GIROCRAB_LANGUAGE") {
+        girocrab_core::i18n::set_language(code);
+    }
     views_ui::purge_stale_documents();
     let screenshot = screenshot_path_from_args(std::env::args().skip(1));
     if screenshot.is_some() && std::env::var_os("SLINT_BACKEND").is_none() {
@@ -1743,6 +1773,7 @@ fn main() -> Result<(), slint::PlatformError> {
         unsafe { std::env::set_var("SLINT_BACKEND", "winit-software") };
     }
     let win = MainWindow::new()?;
+    win.set_rf_english(refunds_ui::english());
     let demo_title = std::env::var_os("GIROCRAB_DEMO_SEED").is_some() || screenshot.is_some();
     if demo_title {
         win.set_window_title("GiroCrab Windows Demo".into());
@@ -1822,8 +1853,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     );
                     views_ui::invalidate_planned_count();
                     SESSION.store(session_id(&v), Ordering::SeqCst);
+                    refunds_ui::reset(&win);
                     show(&win, &v, None);
-                    *vault.lock().unwrap() = Some(v);
+                    *vault.lock().unwrap() = Some(v.clone());
+                    if demo {
+                        refunds_ui::demo(&win, v);
+                    }
                     win.set_message(SharedString::new());
                     if let Some(p) = pending_transfer.lock().unwrap().take() {
                         apply_transfer_prefill(&win, &p);
@@ -1975,6 +2010,7 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     wire_batch_actions(&win, vault.clone());
+    refunds_ui::wire(&win, vault.clone());
     {
         // Privacy mode: only the rendering changes; the cached rows stay as they are.
         let (weak, vault) = (win.as_weak(), vault.clone());
@@ -1982,6 +2018,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
                 return;
             };
+            refunds_ui::privacy_changed(&win);
             let sel = Some(win.get_selected() as i64).filter(|s| *s >= 0);
             let _ = render_header(&win, &v, sel);
             render_bookings(&win);
@@ -2089,6 +2126,8 @@ fn main() -> Result<(), slint::PlatformError> {
         win.on_lock(move || {
             let Some(win) = weak.upgrade() else { return };
             SESSION.store(0, Ordering::SeqCst);
+            win.set_busy(false);
+            refunds_ui::reset(&win);
             *vault.lock().unwrap() = None;
             with_state(|st| *st = State::default());
             win.set_unlocked(false);
@@ -2102,6 +2141,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         // Inspector edits: one-row updates, applied to the cache so the list needs no reload.
         let (weak, vault) = (win.as_weak(), vault.clone());
+        let category_slot = vault.clone();
         let edit = move |f: EditFn| {
             let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
                 return;
@@ -2121,6 +2161,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let edit = Arc::new(edit);
         {
             let edit = edit.clone();
+            let (weak, slot) = (win.as_weak(), category_slot);
             win.on_set_category(move |index| {
                 edit(Box::new(move |v, id_| {
                     let cat = with_state(|st| {
@@ -2142,7 +2183,10 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     });
                     Ok(())
-                }))
+                }));
+                if let (Some(win), Some(v)) = (weak.upgrade(), slot.lock().unwrap().clone()) {
+                    reload(&win, v);
+                }
             });
         }
         {
@@ -2189,6 +2233,9 @@ fn main() -> Result<(), slint::PlatformError> {
             std::thread::spawn(move || {
                 let result = v.apply_rules(true).map_err(|e| e.to_string());
                 let _ = weak.upgrade_in_event_loop(move |win| {
+                    if !is_current(&v) {
+                        return;
+                    }
                     win.set_busy(false);
                     match result {
                         Ok(n) => {
@@ -2452,6 +2499,7 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
                 }
                 if let Err(e) = f(&v, &ids) {
                     win.set_sync_status(e.into());
+                    reload(&win, v);
                     return;
                 }
                 with_state(|st| {
@@ -2460,6 +2508,7 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
                     }
                 });
                 apply_filter(&win);
+                reload(&win, v);
             },
         )
     };

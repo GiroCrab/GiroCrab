@@ -64,6 +64,7 @@ struct Ui {
     generation: u64,
     /// Incremented on lock so in-flight worker callbacks do not repopulate a locked session.
     lock_generation: u64,
+    sidebar_generation: u64,
     depot: Option<DepotData>,
     wealth: Option<WealthData>,
     series: Vec<RecurringSeries>,
@@ -208,7 +209,10 @@ pub fn set_accounts_now(win: &MainWindow, vault: &Vault) {
 
 pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
     let (weak, v) = (win.as_weak(), vault.clone());
-    let cached = with_ui(|u| u.planned_count);
+    let (cached, generation) = with_ui(|u| {
+        u.sidebar_generation += 1;
+        (u.planned_count, u.sidebar_generation)
+    });
     std::thread::spawn(move || {
         let accounts = v.list_accounts().unwrap_or_default();
         let user_groups = v.list_user_groups().unwrap_or_default();
@@ -221,6 +225,9 @@ pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
             .map_or(0, |d| d.len() as u32);
         let v2 = v.clone();
         let _ = weak.upgrade_in_event_loop(move |win| {
+            if !crate::is_current(&v2) || with_ui(|u| u.sidebar_generation) != generation {
+                return;
+            }
             with_ui(|u| {
                 u.accounts = accounts;
                 u.user_groups = user_groups;

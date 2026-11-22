@@ -1,6 +1,6 @@
 # Erstattungen zuordnen
 
-Gemeinsames Verhalten der Oberflächen unter macOS und Linux.
+Gemeinsames Verhalten der Oberflächen unter macOS, Linux und Windows.
 
 ## Einstieg und Aufbau
 
@@ -88,3 +88,23 @@ Aufheben und tokenbasiertes Rückgängig ändern keine Benutzersplits.
 
 Im Demo-Tresor zeigen `--demo-sheet refund`, `refund-reverse`, `refund-before`
 und `refund-linked` fiktive Zuordnungen. `--privacy=all` prüft den Datenschutz.
+
+### Windows
+
+Die fokussierbare Schaltfläche „Erstattung …“ im Inspector öffnet die Zuordnung,
+auch für Ausgaben und Splitbuchungen mit Gesamtsumme null. Die Umsatzzeile zeigt
+Rückpfeil und zugeordneten Betrag. Die Teileauswahl verwendet UUIDs; Verknüpfungen
+bleiben in der vom Kern gelieferten Reihenfolge. Vorschläge und Suchergebnisse
+stehen in getrennten Abschnitten. Fokussierbare Schaltflächen erlauben Zuordnen,
+Aufheben und tokenbasiertes Rückgängig auch per Tastatur. Escape schließt den Dialog.
+
+Lesen und Schreiben laufen auf Hintergrundthreads. Anfragezähler und
+Tresoridentität verwerfen alte Ergebnisse. Während Teilwechseln und Änderungen
+sind alte Zeilen nicht bedienbar. Nach Synchronisation, Split-, Kategorie- und
+Linkänderungen werden Buchungen, Kategorien, Analysen und Cockpit neu geladen.
+Beim Aktivieren des Datenschutzes verschwinden alte Dialoginhalte sofort;
+neu geladene Daten verwenden den aktuellen Datenschutzstatus.
+
+`GIROCRAB_LANGUAGE=en` wählt englische Texte der Erstattungsansicht (Standard:
+Deutsch). Im Demo-Modus (`GIROCRAB_DEMO_SEED=1`) erzeugt
+`GIROCRAB_REFUND_DEMO=split`, `reverse` oder `linked` reproduzierbare Ansichten.

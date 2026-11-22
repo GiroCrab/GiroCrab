@@ -1,4 +1,6 @@
 import { Button, ListView, LineEdit, Palette, ComboBox, CheckBox, TextEdit, Switch, ScrollView } from "std-widgets.slint";
+import { RefundRow, RefundsPanel } from "refunds_dialog.slint";
+export { RefundRow }
 import { TagRow, SplitRow, BudgetRow, TemplateRow, TagsPanel, SplitsPanel, BudgetsPanel, TemplatesPanel } from "tags_dialog.slint";
 export { TagRow, SplitRow, BudgetRow, TemplateRow }
 import { RecLine, RecurringPanel } from "recurring_dialog.slint";
@@ -14,7 +16,7 @@ export { RecLine }
 
 export struct AccountRow { id: int, name: string, bank: string, iban: string, header: string, monogram: string, dot: color, balance: string, currency: string, negative: bool, archived: bool }
 export struct CategoryRow { id: int, name: string, depth: int, color: color }
-export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string }
+export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string, refund-linked: bool, refund: string }
 export struct DayGroup { title: string, sum: string, negative: bool, rows: [BookingRow], show-month: bool, month: string, month-income: string, month-expense: string }
 export struct BarGroup { label: string, income: float, expense: float }
 export struct BudgetLine { name: string, amount: string, progress: float, color: color, over: bool }
@@ -85,6 +87,7 @@ component Icon inherits Path {
         : name == "arrow-in" ? "M 9 2.5 L 13.5 2.5 L 13.5 13.5 L 9 13.5 M 2 8 L 10 8 M 7 5 L 10 8 L 7 11"
         : name == "document" ? "M 4 2 L 9.5 2 L 12.5 5 L 12.5 14 L 4 14 Z M 9.5 2 L 9.5 5 L 12.5 5 M 6 8 L 10.5 8 M 6 10.5 L 10.5 10.5"
         : name == "folder" ? "M 2 4 L 6.5 4 L 8 5.5 L 14 5.5 L 14 12.5 L 2 12.5 Z"
+        : name == "refund" ? "M 6 3 L 3 6 L 6 9 M 3 6 L 10 6 A 3.5 3.5 0 0 1 10 13 L 6 13"
         : name == "search" ? "M 2.5 7 A 4.5 4.5 0 1 0 11.5 7 A 4.5 4.5 0 1 0 2.5 7 M 10.5 10.5 L 14 14"
         : "";
 }
@@ -452,6 +455,8 @@ component BookingLine inherits Rectangle {
                 spacing: 6px;
                 Text { text: b.counterparty; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
                 if b.has-note: Text { text: "📎"; font-size: 11px; color: Theme.muted; }
+                if b.refund-linked: Icon { name: "refund"; width: 12px; height: 12px; }
+                if b.refund != "": Text { text: b.refund; color: Theme.muted; font-size: 11px; }
             }
             if !root.compact || root.active: HorizontalLayout {
                 spacing: 5px;
@@ -909,6 +914,26 @@ export component MainWindow inherits Window {
     callback tag-clear-booking();
     in property <string> inspector-tags;
     in-out property <bool> splits-open: false;
+    in-out property <bool> refunds-open: false;
+    in property <bool> rf-can-open;
+    in property <bool> rf-english;
+    in property <bool> rf-from-refund;
+    in property <bool> rf-loading;
+    in property <bool> rf-edit-pending;
+    in property <bool> rf-can-undo;
+    in property <string> rf-title;
+    in property <string> rf-amount;
+    in property <string> rf-sums;
+    in property <string> rf-status;
+    in property <[RefundRow]> rf-rows;
+    in property <[string]> rf-parts;
+    in-out property <int> rf-part-index;
+    callback refunds-request();
+    callback refund-close();
+    callback refund-part-picked(int);
+    callback refund-search(string);
+    callback refund-toggle(int);
+    callback refund-undo-unlink();
     in property <string> sp-title;
     in property <string> sp-amount;
     in property <string> sp-remaining;
@@ -1817,6 +1842,7 @@ export component MainWindow inherits Window {
                                 Text { text: root.inspector-tags == "" ? "Keine Tags" : root.inspector-tags; font-size: 11px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide; }
                                 GhostButton { text: "Tags …"; enabled: !root.inspector.read-only; clicked => { root.tags-request(); } }
                                 GhostButton { text: "Aufteilen …"; enabled: !root.inspector.read-only; clicked => { root.splits-request(); } }
+                                Button { text: root.rf-english ? "Refund …" : "Erstattung …"; enabled: root.rf-can-open; clicked => { root.refunds-request(); } }
                             }
                         }
                         // details
@@ -2303,6 +2329,22 @@ export component MainWindow inherits Window {
             save() => { root.split-save(); }
             remove-split() => { root.split-clear(); }
             close() => { root.splits-open = false; root.refocus(); }
+        }
+    }
+    if refunds-open: Dialog {
+        dialog-width: 680px;
+        RefundsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent;
+            english: root.rf-english; privacy: root.privacy; from-refund: root.rf-from-refund;
+            booking-title: root.rf-title; booking-amount: root.rf-amount; sums: root.rf-sums; status: root.rf-status;
+            loading: root.rf-loading; pending: root.rf-edit-pending; can-undo: root.rf-can-undo;
+            parts: root.rf-parts; part-index <=> root.rf-part-index; rows: root.rf-rows;
+            part-picked(i) => { root.refund-part-picked(i); }
+            search(t) => { root.refund-search(t); }
+            toggle(i) => { root.refund-toggle(i); }
+            undo-unlink() => { root.refund-undo-unlink(); }
+            close() => { root.refund-close(); }
+            privacy-toggle() => { root.privacy = !root.privacy; root.privacy-changed(); }
         }
     }
     if budgets-open: Dialog {
