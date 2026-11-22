@@ -1625,8 +1625,8 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Buchung existiert nicht oder wurde gelöscht." => {
             "The transaction does not exist or was deleted."
         }
-        "Eine Erstattung muss positiv und die ursprüngliche Buchung negativ sein." => {
-            "A refund must be an incoming amount and the original transaction an outgoing one."
+        "Der gewählte Erstattungsbetrag muss positiv und der gewählte ursprüngliche Betrag negativ sein." => {
+            "The selected refund amount must be incoming and the selected original amount outgoing."
         }
         "Erstattungen dürfen nicht miteinander verkettet werden." => "Refunds cannot be chained.",
         "Die Erstattung ist bereits vollständig zugeordnet." => {

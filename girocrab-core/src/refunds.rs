@@ -513,7 +513,7 @@ fn validate(
         || !Shares::fits(parts, original, o, part, Role::Original)
     {
         return Err(CoreError::invalid(tr(
-            "Eine Erstattung muss positiv und die ursprüngliche Buchung negativ sein.",
+            "Der gewählte Erstattungsbetrag muss positiv und der gewählte ursprüngliche Betrag negativ sein.",
         )));
     }
     // no chains: the amount that is paid back (`original`, `part`) must not pay back itself,
@@ -1247,6 +1247,15 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
 /// keeps `created_ms`, the stamp of when the link was made, which is what the shares are filled
 /// by: a link keeps its place among a refund's other links.
 pub(crate) fn split_changed(conn: &Connection, id: i64) -> CoreResult<()> {
+    // an import stores splits booking by booking: without a link there is nothing to read
+    let linked: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND (refund_id=?1 OR original_id=?1))",
+        [id],
+        |r| r.get(0),
+    )?;
+    if !linked {
+        return Ok(());
+    }
     let parts = split_parts(conn)?;
     widen_gone_parts(conn, &parts, id)?;
     // without the part that paid back or was paid back the booking may have no amount on that
