@@ -272,7 +272,8 @@ fn load_rows(vault: &Vault, target: Target) -> Result<Vec<Row>, String> {
 #[derive(Default)]
 struct State {
     analytics_vault: Option<Arc<Vault>>,
-    expense_scope: Option<(Target, String, u64)>,
+    expense_scope: Option<(Target, String, u64, u64)>,
+    booking_revision: u64,
     expense_error: Option<String>,
     expense_categories: Vec<Category>,
     expense_uncategorized: (i64, usize),
@@ -416,7 +417,12 @@ fn tag_names(rows: &[Row]) -> Vec<String> {
 /// Fills the inline analytics (category breakdown, tag evaluation) from the filtered rows.
 fn render_analytics(win: &MainWindow, privacy: bool) {
     let request = with_state(|st| {
-        let key = (st.target, st.filter.from_date.clone(), st.generation);
+        let key = (
+            st.target,
+            st.filter.from_date.clone(),
+            st.generation,
+            st.booking_revision,
+        );
         if st.expense_scope.as_ref() == Some(&key) {
             return None;
         }
@@ -2111,6 +2117,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 win.set_sync_status(e.into());
                 return;
             }
+            with_state(|st| st.booking_revision = st.booking_revision.wrapping_add(1));
             apply_filter(&win);
         };
         let edit = Arc::new(edit);
@@ -2434,6 +2441,7 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
                     return;
                 }
                 with_state(|st| {
+                    st.booking_revision = st.booking_revision.wrapping_add(1);
                     for r in st.rows.iter_mut().filter(|r| ids.contains(&r.id)) {
                         apply(r);
                     }
