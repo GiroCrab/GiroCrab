@@ -53,12 +53,14 @@
 //!   `tx_recipients`, 4,207 bookings with an IBAN; the write itself not timed), 0.0 ms while the
 //!   data is unchanged; 10.7 ms after a write when every outgoing booking (36,060) carries an IBAN.
 //! Refund links (#714, REFUNDS=n links n incoming bookings before every timing; COPIES=600
-//!   STEP_DAYS=7, 44,474 bookings, 2026-11-22), for 0 / 200 / 2000 links: list_categories 37 / 175 /
-//!   1345 ms, list_category_expenses – / 145 / 1080 ms, list_categories_filtered(expense) 32 / 142 /
-//!   1044 ms, local_api summary (one year) 37 / 57 / 186 ms, list_transactions(limit 3000) 42 / 49 /
-//!   51 ms. Without links nothing is slower than before. The sums join the moved amounts as an
-//!   inline `VALUES` table that SQLite scans once per booking (`planning::effective_sql_own`):
-//!   bookings × links. The shares themselves (`refunds::shares`) cost a few ms at 2000 links.
+//!   STEP_DAYS=7, 44,474 bookings, 2026-11-22), for main / 0 / 200 / 2000 links: list_categories
+//!   34 / 37 / 45 / 66 ms, list_category_expenses – / – / 41 / 61 ms,
+//!   list_categories_filtered(expense) 29 / 34 / 40 / 59 ms, local_api summary (one year) 34 / 37 /
+//!   43 / 67 ms, list_transactions(limit 3000) 39 / 44 / 47 / 54 ms. Before the moved amounts
+//!   drove their own half of the sums (`planning::effective_sql_own`) they were a `LEFT JOIN` to
+//!   an inline `VALUES` table that SQLite scans once per booking, bookings × links:
+//!   list_categories 175 ms at 200 links and 1345 ms at 2000. The shares themselves
+//!   (`refunds::shares`) cost a few ms at 2000 links.
 use girocrab_core::models::{
     BookingDirection, BookingFilter, BookingScope, MatchKind, Rule, RuleField,
 };

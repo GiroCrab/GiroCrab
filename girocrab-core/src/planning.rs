@@ -105,20 +105,35 @@ pub(crate) fn effective_sql_own(
     let (into, paid, drawn) = (&moves.into, &moves.paid, &moves.drawn);
     // what pays back an outgoing part of an income (a fee) is no lower expense
     let paid_back = if expenses { " AND m.expense = 1" } else { "" };
+    // The moved amounts are lists worked out in Rust. Each one drives its own half (a lookup
+    // by primary key per entry) and the bookings outside it are told apart by `NOT IN` (one
+    // index over the list): a `LEFT JOIN` to the list scans it once per booking, which made
+    // the category sums slow with many links (bookings × links, `examples/category_perf`).
     Ok(format!(
         "(
-    SELECT t.category_id AS category_id, t.amount_cents - COALESCE(paid.cents, 0) AS amount_cents, t.booking_date AS booking_date{extra}
-      FROM transactions t LEFT JOIN {paid} paid ON paid.refund_id = t.id
+    SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}
+      FROM transactions t
+     WHERE t.deleted_ms IS NULL{condition}{own}
+       AND t.id NOT IN (SELECT refund_id FROM {paid})
+       AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
+    UNION ALL
+    SELECT t.category_id, t.amount_cents - paid.cents, t.booking_date{extra}
+      FROM {paid} paid CROSS JOIN transactions t ON t.id = paid.refund_id
      WHERE t.deleted_ms IS NULL{condition}{own}
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
-    SELECT s.category_id, s.amount_cents - COALESCE(drawn.cents, 0), t.booking_date{extra}
+    SELECT s.category_id, s.amount_cents, t.booking_date{extra}
       FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
-      LEFT JOIN {drawn} drawn ON drawn.split_id = s.id
+     WHERE t.deleted_ms IS NULL{condition}{own}
+       AND s.id NOT IN (SELECT split_id FROM {drawn})
+    UNION ALL
+    SELECT s.category_id, s.amount_cents - drawn.cents, t.booking_date{extra}
+      FROM {drawn} drawn CROSS JOIN transaction_splits s ON s.id = drawn.split_id
+      JOIN transactions t ON t.id = s.transaction_id
      WHERE t.deleted_ms IS NULL{condition}{own}
     UNION ALL
     SELECT m.category_id, m.amount_cents, t.booking_date{extra}
-      FROM {into} m JOIN transactions t ON t.id = m.refund_id
+      FROM {into} m CROSS JOIN transactions t ON t.id = m.refund_id
      WHERE t.deleted_ms IS NULL{condition}{paid_back}
 )"
     ))
