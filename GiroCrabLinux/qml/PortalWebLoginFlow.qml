@@ -82,6 +82,9 @@ WebLoginFlow {
     /// `cardResponseLimit` ms, so a late answer is never stored under the next card's name.
     property real expectedSince: 0
     readonly property int cardResponseLimit: 20000
+    /// The card whose answer did not come in time: the round ends there, so a late answer can
+    /// only belong to this card and is stored under its name, never under another card.
+    property var lateCard: null
     /// Cards that could not be opened (selection refused or no answer in time): the round
     /// says so at its end instead of leaving them out silently.
     property var failedCards: []
@@ -237,6 +240,9 @@ return true;`
             if (e && key !== e.previous) {
                 expectedCard = null
                 if (!cards.some(c => c.key === key)) cards = cards.concat([{ key: key, name: e.name, number: e.number }])
+            } else if (!e && lateCard && key !== lateCard.previous && !cards.some(c => c.key === key)) {
+                cards = cards.concat([{ key: key, name: lateCard.name, number: lateCard.number }])
+                lateCard = null
             }
         }
     }
@@ -340,9 +346,13 @@ return true;`
         // PortalWebSheet.switchesCard: also while older billing periods are browsed – switching
         // cards neither imports nor closes the sheet (#1010).
         // The open answer of the card switched to comes first: a late one would otherwise be
-        // stored under the next card. Without an answer in time the card counts as not opened.
+        // stored under the next card. Without an answer in time the card counts as not opened
+        // and the round ends: switching on while its answer may still arrive could not tell
+        // the two answers apart.
         if (expectedCard !== null && Date.now() - expectedSince > cardResponseLimit) {
-            failedCards = failedCards.concat([expectedCard.name])
+            failedCards = failedCards.concat([expectedCard.name], (cardQueue || []).map(c => c.name))
+            cardQueue = []
+            lateCard = expectedCard
             expectedCard = null
         }
         if (kind === "AmericanExpress" && n > 0 && !away && Date.now() - lastChange > 4000 && !p.cardsOpened
@@ -355,7 +365,9 @@ return true;`
             return
         }
         // Never while browsing older periods: the automatic import closes the sheet.
-        if (!browsingHistory && n > importedCount && !away && !p.more && Date.now() - lastChange > 4000) {
+        // Nor while a card round is still open or a card's answer is outstanding (#243).
+        if (!browsingHistory && n > importedCount && !away && !p.more && Date.now() - lastChange > 4000
+                && !cardsPending && expectedCard === null) {
             // The automatic import closes the sheet, so it never runs while stored pending
             // charges are no longer listed: they are matched (or discarded) via the button.
             openHoldsNow(unlisted => {
@@ -470,7 +482,7 @@ return true;`
     Button {
         text: qsTr("Umsätze übernehmen (%1 erkannt)").arg(flow.recognized)
         highlighted: true
-        enabled: !flow.importing && flow.recognized > 0 && !flow.cardsPending
+        enabled: !flow.importing && flow.recognized > 0 && !flow.cardsPending && flow.expectedCard === null
         onClicked: flow.attempt(true, true)
     }
 }
