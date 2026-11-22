@@ -63,6 +63,14 @@ struct Ui {
     from_refund: bool,
 }
 
+impl Ui {
+    fn shows_link(&self, link: Link) -> bool {
+        self.booking
+            .as_ref()
+            .is_some_and(|b| b.0 == link.0 || b.0 == link.2)
+    }
+}
+
 thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
 }
@@ -469,13 +477,14 @@ fn edit_link(win: &MainWindow, v: Arc<Vault>, edit: LinkEdit, link: Link) {
             if let Some(can_undo) = sheet {
                 win.set_rf_can_undo(can_undo);
                 win.set_rf_edit_pending(false);
-                match &done {
-                    Ok(()) if win.get_refunds_open() => refresh(&win, v.clone()),
-                    Err(e) => win.set_rf_status(e.as_str().into()),
-                    _ => (),
+                if let Err(e) = &done {
+                    win.set_rf_status(e.as_str().into());
                 }
             }
             if done.is_ok() {
+                if win.get_refunds_open() && with_ui(|u| u.shows_link(link)) {
+                    refresh(&win, v.clone());
+                }
                 reload(&win, v.clone());
                 refresh_dashboard(&win, v);
             }
@@ -596,6 +605,24 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reopened_dialog_refreshes_for_either_affected_booking() {
+        let link = (7, 1, 9, 2);
+        let mut ui = Ui::default();
+        assert!(!ui.shows_link(link));
+        for id in [7, 9] {
+            ui.booking = Some((id, 1000, "EUR".into()));
+            ui.generation = 42;
+            ui.pending = true;
+            ui.undo_unlink = Some((1, 0, 2, 0));
+            assert!(ui.shows_link(link));
+            assert!(ui.pending);
+            assert_eq!(ui.undo_unlink, Some((1, 0, 2, 0)));
+        }
+        ui.booking = Some((11, 1000, "EUR".into()));
+        assert!(!ui.shows_link(link));
+    }
 
     fn booking(id: i64, cents: i64, share: Option<i64>, open: i64) -> RefundBooking {
         RefundBooking {
