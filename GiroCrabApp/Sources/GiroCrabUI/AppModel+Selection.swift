@@ -605,11 +605,20 @@ extension AppModel {
         return max(0, min(count - 1, (current ?? -1) + step))
     }
 
+    /// Row to select for a keyboard move, and whether the list must be scrolled explicitly
+    /// because the move lands on the row that is already selected (no selection change, so
+    /// `SelectionScroller`'s `onChange` would not fire). Nil for an empty list.
+    nonisolated static func keyboardMove<ID: Equatable>(ids: [ID], current: ID?, delta: Int) -> (index: Int, rescroll: Bool)? {
+        let idx = current.flatMap { id in ids.firstIndex(of: id) }
+        guard let next = selectionTarget(from: idx, delta: delta, count: ids.count) else { return nil }
+        return (next, next == idx)
+    }
+
     func moveSelection(_ delta: Int) {
         let list = visibleBookings
-        let idx = selectedBookingID.flatMap { id in list.firstIndex { $0.id == id } }
-        guard let next = Self.selectionTarget(from: idx, delta: delta, count: list.count) else { return }
+        guard let move = Self.keyboardMove(ids: list.map(\.id), current: selectedBookingID, delta: delta) else { return }
         selectedBookingIDs = []
-        selectedBookingID = list[next].id
+        selectedBookingID = list[move.index].id
+        if move.rescroll { keyboardScrollToken &+= 1 }
     }
 }
