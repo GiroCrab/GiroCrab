@@ -180,8 +180,11 @@ struct RefundPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let booking: Booking
     @State private var links: RefundLinks?
-    @State private var candidates: [RefundBooking] = []
-    @State private var top: [RefundSuggestion] = []
+    @State private var loadedCandidates: [RefundBooking] = []
+    @State private var loadedTop: [RefundSuggestion] = []
+    /// The part and direction `loadedTop` and `loadedCandidates` were read for: rows read for
+    /// another part (or the other direction) are not offered while the new ones load or fail.
+    @State private var rowsFor: String?
     @State private var loaded = false
     @State private var search = ""
     /// The parts of a split booking the sheet was opened from, and the one the next link is
@@ -198,6 +201,9 @@ struct RefundPickerSheet: View {
     private var fromRefund: Bool {
         ownParts.first { $0.part == ownPart }.map { $0.split.amountCents > 0 } ?? (booking.amountCents > 0)
     }
+    private var rowsKey: String { "\(ownPart)|\(fromRefund)" }
+    private var candidates: [RefundBooking] { rowsFor == rowsKey ? loadedCandidates : [] }
+    private var top: [RefundSuggestion] { rowsFor == rowsKey ? loadedTop : [] }
     private var linked: [RefundBooking] { (fromRefund ? links?.originals : links?.refunds) ?? [] }
     private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The list below the suggestions; a search shows every hit, also a suggested one.
@@ -285,7 +291,7 @@ struct RefundPickerSheet: View {
             }
         }
         .macFrame(minWidth: 540, idealWidth: 580, minHeight: 520)
-        .task(id: "\(model.vaultRevision)|\(model.refundLinksRevision)|\(search)|\(ownPart)") { await reload() }
+        .task(id: "\(model.vaultRevision)|\(model.refundLinksRevision)|\(search)|\(rowsKey)") { await reload() }
         #if os(macOS)
         .onExitCommand { dismiss() }
         #endif
@@ -341,7 +347,8 @@ struct RefundPickerSheet: View {
     /// Why an unlinked row cannot be chosen: this booking or that one has nothing left to link.
     /// What this booking has left for a further link, in the role the sheet shows.
     /// Of the selected part when the booking is split: another part may still have something left.
-    @State private var ownOpen: Int64?
+    @State private var loadedOpen: Int64?
+    private var ownOpen: Int64? { rowsFor == rowsKey ? loadedOpen : nil }
 
     private var partUsedUp: Bool { ownOpen == 0 && ownParts.count > 1 && ownPart > 0 }
 
@@ -422,11 +429,12 @@ struct RefundPickerSheet: View {
             }
             guard run == loads, let result else { return }
             links = result.0
-            ownOpen = result.4
+            loadedOpen = result.4
             // a linked booking is shown on top only
             let linkedIDs = Set(linked.map(Self.key))
-            top = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
-            candidates = result.2
+            loadedTop = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
+            loadedCandidates = result.2
+            rowsFor = "\(part)|\(paysBack)"
             // parts count from 1 in the order of the split; the sheet starts with a part on the
             // booking's own side
             ownParts = result.3.enumerated().map { (part: UInt32($0.offset + 1), split: $0.element) }
@@ -447,7 +455,10 @@ struct RefundPickerSheet: View {
 struct RefundLinksCard: View {
     @Environment(AppModel.self) private var model
     let booking: Booking
-    @State private var links: RefundLinks?
+    @State private var loaded: (id: Int64, links: RefundLinks)?
+    /// Only the links read for the booking on screen: the card keeps its state when the
+    /// selection moves on, and the links of the booking before are not this one's.
+    private var links: RefundLinks? { loaded?.id == booking.id ? loaded?.links : nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -493,7 +504,7 @@ struct RefundLinksCard: View {
             let id = booking.id
             let read = try? await model.vaultOffMain { try $0.refundLinks(transactionId: id) }
             guard !Task.isCancelled else { return }
-            links = read ?? nil
+            loaded = (read ?? nil).map { (id, $0) }
         }
     }
 
