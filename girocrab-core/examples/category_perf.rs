@@ -52,6 +52,13 @@
 //!   (a scan over every booking row) → 0.6 ms for the first call after a write (index
 //!   `tx_recipients`, 4,207 bookings with an IBAN; the write itself not timed), 0.0 ms while the
 //!   data is unchanged; 10.7 ms after a write when every outgoing booking (36,060) carries an IBAN.
+//! Refund links (#714, REFUNDS=n links n incoming bookings before every timing; COPIES=600
+//!   STEP_DAYS=7, 44,474 bookings, 2026-11-22), for 0 / 200 / 2000 links: list_categories 37 / 175 /
+//!   1345 ms, list_category_expenses – / 145 / 1080 ms, list_categories_filtered(expense) 32 / 142 /
+//!   1044 ms, local_api summary (one year) 37 / 57 / 186 ms, list_transactions(limit 3000) 42 / 49 /
+//!   51 ms. Without links nothing is slower than before. The sums join the moved amounts as an
+//!   inline `VALUES` table that SQLite scans once per booking (`planning::effective_sql_own`):
+//!   bookings × links. The shares themselves (`refunds::shares`) cost a few ms at 2000 links.
 use girocrab_core::models::{
     BookingDirection, BookingFilter, BookingScope, MatchKind, Rule, RuleField,
 };
@@ -170,6 +177,10 @@ fn main() {
     );
     let b = all.transactions[0].clone();
     let (c1, c2) = (cats[3].id, cats[5].id);
+    let refunds = env_usize("REFUNDS", 0);
+    if refunds > 0 {
+        refund_links(&vault, &all.transactions, refunds);
+    }
 
     // The UI's list filter: newest 3000 bookings, all accounts, current period.
     let ui_filter = || BookingFilter {
@@ -438,6 +449,44 @@ fn main() {
     // Last: it writes (a document, a recurring series).
     small_results(&vault, &all.transactions);
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// REFUNDS=n links n incoming bookings to an outgoing one each (#714), before every other
+/// timing: the list and the category sums then read those links.
+fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize) {
+    let incoming = all.iter().filter(|t| t.amount_cents > 0);
+    let outgoing = all.iter().filter(|t| t.amount_cents < 0);
+    let pairs: Vec<(i64, i64)> = incoming.zip(outgoing).map(|(r, o)| (r.id, o.id)).collect();
+    let t = std::time::Instant::now();
+    let linked: Vec<(i64, i64)> = pairs
+        .into_iter()
+        .filter(|&(r, o)| vault.link_refund(r, o, 0).is_ok())
+        .take(n)
+        .collect();
+    let per_link = t.elapsed().as_secs_f32() * 1000.0 / linked.len().max(1) as f32;
+    println!(
+        "refund links: {} ({per_link:.1} ms per link_refund)",
+        linked.len()
+    );
+    let Some(&(r, o)) = linked.first() else {
+        return;
+    };
+    time("refunds: refund_links (inspector)", || {
+        vault.refund_links(r)
+    });
+    time("refunds: refund_suggestions", || {
+        vault.refund_suggestions(o)
+    });
+    time("refunds: refund_candidates(limit 200)", || {
+        vault.refund_candidates(o, String::new(), 200)
+    });
+    time("refunds: refund_candidates(search, limit 200)", || {
+        vault.refund_candidates(o, "a".into(), 200)
+    });
+    time("refunds: list_category_expenses (header pie)", || {
+        vault.list_category_expenses(None, None, vec![])
+    });
+    println!();
 }
 
 /// Calls that return a handful of bookings or only sums.
