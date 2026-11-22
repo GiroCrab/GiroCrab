@@ -4225,6 +4225,31 @@ fn a_taken_over_account_without_imported_bookings_returns_when_its_source_is_ope
 }
 
 #[test]
+fn a_marked_account_revived_by_another_source_keeps_its_mark() {
+    // deleting a login deletes its accounts, marked ones too; another, closed MoneyMoney
+    // account imported into one of them brings it back, but its state is still for its own
+    // MoneyMoney account to give
+    let v = vault();
+    import_with(&v, &fake_db(), |o| o.create_connections = true);
+    let giro = account_by_name(&v, "Girokonto");
+    note_archive_unknown(&v.db().unwrap(), &[giro.id]).unwrap();
+    v.delete_bank_connection(giro.connection_id.unwrap())
+        .unwrap();
+    import_with(
+        &v,
+        &fake_db_with(false, "UPDATE accounts SET refresh = 16 WHERE rowid = 2;"),
+        |o| {
+            o.accounts.retain(|c| c.mm_id == 2);
+            for c in o.accounts.iter_mut() {
+                c.target_account_id = Some(giro.id);
+            }
+        },
+    );
+    assert_eq!(archived_unix(&v, giro.id), None);
+    assert_eq!(archive_unknown(&v.db().unwrap()).unwrap(), vec![giro.id]);
+}
+
+#[test]
 fn an_iban_two_sources_share_leaves_the_state_alone() {
     // MoneyMoney keeps a closed and an open account with the Girokonto's IBAN (#94): the IBAN
     // names no source, so neither the wrong archive nor the repair note is resolved by it –

@@ -3236,7 +3236,8 @@ impl ImportCtx<'_> {
                       WHERE id = ?1",
                     [id],
                 )?;
-            } else if a.closed && revived {
+            } else if a.closed && revived && !marked {
+                // a marked one (deleted with its login) waits for its own MoneyMoney account
                 archive_closed(conn, id)?;
             } else if own && wrongly_archived && !a.closed {
                 // still archived by the import of v0.8.5 and taken over by a fetch

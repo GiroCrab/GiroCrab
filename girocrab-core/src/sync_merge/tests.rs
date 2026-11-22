@@ -3784,6 +3784,35 @@ fn repairs_of_one_account_agree_and_a_later_choice_wins() {
     );
 }
 
+/// #998 review: two known archive states with one stamp (an explicit choice that happens to
+/// carry the stamp of an import's resolution) end alike in both directions: archived wins.
+#[test]
+fn equal_archive_stamps_end_alike_on_both_devices() {
+    let dir = temp_dir("archive-tie");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    for (v, unix) in [(&a, "NULL"), (&b, "1790001000")] {
+        exec(
+            v,
+            &format!(
+                "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+                 INSERT INTO accounts(id, group_id, external_ref, name, archived_unix, archived_ms)
+                     VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', {unix}, 1790001000125);"
+            ),
+        );
+        fill_missing_uuids(&v.db().unwrap()).unwrap();
+    }
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(
+            n(
+                v,
+                "SELECT IFNULL(archived_unix, 0) FROM accounts WHERE id = 1"
+            ),
+            1790001000
+        );
+    }
+}
+
 /// A archived and deleted account A1; B took that over and then got A1 again
 /// from the bank (revive). Both end with A1 live, unarchived and in totals.
 #[test]

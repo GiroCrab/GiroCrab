@@ -620,10 +620,13 @@ pub(crate) fn merge_attached(
         )? as u32;
         // the #998 mark "state unknown" (`archive_unknown`) is part of the archive state and
         // goes with it; with equal stamps (the same repair, then an import here or there that
-        // found the account open) the known state wins
+        // found the account open) the known state wins, between two known ones the larger
+        // archive time (archived over active), so both directions end alike
         changed += tx.execute(
             "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3, archive_unknown = ?5
-              WHERE id = ?1 AND (?4 OR archived_ms < ?3 OR (archived_ms = ?3 AND archive_unknown > ?5))",
+              WHERE id = ?1 AND (?4 OR archived_ms < ?3
+                    OR (archived_ms = ?3 AND (archive_unknown > ?5
+                        OR (archive_unknown = ?5 AND IFNULL(archived_unix, -1) < IFNULL(?2, -1)))))",
             params![id, archived, archived_ms, fresh, unknown],
         )? as u32;
         // total switch (#337): the one field merge of value and stamp — newer
