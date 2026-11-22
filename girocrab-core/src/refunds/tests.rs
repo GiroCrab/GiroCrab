@@ -128,12 +128,25 @@ fn cascade_and_no_chains() {
         .unwrap()
         .execute("DELETE FROM transactions WHERE id=?1", [b[0]])
         .unwrap();
+    // the inspector joins the bookings and would hide a row left behind
+    let stored = |id: i64| -> i64 {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM refund_links WHERE refund_id=?1 OR original_id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(stored(b[0]), 0);
     assert!(originals(&v, b[2]).is_empty());
     v.link_refund(b[2], b[1], 0).unwrap();
     v.db()
         .unwrap()
         .execute("DELETE FROM transactions WHERE id=?1", [b[2]])
         .unwrap();
+    assert_eq!(stored(b[2]), 0);
     assert!(v.refund_links(b[1]).unwrap().refunds.is_empty());
 }
 

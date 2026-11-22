@@ -470,6 +470,14 @@ fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize)
         "refund links: {} ({per_link:.1} ms per link_refund)",
         linked.len()
     );
+    if linked.len() < n {
+        // timings with fewer links are not the workload that was asked for
+        eprintln!(
+            "REFUNDS={n}: the vault has only {} pairs to link; raise COPIES",
+            linked.len()
+        );
+        std::process::exit(1);
+    }
     let Some(&(r, o)) = linked.first() else {
         return;
     };

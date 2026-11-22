@@ -345,13 +345,27 @@ fn qa_merge_conflicting_order_preserves_capacity_and_converges() {
     b.link_refund(br, originals[0], 0).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    // per original, by the id both devices know it by: the same shares the other way
+    // round would be two different results
     let amounts = |v: &Vault, id| {
-        allocations(v, id)
+        let shares = allocations(v, id);
+        let db = v.db().unwrap();
+        shares
             .into_iter()
-            .map(|(_, n)| n.unwrap())
+            .map(|(original, n)| {
+                let key: String = db
+                    .query_row(
+                        "SELECT external_id FROM transactions WHERE id=?1",
+                        [original],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                (key, n.unwrap())
+            })
             .collect::<Vec<_>>()
     };
-    assert_eq!(amounts(&a, r), vec![6000, 4000]);
+    let shares: Vec<i64> = amounts(&a, r).into_iter().map(|(_, n)| n).collect();
+    assert_eq!(shares, vec![6000, 4000]);
     assert_eq!(amounts(&a, r), amounts(&b, br));
     assert_eq!(a.refund_links(r).unwrap().refund_open_cents, 0);
     let extra = booking(&a, account, -1000);
