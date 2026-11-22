@@ -180,6 +180,21 @@ data class ManualLoan(
     val startDate: LocalDate,
 )
 
+/**
+ * The currency most of the money sits in — the one the app adds up in.
+ *
+ * Account balances arrive in their own currencies and the vault carries no exchange rates for
+ * whole accounts, so a total across currencies would be a number without a unit. Everything that
+ * sums money uses this currency and reports the rest as not converted instead.
+ */
+fun VaultSnapshot.primaryCurrency(): String =
+    accounts
+        .groupBy { it.currency.ifBlank { "EUR" } }
+        .mapValues { (_, rows) -> rows.sumOf { kotlin.math.abs(it.balanceCents) } }
+        .maxByOrNull { it.value }
+        ?.key
+        ?: "EUR"
+
 data class TangibleAsset(
     val id: String,
     val name: String,

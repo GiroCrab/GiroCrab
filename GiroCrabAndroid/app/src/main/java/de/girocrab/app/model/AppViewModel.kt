@@ -294,13 +294,21 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
             .groupBy { it.categoryId }
             .mapValues { (_, v) -> -v.sumOf { it.amountCents } }
 
-    fun netWorthCents(): Long {
+    /**
+     * Net worth in [currency] — only that currency, because balances of different currencies are
+     * not converted anywhere in the vault. Adding them would produce a number without a unit.
+     */
+    fun netWorthCents(currency: String = _state.value.data.primaryCurrency()): Long {
         val d = _state.value.data
-        val counted = d.accounts.filter { !it.hidden && it.includeInTotal }
+        val counted = d.accounts.filter {
+            !it.hidden && it.includeInTotal && it.currency.ifBlank { "EUR" } == currency
+        }
         val countedIds = counted.map { it.id }.toSet()
-        // A tangible asset whose account is already in the sum would be counted twice: the account
-        // balance contains it. Only assets without a counted account add to the total (#1429).
-        val looseAssets = d.assets.filterNot { it.accountId in countedIds }
+        // A tangible asset whose account is counted is already inside that account's balance; only
+        // assets of **uncounted** accounts (excluded, hidden or absent) never were, and only those
+        // without any account at all are added on top (#1429).
+        val allIds = d.accounts.map { it.id }.toSet()
+        val looseAssets = d.assets.filter { it.accountId.isBlank() || it.accountId !in allIds }
         return counted.sumOf { it.balanceCents } + looseAssets.sumOf { it.valueCents } -
             d.loans.sumOf { it.remainingCents }
     }

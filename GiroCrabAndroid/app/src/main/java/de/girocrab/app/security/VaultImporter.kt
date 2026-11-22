@@ -193,12 +193,16 @@ class VaultImporter(
         // The new key cannot open the old file, but the old file must survive a failed attempt:
         // it is moved aside first and only dropped once the restore worked.
         val previous = if (vaultPath.exists()) File("${vaultPath.path}.replaced") else null
+        // Only a file that was really moved may be deleted during the rollback: if the move failed,
+        // `vaultPath` still holds the original.
+        var moved = false
         val outcome: ImportResult = try {
             if (previous != null) {
                 previous.delete()
                 if (!vaultPath.renameTo(previous)) {
                     throw ImportFailed("Vorhandene Tresordatei ließ sich nicht beiseitelegen.")
                 }
+                moved = true
             }
             val opened = opener.open(vaultPath.path, key)
             if (opened == null) {
@@ -224,9 +228,10 @@ class VaultImporter(
         } catch (e: Throwable) {
             runCatching { vault?.close() }
             keyStore.clearWrapped()
-            vaultPath.delete()
-            // Cancelled or failed: the untouched vault goes back where it was.
-            restorePrevious(previous, vaultPath)
+            // Delete only what this attempt created: the moved-away original is restored below, and
+            // a file that could not be moved is still the user's data.
+            if (previous == null || moved) vaultPath.delete()
+            restorePrevious(if (moved) previous else null, vaultPath)
             val reason = if (e is ImportFailed) {
                 e.message
             } else {

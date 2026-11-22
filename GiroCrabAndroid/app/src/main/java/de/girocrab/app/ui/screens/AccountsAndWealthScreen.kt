@@ -139,6 +139,10 @@ data class WealthBreakdown(
     val tangibles: Long,
     val loans: Long,
     val creditCards: Long,
+    /** Currency every figure above is in. */
+    val currency: String = "EUR",
+    /** Currencies that hold money too, but are not converted — the screen has to say so. */
+    val foreignCurrencies: Set<String> = emptySet(),
 ) {
     val assets get() = cash + depot + tangibles
     val liabilities get() = loans + creditCards
@@ -150,23 +154,32 @@ fun wealthBreakdown(s: AppUiState): WealthBreakdown {
     // `includeInTotal` is the core's own flag: an account excluded there must not appear in any
     // overall sum, however visible it is in the list.
     val visible = d.accounts.filterNot { it.hidden || !it.includeInTotal }
-    fun sumOf(vararg kinds: AccountKind) =
-        visible.filter { it.kind in kinds }.sumOf { it.balanceCents }
-    // A tangible asset sits in an account that already carries its value: counting both would
-    // double it. Its account drops out of the depot term, the asset itself is added below.
+    // No conversion anywhere in the vault: a total across currencies would have no unit.
+    val currency = d.primaryCurrency()
+    val counted = visible.filter { it.currency.ifBlank { "EUR" } == currency }
+    val countedIds = counted.map { it.id }.toSet()
+    // A tangible asset sits in an account that already carries its value. That account steps out of
+    // every bucket and the asset is counted once, as "Sachwerte" — for an account that is excluded
+    // from the totals, its asset is excluded too.
     val tangibleAccountIds = d.assets.map { it.accountId }.filter { it.isNotBlank() }.toSet()
-    val depotFromHoldings = d.holdings.filter { it.accountId !in tangibleAccountIds }.sumOf { it.valueCents }
-    val depotAccounts = visible
-        .filter { it.kind == AccountKind.Depot && it.id !in tangibleAccountIds }
-        .sumOf { it.balanceCents }
+    val plain = counted.filter { it.id !in tangibleAccountIds }
+    val plainIds = plain.map { it.id }.toSet()
+    fun sumOf(vararg kinds: AccountKind) =
+        plain.filter { it.kind in kinds }.sumOf { it.balanceCents }
+    val depotFromHoldings = d.holdings.filter { it.accountId in plainIds }.sumOf { it.valueCents }
+    val depotAccounts = plain.filter { it.kind == AccountKind.Depot }.sumOf { it.balanceCents }
     val cards = sumOf(AccountKind.CreditCard)
     val loanAccounts = sumOf(AccountKind.Loan)
     return WealthBreakdown(
         cash = sumOf(AccountKind.Giro, AccountKind.Savings, AccountKind.Wallet, AccountKind.Cash),
         depot = if (depotFromHoldings > 0) depotFromHoldings else depotAccounts,
-        tangibles = d.assets.sumOf { it.valueCents },
+        tangibles = d.assets
+            .filter { it.accountId.isBlank() || it.accountId in countedIds }
+            .sumOf { it.valueCents },
         loans = d.loans.sumOf { it.remainingCents } + abs(loanAccounts),
         creditCards = if (cards < 0) -cards else 0L,
+        currency = currency,
+        foreignCurrencies = visible.map { it.currency.ifBlank { "EUR" } }.toSet() - currency,
     )
 }
 
@@ -268,8 +281,9 @@ private fun ScopeGrid(
     val depotCount = state.data.holdings.size
     fun info(k: ScopeCardKind): Pair<String, Int> = when (k) {
         ScopeCardKind.AllAccounts -> formatMoney(total, masked = masked) to 0
-        ScopeCardKind.NetWorth -> formatMoney(wealth.net, masked = masked) to 0
-        ScopeCardKind.Depot -> (if (depotCount > 0) "$depotCount Positionen" else formatMoney(wealth.depot, masked = masked)) to 0
+        ScopeCardKind.NetWorth -> formatMoney(wealth.net, wealth.currency, masked) to 0
+        ScopeCardKind.Depot ->
+            (if (depotCount > 0) "$depotCount Positionen" else formatMoney(wealth.depot, wealth.currency, masked)) to 0
         ScopeCardKind.Unread -> (if (badges.unreadBookings > 0) "${badges.unreadBookings} neu" else "Alles gelesen") to badges.unreadBookings
         ScopeCardKind.Contracts -> "${badges.contracts} aktiv" to 0
         ScopeCardKind.Planned -> "${state.data.standingOrders.size + badges.plannedPayments} Zahlungen" to 0
@@ -407,40 +421,62 @@ fun WealthOverview(w: WealthBreakdown, masked: Boolean, modifier: Modifier = Mod
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionTitle("Vermögen")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            WealthCard("Vermögenswerte", w.assets, Color(0xFF15803D), masked, Modifier.weight(1f))
-            WealthCard("Verbindlichkeiten", w.liabilities, Color(0xFFB91C1C), masked, Modifier.weight(1f))
+            WealthCard("Vermögenswerte", w.assets, Color(0xFF15803D), masked, w.currency, Modifier.weight(1f))
+            WealthCard("Verbindlichkeiten", w.liabilities, Color(0xFFB91C1C), masked, w.currency, Modifier.weight(1f))
         }
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
             Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Nettovermögen", fontWeight = FontWeight.SemiBold)
-                Text(formatMoney(w.net, masked = masked), fontWeight = FontWeight.Bold)
+                Text(formatMoney(w.net, w.currency, masked), fontWeight = FontWeight.Bold)
             }
         }
         CompositionBar("Zusammensetzung Vermögen", w.assets, masked, listOf(
             Triple("Konten", w.cash, Color(0xFF1976D2)),
             Triple("Depot", w.depot, Color(0xFF7B1FA2)),
             Triple("Sachwerte", w.tangibles, Color(0xFFF9A825)),
-        ))
+        ), w.currency)
         CompositionBar("Zusammensetzung Verbindlichkeiten", w.liabilities, masked, listOf(
             Triple("Kredite", w.loans, Color(0xFFB91C1C)),
             Triple("Kreditkarten", w.creditCards, Color(0xFFEF6C00)),
-        ))
+        ), w.currency)
+        // Silently dropping money in another currency would look like a complete total.
+        if (w.foreignCurrencies.isNotEmpty() && !masked) {
+            Text(
+                "Nicht umgerechnet und daher nicht enthalten: " +
+                    w.foreignCurrencies.sorted().joinToString(", ") + ".",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 @Composable
-private fun WealthCard(title: String, cents: Long, color: Color, masked: Boolean, modifier: Modifier) {
+private fun WealthCard(
+    title: String,
+    cents: Long,
+    color: Color,
+    masked: Boolean,
+    currency: String,
+    modifier: Modifier,
+) {
     Card(modifier, colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f))) {
         Column(Modifier.padding(12.dp)) {
             Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(formatMoney(cents, masked = masked), style = MaterialTheme.typography.titleMedium,
+            Text(formatMoney(cents, currency, masked), style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold, color = color)
         }
     }
 }
 
 @Composable
-private fun CompositionBar(title: String, total: Long, masked: Boolean, parts: List<Triple<String, Long, Color>>) {
+private fun CompositionBar(
+    title: String,
+    total: Long,
+    masked: Boolean,
+    parts: List<Triple<String, Long, Color>>,
+    currency: String = "EUR",
+) {
     val shown = parts.filter { it.second > 0 }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = MaterialTheme.typography.labelLarge)
@@ -459,7 +495,7 @@ private fun CompositionBar(title: String, total: Long, masked: Boolean, parts: L
                 Spacer(Modifier.size(8.dp))
                 Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                 val pct = if (masked) "" else " · ${(v * 100.0 / total).toInt()} %"
-                Text(formatMoney(v, masked = masked) + pct, style = MaterialTheme.typography.bodySmall)
+                Text(formatMoney(v, currency, masked) + pct, style = MaterialTheme.typography.bodySmall)
             }
         }
     }

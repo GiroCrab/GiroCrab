@@ -151,11 +151,22 @@ class MainActivity : FragmentActivity() {
 
     // Restore replaces the vault file, then locks so the next unlock re-reads it.
     private val restoreLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) runCatching {
-            // Lock first: the file underneath is about to be replaced, nothing should still show it.
-            vm.lock()
-            contentResolver.openInputStream(uri)?.use { input -> vaultFile.outputStream().use { input.copyTo(it) } }
-        }
+        if (uri == null) return@registerForActivityResult
+        // `outputStream()` truncates first: a provider that fails halfway would leave nothing at all.
+        // The copy therefore lands next to the vault and only replaces it once it is complete.
+        val target = vaultFile
+        val staged = File("${target.path}.incoming")
+        // Lock first: nothing should still show the data that is being replaced.
+        vm.lock()
+        runCatching {
+            staged.parentFile?.mkdirs()
+            contentResolver.openInputStream(uri)?.use { input -> staged.outputStream().use { input.copyTo(it) } }
+                ?: error("no stream")
+            require(staged.length() > 0L) { "backup is empty" }
+            // Replacing is not guaranteed to be atomic across the rename: be explicit about it.
+            if (target.exists() && !target.delete()) error("cannot replace vault")
+            if (!staged.renameTo(target)) error("cannot move backup into place")
+        }.onFailure { staged.delete() }
     }
 
     private fun applyLanguage(code: String) {
