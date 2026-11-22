@@ -827,6 +827,8 @@ public final class AppModel {
     var standingUnknown: String?
     /// Bumped whenever a sync wrote a row to the Abrufprotokoll (#238); the log window reloads on it.
     var syncLogVersion = 0
+    /// Connections whose last sync read only part of the history (the next sync continues it).
+    var historyIncomplete: [Int64: HistoryProgress] = [:]
     /// Unified booking export (PDF / CSV / XML).
     var showExportSheet = false
     var exportFile = ExportFileDocument(data: Data())
@@ -1877,6 +1879,7 @@ public final class AppModel {
         setupRequest = nil
         webLoginConnection = nil
         syncingConnectionID = nil
+        historyIncomplete = [:]
         quietSyncConnectionID = nil
         // the failure text may name a bank: gone with the vault
         autoSyncStatus = AutoSyncStatus()

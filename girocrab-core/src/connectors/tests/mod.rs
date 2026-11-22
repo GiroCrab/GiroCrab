@@ -69,6 +69,95 @@ fn store_fetch_matches_depot_holdings_without_iban() {
 }
 
 #[test]
+fn history_bookings_arrive_checked_and_stored_documents_get_linked() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-history-docs");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(
+            ConnectorKind::TradeRepublic,
+            String::new(),
+            "+491701234567".into(),
+        )
+        .unwrap();
+    let account = RemoteAccount {
+        external_ref: "tr:cash".into(),
+        name: "Verrechnungskonto".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 1000,
+        balance_date: "2026-11-10".into(),
+    };
+    let doc = |bytes: &[u8], booking: Option<&str>| crate::documents::RemoteDocument {
+        account_ref: "tr:cash".into(),
+        booking_external_id: booking.map(str::to_string),
+        title: "Abrechnung – Beispiel".into(),
+        doc_type: "abrechnung".into(),
+        mime_type: "application/pdf".into(),
+        file_name: "a.pdf".into(),
+        bytes: bytes.to_vec(),
+        source_url: "https://example.invalid/doc/1".into(),
+        date: "2024-05-02".into(),
+    };
+    // first the PDF alone (its booking is older than the sync window of that time)
+    let first = FetchResult {
+        accounts: vec![account.clone()],
+        documents: vec![doc(b"%PDF-1.4 test", None)],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::TradeRepublic, conn, first).unwrap();
+    assert_eq!(s.documents_imported, 1);
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert!(docs.iter().all(|d| d.booking_id.is_none()));
+
+    // later the history pass brings the booking (as checked) and the link-only document
+    let booking = RemoteTransaction {
+        account_ref: "tr:cash".into(),
+        external_id: "item-1".into(),
+        booking_date: "2024-05-02".into(),
+        value_date: "2024-05-02".into(),
+        amount_cents: -7500,
+        currency: "EUR".into(),
+        counterparty: "Beispiel".into(),
+        checked: true,
+        ..Default::default()
+    };
+    let second = || FetchResult {
+        accounts: vec![account.clone()],
+        transactions: vec![booking.clone()],
+        documents: vec![doc(&[], Some("item-1"))],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::TradeRepublic, conn, second()).unwrap();
+    assert_eq!(
+        s.documents_imported, 0,
+        "a link-only document is no new document"
+    );
+    assert_eq!(
+        v.list_accounts().unwrap().pop().unwrap().new_count,
+        0,
+        "history is not new"
+    );
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs.len(), 1);
+    let doc_id = docs[0].id;
+    assert!(
+        docs[0].booking_id.is_some(),
+        "the stored document is linked now"
+    );
+    v.link_document(doc_id, None).unwrap();
+    store_fetch(&v, ConnectorKind::TradeRepublic, conn, second()).unwrap();
+    assert_eq!(
+        v.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        None,
+        "replaying an already stored booking does not restore a manual unlink"
+    );
+}
+
+#[test]
 fn unread_depot_keeps_its_positions_and_value() {
     // A sync that could not read the depot (Trade Republic: portfolio request failed)
     // still lists the account, with a placeholder balance of 0.
@@ -2417,13 +2506,15 @@ fn a_fetch_stores_no_documents_while_retrieval_is_off() {
         .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
         .unwrap();
     v.set_documents_fetch(conn, false).unwrap();
-    store_fetch(
+    let summary = store_fetch(
         &v,
         ConnectorKind::TradeRepublic,
         conn,
         fetch_with_document(),
     )
     .unwrap();
+    // the log can say why no document came
+    assert!(summary.documents_off);
     assert!(
         v.list_all_documents(crate::documents::DocumentFilter::default())
             .unwrap()
@@ -2431,13 +2522,14 @@ fn a_fetch_stores_no_documents_while_retrieval_is_off() {
     );
     // on again: the same delivery is stored
     v.set_documents_fetch(conn, true).unwrap();
-    store_fetch(
+    let on = store_fetch(
         &v,
         ConnectorKind::TradeRepublic,
         conn,
         fetch_with_document(),
     )
     .unwrap();
+    assert!(!on.documents_off);
     assert_eq!(
         v.list_all_documents(crate::documents::DocumentFilter::default())
             .unwrap()

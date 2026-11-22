@@ -456,6 +456,26 @@ extension AppModel {
         }.map(\.id))
     }
 
+    /// Trade Republic: restarts the history in the next sync.
+    func resetTradeRepublicHistory(_ id: Int64) {
+        guard syncingConnectionID == nil, let pin = pinVault() else { return }
+        Task {
+            do {
+                try await pin.run { try $0.resetTradeRepublicHistory(connectionId: id) }
+                guard isCurrent(pin) else { return }
+                let message = String(localized: "Historie wird neu aufgebaut")
+                historyIncomplete[id] = HistoryProgress(remaining: 0, total: 0)
+                toast = message
+                logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
+            } catch {
+                guard isCurrent(pin) else { return }
+                let message = describe(error)
+                toast = message
+                logSync(connectionID: id, source: .manual, outcome: .error, message: message)
+            }
+        }
+    }
+
     func revealSetting(_ key: String) -> String {
         ((try? vault?.getSetting(key: key)) ?? nil) ?? ""
     }

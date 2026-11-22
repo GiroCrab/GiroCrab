@@ -69,6 +69,34 @@ pub struct SyncSummary {
     /// Advice that goes with `warnings` (#1627): what the user can do about it.
     /// Names no account, so a sync notice can show it as it is.
     pub hints: Vec<String>,
+    /// New documents (PDFs) this sync stored; ones already in the vault are not counted.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub documents_imported: u32,
+    /// Securities transactions (depot activities) the bank delivered.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub security_transactions: u32,
+    /// Depot positions the bank delivered.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub holdings: u32,
+    /// The sync read only part of the history (it continues with the next sync).
+    #[uniffi(default = false)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub history_incomplete: bool,
+    /// Trades of the history still to read, and all trades of the timeline (0 = unknown).
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub history_remaining: u32,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub history_total: u32,
+    /// Document retrieval is switched off for this connection (and its bank delivers documents):
+    /// the sync fetched none, which the log says.
+    #[uniffi(default = false)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub documents_off: bool,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -469,6 +497,8 @@ pub struct RemoteTransaction {
     /// Product ids (ASIN) of an order's items, comma separated, one entry per
     /// item in purpose order; "" = none (#354).
     pub item_refs: String,
+    /// Stored as already checked ("geprüft"): bookings of an imported history are not "new".
+    pub checked: bool,
 }
 
 impl RemoteTransaction {
@@ -567,6 +597,10 @@ pub struct RemoteSecurityTransaction {
 
 #[derive(Debug, Default, Clone)]
 pub struct FetchResult {
+    /// More history is left for the next sync (securities activities and their documents).
+    pub history_incomplete: bool,
+    pub history_remaining: u32,
+    pub history_total: u32,
     pub accounts: Vec<RemoteAccount>,
     pub transactions: Vec<RemoteTransaction>,
     /// Depot positions; replace the stored holdings of each listed account.
