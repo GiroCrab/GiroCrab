@@ -83,14 +83,16 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
 
     private fun adoptOwn(snapshot: VaultSnapshot) {
         ownSnapshot = snapshot
-        // Imported while the app was in the background: the window starts locked.
+        // Two ways a lock arrives here: it was waiting for the vault (import in the background) or
+        // it is already set (`showOwnVault` hands back the cached snapshot). Both have to survive —
+        // only a successful prompt clears it.
         val locked = pendingBackgroundLock
         pendingBackgroundLock = false
         _state.update {
             it.copy(
                 vaultState = VaultState.Own, vaultMayHoldRealData = true, loading = false,
                 data = snapshot, scope = Scope.All, filter = BookingFilter(), search = "", error = null,
-                backgroundLocked = locked,
+                backgroundLocked = locked || it.backgroundLocked,
             )
         }
     }
