@@ -119,16 +119,13 @@ fn add(v: &mut Vec<Slice>, name: &str, color: &str, cents: i64) {
 pub fn categories(rows: &[&Row], expenses: bool, n: usize) -> Vec<Slice> {
     let mut v = Vec::new();
     for r in rows.iter().filter(|r| !r.transfer) {
-        if (r.amount_cents < 0) != expenses || r.amount_cents == 0 {
-            continue;
-        }
         let name = if r.category_name.is_empty() {
             "Ohne Kategorie"
         } else {
             &r.category_name
         };
         let cents = if expenses {
-            r.amount_cents.abs()
+            (income(r) - r.amount_cents).max(0)
         } else {
             income(r)
         };
@@ -160,26 +157,24 @@ pub fn tags(rows: &[&Row], n: usize) -> Vec<Slice> {
     v
 }
 
-/// What an incoming row counts as income: of a refund linked to its bookings only what none
-/// of them takes up, the rest lowers the expenses (`net_expenses`, #714).
+/// What a row counts as income, including a linked refund's separate income share.
 fn income(r: &Row) -> i64 {
-    r.refund_income_cents
-        .map_or(r.amount_cents, |rest| rest.clamp(0, r.amount_cents))
+    r.refund_income_cents.map_or(r.amount_cents.max(0), |rest| {
+        if r.amount_cents > 0 {
+            rest.clamp(0, r.amount_cents)
+        } else {
+            rest.max(0)
+        }
+    })
 }
 
 /// (income, expenses, net) cents of the rows, transfers excluded. What a linked refund pays
 /// back lowers the expenses instead of being income (#714), so both sums cover the same rows.
 pub fn totals(rows: &[&Row]) -> (i64, i64, i64) {
-    let incoming = || rows.iter().filter(|r| !r.transfer && r.amount_cents > 0);
-    let inc: i64 = incoming().map(|r| income(r)).sum();
-    let paid_back: i64 = incoming().map(|r| r.amount_cents - income(r)).sum();
-    let spent: i64 = rows
-        .iter()
-        .filter(|r| !r.transfer && r.amount_cents < 0)
-        .map(|r| -r.amount_cents)
-        .sum();
-    let exp = spent - paid_back;
-    (inc, exp, inc - exp)
+    let included = || rows.iter().filter(|r| !r.transfer);
+    let inc: i64 = included().map(|r| income(r)).sum();
+    let net: i64 = included().map(|r| r.amount_cents).sum();
+    (inc, inc - net, net)
 }
 
 #[cfg(test)]
@@ -239,6 +234,101 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("C", 10200), ("B", 2000)]
         );
+    }
+
+    #[test]
+    fn nonpositive_split_refunds_carry_income_and_preserve_net() {
+        for (amount, carried) in [(-2000, 500), (0, 500), (-2000, 0), (1000, 400)] {
+            let mut refund = row(amount, "A", &[]);
+            refund.refund_income_cents = Some(carried);
+            let refs = [&refund];
+            assert_eq!(totals(&refs), (carried, carried - amount, amount));
+            let inc = categories(&refs, false, 5);
+            assert_eq!(inc.iter().map(|s| s.cents).sum::<i64>(), carried);
+            let exp = categories(&refs, true, 5);
+            assert_eq!(
+                exp.iter().map(|s| s.cents).sum::<i64>(),
+                (carried - amount).max(0)
+            );
+            refund.transfer = true;
+            assert_eq!(totals(&[&refund]), (0, 0, 0));
+            assert!(categories(&[&refund], false, 5).is_empty());
+        }
+        assert_eq!(totals(&[]), (0, 0, 0));
+        assert!(categories(&[], false, 5).is_empty());
+    }
+
+    #[test]
+    fn core_nonpositive_split_refunds_keep_their_income_in_windows_rows() {
+        use girocrab_core::offline::ManualBookingSetup;
+        use girocrab_core::{AccountKind, BookingFilter, TransactionSplitInput, Vault};
+
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-carry-income-{}-{:?}.sqlite",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let v = Vault::open(path.display().to_string(), vec![7; 32]).unwrap();
+        let account = v
+            .create_offline_account("QA".into(), AccountKind::Checking, "EUR".into(), 0)
+            .unwrap();
+        let add = |amount| {
+            v.save_manual_booking(
+                account,
+                None,
+                ManualBookingSetup {
+                    booking_date: "2025-02-10".into(),
+                    amount_cents: amount,
+                    counterparty: "QA".into(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap()
+        };
+        let part = |amount| TransactionSplitInput {
+            amount_cents: amount,
+            category_id: None,
+            note: String::new(),
+        };
+        let refund = add(-2000);
+        let incoming = add(9500);
+        v.set_transaction_splits(refund, vec![part(-2500), part(500)])
+            .unwrap();
+        v.set_transaction_splits(incoming, vec![part(10000), part(-500)])
+            .unwrap();
+        v.link_refund_parts(refund, 2, incoming, 2).unwrap();
+        let page = v
+            .list_transactions(BookingFilter {
+                limit: 100,
+                ..Default::default()
+            })
+            .unwrap();
+        let b = page.transactions.iter().find(|b| b.id == refund).unwrap();
+        assert_eq!(b.refund_income_cents, 500);
+        let row = Row::from(b);
+        assert_eq!(row.refund_income_cents, Some(500));
+        assert_eq!(totals(&[&row]), (500, 2500, -2000));
+        println!(
+            "3269 core income={}, Windows row={:?}, totals={:?}",
+            b.refund_income_cents,
+            row.refund_income_cents,
+            totals(&[&row])
+        );
+        v.unlink_refund_parts(refund, 2, incoming, 2).unwrap();
+        let page = v
+            .list_transactions(BookingFilter {
+                limit: 100,
+                ..Default::default()
+            })
+            .unwrap();
+        let row = Row::from(page.transactions.iter().find(|b| b.id == refund).unwrap());
+        assert_eq!(totals(&[&row]), (0, 2000, -2000));
+        drop(v);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 
     #[test]
