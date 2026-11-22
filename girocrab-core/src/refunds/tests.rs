@@ -967,11 +967,15 @@ fn links_with_equal_stamps_are_filled_alike_on_both_devices() {
             .find(|o| o.id == original)
             .and_then(|o| o.share_cents)
     };
+    // both links are there on both devices and filled alike
     assert_eq!(
         (share(&a, r_a, t1_a), share(&a, r_a, t2_a)),
-        (share(&b, r_b, t1_b), share(&b, r_b, t2_b))
+        (Some(60), Some(40))
     );
-    assert_eq!(share(&a, r_a, t1_a), Some(60));
+    assert_eq!(
+        (share(&b, r_b, t1_b), share(&b, r_b, t2_b)),
+        (Some(60), Some(40))
+    );
 }
 
 /// The same with originals of two accounts that carry the same date and bank id (ids are
@@ -1026,11 +1030,15 @@ fn links_with_equal_stamps_and_twin_bookings_of_two_accounts_are_filled_alike() 
             .find(|o| o.id == original)
             .and_then(|o| o.share_cents)
     };
+    // both links are there on both devices and filled alike
     assert_eq!(
         (share(&a, r_a, t1_a), share(&a, r_a, t2_a)),
-        (share(&b, r_b, t1_b), share(&b, r_b, t2_b))
+        (Some(60), Some(40))
     );
-    assert_eq!(share(&a, r_a, t1_a), Some(60));
+    assert_eq!(
+        (share(&b, r_b, t1_b), share(&b, r_b, t2_b)),
+        (Some(60), Some(40))
+    );
 }
 
 /// Links to two parts of one booking that end up as one link to the whole booking keep the
