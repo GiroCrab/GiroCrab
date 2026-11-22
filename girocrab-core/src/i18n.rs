@@ -1699,6 +1699,20 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Regel braucht eine Kategorie oder mindestens einen Tag." => {
             "The rule needs a category or at least one tag."
         }
+        // rule / tag export and import (#1057)
+        "Die Datei enthält keine Regeln oder Tags aus GiroCrab." => {
+            "The file contains no rules or tags from GiroCrab."
+        }
+        "Die Datei stammt aus einer neueren GiroCrab-Version. Bitte GiroCrab aktualisieren." => {
+            "The file is from a newer GiroCrab version. Please update GiroCrab."
+        }
+        "unbekannte Suchart" => "unknown match type",
+        "Kategorie „{0}“ nicht gefunden" => "category “{0}” not found",
+        "Konten nicht gefunden ({0})" => "accounts not found ({0})",
+        "bereits vorhanden" => "already exists",
+        "ohne die nicht gefundenen Konten ({0})" => "without the accounts not found ({0})",
+        "„{0}“ – {1}" => "“{0}” – {1}",
+        "„{0}“: {1}" => "“{0}”: {1}",
         "Das Suchmuster ist zu lang." => "The pattern is too long.",
         "Der Suchausdruck ist leer." => "The search expression is empty.",
         "Das Feld „{0}“ wird nicht unterstützt." => "The field “{0}” isn't supported.",

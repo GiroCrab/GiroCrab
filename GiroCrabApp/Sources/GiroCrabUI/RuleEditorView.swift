@@ -94,6 +94,9 @@ struct RuleEditorView: View {
     @State private var saveError: (title: String, message: String)?
     /// Matching bookings that carry all of a rule's tags (#580), loaded off main.
     @State private var tagCounts: [Int64: UInt32] = [:]
+    /// Rules file being written / chosen (#1057).
+    @State private var exchange: RuleTagExport?
+    @State private var importing = false
 
     private var isFiltering: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -193,6 +196,12 @@ struct RuleEditorView: View {
                             .disabled(fullIndex >= model.rules.count - 1)
 
                             Divider()
+                            Button {
+                                exchange = .rules([rule.id])
+                            } label: {
+                                Label("Exportieren …", systemImage: "square.and.arrow.up")
+                            }
+                            Divider()
                             Button(role: .destructive) {
                                 ruleToDelete = rule
                             } label: {
@@ -202,6 +211,8 @@ struct RuleEditorView: View {
                     }
                     .onMove(perform: isFiltering ? nil : moveRulesFromList)
                 }
+                Divider()
+                exchangeBar
             }
             .navigationTitle("Regeln")
             .navigationSplitViewColumnWidth(min: 240, ideal: 280)
@@ -268,6 +279,35 @@ struct RuleEditorView: View {
         .onChange(of: selection) { _, new in
             if let new, let r = model.rules.first(where: { $0.id == new }) { draft = r }
         }
+        .ruleTagExchange(export: $exchange, importing: $importing)
+    }
+
+    /// Bottom of the rule list: rules (with their tags) to and from a file (#1057),
+    /// the same menu button as in the tag manager.
+    private var exchangeBar: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Menu {
+                Button("Regeln importieren …") { importing = true }
+                Divider()
+                Button("Alle Regeln exportieren …") { exchange = .rules([]) }
+                    .disabled(model.rules.isEmpty)
+                Button("Ausgewählte Regel exportieren …") {
+                    if let selection { exchange = .rules([selection]) }
+                }
+                .disabled(selection == nil)
+            } label: {
+                Image(systemName: "square.and.arrow.up.on.square")
+            }
+            #if os(macOS)
+            .menuStyle(.borderlessButton)
+            #endif
+            .fixedSize()
+            .help(Text("Regeln importieren oder exportieren"))
+            .accessibilityLabel(Text("Regeln importieren oder exportieren"))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
     }
 
     private func moveRulesFromList(from source: IndexSet, to destination: Int) {
