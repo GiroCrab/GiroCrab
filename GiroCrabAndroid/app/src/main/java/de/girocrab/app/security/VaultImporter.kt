@@ -12,7 +12,7 @@ sealed interface ImportResult {
     /** The user aborted the prompt — nothing was written. */
     data object RefusedByUser : ImportResult
 
-    /** No native core linked. */
+    /** No biometric hardware, no enrollment or no native core — importing cannot work here. */
     data object Unavailable : ImportResult
 
     /** Anything that ends without a usable vault; the message is meant for the lock screen. */
@@ -31,8 +31,9 @@ sealed interface ImportResult {
  * process dies in between, `state()` still reports `NotSetUp`, so the next attempt starts clean
  * instead of refusing because a half-restored vault claims to be ready.
  *
- * Refuses to run when a vault is already set up: an import would replace it, and that has to be a
- * deliberate decision, not a side effect of tapping "importieren".
+ * An import only replaces something that is already unusable: a dead Keystore key (invalidated by
+ * new biometrics or a reset screen lock) or a vault file without a key to open it. A usable key
+ * **with** its vault file is never touched — that would be data loss dressed up as recovery.
  */
 class VaultImporter(
     private val keyStore: VaultKeyStore,
@@ -42,14 +43,12 @@ class VaultImporter(
     private val title: String = "Tresor einspielen",
     private val subtitle: String = "Bestätige deine Identität, damit der Geräteschlüssel geschützt wird",
 ) {
+    /** One import at a time: two overlapping runs would fight over the same vault file. */
+    private var running = false
+
     fun import(backupPath: String, password: String, onResult: (ImportResult) -> Unit) {
-        if (keyStore.state() == VaultKeyStore.State.Ready) {
-            return onResult(
-                ImportResult.Failed(
-                    "Auf diesem Gerät liegt schon ein Tresor. Ein Import würde ihn ersetzen — " +
-                        "erst den vorhandenen Tresor entfernen.",
-                ),
-            )
+        if (running) {
+            return onResult(ImportResult.Failed("Es läuft bereits ein Import."))
         }
         if (!File(backupPath).isFile) {
             return onResult(ImportResult.Failed("Sicherungsdatei wurde nicht gefunden."))
@@ -57,8 +56,27 @@ class VaultImporter(
         if (!opener.available) return onResult(ImportResult.Unavailable)
 
         val vaultPath = File(opener.defaultVaultPath(filesDir))
-        // Without a wrapped key nothing can open an existing file: it is a leftover from an aborted
-        // attempt and would block this one with "file is not a database".
+        val state = try {
+            keyStore.state()
+        } catch (e: Exception) {
+            return onResult(
+                ImportResult.Failed("Geräteschlüssel nicht lesbar (${e.javaClass.simpleName}: ${e.message})."),
+            )
+        }
+        // There is only something to lose when both parts exist: a usable key and its vault.
+        if (state == VaultKeyStore.State.Ready && vaultPath.exists()) {
+            return onResult(
+                ImportResult.Failed(
+                    "Auf diesem Gerät liegt schon ein Tresor. Ein Import würde ihn ersetzen — " +
+                        "erst den vorhandenen Tresor entfernen.",
+                ),
+            )
+        }
+        // Anything else is unusable: a key that the Keystore no longer honours, or a vault file
+        // nobody can open. Both are replaced rather than kept as a trap.
+        if (state != VaultKeyStore.State.NotSetUp) {
+            keyStore.resetForNewSetup()
+        }
         if (vaultPath.exists() && !vaultPath.delete()) {
             return onResult(
                 ImportResult.Failed("Reste eines früheren Imports ließen sich nicht entfernen."),
@@ -72,29 +90,48 @@ class VaultImporter(
             keyStore.setupCipher()
         } catch (e: Exception) {
             key.fill(0)
-            return onResult(ImportResult.Failed("Geräteschlüssel nicht nutzbar: ${e.message}"))
+            return onResult(
+                ImportResult.Failed("Geräteschlüssel ließ sich nicht anlegen (${e.javaClass.simpleName}: ${e.message})."),
+            )
         }
 
-        prompt.authenticate(cipher, title, subtitle) { result ->
-            when (result) {
-                PromptResult.Cancelled -> {
-                    key.fill(0)
-                    onResult(ImportResult.RefusedByUser)
-                }
-                is PromptResult.Failed -> {
-                    key.fill(0)
-                    onResult(ImportResult.Failed(result.message ?: "Authentifizierung fehlgeschlagen."))
-                }
-                is PromptResult.Succeeded -> {
-                    if (result.cipher !== cipher) {
+        running = true
+        var finished = false
+        fun finish(result: ImportResult) {
+            if (finished) return
+            finished = true
+            running = false
+            onResult(result)
+        }
+
+        try {
+            prompt.authenticate(cipher, title, subtitle) { result ->
+                when (result) {
+                    PromptResult.Cancelled -> {
                         key.fill(0)
-                        return@authenticate onResult(
-                            ImportResult.Failed("Der Prompt lieferte einen anderen Cipher als angefordert."),
-                        )
+                        finish(ImportResult.RefusedByUser)
                     }
-                    restore(result.cipher, key, vaultPath, backupPath, password, onResult)
+                    is PromptResult.Unavailable -> {
+                        key.fill(0)
+                        finish(ImportResult.Unavailable)
+                    }
+                    is PromptResult.Failed -> {
+                        key.fill(0)
+                        finish(ImportResult.Failed(result.message ?: "Authentifizierung fehlgeschlagen."))
+                    }
+                    is PromptResult.Succeeded -> {
+                        if (result.cipher !== cipher) {
+                            key.fill(0)
+                            finish(ImportResult.Failed("Der Prompt lieferte einen anderen Cipher als angefordert."))
+                            return@authenticate
+                        }
+                        restore(result.cipher, key, vaultPath, backupPath, password) { finish(it) }
+                    }
                 }
             }
+        } catch (e: Exception) {
+            key.fill(0)
+            finish(ImportResult.Failed("Import nicht möglich (${e.javaClass.simpleName}: ${e.message})."))
         }
     }
 
@@ -104,17 +141,17 @@ class VaultImporter(
         vaultPath: File,
         backupPath: String,
         password: String,
-        onResult: (ImportResult) -> Unit,
+        finish: (ImportResult) -> Unit,
     ) {
-        val imported: OwnVault
+        var vault: OwnVault? = null
         try {
-            val vault = opener.open(vaultPath.path, key)
-                ?: return onResult(ImportResult.Unavailable)
+            val opened = opener.open(vaultPath.path, key)
+                ?: return finish(ImportResult.Unavailable)
+            vault = opened
 
             try {
-                vault.restoreBackup(backupPath, password)
+                opened.restoreBackup(backupPath, password)
             } catch (e: Exception) {
-                runCatching { vault.close() }
                 throw ImportFailed(
                     "Sicherung ließ sich nicht einspielen (${e.javaClass.simpleName}: ${e.message})",
                 )
@@ -122,18 +159,22 @@ class VaultImporter(
 
             // Published only after the data is in place — see the class comment.
             keyStore.storeWrapped(key, authenticated)
-            imported = vault
+            vault = null // ownership moves to the caller
+            // Deliberately after the handler: a throwing caller must not roll back a good import.
+            finish(ImportResult.Imported(opened))
         } catch (e: Exception) {
+            runCatching { vault?.close() }
             keyStore.clearWrapped()
             vaultPath.delete()
-            val reason = if (e is ImportFailed) e.message else "Import abgebrochen (${e.javaClass.simpleName}: ${e.message})"
-            return onResult(ImportResult.Failed(reason ?: "Import abgebrochen."))
+            val reason = if (e is ImportFailed) {
+                e.message
+            } else {
+                "Import abgebrochen (${e.javaClass.simpleName}: ${e.message})"
+            }
+            finish(ImportResult.Failed(reason ?: "Import abgebrochen."))
         } finally {
             key.fill(0)
         }
-
-        // Deliberately outside the handler: a throwing caller must not roll back a good import.
-        onResult(ImportResult.Imported(imported))
     }
 
     /** Marks a failure that is already phrased for the lock screen. */

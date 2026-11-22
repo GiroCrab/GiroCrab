@@ -105,6 +105,46 @@ class VaultImporterTest {
         assertFalse(vaultPath.exists())
     }
 
+    /**
+     * The state the lock screen reports as `VaultMissing`: a usable key whose vault file is gone.
+     * Import has to work here — that is exactly the case 2.4 sends the user into.
+     */
+    @Test
+    fun importsWhenTheVaultFileIsMissingButTheKeyIsUsable() {
+        createVaultWithAccountsAndBackup(wipeDevice = false)
+        vaultPath.delete() // key stays usable, the file is gone
+        assertEquals(VaultKeyStore.State.Ready, keyStore().state())
+
+        var result: ImportResult? = null
+        importerThatSucceeds().import(backupFile.path, BACKUP_PASSWORD) { result = it }
+
+        val imported = importedOrFail(result)
+        try {
+            assertEquals(2, imported.vault.accountCount)
+        } finally {
+            imported.vault.close()
+        }
+    }
+
+    /** Biometric enrollment invalidated the key: the import replaces the dead key instead of failing. */
+    @Test
+    fun importsOverAnInvalidatedKey() {
+        createVaultWithAccountsAndBackup(wipeDevice = false)
+        deleteAlias() // key gone, vault file still there
+        assertEquals(VaultKeyStore.State.Invalidated, keyStore().state())
+
+        var result: ImportResult? = null
+        importerThatSucceeds().import(backupFile.path, BACKUP_PASSWORD) { result = it }
+
+        val imported = importedOrFail(result)
+        try {
+            assertEquals(2, imported.vault.accountCount)
+        } finally {
+            imported.vault.close()
+        }
+        assertEquals(VaultKeyStore.State.Ready, keyStore().state())
+    }
+
     @Test
     fun refusesToReplaceAnExistingVault() {
         // Device keeps its key and vault here: an import must not overwrite them silently.
