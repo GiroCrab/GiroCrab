@@ -100,7 +100,7 @@ extension AppModel {
         let generation = listGeneration
         let filter = listFilter
         let (from, to) = periodRange
-        let sums = categorySumFilter
+        let sums = categorySumsRequest
         let uncategorizedQuery = uncategorizedCountFilter(sums)
         let listHasFlow = filter.listHasFlow || kpiFollowsList
         categoryRefreshTask = Task { [weak self] in
@@ -121,7 +121,7 @@ extension AppModel {
                     return CategoryRefresh(
                         page: page,
                         flow: flow,
-                        categories: try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false),
+                        categories: try vault.categorySums(sums),
                         uncategorized: Int(try vault.countTransactions(filter: uncategorizedQuery)),
                         groups: try vault.listAccountGroups(),
                         userGroups: try vault.listUserGroups()
@@ -133,8 +133,8 @@ extension AppModel {
                     self.publish(r.page)
                 }
                 let (nowFrom, nowTo) = self.periodRange
-                let nowSums = self.categorySumFilter
-                if nowFrom == from, nowTo == to, nowSums.accounts == sums.accounts, nowSums.checked == sums.checked, nowSums.direction == sums.direction, nowSums.amount == sums.amount {
+                let nowSums = self.categorySumsRequest
+                if nowFrom == from, nowTo == to, nowSums == sums {
                     // same calculation context as the captured filter, not only
                     // the same accounts: the totals switch changes the KPIs
                     // without changing the account list (#337)

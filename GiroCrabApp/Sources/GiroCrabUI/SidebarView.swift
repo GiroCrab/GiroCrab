@@ -165,7 +165,12 @@ struct SidebarView: View {
                     HStack(spacing: DisclosureChevron.gap) {
                         SidebarLeadingSlot()
                         Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                        Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                        let pinned = model.pinnedCategoryKeys.contains("u")
+                        HStack(spacing: 4) {
+                            Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                            if pinned { PinnedFilterMark() }
+                        }
+                        .help(pinned ? model.pinnedFilterSummary(forKey: "u") : "")
                         Spacer()
                     }
                     .contextMenu {
@@ -870,6 +875,16 @@ struct AccountRow: View {
     }
 }
 
+/// Marks a category that counts by filters of its own (#1469), right of its name; the tooltip sits on name and mark.
+struct PinnedFilterMark: View {
+    var body: some View {
+        Image(systemName: "pin.fill")
+            .appFont(.caption2)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Eigene Filter")
+    }
+}
+
 struct CategoryRow: View {
     @Environment(AppModel.self) private var model
     let category: GiroCrabCore.Category
@@ -881,7 +896,13 @@ struct CategoryRow: View {
             Image(systemName: category.sfSymbol)
                 .foregroundStyle(Color.readable(hex: category.colorHex).opacity(0.85))
                 .frame(width: 20)
-            Text(category.name).lineLimit(1).appDefaultFont().sensitive(.labels)
+            // the category counts by filters of its own (#1469): its name and the pin show their criteria
+            let pinned = model.pinnedCategoryKeys.contains("c\(category.id)")
+            HStack(spacing: 4) {
+                Text(category.name).lineLimit(1).appDefaultFont().sensitive(.labels)
+                if pinned { PinnedFilterMark() }
+            }
+            .help(pinned ? model.pinnedFilterSummary(forKey: "c\(category.id)") : "")
             Spacer(minLength: 4)
             if category.totalCents != 0 || !other.isEmpty {
                 VStack(alignment: .trailing, spacing: 1) {

@@ -88,12 +88,12 @@ extension AppModel {
     func reloadCategories() {
         settlePendingSelectionLoad()
         guard let vault else { return }
-        let (from, to) = periodRange
+        // `categories` are the rows the individual queries name; they are read for the request first
+        let request = categorySumsRequest
         runCore {
-            let sums = categorySumFilter
-            categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
+            categories = try vault.categorySums(request)
             categoryTree = Self.buildTree(categories)
-            uncategorizedFilteredCount = Int(try vault.countTransactions(filter: uncategorizedCountFilter(sums)))
+            uncategorizedFilteredCount = Int(try vault.countTransactions(filter: uncategorizedCountFilter(request)))
         }
     }
 
@@ -311,17 +311,21 @@ extension AppModel {
         reloadBookings()
     }
 
-    /// The category views („Ohne Kategorie“, a category) narrow the sidebar's sums to the chosen accounts too (#406).
-    var showsCategoryAccountFilter: Bool {
-        switch sidebarSelection {
-        case .category, .uncategorized: true
+    /// The list offers the account filter (#357): the category views, „Alle Konten“, account
+    /// groups and „Neue Umsätze“. A single account has nothing to choose from.
+    var showsAccountFilter: Bool { Self.offersAccountFilter(shownSelection) }
+
+    /// The switch „Filter auch in den Kategorien anwenden“ (#1469) is offered wherever the sums do not follow the
+    /// filters by themselves: „Alle Konten“, groups, banks, accounts and „Neue Umsätze“.
+    var showsCategorySumsSwitch: Bool {
+        switch shownSelection {
+        case .account, .allAccounts, .group, .bank, .userGroup, .newBookings: true
         default: false
         }
     }
 
-    /// The list offers the account filter (#357): the category views, „Alle Konten“, account
-    /// groups and „Neue Umsätze“. A single account has nothing to choose from.
-    var showsAccountFilter: Bool { Self.offersAccountFilter(shownSelection) }
+    /// The pin (#1469) sits in the filter row of the category views.
+    var showsCategorySumsPin: Bool { Self.isCategoryView(shownSelection) }
 
     static func offersAccountFilter(_ selection: SidebarItem?) -> Bool {
         switch selection {
@@ -367,28 +371,277 @@ extension AppModel {
         categoryAccountFilter = next.count == accountFilterCandidates.count ? [] : next
     }
 
-    /// What the sidebar's category sums count besides the period (#621): the same status, type and
-    /// amount range as the booking list, and its accounts only in the category views (#406).
-    var categorySumFilter: (accounts: [Int64], checked: Bool?, direction: BookingDirection, amount: AmountFilter) {
-        (showsCategoryAccountFilter ? categoryAccountIDs : [], statusFilter == .all ? nil : statusFilter == .checked, directionFilter, amountFilter)
+    static let categorySumsFollowAccountFilterKey = "sidebar.categorySumsFollowAccountFilter"
+    static let pinnedCategoryKeysKey = "sidebar.pinnedCategoryKeys"
+
+    /// The list filters as they are now: status, type, amount and tags, and the chosen accounts (a single account
+    /// counts as its own filter). Search, merchant focus and scope never narrow the sums (#1469).
+    var liveSumFilter: CategorySumFilter {
+        var accounts = categoryAccountIDs
+        if case .account(let id)? = sidebarSelection { accounts = [id] }
+        return CategorySumFilter(accounts: accounts, status: statusFilter, direction: directionFilter, amount: amountFilter, tags: tagFilter)
     }
 
-    /// Period and `categorySumFilter` the sidebar sums load for now.
-    var categorySumsRequest: CategorySumsRequest {
-        let (from, to) = periodRange, sums = categorySumFilter
-        return CategorySumsRequest(from: from, to: to, accounts: sums.accounts, checked: sums.checked, direction: sums.direction, amount: sums.amount)
+    /// The filters the sums of the selected row count by (#621, #1469): in the category views the current filters
+    /// of the list, in the account views none (with the pin each category counts by its own, see `categorySumsRequest`).
+    var categorySumFilter: CategorySumFilter {
+        showsCategoryView || categorySumsFollowAccountFilter ? liveSumFilter : .unfiltered
     }
 
-    /// Hint under the sidebar's „Kategorien“ header while a filter narrows the sums; nil = none.
-    /// Names no account (the sidebar is part of bug report screenshots).
-    var categorySumNote: String? {
+    /// The switch applies the account's filters to the sums: in the account views while it is on.
+    var sumsFollowAccountFilter: Bool { !showsCategoryView && categorySumsFollowAccountFilter }
+
+    /// The list filters as one set.
+    var currentFilterSet: ListFilterSet {
+        ListFilterSet(status: statusFilter, direction: directionFilter, amount: amountFilter, tags: tagFilter,
+                      accounts: categoryAccountFilter, period: period,
+                      customFrom: period == .custom ? customPeriodFrom : nil, customTo: period == .custom ? customPeriodTo : nil)
+    }
+
+    /// Date range the sums count: the period of the filters, else the period shown now.
+    func sumsRange(_ sums: CategorySumFilter) -> (String?, String?) {
+        (sums.period ?? requestedPeriod).range(salaryCycle: salaryCycle)
+    }
+
+    /// Key of a category view in the saved filters: „Ohne Kategorie“ or one category; nil for every other row.
+    static func categoryFilterKey(_ selection: SidebarItem?) -> String? {
+        switch selection {
+        case .category(let id): "c\(id)"
+        case .uncategorized: "u"
+        default: nil
+        }
+    }
+
+    /// The filters of each category, saved (#1469); the shown category's live ones are in `currentFilterSet`.
+    static let categorySetsKey = "sidebar.categoryFilterSets"
+
+    static func loadCategorySets() -> [String: ListFilterSet] {
+        guard let data = AppDefaults.store.data(forKey: categorySetsKey),
+              let stored = try? JSONDecoder().decode([String: StoredFilterSet].self, from: data) else { return [:] }
+        return stored.mapValues(\.set)
+    }
+
+    /// The shown category is pinned: its filters are its own (#1469).
+    var shownCategoryPinned: Bool {
+        Self.categoryFilterKey(sidebarSelection).map(pinnedCategoryKeys.contains) ?? false
+    }
+
+    /// The pinned category whose filters count for `key`: the category itself, else the nearest pinned main category
+    /// (a main category's filters also act on its subcategories until one is pinned itself); nil = the global ones.
+    func governingKey(for key: String) -> String? {
+        if pinnedCategoryKeys.contains(key) { return key }
+        guard key.hasPrefix("c"), var id = Int64(key.dropFirst()) else { return nil }
+        let parents = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.parentId) })
+        while let parent = parents[id] ?? nil {
+            if pinnedCategoryKeys.contains("c\(parent)") { return "c\(parent)" }
+            id = parent
+        }
+        return nil
+    }
+
+    /// Where the shown category's filters come from: its own pin, a pinned main category, or the global ones.
+    enum FilterOrigin { case own, mainCategory, global }
+    var shownFilterOrigin: FilterOrigin {
+        guard let key = Self.categoryFilterKey(sidebarSelection) else { return .global }
+        guard let governing = governingKey(for: key) else { return .global }
+        return governing == key ? .own : .mainCategory
+    }
+
+    /// Keeps the shown category's filters (called after each change in a category view): in the set that governs
+    /// the category (its own, its main category's or the global one).
+    func persistCategorySet() {
+        guard !suspendsFilterReloads, !suspendsPeriodReload, let key = Self.categoryFilterKey(sidebarSelection) else { return }
+        store(currentFilterSet, forKey: key)
+    }
+
+    private func store(_ set: ListFilterSet, forKey key: String) {
+        if let governing = governingKey(for: key) {
+            categorySets[governing] = set
+            saveCategorySets()
+        } else {
+            globalCategoryFilters = set
+        }
+    }
+
+    func saveCategorySets() {
+        let stored = categorySets.mapValues(StoredFilterSet.init)
+        if let data = try? JSONEncoder().encode(stored) { AppDefaults.store.set(data, forKey: Self.categorySetsKey) }
+    }
+
+    /// The filters of a category: those of the pin that governs it, else the global ones.
+    func filterSet(forKey key: String) -> ListFilterSet {
+        governingKey(for: key).map { categorySets[$0] ?? ListFilterSet() } ?? globalCategoryFilters
+    }
+
+    /// The criteria of a filter set for hints: status, type, amount, tags, accounts and the period.
+    func filterCriteria(_ sums: CategorySumFilter) -> [String] {
         var parts: [String] = []
-        if statusFilter != .all { parts.append(String(localized: "Status: \(statusFilter.title)")) }
-        if directionFilter != .all { parts.append(directionFilter == .income ? String(localized: "Einnahmen") : String(localized: "Ausgaben")) }
-        if amountFilter.isActive { parts.append(String(localized: "Betrag")) }
-        let chosen = categorySumFilter.accounts.count
-        if chosen > 0 { parts.append(String(localized: "Konten: \(chosen) von \(allAccounts.count)")) }
-        return parts.isEmpty ? nil : String(localized: "Summen gefiltert – \(parts.joined(separator: " · "))")
+        if let checked = sums.checked { parts.append(String(localized: "Status: \((checked ? StatusFilter.checked : StatusFilter.new).title)")) }
+        if sums.direction != .all { parts.append(sums.direction == .income ? String(localized: "Einnahmen") : String(localized: "Ausgaben")) }
+        if sums.amount.isActive { parts.append(String(localized: "Betrag")) }
+        if sums.untaggedOnly || !sums.tagIDs.isEmpty { parts.append(String(localized: "Tags")) }
+        if !sums.accounts.isEmpty { parts.append(String(localized: "Konten: \(sums.accounts.count) von \(allAccounts.count)")) }
+        return parts
+    }
+
+    /// The query counts by a criterion or by a period other than „Gesamter Zeitraum“.
+    func isNarrowed(_ query: CategorySumQuery) -> Bool {
+        !filterCriteria(query.filter).isEmpty || (query.filter.period ?? requestedPeriod).period != .all
+    }
+
+    /// Hover text of the pin symbol in the sidebar: the criteria of the category's own filters.
+    func pinnedFilterSummary(forKey key: String) -> String {
+        let set = Self.categoryFilterKey(sidebarSelection) == key ? currentFilterSet : filterSet(forKey: key)
+        let sums = sumFilter(of: set)
+        let parts = filterCriteria(sums) + [String(localized: "Zeitraum: \((sums.period ?? requestedPeriod).title)")]
+        return String(localized: "Eigene Filter: \(parts.joined(separator: " · "))")
+    }
+
+    /// The pin of the shown category (#1469): pinned, its filters become its own (they start as the ones shown);
+    /// released, it follows its main category's or the global filters again.
+    func toggleCategoryPin() {
+        guard let key = Self.categoryFilterKey(sidebarSelection) else { return }
+        if pinnedCategoryKeys.contains(key) {
+            pinnedCategoryKeys.remove(key)
+            categorySets[key] = nil
+            saveCategorySets()
+            apply(filterSet(forKey: key))
+        } else {
+            let shown = currentFilterSet
+            pinnedCategoryKeys.insert(key)
+            categorySets[key] = shown
+            saveCategorySets()
+        }
+        reloadCategorySums()
+    }
+
+    /// Shows a filter set in the list header; one reload covers all of it.
+    private func apply(_ next: ListFilterSet) {
+        let changesPeriod = next.period != period
+            || (next.period == .custom && (next.customFrom != customPeriodFrom || next.customTo != customPeriodTo))
+        suspendsFilterReloads = true
+        statusFilter = next.status
+        directionFilter = next.direction
+        amountFilter = next.amount
+        tagFilter = next.tags
+        categoryAccountFilter = next.accounts
+        suspendsFilterReloads = false
+        if let from = next.customFrom, let to = next.customTo { customPeriodFrom = from; customPeriodTo = to }
+        listLimit = Self.defaultListLimit
+        if changesPeriod { period = next.period } else { reloadAfterFilterChange() }
+    }
+
+    /// The sum filters of a saved filter set (accounts in sidebar order, its own period).
+    func sumFilter(of set: ListFilterSet) -> CategorySumFilter {
+        var sums = CategorySumFilter(accounts: allAccounts.map(\.id).filter(set.accounts.contains), status: set.status,
+                                     direction: set.direction, amount: set.amount, tags: set.tags)
+        sums.period = PeriodSetting(set.period, customFrom: set.customFrom, customTo: set.customTo)
+        return sums
+    }
+
+    /// Shows the filters that `selection` belongs to (#1469): the account views have their own set; a pinned category
+    /// has its own; every other category shares the global ones, which are reset when an account view is chosen. The
+    /// caller's selection change reloads the list and the sums.
+    func switchFilterSet(to selection: SidebarItem?) {
+        let oldKey = Self.categoryFilterKey(sidebarSelection)
+        let newKey = Self.categoryFilterKey(selection)
+        guard oldKey != newKey else { return }
+        let shown = currentFilterSet
+        if let oldKey {
+            store(shown, forKey: oldKey)
+            if newKey == nil { globalCategoryFilters = ListFilterSet() }
+        } else {
+            parkedAccountFilters = shown
+        }
+        let next = newKey.map(filterSet) ?? parkedAccountFilters
+        suspendsFilterReloads = true
+        defer { suspendsFilterReloads = false }
+        statusFilter = next.status
+        directionFilter = next.direction
+        amountFilter = next.amount
+        tagFilter = next.tags
+        categoryAccountFilter = next.accounts
+        // the selection change that follows reloads with the period of the set
+        suspendsPeriodReload = true
+        if let from = next.customFrom, let to = next.customTo { customPeriodFrom = from; customPeriodTo = to }
+        period = next.period
+        suspendsPeriodReload = false
+    }
+
+    /// „Ohne Kategorie“ or a category is chosen (the sidebar's category views).
+    var showsCategoryView: Bool { Self.isCategoryView(sidebarSelection) }
+
+    static func isCategoryView(_ selection: SidebarItem?) -> Bool {
+        switch selection {
+        case .category, .uncategorized: true
+        default: false
+        }
+    }
+
+    /// Reloads the sidebar's sums after a switch changed which filters apply (#1469).
+    func reloadCategorySums() {
+        guard vault != nil, categoriesRequest != categorySumsRequest else { return }
+        reloadCategories()
+    }
+
+    /// What the sidebar sums load for now: `categorySumFilter` for the selected row; every other row counts by the
+    /// filters of its category: its own when pinned, else the global ones (empty in the account views, #1469).
+    var categorySumsRequest: CategorySumsRequest {
+        let sums = categorySumFilter
+        let (from, to) = sumsRange(sums)
+        var request = CategorySumsRequest(base: CategorySumQuery(from: from, to: to, filter: sums))
+        let shownKey = Self.categoryFilterKey(sidebarSelection)
+        func query(_ key: String) -> CategorySumQuery {
+            if key == shownKey { return request.base }
+            // the account's filters count for every category without pinned filters of its own or its main category's (#1469)
+            if sumsFollowAccountFilter, governingKey(for: key) == nil { return request.base }
+            let filter = sumFilter(of: filterSet(forKey: key))
+            let (f, t) = sumsRange(filter)
+            return CategorySumQuery(from: f, to: t, filter: filter)
+        }
+        for category in categories { request.perCategory[category.id] = query("c\(category.id)") }
+        request.uncategorized = query("u")
+        return request
+    }
+
+    /// Hint under the sidebar's „Kategorien“ header while a filter narrows the sums; nil = none. Names the
+    /// criteria and whose filter they are (the account's or the category's, #1469), never an account itself
+    /// (the sidebar is part of bug report screenshots).
+    var categorySumNote: String? {
+        // account views without the switch: only pinned categories count by filters, their own
+        if !showsCategoryView, !sumsFollowAccountFilter {
+            let request = categorySumsRequest
+            let own = pinnedCategoryKeys.contains { key in
+                let query = key == "u" ? request.uncategorized : Int64(key.dropFirst()).flatMap { request.perCategory[$0] }
+                return query.map(isNarrowed) ?? false
+            }
+            return own ? String(localized: "Summen gefiltert (Filter der Kategorien) – je Kategorie individuell") : nil
+        }
+        let sums = categorySumFilter
+        var parts: [String]
+        if sumsFollowAccountFilter, case .account? = sidebarSelection {
+            // the selected account is no filter the user chose: it is named as such
+            var named = sums
+            named.accounts = []
+            parts = filterCriteria(named) + [String(localized: "Aktuelles Konto")]
+        } else {
+            parts = filterCriteria(sums)
+        }
+        // with the switch on, the note shows even without a filter: it tells the account's filters reach the sums
+        // a period alone is a filter, too
+        guard !parts.isEmpty || sumsFollowAccountFilter || (sums.period ?? requestedPeriod).period != .all else { return nil }
+        parts.append(String(localized: "Zeitraum: \((sums.period ?? requestedPeriod).title)"))
+        let origin: String
+        if sumsFollowAccountFilter {
+            origin = String(localized: "Filter des Kontos")
+        } else {
+            switch shownFilterOrigin {
+            case .own: origin = String(localized: "Filter dieser Kategorie, individuell")
+            case .mainCategory: origin = String(localized: "Filter der Hauptkategorie")
+            case .global: origin = String(localized: "Filter der Kategorien, global")
+            }
+        }
+        return String(localized: "Summen gefiltert (\(origin)) – \(parts.joined(separator: " · "))")
     }
 
     /// Label of the account menu; never names an account (the header is part of bug report screenshots).
@@ -653,6 +906,7 @@ extension AppModel {
         let filter = currentFilter
         let followsList = filter.listHasFlow || kpiFollowsList
         let sums = categorySumFilter
+        let (sumsFrom, sumsTo) = sumsRange(sums)
         otherCurrenciesTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -660,7 +914,7 @@ extension AppModel {
                     let flows = followsList && !filter.listHasFlow
                         ? try vault.flowOtherCurrencies(filter: filter)
                         : try vault.selectionFlowOtherCurrencies(accountIds: filter.accountIds, dateFrom: from, dateTo: to, respectInTotal: filter.respectInTotal)
-                    let totals = try vault.categoryOtherCurrencyTotals(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
+                    let totals = try vault.categoryOtherSums(from: sumsFrom, to: sumsTo, filter: sums)
                     return (flows, totals)
                 }
                 guard !Task.isCancelled, let loaded else { return }
@@ -880,12 +1134,23 @@ extension AppModel {
     /// The query behind the badge: what the „Ohne Kategorie“ list loads (`currentFilter`, which leaves out detected own
     /// transfers like the list, #302) for the sidebar's period and `categorySumFilter`, counted in SQL (limit 1).
     /// No chosen accounts = all of them, as in the list.
-    func uncategorizedCountFilter(_ sums: (accounts: [Int64], checked: Bool?, direction: BookingDirection, amount: AmountFilter)) -> BookingFilter {
-        let (from, to) = periodRange
+    func uncategorizedCountFilter(_ sums: CategorySumFilter) -> BookingFilter {
+        let (from, to) = sumsRange(sums)
+        return uncategorizedCountFilter(CategorySumQuery(from: from, to: to, filter: sums))
+    }
+
+    /// The badge's query for the request: „Ohne Kategorie“ counts by its own filters where the categories do.
+    func uncategorizedCountFilter(_ request: CategorySumsRequest) -> BookingFilter {
+        uncategorizedCountFilter(request.uncategorized ?? request.base)
+    }
+
+    func uncategorizedCountFilter(_ query: CategorySumQuery) -> BookingFilter {
+        let (from, to, sums) = (query.from, query.to, query.filter)
         return BookingFilter(
             accountIds: sums.accounts, categoryId: nil, includeSubcategories: true, uncategorizedOnly: true,
             search: nil, dateFrom: from, dateTo: to, limit: 1, offset: 0, scope: .all,
             merchantKey: nil, direction: sums.direction, checked: sums.checked, wholeDays: true,
+            tagIds: sums.tagIDs, untaggedOnly: sums.untaggedOnly,
             amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents)
     }
 

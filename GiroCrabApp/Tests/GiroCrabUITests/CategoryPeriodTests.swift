@@ -23,23 +23,30 @@ final class CategoryPeriodTests: XCTestCase {
         XCTAssertNil(Period(storageKey: "bogus"))
     }
 
-    func testCategoryKeepsItsOwnPeriod() throws {
+    /// The period belongs to the filter set (#1469): the unpinned categories share one, the account views have
+    /// their own, a pinned category keeps its own.
+    func testPeriodBelongsToTheFilterSet() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         let ids = model.categories.map(\.id)
         let (a, b) = (try XCTUnwrap(ids.first), try XCTUnwrap(ids.dropFirst().first))
         let year = Period.menu()[4][0]
 
-        model.sidebarSelection = .category(a)
-        model.interactivePeriod = year
-        model.sidebarSelection = .category(b)
-        model.interactivePeriod = .all
-        model.sidebarSelection = .category(a)
-        XCTAssertEqual(model.period, year)
-        model.sidebarSelection = .category(b)
-        XCTAssertEqual(model.period, .all)
-        // Without a saved choice the current period stays.
         model.sidebarSelection = .allAccounts
         model.interactivePeriod = .months12
-        XCTAssertEqual(model.period, .months12)
+        model.sidebarSelection = .category(a)
+        XCTAssertEqual(model.period, .all, "the category views do not take over the account's period")
+        model.interactivePeriod = year
+        model.sidebarSelection = .category(b)
+        XCTAssertEqual(model.period, year, "unpinned categories share the global period")
+        model.toggleCategoryPin()
+        model.interactivePeriod = .days(7)
+        model.sidebarSelection = .category(a)
+        XCTAssertEqual(model.period, year, "the pinned category's period stays with it")
+        model.sidebarSelection = .allAccounts
+        XCTAssertEqual(model.period, .months12, "the account views keep their own period")
+        model.sidebarSelection = .category(b)
+        XCTAssertEqual(model.period, .days(7), "the pin keeps the period of its category")
+        model.sidebarSelection = .category(a)
+        XCTAssertEqual(model.period, .all, "the global filters were reset in the account view")
     }
 }

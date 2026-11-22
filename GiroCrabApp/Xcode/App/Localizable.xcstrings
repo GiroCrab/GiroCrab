@@ -3536,6 +3536,17 @@
         }
       }
     },
+    "Aktuelles Konto" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current account"
+          }
+        }
+      }
+    },
     "Alle" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11057,6 +11068,17 @@
         }
       }
     },
+    "Die Filter gehören nur zu dieser Kategorie und bleiben erhalten. Zum Lösen klicken: Dann gelten wieder die Filter aller Kategorien." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The filters belong to this category only and are kept. Click to release: the filters of all categories apply again."
+          }
+        }
+      }
+    },
     "Die Gruppe ist leer." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12458,6 +12480,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Custom Colours"
+          }
+        }
+      }
+    },
+    "Eigene Filter" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Own filters"
+          }
+        }
+      }
+    },
+    "Eigene Filter: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Own filters: %@"
           }
         }
       }
@@ -14427,6 +14471,94 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Set…"
+          }
+        }
+      }
+    },
+    "Filter an diese Kategorie binden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bind the filters to this category"
+          }
+        }
+      }
+    },
+    "Filter an diese Kategorie binden: Sie gelten nur hier und für ihre Summe in der Seitenleiste. Ohne Stecknadel gelten die Filter für alle Kategorien." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bind the filters to this category: they apply only here and to its total in the sidebar. Without the pin the filters apply to all categories."
+          }
+        }
+      }
+    },
+    "Filter auch in den Kategorien anwenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply the filters to the categories, too"
+          }
+        }
+      }
+    },
+    "Filter der Hauptkategorie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter of the main category"
+          }
+        }
+      }
+    },
+    "Filter der Kategorie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "category filters"
+          }
+        }
+      }
+    },
+    "Filter der Kategorien, global" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter of the categories, global"
+          }
+        }
+      }
+    },
+    "Filter des Kontos" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter of the account"
+          }
+        }
+      }
+    },
+    "Filter dieser Kategorie, individuell" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter of this category, individual"
           }
         }
       }
@@ -28703,6 +28835,17 @@
         }
       }
     },
+    "Status, Buchungsart, Betrag, Tags, Konten und Zeitraum gelten auch für die Summen in der Seitenleiste" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status, type, amount, tags, accounts and period also apply to the totals in the sidebar"
+          }
+        }
+      }
+    },
     "Status: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29242,13 +29385,24 @@
         }
       }
     },
-    "Summen gefiltert – %@" : {
+    "Summen gefiltert (%@) – %@" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Totals filtered – %@"
+            "value" : "Totals filtered (%1$@) – %2$@"
+          }
+        }
+      }
+    },
+    "Summen gefiltert (Filter der Kategorien) – je Kategorie individuell" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Totals filtered (filters of the categories) – individual per category"
           }
         }
       }

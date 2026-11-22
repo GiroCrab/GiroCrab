@@ -41,12 +41,14 @@ final class CategoryAccountFilterTests: XCTestCase {
         // the category total covers all accounts
         XCTAssertNil(model.headerBalance)
 
-        // stays for the other category views …
+        // stays for the other category views (the filters of unpinned categories are global, #1469) …
         model.sidebarSelection = .uncategorized
         XCTAssertEqual(model.currentFilter.accountIds, [account])
         XCTAssertTrue(model.currentFilter.uncategorizedOnly)
-        // … and since #357 also narrows „Alle Konten“, but never a single account
+        // … but „Alle Konten“ and the account views have an account filter of their own (#1469)
         model.sidebarSelection = .allAccounts
+        XCTAssertEqual(model.currentFilter.accountIds, [])
+        model.toggleCategoryAccount(account)
         XCTAssertEqual(model.currentFilter.accountIds, [account])
         model.sidebarSelection = .account(account)
         XCTAssertEqual(model.currentFilter.accountIds, [account])
@@ -54,8 +56,8 @@ final class CategoryAccountFilterTests: XCTestCase {
         model.sidebarSelection = .account(other.id)
         XCTAssertEqual(model.currentFilter.accountIds, [other.id])
 
+        // the category views kept nothing of it (no pin): the global filters were reset
         model.sidebarSelection = .category(category)
-        model.toggleCategoryAccount(account)
         XCTAssertEqual(model.currentFilter.accountIds, [])
         XCTAssertEqual(model.bookings.count, all)
     }

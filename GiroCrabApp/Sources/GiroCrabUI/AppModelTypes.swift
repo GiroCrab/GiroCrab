@@ -204,14 +204,108 @@ enum Period: Hashable, Identifiable {
     }
 }
 
-/// What the sidebar category sums were loaded for (#1413): period range and `categorySumFilter`.
+/// One query of the sidebar sums: a period range and the filters.
+struct CategorySumQuery: Equatable {
+    var from: String?
+    var to: String?
+    var filter: CategorySumFilter
+}
+
+/// What the sidebar category sums were loaded for (#1413, #1469): the query of every row not named in
+/// `perCategory`, and the individual queries of categories that count by their own filters.
 struct CategorySumsRequest: Equatable {
-    let from: String?
-    let to: String?
-    let accounts: [Int64]
-    let checked: Bool?
-    let direction: BookingDirection
-    let amount: AmountFilter
+    var base: CategorySumQuery
+    var perCategory: [Int64: CategorySumQuery] = [:]
+    /// „Ohne Kategorie“ with its own filters; nil = `base`.
+    var uncategorized: CategorySumQuery?
+}
+
+/// The list filters of one context (#1469): the account views („Alle Konten“, groups, banks, accounts) and the
+/// category views each have their own set; they never take over values from each other.
+struct ListFilterSet: Equatable {
+    var status: StatusFilter = .all
+    var direction: BookingDirection = .all
+    var amount = AmountFilter()
+    var tags = BookingTagFilter()
+    var accounts: Set<Int64> = []
+    /// The period belongs to the set, too: the account views and the category views never share it.
+    var period: Period = .all
+    var customFrom: String?
+    var customTo: String?
+}
+
+/// `ListFilterSet` as saved per category (#1469).
+struct StoredFilterSet: Codable {
+    var status: String
+    var direction: String
+    var minCents: Int64?
+    var maxCents: Int64?
+    var tagIDs: [Int64]
+    var untagged: Bool
+    var accounts: [Int64]
+    var period: String
+    var customFrom: String?
+    var customTo: String?
+
+    init(_ set: ListFilterSet) {
+        status = set.status.rawValue
+        direction = set.direction == .income ? "income" : set.direction == .expense ? "expense" : "all"
+        minCents = set.amount.minCents
+        maxCents = set.amount.maxCents
+        tagIDs = set.tags.tagIDs.sorted()
+        untagged = set.tags.untagged
+        accounts = set.accounts.sorted()
+        period = set.period.lastChoiceKey()
+        customFrom = set.customFrom
+        customTo = set.customTo
+    }
+
+    var set: ListFilterSet {
+        var s = ListFilterSet()
+        s.status = StatusFilter(rawValue: status) ?? .all
+        s.direction = direction == "income" ? .income : direction == "expense" ? .expense : .all
+        s.amount = AmountFilter(minCents: minCents, maxCents: maxCents)
+        s.tags = BookingTagFilter(tagIDs: Set(tagIDs), untagged: untagged)
+        s.accounts = Set(accounts)
+        s.period = Period(lastChoiceKey: period) ?? .all
+        s.customFrom = customFrom
+        s.customTo = customTo
+        return s
+    }
+}
+
+/// The list filters the sidebar's category sums and the „Ohne Kategorie“ badge count besides the period
+/// (#621, #1469): which of them apply is decided by `AppModel.categorySumFilter`.
+struct CategorySumFilter: Equatable {
+    /// Chosen accounts; empty = all of them.
+    var accounts: [Int64] = []
+    var checked: Bool?
+    var direction: BookingDirection = .all
+    var amount = AmountFilter()
+    /// Tags the booking must carry (all of them), sorted; ignored with `untaggedOnly`.
+    var tagIDs: [Int64] = []
+    var untaggedOnly = false
+    /// The period the sums count; nil = the period shown now (the pin holds the category's own, #1469).
+    var period: PeriodSetting?
+
+    /// No filter at all, not even a period: what the sums count when neither switch nor pin applies filters (#1469).
+    static let unfiltered: CategorySumFilter = {
+        var sums = CategorySumFilter()
+        sums.period = PeriodSetting(.all)
+        return sums
+    }()
+
+    /// The list filters of the header row as a sum filter (status, type, amount, tags, accounts).
+    init(accounts: [Int64] = [], status: StatusFilter = .all, direction: BookingDirection = .all,
+         amount: AmountFilter = AmountFilter(), tags: BookingTagFilter = BookingTagFilter(), period: PeriodSetting? = nil) {
+        self.period = period
+        self.accounts = accounts
+        checked = status == .all ? nil : status == .checked
+        self.direction = direction
+        self.amount = amount
+        tagIDs = tags.untagged ? [] : tags.tagIDs.sorted()
+        untaggedOnly = tags.untagged
+    }
 }
 
 /// A period with the dates of `.custom` (#1413): what `AppModel.shownPeriod` holds.
@@ -847,4 +941,37 @@ enum TagRenameIntent: Equatable {
 struct SelectionTotal: Equatable {
     let currency: String
     let cents: Int64
+}
+
+extension Vault {
+    /// The sidebar's category sums for the period and the filters of `filter` (#621, #1469).
+    func categorySums(from: String?, to: String?, filter: CategorySumFilter) throws -> [GiroCrabCore.Category] {
+        try listCategoriesFilteredAmount(
+            dateFrom: from, dateTo: to, accountIds: filter.accounts, checked: filter.checked, direction: filter.direction,
+            amountMinCents: filter.amount.minCents, amountMaxCents: filter.amount.maxCents,
+            tagIds: filter.tagIDs, untaggedOnly: filter.untaggedOnly)
+    }
+
+    /// The sums of a request: every row counts by `base` unless `perCategory` names its own query; one core call per
+    /// distinct query.
+    func categorySums(_ request: CategorySumsRequest) throws -> [GiroCrabCore.Category] {
+        var rows = try categorySums(from: request.base.from, to: request.base.to, filter: request.base.filter)
+        var cache: [(CategorySumQuery, [GiroCrabCore.Category])] = []
+        for index in rows.indices {
+            guard let query = request.perCategory[rows[index].id], query != request.base else { continue }
+            if cache.first(where: { $0.0 == query }) == nil {
+                cache.append((query, try categorySums(from: query.from, to: query.to, filter: query.filter)))
+            }
+            if let row = cache.first(where: { $0.0 == query })?.1.first(where: { $0.id == rows[index].id }) { rows[index] = row }
+        }
+        return rows
+    }
+
+    /// What those sums leave out: the other currencies per category (#1049).
+    func categoryOtherSums(from: String?, to: String?, filter: CategorySumFilter) throws -> [CategoryCurrencyAmount] {
+        try categoryOtherCurrencyTotals(
+            dateFrom: from, dateTo: to, accountIds: filter.accounts, checked: filter.checked, direction: filter.direction,
+            amountMinCents: filter.amount.minCents, amountMaxCents: filter.amount.maxCents,
+            tagIds: filter.tagIDs, untaggedOnly: filter.untaggedOnly)
+    }
 }

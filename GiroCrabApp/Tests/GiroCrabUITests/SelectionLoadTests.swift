@@ -296,21 +296,6 @@ final class SelectionLoadTests: XCTestCase {
         XCTAssertEqual(model.salaryCycle?.lastDate, fresh?.lastDate)
     }
 
-    /// #1413: a non-booking column cancels a pending period change; the sidebar sums still follow the period.
-    func testNonBookingColumnLoadsSumsOfAPendingPeriod() throws {
-        model.selectionPlaceholderDelay = .seconds(30)
-        let before = model.categories.map(\.totalCents)
-        model.interactivePeriod = Period.previousYear()
-        XCTAssertEqual(model.categories.map(\.totalCents), before)
-
-        model.sidebarSelection = .planned
-        XCTAssertEqual(model.shownPeriod.period, Period.previousYear())
-        let sums = model.categories.map(\.totalCents)
-        XCTAssertNotEqual(sums, before)
-        model.reloadCategories()
-        XCTAssertEqual(model.categories.map(\.totalCents), sums)
-    }
-
     func testRapidSwitchesKeepTheLatestSelection() async throws {
         let accounts = model.allAccounts.prefix(3)
         for a in accounts {
@@ -418,9 +403,17 @@ final class SelectionLoadTests: XCTestCase {
 
     private func assertGeplantDropsFilterAfterAccountClick(placeholderDelay: Duration) throws {
         model.selectionPlaceholderDelay = placeholderDelay
-        let category = try XCTUnwrap(model.categories.first)
         let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
-        model.sidebarSelection = .category(category.id)
+        // a category the account filter narrows: its own row is the only one that counts by it (#1469)
+        let vault = try XCTUnwrap(model.vault)
+        var category: GiroCrabCore.Category?
+        for c in model.categories {
+            model.sidebarSelection = .category(c.id)
+            let accounts = Set(try vault.listTransactions(filter: model.currentFilter).transactions.map(\.accountId))
+            if accounts.contains(account.id), accounts.count > 1 { category = c; break }
+        }
+        let chosen = try XCTUnwrap(category, "the demo vault has no category with bookings of several accounts")
+        model.sidebarSelection = .category(chosen.id)
         model.categoryAccountFilter = [account.id]
         let filtered = model.categories.map(\.totalCents)
 
