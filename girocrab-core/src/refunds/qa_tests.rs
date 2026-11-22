@@ -2,6 +2,30 @@
 use super::*;
 use crate::{models::*, offline::ManualBookingSetup, test_support::TempDir};
 #[test]
+fn restore_rejects_named_parts_retired_by_split_removal() {
+    for refund_side in [false, true] {
+        let (_d, v, a) = fixture();
+        let (ca, cb) = categories(&v);
+        let r = booking(&v, a, 10000);
+        let o = booking(&v, a, -10000);
+        let (id, sign, rp, op) = if refund_side {
+            (r, 1, 1, 0)
+        } else {
+            (o, -1, 0, 1)
+        };
+        split(&v, id, ca, cb, sign);
+        v.link_refund_parts(r, rp, o, op).unwrap();
+        v.set_transaction_splits(id, Vec::new()).unwrap();
+        assert!(v.restore_refund_parts(r, rp, o, op).is_err());
+        assert_eq!(v.refund_links(r).unwrap().originals.len(), 1);
+        v.unlink_refund_parts(r, 0, o, 0).unwrap();
+        assert!(allocations(&v, r).is_empty());
+        v.restore_refund_parts(r, 0, o, 0).unwrap();
+        assert_eq!(allocations(&v, r), [(o, Some(10000))]);
+    }
+}
+
+#[test]
 fn restore_whole_purchase_link_after_splitting_preserves_allocation() {
     let (_d, v, a) = fixture();
     let (ca, cb) = categories(&v);

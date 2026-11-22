@@ -1423,9 +1423,25 @@ impl Vault {
         if !deleted {
             return Ok(());
         }
+        let parts = split_parts(&db)?;
+        if (original_part > 0
+            && named(
+                &parts,
+                original_id,
+                i64::from(original_part),
+                Role::Original,
+            )
+            .is_none())
+            || (refund_part > 0
+                && named(&parts, refund_id, i64::from(refund_part), Role::Refund).is_none())
+        {
+            return Err(CoreError::invalid(tr(
+                "Bei einer geteilten Buchung wird ein Teil verknüpft.",
+            )));
+        }
         validate(
             &db,
-            &split_parts(&db)?,
+            &parts,
             refund_id,
             original_id,
             i64::from(original_part),
