@@ -2,9 +2,13 @@
 
 Gemeinsames Verhalten der Oberflächen unter macOS, Linux und Windows.
 
+Die Kernregeln und ihre Begründung stehen in
+[ADR 0002](adr/0002-refund-links-and-projection.md).
+
 ## Einstieg und Aufbau
 
-Das Kontextmenü einer Buchung öffnet „Erstattung zuordnen …“. Das funktioniert
+Unter macOS und Linux öffnet das Kontextmenü einer Buchung „Erstattung zuordnen …“.
+Unter Windows öffnet „Erstattung …“ im Inspector die Zuordnung. Das funktioniert
 für Eingänge, Ausgaben und aufgeteilte Buchungen mit einer Gesamtsumme von null.
 Die Buchungsliste kennzeichnet zugeordnete Erstattungen mit einem Rückpfeil.
 Bei einer teilweisen Zuordnung steht der zugeordnete Betrag daneben; bei
@@ -104,6 +108,9 @@ sind alte Zeilen nicht bedienbar. Nach Synchronisation, Split-, Kategorie- und
 Linkänderungen werden Buchungen, Kategorien, Analysen und Cockpit neu geladen.
 Beim Aktivieren des Datenschutzes verschwinden alte Dialoginhalte sofort;
 neu geladene Daten verwenden den aktuellen Datenschutzstatus.
+
+„Werte ausblenden“ aktiviert den Datenschutz auch im geöffneten Windows-Dialog;
+„Werte anzeigen“ beendet ihn wieder.
 
 `GIROCRAB_LANGUAGE=en` wählt englische Texte der Erstattungsansicht (Standard:
 Deutsch). Im Demo-Modus (`GIROCRAB_DEMO_SEED=1`) erzeugt

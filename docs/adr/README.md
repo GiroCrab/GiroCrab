@@ -51,3 +51,4 @@ and test results in audits. Use issues for plans and open questions.
 | ADR | Status |
 | --- | --- |
 | [0001 – Bank connector architecture](0001-connector-architecture.md) | Proposed |
+| [0002 – Refund links, stable split identities and shared projection](0002-refund-links-and-projection.md) | Proposed |

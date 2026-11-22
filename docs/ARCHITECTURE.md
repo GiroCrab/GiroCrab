@@ -38,7 +38,13 @@ and `migrate` runs the missing ones in a single transaction.
 | 31 | `booking_documents.seen_at`: read status of documents; the document list index carries the column, a partial index finds the unread ones |
 | 32 | `accounts.note` / `note_ms`: the account note syncs like the name (#980); moves the setting `account.note.<id>` onto the account |
 | 33 | `hidden_recipients`: IBANs left out of the transfer suggestions (#978); index `tx_recipients` over the outgoing bookings with an IBAN |
-| 34+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 34 | per-account total inclusion and its sync stamp |
+| 35 | merchant recognition switches and custom merchants |
+| 36 | per-account bank label and its sync stamp |
+| 37 | sidebar sections by account kind |
+| 38 | stable split UUIDs with deterministic backfill, separate split position and `refund_links` (#714) |
+
+The tables of securities depots are described in `docs/DEPOT_DATENMODELL.md`.
 
 **Changing the schema**
 
@@ -88,6 +94,8 @@ module adds its own methods to it and reaches the database through `self.db()`.
   | `vault/rules.rs` | pattern and expression rules |
   | `vault/settings.rs` | settings and `KNOWN_SETTINGS` |
   | `vault/merge.rs` | merging a peer snapshot or another vault file |
+  | `refunds.rs`, `refunds/` | UUID endpoint resolution, allocation, link API, suggestions and full-row link merge |
+  | `projection.rs`, `projection/` | shared refund-aware category/flow contributions, reports and aggregation lint |
   | `loans.rs`, `planning.rs`, `documents.rs`, `insights.rs`, `connectors/*.rs`, `importers/*.rs`, … | their feature |
 
 - A feature module has at most one `#[uniffi::export] impl Vault` (the Swift API) and one plain
@@ -107,3 +115,27 @@ module adds its own methods to it and reaches the database through `self.db()`.
   (`kept_key`, `migrate`). Other modules use `Vault::db()` only.
 - Tests sit in the module whose code they exercise.
 - A new feature gets a new module. Don't add another section to an existing file.
+
+## Refund links and financial projection
+
+Refund links are stored independently of bank bookings and user splits. Split
+parts have durable UUIDs; their display position is not an endpoint identity.
+`planning/split_ids.rs` implements migration 38. `planning.rs` preserves kept
+UUIDs, and the split and twin merge paths retain them.
+
+`refunds.rs` resolves endpoints and allocates capacity in sync-identity order;
+`refunds/store.rs` persists local reconciliation and merges complete link rows
+after exact booking-id mapping. Merge itself does not resolve or repair links.
+`refunds/api.rs` exposes link/unlink and compare-and-set restore. Allocation is
+cached by vault data revision, not persisted as additional financial truth.
+
+`projection.rs` and `projection/reports.rs` supply financial totals to core
+reports and front ends. Refund attribution uses the refund's account/date and
+the original endpoint's category/classification. Currencies and permitted account
+scopes stay separate. `projection/lint.rs` guards against reintroducing raw
+category/split sums in core, Linux and Windows consumers; transaction rows are
+for presentation, not a replacement report source.
+
+See [ADR 0002](adr/0002-refund-links-and-projection.md) for the rules, rejected
+alternatives and test evidence, and the [refund UI guide](ERSTATTUNGEN_UI.md)
+for platform entry points and privacy behavior.
