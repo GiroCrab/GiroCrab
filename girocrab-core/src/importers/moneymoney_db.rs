@@ -498,6 +498,9 @@ struct SrcAccount {
     /// `accounts.refresh` (the low bits are its refresh settings). MoneyMoney
     /// keeps no date for it. Not `cancel_tsp`, a cancelled refresh (#998).
     closed: bool,
+    /// The database has `refresh` (MoneyMoney always fills it): without the column
+    /// `closed` is `false` for lack of knowledge, not because the account is in use.
+    closed_known: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1245,6 +1248,11 @@ fn read_source(path: &str, password: &SecretString) -> CoreResult<Source> {
 
 /// Accounts – never cred / userdata / transientdata / web_ops.
 fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
+    let closed_known: bool = conn.query_row(
+        "SELECT count(*) > 0 FROM pragma_table_info('accounts') WHERE lower(name) = 'refresh'",
+        [],
+        |r| r.get(0),
+    )?;
     let sql = select(
         conn,
         "accounts",
@@ -1288,6 +1296,7 @@ fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
             balance_ts: vint(get(r, 12)?).filter(|t| *t > 0),
             bic: vtext(get(r, 13)?),
             closed: vint(get(r, 14)?).is_some_and(|f| f & MM_CLOSED != 0),
+            closed_known,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -3239,7 +3248,7 @@ impl ImportCtx<'_> {
             } else if a.closed && revived && !marked {
                 // a marked one (deleted with its login) waits for its own MoneyMoney account
                 archive_closed(conn, id)?;
-            } else if own && wrongly_archived && !a.closed {
+            } else if own && wrongly_archived && !a.closed && a.closed_known {
                 // still archived by the import of v0.8.5 and taken over by a fetch
                 // without imported bookings, so step 38 could not tell: its own
                 // MoneyMoney account says it is in use (stamped like step 38)
@@ -3248,7 +3257,7 @@ impl ImportCtx<'_> {
                       WHERE id = ?1",
                     [id],
                 )?;
-            } else if unknown {
+            } else if unknown && a.closed_known {
                 // in use according to its own MoneyMoney account: known from now on. The stamp
                 // stays, so a choice made since on another device still wins; with equal stamps
                 // the merge takes the known state

@@ -4250,6 +4250,24 @@ fn a_marked_account_revived_by_another_source_keeps_its_mark() {
 }
 
 #[test]
+fn a_source_without_a_closed_state_settles_nothing() {
+    // a database without `refresh` cannot say whether an account is in use: the repair mark
+    // stays, and so does an archive the import of v0.8.5 left
+    let v = vault();
+    import_with(&v, &fake_db(), |_| {});
+    let giro = account_by_name(&v, "Girokonto").id;
+    note_archive_unknown(&v.db().unwrap(), &[giro]).unwrap();
+    let no_state = "ALTER TABLE accounts DROP COLUMN refresh;";
+    import_with(&v, &fake_db_with(false, no_state), |_| {});
+    assert_eq!(archive_unknown(&v.db().unwrap()).unwrap(), vec![giro]);
+
+    let v = vault();
+    let taken = taken_over_giro(&v, Some((1_790_000_000, 1_790_001_000_123)));
+    import_with(&v, &fake_db_with(false, no_state), |_| {});
+    assert_eq!(archived_unix(&v, taken), Some(1_790_000_000));
+}
+
+#[test]
 fn an_iban_two_sources_share_leaves_the_state_alone() {
     // MoneyMoney keeps a closed and an open account with the Girokonto's IBAN (#94): the IBAN
     // names no source, so neither the wrong archive nor the repair note is resolved by it –
