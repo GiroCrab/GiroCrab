@@ -136,12 +136,18 @@ class VaultImporter(
                         }
                         // The prompt answers on Main; the native work below is blocking.
                         io.execute {
-                            restore(result.cipher, key, vaultPath, backupPath, password) { finish(it) }
+                            try {
+                                restore(result.cipher, key, vaultPath, backupPath, password) { finish(it) }
+                            } catch (t: Throwable) {
+                                // A failing executor thread would leave `running` true forever.
+                                key.fill(0)
+                                finish(ImportResult.Failed("Import abgebrochen (${t.javaClass.simpleName})."))
+                            }
                         }
                     }
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             key.fill(0)
             finish(ImportResult.Failed("Import nicht möglich (${e.javaClass.simpleName}: ${e.message})."))
         }
@@ -163,7 +169,8 @@ class VaultImporter(
 
             try {
                 opened.restoreBackup(backupPath, password)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Includes `UnsatisfiedLinkError`: the core would otherwise leave no result behind.
                 throw ImportFailed(
                     "Sicherung ließ sich nicht einspielen (${e.javaClass.simpleName}: ${e.message})",
                 )
@@ -173,7 +180,7 @@ class VaultImporter(
             keyStore.storeWrapped(key, authenticated)
             vault = null // ownership moves to the caller
             ImportResult.Imported(opened)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             runCatching { vault?.close() }
             keyStore.clearWrapped()
             vaultPath.delete()
