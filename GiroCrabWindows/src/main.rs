@@ -1302,6 +1302,41 @@ fn pick_import_file() -> Option<PathBuf> {
     std::env::var_os("GIROCRAB_IMPORT_FILE").map(PathBuf::from)
 }
 
+/// Save dialog for the GiroCode PNG (Windows). Elsewhere `GIROCRAB_EXPORT_DIR` (development builds).
+#[cfg(windows)]
+fn save_png_file(name: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title("GiroCode als PNG speichern")
+        .set_file_name(name)
+        .add_filter("PNG-Bild", &["png"])
+        .save_file()
+}
+
+#[cfg(not(windows))]
+fn save_png_file(name: &str) -> Option<PathBuf> {
+    std::env::var_os("GIROCRAB_EXPORT_DIR").map(|d| PathBuf::from(d).join(name))
+}
+
+/// Puts the image on the clipboard as registered "PNG" and as `CF_DIB`.
+#[cfg(windows)]
+fn copy_image_to_clipboard(png: &[u8], dib: &[u8]) -> Result<(), String> {
+    use clipboard_win::{Clipboard, raw, register_format};
+    const CF_DIB: u32 = 8;
+    let busy = |_| "Die Zwischenablage ist gerade belegt; bitte erneut versuchen.".to_string();
+    let _open = Clipboard::new_attempts(10).map_err(busy)?;
+    raw::empty().map_err(busy)?;
+    raw::set_without_clear(CF_DIB, dib).map_err(busy)?;
+    if let Some(format) = register_format("PNG") {
+        raw::set_without_clear(format.get(), png).map_err(busy)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn copy_image_to_clipboard(_png: &[u8], _dib: &[u8]) -> Result<(), String> {
+    Err("Bilder in die Zwischenablage kopieren geht nur unter Windows.".into())
+}
+
 /// `TransferSession` driven synchronously.
 struct CoreTransfer {
     session: Arc<girocrab_core::TransferSession>,
@@ -2063,6 +2098,42 @@ fn main() -> Result<(), slint::PlatformError> {
                     win.set_transfer_status(e.into());
                 }
             }
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_transfer_girocode_copy(move || {
+            let Some(win) = weak.upgrade() else { return };
+            // Status texts never contain the name, IBAN or amount.
+            let status = girocode::girocode_clipboard_images(&transfer_fields(&win))
+                .and_then(|(png, dib)| copy_image_to_clipboard(&png, &dib))
+                .map(|()| "GiroCode als Bild in die Zwischenablage kopiert.".to_string())
+                .unwrap_or_else(|e| e);
+            win.set_transfer_status(status.into());
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_transfer_girocode_save(move || {
+            let Some(win) = weak.upgrade() else { return };
+            let f = transfer_fields(&win);
+            let png = match girocode::girocode_payload_for(&f)
+                .and_then(|p| girocode::girocode_png_bytes(&p, girocode::EXPORT_MODULE_PX))
+            {
+                Ok(png) => png,
+                Err(e) => {
+                    win.set_transfer_status(e.into());
+                    return;
+                }
+            };
+            let Some(path) = save_png_file(&girocode::girocode_png_file_name(&f.name)) else {
+                return;
+            };
+            let status = match std::fs::write(&path, png) {
+                Ok(()) => "GiroCode als PNG gespeichert.".to_string(),
+                Err(e) => format!("Die Datei konnte nicht gespeichert werden: {e}"),
+            };
+            win.set_transfer_status(status.into());
         });
     }
     {
