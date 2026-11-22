@@ -743,10 +743,10 @@ Rectangle {
         property alias chevron: chevron
         /// Width the name line gets in a single line: the row minus date, signet, marks and amount.
         readonly property real nameLineWidth: width - 28 - (compact ? 80 * Theme.textScale + 8 : 0) - Theme.scaled(signetSize) - 8
-        /// What the refund marker and its amount take of the name line (0 without a link).
-        readonly property real refundRoom: (refundIcon.visible ? refundIcon.width + 6 : 0) + (refundPart.visible ? Math.ceil(refundPart.implicitWidth) + 6 : 0)
             - (checkIcon.visible ? checkIcon.width + 8 : 0) - (pendingIcon.visible ? pendingIcon.width + 8 : 0)
             - (amountLabel.visible ? amountLabel.implicitWidth : orderAmount.implicitWidth + 16) - 8
+        /// What the refund marker and its amount take of the name line (0 without a link).
+        readonly property real refundRoom: (refundIcon.visible ? refundIcon.width + 6 : 0) + (refundPart.visible ? Math.ceil(refundPart.implicitWidth) + 6 : 0)
         implicitHeight: Math.max((effectiveDensity === "compact" ? 28 : 44) * Theme.textScale, column.implicitHeight) + 2 * verticalPadding
 
         ColumnLayout {

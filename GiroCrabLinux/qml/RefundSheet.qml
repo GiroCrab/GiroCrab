@@ -7,7 +7,14 @@ import QtQuick.Layouts
 // up to three suggestions, then the searchable list. One click links or removes one pair.
 Sheet {
     id: sheet
-    readonly property var booking: AppModel.refundBooking
+    /// The booking as the list has it now: a sync can change its amount while the sheet is open.
+    readonly property var booking: {
+        const opened = AppModel.refundBooking
+        if (!opened) return opened
+        const rows = AppModel.bookings || []
+        for (let i = 0; i < rows.length; i++) if (rows[i].id === opened.id) return rows[i]
+        return opened
+    }
     /// The side of the selected part, else of the booking: a part of the other direction
     /// (a credit in a purchase) is linked on its own side.
     readonly property bool fromRefund: {
