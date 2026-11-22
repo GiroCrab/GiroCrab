@@ -31,7 +31,7 @@ export component RefundsPanel inherits FocusScope {
     init => { self.focus(); }
     capture-key-pressed(event) => {
         if event.text == "\u{1b}" { root.close(); return accept; }
-        if event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p" || event.text == "\u{10}") { root.privacy-toggle(); return accept; }
+        if event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p") { root.privacy-toggle(); return accept; }
         reject
     }
     VerticalLayout {
