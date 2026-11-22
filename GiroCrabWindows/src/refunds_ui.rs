@@ -43,6 +43,7 @@ impl LinkEdit {
 #[derive(Default)]
 struct Ui {
     generation: u64,
+    refresh_sequence: u64,
     pending: bool,
     undo_unlink: Option<Link>,
     /// The booking the dialog is open for: (id, amount in cents, currency).
@@ -394,9 +395,17 @@ fn show(win: &MainWindow, loaded: Loaded) {
 
 /// Loads the dialog's content for the open booking on a worker thread.
 fn refresh(win: &MainWindow, v: Arc<Vault>) {
-    let Some(((booking, cents, currency), search, own_part)) =
-        with_ui(|u| Some((u.booking.clone()?, u.search.clone(), u.own_part)))
-    else {
+    let Some(((booking, cents, currency), search, own_part, generation, sequence)) = with_ui(|u| {
+        let booking = u.booking.clone()?;
+        u.refresh_sequence = u.refresh_sequence.wrapping_add(1);
+        Some((
+            booking,
+            u.search.clone(),
+            u.own_part,
+            u.generation,
+            u.refresh_sequence,
+        ))
+    }) else {
         return;
     };
     let weak = win.as_weak();
@@ -408,7 +417,9 @@ fn refresh(win: &MainWindow, v: Arc<Vault>) {
                 return;
             }
             let current = with_ui(|u| {
-                u.booking.as_ref().map(|b| b.0) == Some(booking)
+                u.generation == generation
+                    && u.refresh_sequence == sequence
+                    && u.booking.as_ref().map(|b| b.0) == Some(booking)
                     && u.search == search
                     && u.own_part == own_part
             });
