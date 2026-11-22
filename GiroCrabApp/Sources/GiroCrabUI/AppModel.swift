@@ -19,11 +19,13 @@ public final class AppModel {
 
     let options: LaunchOptions
     /// A swapped-in vault (unlock, demo ↔ own) shows its own sidebar badges: the counts are read again.
-    /// Any vault swap cancels a running Advanzia workflow.
+    /// Any vault swap cancels a running Advanzia workflow and closes the refund picker.
     private(set) var vault: Vault? {
         didSet {
             vaultRevision &+= 1
             advanziaWorkflow?.cancel()
+            // the picker holds ids and candidates of the vault it was opened in (#714)
+            if vault !== oldValue { refundPickerBooking = nil }
             if vault != nil { refreshSidebarCounts() }
         }
     }

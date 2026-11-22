@@ -162,6 +162,14 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(model.refundPickerBooking?.refundLink, .refund)
     }
 
+    func testThePickerClosesWhenItsVaultIsGone() throws {
+        let (refund, _) = try pair()
+        model.openRefundPicker(for: refund)
+        XCTAssertNotNil(model.refundPickerBooking)
+        model.releaseVaultState()
+        XCTAssertNil(model.refundPickerBooking)
+    }
+
     func testTheInspectorCardHasItsPlaceInTheStandardLayout() {
         let visible = InspectorLayout.standard.visible
         XCTAssertEqual(visible.firstIndex(of: .refunds), visible.firstIndex(of: .tags).map { $0 + 1 })
