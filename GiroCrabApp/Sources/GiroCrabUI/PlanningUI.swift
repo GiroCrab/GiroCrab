@@ -469,7 +469,8 @@ struct CashflowCard: View {
             // kind / bank = overall money figure; a directly requested single
             // account is a proof view and keeps its sums
             if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6, accountIds: accountIds,
-                                                 respectInTotal: model.sidebarSelection?.usesTotalsContext ?? true) {
+                                                 respectInTotal: model.sidebarSelection?.usesTotalsContext ?? true),
+               !Task.isCancelled { // a newer read (after a refund link) has taken over
                 rows = loaded
             }
         }
