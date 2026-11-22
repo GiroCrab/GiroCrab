@@ -32,6 +32,8 @@ pub struct Cells {
     pub id: i64,
     pub cells: [String; 6],
     pub negative: bool,
+    /// Shown emphasized (Belege: document not yet seen).
+    pub unread: bool,
 }
 
 /// Period of the header selector. It limits distributions, fees/taxes and the activity table;
@@ -359,6 +361,7 @@ pub fn position_row(
             String::new(),
         ],
         negative: neg,
+        unread: false,
     }
 }
 
@@ -403,6 +406,7 @@ pub fn activity_row(
             String::new(),
         ],
         negative: amount < 0,
+        unread: false,
     }
 }
 
@@ -672,6 +676,7 @@ pub fn wealth_view(data: &WealthData, tab: WealthTab, money: &dyn Fn(i64) -> Str
                     String::new(),
                 ],
                 negative: a.balance_cents < 0,
+                unread: false,
             })
             .collect()
     };
@@ -999,6 +1004,7 @@ mod tests {
                 "".into(),
             ],
             negative: false,
+            unread: false,
         };
         c.mask(&[0, 2, 9], false);
         assert_eq!(c.cells[0], "Name");
