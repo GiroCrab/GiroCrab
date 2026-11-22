@@ -1077,3 +1077,27 @@ fn links_of_two_parts_that_become_one_keep_the_earliest_place() {
     assert_eq!(part_links(&v, refund).len(), 2);
     assert_eq!((share(first), share(second)), (200, 70));
 }
+
+/// The inspector lists the links of a booking in the order they are filled, also when their
+/// stamps are equal and the order comes from the bookings.
+#[test]
+fn links_with_equal_stamps_are_listed_in_the_order_they_are_filled() {
+    let d = TempDir::new("refunds-listed");
+    let v = open(&d, "v");
+    let b = seed(&v);
+    v.link_refund(b[2], b[5], 0).unwrap();
+    v.link_refund(b[2], b[0], 0).unwrap();
+    v.db()
+        .unwrap()
+        .execute("UPDATE refund_links SET created_ms=5,changed_ms=5", [])
+        .unwrap();
+    // the earlier booking is filled first, though it has the higher id
+    let listed: Vec<(i64, Option<i64>)> = v
+        .refund_links(b[2])
+        .unwrap()
+        .originals
+        .iter()
+        .map(|o| (o.id, o.share_cents))
+        .collect();
+    assert_eq!(listed, vec![(b[5], Some(1)), (b[0], Some(49))]);
+}

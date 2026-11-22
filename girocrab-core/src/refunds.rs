@@ -240,6 +240,8 @@ type Link = (i64, i64, i64, i64);
 #[derive(Default)]
 struct Shares {
     links: HashMap<Link, i64>,
+    /// The place of every live link in the order the shares are filled.
+    place: HashMap<Link, usize>,
     /// Links between different currencies: they get nothing.
     mixed: std::collections::HashSet<Link>,
     /// Per part (booking, part from 1) of a split booking, and per booking without parts
@@ -425,6 +427,7 @@ fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shar
     let mut out = Shares::default();
     for (r, o, part, refund_part, r_amount, o_amount, r_cur, o_cur) in links {
         let link = (r, o, part, refund_part);
+        out.place.insert(link, out.place.len());
         if r == o
             || !Shares::fits(parts, r, r_amount, refund_part, Role::Refund)
             || !Shares::fits(parts, o, o_amount, part, Role::Original)
@@ -1366,6 +1369,10 @@ impl Vault {
                 .map(|p| p.label.clone())
                 .unwrap_or_default()
         };
+        // listed in the order they are filled, also with equal stamps (`shares`)
+        let place = |l: Link| shares.place.get(&l).copied().unwrap_or(usize::MAX);
+        originals.sort_by_key(|o| place(link(transaction_id, o.id, o)));
+        refunds.sort_by_key(|r| place(link(r.id, transaction_id, r)));
         for o in &mut originals {
             o.share_cents = shares.links.get(&link(transaction_id, o.id, o)).copied();
             o.refund_part_label = own_label(o.refund_part, Role::Refund);
