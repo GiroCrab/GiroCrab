@@ -179,6 +179,26 @@ class VaultImporterTest {
         assertTrue("missing file must be reported, was $result", result is ImportResult.Failed)
     }
 
+    /**
+     * An `Error` on the prompt path — in practice `UnsatisfiedLinkError` when the core is missing —
+     * must still end the import. A result that never arrives would leave the lock screen waiting
+     * and `running` on `true` for the rest of the process.
+     */
+    @Test
+    fun errorFromThePromptStillEndsTheImport() {
+        createVaultWithAccountsAndBackup(wipeDevice = true)
+
+        val importer = VaultImporter(
+            keyStore = keyStore(),
+            opener = opener,
+            prompt = { _, _, _, _ -> throw AssertionError("kein nativer Kern geladen") },
+            filesDir = dir,
+        )
+        val result = runImport(importer, backupFile.path, BACKUP_PASSWORD)
+
+        assertTrue("an Error must end the import, was $result", result is ImportResult.Failed)
+    }
+
     // --- helpers ---------------------------------------------------------------------------
 
     private fun importerThatSucceeds() = VaultImporter(
