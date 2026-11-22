@@ -64,6 +64,45 @@ struct Ui {
 }
 
 impl Ui {
+    fn open(&mut self, booking: (i64, i64, String), title: String) {
+        *self = Self {
+            generation: self.generation.wrapping_add(1),
+            pending: self.pending,
+            booking: Some(booking),
+            title,
+            ..Self::default()
+        };
+    }
+
+    fn begin_edit(&mut self) -> Option<u64> {
+        if self.pending {
+            return None;
+        }
+        self.pending = true;
+        Some(self.generation)
+    }
+
+    fn finish_edit(
+        &mut self,
+        generation: u64,
+        edit: LinkEdit,
+        link: Link,
+        success: bool,
+    ) -> Option<bool> {
+        self.pending = false;
+        if self.generation != generation {
+            return None;
+        }
+        if success {
+            self.undo_unlink = match edit {
+                LinkEdit::Unlink => Some(link),
+                LinkEdit::Link => self.undo_unlink.filter(|&old| old != link),
+                LinkEdit::Restore => None,
+            };
+        }
+        Some(self.undo_unlink.is_some())
+    }
+
     fn shows_link(&self, link: Link) -> bool {
         self.booking
             .as_ref()
@@ -443,13 +482,7 @@ fn refresh(win: &MainWindow, v: Arc<Vault>) {
 }
 
 fn edit_link(win: &MainWindow, v: Arc<Vault>, edit: LinkEdit, link: Link) {
-    let Some(generation) = with_ui(|u| {
-        if u.pending {
-            return None;
-        }
-        u.pending = true;
-        Some(u.generation)
-    }) else {
+    let Some(generation) = with_ui(Ui::begin_edit) else {
         return;
     };
     win.set_rf_edit_pending(true);
@@ -460,23 +493,10 @@ fn edit_link(win: &MainWindow, v: Arc<Vault>, edit: LinkEdit, link: Link) {
             if !crate::is_current(&v) {
                 return;
             }
-            let sheet = with_ui(|u| {
-                if u.generation != generation {
-                    return None;
-                }
-                u.pending = false;
-                if done.is_ok() {
-                    u.undo_unlink = match edit {
-                        LinkEdit::Unlink => Some(link),
-                        LinkEdit::Link => u.undo_unlink.filter(|&old| old != link),
-                        LinkEdit::Restore => None,
-                    };
-                }
-                Some(u.undo_unlink.is_some())
-            });
+            let sheet = with_ui(|u| u.finish_edit(generation, edit, link, done.is_ok()));
+            win.set_rf_edit_pending(false);
             if let Some(can_undo) = sheet {
                 win.set_rf_can_undo(can_undo);
-                win.set_rf_edit_pending(false);
                 if let Err(e) = &done {
                     win.set_rf_status(e.as_str().into());
                 }
@@ -530,17 +550,10 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         win.set_rf_hint(SharedString::new());
         win.set_rf_status(SharedString::new());
         win.set_rf_can_undo(false);
-        win.set_rf_edit_pending(false);
         win.set_rf_rows(ModelRc::new(VecModel::from(Vec::<RefundRow>::new())));
         win.set_rf_parts(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
-        with_ui(|u| {
-            *u = Ui {
-                generation: u.generation.wrapping_add(1),
-                booking: Some((id, cents, currency)),
-                title,
-                ..Ui::default()
-            }
-        });
+        with_ui(|u| u.open((id, cents, currency), title));
+        win.set_rf_edit_pending(with_ui(|u| u.pending));
         head(&win);
         win.set_refunds_open(true);
         refresh(&win, v);
@@ -605,6 +618,43 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reopened_dialog_blocks_overlapping_writes_until_completion() {
+        for success in [false, true] {
+            for reopened in [false, true] {
+                let mut ui = Ui::default();
+                ui.open((7, 1000, "EUR".into()), "QA".into());
+                let first = ui.begin_edit().unwrap();
+                assert!(ui.begin_edit().is_none());
+                if reopened {
+                    ui.open((9, -1000, "EUR".into()), "QB".into());
+                }
+                assert!(ui.pending);
+                assert!(ui.begin_edit().is_none());
+                let link = (7, 0, 9, 0);
+                let can_undo = ui.finish_edit(first, LinkEdit::Unlink, link, success);
+                assert!(!ui.pending);
+                if reopened {
+                    assert_eq!(can_undo, None);
+                    assert_eq!(ui.undo_unlink, None);
+                } else {
+                    assert_eq!(can_undo, Some(success));
+                    assert_eq!(ui.undo_unlink, success.then_some(link));
+                }
+                let next = ui.begin_edit().unwrap();
+                assert_eq!(next, ui.generation);
+                assert_eq!(
+                    ui.finish_edit(next, LinkEdit::Link, link, true),
+                    Some(false)
+                );
+                assert!(!ui.pending);
+            }
+        }
+        println!(
+            "1383 reopen blocks a second worker; success and error release pending without stale undo"
+        );
+    }
 
     #[test]
     fn reopened_dialog_refreshes_for_either_affected_booking() {
