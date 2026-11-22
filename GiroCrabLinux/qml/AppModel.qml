@@ -55,12 +55,12 @@ QtObject {
     /// more with fresh arguments when it is back, so fast clicking queues nothing.
     /// The demo vault (small, launch options and screenshots expect its data at once)
     /// loads synchronously.
-    function loadOffMain(channel, request, apply, failed) {
+    function loadOffMain(channel, request, apply, failed, alwaysAsync) {
         if (!vaultLoaded) return
         const l = loads[channel] || (loads[channel] = { gen: 0, busy: false, again: false })
         l.gen++
         l.request = request; l.apply = apply; l.failed = failed || null
-        if (demoActive) {
+        if (demoActive && !alwaysAsync) {
             const req = loadRequest(request)
             if (!req) return
             let results

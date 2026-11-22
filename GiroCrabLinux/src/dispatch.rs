@@ -1481,8 +1481,45 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         // overview card. Not in the macro below because it carries no
         // `respect_in_total` from QML.
         "cashflow_by_period" => Some(cashflow_by_period_totals(v, a)),
+        "refund_sheet" => Some(refund_sheet(v, a)),
         _ => dispatch_vault_methods(v, method, a),
     }
+}
+
+fn refund_sheet(v: &Vault, a: &Value) -> R {
+    let id = arg(a, "transaction_id")?;
+    let amount: i64 = arg(a, "amount_cents")?;
+    let selected: u32 = arg(a, "own_part")?;
+    let query: String = arg(a, "query")?;
+    let err = |e: girocrab_core::CoreError| e.to_string();
+    let splits = v.list_transaction_splits(id).map_err(err)?;
+    let index = selected
+        .checked_sub(1)
+        .map(|i| i as usize)
+        .filter(|&i| i < splits.len())
+        .or_else(|| {
+            splits
+                .iter()
+                .position(|s| (s.amount_cents > 0) == (amount > 0))
+        })
+        .or_else(|| (!splits.is_empty()).then_some(0));
+    let part = index.map_or(0, |i| i as u32 + 1);
+    let pays_back = index.map_or(amount > 0, |i| splits[i].amount_cents > 0);
+    let links = v.refund_links(id).map_err(err)?;
+    let own_open = v.refund_part_open(id, pays_back, part).map_err(err)?;
+    let suggestions = if query.trim().is_empty() {
+        v.refund_part_suggestions(id, pays_back, part)
+            .map_err(err)?
+    } else {
+        Vec::new()
+    };
+    let candidates = v
+        .refund_part_candidates(id, pays_back, query, 200)
+        .map_err(err)?;
+    ok(
+        json!({ "splits": splits, "own_part": part, "links": links, "own_open": own_open,
+        "suggestions": suggestions, "candidates": candidates }),
+    )
 }
 
 fn cashflow_by_period_totals(v: &Vault, a: &Value) -> R {
@@ -1738,6 +1775,24 @@ mod tests {
         let links = call("refund_links", json!({ "transaction_id": refund }));
         assert_eq!(links["originals"][0]["refund_part"], json!(2));
         assert_eq!(links["assigned_cents"], json!(4000));
+        let sheet = |part, query| {
+            call(
+                "refund_sheet",
+                json!({
+                    "transaction_id": refund, "amount_cents": 6000, "own_part": part, "query": query
+                }),
+            )
+        };
+        let first = sheet(0, "");
+        assert_eq!(first["own_part"], json!(1));
+        assert_eq!(first["own_open"], json!(2000));
+        assert_eq!(first["links"], links);
+        let second = sheet(2, "shop");
+        assert_eq!(second["own_part"], json!(2));
+        assert_eq!(second["own_open"], json!(0));
+        assert_eq!(second["suggestions"], json!([]));
+        assert_eq!(second["candidates"][0]["id"], original);
+        assert_eq!(sheet(2, "no matching booking")["candidates"], json!([]));
         assert_eq!(total(range.clone()), -6000);
         assert_eq!(
             total(

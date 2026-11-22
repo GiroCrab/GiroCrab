@@ -23,14 +23,19 @@ Sheet {
     property int ownPart: 0
     /// What the selected part (else the booking) has left for a further link.
     property var ownOpen: null
-    onOwnPartChanged: reload()
+    property bool loading: false
+    readonly property string loadChannel: "refundSheet"
     property string search: ""
     property string error: ""
     visible: booking !== null
     sheetWidth: 580
     padding: 22
-    onClosed: AppModel.refundBooking = null
-    onAboutToShow: reload()
+    onClosed: {
+        searchTimer.stop()
+        AppModel.cancelLoad(loadChannel)
+        AppModel.refundBooking = null
+    }
+    onAboutToShow: reload(ownPart)
 
     readonly property var linked: links ? (fromRefund ? links.originals : links.refunds) : []
     /// The booking has nothing left for a further link.
@@ -43,34 +48,40 @@ Sheet {
 
     property Connections changes: Connections {
         target: AppModel
-        function onRefundLinksRevisionChanged() { sheet.reload() }
+        function onRefundLinksRevisionChanged() { sheet.reload(sheet.ownPart) }
+        function onVaultGenerationChanged() { sheet.close() }
     }
-    property Timer searchTimer: Timer { interval: 200; onTriggered: sheet.reload() }
-    onSearchChanged: searchTimer.restart()
+    property Timer searchTimer: Timer { interval: 200; onTriggered: sheet.reload(sheet.ownPart) }
+    onSearchChanged: {
+        AppModel.cancelLoad(loadChannel)
+        loading = true
+        searchTimer.restart()
+    }
 
-    function reload() {
+    function reload(part) {
         const b = booking
         if (b === null) return
-        try {
-            const splits = AppModel.core("list_transaction_splits", { transaction_id: b.id })
-            ownParts = splits.map((s, i) => {
+        searchTimer.stop()
+        loading = true
+        error = ""
+        const args = { transaction_id: b.id, amount_cents: b.amount_cents, own_part: part, query: search }
+        AppModel.loadOffMain(loadChannel, () => [["refund_sheet", args]], results => {
+            const data = results[0]
+            ownParts = data.splits.map((s, i) => {
                 const c = s.category_id ? AppModel.categoryByID(s.category_id) : null
                 return { part: i + 1, amount: s.amount_cents,
                          text: [qsTr("Teil %1").arg(i + 1), c ? c.path : "", s.note, Fmt.money(s.amount_cents, b.currency)].filter(t => t !== "").join(" · ") }
             })
-            if (!ownParts.some(p => p.part === ownPart)) {
-                // starts with a part on the booking's own side; the change reloads
-                const own = ownParts.find(p => (p.amount > 0) === (b.amount_cents > 0)) || ownParts[0]
-                const part = own ? own.part : 0
-                if (part !== ownPart) { ownPart = part; return }
-            }
-            const side = { transaction_id: b.id, pays_back: fromRefund }
-            links = AppModel.core("refund_links", { transaction_id: b.id })
-            ownOpen = AppModel.core("refund_part_open", Object.assign({ own_part: ownPart }, side))
-            top = sheet.search.trim() === "" ? AppModel.core("refund_part_suggestions", Object.assign({ own_part: ownPart }, side)).filter(s => !linked.some(l => same(l, s.booking))) : []
-            candidates = AppModel.core("refund_part_candidates", Object.assign({ query: sheet.search, limit: 200 }, side))
-            error = ""
-        } catch (e) { error = e.message }
+            ownPart = data.own_part
+            links = data.links
+            ownOpen = data.own_open
+            top = data.suggestions.filter(s => !linked.some(l => same(l, s.booking)))
+            candidates = data.candidates
+            loading = false
+        }, message => {
+            error = message
+            loading = false
+        }, true)
     }
     function toggle(row, isLinked) {
         AppModel.setRefundLink(fromRefund ? booking.id : row.id, fromRefund ? row.id : booking.id,
@@ -122,7 +133,7 @@ Sheet {
         property string reason: ""
         readonly property string why: isLinked ? "" : sheet.blocked(row)
         Layout.fillWidth: true
-        enabled: why === ""
+        enabled: !sheet.loading && sheet.error === "" && why === ""
         opacity: enabled ? 1 : 0.45
         padding: 6
         onClicked: sheet.toggle(row, isLinked)
@@ -184,7 +195,10 @@ Sheet {
             Layout.fillWidth: true
             model: sheet.ownParts.map(p => p.text)
             currentIndex: Math.max(0, sheet.ownParts.findIndex(p => p.part === sheet.ownPart))
-            onActivated: index => sheet.ownPart = sheet.ownParts[index].part
+            onActivated: index => {
+                sheet.ownPart = sheet.ownParts[index].part
+                sheet.reload(sheet.ownPart)
+            }
             Accessible.name: sheet.fromRefund ? qsTr("Erstattung aus") : qsTr("Erstattung für")
             // category names, amounts and notes of the parts: one cover per kind, `Sensitive`
             // looks at one kind only
