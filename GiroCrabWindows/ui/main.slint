@@ -984,6 +984,8 @@ export component MainWindow inherits Window {
     // clipboard text -> empty transfer fields; GiroCode (EPC QR) for the current fields (#663)
     callback transfer-paste(string);
     callback transfer-girocode();
+    callback transfer-girocode-copy();
+    callback transfer-girocode-save();
 
     // account / category management, About, keyboard shortcuts
     in property <[color]> palette;
@@ -1965,6 +1967,18 @@ export component MainWindow inherits Window {
                         height: 232px;
                         background: #ffffff;
                         Image { source: root.girocode-image; image-fit: contain; image-rendering: pixelated; width: parent.width - 8px; height: parent.height - 8px; }
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Button {
+                            text: "Bild kopieren";
+                            clicked => { root.transfer-girocode-copy(); }
+                        }
+                        Button {
+                            text: "Als PNG speichern…";
+                            clicked => { root.transfer-girocode-save(); }
+                        }
                     }
                     Text {
                         text: "Scannen Sie den Code mit der App Ihrer Bank. Ausführungsdatum und Echtzeitüberweisung wählen Sie dort.";

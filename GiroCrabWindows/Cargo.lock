@@ -2203,6 +2203,7 @@ name = "girocrab-windows"
 version = "0.8.7"
 dependencies = [
  "base64 0.22.1",
+ "clipboard-win",
  "ed25519-dalek 2.2.0",
  "girocrab-core",
  "image",
