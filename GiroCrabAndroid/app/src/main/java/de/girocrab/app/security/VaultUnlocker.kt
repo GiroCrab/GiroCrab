@@ -5,6 +5,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 
 /** What the lock screen has to show after asking for the device key. */
@@ -68,20 +69,27 @@ class VaultUnlocker(
 
     fun unlock(onResult: (UnlockResult) -> Unit) {
         if (prompting) return
+        // Answered at most once. A caller lambda that throws — the lock screen reads `accountCount`
+        // while composing its message — would otherwise land in the catch below and be answered a
+        // second time with a refusal, hiding the real problem behind a plausible one.
+        val delivered = AtomicBoolean(false)
+        val deliver: (UnlockResult) -> Unit = { result ->
+            if (delivered.compareAndSet(false, true)) onResult(result)
+        }
         // Reading the wrapped file can fail (I/O). That is not an invalidated key: the user may
         // retry, so it must not travel as `KeyInvalidated`.
         val state = try {
             keyStore.state()
         } catch (e: Exception) {
-            return onResult(
+            return deliver(
                 UnlockResult.Refused(
                     "Tresorschlüssel nicht lesbar (${e.javaClass.simpleName}: ${e.message}) — neuer Versuch möglich.",
                 ),
             )
         }
         when (state) {
-            VaultKeyStore.State.NotSetUp -> return onResult(UnlockResult.NoVaultOnDevice)
-            VaultKeyStore.State.Invalidated -> return onResult(UnlockResult.KeyInvalidated)
+            VaultKeyStore.State.NotSetUp -> return deliver(UnlockResult.NoVaultOnDevice)
+            VaultKeyStore.State.Invalidated -> return deliver(UnlockResult.KeyInvalidated)
             VaultKeyStore.State.Ready -> Unit
         }
         // Android never creates a vault on its own (#1459, Import-only): without a file there is
@@ -93,23 +101,23 @@ class VaultUnlocker(
             keyStore.unlockCipher()
         } catch (_: Exception) {
             // Key invalidated between state() and here: same answer, the key is unusable.
-            return onResult(UnlockResult.KeyInvalidated)
+            return deliver(UnlockResult.KeyInvalidated)
         }
         prompting = true
         try {
             prompt.authenticate(cipher, title, subtitle) { result ->
                 prompting = false
                 when (result) {
-                    PromptResult.Cancelled -> onResult(UnlockResult.Refused(null))
-                    is PromptResult.Unavailable -> onResult(UnlockResult.Unavailable)
-                    is PromptResult.Failed -> onResult(UnlockResult.Refused(result.message))
-                    is PromptResult.Succeeded -> onAuthenticated(cipher, result.cipher, onResult)
+                    PromptResult.Cancelled -> deliver(UnlockResult.Refused(null))
+                    is PromptResult.Unavailable -> deliver(UnlockResult.Unavailable)
+                    is PromptResult.Failed -> deliver(UnlockResult.Refused(result.message))
+                    is PromptResult.Succeeded -> onAuthenticated(cipher, result.cipher, deliver)
                 }
             }
         } catch (e: Exception) {
             // A prompt that never calls back would block every later attempt.
             prompting = false
-            onResult(UnlockResult.Refused("Entsperren nicht möglich (${e.javaClass.simpleName}: ${e.message})"))
+            deliver(UnlockResult.Refused("Entsperren nicht möglich (${e.javaClass.simpleName}: ${e.message})"))
         }
     }
 
