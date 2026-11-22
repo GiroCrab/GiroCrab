@@ -481,6 +481,17 @@ fn call(method: &str, a: &Value) -> R {
         "parse_amount_to_cents" => {
             ok(girocrab_core::parse_amount_to_cents(arg(a, "text")?).map_err(|e| e.to_string())?)
         }
+        // SplitSheet (#1663): an amount or a share ("50 %") of the booking; the quick picks
+        "parse_split_part_to_cents" => ok(girocrab_core::money::parse_split_part(
+            &arg::<String>(a, "text")?,
+            arg(a, "total_cents")?,
+        )
+        .map_err(|e| e.to_string())?),
+        "split_share_cents" => ok(girocrab_core::money::share_cents(
+            arg(a, "total_cents")?,
+            arg(a, "numerator")?,
+            arg(a, "denominator")?,
+        )),
         "open_demo" => open_demo(),
         "connector_kind_key" => ok(girocrab_core::banking_gate::connector_kind_key(arg(
             a, "kind",
@@ -2143,6 +2154,20 @@ mod tests {
         assert_eq!(
             call_json("parse_amount_to_cents", r#"{"text":"1.234,56"}"#),
             r#"{"ok":123456}"#
+        );
+        assert_eq!(
+            call_json(
+                "parse_split_part_to_cents",
+                r#"{"text":"50 %","total_cents":8743}"#
+            ),
+            r#"{"ok":4371}"#
+        );
+        assert_eq!(
+            call_json(
+                "split_share_cents",
+                r#"{"total_cents":10000,"numerator":1,"denominator":3}"#
+            ),
+            r#"{"ok":3333}"#
         );
         drop(v);
         for suffix in ["", "-wal", "-shm"] {

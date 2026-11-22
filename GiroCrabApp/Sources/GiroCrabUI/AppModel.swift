@@ -1106,6 +1106,9 @@ public final class AppModel {
             if let c = categories.first(where: { $0.depth == 0 }) {
                 newCategoryRequest = NewCategoryRequest(parent: c.id)
             }
+        case "split":
+            // "Umsatz aufteilen" of the first expense (#1663)
+            splitBooking = bookings.first { $0.amountCents < 0 }
         case "export":
             // Export dialog on the current view's demo bookings.
             period = Period.previousMonth()

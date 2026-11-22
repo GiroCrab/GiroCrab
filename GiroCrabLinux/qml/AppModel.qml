@@ -3132,6 +3132,16 @@ QtObject {
         reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning()
         return ""
     }
+    /// SplitMath.parse (#1663): a part as typed – an amount ("43,71") or a share of `total`
+    /// ("50 %") – in cents; null when it is neither.
+    function splitPartCents(text, total) {
+        try { return core("parse_split_part_to_cents", { text: String(text), total_cents: total }) } catch (e) { return null }
+    }
+    /// SplitMath.share: `numerator / denominator` of `total`, rounded toward zero (the odd cent
+    /// stays with the rest); null when it cannot be computed.
+    function splitShareCents(total, numerator, denominator) {
+        try { return core("split_share_cents", { total_cents: total, numerator: numerator, denominator: denominator }) } catch (e) { return null }
+    }
 
     function newRuleDraft(booking) {
         const b = booking || null
@@ -4194,6 +4204,8 @@ QtObject {
             break
         }
         case "category": if (top) newCategoryRequest = { parent: top.id }; break
+        // "Umsatz aufteilen" of the first expense (#1663)
+        case "split": splitBooking = bookings.find(b => b.amount_cents < 0) ?? null; break
         // Konten › Tags verwalten … (#228)
         // `tags-accounts`: the first tag's bookings per account (TagManagerSheet.qml)
         case "tags": case "tags-accounts": TagManager.open(); break

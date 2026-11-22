@@ -7239,6 +7239,17 @@
         }
       }
     },
+    "Bekommt automatisch, was die anderen Teile übrig lassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatically gets what the other parts leave"
+          }
+        }
+      }
+    },
     "Belastung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7934,6 +7945,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Amount in the menu bar"
+          }
+        }
+      }
+    },
+    "Betrag oder Anteil, z. B. „50 %“" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount or share, e.g. “50%”"
           }
         }
       }
@@ -11432,6 +11454,17 @@
         }
       }
     },
+    "Die Hälfte abspalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split off half"
+          }
+        }
+      }
+    },
     "Die Händlerliste konnte nicht geladen werden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13079,6 +13112,17 @@
         }
       }
     },
+    "Ein Drittel abspalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split off a third"
+          }
+        }
+      }
+    },
     "Ein Konto dieses Zugangs zeigt in der Seitenleiste einen eigenen Banknamen oder keinen (Kontoeinstellungen)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13152,6 +13196,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "An update is being prepared."
+          }
+        }
+      }
+    },
+    "Ein Viertel abspalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split off a quarter"
           }
         }
       }
@@ -27355,6 +27410,17 @@
         }
       }
     },
+    "Rest" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remainder"
+          }
+        }
+      }
+    },
     "Rest zuweisen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30558,6 +30624,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Add part"
+          }
+        }
+      }
+    },
+    "Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parts are amounts like “43.71” or shares like “50%”."
           }
         }
       }

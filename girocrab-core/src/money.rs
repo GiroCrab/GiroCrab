@@ -25,6 +25,36 @@ pub fn parse_amount_to_cents(text: String) -> Result<i64, CoreError> {
     parse_cents(&text)
 }
 
+/// `numerator / denominator` of `total_cents`, rounded toward zero, so the
+/// cent that does not divide stays with the rest of a split (#1663): half of
+/// 87,43 € is 43,71 €, the rest 43,72 €. `None` for a zero denominator or a
+/// share beyond `i64`.
+pub fn share_cents(total_cents: i64, numerator: i64, denominator: i64) -> Option<i64> {
+    if denominator == 0 {
+        return None;
+    }
+    i64::try_from(i128::from(total_cents) * i128::from(numerator) / i128::from(denominator)).ok()
+}
+
+/// A part typed into the split sheet (#1663): an amount read like
+/// [`parse_cents`] ("43,71") or a percentage of `total_cents` ("50 %",
+/// "33,3%"), rounded toward zero like [`share_cents`]. A percentage may carry
+/// any number of decimals; its lone separator is always the decimal one.
+pub fn parse_split_part(text: &str, total_cents: i64) -> CoreResult<i64> {
+    let Some(percent) = text.trim().strip_suffix('%') else {
+        return parse_cents(text);
+    };
+    let invalid = || CoreError::InvalidInput {
+        message: trf("Kein gültiger Anteil: „{0}“", &[&text]),
+    };
+    let p = text_decimal(percent, Lone::Decimal).ok_or_else(invalid)?;
+    Decimal::from(total_cents)
+        .checked_mul(p)
+        .and_then(|d| d.checked_div(Decimal::ONE_HUNDRED))
+        .and_then(|d| d.trunc().to_i64())
+        .ok_or_else(invalid)
+}
+
 /// Parses an amount written for people ("1.234,56 €", "-12.5", "(5,00)",
 /// "12,30-", "EUR 1'234.50") into cents. More than two decimals are an error
 /// unless they are zeros.
@@ -423,5 +453,42 @@ mod tests {
     fn formats() {
         assert_eq!(format_cents(-123456, "EUR".into()), "-1.234,56 EUR");
         assert_eq!(format_cents(5, "EUR".into()), "0,05 EUR");
+    }
+
+    /// #1663: the cent that does not divide stays with the rest, in either direction.
+    #[test]
+    fn shares_round_toward_zero() {
+        assert_eq!(share_cents(8_743, 1, 2), Some(4_371));
+        assert_eq!(share_cents(-8_743, 1, 2), Some(-4_371));
+        assert_eq!(share_cents(10_000, 1, 3), Some(3_333));
+        assert_eq!(share_cents(10_000, 2, 3), Some(6_666));
+        assert_eq!(share_cents(1, 1, 4), Some(0));
+        assert_eq!(share_cents(i64::MAX, 3, 2), None);
+        assert_eq!(share_cents(100, 1, 0), None);
+    }
+
+    #[test]
+    fn split_parts_read_amounts_and_percentages() {
+        let part = |s: &str| parse_split_part(s, 8_743).ok();
+        for (input, cents) in [
+            ("43,71", Some(4_371)),
+            ("1.500", Some(150_000)),
+            ("50 %", Some(4_371)),
+            ("50%", Some(4_371)),
+            (" 50 % ", Some(4_371)),
+            ("33,3 %", Some(2_911)),
+            ("33.333%", Some(2_914)),
+            ("100 %", Some(8_743)),
+            ("150 %", Some(13_114)),
+            ("−10 %", Some(-874)),
+            ("0 %", Some(0)),
+            ("%", None),
+            ("abc %", None),
+            ("50 %%", None),
+            ("", None),
+        ] {
+            assert_eq!(part(input), cents, "{input:?}");
+        }
+        assert_eq!(parse_split_part("50 %", -8_743).ok(), Some(-4_371));
     }
 }

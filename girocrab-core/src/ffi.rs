@@ -170,6 +170,19 @@ fn portal_schema_dump(json_bodies: Vec<String>, dom_rows_json: String) -> String
     crate::importers::portal_import::portal_schema_dump(json_bodies, dom_rows_json)
 }
 
+/// A part typed into the split sheet: an amount or a percentage of `total_cents` (#1663).
+#[uniffi::export]
+fn parse_split_part_to_cents(text: String, total_cents: i64) -> Result<i64, CoreError> {
+    crate::money::parse_split_part(&text, total_cents)
+}
+
+/// `numerator / denominator` of `total_cents`, rounded toward zero (#1663); `None` when it
+/// cannot be computed.
+#[uniffi::export]
+fn split_share_cents(total_cents: i64, numerator: i64, denominator: i64) -> Option<i64> {
+    crate::money::share_cents(total_cents, numerator, denominator)
+}
+
 #[uniffi::export]
 fn parse_amount_to_cents(text: String) -> Result<i64, CoreError> {
     crate::parse_amount_to_cents(text)

@@ -29,6 +29,7 @@ extension AppModel {
         return nil
     }
 
+
     /// `nil` = locked, cancelled or the vault changed meanwhile (keep what is shown).
     /// `accountIds` empty = all accounts. `respectInTotal`: the card as an
     /// overall money figure (#337) — only the effective total set contributes;
@@ -532,11 +533,28 @@ enum SplitMath {
     static func isValid(total: Int64, parts: [Int64]) -> Bool {
         parts.count >= 2 && !parts.contains(0) && remaining(total: total, parts: parts) == 0
     }
+    /// What the first part keeps (#1663): `total` minus the parts split off; nil when one of
+    /// them is unreadable (nil) or the difference leaves `Int64`.
+    static func rest(total: Int64, splitOff: [Int64?]) -> Int64? {
+        splitOff.reduce(Optional(total)) { rest, part in
+            guard let rest, let part else { return nil }
+            let (difference, overflow) = rest.subtractingReportingOverflow(part)
+            return overflow ? nil : difference
+        }
+    }
+    /// A part as typed (#1663): an amount ("43,71") or a share of `total` ("50 %"). The core
+    /// reads it, like every amount field (`Money.parseCents`).
+    static func parse(_ text: String, total: Int64) -> Int64? {
+        try? parseSplitPartToCents(text: text, totalCents: total)
+    }
+    /// `numerator / denominator` of `total`, rounded toward zero: the odd cent stays with the rest.
+    static func share(of total: Int64, _ numerator: Int64, _ denominator: Int64) -> Int64? {
+        splitShareCents(totalCents: total, numerator: numerator, denominator: denominator)
+    }
 }
 
 struct SplitSheet: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.reportRedaction) private var redaction
     @Environment(\.dismiss) private var dismiss
     let booking: Booking
 
@@ -546,69 +564,95 @@ struct SplitSheet: View {
         var amount = ""
         var note = ""
     }
+    /// The first part keeps the rest (#1663): its amount follows from the others, so the parts
+    /// always add up and only what is split off is typed.
     @State private var parts: [Part] = []
     @State private var error: String?
     /// The booking is split already (loaded with the parts).
     @State private var hasSplits = false
+    @FocusState private var focusedPart: UUID?
+    /// The part ½ ⅓ ¼ fill: the one typed in last, else the last part.
+    @State private var pickTarget: UUID?
 
     private var total: Int64 { abs(booking.amountCents) }
     private var sign: Int64 { booking.amountCents < 0 ? -1 : 1 }
-    private func cents(_ p: Part) -> Int64 { Money.parseCents(p.amount) ?? 0 }
     // Amounts are entered in the booking's direction: a negative part counter-books the others
-    // (+59 = +200 and -141, #427). Only the sum must match; no part may be 0.
-    private var remaining: Int64 { SplitMath.remaining(total: total, parts: parts.map(cents)) }
-    private var valid: Bool { SplitMath.isValid(total: total, parts: parts.map(cents)) }
+    // (+59 = +200 and -141, #427). The first part takes what is left; no part may be 0.
+    /// The parts split off as typed; nil = unreadable. An empty field counts as 0, so the rest
+    /// shows the whole amount until something is typed.
+    private var splitOff: [Int64?] {
+        parts.dropFirst().map {
+            $0.amount.trimmingCharacters(in: .whitespaces).isEmpty ? 0 : SplitMath.parse($0.amount, total: total)
+        }
+    }
+    private var rest: Int64? { SplitMath.rest(total: total, splitOff: splitOff) }
+    /// The amounts to save, in the order of `parts`; nil while a part is unreadable.
+    private var amounts: [Int64]? { rest.map { [$0] + splitOff.compactMap { $0 } } }
+    private var valid: Bool { amounts.map { SplitMath.isValid(total: total, parts: $0) } ?? false }
+    /// Why "Speichern" is greyed out (#383): say so instead of leaving it silent.
+    private var problem: LocalizedStringKey? {
+        guard !valid, !parts.isEmpty, error == nil else { return nil }
+        let unreadable = parts.dropFirst().contains {
+            !$0.amount.trimmingCharacters(in: .whitespaces).isEmpty && SplitMath.parse($0.amount, total: total) == nil
+        }
+        return unreadable
+            ? "Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“."
+            : "Jeder Teil braucht einen Betrag ungleich 0."
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Umsatz aufteilen").appFont(.title3, weight: .bold)
-            Text("\(booking.merchantName) · \(Money.format(booking.amountCents))").foregroundStyle(Theme.secondary).sensitive([.personal, .amounts])
-            ForEach($parts) { $p in
-                HStack(spacing: 8) {
-                    Picker("Kategorie", selection: $p.categoryID) {
-                        Text(model.uncategorizedLabel).tag(Int64?.none)
-                        ForEach(model.categories, id: \.id) { c in Text(c.path).tag(Int64?.some(c.id)) }
-                    }
-                    .labelsHidden().frame(maxWidth: 190)
-                    .sensitive(.labels)
-                    TextField(Money.plain(0), text: $p.amount)
-                        .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
-                        .appFont(.body, monospacedDigit: true).frame(width: 90)
-                    TextField("Notiz", text: $p.note).textFieldStyle(.roundedBorder)
-                    if parts.count > 2 {
-                        Button { parts.removeAll { $0.id == p.id } } label: { Label("Aufteilung entfernen", systemImage: "minus.circle") }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                            .help("Aufteilung entfernen")
+            HStack(spacing: 8) {
+                Text("\(booking.merchantName) · \(Money.format(booking.amountCents))").foregroundStyle(Theme.secondary).sensitive([.personal, .amounts])
+                Spacer(minLength: 8)
+                quickPicks
+            }
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
+                ForEach($parts) { $p in
+                    let isRest = p.id == parts.first?.id
+                    GridRow {
+                        Picker("Kategorie", selection: $p.categoryID) {
+                            Text(model.uncategorizedLabel).tag(Int64?.none)
+                            ForEach(model.categories, id: \.id) { c in Text(c.path).tag(Int64?.some(c.id)) }
+                        }
+                        .labelsHidden().frame(maxWidth: 190)
+                        .sensitive(.labels)
+                        if isRest {
+                            // what the parts below leave, never typed (#1663)
+                            TextField(Money.plain(0), text: .constant(rest.map(Money.plain) ?? "–"))
+                                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
+                                .appFont(.body, monospacedDigit: true).frame(width: 90)
+                                .disabled(true)
+                                .help("Bekommt automatisch, was die anderen Teile übrig lassen")
+                                .accessibilityLabel("Rest")
+                        } else {
+                            TextField(Money.plain(0), text: $p.amount)
+                                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
+                                .appFont(.body, monospacedDigit: true).frame(width: 90)
+                                .focused($focusedPart, equals: p.id)
+                                .onSubmit { settle(p.id) }
+                                .help("Betrag oder Anteil, z. B. „50 %“")
+                        }
+                        TextField("Notiz", text: $p.note).textFieldStyle(.roundedBorder)
+                        if !isRest, parts.count > 2 {
+                            Button { parts.removeAll { $0.id == p.id } } label: { Label("Aufteilung entfernen", systemImage: "minus.circle") }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .help("Aufteilung entfernen")
+                        }
                     }
                 }
             }
-            HStack {
-                Button { parts.append(Part(amount: remaining != 0 ? Money.plain(remaining) : "")) } label: {
-                    Label("Teil hinzufügen", systemImage: "plus")
-                }
-                .buttonStyle(.borderless)
-                Spacer()
-                Text("Restbetrag: \(Money.format(remaining))")
-                    .appFont(.callout, weight: .semibold, monospacedDigit: true)
-                    .foregroundStyle(remaining == 0 ? Theme.inflow : Theme.warning)
-                    .sensitive(.amounts)
-                if remaining != 0, let last = parts.indices.last {
-                    // one click: the rest goes into the last part (#427)
-                    Button("Rest zuweisen") {
-                        let others = parts.indices.filter { $0 != last }.reduce(0) { $0 + cents(parts[$1]) }
-                        parts[last].amount = Money.plain(total - others)
-                    }
-                    .help("Trägt den Restbetrag im letzten Teil ein")
-                }
+            Button {
+                let part = Part()
+                parts.append(part)
+                focusedPart = part.id
+            } label: {
+                Label("Teil hinzufügen", systemImage: "plus")
             }
-            // Why "Speichern" is greyed out (#383): say so instead of leaving it silent.
-            if !valid, !parts.isEmpty, error == nil {
-                Text(remaining != 0
-                    ? "Die Teilbeträge müssen zusammen \(redaction.masking(Money.format(total), .amounts)) ergeben (Restbetrag: \(redaction.masking(Money.format(remaining), .amounts))), erst dann lässt sich speichern."
-                    : "Jeder Teil braucht einen Betrag ungleich 0.")
-                    .appFont(.callout).foregroundStyle(Theme.secondary)
-            }
+            .buttonStyle(.borderless)
+            if let problem { Text(problem).appFont(.callout).foregroundStyle(Theme.secondary) }
             if let error { Text(error).appFont(.callout).foregroundStyle(Theme.negative) }
             HStack {
                 if hasSplits {
@@ -620,8 +664,9 @@ struct SplitSheet: View {
                 Spacer()
                 Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Speichern") {
-                    let inputs = parts.map {
-                        TransactionSplitInput(categoryId: $0.categoryID, amountCents: sign * cents($0), note: $0.note)
+                    guard let amounts else { return }
+                    let inputs = zip(parts, amounts).map { part, cents in
+                        TransactionSplitInput(categoryId: part.categoryID, amountCents: sign * cents, note: part.note)
                     }
                     error = model.saveSplits(inputs, for: booking)
                     if error == nil { dismiss() }
@@ -630,7 +675,12 @@ struct SplitSheet: View {
             }
         }
         .padding(22)
-        .macFrame(width: 560)
+        .macFrame(width: 600)
+        // "50 %" becomes the amount once the field is left (#1663)
+        .onChange(of: focusedPart) { old, new in
+            if let old { settle(old) }
+            if let new { pickTarget = new }
+        }
         .task {
             guard let existing = await model.splits(for: booking) else {
                 // never offer a fresh split over one that could not be read
@@ -639,11 +689,42 @@ struct SplitSheet: View {
             }
             hasSplits = !existing.isEmpty
             if existing.isEmpty {
-                parts = [Part(categoryID: booking.categoryId, amount: Money.plain(total)), Part()]
+                // screenshots: half split off, as after a click on ½
+                let demo = model.options.demoSheetName == "split" ? SplitMath.share(of: total, 1, 2).map(Money.plain) : nil
+                parts = [Part(categoryID: booking.categoryId), Part(amount: demo ?? "")]
+                focusedPart = parts.last?.id
             } else {
                 parts = existing.map { Part(categoryID: $0.categoryId, amount: Money.plain(sign * $0.amountCents), note: $0.note) }
             }
         }
+    }
+
+    /// A share typed as "50 %" turns into the amount it stands for (#1663); anything else stays.
+    private func settle(_ id: UUID) {
+        guard let i = parts.firstIndex(where: { $0.id == id }), parts[i].amount.contains("%"),
+              let cents = SplitMath.parse(parts[i].amount, total: total) else { return }
+        parts[i].amount = Money.plain(cents)
+    }
+
+    /// Next to the booking's amount: one click to split off a half, third or quarter (#1663) into
+    /// the part typed in last (else the last part); the odd cent stays with the rest.
+    @ViewBuilder
+    private var quickPicks: some View {
+        let pick = { (denominator: Int64) in
+            let target = parts.dropFirst().last { $0.id == pickTarget } ?? parts.last
+            guard let i = parts.firstIndex(where: { $0.id == target?.id }), i > 0 else { return }
+            parts[i].amount = SplitMath.share(of: total, 1, denominator).map(Money.plain) ?? ""
+        }
+        HStack(spacing: 4) {
+            Button { pick(2) } label: { Text(verbatim: "½").frame(minWidth: 18) }
+                .help("Die Hälfte abspalten").accessibilityLabel("Die Hälfte abspalten")
+            Button { pick(3) } label: { Text(verbatim: "⅓").frame(minWidth: 18) }
+                .help("Ein Drittel abspalten").accessibilityLabel("Ein Drittel abspalten")
+            Button { pick(4) } label: { Text(verbatim: "¼").frame(minWidth: 18) }
+                .help("Ein Viertel abspalten").accessibilityLabel("Ein Viertel abspalten")
+        }
+        .buttonStyle(.bordered)
+        .appFont(.body)
     }
 }
 

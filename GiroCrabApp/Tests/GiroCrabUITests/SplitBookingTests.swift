@@ -38,4 +38,20 @@ final class SplitBookingTests: XCTestCase {
         let stored = await model.splits(for: booking)
         XCTAssertEqual(stored?.map(\.amountCents).sorted(), [big, booking.amountCents - big].sorted())
     }
+
+    /// #1663: a part is an amount or a share; the first part keeps the rest and the odd cent.
+    func testSplitPartsReadSharesAndTheRestKeepsTheOddCent() {
+        XCTAssertEqual(SplitMath.parse("50 %", total: 8_743), 4_371)
+        XCTAssertEqual(SplitMath.parse("43,71", total: 8_743), 4_371)
+        XCTAssertEqual(SplitMath.parse("−10 %", total: 8_743), -874)
+        XCTAssertNil(SplitMath.parse("", total: 8_743))
+        XCTAssertNil(SplitMath.parse("halb", total: 8_743))
+        XCTAssertEqual(SplitMath.share(of: 8_743, 1, 2), 4_371)
+        XCTAssertEqual(SplitMath.share(of: 10_000, 1, 3), 3_333)
+        XCTAssertEqual(SplitMath.rest(total: 8_743, splitOff: [4_371]), 4_372)
+        XCTAssertEqual(SplitMath.rest(total: 5_900, splitOff: [20_000]), -14_100)
+        XCTAssertNil(SplitMath.rest(total: 8_743, splitOff: [4_371, nil]))
+        XCTAssertNil(SplitMath.rest(total: 1, splitOff: [Int64.min]))
+    }
+
 }

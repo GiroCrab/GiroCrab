@@ -1672,6 +1672,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Kein gültiger Betrag: „{0}“" => "Not a valid amount: “{0}”",
         "Zu viele Nachkommastellen in „{0}“" => "Too many decimal places in “{0}”",
         "Betrag zu groß: „{0}“" => "Amount too large: “{0}”",
+        "Kein gültiger Anteil: „{0}“" => "Not a valid share: “{0}”",
         // ------------------------------------------------------------ vault.rs
         "Ungültiger Monat." => "Invalid month.",
         "Das Budget muss größer als 0 sein." => "The budget must be greater than 0.",
