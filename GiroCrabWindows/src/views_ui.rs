@@ -93,10 +93,12 @@ impl Ui {
         let model = self.side_model.take();
         let generation = self.generation.wrapping_add(1);
         let lock_generation = self.lock_generation.wrapping_add(1);
+        let sidebar_generation = self.sidebar_generation.wrapping_add(1);
         *self = Self::default();
         self.side_model = model;
         self.generation = generation;
         self.lock_generation = lock_generation;
+        self.sidebar_generation = sidebar_generation;
     }
 }
 
@@ -1540,6 +1542,7 @@ mod tests {
         let mut u = Ui {
             generation: 4,
             lock_generation: 7,
+            sidebar_generation: 9,
             doc_rows: vec![11, 12],
             doc_unread: vec![12],
             selected_doc: Some(11),
@@ -1548,6 +1551,7 @@ mod tests {
         u.reset_for_lock();
         assert_eq!(u.generation, 5);
         assert_eq!(u.lock_generation, 8);
+        assert_eq!(u.sidebar_generation, 10);
         assert!(u.doc_rows.is_empty());
         assert!(u.doc_unread.is_empty());
         assert_eq!(u.selected_doc, None);
