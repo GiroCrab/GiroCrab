@@ -47,6 +47,10 @@ public struct GiroCrabScenes: Scene {
                 .modifier(AutoLockOnBackground(model: model))
                 .privacyModeEnvironment()
                 .listSettingsEnvironment()
+                // `girocrab://transfer?…` from another app or a web page (PaymentLink); the
+                // open main window takes it instead of a new one being made for it.
+                .onOpenURL { model.openLink($0) }
+                .handlesExternalEvents(preferring: [PaymentLink.scheme], allowing: ["*"])
                 #if os(macOS)
                 .appTextSize(textSize.effective)
                 .modifier(MenuBarBridge(model: model))
@@ -54,6 +58,7 @@ public struct GiroCrabScenes: Scene {
                 .frame(minHeight: 480, maxHeight: .infinity)
                 #endif
         }
+        .handlesExternalEvents(matching: [PaymentLink.scheme])
         #if os(macOS)
         // Fits a 13" MacBook Air (1470 × 956 pt) with room for the Dock.
         .defaultSize(width: 1280, height: 820)

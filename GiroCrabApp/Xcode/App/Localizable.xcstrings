@@ -5616,6 +5616,17 @@
         }
       }
     },
+    "Aus einem Link übernommen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taken from a link"
+          }
+        }
+      }
+    },
     "Aus: Das Konto wird archiviert und ausgeblendet, seine Daten bleiben erhalten." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10251,6 +10262,28 @@
         }
       }
     },
+    "Der Link enthält keine IBAN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The link contains no IBAN."
+          }
+        }
+      }
+    },
+    "Der Link verlangt eine Zahlung in %@. Überweisungen sind nur in Euro möglich." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The link asks for a payment in %@. Transfers are only possible in euros."
+          }
+        }
+      }
+    },
     "Der Ordner „GiroCrab“ in iCloud Drive enthält bereits andere Dateien. Ihre bisherigen Daten bleiben unverändert im bisherigen Ordner und werden dort weiter synchronisiert." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13617,6 +13650,17 @@
         }
       }
     },
+    "Empfänger, IBAN und Betrag stammen aus einer anderen App oder Webseite. Bitte mit der Rechnung vergleichen, bevor Sie die Überweisung freigeben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recipient, IBAN and amount come from another app or website. Please compare them with the invoice before you approve the transfer."
+          }
+        }
+      }
+    },
     "Empfänger-IBAN" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14290,6 +14334,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "There is nothing new from the GiroCrab project right now."
+          }
+        }
+      }
+    },
+    "Es gibt kein Girokonto mit IBAN, von dem aus überwiesen werden kann." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There is no checking account with an IBAN to transfer from."
           }
         }
       }
@@ -16177,6 +16232,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GiroCrab can't read the sync folder “%@”. Choose the folder again in Settings › iCloud Sync."
+          }
+        }
+      }
+    },
+    "GiroCrab kann mit diesem Link nichts anfangen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab can't handle this link."
           }
         }
       }
@@ -21754,6 +21820,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Line"
+          }
+        }
+      }
+    },
+    "Link nicht übernommen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link not applied"
           }
         }
       }
