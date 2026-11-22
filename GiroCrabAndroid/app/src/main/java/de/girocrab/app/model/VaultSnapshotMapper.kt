@@ -199,8 +199,10 @@ object VaultSnapshotMapper {
     private fun accountKind(kind: CoreAccountKind): AccountKind = when (kind) {
         CoreAccountKind.CHECKING -> AccountKind.Giro
         CoreAccountKind.SAVINGS -> AccountKind.Savings
-        // Festgeld (#1002) gibt es in der App-Kind-Liste nicht; es zählt zu den Sparformen.
+        // Festgeld (#1002) und Bausparen gibt es in der App-Kind-Liste nicht; beide zählen zu den
+        // Sparformen.
         CoreAccountKind.TIME_DEPOSIT -> AccountKind.Savings
+        CoreAccountKind.BUILDING_SAVINGS -> AccountKind.Savings
         CoreAccountKind.CREDIT_CARD -> AccountKind.CreditCard
         CoreAccountKind.BROKERAGE -> AccountKind.Depot
         CoreAccountKind.LOAN -> AccountKind.Loan

@@ -75,6 +75,7 @@ import de.girocrab.app.model.AppUiState
 import de.girocrab.app.model.Booking
 import de.girocrab.app.model.Holding
 import de.girocrab.app.model.ConnectorKind
+import de.girocrab.app.model.primaryCurrency
 import java.text.NumberFormat
 import java.util.Currency
 import java.time.LocalDate
