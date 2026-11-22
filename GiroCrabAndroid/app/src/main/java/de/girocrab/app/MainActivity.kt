@@ -79,6 +79,7 @@ import de.girocrab.app.model.VaultState
 import de.girocrab.app.security.AndroidCipherPrompt
 import de.girocrab.app.security.ImportResult
 import de.girocrab.app.security.NativeVaultOpener
+import de.girocrab.app.security.OwnVault
 import de.girocrab.app.security.UnlockResult
 import de.girocrab.app.security.VaultKeyStore
 import de.girocrab.app.security.VaultImporter
@@ -266,8 +267,14 @@ fun GiroCrabRoot(
                     unlockMessage = null
                     demoEscape = false
                     request.unlock { result ->
-                        unlockMessage = describe(result)
-                        demoEscape = result is UnlockResult.Opened
+                        // Reading the data is the mapper's job (#1429, 3.1); the handle is closed
+                        // as soon as the copy exists, so the ViewModel never holds a native one.
+                        unlockMessage = if (result is UnlockResult.Opened) {
+                            adoptOwnSnapshot(vm, result.vault, "Tresor geöffnet, Inhalt aber nicht lesbar")
+                        } else {
+                            describe(result)
+                        }
+                        demoEscape = false
                     }
                 }
             },
@@ -289,11 +296,13 @@ fun GiroCrabRoot(
                         unlockMessage = "Sicherung wird eingespielt …"
                         request.import(file.path, password) { result ->
                             try {
-                                unlockMessage = describeImport(result)
-                            } catch (e: Exception) {
-                                // The import is committed; only reading it back failed.
-                                unlockMessage = "Sicherung eingespielt, Inhalt aber nicht lesbar " +
-                                    "(${e.javaClass.simpleName}: ${e.message})."
+                                unlockMessage = if (result is ImportResult.Imported) {
+                                    adoptOwnSnapshot(
+                                        vm, result.vault, "Sicherung eingespielt, Inhalt aber nicht lesbar",
+                                    )
+                                } else {
+                                    describeImport(result)
+                                }
                             } finally {
                                 demoEscape = result is ImportResult.Imported
                                 file.delete()
@@ -532,6 +541,23 @@ private fun GiroCrabIntro(skip: Boolean) {
  * Message for the lock screen. Opening the vault is proven by the account count — the data itself
  * still comes from the mapper in #1429 (3.1), so the handle is closed again right here.
  */
+/**
+ * Reads the vault into the snapshot the screens show (#1429, 3.1) and closes the handle in the same
+ * breath: the ViewModel keeps data, never a native handle. A failure after a successful open is
+ * reported as exactly that — the vault did open, only reading it back did not work.
+ */
+private fun adoptOwnSnapshot(vm: AppViewModel, vault: OwnVault, failure: String): String? = try {
+    val snapshot = try {
+        vault.snapshot()
+    } finally {
+        vault.close()
+    }
+    vm.adoptOwnVault(snapshot)
+    null
+} catch (e: Exception) {
+    "$failure (${e.javaClass.simpleName}: ${e.message})."
+}
+
 private fun describeImport(result: ImportResult): String = when (result) {
     is ImportResult.Imported -> {
         // Counting is only a proof that data arrived; the list itself follows with #1429.

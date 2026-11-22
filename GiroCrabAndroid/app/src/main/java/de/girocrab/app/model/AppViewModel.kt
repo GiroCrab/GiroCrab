@@ -95,6 +95,12 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         }
     }
 
+    /**
+     * Adopts a snapshot read from the own vault (#1429, 3.1). The native handle stays with the
+     * caller and is closed there — the ViewModel keeps data, never a handle.
+     */
+    fun adoptOwnVault(snapshot: VaultSnapshot) = adoptOwn(snapshot)
+
     fun showOwnVault() {
         val own = ownSnapshot
         if (own != null) adoptOwn(own) else bootstrap()
