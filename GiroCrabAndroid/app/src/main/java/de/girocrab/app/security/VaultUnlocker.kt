@@ -18,7 +18,10 @@ sealed interface UnlockResult {
     /** The Keystore key is gone or invalidated; only a restore brings the vault back. */
     data object KeyInvalidated : UnlockResult
 
-    /** No biometric hardware, nothing enrolled, or no core linked. */
+    /**
+     * Nothing to authenticate with — no biometric hardware, nothing enrolled — or no native core
+     * linked. Distinct from [Refused] on purpose: retrying cannot help, importing can.
+     */
     data object Unavailable : UnlockResult
 
     /** Aborted, failed, or unusable cipher — nothing was unwrapped. */
@@ -29,6 +32,8 @@ sealed interface UnlockResult {
 sealed interface PromptResult {
     class Succeeded(val cipher: Cipher) : PromptResult
     data object Cancelled : PromptResult
+    /** No sensor, no enrollment, hardware temporarily unavailable — retrying will not help. */
+    data class Unavailable(val message: String?) : PromptResult
     data class Failed(val message: String?) : PromptResult
 }
 
@@ -57,7 +62,18 @@ class VaultUnlocker(
 
     fun unlock(onResult: (UnlockResult) -> Unit) {
         if (prompting) return
-        when (keyStore.state()) {
+        // Reading the wrapped file can fail (I/O). That is not an invalidated key: the user may
+        // retry, so it must not travel as `KeyInvalidated`.
+        val state = try {
+            keyStore.state()
+        } catch (e: Exception) {
+            return onResult(
+                UnlockResult.Refused(
+                    "Tresorschlüssel nicht lesbar (${e.javaClass.simpleName}: ${e.message}) — neuer Versuch möglich.",
+                ),
+            )
+        }
+        when (state) {
             VaultKeyStore.State.NotSetUp -> return onResult(UnlockResult.NoVaultOnDevice)
             VaultKeyStore.State.Invalidated -> return onResult(UnlockResult.KeyInvalidated)
             VaultKeyStore.State.Ready -> Unit
@@ -74,6 +90,7 @@ class VaultUnlocker(
                 prompting = false
                 when (result) {
                     PromptResult.Cancelled -> onResult(UnlockResult.Refused(null))
+                    is PromptResult.Unavailable -> onResult(UnlockResult.Unavailable)
                     is PromptResult.Failed -> onResult(UnlockResult.Refused(result.message))
                     is PromptResult.Succeeded -> onAuthenticated(cipher, result.cipher, onResult)
                 }
@@ -126,7 +143,8 @@ class AndroidCipherPrompt(private val activity: FragmentActivity) : CipherPrompt
         onResult: (PromptResult) -> Unit,
     ) {
         if (!canAuthenticate()) {
-            onResult(PromptResult.Failed("Auf diesem Gerät ist keine sichere Sperre eingerichtet."))
+            // No sensor or nothing enrolled: retrying cannot help, so this is not a refusal.
+            onResult(PromptResult.Unavailable("Auf diesem Gerät ist keine sichere Sperre eingerichtet."))
             return
         }
         val prompt = BiometricPrompt(
@@ -142,10 +160,22 @@ class AndroidCipherPrompt(private val activity: FragmentActivity) : CipherPrompt
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    val cancelled = errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
-                        errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
-                        errorCode == BiometricPrompt.ERROR_CANCELED
-                    onResult(if (cancelled) PromptResult.Cancelled else PromptResult.Failed(errString.toString()))
+                    val message = errString.toString()
+                    when (errorCode) {
+                        BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+                        BiometricPrompt.ERROR_USER_CANCELED,
+                        BiometricPrompt.ERROR_CANCELED,
+                        -> onResult(PromptResult.Cancelled)
+
+                        // Hardware or enrollment gone: a retry cannot succeed, but importing can.
+                        BiometricPrompt.ERROR_HW_UNAVAILABLE,
+                        BiometricPrompt.ERROR_HW_NOT_PRESENT,
+                        BiometricPrompt.ERROR_NO_BIOMETRICS,
+                        BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL,
+                        -> onResult(PromptResult.Unavailable(message))
+
+                        else -> onResult(PromptResult.Failed(message))
+                    }
                 }
             },
         )
