@@ -32,16 +32,20 @@ extension AppModel {
     /// So the rows show the new category at once and everything derived from it
     /// (totals, counts, KPIs) follows from a background refresh.
     func setCategory(_ categoryID: Int64?, for bookings: [Booking]) {
-        guard let vault, !bookings.isEmpty else { return }
+        setCategory(categoryID, forBookingIDs: bookings.map(\.id))
+    }
+
+    private func setCategory(_ categoryID: Int64?, forBookingIDs bookingIDs: [Booking.ID]) {
+        guard let vault, !bookingIDs.isEmpty else { return }
         do {
-            for b in bookings { try vault.setTransactionCategory(transactionId: b.id, categoryId: categoryID) }
+            for id in bookingIDs { try vault.setTransactionCategory(transactionId: id, categoryId: categoryID) }
         } catch {
             // Partly written: show the database state as before (synchronous).
             errorMessage = describe(error)
             reloadAfterCategoryChange()
             return
         }
-        showCategory(categoryID, on: Set(bookings.map(\.id)))
+        showCategory(categoryID, on: Set(bookingIDs))
         // Merchant histories count categories: keep the shown one until the new one is in.
         refreshSelectedBookingHistory()
         // Rule counts and the investment dashboard: reload only when on screen,
@@ -309,10 +313,14 @@ extension AppModel {
         patchLoadedRows([booking.id]) { $0.note = note }
     }
 
-    func createCategory(name: String, parent: Int64?, symbol: String, color: String) {
+    func createCategory(name: String, parent: Int64?, symbol: String, color: String,
+                        assigning bookingIDs: [Booking.ID] = []) {
         guard let vault else { return }
-        runCore { _ = try vault.createCategory(name: name, parentId: parent, sfSymbol: symbol, colorHex: color) }
-        reloadCategories()
+        runCore {
+            let id = try vault.createCategory(name: name, parentId: parent, sfSymbol: symbol, colorHex: color)
+            reloadCategories()
+            setCategory(id, forBookingIDs: bookingIDs)
+        }
     }
 
     /// Changes one property of a category and keeps the others (#168) –

@@ -9,7 +9,7 @@ export struct SiRow { title: string, detail: string }
 
 export global SettingsImportState {
     in-out property <bool> open: false;
-    // 0 = Import, 1 = Export, 2 = Sicherung, 3 = Einstellungen, 4 = Abrufprotokoll
+    // 0 = Import, 1 = Export, 2 = Sicherung, 3 = Einstellungen, 4 = Abrufprotokoll, 5 = Mitteilungen
     in-out property <int> tab: 0;
     in property <string> status;
     in property <bool> busy: false;
@@ -44,6 +44,9 @@ export global SettingsImportState {
     in-out property <bool> col-category: true;
     in-out property <bool> col-note: true;
     in-out property <bool> col-balance: false;
+    in-out property <bool> col-iban: false;
+    in-out property <bool> col-running-balance: false;
+    in-out property <bool> per-account: false;
     in property <[string]> camt-versions;
     in-out property <int> camt-version: 1;
     callback export-csv();
@@ -232,9 +235,19 @@ export component SettingsImportPanel inherits VerticalLayout {
             CheckBox { text: "Kategorie"; checked <=> SettingsImportState.col-category; }
             CheckBox { text: "Notiz"; checked <=> SettingsImportState.col-note; }
             CheckBox { text: "Kontostand (Kopfzeile)"; checked <=> SettingsImportState.col-balance; }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            CheckBox { text: "Gegen-IBAN"; checked <=> SettingsImportState.col-iban; }
+            CheckBox { text: "Saldo (mitlaufend)"; checked <=> SettingsImportState.col-running-balance; }
+            CheckBox { text: "Pro Konto eine Datei"; checked <=> SettingsImportState.per-account; }
+        }
+        HorizontalLayout {
+            spacing: 12px;
             Rectangle { horizontal-stretch: 1; }
             Button { text: "CSV speichern …"; primary: true; enabled: !SettingsImportState.busy; clicked => { SettingsImportState.export-csv(); } }
         }
+        if SettingsImportState.per-account: Info { text: "Pro Konto eine Datei: Alle Konten werden exportiert, die Konto-Auswahl gilt nur für CAMT.053."; ink: root.muted; }
         Text { text: "CAMT.053 (Kontoauszug)"; color: root.ink; font-size: 13px; font-weight: 600; }
         HorizontalLayout {
             spacing: 8px;
@@ -299,7 +312,7 @@ export component SettingsImportPanel inherits VerticalLayout {
         }
     }
 
-    // ---- 4: Abrufprotokoll
+    // ---- 5: Mitteilungen
     if SettingsImportState.tab == 5: VerticalLayout {
         spacing: 6px;
         Rows {
@@ -320,6 +333,7 @@ export component SettingsImportPanel inherits VerticalLayout {
         }
     }
 
+    // ---- 4: Abrufprotokoll
     if SettingsImportState.tab == 4: VerticalLayout {
         spacing: 6px;
         HorizontalLayout {

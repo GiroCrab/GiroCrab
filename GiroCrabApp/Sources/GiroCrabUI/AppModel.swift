@@ -1765,6 +1765,7 @@ public final class AppModel {
 
     /// Cancels every task, drops the vault and clears what it loaded (shared by `lock()` and the app reset).
     func releaseVaultState() {
+        newCategoryRequest = nil
         reportPick = nil
         scopeLoadTask?.cancel()
         categoryRefreshTask?.cancel()

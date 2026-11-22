@@ -285,6 +285,8 @@ struct State {
     generation: u64,
     /// (account id, label, bank name) of the accounts a transfer can start from.
     transfer_sources: Vec<(i64, String, String)>,
+    /// Recipient rule per entry of `transfer_sources` (savings → reference account, #582).
+    transfer_rules: Vec<transfer_flow::RecipientRule>,
     /// What the sidebar selected; decides which bookings `reload` loads.
     target: Target,
     /// Decoded merchant logos by candidate key (`logos::key`); lives for the session.
@@ -1253,21 +1255,88 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     }
 }
 
-/// Accounts a transfer can start from: those that belong to a bank connection.
+/// Accounts a transfer can start from: those that belong to a bank connection. A savings account
+/// may only send to its reference account (`transfer_flow::recipient_rule`, #582).
 fn refresh_transfer_sources(win: &MainWindow, vault: &Vault) {
-    let sources: Vec<(i64, String, String)> = vault
-        .list_accounts()
-        .unwrap_or_default()
+    let accounts = vault.list_accounts().unwrap_or_default();
+    let (sources, rules): (
+        Vec<(i64, String, String)>,
+        Vec<transfer_flow::RecipientRule>,
+    ) = accounts
         .iter()
         .filter(|a| a.connection_id.is_some())
-        .map(|a| (a.id, a.name.clone(), a.bank_name.clone()))
-        .collect();
+        .map(|a| {
+            (
+                (a.id, a.name.clone(), a.bank_name.clone()),
+                transfer_flow::recipient_rule(a, &accounts),
+            )
+        })
+        .unzip();
     let labels: Vec<SharedString> = sources
         .iter()
         .map(|s| SharedString::from(s.1.as_str()))
         .collect();
     win.set_transfer_accounts(ModelRc::new(VecModel::from(labels)));
-    with_state(|st| st.transfer_sources = sources);
+    // The rule shown so far: old index under the old rules.
+    let before = transfer_rule_at(win.get_tr_account_index());
+    with_state(|st| {
+        st.transfer_sources = sources;
+        st.transfer_rules = rules;
+    });
+    // A shorter list must not leave the index pointing past the sender the ComboBox shows.
+    let index = normalize_transfer_index(win);
+    if transfer_rule_at(index) != before {
+        // A shown GiroCode may carry a recipient the new rule no longer allows.
+        win.set_girocode_open(false);
+    }
+    apply_transfer_rule(win, index);
+}
+
+/// Clamps the saved sender index to the current sender list (the range the ComboBox uses) and
+/// stores it back, so the applied recipient rule always belongs to the sender shown.
+fn normalize_transfer_index(win: &MainWindow) -> i32 {
+    let last = (with_state(|st| st.transfer_sources.len()) as i32 - 1).max(0);
+    let index = win.get_tr_account_index().clamp(0, last);
+    win.set_tr_account_index(index);
+    index
+}
+
+/// Recipient rule of the sender at `index` of the transfer dialog (free when out of range).
+fn transfer_rule_at(index: i32) -> transfer_flow::RecipientRule {
+    with_state(|st| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| st.transfer_rules.get(i).cloned())
+            .unwrap_or_default()
+    })
+}
+
+/// Locks or frees the recipient fields for the chosen sender. Shown values are masked in privacy
+/// mode; the real values stay in `State` and are enforced again on submit.
+fn apply_transfer_rule(win: &MainWindow, index: i32) {
+    use transfer_flow::RecipientRule;
+    let rule = transfer_rule_at(index);
+    let privacy = privacy_on(win);
+    let (locked, name, iban, hint) = match &rule {
+        RecipientRule::Free => (false, String::new(), String::new(), ""),
+        RecipientRule::Fixed(r) => (
+            true,
+            daily::mask(&r.name, privacy),
+            daily::mask(&r.iban, privacy),
+            transfer_flow::SAVINGS_HINT,
+        ),
+        RecipientRule::Unavailable => (
+            true,
+            String::new(),
+            String::new(),
+            transfer_flow::SAVINGS_NO_REFERENCE,
+        ),
+    };
+    win.set_tr_recipient_locked(locked);
+    win.set_tr_recipient_blocked(rule == RecipientRule::Unavailable);
+    win.set_tr_locked_name(name.into());
+    win.set_tr_locked_iban(iban.into());
+    win.set_tr_recipient_hint(hint.into());
 }
 
 /// Result line of an import run.
@@ -1555,6 +1624,18 @@ fn transfer_fields(win: &MainWindow) -> girocode::Fields {
     }
 }
 
+/// Fields for a GiroCode export: the sender's recipient rule applied with the real (unmasked)
+/// values from `State`, like on submit. Refused for a savings account without reference account.
+fn girocode_fields(win: &MainWindow) -> Result<girocode::Fields, String> {
+    let mut f = transfer_fields(win);
+    transfer_flow::apply_recipient_fields(
+        &mut f.name,
+        &mut f.iban,
+        &transfer_rule_at(win.get_tr_account_index()),
+    )?;
+    Ok(f)
+}
+
 fn set_transfer_fields(win: &MainWindow, f: &girocode::Fields) {
     win.set_transfer_pre_name(f.name.clone().into());
     win.set_transfer_pre_iban(f.iban.clone().into());
@@ -1569,6 +1650,8 @@ fn apply_transfer_prefill(win: &MainWindow, p: &TransferPrefill) {
     win.set_transfer_pre_purpose(p.purpose.clone().into());
     win.set_transfer_status(SharedString::new());
     win.set_girocode_open(false);
+    let index = normalize_transfer_index(win);
+    apply_transfer_rule(win, index);
     win.set_transfer_open(true);
 }
 
@@ -1866,6 +1949,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = render_header(&win, &v, sel);
             render_bookings(&win);
             views_ui::rerender(&win);
+            apply_transfer_rule(&win, win.get_tr_account_index());
             refunds_ui::privacy_changed(&win, v);
         });
     }
@@ -2115,6 +2199,16 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     {
         let weak = win.as_weak();
+        win.on_transfer_account_changed(move |index| {
+            if let Some(win) = weak.upgrade() {
+                // The sender's rule may change the recipient: a shown GiroCode would be stale.
+                win.set_girocode_open(false);
+                apply_transfer_rule(&win, index);
+            }
+        });
+    }
+    {
+        let weak = win.as_weak();
         win.on_transfer_start(move || {
             let Some(win) = weak.upgrade() else { return };
             apply_transfer_prefill(&win, &TransferPrefill::default());
@@ -2139,7 +2233,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = win.as_weak();
         win.on_transfer_girocode(move || {
             let Some(win) = weak.upgrade() else { return };
-            match girocode::girocode_image(&transfer_fields(&win)) {
+            match girocode_fields(&win).and_then(|f| girocode::girocode_image(&f)) {
                 Ok(img) => {
                     win.set_girocode_image(img);
                     win.set_girocode_open(true);
@@ -2157,7 +2251,8 @@ fn main() -> Result<(), slint::PlatformError> {
         win.on_transfer_girocode_copy(move || {
             let Some(win) = weak.upgrade() else { return };
             // Status texts never contain the name, IBAN or amount.
-            let status = girocode::girocode_clipboard_images(&transfer_fields(&win))
+            let status = girocode_fields(&win)
+                .and_then(|f| girocode::girocode_clipboard_images(&f))
                 .and_then(|(png, dib)| copy_image_to_clipboard(&png, &dib))
                 .map(|()| "GiroCode als Bild in die Zwischenablage kopiert.".to_string())
                 .unwrap_or_else(|e| e);
@@ -2168,7 +2263,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = win.as_weak();
         win.on_transfer_girocode_save(move || {
             let Some(win) = weak.upgrade() else { return };
-            let f = transfer_fields(&win);
+            let f = match girocode_fields(&win) {
+                Ok(f) => f,
+                Err(e) => {
+                    win.set_transfer_status(e.into());
+                    return;
+                }
+            };
             let png = match girocode::girocode_payload_for(&f)
                 .and_then(|p| girocode::girocode_png_bytes(&p, girocode::EXPORT_MODULE_PX))
             {
@@ -2200,7 +2301,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             let source = with_state(|st| st.transfer_sources.get(index.max(0) as usize).cloned());
-            let input = daily::TransferInput {
+            let mut input = daily::TransferInput {
                 account_id: source.as_ref().map_or(0, |s| s.0),
                 name: name.to_string(),
                 iban: iban.to_string(),
@@ -2209,6 +2310,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 instant,
                 date: date.to_string(),
             };
+            // The form text never wins over a savings account's reference account.
+            if let Err(e) =
+                transfer_flow::apply_recipient_rule(&mut input, &transfer_rule_at(index))
+            {
+                win.set_transfer_status(e.into());
+                return;
+            }
             let request = match daily::validate_transfer(&input) {
                 Ok(r) => r,
                 Err(e) => {

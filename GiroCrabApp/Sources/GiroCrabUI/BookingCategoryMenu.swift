@@ -41,9 +41,15 @@ struct CategoryAssignMenu: View {
                 }
                 Divider()
             }
-            CategoryMenuItems(nodes: model.categoryTree, current: assigned.count == 1 ? assigned.first ?? nil : nil) {
-                model.setCategory($0, for: targets)
-            }
+            CategoryMenuItems(
+                nodes: model.categoryTree,
+                parent: nil,
+                current: assigned.count == 1 ? assigned.first ?? nil : nil,
+                pick: { model.setCategory($0, for: targets) },
+                create: { parent in
+                    model.newCategoryRequest = NewCategoryRequest(parent: parent, bookingIDs: targets.map(\.id))
+                }
+            )
             Divider()
             Button(targets.count > 1 ? "\(targets.count) Buchungen kategorisieren …" : "Kategorisieren …",
                    systemImage: "magnifyingglass") {
@@ -61,19 +67,23 @@ struct CategoryAssignMenu: View {
 /// picking it again changes nothing (it would turn a rule's category manual).
 private struct CategoryMenuItems: View {
     let nodes: [CategoryNode]
+    let parent: Int64?
     let current: Int64?
     let pick: (Int64) -> Void
+    let create: (Int64?) -> Void
 
     var body: some View {
         ForEach(nodes) { node in
             let label = Label(node.category.name, systemImage: node.category.sfSymbol)
             if let kids = node.children {
                 Menu {
-                    CategoryMenuItems(nodes: kids, current: current, pick: pick)
+                    CategoryMenuItems(nodes: kids, parent: node.id, current: current, pick: pick, create: create)
                 } label: { label }
             } else {
                 Toggle(isOn: Binding(get: { node.id == current }, set: { if $0 { pick(node.id) } })) { label }
             }
         }
+        if !nodes.isEmpty { Divider() }
+        Button("Neue Kategorie …", systemImage: "plus") { create(parent) }
     }
 }

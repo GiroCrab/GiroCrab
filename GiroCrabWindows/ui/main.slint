@@ -784,6 +784,14 @@ export component MainWindow inherits Window {
     in-out property <string> note-text;
     in-out property <bool> transfer-open: false;
     in property <[string]> transfer-accounts;
+    // Savings sender: recipient fixed to the reference account (#582). Values arrive masked in privacy mode.
+    in-out property <int> tr-account-index: 0;
+    in property <bool> tr-recipient-locked: false;
+    in property <bool> tr-recipient-blocked: false;
+    in property <string> tr-locked-name;
+    in property <string> tr-locked-iban;
+    in property <string> tr-recipient-hint;
+    callback transfer-account-changed(int);
     in-out property <string> transfer-status;
     // Pre-fill from girocrab://transfer URL / --transfer-url (#431); never auto-submitted.
     in-out property <string> transfer-pre-name;
@@ -1960,9 +1968,22 @@ export component MainWindow inherits Window {
                 spacing: 8px;
                 Text { text: "Überweisung"; font-size: 18px; font-weight: 700; color: Theme.text; }
                 Text { text: "Von Konto"; font-size: 11px; color: Theme.muted; }
-                tr-account := ComboBox { model: root.transfer-accounts; current-index: 0; }
-                tr-name := LineEdit { text <=> root.transfer-pre-name; edited => { root.girocode-open = false; } placeholder-text: "Empfänger (Name)"; }
-                tr-iban := LineEdit { text <=> root.transfer-pre-iban; edited => { root.girocode-open = false; } placeholder-text: "IBAN des Empfängers"; }
+                tr-account := ComboBox {
+                    model: root.transfer-accounts;
+                    current-index <=> root.tr-account-index;
+                    selected(value) => { root.transfer-account-changed(self.current-index); }
+                }
+                if !root.tr-recipient-locked : tr-name := LineEdit { text <=> root.transfer-pre-name; edited => { root.girocode-open = false; } placeholder-text: "Empfänger (Name)"; }
+                if !root.tr-recipient-locked : tr-iban := LineEdit { text <=> root.transfer-pre-iban; edited => { root.girocode-open = false; } placeholder-text: "IBAN des Empfängers"; }
+                if root.tr-recipient-locked : VerticalLayout {
+                    spacing: 4px;
+                    if root.tr-locked-name != "" : Text { text: root.tr-locked-name; color: Theme.text; font-size: 13px; }
+                    if root.tr-locked-iban != "" : Text { text: root.tr-locked-iban; color: Theme.text; font-size: 13px; }
+                }
+                if root.tr-recipient-hint != "" : Text {
+                    text: root.tr-recipient-hint;
+                    color: Theme.muted; font-size: 11px; wrap: word-wrap;
+                }
                 tr-amount := LineEdit { text <=> root.transfer-pre-amount; edited => { root.girocode-open = false; } placeholder-text: "Betrag in EUR, z. B. 12,50"; }
                 tr-purpose := LineEdit { text <=> root.transfer-pre-purpose; edited => { root.girocode-open = false; } placeholder-text: "Verwendungszweck (max. 140 Zeichen)"; }
                 HorizontalLayout {
@@ -2015,7 +2036,8 @@ export component MainWindow inherits Window {
                     Button {
                         text: "Senden";
                         primary: true;
-                        clicked => { root.transfer-submit(tr-account.current-index, tr-name.text, tr-iban.text, tr-amount.text, tr-purpose.text, tr-instant.checked, tr-instant.checked ? "" : tr-date.text); }
+                        enabled: !root.tr-recipient-blocked;
+                        clicked => { root.transfer-submit(tr-account.current-index, root.transfer-pre-name, root.transfer-pre-iban, tr-amount.text, tr-purpose.text, tr-instant.checked, tr-instant.checked ? "" : tr-date.text); }
                     }
                 }
             }
