@@ -146,18 +146,18 @@ fn income(r: &Row) -> i64 {
         .map_or(r.amount_cents, |rest| rest.clamp(0, r.amount_cents))
 }
 
-/// (income, expenses, net) cents of the rows, transfers excluded.
+/// (income, expenses, net) cents of the rows, transfers excluded. What a linked refund pays
+/// back lowers the expenses instead of being income (#714), so both sums cover the same rows.
 pub fn totals(rows: &[&Row]) -> (i64, i64, i64) {
-    let inc: i64 = rows
-        .iter()
-        .filter(|r| !r.transfer && r.amount_cents > 0)
-        .map(|r| income(r))
-        .sum();
-    let exp: i64 = rows
+    let incoming = || rows.iter().filter(|r| !r.transfer && r.amount_cents > 0);
+    let inc: i64 = incoming().map(|r| income(r)).sum();
+    let paid_back: i64 = incoming().map(|r| r.amount_cents - income(r)).sum();
+    let spent: i64 = rows
         .iter()
         .filter(|r| !r.transfer && r.amount_cents < 0)
         .map(|r| -r.amount_cents)
         .sum();
+    let exp = spent - paid_back;
     (inc, exp, inc - exp)
 }
 
@@ -206,7 +206,11 @@ mod tests {
         part.refund_income_cents = Some(2000);
         let rows = [full, part, row(10200, "C", &[])];
         let refs: Vec<&Row> = rows.iter().collect();
-        assert_eq!(totals(&refs).0, 12200);
+        // what the refunds pay back (10000 + 3000) lowers the expenses of the same rows
+        assert_eq!(totals(&refs), (12200, -13000, 25200));
+        let spent = row(-20000, "A", &[]);
+        let with_expense: Vec<&Row> = rows.iter().chain([&spent]).collect();
+        assert_eq!(totals(&with_expense), (12200, 7000, 5200));
         let c = categories(&refs, false, 5);
         assert_eq!(
             c.iter()

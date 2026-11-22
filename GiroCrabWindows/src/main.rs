@@ -449,9 +449,10 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
     }
     let (inc, exp, exp_cats, inc_cats, tags) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
-        let (inc, _, _) = analytics::totals(&shown);
+        // both sums from the filtered rows; the expense chart is the account's, whatever
+        // the search, status and tag filters leave of it
+        let (inc, exp, _) = analytics::totals(&shown);
         let expense_cats = analytics::net_expenses(&st.expense_categories, 6);
-        let exp = expense_cats.iter().map(|c| c.cents).sum();
         (
             inc,
             exp,
