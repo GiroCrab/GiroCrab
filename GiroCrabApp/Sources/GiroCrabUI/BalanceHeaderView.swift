@@ -179,6 +179,14 @@ struct StreamHeaderCard: View {
                             .minimumScaleFactor(0.6)
                         if !compactHeader {
                             Text(hb.label).appFont(.caption).foregroundStyle(Theme.secondary)
+                            // credit line the issuer reports (#1143): available of the whole line
+                            if let a = account, let limit = a.creditLimitCents {
+                                Text("Verfügbar \(Money.format(max(0, limit + a.balanceCents), currency: a.currency)) von \(Money.format(limit, currency: a.currency))")
+                                    .sensitive(.amounts)
+                                    .appFont(.caption, monospacedDigit: true)
+                                    .foregroundStyle(Theme.secondary)
+                                    .lineLimit(1)
+                            }
                             if showLastFetch, let a = account, let fetch = model.lastFetchText(for: a) {
                                 Text(fetch.text)
                                     .sensitive()

@@ -32064,6 +32064,17 @@
         }
       }
     },
+    "Verfügbar %@ von %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available %1$@ of %2$@"
+          }
+        }
+      }
+    },
     "Verfügbar (Giro, Tagesgeld, Karten)" : {
       "extractionState" : "manual",
       "localizations" : {

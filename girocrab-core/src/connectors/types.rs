@@ -578,6 +578,8 @@ pub struct FetchResult {
     pub balances_unknown: Vec<String>,
     /// Explicit bank-reported balances, including zero; never derive a replacement.
     pub balances_reported: Vec<String>,
+    /// Credit line (cents, positive) of accounts (external ref) whose issuer reports one (#1143).
+    pub credit_limits: Vec<(String, i64)>,
     /// Securities transactions (buy, sell, dividend …) of depots; added or
     /// refreshed by `(account, external_id)`, never removed.
     pub security_transactions: Vec<RemoteSecurityTransaction>,
@@ -654,6 +656,7 @@ impl FetchResult {
         self.holdings_fetched.retain(|r| keep(r));
         self.balances_unknown.retain(|r| keep(r));
         self.balances_reported.retain(|r| keep(r));
+        self.credit_limits.retain(|(r, _)| keep(r));
         self.security_transactions.retain(|t| keep(&t.account_ref));
         self.standing_orders.retain(|o| keep(&o.account_ref));
         self.standing_orders_fetched.retain(|r| keep(r));

@@ -65,6 +65,7 @@
 //! - 40: refund links (#714): `refund_links` between bookings or their split parts.
 //! - 41: `transactions.date_ms` (#714): edit stamp of the date of a manual booking, so a date
 //!   edit syncs on its own (neither with the text nor with amount and splits).
+//! - 42: credit line of a card (#1143): `accounts.credit_limit_cents`, device-local.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -122,6 +123,7 @@ const STEPS: &[Step] = &[
     Step::Hook(crate::planning::stable_split_ids),             // 39 (#714)
     Step::Sql(REFUND_LINKS),                                   // 40 (#714)
     Step::Hook(manual_date_stamp),                             // 41 (#714)
+    Step::Hook(account_credit_limit),                          // 42 (#1143)
 ];
 
 /// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
@@ -993,6 +995,15 @@ fn account_total_flag(conn: &Connection) -> CoreResult<()> {
 
 /// Step 36 (#1467): what the sidebar shows in place of the bank name, with
 /// its sync stamp; NULL keeps the bank name.
+/// Step 42 (#1143): the credit line a card issuer reports (cents), shown next to the
+/// balance. Device-local: every fetch refreshes it, so it is not part of the sync merge.
+fn account_credit_limit(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "credit_limit_cents")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN credit_limit_cents INTEGER;")?;
+    }
+    Ok(())
+}
+
 fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     if !has_column(conn, "main", "accounts", "bank_label")? {
         conn.execute_batch("ALTER TABLE accounts ADD COLUMN bank_label TEXT;")?;
@@ -1227,7 +1238,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 41);
+        assert_eq!(SCHEMA_VERSION, 42);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for

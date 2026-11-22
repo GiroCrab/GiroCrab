@@ -116,6 +116,16 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
         account.balance_date = date(card, "balanceDate")?;
         result.balances_reported.push(account.external_ref.clone());
     }
+    // The credit line (portal: AvailableLimit of the card); absent or 0 = not shown.
+    let limit = &card["creditLimit"];
+    if !limit.is_null() {
+        let cents = crate::money::json_number_to_cents_rounded(limit).map_err(|_| invalid())?;
+        if cents > 0 {
+            result
+                .credit_limits
+                .push((account.external_ref.clone(), cents));
+        }
+    }
     result.transactions = transactions(&root, &account)?;
     result.accounts.push(account);
     Ok(result)
@@ -327,5 +337,46 @@ mod tests {
         broken["bookingDate"] = json!("kein Datum");
         f["transactions"].as_array_mut().unwrap().push(broken);
         assert!(snapshot(&f.to_string()).is_err());
+    }
+
+    #[test]
+    fn the_credit_line_is_stored_and_kept_when_a_later_fetch_lacks_it() {
+        let dir = crate::test_support::TempDir::new("airplus-limit");
+        let vault =
+            Vault::open(dir.join("vault.db").to_string_lossy().into(), vec![7; 32]).unwrap();
+        let connection = vault
+            .add_bank_connection(ConnectorKind::AirPlus, "Test AirPlus".into(), "test".into())
+            .unwrap();
+        let mut f = fixture();
+        f["card"]["creditLimit"] = json!(5000);
+        let parsed = snapshot(&f.to_string()).unwrap();
+        assert_eq!(parsed.credit_limits.len(), 1);
+        assert_eq!(parsed.credit_limits[0].1, 500_000);
+        vault
+            .clone()
+            .import_airplus_snapshot(connection, f.to_string())
+            .unwrap();
+        assert_eq!(
+            vault.list_accounts().unwrap()[0].credit_limit_cents,
+            Some(500_000)
+        );
+        // not delivered this time: the stored line stays
+        vault
+            .clone()
+            .import_airplus_snapshot(connection, fixture().to_string())
+            .unwrap();
+        assert_eq!(
+            vault.list_accounts().unwrap()[0].credit_limit_cents,
+            Some(500_000)
+        );
+        // a zero line is no line
+        let mut zero = fixture();
+        zero["card"]["creditLimit"] = json!(0);
+        assert!(
+            snapshot(&zero.to_string())
+                .unwrap()
+                .credit_limits
+                .is_empty()
+        );
     }
 }

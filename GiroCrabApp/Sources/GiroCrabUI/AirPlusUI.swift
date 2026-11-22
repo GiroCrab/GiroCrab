@@ -96,11 +96,13 @@ enum AirPlusScripts {
           }
           if (!complete) throw new Error('AirPlus: Die Umsatzliste ist zu lang und wurde nicht vollständig abgerufen.');
           const used = card.LimitUsed?.Value;
+          const limit = card.AvailableLimit?.Value;
           return JSON.stringify({
             version: 1,
             card: {id: String(card.CardFinancialAccountId), maskedNumber: card.MaskedCardNumber,
               currency: rows[0]?.currency || card.LimitUsed?.Currency?.Code || 'EUR',
               limitUsed: Number.isFinite(used) ? used : null,
+              creditLimit: Number.isFinite(limit) ? limit : null,
               balanceDate: new Date().toISOString().slice(0, 10)},
             transactions: rows
           });

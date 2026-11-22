@@ -46,7 +46,8 @@ and `migrate` runs the missing ones in a single transaction.
 | 39 | `transaction_splits.uuid` / `position`: stable split-part identities, deterministic UUIDv5 backfill (#714) |
 | 40 | `refund_links`: refund links between bookings or split parts (#714) |
 | 41 | `transactions.date_ms`: edit stamp of a manual booking's date, synced on its own (#714) |
-| 42+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 42 | `accounts.credit_limit_cents`: credit line a card issuer reports, device-local (#1143) |
+| 43+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 

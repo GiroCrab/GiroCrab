@@ -484,6 +484,16 @@ pub(crate) fn store_fetch(
                     id
                 }
             };
+            if let Some((_, cents)) = data
+                .credit_limits
+                .iter()
+                .find(|(r, _)| *r == acc.external_ref)
+            {
+                tx.execute(
+                    "UPDATE accounts SET credit_limit_cents = ?1 WHERE id = ?2",
+                    params![cents, id],
+                )?;
+            }
             accounts_updated += 1;
             account_ids.insert(acc.external_ref.clone(), id);
             if is_new && had_accounts > 0 {

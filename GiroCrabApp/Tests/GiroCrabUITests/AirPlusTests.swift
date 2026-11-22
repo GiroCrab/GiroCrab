@@ -79,7 +79,7 @@ final class AirPlusTests: XCTestCase {
         x.setRequestHeader('x-xsrf-token', 'invented-token');
         x.setRequestHeader('X-Invented-Header', 'kept');
         x.send(JSON.stringify({Card: {CardFinancialAccountId: '170000000001', MaskedCardNumber: '531954******0000',
-          LimitUsed: {Value: 123.45, Currency: {Code: 'EUR'}}}, PageIndex: 1, PageSize: 5, Skip: 0, Take: 5,
+          LimitUsed: {Value: 123.45, Currency: {Code: 'EUR'}}, AvailableLimit: {Value: 5000, Currency: {Code: 'EUR'}}}, PageIndex: 1, PageSize: 5, Skip: 0, Take: 5,
           Sort: [{Field: 'postingDate', Dir: 'desc'}], Filters: []}));
         x.listeners.forEach(function(f) { f(); });
         """)
@@ -109,6 +109,7 @@ final class AirPlusTests: XCTestCase {
         let card = try XCTUnwrap(snapshot["card"] as? [String: Any])
         XCTAssertEqual(card["id"] as? String, "170000000001")
         XCTAssertEqual(card["limitUsed"] as? Double, 123.45)
+        XCTAssertEqual(card["creditLimit"] as? Double, 5000)
         XCTAssertEqual(card["currency"] as? String, "EUR")
         let rows = try XCTUnwrap(snapshot["transactions"] as? [[String: Any]])
         XCTAssertEqual(rows.count, 70)
