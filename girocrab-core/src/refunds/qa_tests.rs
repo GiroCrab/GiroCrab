@@ -2,6 +2,76 @@
 use super::*;
 use crate::{models::*, offline::ManualBookingSetup, test_support::TempDir};
 #[test]
+fn outgoing_split_credit_repaying_an_income_fee_keeps_flow_attribution() {
+    for amount in [-5000, 0] {
+        let (_d, v, a) = fixture();
+        let (expense, credit) = categories(&v);
+        let salary = third_category(&v);
+        let fee = v
+            .create_category("Fee".into(), None, "tag".into(), "#abcdef".into())
+            .unwrap();
+        let refund = if amount == 0 {
+            let db = v.db().unwrap();
+            db.execute(
+                "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,counterparty,purpose) VALUES (?1,'ZERO',?2,0,'QA vendor','')",
+                params![a, crate::dates::today_iso()],
+            )
+            .unwrap();
+            db.last_insert_rowid()
+        } else {
+            booking(&v, a, amount)
+        };
+        let income = booking(&v, a, 9500);
+        v.set_transaction_splits(
+            refund,
+            vec![part(expense, -10000), part(credit, 10000 + amount)],
+        )
+        .unwrap();
+        v.set_transaction_splits(income, vec![part(salary, 10000), part(fee, -500)])
+            .unwrap();
+        let check = |linked: bool| {
+            let paid = if linked { 500 } else { 0 };
+            let whole = sums(&page(&v, None));
+            let filtered = [expense, credit, salary, fee].map(|c| sums(&page(&v, Some(c))));
+            println!("outgoing={amount}, linked={linked}: whole={whole:?}, filtered={filtered:?}");
+            assert_eq!(whole, (9500 + paid, amount - paid));
+            assert_eq!(
+                filtered,
+                [
+                    (0, -10000),
+                    (0, 10000 + amount - paid),
+                    (10000, 0),
+                    (-500 + paid, 0)
+                ]
+            );
+            assert_eq!(
+                whole,
+                filtered
+                    .iter()
+                    .fold((0, 0), |(i, e), (di, de)| (i + di, e + de))
+            );
+            let flow = v.selection_flow(vec![], None, None).unwrap();
+            assert_eq!(
+                (flow.income_cents, flow.consumption_cents),
+                (whole.0, -whole.1)
+            );
+            let periods = v
+                .cashflow_by_period(PeriodGranularity::Month, 1, None, false)
+                .unwrap();
+            assert_eq!(
+                (periods[0].income_cents, periods[0].expense_cents),
+                (whole.0, -whole.1)
+            );
+            assert_eq!(v.refund_links(refund).unwrap().refund_income_cents, paid);
+        };
+        check(false);
+        v.link_refund_parts(refund, 2, income, 2).unwrap();
+        check(true);
+        v.unlink_refund_parts(refund, 2, income, 2).unwrap();
+        check(false);
+    }
+}
+#[test]
 fn restore_rejects_named_parts_retired_by_split_removal() {
     for refund_side in [false, true] {
         let (_d, v, a) = fixture();

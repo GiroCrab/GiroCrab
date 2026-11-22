@@ -157,8 +157,8 @@ pub struct RefundLinks {
     pub original_total_cents: i64,
     /// What of that is left for a further link.
     pub original_open_cents: i64,
-    /// For an incoming booking that pays back: what of it stays income, i.e. all but what
-    /// pays back outgoing bookings (`Booking::refund_income_cents`). Else 0.
+    /// The income share of a linked refund (`Booking::refund_income_cents`): its unassigned
+    /// incoming remainder and what pays back an income's fee. Else 0.
     pub refund_income_cents: i64,
 }
 
@@ -982,10 +982,10 @@ impl CategoryRefunds {
                 (i128::from(open) * i128::from(share_cents) / i128::from(amount_cents)) as i64
             }
         };
-        let income = if refund_income_cents > 0
-            || (amount_cents > 0
-                && flow == crate::merchants::FlowKind::Consumption
-                && this.out_of.contains_key(&id))
+        let income = if amount_cents > 0
+            && (refund_income_cents > 0
+                || (flow == crate::merchants::FlowKind::Consumption
+                    && this.out_of.contains_key(&id)))
         {
             rest
         } else {
@@ -1525,8 +1525,18 @@ impl Vault {
             refund_open_cents: open(Role::Refund),
             original_total_cents: total(Role::Original),
             original_open_cents: open(Role::Original),
-            refund_income_cents: if own_amount > 0 && !originals.is_empty() {
-                (own_amount - shares.expense.get(&transaction_id).copied().unwrap_or(0)).max(0)
+            refund_income_cents: if !originals.is_empty() {
+                let expense = shares.expense.get(&transaction_id).copied().unwrap_or(0);
+                if own_amount > 0 {
+                    (own_amount - expense).max(0)
+                } else {
+                    shares
+                        .linked
+                        .get(&transaction_id)
+                        .and_then(|(_, paid, _)| *paid)
+                        .unwrap_or(0)
+                        - expense
+                }
             } else {
                 0
             },

@@ -492,8 +492,8 @@ pub struct Booking {
     /// what its originals take up, of an original what its refunds pay back). `None` when
     /// unlinked, fully covered, covered with nothing (its links take 0) or linked across currencies.
     pub refund_part_cents: Option<i64>,
-    /// The part of a refund that is linked but taken up by no original: it stays income in
-    /// the sums, while the booking's `flow` (consumption) holds for the rest. 0 otherwise.
+    /// The income share of a linked refund: its unassigned incoming remainder and what pays
+    /// back an income's fee. The booking's `flow` (consumption) holds for the rest. 0 otherwise.
     pub refund_income_cents: i64,
     pub id: i64,
     pub account_id: i64,
@@ -957,7 +957,14 @@ pub(crate) fn split_flow_parts(
     refund_income_cents: i64,
 ) -> [(crate::merchants::FlowKind, i64); 2] {
     use crate::merchants::FlowKind;
-    let income = if flow == FlowKind::Consumption && amount_cents > 0 {
+    let income = if flow == FlowKind::Consumption && amount_cents <= 0 {
+        if share_cents == amount_cents || amount_cents == 0 {
+            refund_income_cents
+        } else {
+            (i128::from(refund_income_cents) * i128::from(share_cents) / i128::from(amount_cents))
+                as i64
+        }
+    } else if flow == FlowKind::Consumption && amount_cents > 0 {
         let whole = refund_income_cents.clamp(0, amount_cents);
         if share_cents == amount_cents {
             whole

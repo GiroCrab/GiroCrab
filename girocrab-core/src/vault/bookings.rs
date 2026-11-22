@@ -394,6 +394,11 @@ impl BookingFinisher {
             let paid = refund_covered.expense.get(&t.id).copied().unwrap_or(0);
             t.flow = FlowKind::Consumption;
             t.refund_income_cents = (t.amount_cents - paid).max(0);
+        } else if let Some((paid, _)) = pays
+            && t.amount_cents <= 0
+            && t.flow == FlowKind::Consumption
+        {
+            t.refund_income_cents = paid - refund_covered.expense.get(&t.id).copied().unwrap_or(0);
         }
         if let Some(loan) = self.loan_links.get(&t.id) {
             t.flow = match visible {
