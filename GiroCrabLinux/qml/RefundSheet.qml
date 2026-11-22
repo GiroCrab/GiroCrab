@@ -190,6 +190,8 @@ Sheet {
             // looks at one kind only
             Sensitive { labels: true }
             Sensitive { amounts: true }
+            sensitiveLabels: true
+            sensitiveAmounts: true
         }
         TextField {
             Layout.fillWidth: true
