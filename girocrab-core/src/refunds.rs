@@ -921,9 +921,11 @@ impl CategoryRefunds {
         amount_cents: i64,
         refund_income_cents: i64,
     ) -> [(crate::merchants::FlowKind, i64); 2] {
+        // a split booking of 0 in sum (a refund part and a fee part) still moves its parts;
+        // only the share of an unsplit booking is worked out from its amount
         let Some((this, assigned)) = this
             .and_then(|m| Some((m, m.assigned.get(&id)?)))
-            .filter(|_| amount_cents != 0)
+            .filter(|(m, _)| amount_cents != 0 || m.out_of.contains_key(&id))
         else {
             return crate::models::split_flow_parts(
                 flow,

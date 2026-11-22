@@ -1639,3 +1639,34 @@ fn qa_suggestions_and_open_amount_follow_the_selected_part_of_a_split_refund() {
     assert_eq!(v.refund_part_open(r, true, 0).unwrap(), 799);
     assert!(v.refund_part_suggestions(r, true, 2).unwrap().is_empty());
 }
+
+/// A split booking of 0 in sum (a refund and a fee of the same amount): its incoming part
+/// still pays back, in the list of every category as in the sidebar.
+#[test]
+fn split_booking_of_zero_in_sum_pays_back_with_its_incoming_part() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let cc = third_category(&v);
+    // from a bank: a booking made by hand has an amount
+    let r = {
+        let db = v.db().unwrap();
+        db.execute(
+            "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,counterparty,purpose) VALUES (?1,'ZERO',?2,0,'QA vendor','')",
+            rusqlite::params![a, crate::dates::today_iso()],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let o = booking(&v, a, -10000);
+    v.set_transaction_category(o, Some(cc)).unwrap();
+    v.set_transaction_splits(r, vec![part(ca, 10000), part(cb, -10000)])
+        .unwrap();
+    v.link_refund_parts(r, 1, o, 0).unwrap();
+    let sidebar = [ca, cb, cc].map(|c| totals(&v, c).0);
+    assert_eq!(sidebar, [0, -10000, 0]);
+    let listed = [ca, cb, cc].map(|c| {
+        let p = page(&v, Some(c));
+        p.income_cents + p.expense_cents
+    });
+    assert_eq!(listed, sidebar);
+}
