@@ -203,9 +203,10 @@ ApplicationWindow {
             Action { text: qsTr("Nächste Buchung"); shortcut: "Ctrl+Meta+Down"; onTriggered: AppModel.moveSelection(1) }
             Action { text: qsTr("Vorherige Buchung"); shortcut: "Ctrl+Meta+Up"; onTriggered: AppModel.moveSelection(-1) }
             AppMenuSeparator {}
-            Action { text: qsTr("Alle Buchungen"); shortcut: "Ctrl+1"; onTriggered: AppModel.scope = "All" }
-            Action { text: qsTr("Alltag && Konsum"); shortcut: "Ctrl+2"; onTriggered: AppModel.scope = "Everyday" }
-            Action { text: qsTr("Sparpläne && Perks"); shortcut: "Ctrl+3"; onTriggered: AppModel.scope = "Investments" }
+            // AccountPresentation.menuTitle: booking scopes or the depot tabs (#564)
+            Action { text: DepotState.menuTitle(0, qsTr("Alle Buchungen")); shortcut: "Ctrl+1"; onTriggered: DepotState.applyScopeShortcut(0, "All") }
+            Action { text: DepotState.menuTitle(1, qsTr("Alltag && Konsum")); shortcut: "Ctrl+2"; onTriggered: DepotState.applyScopeShortcut(1, "Everyday") }
+            Action { text: DepotState.menuTitle(2, qsTr("Sparpläne && Perks")); shortcut: "Ctrl+3"; onTriggered: DepotState.applyScopeShortcut(2, "Investments") }
             // MARK: manual loans – LoanAssignMenu(model:booking: model.selectedBooking)
             AppMenuSeparator {}
             LoanAssignMenu { booking: AppModel.selectedBooking }
@@ -294,13 +295,22 @@ ApplicationWindow {
             StackLayout {
                 SplitView.minimumWidth: Math.max(360, Math.min(560, window.width - sidebarPane.width - (AppModel.showInspector ? 280 : 0) - 2))
                 SplitView.fillWidth: true
-                currentIndex: ({ documents: 1, wealth: 2, planned: 3, directDebits: 4 })[AppModel.sidebarSelection] ?? 0
+                currentIndex: DepotState.presentation === "securities" ? 5
+                              : ({ documents: 1, wealth: 2, planned: 3, directDebits: 4 })[AppModel.sidebarSelection] ?? 0
                 BookingStreamView {}
                 DocumentsView {}
                 // built only while shown (it loads the depot positions and the cash history)
                 Loader { active: AppModel.sidebarSelection === "wealth"; sourceComponent: Component { WealthView {} } }
                 Loader { active: AppModel.sidebarSelection === "planned"; sourceComponent: Component { PlannedPaymentsView {} } }
                 Loader { active: AppModel.sidebarSelection === "directDebits"; sourceComponent: Component { DirectDebitsView {} } }
+                // accountColumn (RootView.swift, #564): a securities depot has its own view; one instance
+                // per account (`.id(account.id)`), so no state of another account stays
+                Item {
+                    Repeater {
+                        model: DepotState.selectedSecuritiesDepot ? [DepotState.selectedSecuritiesDepot.id] : []
+                        DepotDetailView { required property var modelData; anchors.fill: parent; account: AppModel.account(modelData) }
+                    }
+                }
             }
             InspectorView {
                 visible: AppModel.showInspector
@@ -341,7 +351,7 @@ ApplicationWindow {
                 ToolTip.text: qsTr("Alle Dokumente, eigene Belege oder Bankdokumente anzeigen"); ToolTip.visible: docScopeHover.hovered; ToolTip.delay: 600
             }
             Segmented {
-                visible: AppModel.sidebarSelection !== "wealth" && AppModel.sidebarSelection !== "documents"
+                visible: AppModel.sidebarSelection !== "wealth" && AppModel.sidebarSelection !== "documents" && DepotState.presentation === "bookings"
                 options: AppModel.scopes
                 current: AppModel.scope
                 enabled: AppModel.sidebarSelection !== "newBookings"
@@ -387,12 +397,14 @@ ApplicationWindow {
             TextField {
                 id: search
                 Layout.preferredWidth: Math.max(220, Math.min(510, window.width * 0.22))
-                placeholderText: qsTr("Händler, Zweck, IBAN, Betrag")
-                text: AppModel.searchText
-                onTextEdited: AppModel.searchText = text
+                // AssetAccountFrame `.searchable`: the holdings views search their own positions (#564)
+                readonly property bool holdings: DepotState.presentation !== "bookings"
+                placeholderText: holdings ? DepotState.searchPrompt : qsTr("Händler, Zweck, IBAN, Betrag")
+                text: holdings ? DepotState.query : AppModel.searchText
+                onTextEdited: { if (holdings) DepotState.query = text; else AppModel.searchText = text }
                 leftPadding: 28
                 SFIcon { symbol: "magnifyingglass"; size: 14; anchors.verticalCenter: parent.verticalCenter; x: 8 }
-                Keys.onEscapePressed: AppModel.searchText = ""
+                Keys.onEscapePressed: { if (holdings) DepotState.query = ""; else AppModel.searchText = "" }
                 Sensitive { when: search.text !== "" }   // typed names, IBANs, amounts (#301)
             }
         }
