@@ -42,9 +42,16 @@ Sheet {
     readonly property bool usedUp: ownOpen === 0
     readonly property bool partUsedUp: usedUp && ownParts.length > 1 && ownPart > 0
     /// Candidates below the suggestions; a linked or suggested booking is shown once only.
-    readonly property var others: candidates.filter(c => !linked.some(l => same(l, c)) && !top.some(s => same(s.booking, c)))
+    readonly property var others: candidates.filter(c => !linked.some(l => same(l, c)) && !top.some(s => same(candidateLink(s.booking), c)))
+    function candidateLink(row) {
+        return { id: row.id, part: fromRefund ? row.part : ownPart,
+                 refund_part: fromRefund ? ownPart : row.refund_part }
+    }
     /// A split booking appears once per part.
-    function same(a, b) { return a.id === b.id && a.part === b.part && a.refund_part === b.refund_part }
+    function same(a, b) {
+        const candidate = candidateLink(b)
+        return a.id === candidate.id && a.part === candidate.part && a.refund_part === candidate.refund_part
+    }
 
     property Connections changes: Connections {
         target: AppModel
