@@ -273,6 +273,7 @@ fn load_rows(vault: &Vault, target: Target) -> Result<Vec<Row>, String> {
 struct State {
     analytics_vault: Option<Arc<Vault>>,
     expense_scope: Option<(Target, String, u64)>,
+    expense_error: Option<String>,
     expense_categories: Vec<Category>,
     expense_uncategorized: (i64, usize),
     expense_currency: String,
@@ -457,12 +458,18 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
                             st.expense_categories = categories;
                             st.expense_uncategorized = uncategorized;
                             st.expense_currency = currency;
+                            st.expense_error = None;
                         });
                         render_analytics(&win, privacy_on(&win));
                     }
-                    Err(e) => win.set_analytics_summary(
-                        format!("Ausgaben konnten nicht geladen werden: {e}").into(),
-                    ),
+                    Err(e) => {
+                        let error = format!("Ausgaben konnten nicht geladen werden: {e}");
+                        with_state(|st| {
+                            st.expense_scope = None;
+                            st.expense_error = Some(error.clone());
+                        });
+                        win.set_analytics_summary(error.into());
+                    }
                 }
             });
         });
@@ -511,6 +518,10 @@ fn render_analytics(win: &MainWindow, privacy: bool) {
     win.set_analytics_expense_cats(lines(exp_cats, &exp_currency));
     win.set_analytics_income_cats(lines(inc_cats, "EUR"));
     win.set_analytics_tags(lines(tags, "EUR"));
+    if let Some(error) = with_state(|st| st.expense_error.clone()) {
+        win.set_analytics_summary(error.into());
+        return;
+    }
     win.set_analytics_summary(
         daily::mask(
             &format!(
