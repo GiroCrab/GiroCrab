@@ -1,6 +1,6 @@
 # Überweisung per Link (`girocrab://transfer`)
 
-Andere Apps und Webseiten können GiroCrab bitten, ein Überweisungsformular mit Empfänger, IBAN, Betrag und Verwendungszweck zu öffnen, etwa eine Belegverwaltung oder eine Rechnung im Browser. Die Belegverwaltung [Receipts Space](https://receipts-app.com/) nutzt den Link für „Direkt bezahlen“ (macOS): Dort GiroCrab als App zum Bezahlen wählen. GiroCrab füllt das Formular nur aus. Gesendet wird erst, wenn die Nutzerin oder der Nutzer die Überweisung im Formular prüft und mit PIN und TAN freigibt.
+Andere Apps, Webseiten und Automatisierungen können GiroCrab bitten, ein Überweisungsformular mit Empfänger, IBAN, Betrag und Verwendungszweck zu öffnen – etwa aus Paperless-ngx, einer Belegverwaltung, Apple Kurzbefehlen oder einer Rechnung im Browser. GiroCrab füllt das Formular nur aus. Gesendet wird erst, wenn die Nutzerin oder der Nutzer die Überweisung im Formular prüft und mit PIN und TAN freigibt.
 
 Gilt für macOS und iOS/iPadOS. Code: `GiroCrabApp/Sources/GiroCrabUI/PaymentLink.swift` (Parser), `AppModel+Transfer.swift` (`openLink`, `presentPendingPaymentLink`).
 
