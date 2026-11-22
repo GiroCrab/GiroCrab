@@ -413,6 +413,7 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
             [&pairs],
         )?;
     }
+    crate::refunds::drop_invalid_manual_sides(conn)?;
     conn.execute(
         "UPDATE booking_documents SET account_id = ?2 WHERE account_id = ?1",
         params![twin, bank],

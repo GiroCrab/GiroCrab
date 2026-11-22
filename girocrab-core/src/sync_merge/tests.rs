@@ -4391,6 +4391,97 @@ fn rule_account_set_merges_across_vaults() {
     assert_eq!(a.list_rules().unwrap()[0].account_ids, vec![ids[0], ids[2]]);
 }
 
+#[test]
+fn folded_twin_cleans_invalid_manual_refund_sides_after_remapping() {
+    for (amount, stamp, linked, fail) in [
+        (100, 200, true, false),
+        (-100, 200, true, false),
+        (100, 0, true, false),
+        (100, 200, false, false),
+        (100, 200, true, true),
+    ] {
+        let dir = temp_dir("twin-manual-refund-sides");
+        let v = open(&dir, "a.db");
+        let c = comdirect(&v);
+        let bank = giro(&v, c, "API1", &["purchase", "refund"]);
+        let twin = giro(&v, c, MM_GIRO, &["purchase", "refund"]);
+        exec(
+            &v,
+            &format!(
+                "UPDATE transactions SET amount_cents = -100 WHERE external_id = 'purchase';
+                 UPDATE transactions SET amount_cents = 40 WHERE external_id = 'refund';
+                 UPDATE transactions SET amount_cents = {amount}, manual_value_ms = {stamp},
+                        value_date = booking_date
+                  WHERE account_id = {bank} AND external_id = 'purchase';"
+            ),
+        );
+        if linked {
+            exec(
+                &v,
+                &format!(
+                    "INSERT INTO refund_links(refund_id, original_id, created_ms, changed_ms)
+                         SELECT r.id, o.id, 1, 1 FROM transactions r, transactions o
+                          WHERE r.account_id = {twin} AND r.external_id = 'refund'
+                            AND o.account_id = {twin} AND o.external_id = 'purchase';"
+                ),
+            );
+        }
+        if fail {
+            exec(
+                &v,
+                "CREATE TRIGGER fail_refund_cleanup BEFORE UPDATE OF deleted_ms ON refund_links
+                 WHEN NEW.deleted_ms IS NOT NULL
+                 BEGIN SELECT RAISE(ABORT, 'QA cleanup blocked'); END;",
+            );
+        }
+        let db = v.db().unwrap();
+        let result = super::twins::fold_twins(&db);
+        if fail {
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("QA cleanup blocked"), "{error}");
+            let endpoints: (i64, i64, Option<i64>) = db
+                .query_row(
+                    "SELECT r.account_id, o.account_id, l.deleted_ms FROM refund_links l
+                     JOIN transactions r ON r.id = l.refund_id
+                     JOIN transactions o ON o.id = l.original_id",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(endpoints, (twin, twin, None));
+            let retired: Option<i64> = db
+                .query_row(
+                    "SELECT deleted_ms FROM accounts WHERE id = ?1",
+                    [twin],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(retired, None);
+            eprintln!("0362 cleanup failure rolls back the fold: {error}");
+        } else {
+            assert_eq!(result.unwrap(), 1);
+            let rows: Vec<(i64, i64, bool)> = db
+                .prepare(
+                    "SELECT r.account_id, o.account_id, l.deleted_ms IS NOT NULL FROM refund_links l
+                     JOIN transactions r ON r.id = l.refund_id
+                     JOIN transactions o ON o.id = l.original_id",
+                )
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let retired = amount > 0 && stamp > 0;
+            eprintln!("0362 bank_amount={amount}, manual_stamp={stamp}, linked={linked}: {rows:?}");
+            if linked {
+                assert_eq!(rows, vec![(bank, bank, retired)]);
+            } else {
+                assert!(rows.is_empty());
+            }
+        }
+    }
+}
+
 /// Refund links (#714) of a folded twin point at the bank account's copies afterwards,
 /// whether the other booking of the link is in the twin too or in another account.
 #[test]
