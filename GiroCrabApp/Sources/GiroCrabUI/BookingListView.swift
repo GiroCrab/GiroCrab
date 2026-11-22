@@ -1218,7 +1218,9 @@ struct BookingCategoryLabel: View {
         let none = booking.categoryName.isEmpty
         let color = none ? Theme.warning : Color.readable(hex: booking.categoryColorHex)
         HStack(spacing: 3) {
-            Image(systemName: none ? "questionmark.folder" : (booking.categorySymbol.isEmpty ? "tag.fill" : booking.categorySymbol))
+            Image(systemName: none
+                ? "questionmark.folder"
+                : (booking.categorySymbol.isEmpty ? SymbolCatalog.defaultCategorySymbol : booking.categorySymbol))
                 .appFont(.caption)
             Text(none ? model.uncategorizedLabel : booking.categoryName)
                 .sensitive(.labels)

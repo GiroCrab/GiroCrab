@@ -80,7 +80,8 @@ enum SymbolCatalog {
             i("shield", "Versicherung"), i("umbrella", "Schutz"),
         ]),
         Section(title: "Sonstiges", items: [
-            i("tshirt", "Kleidung"), i("bag", "Einkaufstasche"), i("tag", "Etikett"), i("star", "Favorit"),
+            i("tshirt", "Kleidung"), i("bag", "Einkaufstasche"), i("tag", "Etikett"),
+            i("tag.fill", "Etikett, gefüllt"), i("star", "Favorit"),
             i("flag", "Flagge"), i("globe", "Welt"), i("cloud", "Cloud"), i("sparkles", "Besonderes"),
             i("hand.raised", "Spende"), i("ellipsis.circle", "Andere"), i("questionmark.circle", "Unbekannt"),
         ]),
@@ -89,6 +90,15 @@ enum SymbolCatalog {
     /// Catalogue symbols: known to exist, no image lookup needed (views ask
     /// on every redraw).
     private static let known: Set<String> = Set(sections.flatMap { $0.items.map(\.symbol) })
+
+    /// Symbol of a category without an explicit choice. Must match the core
+    /// default (`create_category`, schema, importers): the outlined tag (#1610).
+    static let defaultCategorySymbol = "tag"
+
+    /// Whether the symbol is offered in the picker's catalogue.
+    static func isListed(_ symbol: String) -> Bool {
+        known.contains(symbol)
+    }
 
     /// Whether the running OS ships this SF Symbol.
     static func exists(_ symbol: String) -> Bool {
