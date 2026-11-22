@@ -289,9 +289,34 @@ pub fn csv_columns(o: CsvOptions) -> girocrab_core::export::ExportCsvColumns {
     }
 }
 
+/// Comparison key for file names as NTFS sees them: each character uppercased on its own,
+/// one to one (so `ς`, `σ` and `Σ` collide); multi-character mappings (`ß` → `SS`) are not applied.
+fn ntfs_key(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+/// `name` for the first try (`i` < 2), then `stem-2.ext`, `stem-3.ext`, …
+pub fn numbered_file_name(name: &str, i: u32) -> String {
+    if i < 2 {
+        return name.to_string();
+    }
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}-{i}.{ext}"),
+        _ => format!("{name}-{i}"),
+    }
+}
+
 /// One CSV file name per account, in the given order: cleaned account name, unique within the
-/// batch (case-insensitive, NTFS) and not taken in the folder (`exists`); clashes get `-2`, `-3`, …
-/// The fixed prefix rules out reserved device names (`CON`, `NUL`, …).
+/// batch (case-insensitive like NTFS, see `ntfs_key`) and not taken in the folder (`exists`);
+/// clashes get `-2`, `-3`, … The fixed prefix rules out reserved device names (`CON`, `NUL`, …).
 pub fn per_account_file_names(
     names: &[String],
     today: &str,
@@ -305,11 +330,11 @@ pub fn per_account_file_names(
             let stem = format!("girocrab-umsaetze-{base}-{today}");
             let mut name = format!("{stem}.csv");
             let mut i = 2;
-            while taken.contains(&name.to_lowercase()) || exists(&name) {
+            while taken.contains(&ntfs_key(&name)) || exists(&name) {
                 name = format!("{stem}-{i}.csv");
                 i += 1;
             }
-            taken.insert(name.to_lowercase());
+            taken.insert(ntfs_key(&name));
             name
         })
         .collect()
@@ -577,6 +602,38 @@ mod tests {
             per_account_file_names(&names, "2025-03-31", |f| f == taken),
             vec!["girocrab-umsaetze-Giro-2025-03-31-2.csv"]
         );
+    }
+
+    #[test]
+    fn batch_names_collide_like_ntfs() {
+        // ς, σ and Σ uppercase to the same letter on NTFS
+        let names: Vec<String> = vec!["Kontoσ".into(), "Kontoς".into(), "KontoΣ".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Kontoσ-2025-03-31.csv",
+                "girocrab-umsaetze-Kontoς-2025-03-31-2.csv",
+                "girocrab-umsaetze-KontoΣ-2025-03-31-3.csv",
+            ]
+        );
+        // NTFS maps one to one: ß does not become SS
+        let names: Vec<String> = vec!["Straße".into(), "STRASSE".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Straße-2025-03-31.csv",
+                "girocrab-umsaetze-STRASSE-2025-03-31.csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn numbered_names() {
+        assert_eq!(numbered_file_name("a.csv", 1), "a.csv");
+        assert_eq!(numbered_file_name("a.csv", 2), "a-2.csv");
+        assert_eq!(numbered_file_name("a-2.csv", 3), "a-2-3.csv");
+        assert_eq!(numbered_file_name("ohne", 2), "ohne-2");
+        assert_eq!(numbered_file_name(".csv", 2), ".csv-2");
     }
 
     #[test]

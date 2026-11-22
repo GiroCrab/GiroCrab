@@ -190,6 +190,26 @@ fn write_bytes(path: &PathBuf, data: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("Die Datei konnte nicht geschrieben werden: {e}"))
 }
 
+/// Writes a new file into `dir` and never replaces one: if `name` was created in the meantime
+/// (by another program), the next free `-N` name is used.
+fn write_new(dir: &std::path::Path, name: &str, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let failed = |e: std::io::Error| format!("Die Datei konnte nicht geschrieben werden: {e}");
+    for i in 1..=100 {
+        let path = dir.join(view::numbered_file_name(name, i));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => return f.write_all(data).map_err(failed),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(failed(e)),
+        }
+    }
+    Err("Im Ordner ist kein freier Dateiname mehr verfügbar.".to_string())
+}
+
 fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -683,7 +703,7 @@ fn wire_export(win: &MainWindow) {
                 let mut total = 0;
                 for ((id, _), name) in accounts.iter().zip(&files) {
                     let (csv, n) = account_csv(&v, *id, &period, opts, with_balance)?;
-                    write_bytes(&dir.join(name), csv.as_bytes())?;
+                    write_new(&dir, name, csv.as_bytes())?;
                     total += n;
                 }
                 // Counts only: no account names or paths in the status line (privacy mode).
@@ -1116,4 +1136,28 @@ fn wire_news(win: &MainWindow) {
         gs.invoke_tab_changed(5);
         gs.invoke_news_select(0);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_new;
+
+    #[test]
+    fn per_account_write_never_replaces_a_file() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("girocrab-write-new-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // appeared after the names were planned
+        std::fs::write(dir.join("a.csv"), b"fremd").unwrap();
+        write_new(&dir, "a.csv", b"neu").unwrap();
+        assert_eq!(std::fs::read(dir.join("a.csv")).unwrap(), b"fremd");
+        assert_eq!(std::fs::read(dir.join("a-2.csv")).unwrap(), b"neu");
+        // a free name is written directly
+        write_new(&dir, "b.csv", b"frei").unwrap();
+        assert_eq!(std::fs::read(dir.join("b.csv")).unwrap(), b"frei");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
