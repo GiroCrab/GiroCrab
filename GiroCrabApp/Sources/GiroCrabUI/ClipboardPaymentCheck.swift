@@ -61,7 +61,7 @@ enum ClipboardPaymentCheck {
     static func summary(_ p: ParsedPayment) -> String {
         [p.iban.map(maskedIBAN),
          p.name,
-         p.amountText.flatMap { try? parseAmountToCents(text: $0) }.map { Money.format($0) }]
+         p.amountText.flatMap(Money.parseCents).map { Money.format($0) }]
             .compactMap { $0 }.joined(separator: " · ")
     }
 

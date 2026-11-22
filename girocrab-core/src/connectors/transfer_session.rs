@@ -88,6 +88,19 @@ pub struct TransferSession {
     state: AsyncMutex<TransferState>,
 }
 
+#[uniffi::export]
+impl TransferSession {
+    /// True while the session waits for the TAN of the order itself (it was sent), false during the
+    /// login SCA and after the end. The app shows its order comparison (#949) only then.
+    pub fn awaits_order_approval(&self) -> bool {
+        // a step in flight holds the lock: then no challenge is on screen either, so `false`
+        self.state
+            .try_lock()
+            .map(|st| st.stage == Stage::Submitted)
+            .unwrap_or(false)
+    }
+}
+
 impl TransferSession {
     pub(crate) fn new(
         vault: Arc<Vault>,

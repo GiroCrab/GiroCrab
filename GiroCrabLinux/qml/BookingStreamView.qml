@@ -655,6 +655,25 @@ Rectangle {
             }
             onObjectRemoved: (index, menu) => rowMenu.removeMenu(menu)
         }
+        // OfflineBookingMenu (OfflineAccountsUI.swift, #679): edit / delete by hand, mirror into an offline account
+        AppMenuItem { id: editManualItem; readonly property bool shown: OfflineAccounts.isManuallyEditable(stream.menuBooking)
+                   visible: shown; height: shown ? implicitHeight : 0
+                   text: qsTr("Buchung bearbeiten …"); icon.name: SF.icon("square.and.pencil")
+                   onTriggered: OfflineAccounts.editManualBooking(stream.menuBooking) }
+        AppMenuItem { readonly property bool shown: OfflineAccounts.isManuallyEditable(stream.menuBooking)
+                   visible: shown; height: shown ? implicitHeight : 0
+                   text: qsTr("Buchung löschen …"); icon.name: SF.icon("trash")
+                   onTriggered: OfflineAccounts.deleting = stream.menuBooking }
+        Instantiator {
+            model: stream.menuBooking && OfflineAccounts.offlineAccounts.some(a => a.id !== stream.menuBooking.account_id) ? 1 : 0
+            delegate: OfflineMirrorMenu { booking: stream.menuBooking }
+            onObjectAdded: (index, menu) => {
+                let at = 0
+                for (let i = 0; i < rowMenu.count; ++i) if (rowMenu.itemAt(i) === editManualItem) at = i + 2
+                rowMenu.insertMenu(at, menu)
+            }
+            onObjectRemoved: (index, menu) => rowMenu.removeMenu(menu)
+        }
         AppMenuSeparator {}
         AppMenuItem {
             readonly property string who: stream.menuBooking ? (stream.menuBooking.counterparty || stream.menuBooking.merchant_name) : ""
@@ -781,7 +800,11 @@ Rectangle {
                             Layout.minimumWidth: br.isSingleLine ? Math.min(Math.ceil(implicitWidth), Math.max(0, br.nameLineWidth - 30)) : 0
                             Sensitive {}
                         }
-                        SFIcon { id: docIcon; visible: br.booking && br.booking.document_count > 0; symbol: "doc.text.fill"; size: 11; color: Theme.withAlpha(Theme.accent, 0.8) }
+                        SFIcon { id: docIcon; visible: br.booking && br.booking.document_count > 0; symbol: "doc.text.fill"; size: 11; color: Theme.withAlpha(Theme.accent, 0.8)
+                                 // BookingListView.swift › BookingRow: .help (#675)
+                                 HoverHandler { id: docHover }
+                                 ToolTip.visible: docHover.hovered && docIcon.visible; ToolTip.delay: 500
+                                 ToolTip.text: br.booking ? qsTr("%1 Beleg(e) – Leertaste für Vorschau").arg(br.booking.document_count) : "" }
                         SFIcon { id: repeatIcon; visible: br.booking !== null && AppModel.recurringSeries(br.booking) !== null; symbol: "repeat"; size: 11 }
                         // Keep the name and amount first. Show the category only when its
                         // complete label fits (ViewThatFits); the purpose yields first.
@@ -883,6 +906,10 @@ Rectangle {
                             HoverHandler { id: chevronHover }
                             ToolTip.visible: chevronHover.hovered; ToolTip.delay: 600
                             ToolTip.text: br.expanded ? qsTr("Artikel einklappen") : qsTr("Alle Artikel anzeigen")
+                            // BookingRow: .accessibilityLabel(amazonExpanded ? … : …) (#571)
+                            Accessible.role: Accessible.Button
+                            Accessible.name: ToolTip.text
+                            Accessible.onPressAction: stream.toggleAmazonExpanded(br.booking.id)
                         }
                         Item { Layout.fillWidth: true }
                     }
@@ -986,6 +1013,18 @@ Rectangle {
         SFIcon { symbol: none ? "questionmark.folder" : (booking.category_symbol || "tag.fill"); size: 11; color: parent.tint }
         Text { text: none ? SidebarModel.uncategorizedLabel : booking.category_name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: parent.tint; elide: Text.ElideRight
                Sensitive { labels: true } }   // also a custom „Ohne Kategorie“ label (#597)
+        // BookingListView.swift › BookingSuggestionHint (#664): the history's suggestion behind
+        // „Ohne Kategorie“, in the secondary colour so it never reads as assigned
+        readonly property var suggested: none ? CategorySuggestions.category(CategorySuggestions.forBooking(booking)) : null
+        RowLayout {
+            visible: parent.suggested !== null
+            Layout.leftMargin: 4
+            spacing: 3
+            Accessible.name: parent.suggested ? qsTr("Vorschlag: %1").arg(AppModel.masking(parent.suggested.name, AppModel.redactLabels)) : ""
+            SFIcon { symbol: "clock.arrow.circlepath"; size: 11; color: Theme.secondary }
+            Text { text: parent.parent.suggested ? parent.parent.suggested.name : ""; font.pixelSize: Theme.callout + 1; color: Theme.secondary; elide: Text.ElideRight
+                   Sensitive { labels: true } }
+        }
     }
 
     // Onboarding.swift › EmptyVaultCard: the personal vault has no accounts yet.
@@ -1001,7 +1040,7 @@ Rectangle {
                    font.pixelSize: Theme.callout + 1; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Repeater {
                 model: [qsTr("Bank wählen und Anmeldenamen eingeben"),
-                        qsTr("Fehlende Angaben ergänzen (z. B. FinTS-Produkt-ID, API-Schlüssel) – das Formular öffnet sich automatisch"),
+                        qsTr("Fehlende Angaben ergänzen (z. B. API-Schlüssel) – das Formular öffnet sich automatisch"),
                         qsTr("PIN eingeben und in der Banking-App freigeben")]
                 RowLayout {
                     required property string modelData

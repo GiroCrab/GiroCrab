@@ -22,10 +22,12 @@ fn banks() -> &'static [Bank] {
     BANKS.get_or_init(|| rows(FINTS_TSV).map(|[b, n, u]| (b, n, u)).collect())
 }
 
-/// (BLZ, BIC) from the Bundesbank BLZ list, sorted by BLZ.
-fn bics() -> &'static [(&'static str, &'static str)] {
-    static BICS: OnceLock<Vec<(&str, &str)>> = OnceLock::new();
-    BICS.get_or_init(|| rows(BIC_TSV).map(|[b, c]| (b, c)).collect())
+/// (BLZ, BIC, bank name) from the Bundesbank BLZ list, sorted by BLZ.
+type BicEntry = (&'static str, &'static str, &'static str);
+
+fn bics() -> &'static [BicEntry] {
+    static BICS: OnceLock<Vec<BicEntry>> = OnceLock::new();
+    BICS.get_or_init(|| rows(BIC_TSV).map(|[b, c, n]| (b, c, n)).collect())
 }
 
 /// Name and FinTS endpoint of a bank in the built-in directory.
@@ -46,9 +48,13 @@ fn info(entry: &Bank) -> FinTsBankInfo {
 }
 
 /// Keeps only the digits ("1005 0000" -> "10050000").
-fn digits(s: &str) -> String {
+pub(crate) fn digits(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_digit()).collect()
 }
+
+/// Bank code of the Miles & More credit cards (Deutsche Bank), used by the bank
+/// only for these cards (`docs/miles-and-more-connector.md`).
+pub(crate) const MILES_AND_MORE_BLZ: &str = "50070439";
 
 /// comdirect's bank codes (Bundesbank: "Commerzbank, GF comdirect"); the
 /// code of an account is in its IBAN. The FinTS login may need another one of
@@ -202,10 +208,10 @@ pub fn search_by_bic(query: &str, limit: usize) -> Vec<FinTsBankInfo> {
     };
     bics()
         .iter()
-        .filter(|(_, bic)| {
+        .filter(|(_, bic, _)| {
             bic.starts_with(&q[..8]) && branch.is_none_or(|br| bic.len() == 8 || &bic[8..] == br)
         })
-        .filter_map(|(blz, _)| find(blz))
+        .filter_map(|(blz, _, _)| find(blz))
         .take(limit)
         .map(info)
         .collect()
@@ -250,14 +256,25 @@ fn lookup_fints_bank_by_input(input: String) -> Option<FinTsBankInfo> {
     blz_from_input(&input).and_then(|b| lookup(&b))
 }
 
-/// BIC of a German IBAN's bank, from the Bundesbank BLZ list in
-/// `data/bic_directory.tsv` ("INGDDEFF"). `None` for non-German or invalid IBANs.
-pub fn bic_for_iban(iban: String) -> Option<String> {
-    let blz = blz_from_german_iban(&iban)?;
+/// Entry of a German IBAN's bank in the Bundesbank BLZ list
+/// (`data/bic_directory.tsv`). `None` for non-German or invalid IBANs.
+fn bic_entry(iban: &str) -> Option<&'static BicEntry> {
+    let blz = blz_from_german_iban(iban)?;
     let bics = bics();
     bics.binary_search_by(|e| e.0.cmp(blz.as_str()))
         .ok()
-        .map(|i| bics[i].1.to_string())
+        .map(|i| &bics[i])
+}
+
+/// BIC of a German IBAN's bank ("INGDDEFF"). `None` for non-German or invalid IBANs.
+pub fn bic_for_iban(iban: String) -> Option<String> {
+    bic_entry(&iban).map(|e| e.1.to_string())
+}
+
+/// Name of a German IBAN's bank ("Commerzbank"), shown next to the recipient's
+/// IBAN in the transfer form (#1563). `None` for non-German or invalid IBANs.
+pub fn bank_name_for_iban(iban: String) -> Option<String> {
+    bic_entry(&iban).map(|e| e.2.to_string())
 }
 
 #[cfg(test)]
@@ -268,8 +285,14 @@ mod tests {
 
     #[test]
     fn every_data_row_parses() {
-        assert_eq!(malformed_rows(BIC_TSV, 2, 2), Vec::<&str>::new());
+        assert_eq!(malformed_rows(BIC_TSV, 3, 3), Vec::<&str>::new());
         assert_eq!(malformed_rows(FINTS_TSV, 3, 3), Vec::<&str>::new());
+        // every bank has a name, without the Bundesbank's "-alt-" merger marker
+        let bad: Vec<_> = bics()
+            .iter()
+            .filter(|e| e.2.is_empty() || e.2.contains("-alt"))
+            .collect();
+        assert_eq!(bad, Vec::<&BicEntry>::new());
     }
 
     #[test]
@@ -285,6 +308,14 @@ mod tests {
         );
         assert_eq!(bic_for_iban("AT611904300234573201".into()), None);
         assert_eq!(bic_for_iban("".into()), None);
+        assert_eq!(
+            bank_name_for_iban("DE89 3704 0044 0532 0130 00".into()).as_deref(),
+            Some("Commerzbank")
+        );
+        assert_eq!(bank_name_for_iban("AT611904300234573201".into()), None);
+        assert_eq!(bank_name_for_iban("DE89370400440532013001".into()), None);
+        // valid checksum, BLZ not in the list
+        assert_eq!(bank_name_for_iban("DE44999999990532013000".into()), None);
     }
 
     #[test]

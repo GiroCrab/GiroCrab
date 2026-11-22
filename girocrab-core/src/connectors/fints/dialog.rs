@@ -33,6 +33,29 @@ pub(super) fn tan_demanded(e: &CoreError) -> bool {
     matches!(e, CoreError::Bank { code, .. } if matches!(code.as_str(), "0030" | "3956"))
 }
 
+/// Statements this far back are handed out without a TAN (PSD2, RTS art. 10);
+/// banks like comdirect ask for one beyond (#1627).
+const DAYS_WITHOUT_TAN: i64 = 90;
+
+/// Whether `e` is a TAN demand (0030) for statements that reach back further
+/// than banks serve without one (#1627). The start is the login-wide
+/// `ctx.since`, the date the statements requests are sent with. Any other TAN
+/// demand does not qualify: a shorter period would not help there.
+pub(super) fn tan_beyond_free_period(ctx: &ConnectContext, e: &CoreError) -> bool {
+    matches!(e, CoreError::Bank { code, .. } if code == "0030")
+        && crate::dates::parse_iso(&ctx.since).is_some_and(|since| {
+            crate::dates::days_between(since, crate::dates::today()) > DAYS_WITHOUT_TAN
+        })
+}
+
+/// The way out of [`tan_beyond_free_period`], one hint for the whole sync.
+/// No colon after "TAN": the log scrubber would take it for a TAN value.
+pub(super) fn period_hint() -> &'static str {
+    tr(
+        "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen.",
+    )
+}
+
 /// Whether a TAN medium name already carries the "SO:" (security object) prefix.
 pub(super) fn has_so_prefix(medium: &str) -> bool {
     medium
@@ -575,7 +598,7 @@ impl FinTsConnector {
             return Err(CoreError::Bank {
                 code: "0030".into(),
                 message: trf(
-                    "Die Bank verlangt für {0} eine TAN-Eingabe. Bitte ein Push-/App-Verfahren (z. B. SecureGo plus) verwenden oder „Tage beim ersten Abruf“ auf höchstens 90 setzen.",
+                    "Die Bank verlangt für {0} eine TAN-Eingabe, die während des Abrufs nicht möglich ist. Bitte ein App-Verfahren der Bank (Freigabe in der Banking-App) verwenden.",
                     &[&seg_id],
                 ),
             });

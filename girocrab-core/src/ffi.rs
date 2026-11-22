@@ -12,9 +12,18 @@ use crate::connectors::fints_directory::FinTsBankInfo;
 use crate::connectors::fints_presets::FinTsPreset;
 use crate::export::{ExportCsvBalanceLine, ExportCsvColumns, ExportCsvRow};
 use crate::mandates::MandateCsvImport;
-use crate::models::{ConnectorKind, Holding};
+use crate::models::{AccountKind, AccountKindSection, ConnectorKind, Holding};
 use crate::payment_input::{GiroCodeMatrix, PaymentDetails};
 use crate::{BankDescriptor, CoreError};
+
+#[uniffi::export(async_runtime = "tokio")]
+async fn check_bitcoin_core(
+    datadir: String,
+    rpc_url: String,
+    wallet: String,
+) -> Result<String, CoreError> {
+    crate::connectors::bitcoin_core::check_bitcoin_core(datadir, rpc_url, wallet).await
+}
 
 #[uniffi::export]
 fn core_version() -> String {
@@ -49,6 +58,11 @@ fn clear_banking_block() {
 #[uniffi::export]
 fn connector_kind_key(kind: ConnectorKind) -> String {
     crate::banking_gate::connector_kind_key(kind)
+}
+
+#[uniffi::export]
+fn account_kind_section(kind: AccountKind) -> AccountKindSection {
+    crate::connectors::account_kind_section(kind)
 }
 
 #[uniffi::export]
@@ -98,6 +112,11 @@ fn blz_from_bank_input(input: String) -> Option<String> {
 #[uniffi::export]
 fn bic_for_iban(iban: String) -> Option<String> {
     crate::connectors::fints_directory::bic_for_iban(iban)
+}
+
+#[uniffi::export]
+fn bank_name_for_iban(iban: String) -> Option<String> {
+    crate::connectors::fints_directory::bank_name_for_iban(iban)
 }
 
 #[uniffi::export]

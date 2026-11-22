@@ -64,7 +64,7 @@ Rectangle {
         }
         out.push({ type: "caption", key: "documents", title: qsTr("Dokumente"), open: !sm.documentsCollapsed })
         if (!sm.documentsCollapsed)
-            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & PostBox"), badge: 0 })
+            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & Postbox"), badge: 0 })
         const pending = m.connections.filter(c => !m.allAccounts.some(a => a.connection_id === c.id))
         if (pending.length) {
             out.push({ type: "section", title: qsTr("Neue Bankzugänge") })
@@ -182,7 +182,23 @@ Rectangle {
             clip: true
             topMargin: accountsHeader.height
             bottomMargin: 10
-            model: sidebar.rows
+            // set by hand, not bound: a new array resets the view to its top, and the sidebar is
+            // rebuilt on every count, balance or fold change – the scroll position stays
+            /// Scrolled to the very top (accounts header in view): stays there when the header grows.
+            property bool pinnedTop: true
+            onContentYChanged: pinnedTop = contentY <= -topMargin + 1
+            onTopMarginChanged: if (pinnedTop) contentY = -topMargin
+            function applyRows() {
+                const y = contentY
+                const atTop = pinnedTop
+                model = sidebar.rows
+                if (atTop) { contentY = -topMargin; return }
+                forceLayout()
+                const max = Math.max(-topMargin, contentHeight - height + bottomMargin)
+                contentY = Math.max(-topMargin, Math.min(y, max))
+            }
+            Component.onCompleted: model = sidebar.rows
+            Connections { target: sidebar; function onRowsChanged() { list.applyRows() } }
             boundsBehavior: Flickable.StopAtBounds
             interactive: false
             WheelHandler { acceptedDevices: PointerDevice.AllDevices; onWheel: e => keyNav.scrollBy(e) }
@@ -229,7 +245,7 @@ Rectangle {
                     selectionKey: "userGroup:" + g.uuid
                     // taller hit area for the drop zones (.padding(.vertical, 3))
                     topGap: g.depth === 0 ? 10 : 4
-                    rowHeight: 30
+                    rowHeight: Math.max(30, Math.ceil(userGroupName.implicitHeight) + 10)   // a second line instead of "…" (#650)
                     TapHandler { acceptedButtons: Qt.RightButton; onTapped: sidebar.openGroupMenu(groupRow.g, groupRow) }
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: SidebarModel.rowLeading + g.depth * SidebarModel.iconInset; anchors.rightMargin: SidebarModel.rowTrailing
@@ -239,7 +255,8 @@ Rectangle {
                         // the group's colour, like an account's icon
                         SFIcon { symbol: g.sf_symbol; size: 15; Layout.preferredWidth: 20
                                  color: selected || !g.color_hex ? Theme.secondary : Theme.readable(g.color_hex) }
-                        Text { text: g.name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true
+                        Text { id: userGroupName; text: g.name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true
+                               wrapMode: Text.Wrap; maximumLineCount: 2
                                Sensitive { labels: true } }
                         SFIcon { visible: !g.in_total; symbol: "eye.slash"; size: 10
                                  Accessible.name: qsTr("Nicht in der Gesamtsumme")
@@ -275,14 +292,17 @@ Rectangle {
                     readonly property bool isLoanGroup: g.accounts.length > 0 && g.accounts.every(a => a.kind === "Loan")
                     selectionKey: modelData.bank ? "bank:" + g.id : "group:" + g.id
                     topGap: 10
+                    rowHeight: Math.max(30, Math.ceil(kindGroupName.implicitHeight) + 10)   // SectionHeader: .lineLimit(2) (#650)
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: SidebarModel.rowLeading; anchors.rightMargin: SidebarModel.rowTrailing
                         spacing: SidebarModel.gap
                         SidebarChevron { open: modelData.open
                                          onToggled: modelData.bank ? AppModel.toggleCollapsedBank(g.id) : AppModel.toggleCollapsedGroup(g.id)
-                                         accessibleName: open ? qsTr("„%1“ einklappen").arg(g.name) : qsTr("„%1“ ausklappen").arg(g.name) }
+                                         readonly property string spokenName: modelData.bank ? g.name : AppModel.masking(g.name, AppModel.redactLabels)
+                                         accessibleName: open ? qsTr("„%1“ einklappen").arg(spokenName) : qsTr("„%1“ ausklappen").arg(spokenName) }
                         SFIcon { symbol: g.sf_symbol; size: 15; Layout.preferredWidth: 20 }
-                        Text { text: g.name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true
+                        Text { id: kindGroupName; text: g.name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true
+                               wrapMode: Text.Wrap; maximumLineCount: 2
                                Sensitive { labels: true; when: !modelData.bank } }   // bank names stay visible
                         Text { text: Fmt.money(g.balance_cents); font.pixelSize: Theme.caption; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
                                color: selected ? Theme.text : (g.balance_cents < 0 && isLoanGroup ? Theme.loan : (g.balance_cents < 0 ? Theme.negative : Theme.secondary))
@@ -385,7 +405,7 @@ Rectangle {
                         anchors.fill: parent; anchors.leftMargin: SidebarModel.rowLeading + modelData.depth * SidebarModel.iconInset; anchors.rightMargin: SidebarModel.rowTrailing
                         spacing: SidebarModel.gap
                         SidebarChevron { visible: modelData.hasChildren; open: modelData.open; onToggled: AppModel.toggleExpandedCategory(c.id)
-                                         accessibleName: open ? qsTr("„%1“ einklappen").arg(c.name) : qsTr("„%1“ ausklappen").arg(c.name) }
+                                         accessibleName: open ? qsTr("„%1“ einklappen").arg(AppModel.masking(c.name, AppModel.redactLabels)) : qsTr("„%1“ ausklappen").arg(AppModel.masking(c.name, AppModel.redactLabels)) }
                         Item { visible: !modelData.hasChildren; implicitWidth: SidebarModel.slot }
                         // CategoryRow: HStack(spacing: 8)
                         RowLayout {
@@ -443,6 +463,7 @@ Rectangle {
     AppMenu {
         id: addMenu
         AppMenuItem { text: qsTr("Neues Konto …"); icon.name: SF.icon("building.columns"); onTriggered: AppModel.showAddBank = true }
+        AppMenuItem { text: qsTr("Neues Offline-Konto …"); icon.name: SF.icon("banknote"); onTriggered: OfflineAccounts.openNewAccount() }
         AppMenuItem { text: qsTr("Neue Kontengruppe …"); icon.name: SF.icon("folder.badge.plus")
                       onTriggered: AppModel.groupDialog = { kind: "create", movingAccount: null, parent: null } }
         AppMenuSeparator {}
@@ -450,7 +471,7 @@ Rectangle {
         AppMenuItem { text: qsTr("Neue Kategoriengruppe …"); icon.name: SF.icon("tag.circle"); onTriggered: AppModel.newCategoryRequest = { parent: null } }
     }
     function openNavMenu(key) { if (key === "newBookings") allMenu.popup(); else uncategorizedMenu.popup() }
-    /// „Neue Umsätze“, „Vermögen“, „Geplant“, „Lastschriften“, „Belege & PostBox“ and „Ohne Kategorie“:
+    /// „Neue Umsätze“, „Vermögen“, „Geplant“, „Lastschriften“, „Belege & Postbox“ and „Ohne Kategorie“:
     /// a page row with the empty chevron column, icon, title and count badge.
     component NavRow: SidebarRow {
         id: navRow
@@ -587,12 +608,23 @@ Rectangle {
         id: accountMenu
         readonly property var a: sidebar.menuAccount
         readonly property bool archived: a !== null && a.archived_unix !== null
+        /// takes manual bookings (#679): not archived, no bank connection
+        readonly property bool offline: a !== null && !archived && OfflineAccounts.isOffline(a.id)
+        // an offline account is always cash (#679): its entry of „Kontoart ändern …“ is left out
+        onAboutToShow: {
+            const cash = a !== null && OfflineAccounts.isOffline(a.id)
+            for (let i = 0; i < count; ++i) {
+                const it = itemAt(i)
+                if (it && it.subMenu === kindMenu) { it.visible = !cash; it.height = cash ? 0 : it.implicitHeight }
+            }
+        }
         // „Konto bearbeiten …“ (#639): name, owner, kind and note in one sheet
         AppMenuItem { text: qsTr("Konto bearbeiten …"); icon.name: SF.icon("square.and.pencil"); onTriggered: accountEditSheet.edit(accountMenu.a.id) }
         AppMenuItem { text: qsTr("Umbenennen …"); icon.name: SF.icon("pencil"); onTriggered: AppModel.groupDialog = { kind: "renameAccount", account: accountMenu.a } }
         AppMenuItem { text: qsTr("Symbol && Farbe …"); icon.name: SF.icon("paintpalette"); onTriggered: AppModel.iconColorTarget = { type: "account", id: accountMenu.a.id } }
         // WP3: CategoryChipToggle (#336, #604) – the tick follows the stored value
         CategoryChipToggle { account: accountMenu.a }
+        // an offline account is always cash (#679): no „Kontoart ändern …“
         AppMenu {
             id: kindMenu
             title: qsTr("Kontoart ändern …")
@@ -652,10 +684,19 @@ Rectangle {
                    visible: shown; height: shown ? implicitHeight : 0
                    text: qsTr("Startsaldo …"); icon.name: SF.icon("clock.arrow.circlepath")
                    onTriggered: AppModel.openOpeningBalance(accountMenu.a) }
+        // OfflineAccountMenuItems (OfflineAccountsUI.swift, #679)
+        AppMenuItem { readonly property bool shown: accountMenu.offline
+                   visible: shown; height: shown ? implicitHeight : 0
+                   text: qsTr("Neue Buchung …"); icon.name: SF.icon("plus")
+                   onTriggered: OfflineAccounts.openManualBooking(accountMenu.a.id) }
+        AppMenuItem { readonly property bool shown: accountMenu.offline
+                   visible: shown; height: shown ? implicitHeight : 0
+                   text: qsTr("Saldo korrigieren …"); icon.name: SF.icon("equal.circle")
+                   onTriggered: OfflineAccounts.openBalanceCorrection(accountMenu.a.id) }
         AppMenuItem {
             readonly property var conn: sidebar.menuConnectionOfAccount
             visible: conn !== null; height: visible ? implicitHeight : 0
-            text: conn ? qsTr("%1 abrufen").arg(AppModel.menuText(accountMenu.a.name)) : ""
+            text: conn ? qsTr("%1 abrufen").arg(AppModel.menuText(AppModel.masking(accountMenu.a.name))) : ""
             icon.name: SF.icon("arrow.triangle.2.circlepath")
             enabled: conn !== null && AppModel.bankingGate(conn) === null
             onTriggered: AppModel.requestSync(conn)
