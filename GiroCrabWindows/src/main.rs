@@ -302,6 +302,23 @@ struct State {
 }
 
 impl State {
+    fn install_analytics_vault(&mut self, vault: &Arc<Vault>) {
+        if self
+            .analytics_vault
+            .as_ref()
+            .is_none_or(|old| !Arc::ptr_eq(old, vault))
+        {
+            self.expense_rules_pending = false;
+            self.expense_scope = None;
+            self.expense_request_sequence = self.expense_request_sequence.wrapping_add(1);
+            self.expense_categories.clear();
+            self.expense_uncategorized = (0, 0);
+            self.expense_currency.clear();
+            self.expense_error = None;
+        }
+        self.analytics_vault = Some(vault.clone());
+    }
+
     fn expense_request_is_current(&self, key: &(Target, String, u64, u64), sequence: u64) -> bool {
         !self.expense_rules_pending
             && self.expense_request_sequence == sequence
@@ -833,7 +850,7 @@ fn apply_filter(win: &MainWindow) {
 
 /// Loads the bookings of the current account scope on a worker thread, then redraws.
 fn reload(win: &MainWindow, vault: Arc<Vault>) {
-    with_state(|st| st.analytics_vault = Some(vault.clone()));
+    with_state(|st| st.install_analytics_vault(&vault));
     let target = with_state(|st| st.target);
     let generation = with_state(|st| {
         st.generation += 1;
@@ -1282,6 +1299,7 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     if !is_current(vault) {
         return;
     }
+    with_state(|st| st.install_analytics_vault(vault));
     // Privacy follows `toggle || !unlocked`: unlock first and start with the toggle off, so the
     // first paint shows real balances instead of masks.
     win.set_privacy(false);
@@ -2831,6 +2849,63 @@ mod tests {
         println!("rules completion: locked/replaced vault rejected; current vault accepted");
         with_state(|st| *st = State::default());
         SESSION.store(0, Ordering::SeqCst);
+        drop(a);
+        drop(b);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn expense_state_resets_only_when_installing_a_different_vault() {
+        let dir = std::env::temp_dir().join(format!(
+            "girocrab-win-expense-install-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = Vault::open(dir.join("a.db").display().to_string(), vec![7; 32]).unwrap();
+        let b = Vault::open(dir.join("b.db").display().to_string(), vec![7; 32]).unwrap();
+        a.seed_starter_categories().unwrap();
+        let cats = a.list_categories(None, None).unwrap();
+        assert!(!cats.is_empty());
+        let key = (Target::Account(1), "2025-02-10".into(), 7, 3);
+        let mut st = State {
+            analytics_vault: Some(a.clone()),
+            expense_scope: Some(key.clone()),
+            expense_request_sequence: 5,
+            expense_rules_pending: true,
+            expense_error: Some("old error".into()),
+            expense_categories: cats,
+            expense_uncategorized: (40, 1),
+            expense_currency: "USD".into(),
+            ..Default::default()
+        };
+        st.install_analytics_vault(&a);
+        assert!(st.expense_rules_pending);
+        assert_eq!(st.expense_scope, Some(key.clone()));
+        assert_eq!(st.expense_request_sequence, 5);
+        assert!(!st.expense_categories.is_empty());
+        assert_eq!(st.expense_uncategorized, (40, 1));
+        assert_eq!(st.expense_currency, "USD");
+        assert_eq!(st.expense_error.as_deref(), Some("old error"));
+        st.install_analytics_vault(&b);
+        assert!(!st.expense_rules_pending);
+        assert!(st.expense_scope.is_none());
+        assert_eq!(st.expense_request_sequence, 6);
+        assert!(st.expense_categories.is_empty());
+        assert_eq!(st.expense_uncategorized, (0, 0));
+        assert!(st.expense_currency.is_empty());
+        assert!(st.expense_error.is_none());
+        assert!(Arc::ptr_eq(st.analytics_vault.as_ref().unwrap(), &b));
+        assert!(!st.expense_request_is_current(&key, 5));
+        let mut empty = State::default();
+        empty.install_analytics_vault(&a);
+        assert!(!empty.expense_rules_pending);
+        assert!(Arc::ptr_eq(empty.analytics_vault.as_ref().unwrap(), &a));
+        println!(
+            "3275 same vault preserves pending/cache; replacement resets pending/scope/cache/error"
+        );
+        drop(st);
+        drop(empty);
         drop(a);
         drop(b);
         std::fs::remove_dir_all(dir).unwrap();
