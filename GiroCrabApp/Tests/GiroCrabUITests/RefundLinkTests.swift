@@ -66,8 +66,10 @@ final class RefundLinkTests: XCTestCase {
         }
         XCTAssertNil(model.errorMessage)
         XCTAssertTrue(undo.canUndo)
-        let other = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
-        let otherVault = try XCTUnwrap(other.vault)
+        let otherURL = AppModel.tempVaultURL("GiroCrab-RefundUndo-\(UUID().uuidString)")
+        XCTAssertNotEqual(otherURL, AppModel.tempVaultURL("GiroCrab-Demo"))
+        let otherVault = try Vault.open(path: otherURL.path, key: Data(repeating: 7, count: 32))
+        _ = try otherVault.seedDemoData()
         if !unlink {
             try otherVault.linkRefundParts(refundId: refund.id, refundPart: 0, originalId: originals[0].id, originalPart: 0)
         }
