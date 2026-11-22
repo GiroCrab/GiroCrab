@@ -577,27 +577,27 @@ pub(crate) fn merge_attached(
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
         (Option<i64>, i64, String, i64, String, i64),
-        (bool, i64, Option<String>, i64),
+        (bool, i64, Option<String>, i64, bool),
     )> = tx
         .prepare(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
                     archived_unix, archived_ms, sf_symbol, symbol_ms, note, note_ms,
-                    include_in_total != 0, total_ms, bank_label, bank_label_ms
+                    include_in_total != 0, total_ms, bank_label, bank_label_ms, archive_unknown != 0
              FROM other.accounts",
         )?
         .query_map([], |r| {
             Ok((
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
                 (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?),
-                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?),
+                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?),
             ))
         })?
         .collect::<Result<_, _>>()?;
     for (
         (oid, uuid, order, placed, name, named, color, colored),
         (archived, archived_ms, symbol, symbol_ms, note, noted),
-        (in_total, total_ms, label, label_ms),
+        (in_total, total_ms, label, label_ms, unknown),
     ) in rows
     {
         let Some(&id) = acc_map.get(&oid) else {
@@ -618,9 +618,13 @@ pub(crate) fn merge_attached(
             "UPDATE accounts SET color_hex = ?2, color_ms = ?3 WHERE id = ?1 AND (?4 OR color_ms < ?3)",
             params![id, color, colored, fresh],
         )? as u32;
+        // the #998 mark "state unknown" (`archive_unknown`) is part of the archive state and
+        // goes with it; with equal stamps (the same repair, then an import here or there that
+        // found the account open) the known state wins
         changed += tx.execute(
-            "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3 WHERE id = ?1 AND (?4 OR archived_ms < ?3)",
-            params![id, archived, archived_ms, fresh],
+            "UPDATE accounts SET archived_unix = ?2, archived_ms = ?3, archive_unknown = ?5
+              WHERE id = ?1 AND (?4 OR archived_ms < ?3 OR (archived_ms = ?3 AND archive_unknown > ?5))",
+            params![id, archived, archived_ms, fresh, unknown],
         )? as u32;
         // total switch (#337): the one field merge of value and stamp — newer
         // stamp wins, an equal stamp breaks the tie towards `true` (like the
@@ -1434,9 +1438,11 @@ fn renumber(tx: &Connection, ids: &[i64]) -> CoreResult<()> {
 
 /// [`Vault::set_account_archived`] on a held connection; the number of accounts
 /// changed (0: no such account). Time and stamp come from the same second, and
-/// archiving an archived account keeps both: the MoneyMoney import of v0.8.5
-/// left archives whose time lies before their stamp (#998), and an archive made
-/// here must never look like one of those.
+/// archiving an archived account keeps both: the #998 repair (schema step 38)
+/// tells the old MoneyMoney import's archives by a gap between them. Confirming
+/// such an archive renews both, so neither the repair nor an import undoes it.
+/// The state is chosen now: a MoneyMoney import keeps it from now on (#890,
+/// `archive_unknown` ends).
 pub(crate) fn set_archived_inner(
     conn: &Connection,
     account_id: i64,
@@ -1444,10 +1450,13 @@ pub(crate) fn set_archived_inner(
 ) -> CoreResult<usize> {
     let now = now_ms();
     Ok(conn.execute(
-        "UPDATE accounts SET archived_unix = CASE WHEN ?2 THEN IFNULL(archived_unix, ?3) END,
-                             archived_ms = CASE WHEN ?2 AND archived_unix IS NOT NULL THEN archived_ms ELSE ?4 END
+        "UPDATE accounts SET archived_unix = CASE WHEN ?2 THEN CASE WHEN archived_unix IS NOT NULL
+                                 AND archived_unix * 1000 >= archived_ms - ?5 THEN archived_unix ELSE ?3 END END,
+                             archived_ms = CASE WHEN ?2 AND archived_unix IS NOT NULL
+                                 AND archived_unix * 1000 >= archived_ms - ?5 THEN archived_ms ELSE ?4 END,
+                             archive_unknown = 0
          WHERE id = ?1",
-        params![account_id, archived, now / 1000, now],
+        params![account_id, archived, now / 1000, now, crate::schema::ARCHIVE_STAMP_GAP_MS],
     )?)
 }
 
