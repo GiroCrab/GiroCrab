@@ -322,6 +322,14 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|s| f(&mut s.borrow_mut()))
 }
 
+fn finish_rule_application(vault: &Arc<Vault>) -> bool {
+    if !is_current(vault) {
+        return false;
+    }
+    with_state(|st| st.expense_rules_pending = false);
+    true
+}
+
 fn privacy_on(win: &MainWindow) -> bool {
     daily::effective_privacy(win.get_privacy(), win.get_unlocked())
 }
@@ -2226,7 +2234,9 @@ fn main() -> Result<(), slint::PlatformError> {
             std::thread::spawn(move || {
                 let result = v.apply_rules(true).map_err(|e| e.to_string());
                 let _ = weak.upgrade_in_event_loop(move |win| {
-                    with_state(|st| st.expense_rules_pending = false);
+                    if !finish_rule_application(&v) {
+                        return;
+                    }
                     win.set_busy(false);
                     match result {
                         Ok(n) => {
@@ -2778,6 +2788,53 @@ fn strip_csv_columns(csv: &str, keep_iban: bool, keep_tags: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rules_completion_rejects_locked_and_replaced_vaults() {
+        struct RestoreSession(usize);
+        impl Drop for RestoreSession {
+            fn drop(&mut self) {
+                SESSION.store(self.0, Ordering::SeqCst);
+            }
+        }
+        let _session = RestoreSession(SESSION.swap(0, Ordering::SeqCst));
+        let dir = std::env::temp_dir().join(format!(
+            "girocrab-win-rule-session-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = Vault::open(dir.join("a").display().to_string(), vec![7; 32]).unwrap();
+        let b = Vault::open(dir.join("b").display().to_string(), vec![7; 32]).unwrap();
+        with_state(|st| {
+            *st = State::default();
+            st.expense_rules_pending = true;
+            st.analytics_vault = Some(b.clone());
+            st.generation = 7;
+        });
+        for current in [0, session_id(&b)] {
+            SESSION.store(current, Ordering::SeqCst);
+            assert!(!finish_rule_application(&a));
+            with_state(|st| {
+                assert!(st.expense_rules_pending);
+                assert_eq!(st.generation, 7);
+                assert!(Arc::ptr_eq(st.analytics_vault.as_ref().unwrap(), &b));
+            });
+        }
+        assert!(finish_rule_application(&b));
+        assert!(!with_state(|st| st.expense_rules_pending));
+        assert!(finish_rule_application(&b));
+        assert!(!with_state(|st| st.expense_rules_pending));
+        println!("rules completion: locked/replaced vault rejected; current vault accepted");
+        with_state(|st| *st = State::default());
+        SESSION.store(0, Ordering::SeqCst);
+        drop(a);
+        drop(b);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn expense_completion_rejects_repeated_scopes_and_invalidated_data() {
