@@ -66,6 +66,12 @@ fn head(win: &MainWindow) {
 pub fn privacy_changed(win: &MainWindow, v: Arc<Vault>) {
     if win.get_refunds_open() {
         head(win);
+        // what was drawn for the other mode goes at once, not when the new load arrives
+        // (it may be slow or fail)
+        win.set_rf_sums(SharedString::new());
+        win.set_rf_hint(SharedString::new());
+        win.set_rf_parts(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+        win.set_rf_rows(ModelRc::new(VecModel::from(Vec::new())));
         refresh(win, v);
     }
 }
