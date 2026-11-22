@@ -1116,17 +1116,18 @@ pub(crate) fn store_fetch(
     }
 }
 
-/// Sidebar sections (fixed order).
+/// Sidebar sections of the "by kind" view (fixed order): one per account kind (#1003).
+/// Step 37 of `schema.rs` moves old vaults to these; its sections must match.
 pub(crate) fn group_for(kind: AccountKind) -> (&'static str, &'static str, i32) {
     match kind {
-        AccountKind::Checking
-        | AccountKind::Savings
-        | AccountKind::TimeDeposit
-        | AccountKind::Cash
-        | AccountKind::PaymentService => ("Giro & Tagesgeld", "building.columns", 1),
-        AccountKind::CreditCard => ("Kreditkarten", "creditcard", 2),
-        AccountKind::Brokerage => ("Depots & ETFs", "chart.pie", 3),
-        AccountKind::Loan => ("Darlehen & Kredite", "house", 4),
+        AccountKind::Checking => ("Girokonten", "building.columns", 1),
+        AccountKind::Savings => ("Tagesgeld / Sparen", "banknote", 2),
+        AccountKind::TimeDeposit => ("Festgeld", "lock", 3),
+        AccountKind::Cash => ("Bargeld", "eurosign.circle", 4),
+        AccountKind::PaymentService => ("Zahlungsdienste", "wallet.pass", 5),
+        AccountKind::CreditCard => ("Kreditkarten", "creditcard", 6),
+        AccountKind::Brokerage => ("Depots & ETFs", "chart.pie", 7),
+        AccountKind::Loan => ("Darlehen & Kredite", "house", 8),
     }
 }
 

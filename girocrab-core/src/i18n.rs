@@ -174,8 +174,12 @@ pub fn display_path_in(lang: Lang, path: &str) -> String {
 /// the vault.
 fn default_name_en(de: &str) -> Option<&'static str> {
     Some(match de {
-        // Account groups (sidebar sections).
-        "Giro & Tagesgeld" => "Checking & savings",
+        // Account groups (sidebar sections). "Bargeld" is the same word
+        // as a starter category below and shares its translation.
+        "Girokonten" => "Checking accounts",
+        "Tagesgeld / Sparen" => "Savings",
+        "Festgeld" => "Time deposits",
+        "Zahlungsdienste" => "Payment services",
         "Kreditkarten" => "Credit cards",
         "Depots & ETFs" => "Portfolios & ETFs",
         "Darlehen & Kredite" => "Loans",
@@ -1993,10 +1997,7 @@ mod tests {
 
     #[test]
     fn default_names_translate() {
-        assert_eq!(
-            display_name_in(Lang::En, "Giro & Tagesgeld"),
-            "Checking & savings"
-        );
+        assert_eq!(display_name_in(Lang::En, "Girokonten"), "Checking accounts");
         assert_eq!(display_name_in(Lang::En, "Lebensmittel"), "Food");
         assert_eq!(
             display_name_in(Lang::En, "Meine Kategorie"),

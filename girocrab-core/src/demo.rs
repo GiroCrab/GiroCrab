@@ -1625,24 +1625,6 @@ impl Vault {
         }
         let today = crate::dates::today();
         let txs = generate(today);
-        for g in [
-            "Giro & Tagesgeld",
-            "Kreditkarten",
-            "Depots & ETFs",
-            "Darlehen & Kredite",
-        ] {
-            let (_, sym, order) = [
-                AccountKind::Checking,
-                AccountKind::CreditCard,
-                AccountKind::Brokerage,
-                AccountKind::Loan,
-            ]
-            .into_iter()
-            .map(group_for)
-            .find(|x| x.0 == g)
-            .unwrap();
-            Vault::ensure_group(&tx, g, sym, order)?;
-        }
         let mut acc_ids = std::collections::HashMap::new();
         for (i, spec) in DEMO_ACCOUNTS.iter().enumerate() {
             let (group, sym, order) = group_for(spec.kind);
@@ -3447,7 +3429,7 @@ mod tests {
         let v = Vault::open(dir.to_string_lossy().to_string(), vec![5u8; 32]).unwrap();
         v.seed_demo_data().unwrap();
         let groups_en = with_language(Lang::En, || v.list_account_groups().unwrap());
-        assert!(groups_en.iter().any(|g| g.name == "Checking & savings"));
+        assert!(groups_en.iter().any(|g| g.name == "Checking accounts"));
         assert!(groups_en.iter().any(|g| g.name == "Loans"));
         let de = v.list_categories(None, None).unwrap();
         let en = with_language(Lang::En, || v.list_categories(None, None).unwrap());

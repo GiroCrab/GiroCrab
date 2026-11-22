@@ -956,7 +956,7 @@ pub(crate) fn set_parent(
     Ok(())
 }
 
-/// Order of kinds inside a group: Giro → Karten → Depots → Darlehen.
+/// Order of kinds inside a group: Giro → Tagesgeld → Festgeld → Bargeld → Zahlungsdienste → Karten → Depots → Darlehen.
 fn kind_rank(a: &Account) -> i32 {
     group_for(a.kind).2
 }
