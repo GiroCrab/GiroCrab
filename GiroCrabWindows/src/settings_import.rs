@@ -268,7 +268,83 @@ pub fn amazon_text(c: &AmazonCheck, eur: &dyn Fn(i64) -> String) -> String {
 
 // ---- export ----------------------------------------------------------------------------------------
 
-pub fn export_rows(list: &[Booking]) -> Vec<ExportCsvRow> {
+/// Column switches of the CSV export tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CsvOptions {
+    pub category: bool,
+    pub note: bool,
+    pub iban: bool,
+    pub running_balance: bool,
+}
+
+/// Maps the switches onto the core's CSV columns (daily balance and tags are not offered here).
+pub fn csv_columns(o: CsvOptions) -> girocrab_core::export::ExportCsvColumns {
+    girocrab_core::export::ExportCsvColumns {
+        category: o.category,
+        note: o.note,
+        daily_balance: false,
+        running_balance: o.running_balance,
+        iban: o.iban,
+        tags: false,
+    }
+}
+
+/// Comparison key for file names as NTFS sees them: each character uppercased on its own,
+/// one to one (so `ς`, `σ` and `Σ` collide); multi-character mappings (`ß` → `SS`) are not applied.
+fn ntfs_key(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+/// `name` for the first try (`i` < 2), then `stem-2.ext`, `stem-3.ext`, …
+pub fn numbered_file_name(name: &str, i: u32) -> String {
+    if i < 2 {
+        return name.to_string();
+    }
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}-{i}.{ext}"),
+        _ => format!("{name}-{i}"),
+    }
+}
+
+/// One CSV file name per account, in the given order: cleaned account name, unique within the
+/// batch (case-insensitive like NTFS, see `ntfs_key`) and not taken in the folder (`exists`);
+/// clashes get `-2`, `-3`, … The fixed prefix rules out reserved device names (`CON`, `NUL`, …).
+pub fn per_account_file_names(
+    names: &[String],
+    today: &str,
+    exists: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut taken = std::collections::HashSet::new();
+    names
+        .iter()
+        .map(|n| {
+            let base = crate::lists::safe_file_name(&n.replace(['/', '\\'], "_"), "Konto");
+            let stem = format!("girocrab-umsaetze-{base}-{today}");
+            let mut name = format!("{stem}.csv");
+            let mut i = 2;
+            while taken.contains(&ntfs_key(&name)) || exists(&name) {
+                name = format!("{stem}-{i}.csv");
+                i += 1;
+            }
+            taken.insert(ntfs_key(&name));
+            name
+        })
+        .collect()
+}
+
+/// `balances`: running balance per booking id (`BookingPage.running_balances`), empty when not wanted.
+pub fn export_rows(
+    list: &[Booking],
+    balances: &std::collections::HashMap<i64, i64>,
+) -> Vec<ExportCsvRow> {
     list.iter()
         .map(|b| ExportCsvRow {
             date: b.booking_date.chars().take(10).collect(),
@@ -282,7 +358,7 @@ pub fn export_rows(list: &[Booking]) -> Vec<ExportCsvRow> {
             amount_cents: b.amount_cents,
             currency: b.currency.clone(),
             day_balance_cents: None,
-            balance_cents: None,
+            balance_cents: balances.get(&b.id).copied(),
         })
         .collect()
 }
@@ -470,6 +546,94 @@ mod tests {
             category: cat.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn csv_switches_map_to_core_columns() {
+        let off = csv_columns(CsvOptions::default());
+        assert!(!off.category && !off.note && !off.iban && !off.running_balance);
+        assert!(!off.daily_balance && !off.tags);
+        let on = csv_columns(CsvOptions {
+            category: true,
+            note: true,
+            iban: true,
+            running_balance: true,
+        });
+        assert!(on.category && on.note && on.iban && on.running_balance);
+        assert!(!on.daily_balance && !on.tags);
+        let only_iban = csv_columns(CsvOptions {
+            iban: true,
+            ..Default::default()
+        });
+        assert!(only_iban.iban && !only_iban.running_balance && !only_iban.category);
+    }
+
+    #[test]
+    fn same_named_accounts_get_unique_files() {
+        let names: Vec<String> = vec!["Girokonto".into(), "Girokonto".into(), "girokonto".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Girokonto-2025-03-31.csv",
+                "girocrab-umsaetze-Girokonto-2025-03-31-2.csv",
+                "girocrab-umsaetze-girokonto-2025-03-31-3.csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn account_names_are_cleaned() {
+        let names: Vec<String> = vec!["Giro/Spar: Haushalt".into(), "".into(), "...".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Giro_Spar_ Haushalt-2025-03-31.csv",
+                "girocrab-umsaetze-Konto-2025-03-31.csv",
+                "girocrab-umsaetze-Konto-2025-03-31-2.csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn existing_files_are_not_overwritten() {
+        let names: Vec<String> = vec!["Giro".into()];
+        let taken = "girocrab-umsaetze-Giro-2025-03-31.csv";
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |f| f == taken),
+            vec!["girocrab-umsaetze-Giro-2025-03-31-2.csv"]
+        );
+    }
+
+    #[test]
+    fn batch_names_collide_like_ntfs() {
+        // ς, σ and Σ uppercase to the same letter on NTFS
+        let names: Vec<String> = vec!["Kontoσ".into(), "Kontoς".into(), "KontoΣ".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Kontoσ-2025-03-31.csv",
+                "girocrab-umsaetze-Kontoς-2025-03-31-2.csv",
+                "girocrab-umsaetze-KontoΣ-2025-03-31-3.csv",
+            ]
+        );
+        // NTFS maps one to one: ß does not become SS
+        let names: Vec<String> = vec!["Straße".into(), "STRASSE".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Straße-2025-03-31.csv",
+                "girocrab-umsaetze-STRASSE-2025-03-31.csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn numbered_names() {
+        assert_eq!(numbered_file_name("a.csv", 1), "a.csv");
+        assert_eq!(numbered_file_name("a.csv", 2), "a-2.csv");
+        assert_eq!(numbered_file_name("a-2.csv", 3), "a-2-3.csv");
+        assert_eq!(numbered_file_name("ohne", 2), "ohne-2");
+        assert_eq!(numbered_file_name(".csv", 2), ".csv-2");
     }
 
     #[test]
