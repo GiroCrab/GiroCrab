@@ -43,6 +43,7 @@ impl LinkEdit {
 #[derive(Default)]
 struct Ui {
     generation: u64,
+    session: usize,
     refresh_sequence: u64,
     pending: bool,
     undo_unlink: Option<Link>,
@@ -64,22 +65,31 @@ struct Ui {
 }
 
 impl Ui {
-    fn open(&mut self, booking: (i64, i64, String), title: String) {
+    fn open(&mut self, booking: (i64, i64, String), title: String, session: usize) {
         *self = Self {
             generation: self.generation.wrapping_add(1),
-            pending: self.pending,
+            pending: self.pending && self.session == session,
+            session,
             booking: Some(booking),
             title,
             ..Self::default()
         };
     }
 
-    fn begin_edit(&mut self) -> Option<u64> {
-        if self.pending {
+    fn begin_edit(&mut self, session: usize) -> Option<u64> {
+        if self.session != session || self.pending {
             return None;
         }
         self.pending = true;
         Some(self.generation)
+    }
+
+    fn discard_edit(&mut self, session: usize) -> bool {
+        if self.session != session {
+            return false;
+        }
+        self.pending = false;
+        true
     }
 
     fn finish_edit(
@@ -482,7 +492,7 @@ fn refresh(win: &MainWindow, v: Arc<Vault>) {
 }
 
 fn edit_link(win: &MainWindow, v: Arc<Vault>, edit: LinkEdit, link: Link) {
-    let Some(generation) = with_ui(Ui::begin_edit) else {
+    let Some(generation) = with_ui(|u| u.begin_edit(crate::session_id(&v))) else {
         return;
     };
     win.set_rf_edit_pending(true);
@@ -491,6 +501,9 @@ fn edit_link(win: &MainWindow, v: Arc<Vault>, edit: LinkEdit, link: Link) {
         let done = edit.apply(&v, link);
         let _ = weak.upgrade_in_event_loop(move |win| {
             if !crate::is_current(&v) {
+                if with_ui(|u| u.discard_edit(crate::session_id(&v))) {
+                    win.set_rf_edit_pending(false);
+                }
                 return;
             }
             let sheet = with_ui(|u| u.finish_edit(generation, edit, link, done.is_ok()));
@@ -552,7 +565,7 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         win.set_rf_can_undo(false);
         win.set_rf_rows(ModelRc::new(VecModel::from(Vec::<RefundRow>::new())));
         win.set_rf_parts(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
-        with_ui(|u| u.open((id, cents, currency), title));
+        with_ui(|u| u.open((id, cents, currency), title, crate::session_id(&v)));
         win.set_rf_edit_pending(with_ui(|u| u.pending));
         head(&win);
         win.set_refunds_open(true);
@@ -620,18 +633,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stale_session_edits_do_not_block_or_release_a_new_sessions_worker() {
+        let mut ui = Ui::default();
+        ui.open((7, 1000, "EUR".into()), "QA".into(), 1);
+        ui.begin_edit(1).unwrap();
+        assert!(ui.begin_edit(2).is_none());
+        ui.open((9, 1000, "EUR".into()), "QB".into(), 2);
+        assert!(!ui.pending);
+        ui.begin_edit(2).unwrap();
+        assert!(!ui.discard_edit(1));
+        assert!(ui.pending);
+        assert!(ui.begin_edit(2).is_none());
+        assert!(ui.discard_edit(2));
+        assert!(!ui.pending);
+        ui.begin_edit(2).unwrap();
+        assert!(ui.discard_edit(2));
+        assert_eq!(ui.undo_unlink, None);
+        println!(
+            "3208 switching sessions releases old pending; stale completion cannot release the new session's worker"
+        );
+    }
+
+    #[test]
     fn reopened_dialog_blocks_overlapping_writes_until_completion() {
         for success in [false, true] {
             for reopened in [false, true] {
                 let mut ui = Ui::default();
-                ui.open((7, 1000, "EUR".into()), "QA".into());
-                let first = ui.begin_edit().unwrap();
-                assert!(ui.begin_edit().is_none());
+                ui.open((7, 1000, "EUR".into()), "QA".into(), 1);
+                let first = ui.begin_edit(1).unwrap();
+                assert!(ui.begin_edit(1).is_none());
                 if reopened {
-                    ui.open((9, -1000, "EUR".into()), "QB".into());
+                    ui.open((9, -1000, "EUR".into()), "QB".into(), 1);
                 }
                 assert!(ui.pending);
-                assert!(ui.begin_edit().is_none());
+                assert!(ui.begin_edit(1).is_none());
                 let link = (7, 0, 9, 0);
                 let can_undo = ui.finish_edit(first, LinkEdit::Unlink, link, success);
                 assert!(!ui.pending);
@@ -642,7 +677,7 @@ mod tests {
                     assert_eq!(can_undo, Some(success));
                     assert_eq!(ui.undo_unlink, success.then_some(link));
                 }
-                let next = ui.begin_edit().unwrap();
+                let next = ui.begin_edit(1).unwrap();
                 assert_eq!(next, ui.generation);
                 assert_eq!(
                     ui.finish_edit(next, LinkEdit::Link, link, true),
