@@ -78,60 +78,49 @@ pub(super) fn next_stamp(conn: &Connection) -> CoreResult<i64> {
     Ok(crate::dates::now_ms().max(last.checked_add(1).ok_or_else(invalid)?))
 }
 
-/// Local edits preserve an old-key tombstone when an endpoint is retargeted.
-pub(crate) fn reconcile(conn: &Connection, booking: i64) -> CoreResult<()> {
-    let linked:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND (refund_id=?1 OR original_id=?1))",[booking],|r|r.get(0))?;
-    if !linked {
-        return Ok(());
-    }
-    let state = State::load(conn)?;
-    let resolutions = resolve(&state);
-    for a in resolutions
-        .into_iter()
-        .filter(|a| a.row.key.refund.0 == booking || a.row.key.original.0 == booking)
-    {
-        let target = a
-            .refund
-            .zip(a.original)
-            .map(|(refund, original)| Key { refund, original });
-        if target.as_ref() == Some(&a.row.key) {
-            continue;
-        }
-        let mut old = a.row;
-        old.changed_ms = next_stamp(conn)?;
-        old.deleted_ms = Some(old.changed_ms);
-        write(conn, &old)?;
-        if let Some(key) = target {
-            let mut moved = old;
-            moved.key = key;
-            moved.deleted_ms = None;
-            moved.changed_ms = next_stamp(conn)?;
-            let current = load_rows(conn, "main")?
-                .into_iter()
-                .find(|r| r.key == moved.key);
-            if current.is_none_or(|r| moved.rank() > r.rank()) {
-                write(conn, &moved)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Plain full-row LWW. No resolver, allocation, timestamps or booking-state cleanup.
 pub(crate) fn merge_attached(conn: &Connection, bookings: &HashMap<i64, i64>) -> CoreResult<()> {
+    let rows = load_rows(conn, "other")?.into_iter().filter_map(|mut row| {
+        row.key.refund.0 = *bookings.get(&row.key.refund.0)?;
+        row.key.original.0 = *bookings.get(&row.key.original.0)?;
+        Some(row)
+    });
+    merge_rows(conn, rows)
+}
+
+pub(crate) fn move_endpoints(conn: &Connection, bookings: &HashMap<i64, i64>) -> CoreResult<()> {
+    let rows: Vec<_> = load_rows(conn, "main")?
+        .into_iter()
+        .filter(|r| {
+            bookings.contains_key(&r.key.refund.0) || bookings.contains_key(&r.key.original.0)
+        })
+        .collect();
+    for row in &rows {
+        conn.execute("DELETE FROM refund_links WHERE refund_id=?1 AND refund_part=?2 AND original_id=?3 AND original_part=?4",
+            params![row.key.refund.0,row.key.refund.1,row.key.original.0,row.key.original.1])?;
+    }
+    merge_rows(
+        conn,
+        rows.into_iter().map(|mut row| {
+            row.key.refund.0 = bookings
+                .get(&row.key.refund.0)
+                .copied()
+                .unwrap_or(row.key.refund.0);
+            row.key.original.0 = bookings
+                .get(&row.key.original.0)
+                .copied()
+                .unwrap_or(row.key.original.0);
+            row
+        }),
+    )
+}
+
+fn merge_rows(conn: &Connection, rows: impl IntoIterator<Item = Row>) -> CoreResult<()> {
     let mut local: HashMap<_, _> = load_rows(conn, "main")?
         .into_iter()
         .map(|r| (r.key.clone(), r))
         .collect();
-    for mut other in load_rows(conn, "other")? {
-        let (Some(&refund), Some(&original)) = (
-            bookings.get(&other.key.refund.0),
-            bookings.get(&other.key.original.0),
-        ) else {
-            continue;
-        };
-        other.key.refund.0 = refund;
-        other.key.original.0 = original;
+    for other in rows {
         if local
             .get(&other.key)
             .is_none_or(|r| other.rank() > r.rank())

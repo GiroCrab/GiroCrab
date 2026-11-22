@@ -1,5 +1,53 @@
 use super::*;
 
+pub(super) struct SearchIndex {
+    books: Vec<i64>,
+    merchants: HashMap<i64, String>,
+    linked: HashSet<Key>,
+}
+
+fn index<'a>(v: &Vault, db: &Connection, p: &'a Projection) -> CoreResult<&'a SearchIndex> {
+    let rules = v.merchant_rules(db)?;
+    Ok(p.search.get_or_init(|| {
+        let mut books: Vec<_> = p.state.books.values().filter(|b| b.live).collect();
+        books.sort_by(|a, b| {
+            b.date
+                .cmp(&a.date)
+                .then_with(|| a.identity.cmp(&b.identity))
+        });
+        let mut names = HashMap::new();
+        let merchants = books
+            .iter()
+            .map(|b| {
+                let name = names
+                    .entry((&b.counterparty, &b.purpose))
+                    .or_insert_with(|| {
+                        rules
+                            .resolve_with_bundled(&b.counterparty, &b.purpose)
+                            .0
+                            .name
+                    });
+                (b.id, name.clone())
+            })
+            .collect();
+        let mut linked = HashSet::new();
+        for a in &p.allocations {
+            linked.insert(a.row.key.clone());
+            if let (Some(refund), Some(original)) = (&a.refund, &a.original) {
+                linked.insert(Key {
+                    refund: refund.clone(),
+                    original: original.clone(),
+                });
+            }
+        }
+        SearchIndex {
+            books: books.into_iter().map(|b| b.id).collect(),
+            merchants,
+            linked,
+        }
+    }))
+}
+
 fn reference_tokens(text: &str) -> HashSet<String> {
     text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')' | '+'))
         .filter(|w| !w.chars().all(|c| c.is_ascii_digit() || c == '.') && !is_date(w))
@@ -44,6 +92,7 @@ fn candidates(
     p: &Projection,
     own: &Endpoint,
     query: &str,
+    limit: usize,
 ) -> CoreResult<Vec<RefundCandidate>> {
     let book = p
         .state
@@ -56,31 +105,22 @@ fn candidates(
         .amount_of(&own.1)
         .filter(|a| *a != 0)
         .ok_or_else(invalid)?;
-    if p.open(own) == 0 {
+    if p.open(own) == 0 || limit == 0 {
         return Ok(Vec::new());
     }
     let query = query.trim().to_lowercase();
-    let rules = v.merchant_rules(db)?;
+    let index = index(v, db, p)?;
     let mut out = Vec::new();
-    let mut books: Vec<_> = p
-        .state
+    let books = index
         .books
-        .values()
-        .filter(|b| b.live && b.id != book.id && b.currency == book.currency)
-        .collect();
-    books.sort_by(|a, b| {
-        b.date
-            .cmp(&a.date)
-            .then_with(|| a.identity.cmp(&b.identity))
-    });
+        .iter()
+        .map(|id| &p.state.books[id])
+        .filter(|b| b.live && b.id != book.id && b.currency == book.currency);
     for b in books {
         if b.check_capacity().is_err() {
             continue;
         }
-        let merchant = rules
-            .resolve_with_bundled(&b.counterparty, &b.purpose)
-            .0
-            .name;
+        let merchant = &index.merchants[&b.id];
         for (endpoint, other_amount) in b.endpoints() {
             if other_amount == 0 || (other_amount > 0) == (amount > 0) || p.open(&endpoint) == 0 {
                 continue;
@@ -96,11 +136,7 @@ fn candidates(
                     original: own.clone(),
                 }
             };
-            if p.allocations.iter().any(|a| {
-                a.row.key == key
-                    || a.refund.as_ref() == Some(&key.refund)
-                        && a.original.as_ref() == Some(&key.original)
-            }) {
+            if index.linked.contains(&key) {
                 continue;
             }
             let label = b.label_of(&endpoint.1);
@@ -133,6 +169,9 @@ fn candidates(
                 currency: b.currency.clone(),
                 category_id,
             });
+            if out.len() == limit {
+                return Ok(out);
+            }
         }
     }
     Ok(out)
@@ -150,9 +189,14 @@ impl Vault {
     ) -> CoreResult<Vec<RefundCandidate>> {
         let db = self.db()?;
         let p = self.refund_projection(&db)?;
-        let mut rows = candidates(self, &db, &p, &Endpoint(transaction_id, own_part), &query)?;
-        rows.truncate(limit as usize);
-        Ok(rows)
+        candidates(
+            self,
+            &db,
+            &p,
+            &Endpoint(transaction_id, own_part),
+            &query,
+            limit as usize,
+        )
     }
 
     pub fn refund_suggestions(
@@ -163,7 +207,10 @@ impl Vault {
         let db = self.db()?;
         let p = self.refund_projection(&db)?;
         let own = Endpoint(transaction_id, own_part);
-        let pool = candidates(self, &db, &p, &own, "")?;
+        let pool = candidates(self, &db, &p, &own, "", usize::MAX)?;
+        if pool.is_empty() {
+            return Ok(Vec::new());
+        }
         let source = p.state.books.get(&transaction_id).ok_or_else(invalid)?;
         let amount = source
             .amount_of(&own.1)
@@ -171,11 +218,7 @@ impl Vault {
             .checked_abs()
             .ok_or_else(invalid)?;
         let refs = reference_tokens(&format!("{} {}", source.purpose, source.reference));
-        let merchant = self
-            .merchant_rules(&db)?
-            .resolve_with_bundled(&source.counterparty, &source.purpose)
-            .0
-            .name;
+        let merchant = &index(self, &db, &p)?.merchants[&transaction_id];
         let mut out: Vec<RefundSuggestion> = Vec::new();
         for reason in [
             RefundMatch::SameAmount,
@@ -198,7 +241,7 @@ impl Vault {
                         (!source.counterparty.trim().is_empty()
                             && source.counterparty.trim().to_lowercase()
                                 == c.counterparty.trim().to_lowercase()
-                            || !merchant.is_empty() && merchant == c.merchant_name)
+                            || !merchant.is_empty() && merchant == &c.merchant_name)
                             && days_between(&source.date, &c.booking_date).is_some_and(|d| d <= 62)
                     }
                     RefundMatch::SameReference => !refs.is_disjoint(&reference_tokens(&format!(

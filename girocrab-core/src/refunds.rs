@@ -1,7 +1,7 @@
 //! UUID-addressed refund links. Resolution and allocation never mutate bookings or splits.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rusqlite::Connection;
 
@@ -15,7 +15,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use store::{merge_attached, reconcile};
+pub(crate) use store::{merge_attached, move_endpoints};
 
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -206,6 +206,7 @@ pub(crate) struct Projection {
     pub allocations: Vec<Allocation>,
     remaining: HashMap<Endpoint, i64>,
     pub summaries: HashMap<i64, Summary>,
+    search: OnceLock<search::SearchIndex>,
 }
 
 fn invalid() -> CoreError {
@@ -387,6 +388,7 @@ impl Projection {
             allocations,
             remaining,
             summaries,
+            search: OnceLock::new(),
         })
     }
 

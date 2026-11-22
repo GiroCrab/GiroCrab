@@ -686,6 +686,18 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
             _ => Vec::new(),
         };
         let proof = !ids.is_empty();
+        let currency = ids
+            .first()
+            .and_then(|id| {
+                vault
+                    .list_accounts()
+                    .ok()?
+                    .into_iter()
+                    .find(|a| a.id == *id)
+                    .map(|a| a.currency.trim().to_ascii_uppercase())
+            })
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| "EUR".into());
         let flow = vault
             .cashflow_by_period(
                 gran,
@@ -706,7 +718,7 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
                 ..Default::default()
             })
             .unwrap_or_default();
-        let fallback = cockpit::top_spending(&expenses, 4);
+        let fallback = cockpit::top_spending(&expenses, 4, &currency);
         let _ = weak.upgrade_in_event_loop(move |win| {
             if !is_current(&vault)
                 || with_state(|st| st.generation != generation || st.dashboard_generation != token)
@@ -744,14 +756,14 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
                 lines
                     .into_iter()
                     .map(|l| {
-                        let spent = daily::mask(&money(l.spent_cents, "EUR"), privacy);
+                        let spent = daily::mask(&money(l.spent_cents, &l.currency), privacy);
                         BudgetLine {
                             name: daily::mask(&l.name, false).into(),
                             amount: match l.limit_cents {
                                 Some(limit) if !privacy => format!(
                                     "{} / {}",
-                                    money(l.spent_cents, "EUR"),
-                                    money(limit, "EUR")
+                                    money(l.spent_cents, &l.currency),
+                                    money(limit, &l.currency)
                                 )
                                 .into(),
                                 _ => spent.into(),

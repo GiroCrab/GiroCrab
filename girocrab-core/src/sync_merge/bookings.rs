@@ -23,6 +23,7 @@ struct BookingFields {
     text_ms: i64,
     splits: Vec<SplitLine>,
     splits_ms: i64,
+    manual_amount: Option<i64>,
     /// tag uuids, sorted (#228)
     tags: crate::tags::merge::TagSet,
     tags_ms: i64,
@@ -74,13 +75,26 @@ impl BookingFields {
                 t.clone(),
             )
         });
-        take_ranked(
-            &mut self.splits,
-            &mut self.splits_ms,
-            &o.splits,
-            o.splits_ms,
-            Clone::clone,
-        );
+        let mut unit = (self.manual_amount, self.splits.clone());
+        let other_unit = (o.manual_amount, o.splits.clone());
+        if self.manual_amount.is_some() && o.manual_amount.is_some() {
+            take_ranked(
+                &mut unit,
+                &mut self.splits_ms,
+                &other_unit,
+                o.splits_ms,
+                Clone::clone,
+            );
+            (self.manual_amount, self.splits) = unit;
+        } else {
+            take_ranked(
+                &mut self.splits,
+                &mut self.splits_ms,
+                &o.splits,
+                o.splits_ms,
+                Clone::clone,
+            );
+        }
         // the tag set as a whole; equal stamps: the larger set by value
         take_ranked(
             &mut self.tags,
@@ -139,7 +153,8 @@ const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
         imported_unix, purpose_code, gvc, salary_flag,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms
+        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms,
+        external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM other.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan'))
      FROM other.transactions ORDER BY account_id, external_id";
 
 /// The id both sides keep for one booking known under two ids: the bank's
@@ -237,7 +252,7 @@ pub(crate) fn merge_bookings(
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms
+                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan'))
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
@@ -271,6 +286,7 @@ pub(crate) fn merge_bookings(
                     text_ms: r.get(13)?,
                     splits: local_splits.remove(&id).unwrap_or_default(),
                     splits_ms: r.get(14)?,
+                    manual_amount: r.get::<_, bool>(20)?.then(|| r.get(17)).transpose()?,
                     tags: local_tags.remove(&id).unwrap_or_default(),
                     tags_ms: r.get(19)?,
                     deleted_ms: r.get(15)?,
@@ -319,6 +335,7 @@ pub(crate) fn merge_bookings(
                     text_ms: r.get(24)?,
                     splits: Vec::new(),
                     splits_ms: r.get(25)?,
+                    manual_amount: r.get::<_, bool>(32)?.then(|| r.get(6)).transpose()?,
                     tags: Vec::new(),
                     tags_ms: r.get(31)?,
                     deleted_ms: r.get(26)?,
@@ -412,11 +429,12 @@ pub(crate) fn merge_bookings(
                 if !m.splits.is_empty()
                     && m.splits
                         .iter()
-                        .try_fold(0i64, |sum, p| sum.checked_add(p.2))
-                        != Some(local_amounts[&id])
+                        .try_fold(0i128, |sum, p| sum.checked_add(i128::from(p.2)))
+                        != Some(i128::from(m.manual_amount.unwrap_or(local_amounts[&id])))
                 {
                     m.splits = old.splits.clone();
                     m.splits_ms = old.splits_ms;
+                    m.manual_amount = old.manual_amount;
                 }
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
                 if m == old {
@@ -426,6 +444,9 @@ pub(crate) fn merge_bookings(
                     continue;
                 }
                 write_booking(conn, id, &old, &m, &cat_id, &tag_ids, &mut cleared)?;
+                if let Some(amount) = m.manual_amount {
+                    local_amounts.insert(id, amount);
+                }
                 local.insert(id, m);
                 stats.bookings_updated += 1;
             }
@@ -536,6 +557,12 @@ fn write_booking(
     tag_ids: &crate::tags::merge::TagIds,
     cleared: &mut HashSet<i64>,
 ) -> CoreResult<()> {
+    if m.manual_amount != old.manual_amount {
+        conn.execute(
+            "UPDATE transactions SET amount_cents=?2 WHERE id=?1",
+            params![id, m.manual_amount],
+        )?;
+    }
     if m.cat != old.cat {
         if m.cat.is_some() {
             conn.execute(

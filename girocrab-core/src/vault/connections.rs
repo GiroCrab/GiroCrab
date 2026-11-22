@@ -204,6 +204,9 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
                 params![k, o],
             )?;
         }
+        if same_amount {
+            crate::refunds::move_endpoints(conn, &std::collections::HashMap::from([(o, k)]))?;
+        }
         // a loan link of `keep` wins (transaction_id is the key)
         conn.execute(
             "UPDATE OR IGNORE loan_links SET transaction_id = ?1 WHERE transaction_id = ?2",
@@ -756,6 +759,10 @@ impl Vault {
                       WHERE transactions.id = ?1",
                     params![live, stale],
                 )?;
+                crate::refunds::move_endpoints(
+                    &tx,
+                    &std::collections::HashMap::from([(stale, live)]),
+                )?;
             }
             tx.execute(
                 "UPDATE transactions SET external_id = 'switch-stale-' || id || ':' || substr(external_id, 11)
@@ -830,6 +837,87 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::models::BookingFilter;
+
+    #[test]
+    fn duplicate_account_fold_preserves_refund_parts_only_for_matching_amounts() {
+        for same_amount in [true, false] {
+            let dir = crate::test_support::TempDir::new("refund-duplicate-account");
+            let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![6; 32]).unwrap();
+            let keep = v
+                .create_offline_account(
+                    "Keep".into(),
+                    crate::models::AccountKind::Cash,
+                    "EUR".into(),
+                    0,
+                )
+                .unwrap();
+            let dup = v
+                .create_offline_account(
+                    "Duplicate".into(),
+                    crate::models::AccountKind::Cash,
+                    "EUR".into(),
+                    0,
+                )
+                .unwrap();
+            let add = |acc, amount| {
+                v.save_manual_booking(
+                    acc,
+                    None,
+                    crate::offline::ManualBookingSetup {
+                        booking_date: "2026-01-01".into(),
+                        amount_cents: amount,
+                        counterparty: String::new(),
+                        purpose: String::new(),
+                        category_id: None,
+                        note: String::new(),
+                    },
+                )
+                .unwrap()
+            };
+            let k = add(keep, if same_amount { -100 } else { -200 });
+            let o = add(dup, -100);
+            let r = add(keep, 60);
+            {
+                let db = v.db().unwrap();
+                db.execute(
+                    "UPDATE transactions SET external_id='original' WHERE id IN (?1,?2)",
+                    params![k, o],
+                )
+                .unwrap();
+            }
+            v.set_transaction_splits(
+                o,
+                [-60, -40]
+                    .into_iter()
+                    .map(|amount| crate::models::TransactionSplitInput {
+                        uuid: None,
+                        category_id: None,
+                        amount_cents: amount,
+                        note: String::new(),
+                    })
+                    .collect(),
+            )
+            .unwrap();
+            let uuid = v.list_transaction_splits(o).unwrap()[0].uuid.clone();
+            v.link_refund(r, String::new(), o, uuid.clone()).unwrap();
+            {
+                let db = v.db().unwrap();
+                let tx = db.unchecked_transaction().unwrap();
+                merge_duplicate_account(&tx, keep, dup).unwrap();
+                tx.execute("DELETE FROM accounts WHERE id=?1", [dup])
+                    .unwrap();
+                tx.commit().unwrap();
+            }
+            let links = v.refund_links(r).unwrap();
+            if same_amount {
+                assert_eq!(links[0].original_id, k);
+                assert_eq!(links[0].original_part, uuid);
+                assert_eq!(links[0].allocated_cents, 60);
+            } else {
+                assert!(links.is_empty());
+            }
+        }
+    }
 
     #[test]
     fn session_hand_over_and_clear_keep_the_other_state() {

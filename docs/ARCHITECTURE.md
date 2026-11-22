@@ -124,8 +124,9 @@ parts have durable UUIDs; their display position is not an endpoint identity.
 UUIDs, and the split and twin merge paths retain them.
 
 `refunds.rs` resolves endpoints and allocates capacity in sync-identity order;
-`refunds/store.rs` persists local reconciliation and merges complete link rows
-after exact booking-id mapping. Merge itself does not resolve or repair links.
+`refunds/store.rs` merges complete link rows after exact booking-id mapping,
+including import take-overs. Local edits and deletions keep original link keys
+and stamps; resolution never writes derived retargets or tombstones.
 `refunds/api.rs` exposes link/unlink and compare-and-set restore. Allocation is
 cached by vault data revision, not persisted as additional financial truth.
 
@@ -139,3 +140,7 @@ for presentation, not a replacement report source.
 See [ADR 0002](adr/0002-refund-links-and-projection.md) for the rules, rejected
 alternatives and test evidence, and the [refund UI guide](ERSTATTUNGEN_UI.md)
 for platform entry points and privacy behavior.
+
+Manual bookings in offline accounts merge amount and split vector atomically
+under `splits_ms`, with a deterministic value tie-break. Bank booking amounts
+keep their existing merge semantics. No additional schema step is needed.

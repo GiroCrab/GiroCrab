@@ -327,6 +327,7 @@ impl Vault {
         require_offline(&tx, account_id)?;
         require_category(&tx, setup.category_id)?;
         ensure_opening(&tx, account_id)?;
+        let mut amount_changed = false;
         let id = match booking_id {
             None => insert_booking(
                 &tx,
@@ -341,12 +342,13 @@ impl Vault {
                 if booking_account(&tx, id)? != account_id {
                     return Err(not_found(trf("Buchung {0}", &[&id])));
                 }
-                let split_amount_changed: bool = tx.query_row(
-                    "SELECT amount_cents != ?2 AND EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=?1)
+                let (changed, has_splits): (bool, bool) = tx.query_row(
+                    "SELECT amount_cents != ?2, EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=?1)
                      FROM transactions WHERE id=?1",
-                    params![id, setup.amount_cents], |r| r.get(0),
+                    params![id, setup.amount_cents], |r| Ok((r.get(0)?, r.get(1)?)),
                 )?;
-                if split_amount_changed && splits.as_ref().is_none_or(Vec::is_empty) {
+                amount_changed = changed;
+                if amount_changed && has_splits && splits.as_ref().is_none_or(Vec::is_empty) {
                     return Err(CoreError::invalid(tr(
                         "Bitte passen Sie die Aufteilung zusammen mit dem Buchungsbetrag an.",
                     )));
@@ -386,8 +388,11 @@ impl Vault {
         };
         if let Some(parts) = &splits {
             crate::planning::store_splits(&tx, id, parts)?;
-        } else {
-            crate::refunds::reconcile(&tx, id)?;
+        } else if amount_changed {
+            tx.execute(
+                "UPDATE transactions SET splits_ms=MAX(splits_ms+1,?2) WHERE id=?1",
+                params![id, now_ms()],
+            )?;
         }
         finish(&tx, account_id)?;
         tx.commit()?;
@@ -405,7 +410,6 @@ impl Vault {
             "UPDATE transactions SET deleted_ms = ?1 WHERE id = ?2",
             params![now_ms(), booking_id],
         )?;
-        crate::refunds::reconcile(&tx, booking_id)?;
         crate::opening_balance::refresh(&tx, account_id)?;
         tx.commit()?;
         Ok(())

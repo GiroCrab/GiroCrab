@@ -1,3 +1,399 @@
+mod review_regressions {
+    #[test]
+    fn manual_unit_ties_and_amount_only_edits_converge() {
+        for a_first in [true, false] {
+            let (a, account, o, _) = seed();
+            let b = vault();
+            merge(&b, &a);
+            let bo = peer_id(&b, &a, o);
+            a.save_manual_booking_with_splits(
+                account,
+                Some(o),
+                setup(-6000),
+                Some(vec![part(None, -3000), part(None, -3000)]),
+            )
+            .unwrap();
+            let ba = number(
+                &b,
+                &format!("SELECT account_id FROM transactions WHERE id={bo}"),
+            );
+            b.save_manual_booking_with_splits(
+                ba,
+                Some(bo),
+                setup(-7000),
+                Some(vec![part(None, -3000), part(None, -4000)]),
+            )
+            .unwrap();
+            sql(&a, "UPDATE transactions SET splits_ms=10000000000000");
+            sql(&b, "UPDATE transactions SET splits_ms=10000000000000");
+            if a_first {
+                merge(&a, &b);
+                merge(&b, &a);
+            } else {
+                merge(&b, &a);
+                merge(&a, &b);
+            }
+            assert_eq!(splits(&a, o), splits(&b, bo));
+            for (v, id) in [(&a, o), (&b, bo)] {
+                assert_eq!(
+                    number(
+                        v,
+                        &format!("SELECT amount_cents FROM transactions WHERE id={id}")
+                    ),
+                    -6000
+                );
+                assert_eq!(splits(v, id).iter().map(|p| p.1).sum::<i64>(), -6000);
+            }
+            a.set_transaction_splits(o, vec![]).unwrap();
+            a.save_manual_booking(account, Some(o), setup(-8000))
+                .unwrap();
+            merge(&b, &a);
+            merge(&a, &b);
+            assert!(splits(&b, bo).is_empty());
+            assert_eq!(
+                number(
+                    &b,
+                    &format!("SELECT amount_cents FROM transactions WHERE id={bo}")
+                ),
+                -8000
+            );
+        }
+    }
+
+    #[test]
+    fn hand_over_retains_part_keys_and_resolves_survivor_parts_conservatively() {
+        for amounts in [
+            vec![-3000, -2000],
+            vec![-1000, -2000, -2000],
+            vec![-2500, -2500],
+        ] {
+            let (v, account, o, r) = seed();
+            v.save_manual_booking(account, Some(r), setup(2000))
+                .unwrap();
+            v.set_transaction_splits(o, vec![part(None, -3000), part(None, -2000)])
+                .unwrap();
+            let old = splits(&v, o)[1].0.clone();
+            v.link_refund(r, String::new(), o, old.clone()).unwrap();
+            let survivor = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+            v.set_transaction_splits(survivor, amounts.iter().map(|a| part(None, *a)).collect())
+                .unwrap();
+            crate::importers::portal_import::hand_over(&v.db().unwrap(), o, survivor).unwrap();
+            let links = v.refund_links(r).unwrap();
+            assert_eq!(links[0].original_id, survivor);
+            assert_eq!(links[0].original_part, old);
+            assert_eq!(
+                links[0].allocated_cents,
+                if amounts == [-3000, -2000] { 2000 } else { 0 }
+            );
+            assert_eq!(links[0].inactive, amounts != [-3000, -2000]);
+            let token = v
+                .unlink_refund(r, String::new(), survivor, old.clone())
+                .unwrap();
+            let restored = v.restore_refund(r, String::new(), survivor, old, token);
+            assert_eq!(restored.is_ok(), amounts == [-3000, -2000]);
+        }
+    }
+
+    #[test]
+    fn hand_over_collisions_keep_the_complete_lww_winner() {
+        let (v, account, o, r) = seed();
+        let survivor = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        v.link_refund(r, String::new(), o, String::new()).unwrap();
+        v.unlink_refund(r, String::new(), o, String::new()).unwrap();
+        v.link_refund(r, String::new(), survivor, String::new())
+            .unwrap();
+        let created = v.refund_links(r).unwrap()[0].created_ms;
+        crate::importers::portal_import::hand_over(&v.db().unwrap(), o, survivor).unwrap();
+        assert_eq!(number(&v, "SELECT COUNT(*) FROM refund_links"), 1);
+        let links = v.refund_links(r).unwrap();
+        assert_eq!(links[0].created_ms, created);
+        assert_eq!(links[0].allocated_cents, 5000);
+    }
+    use std::sync::Arc;
+
+    use crate::models::{AccountKind, TransactionSplitInput};
+    use crate::offline::ManualBookingSetup;
+    use crate::vault::Vault;
+
+    fn vault() -> Arc<Vault> {
+        let path = crate::test_support::thread_temp_path(&format!(
+            "refund-review-{}",
+            uuid::Uuid::new_v4()
+        ));
+        Vault::open(path.to_string_lossy().into(), vec![7; 32]).unwrap()
+    }
+
+    fn setup(amount_cents: i64) -> ManualBookingSetup {
+        ManualBookingSetup {
+            booking_date: "2026-01-01".into(),
+            amount_cents,
+            counterparty: "Review".into(),
+            purpose: String::new(),
+            category_id: None,
+            note: String::new(),
+        }
+    }
+
+    fn part(uuid: Option<String>, amount_cents: i64) -> TransactionSplitInput {
+        TransactionSplitInput {
+            uuid,
+            amount_cents,
+            category_id: None,
+            note: String::new(),
+        }
+    }
+
+    fn seed() -> (Arc<Vault>, i64, i64, i64) {
+        let v = vault();
+        let account = v
+            .create_offline_account("Review".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let o = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        let r = v.save_manual_booking(account, None, setup(5000)).unwrap();
+        (v, account, o, r)
+    }
+
+    fn merge(into: &Vault, from: &Vault) {
+        into.merge_other_vault(from.file_path(), vec![7; 32])
+            .unwrap();
+    }
+
+    fn peer_id(peer: &Vault, source: &Vault, id: i64) -> i64 {
+        let ext: String = source
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT external_id FROM transactions WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        peer.db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE external_id=?1",
+                [ext],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn sql(v: &Vault, sql: &str) {
+        v.db().unwrap().execute_batch(sql).unwrap();
+    }
+    fn number(v: &Vault, sql: &str) -> i64 {
+        v.db().unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+    fn splits(v: &Vault, id: i64) -> Vec<(String, i64)> {
+        v.list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.uuid, s.amount_cents))
+            .collect()
+    }
+
+    #[test]
+    fn t1_hand_over_preserves_refund_allocation() {
+        let (v, account, o, r) = seed();
+        let o2 = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        v.link_refund(r, "".into(), o, "".into()).unwrap();
+        crate::importers::portal_import::hand_over(&v.db().unwrap(), o, o2).unwrap();
+        let links = v.refund_links(r).unwrap();
+        assert_eq!(
+            links.iter().map(|l| l.allocated_cents).sum::<i64>(),
+            5000,
+            "hand-over must preserve the refund allocation on the surviving booking; links={links:?}"
+        );
+    }
+
+    #[test]
+    fn t1b_synced_twin_take_over_preserves_refund_allocation() {
+        let (v, account, o, r) = seed();
+        let twin = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        sql(
+            &v,
+            &format!("UPDATE transactions SET external_id='mm-review-twin' WHERE id={twin}"),
+        );
+        sql(
+            &v,
+            &format!(
+                "UPDATE transactions SET category_source='none', checked=0, note='' WHERE id={o}"
+            ),
+        );
+        v.link_refund(r, "".into(), o, "".into()).unwrap();
+        let merged = crate::importers::moneymoney_import::merge_synced_twin(
+            &v.db().unwrap(),
+            o,
+            "2026-01-01",
+            -5000,
+            "",
+            "Review",
+            "",
+        )
+        .unwrap();
+        assert!(
+            merged,
+            "fixture must execute the synced-twin take-over path"
+        );
+        let links = v.refund_links(r).unwrap();
+        assert_eq!(
+            links.iter().map(|l| l.allocated_cents).sum::<i64>(),
+            5000,
+            "synced-twin take-over must preserve the refund allocation on its survivor; links={links:?}"
+        );
+    }
+
+    #[test]
+    fn t2_later_unlink_wins_over_local_split_retarget_in_both_orders() {
+        let mut failures = Vec::new();
+        for a_first in [true, false] {
+            let (a, account, o, r) = seed();
+            a.save_manual_booking_with_splits(account, Some(r), setup(2000), None)
+                .unwrap();
+            a.set_transaction_splits(o, vec![part(None, -3000), part(None, -2000)])
+                .unwrap();
+            let old = splits(&a, o);
+            a.link_refund(r, "".into(), o, old[1].0.clone()).unwrap();
+            let b = vault();
+            merge(&b, &a);
+            let bo = peer_id(&b, &a, o);
+            let br = peer_id(&b, &a, r);
+            a.set_transaction_splits(
+                o,
+                vec![part(Some(old[0].0.clone()), -3000), part(None, -2000)],
+            )
+            .unwrap();
+            b.unlink_refund(br, "".into(), bo, old[1].0.clone())
+                .unwrap();
+            let later = number(&a, "SELECT MAX(changed_ms)+1000 FROM refund_links");
+            sql(
+                &b,
+                &format!("UPDATE refund_links SET changed_ms={later},deleted_ms={later}"),
+            );
+            if a_first {
+                merge(&a, &b);
+                merge(&b, &a);
+            } else {
+                merge(&b, &a);
+                merge(&a, &b);
+            }
+            let al = a.refund_links(r).unwrap();
+            let bl = b.refund_links(br).unwrap();
+            if !al.is_empty() || !bl.is_empty() {
+                failures.push(format!("a_first={a_first}: A={al:?}; B={bl:?}"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "later explicit unlink must win and both peers must have no live allocation: {failures:#?}"
+        );
+    }
+
+    #[test]
+    fn t3_manual_amount_and_split_identities_converge() {
+        for a_first in [true, false] {
+            let (a, account, o, _) = seed();
+            a.set_transaction_splits(o, vec![part(None, -3000), part(None, -2000)])
+                .unwrap();
+            let b = vault();
+            merge(&b, &a);
+            let bo = peer_id(&b, &a, o);
+            let old = splits(&a, o);
+            a.save_manual_booking_with_splits(
+                account,
+                Some(o),
+                setup(-6000),
+                Some(vec![part(Some(old[0].0.clone()), -3000), part(None, -3000)]),
+            )
+            .unwrap();
+            if a_first {
+                merge(&a, &b);
+                merge(&b, &a);
+            } else {
+                merge(&b, &a);
+                merge(&a, &b);
+            }
+            let ap = splits(&a, o);
+            let bp = splits(&b, bo);
+            let aa = number(
+                &a,
+                &format!("SELECT amount_cents FROM transactions WHERE id={o}"),
+            );
+            let ba = number(
+                &b,
+                &format!("SELECT amount_cents FROM transactions WHERE id={bo}"),
+            );
+            assert!(
+                ap == bp
+                    && ap.iter().map(|p| p.1).sum::<i64>() == aa
+                    && bp.iter().map(|p| p.1).sum::<i64>() == ba,
+                "manual amount/splits must converge with valid sums: A amount={aa}, splits={ap:?}; B amount={ba}, splits={bp:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn t4_same_key_merge_keeps_complete_lww_winner_in_both_orders() {
+        let mut actual = Vec::new();
+        for a_first in [true, false] {
+            let (a, _, o, r) = seed();
+            let b = vault();
+            merge(&b, &a);
+            let bo = peer_id(&b, &a, o);
+            let br = peer_id(&b, &a, r);
+            a.link_refund(r, "".into(), o, "".into()).unwrap();
+            b.link_refund(br, "".into(), bo, "".into()).unwrap();
+            sql(&a, "UPDATE refund_links SET created_ms=100,changed_ms=100");
+            sql(&b, "UPDATE refund_links SET created_ms=200,changed_ms=200");
+            if a_first {
+                merge(&a, &b);
+                merge(&b, &a);
+            } else {
+                merge(&b, &a);
+                merge(&a, &b);
+            }
+            actual.push((
+                a_first,
+                number(&a, "SELECT created_ms FROM refund_links"),
+                number(&b, "SELECT created_ms FROM refund_links"),
+            ));
+        }
+        assert!(
+            actual.iter().all(|(_, a, b)| *a == 200 && *b == 200),
+            "same-key merge must preserve the complete LWW winner: (a_first,A,B)={actual:?}"
+        );
+    }
+
+    #[test]
+    fn t5_account_delete_removes_live_refund_allocation() {
+        let (v, account, o, _) = seed();
+        let refund_account = v
+            .create_offline_account("Refund".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let r = v
+            .save_manual_booking(refund_account, None, setup(5000))
+            .unwrap();
+        v.link_refund(r, "".into(), o, "".into()).unwrap();
+        v.set_account_archived(account, true).unwrap();
+        v.delete_account(account).unwrap();
+        assert!(
+            v.refund_links(r)
+                .unwrap()
+                .iter()
+                .all(|l| l.inactive && l.allocated_cents == 0),
+            "account deletion must remove live allocations to its bookings"
+        );
+        assert_eq!(
+            number(
+                &v,
+                "SELECT COUNT(*) FROM refund_links WHERE deleted_ms IS NOT NULL"
+            ),
+            0,
+            "account deletion must leave link rows unchanged"
+        );
+    }
+}
+
 use std::sync::Arc;
 
 use rusqlite::params;
@@ -168,7 +564,7 @@ fn uuid_parts_mixed_roles_zero_total_and_booking_markers_leave_splits_untouched(
 }
 
 #[test]
-fn deleted_part_retargets_only_a_unique_snapshot_match_and_tombstones_old_key() {
+fn deleted_part_resolves_only_a_unique_snapshot_match_without_changing_the_key() {
     let f = Fixture::new();
     let (r, o) = (f.add("r", 100), f.add("o", -200));
     let parts = f.split(o, &[-100, -100]);
@@ -180,13 +576,18 @@ fn deleted_part_retargets_only_a_unique_snapshot_match_and_tombstones_old_key() 
     )
     .unwrap();
     // The removed part has two indistinguishable replacements: no guessing.
-    assert!(f.v.refund_links(r).unwrap().is_empty());
+    assert!(
+        f.v.refund_links(r)
+            .unwrap()
+            .iter()
+            .all(|l| l.inactive && l.allocated_cents == 0)
+    );
     assert_eq!(
         number(
             &f.v,
             "SELECT COUNT(*) FROM refund_links WHERE deleted_ms IS NOT NULL"
         ),
-        1
+        0
     );
     let r2 = f.add("r2", 100);
     let current = f.v.list_transaction_splits(o).unwrap();
@@ -202,15 +603,17 @@ fn deleted_part_retargets_only_a_unique_snapshot_match_and_tombstones_old_key() 
     .unwrap();
     let l = f.v.refund_links(r2).unwrap();
     assert_eq!(l.len(), 1);
-    assert_eq!(l[0].allocated_cents, 100);
-    assert_ne!(l[0].original_part, current[0].uuid);
+    assert_eq!(shares(&f.v, r), [100]);
+    assert_eq!(l[0].allocated_cents, 0);
+    assert_eq!(l[0].original_part, current[0].uuid);
+    assert_ne!(l[0].resolved_original_part.as_ref(), Some(&current[0].uuid));
     assert!(l[0].created_ms > created);
     assert_eq!(
         number(
             &f.v,
             "SELECT COUNT(*) FROM refund_links WHERE deleted_ms IS NOT NULL"
         ),
-        2
+        0
     );
 }
 
@@ -222,14 +625,15 @@ fn whole_booking_split_and_split_removal_use_the_same_resolver() {
     let original_created = f.v.refund_links(r).unwrap()[0].created_ms;
     let p = f.split(o, &[-100, 20, -20]);
     let l = f.v.refund_links(r).unwrap();
-    assert_eq!(l[0].original_part, p[0]);
+    assert_eq!(l[0].original_part, "");
+    assert_eq!(l[0].resolved_original_part.as_ref(), Some(&p[0]));
     assert_eq!(l[0].created_ms, original_created);
     f.v.set_transaction_splits(o, vec![]).unwrap();
     let l = f.v.refund_links(r).unwrap();
     assert_eq!(l[0].original_part, "");
     assert_eq!(l[0].created_ms, original_created);
     f.split(o, &[-60, -40]);
-    assert!(f.v.refund_links(r).unwrap().is_empty());
+    assert!(f.v.refund_links(r).unwrap()[0].inactive);
 }
 
 #[test]
@@ -285,11 +689,21 @@ fn sign_flip_currency_change_and_deletion_drop_links_without_rewriting_bookings(
         &format!("UPDATE transactions SET currency='EUR' WHERE id={o}"),
     );
     f.change(o, 100, None);
-    assert!(f.v.refund_links(r).unwrap().is_empty());
+    assert!(
+        f.v.refund_links(r)
+            .unwrap()
+            .iter()
+            .all(|l| l.inactive && l.allocated_cents == 0)
+    );
     let o2 = f.add("o2", -100);
     f.link(r, "", o2, "");
     f.v.delete_manual_booking(o2).unwrap();
-    assert!(f.v.refund_links(r).unwrap().is_empty());
+    assert!(
+        f.v.refund_links(r)
+            .unwrap()
+            .iter()
+            .all(|l| l.inactive && l.allocated_cents == 0)
+    );
 }
 
 #[test]
@@ -384,8 +798,7 @@ fn undo_is_cas_preserves_order_and_relink_gets_a_new_position_even_after_merge()
 }
 
 #[test]
-fn restore_can_resolve_an_old_whole_key_after_a_split_but_not_an_edit_tombstone_with_an_old_token()
-{
+fn restore_resolves_the_original_key_and_inactive_links_can_still_be_unlinked() {
     let f = Fixture::new();
     let (r, o) = (f.add("r", 100), f.add("o", -100));
     f.link(r, "", o, "");
@@ -399,7 +812,11 @@ fn restore_can_resolve_an_old_whole_key_after_a_split_but_not_an_edit_tombstone_
         f.v.restore_refund(r, "".into(), o, "".into(), token)
             .is_err()
     );
-    assert!(f.v.unlink_refund(r, "".into(), o, "".into()).is_err());
+    let token = f.v.unlink_refund(r, "".into(), o, "".into()).unwrap();
+    assert!(
+        f.v.restore_refund(r, "".into(), o, "".into(), token)
+            .is_err()
+    );
 }
 
 #[test]
@@ -878,7 +1295,7 @@ fn suggestions_exclude_the_selected_part_pair_not_the_entire_booking_pair() {
 }
 
 #[test]
-fn expired_pending_booking_cleanup_tombstones_its_refund_links() {
+fn expired_pending_booking_cleanup_leaves_links_read_time_inactive() {
     let f = Fixture::new();
     let (r, o) = (f.add("r", 100), f.add("pending-old", -100));
     raw(
@@ -900,12 +1317,17 @@ fn expired_pending_booking_cleanup_tombstones_its_refund_links() {
         crate::connectors::FetchResult::default(),
     )
     .unwrap();
-    assert!(f.v.refund_links(r).unwrap().is_empty());
+    assert!(
+        f.v.refund_links(r)
+            .unwrap()
+            .iter()
+            .all(|l| l.inactive && l.allocated_cents == 0)
+    );
     assert_eq!(
         number(
             &f.v,
             "SELECT COUNT(*) FROM refund_links WHERE deleted_ms IS NOT NULL"
         ),
-        1
+        0
     );
 }

@@ -1309,6 +1309,10 @@ fn convert_legacy_copies(db: &rusqlite::Connection, account_id: i64) -> Result<u
     };
     for id in &copies {
         db.execute(&copy_sql, [id])?;
+        let survivor: i64 = db.query_row(
+            "SELECT c.id FROM transactions c JOIN transactions old ON c.account_id=old.account_id AND c.external_id=?2 || old.external_id WHERE old.id=?1",
+            params![id, HOLD_PREFIX], |r| r.get(0))?;
+        crate::refunds::move_endpoints(db, &std::collections::HashMap::from([(*id, survivor)]))?;
         crate::sync_merge::soft_delete_booking(db, *id)?;
     }
     Ok(copies.len() as u32)
@@ -1443,6 +1447,7 @@ pub(crate) fn merge_imported_split_parts(
             )?;
         }
         for (id, ..) in &parts {
+            crate::refunds::move_endpoints(db, &std::collections::HashMap::from([(*id, bank_id)]))?;
             crate::sync_merge::soft_delete_booking(db, *id)?;
         }
         merged += 1;
@@ -1472,6 +1477,7 @@ pub(crate) fn hand_over(db: &rusqlite::Connection, from: i64, to: i64) -> Result
           WHERE id = ?2 AND checked = 0 AND (SELECT checked FROM transactions WHERE id = ?1) = 1",
         params![from, to, now],
     )?;
+    crate::refunds::move_endpoints(db, &std::collections::HashMap::from([(from, to)]))?;
     crate::sync_merge::soft_delete_booking(db, from)
 }
 

@@ -810,7 +810,7 @@ pub(crate) fn store_fetch(
             .filter(|p| !p.is_empty())
             .map(|p| format!("{}%", p.replace('%', "").replace('_', "\\_")))
             .unwrap_or_default();
-        let removed=tx.prepare(
+        tx.execute(
             "UPDATE transactions SET deleted_ms = ?1
               WHERE external_id LIKE 'pending-%' AND deleted_ms IS NULL
                 -- web-portal holds (#629) are settled or discarded explicitly
@@ -829,11 +829,9 @@ pub(crate) fn store_fetch(
                            OR (transactions.booking_text LIKE 'Sammelüberweisung%'
                                AND (r.booking_text LIKE '%Sammel%' OR r.purpose LIKE '%Sammel%')
                                AND r.booking_date <= date(transactions.booking_date, '+7 days')))
-                      AND r.booking_date >= transactions.booking_date)) RETURNING id",
-        )?.query_map(params![crate::dates::now_ms(), managed_hold_like],|r|r.get::<_,i64>(0))?.collect::<Result<Vec<_>,_>>()?;
-        for id in removed {
-            crate::refunds::reconcile(&tx, id)?;
-        }
+                      AND r.booking_date >= transactions.booking_date))",
+            params![crate::dates::now_ms(), managed_hold_like],
+        )?;
         // Entries the connector recognised as no real movement (stored by an older version).
         for (account_ref, external_id) in &data.withdrawn {
             let Some(acc_id) = account_ids.get(account_ref) else {

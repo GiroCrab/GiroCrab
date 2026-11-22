@@ -207,6 +207,20 @@ fn main() {
         cats.len()
     );
     let b = all.transactions[0].clone();
+    if let Some(search) = all.transactions.iter().find(|b| {
+        b.amount_cents > 0 && b.refund_cents == 0 && b.split_count == 0 && b.currency == "EUR"
+    }) {
+        time("refund_candidates(positive, limit 200)", || {
+            vault
+                .refund_candidates(search.id, String::new(), String::new(), 200)
+                .expect("refund candidates benchmark")
+        });
+        time("refund_suggestions(positive)", || {
+            vault
+                .refund_suggestions(search.id, String::new())
+                .expect("refund suggestions benchmark")
+        });
+    }
     let (c1, c2) = (cats[3].id, cats[5].id);
 
     // The UI's list filter: newest 3000 bookings, all accounts, current period.

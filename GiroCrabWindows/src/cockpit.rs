@@ -256,6 +256,7 @@ pub fn chart(periods: &[PeriodCashflow]) -> (Vec<Bars>, Vec<String>) {
 #[derive(Debug, PartialEq)]
 pub struct Budget {
     pub name: String,
+    pub currency: String,
     pub spent_cents: i64,
     /// `None` for the "top expenses" fallback without a limit.
     pub limit_cents: Option<i64>,
@@ -270,6 +271,7 @@ pub fn budgets(status: &[CategoryBudgetStatus]) -> Vec<Budget> {
         .filter(|s| s.budget_cents > 0)
         .map(|s| Budget {
             name: s.name.clone(),
+            currency: "EUR".into(),
             spent_cents: s.spent_cents,
             limit_cents: Some(s.budget_cents),
             progress: (s.spent_cents.max(0) as f64 / s.budget_cents as f64) as f32,
@@ -281,7 +283,7 @@ pub fn budgets(status: &[CategoryBudgetStatus]) -> Vec<Budget> {
 }
 
 /// Bars over core expense totals, relative to the largest one.
-pub fn top_spending(totals: &[CategoryFlowTotal], n: usize) -> Vec<Budget> {
+pub fn top_spending(totals: &[CategoryFlowTotal], n: usize, currency: &str) -> Vec<Budget> {
     let mut sums: Vec<(String, String, i64)> = totals
         .iter()
         .filter(|t| t.cents > 0)
@@ -293,6 +295,7 @@ pub fn top_spending(totals: &[CategoryFlowTotal], n: usize) -> Vec<Budget> {
     sums.into_iter()
         .map(|(name, color_hex, spent)| Budget {
             name,
+            currency: currency.into(),
             spent_cents: spent,
             limit_cents: None,
             progress: spent as f32 / max as f32,
@@ -459,7 +462,13 @@ pub(crate) mod tests {
                 booking_count: 1,
             },
         ];
-        let top = top_spending(&rows, 4);
+        let top = top_spending(&rows, 4, "USD");
+        assert_eq!(top[0].currency, "USD");
+        assert_eq!(
+            crate::money(top[0].spent_cents, &top[0].currency),
+            "45,00 $"
+        );
+        assert!(top_spending(&[], 4, "USD").is_empty());
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].name, "Essen");
         assert_eq!(top[0].spent_cents, 4500);

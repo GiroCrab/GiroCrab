@@ -393,7 +393,6 @@ pub(crate) fn soft_delete_booking(conn: &Connection, id: i64) -> CoreResult<()> 
         "UPDATE transactions SET deleted_ms = ?1 WHERE id = ?2 AND deleted_ms IS NULL",
         params![now_ms(), id],
     )?;
-    crate::refunds::reconcile(conn, id)?;
     Ok(())
 }
 
@@ -419,11 +418,6 @@ fn soft_delete_account_at(conn: &Connection, id: i64, now: i64) -> CoreResult<()
         "UPDATE accounts SET deleted_ms = ?1 WHERE id = ?2 AND deleted_ms IS NULL",
         params![now, id],
     )?;
-    let linked:Vec<i64>=conn.prepare("SELECT DISTINCT t.id FROM transactions t JOIN refund_links l ON l.refund_id=t.id OR l.original_id=t.id WHERE t.account_id=?1 AND l.deleted_ms IS NULL")?
-        .query_map([id],|r|r.get(0))?.collect::<Result<_,_>>()?;
-    for booking in linked {
-        crate::refunds::reconcile(conn, booking)?;
-    }
     Ok(())
 }
 

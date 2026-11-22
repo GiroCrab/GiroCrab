@@ -2720,7 +2720,7 @@ fn edited_text_syncs() {
 }
 
 #[test]
-fn incoming_splits_must_match_the_kept_manual_booking_amount() {
+fn incoming_splits_must_match_the_kept_bank_booking_amount() {
     let dir = temp_dir("split-amount-sync");
     let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
     let account = a
@@ -2740,6 +2740,10 @@ fn incoming_splits_must_match_the_kept_manual_booking_amount() {
         note: String::new(),
     };
     let id = a.save_manual_booking(account, None, setup.clone()).unwrap();
+    exec(
+        &a,
+        &format!("UPDATE transactions SET external_id='bank-booking' WHERE id={id}"),
+    );
     a.set_transaction_splits(id, vec![split(None, -200), split(None, -300)])
         .unwrap();
     merge(&b, &a);

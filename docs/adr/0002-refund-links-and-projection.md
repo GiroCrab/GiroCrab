@@ -53,8 +53,10 @@ the same UUID set, not a promised identity for each old row position.
 New parts receive UUID-v4 identities. Kept parts retain their UUIDs, including
 when their content changes. Editors pass UUIDs back; sync preserves the winning
 whole split vector's UUIDs and order, and twin folding preserves moved UUIDs.
-This does not introduce per-part conflict merging. An incoming nonempty vector
-whose sum differs from the retained booking amount is not applied.
+This does not introduce per-part conflict merging. For manual bookings of offline
+accounts, amount and split vector merge as one unit under `splits_ms`, with a
+deterministic `(amount, vector)` tie-break. Amount-only edits stamp that same unit.
+Bank amounts remain bank-owned; an incompatible incoming split vector is not applied.
 
 ### One pure resolver, never widening
 
@@ -68,10 +70,11 @@ duplicate a canonical pair.
 
 Resolution never takes several replacement parts, spreads a link across them or
 substitutes a larger parent amount. It does not infer a new user choice from
-available capacity. Read-time resolution writes nothing. Local split edits,
-sign-changing manual amount edits and booking deletion use the same resolver to
-persist retargeting or tombstones. Snapshot merge does not perform that cleanup;
-otherwise the merge order of booking, split and link state could change the result.
+available capacity. Resolution writes nothing, including after local split edits,
+sign changes or true booking/account deletion. The original link key, snapshots
+and stamps remain unchanged; deleted or incompatible bookings make it inactive
+at read time. Only explicit unlink creates a link tombstone. Otherwise a derived
+replacement row could survive a peer's later unlink of the original key.
 
 ### Allocation is deterministic and revision-cached
 
@@ -94,6 +97,11 @@ through the exact booking map produced by the booking merge. It never assumes
 that equal local integers identify the same booking. [Twin folding](../../girocrab-core/src/sync_merge/twins.rs)
 also supplies explicit maps for moved bookings and unaffected endpoints; it does
 not guess counterpart ids or discard their split UUIDs.
+
+Import deduplication and take-over paths apply the same row-ranking mechanism
+when remapping actual booking identities before deleting the redundant booking.
+Part UUIDs stay unchanged; missing survivor parts follow the read-time rule.
+This identity remap is not a derived split-part retarget.
 
 For a natural-key collision, choose the maximum complete row under the total rank
 `(changed_ms, deleted_ms.is_some(), created_ms, refund_cents, original_cents,
@@ -134,7 +142,7 @@ grouping are not alternative category-report implementations.
 
 ## Not covered
 
-Manual booking amount sync, per-part split conflict merging and cross-currency
+Bank booking amount sync changes, per-part split conflict merging and cross-currency
 refund conversion. Suggestion ranking and platform layouts are UI/API policy,
 not alternative sources of link or allocation truth.
 
@@ -150,7 +158,9 @@ not alternative sources of link or allocation truth.
   creation, but puts a re-linked key back at its old priority. For example, merging
   a tombstone created at 10 with a winning re-link created at 30 must not reset
   the winner to 10. Modifying a ranked winner's creation stamp also undermines
-  the full-row merge rule's associativity argument.
+  the full-row merge rule's associativity argument: with live A at creation 100,
+  tombstone T and a later re-link L at creation 200, `A + T = T` and
+  `T + L = L(200)`, while applying a later minimum against A would yield 100.
 - **Per-screen totals or allocation** would duplicate classification, currency and
   scope rules and let different reports disagree about the same refund.
 
