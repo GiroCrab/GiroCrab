@@ -645,6 +645,9 @@ pub(crate) fn store_fetch(
                     params![tx.last_insert_rowid(),remote.classification.asset_class.map(|a|a.as_str()),remote.classification.instrument.map(|a|a.as_str()),remote.direct_crypto])?;
             }
         }
+        let match_rules = super::document_matching::rules_for_connection(&tx, connection_id, kind)?;
+        let mut new_booking_ids = HashSet::new();
+        let mut changed_document_ids = HashSet::new();
         let mut imported = 0u32;
         let mut skipped_archived = 0u32;
         {
@@ -728,6 +731,9 @@ pub(crate) fn store_fetch(
                                 t.creditor_id,
                                 t.item_refs
                             ])?;
+                            if match_rules.is_some() && !hold {
+                                new_booking_ids.insert(tx.last_insert_rowid());
+                            }
                             imported += 1;
                             if data.adjust_balances {
                                 tx.prepare_cached(
@@ -735,6 +741,10 @@ pub(crate) fn store_fetch(
                                 )?
                                 .execute(params![t.amount_cents, t.booking_date, acc_id])?;
                             }
+                        } else if match_rules.is_some()
+                            && let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)?
+                        {
+                            new_booking_ids.insert(adopted.id);
                         }
                     }
                 }
@@ -937,8 +947,11 @@ pub(crate) fn store_fetch(
                     &d.date,
                 )
             };
-            if matches!(added, Ok(Some(_))) {
+            if let Ok(Some(id)) = &added {
                 documents_stored += 1;
+                if match_rules.is_some() && booking_id.is_none() && acc_id.is_some() {
+                    changed_document_ids.insert(*id);
+                }
             }
             match (added, acc_id) {
                 (Ok(Some(_)), _)
@@ -950,11 +963,20 @@ pub(crate) fn store_fetch(
                 }
                 // stored before without an account: it gets the one found now
                 (Ok(None), Some(acc_id)) if !d.source_url.is_empty() => {
-                    tx.execute(
-                        "UPDATE booking_documents SET account_id = ?1
-                          WHERE source_url = ?2 AND account_id IS NULL AND booking_id IS NULL",
-                        params![acc_id, d.source_url],
-                    )?;
+                    let assigned: Option<i64> = tx
+                        .query_row(
+                            "UPDATE booking_documents SET account_id = ?1
+                              WHERE source_url = ?2 AND account_id IS NULL AND booking_id IS NULL
+                              RETURNING id",
+                            params![acc_id, d.source_url],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    if match_rules.is_some()
+                        && let Some(id) = assigned
+                    {
+                        changed_document_ids.insert(id);
+                    }
                 }
                 _ => {}
             }
@@ -1013,6 +1035,18 @@ pub(crate) fn store_fetch(
         }
         if kind == ConnectorKind::Advanzia {
             super::advanzia::settle_holds(&tx, &account_ids, &mut data)?;
+        }
+        // Repeated deliveries alone cannot re-create a link that the user removed.
+        if let Some(rules) = match_rules
+            && (!changed_document_ids.is_empty() || !new_booking_ids.is_empty())
+        {
+            super::document_matching::link_unlinked_by_content(
+                &tx,
+                connection_id,
+                &rules,
+                &changed_document_ids,
+                &new_booking_ids,
+            )?;
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = &data.state {
@@ -1749,7 +1783,7 @@ impl Vault {
 }
 
 /// Is `key` a comdirect login via FinTS?
-fn is_comdirect_fints(key: &str) -> bool {
+pub(super) fn is_comdirect_fints(key: &str) -> bool {
     ConnectorKind::fints_blz(key)
         .is_some_and(|b| super::fints_directory::COMDIRECT_BLZ.contains(&b))
 }

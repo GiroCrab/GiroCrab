@@ -121,7 +121,7 @@ extension AppModel {
                     return CategoryRefresh(
                         page: page,
                         flow: flow,
-                        categories: try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents),
+                        categories: try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false),
                         uncategorized: Int(try vault.countTransactions(filter: uncategorizedQuery)),
                         groups: try vault.listAccountGroups(),
                         userGroups: try vault.listUserGroups()

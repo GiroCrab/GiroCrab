@@ -2567,6 +2567,8 @@ mod list_cache_tests {
                     BookingDirection::All,
                     min,
                     max,
+                    vec![],
+                    false,
                 )
                 .unwrap())
         };
