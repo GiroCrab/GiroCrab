@@ -296,6 +296,41 @@ impl DocumentCandidate {
     }
 }
 
+/// The queue after a document pass: what the pass did not reach first, then what failed. A
+/// candidate that keeps failing must not hold the places of every pass while others never get
+/// a try (review of #1660).
+fn pending_after_pass(
+    not_reached: Vec<DocumentCandidate>,
+    failed: Vec<DocumentCandidate>,
+) -> Vec<DocumentCandidate> {
+    let mut pending = not_reached;
+    pending.extend(failed);
+    pending
+}
+
+/// Where the timeline pass starts for this sync: `(history_done, resume cursor)`. A sync of one
+/// account (#1124) is cut down to it after the fetch, so it reads no history and resumes nothing:
+/// a history batch it read would lose the other account's rows for good (review of #1660).
+fn history_scope(session: &StoredSession, single_account: bool) -> (bool, Option<String>) {
+    if single_account {
+        return (true, None);
+    }
+    (
+        session.trade_history_complete && session.trade_history_retry.is_empty(),
+        session.transaction_history_cursor.clone(),
+    )
+}
+
+/// Whether the Activity Log listing may stop at an item of `date`: below the sync window, and
+/// only once the whole log was listed (a history finished while document retrieval was off has
+/// never listed the older statements, review of #1660) and no earlier listing is still open.
+fn activity_log_stops_at(date: &str, window_start: &str, session: &StoredSession) -> bool {
+    !date.is_empty()
+        && date < window_start
+        && session.doc_listing_complete
+        && !session.doc_listing_open
+}
+
 /// New candidates take precedence over queued copies of the same timeline item.
 /// A disabled document fetch keeps the queue for the first enabled fetch.
 fn documents_for_fetch(
@@ -517,7 +552,10 @@ fn plan_trades<'a>(
                 .skip(HISTORY_BATCH)
                 .take_while(|r| r.date == border),
         );
-        if before == Some(border.as_str())
+        // A border day that fills a batch on its own would be read again in full by the next one:
+        // take the next day along, also in the first batch (review of #1660).
+        let border_fills_batch = older.iter().filter(|r| r.date == border).count() >= HISTORY_BATCH;
+        if (before == Some(border.as_str()) || border_fills_batch)
             && let Some(next_day) = older.get(batch.len()).map(|r| r.date.clone())
         {
             let offset = batch.len();
@@ -1356,6 +1394,11 @@ struct StoredSession {
     /// as this is set. Entries not listed cannot be in `doc_pending`.
     #[serde(rename = "doc_listing_open_v1")]
     doc_listing_open: bool,
+    /// The Activity Log was listed to its very end once (with document retrieval on). Before that,
+    /// no listing stops at the sync window: a history finished while retrieval was off has never
+    /// listed the older statements (review of #1660).
+    #[serde(rename = "doc_listing_complete_v1")]
+    doc_listing_complete: bool,
     /// Next Activity Log page after a partial listing. A flag alone would repeat the same pages.
     #[serde(
         rename = "doc_listing_cursor_v1",
@@ -1835,9 +1878,12 @@ impl BankConnector for TradeRepublicConnector {
         let mut older_bookings: Vec<RemoteTransaction> = Vec::new();
         // the history pass pages through the whole timeline (cheap); details are batched below
         // (trades to read again lie anywhere in the timeline: it is paged through to the end)
-        let history_done =
-            self.session.trade_history_complete && self.session.trade_history_retry.is_empty();
-        let resume = self.session.transaction_history_cursor.clone();
+        // One account from its sidebar menu (#1124): `keep_only` cuts the result down to it after
+        // this fetch. The history pass and the document queue wait for the next full sync instead
+        // of moving on with data that is thrown away (a cash-only sync would drop the depot's
+        // activities of a history batch for good, review of #1660).
+        let single_account = ctx.only_account.is_some();
+        let (history_done, resume) = history_scope(&self.session, single_account);
         let mut next_history_page = None;
         let mut seen = std::collections::HashSet::new();
         // While backfilling older pages, still refresh the recent window from the head.
@@ -1990,7 +2036,11 @@ impl BankConnector for TradeRepublicConnector {
         let mut act_cursor = self.session.doc_listing_cursor.clone();
         // whether the listing got to its end (or to the window, where an earlier pass had finished)
         let mut listing_complete = false;
-        let activity_limit = if ctx.documents.enabled() { 100 } else { 0 };
+        let activity_limit = if ctx.documents.enabled() && !single_account {
+            100
+        } else {
+            0
+        };
         'activity_pages: for _ in 0..activity_limit {
             let mut payload = json!({"type": "timelineActivityLog"});
             if let Some(c) = &act_cursor {
@@ -2009,12 +2059,7 @@ impl BankConnector for TradeRepublicConnector {
                     .chars()
                     .take(10)
                     .collect();
-                // below the window the account-level documents are read during the history pass
-                if !date.is_empty()
-                    && date.as_str() < window_start.as_str()
-                    && self.session.trade_history_complete
-                    && !self.session.doc_listing_open
-                {
+                if activity_log_stops_at(&date, &window_start, &self.session) {
                     listing_complete = true;
                     break 'activity_pages;
                 }
@@ -2081,11 +2126,12 @@ impl BankConnector for TradeRepublicConnector {
             act_cursor = page["cursors"]["after"].as_str().map(|s| s.to_string());
             if act_cursor.is_none() {
                 listing_complete = true;
+                self.session.doc_listing_complete = true;
                 break;
             }
         }
         // a listing that stopped early is picked up again, whatever the trade history says
-        if ctx.documents.enabled() {
+        if ctx.documents.enabled() && !single_account {
             self.session.doc_listing_open = !listing_complete;
             self.session.doc_listing_cursor = if listing_complete { None } else { act_cursor };
         }
@@ -2099,25 +2145,27 @@ impl BankConnector for TradeRepublicConnector {
             &trade_rows,
             &window_start,
             self.session.trade_history_before.as_deref(),
-            self.session.trade_history_complete,
+            self.session.trade_history_complete || single_account,
         );
-        add_retries(
-            &mut plan.selected,
-            &trade_rows,
-            &self.session.trade_history_retry,
-        );
-        // Old connection states stored only IDs. Keep unresolved ones until the full scan ends.
-        if !plan.complete || next_history_page.is_some() {
-            self.session
-                .trade_history_retry
-                .retain(|id| !plan.selected.iter().any(|row| &row.id == id));
-        } else {
-            self.session.trade_history_retry.clear();
-        }
         let retry_rows = self.session.trade_retry_rows.clone();
-        for row in &retry_rows {
-            if !plan.selected.iter().any(|selected| selected.id == row.id) {
-                plan.selected.push(row);
+        if !single_account {
+            add_retries(
+                &mut plan.selected,
+                &trade_rows,
+                &self.session.trade_history_retry,
+            );
+            // Old connection states stored only IDs. Keep unresolved ones until the full scan ends.
+            if !plan.complete || next_history_page.is_some() {
+                self.session
+                    .trade_history_retry
+                    .retain(|id| !plan.selected.iter().any(|row| &row.id == id));
+            } else {
+                self.session.trade_history_retry.clear();
+            }
+            for row in &retry_rows {
+                if !plan.selected.iter().any(|selected| selected.id == row.id) {
+                    plan.selected.push(row);
+                }
             }
         }
         // The bookings of the history batch: the days from the oldest trade of this batch up to
@@ -2157,10 +2205,12 @@ impl BankConnector for TradeRepublicConnector {
         // Document retrieval switched off: no detail screens for documents, nothing remembered
         // (the securities page below fetches the trade screens it needs itself).
         let documents_off = !ctx.documents.enabled();
+        // a single-account sync keeps the candidates for the next full one: the documents of the
+        // other account would be remembered as downloaded and then thrown away by `keep_only`
         let mut doc_candidates = documents_for_fetch(
             doc_candidates,
             &mut self.session.doc_pending,
-            !documents_off,
+            !documents_off && !single_account,
         );
         let doc_limit = if self.session.trade_history_complete {
             50
@@ -2289,10 +2339,8 @@ impl BankConnector for TradeRepublicConnector {
                 self.session.doc_items.push(candidate.id);
             }
         }
-        if !documents_off {
-            // failed ones first (they are the older passes' leftovers anyway), then what was not reached
-            still_open.extend(beyond_limit);
-            self.session.doc_pending = still_open;
+        if !documents_off && !single_account {
+            self.session.doc_pending = pending_after_pass(beyond_limit, still_open);
         }
         out.documents_incomplete =
             docs_incomplete || (!documents_off && self.session.doc_listing_open);
@@ -2343,14 +2391,27 @@ impl BankConnector for TradeRepublicConnector {
         let _ = ws.close(None).await;
         // An open page cursor means this pass does not know the full history size.
         let history_total_known = resume.is_none() && next_history_page.is_none();
-        self.advance_history(plan.before, plan.complete, next_history_page);
+        if !single_account {
+            self.advance_history(plan.before, plan.complete, next_history_page);
+        }
         // the history is not complete while a trade is still to be read again
         // documents still open (downloads, a listing that stopped early) keep "Weiter abrufen" on
         out.history_incomplete = !self.session.trade_history_complete
             || !failed_trades.is_empty()
             || (!documents_off
                 && (!self.session.doc_pending.is_empty() || self.session.doc_listing_open));
-        self.session.trade_retry_rows = failed_trades;
+        if single_account {
+            // the rows waiting for a retry stay; recent ones that failed now join them
+            let mut rows = retry_rows.clone();
+            for row in failed_trades {
+                if !rows.iter().any(|r| r.id == row.id) {
+                    rows.push(row);
+                }
+            }
+            self.session.trade_retry_rows = rows;
+        } else {
+            self.session.trade_retry_rows = failed_trades;
+        }
         out.history_remaining = plan.remaining as u32;
         if history_total_known && plan.remaining > 0 {
             out.history_total = trade_rows.len() as u32;
@@ -3574,6 +3635,60 @@ mod tests {
         assert!(recent.page(failure()).is_err());
     }
 
+    /// Review of #1660: a sync of one account reads no history and resumes no cursor, so the
+    /// rows `keep_only` drops afterwards are read by the next full sync; a full sync goes on.
+    #[test]
+    fn a_single_account_sync_leaves_the_history_where_it_is() {
+        let mut session = StoredSession {
+            transaction_history_cursor: Some("page-7".into()),
+            ..Default::default()
+        };
+        assert_eq!(history_scope(&session, true), (true, None));
+        assert_eq!(
+            history_scope(&session, false),
+            (false, Some("page-7".into()))
+        );
+        session.trade_history_complete = true;
+        assert!(history_scope(&session, false).0);
+        session.trade_history_retry = vec!["t1".into()];
+        assert!(!history_scope(&session, false).0, "a retry keeps it going");
+    }
+
+    /// Review of #1660: until the Activity Log was listed to its end once, no listing stops at
+    /// the sync window, whatever the trade history says.
+    #[test]
+    fn the_activity_log_stops_at_the_window_only_after_one_full_listing() {
+        let mut session = StoredSession {
+            trade_history_complete: true,
+            ..Default::default()
+        };
+        let window = "2026-11-01";
+        assert!(!activity_log_stops_at("2024-01-01", window, &session));
+        session.doc_listing_complete = true;
+        assert!(activity_log_stops_at("2024-01-01", window, &session));
+        assert!(!activity_log_stops_at("2026-11-05", window, &session));
+        assert!(!activity_log_stops_at("", window, &session));
+        session.doc_listing_open = true;
+        assert!(!activity_log_stops_at("2024-01-01", window, &session));
+    }
+
+    /// Review of #1660: candidates a pass did not reach get their try before the ones that failed.
+    #[test]
+    fn the_queue_puts_unreached_documents_before_failed_ones() {
+        let candidate = |id: &str| DocumentCandidate {
+            id: id.into(),
+            date: "2023-05-01".into(),
+            title: "Kontoauszug".into(),
+            event_context: String::new(),
+        };
+        let queue = pending_after_pass(vec![candidate("new")], vec![candidate("broken")]);
+        assert_eq!(queue, [candidate("new"), candidate("broken")]);
+        // next pass: the unreached one is ahead of the one that keeps failing
+        let mut pending = queue;
+        let next = documents_for_fetch(Vec::new(), &mut pending, true);
+        assert_eq!(next.first().map(|c| c.id.as_str()), Some("new"));
+    }
+
     #[test]
     fn disabled_documents_keep_history_candidates_for_the_next_enabled_fetch() {
         let candidate = |id: &str| DocumentCandidate {
@@ -3629,9 +3744,13 @@ mod tests {
             .chain((0..450).map(|i| trade("2020-01-10", &format!("old{i}"))))
             .collect();
         rows.push(trade("2019-12-01", "last"));
+        // a border day that fills a batch on its own takes the next day along, already in the
+        // first batch: the 450 are not read a second time to reach the last trade
         let first = plan_trades(&rows, "2026-11-01", None, false);
-        assert_eq!(first.selected.len(), 600);
-        assert_eq!(first.remaining, 1);
+        assert_eq!(first.selected.len(), 601);
+        assert_eq!(first.remaining, 0);
+        assert!(first.complete);
+        // resumed on that day (a cursor of an older build), it still moves on
         let next = plan_trades(&rows, "2026-11-01", Some("2020-01-10"), false);
         assert_eq!(next.selected.len(), 601);
         assert!(next.complete);

@@ -26,6 +26,8 @@ public final class AppModel {
             showRuleEditor = false
             ruleDraft = nil
             advanziaWorkflow?.cancel()
+            // connection ids belong to one vault: the demo must not show the own vault's progress
+            historyIncomplete = [:]
             if vault != nil { refreshSidebarCounts() }
         }
     }

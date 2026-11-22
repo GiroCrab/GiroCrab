@@ -525,6 +525,8 @@ impl Vault {
                 "trade_retry_rows_v1",
                 "transaction_history_cursor_v1",
                 "doc_listing_cursor_v1",
+                // the Activity Log is listed to its end once more
+                "doc_listing_complete_v1",
             ] {
                 if let Some(mut value) = o.remove(key) {
                     wipe(&mut value);
@@ -911,7 +913,8 @@ mod tests {
             "cookies": "tr_session=test",
             "doc_items": ["already-downloaded"],
             "trade_history_v3_complete": true,
-            "transaction_history_cursor_v1": "next-page"
+            "transaction_history_cursor_v1": "next-page",
+            "doc_listing_complete_v1": true
         }));
         store_state(&v.db().unwrap(), c, &original).unwrap();
 
@@ -926,6 +929,7 @@ mod tests {
             );
             assert!(state["trade_history_v3_complete"].is_null());
             assert!(state["transaction_history_cursor_v1"].is_null());
+            assert!(state["doc_listing_complete_v1"].is_null());
             assert_eq!(state["doc_listing_open_v1"], true);
         });
     }

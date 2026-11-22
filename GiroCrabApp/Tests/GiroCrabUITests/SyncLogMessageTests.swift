@@ -48,4 +48,15 @@ final class SyncLogMessageTests: XCTestCase {
         XCTAssertEqual(AppModel.syncLogMessage(summary(documentsOff: true)), "Keine neuen Buchungen · Dokumentenabruf aus")
         XCTAssertEqual(AppModel.syncLogMessage(summary(imported: 3, documentsOff: true)), "3 neue Buchungen · Dokumentenabruf aus")
     }
+
+    /// Review of #1660: connection ids belong to one vault, so the progress of a history does not
+    /// show in the demo (or the other way round) after a vault swap.
+    func testHistoryProgressDoesNotCarryOverToAnotherVault() {
+        let model = AppModel(options: LaunchOptions(arguments: ["--fresh-vault"], environment: [:]))
+        XCTAssertEqual(model.vaultState, .open)
+        model.historyIncomplete[1] = HistoryProgress(remaining: 5, total: 10)
+        model.showDemo()
+        XCTAssertTrue(model.demoActive)
+        XCTAssertTrue(model.historyIncomplete.isEmpty)
+    }
 }
