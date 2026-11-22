@@ -1,10 +1,10 @@
 //! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
 //! (outgoing). One original can have several refunds and one refund can pay back several originals
-//! (step 38); links do not chain. A link to a split booking names one of its parts (step 39,
-//! `original_part`): the refund pays back that part only. A link whose part is gone (the split
-//! was removed or has no such part any more) becomes a link to the whole booking (`split_changed`);
+//! (schema step 37 holds all of it); links do not chain. A link to a split booking names one of
+//! its parts (`original_part`): the refund pays back that part only. A link whose part is gone
+//! (the split was removed or has no such part any more) becomes a link to the whole booking (`split_changed`);
 //! such a link to a split booking fills its parts from the last to the first. A split refund
-//! works the same way (step 40, `refund_part`): the link names the part of the income that is
+//! works the same way (`refund_part`): the link names the part of the income that is
 //! the refund, and a link to the whole of a split refund takes from its parts from the last to
 //! the first. The link only documents what belongs together: amounts, categories and balances remain
 //! unchanged. Removing a link keeps the row as a tombstone (`deleted_ms`), so the removal reaches

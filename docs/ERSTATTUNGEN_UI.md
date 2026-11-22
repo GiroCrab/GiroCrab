@@ -14,8 +14,8 @@ Erstattung und ursprünglicher Buchung: Eine ursprüngliche Buchung kann mehrere
 Erstattung kann mehrere Buchungen zurückzahlen (eine Sammelerstattung).
 
 **Was zählt:** Eine Buchung gilt höchstens bis zu ihrem Betrag als erstattet, und jede Erstattung zählt nur einmal.
-Der Core verteilt dazu jede Erstattung (älteste zuerst) auf ihre ursprünglichen Buchungen (älteste zuerst); was eine
-Buchung nicht mehr aufnimmt, bleibt für die nächste. `RefundLinks.refunded_cents` (für die ursprüngliche Buchung) und
+Der Core füllt dazu die Verknüpfungen in der Reihenfolge, in der sie angelegt wurden (siehe „Reihenfolge und Grenze“);
+was eine Buchung nicht mehr aufnimmt, bleibt für die nächste. `RefundLinks.refunded_cents` (für die ursprüngliche Buchung) und
 `assigned_cents` (für die Erstattung) tragen das Ergebnis; bei verschiedenen Währungen fehlen sie (#569).
 
 - Eine Erstattung ist ein eingehender Betrag (> 0), die ursprüngliche Buchung ein ausgehender (< 0). Das gilt je
