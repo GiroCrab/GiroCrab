@@ -24,9 +24,6 @@ struct StandingDraft {
     /// Day of the month (31 = last day) or weekday (1 = Monday … 7).
     var execDay = 1
     var pin = ""
-    /// The rhythm an order held when the form opened (change/delete). It stays in the rhythm picker and is not
-    /// moved to a rhythm the bank lists: it is the bank's own.
-    var heldRhythm: StandingRhythm?
 
     static var tomorrow: Date { Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date() }
 
@@ -60,7 +57,6 @@ struct StandingDraft {
         }
         unit = o.timeUnit
         interval = Int(o.interval)
-        if action != .create { heldRhythm = StandingRhythm(unit: unit, interval: interval) }
         execDay = Int(o.execDay)
         if action == .change { syncDate(to: nil) }  // the stored start lies in the past: the next date on the order's day
     }
@@ -205,7 +201,7 @@ struct StandingDraft {
     /// Moves values the bank does not allow to the nearest allowed one, so the form never shows a combination it would refuse.
     mutating func conform(to l: StandingOrderLimits?) {
         let intervals = allowedIntervals(l)
-        if !intervals.isEmpty, !intervals.contains(interval), rhythm != heldRhythm { interval = intervals[0] }
+        if !intervals.isEmpty, !intervals.contains(interval) { interval = intervals[0] }
         let days = allowedDays(l)
         if !days.isEmpty, !days.contains(execDay) {
             execDay = days.min { abs($0 - execDay) < abs($1 - execDay) } ?? days[0]
@@ -245,8 +241,9 @@ struct StandingDraft {
 
     /// What the rhythm picker offers. Without limits from the bank: weekly, monthly, every 2 months, quarterly,
     /// half-yearly, yearly. With limits: what the bank reports for weeks and for months (up to a year of months),
-    /// so a rhythm outside the usual ones that the bank supports can be picked. The order's own rhythm
-    /// (`heldRhythm`) stays offered, so a held order is not lost by choosing another rhythm and back.
+    /// so a rhythm outside the usual ones that the bank supports can be picked. The current rhythm is always
+    /// in the list, so the picker can show it; a rhythm the bank does not list is moved to one it lists by
+    /// `conform(to:)`, as the bank refuses it when sending.
     func rhythmChoices(_ l: StandingOrderLimits?) -> [StandingRhythm] {
         func values(_ reported: [UInt32]?, usual: [Int], top: Int) -> [Int] {
             let list = (reported ?? []).map(Int.init).filter { (1...top).contains($0) }
@@ -254,7 +251,7 @@ struct StandingDraft {
         }
         var list = values(l?.weeks, usual: [1], top: 52).map { StandingRhythm(unit: "W", interval: $0) }
             + values(l?.months, usual: [1, 2, 3, 6, 12], top: 12).map { StandingRhythm(unit: "M", interval: $0) }
-        for r in [heldRhythm, rhythm].compactMap({ $0 }) where !list.contains(r) { list.append(r) }
+        if !list.contains(rhythm) { list.append(rhythm) }
         return list
     }
 
