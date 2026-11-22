@@ -482,19 +482,19 @@ fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize)
         return;
     };
     time("refunds: refund_links (inspector)", || {
-        vault.refund_links(r)
+        vault.refund_links(r).unwrap()
     });
     time("refunds: refund_suggestions", || {
-        vault.refund_suggestions(o)
+        vault.refund_suggestions(o).unwrap()
     });
     time("refunds: refund_candidates(limit 200)", || {
-        vault.refund_candidates(o, String::new(), 200)
+        vault.refund_candidates(o, String::new(), 200).unwrap()
     });
     time("refunds: refund_candidates(search, limit 200)", || {
-        vault.refund_candidates(o, "a".into(), 200)
+        vault.refund_candidates(o, "a".into(), 200).unwrap()
     });
     time("refunds: list_category_expenses (header pie)", || {
-        vault.list_category_expenses(None, None, vec![])
+        vault.list_category_expenses(None, None, vec![]).unwrap()
     });
     println!();
 }
