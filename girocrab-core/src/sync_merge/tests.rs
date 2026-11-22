@@ -4409,7 +4409,10 @@ fn folded_twin_hands_over_rules_documents_and_loan_links() {
                  SELECT id, {twin}, x'00' FROM transactions WHERE account_id = {twin} AND external_id = 'mm-1';
              INSERT INTO loan_links(transaction_id, loan_account_id)
                  SELECT t.id, a.id FROM transactions t, accounts a
-                  WHERE t.account_id = {twin} AND t.external_id = 'mm-2' AND a.external_ref = 'L1';"
+                  WHERE t.account_id = {twin} AND t.external_id = 'mm-2' AND a.external_ref = 'L1';
+             INSERT INTO document_links(uuid, booking_id, account_id, url, updated_ms)
+                 SELECT 'u1', id, {twin}, 'https://archiv.example/1', 5 FROM transactions
+                  WHERE account_id = {twin} AND external_id = 'mm-2';"
         ),
     );
     drop(v);
@@ -4440,6 +4443,460 @@ fn folded_twin_hands_over_rules_documents_and_loan_links() {
         n(&v, "SELECT transaction_id FROM loan_links"),
         bank_booking("mm-2")
     );
+    // the linked receipt (#590) follows its booking, stamped like an edit
+    assert_eq!(
+        text(
+            &v,
+            "SELECT booking_id || ':' || account_id || ':' || (updated_ms > 5) || ':' || (rev != '')
+               FROM document_links"
+        ),
+        format!("{}:{bank}:1:1", bank_booking("mm-2"))
+    );
+}
+
+/// A device that still has the twin links a receipt to one of its bookings
+/// (#590). On the device that folded the twin long ago the reference reaches
+/// the bank account's copy, and the two converge on it.
+#[test]
+fn a_reference_on_a_folded_twin_reaches_the_bank_copy() {
+    let dir = temp_dir("twin-link");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    let bank = giro(&a, c, "API1", &["mm-1", "mm-2"]);
+    giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin
+    assert_eq!(
+        n(&a, "SELECT count(*) FROM accounts WHERE deleted_ms IS NULL"),
+        1
+    );
+
+    let b = open(&dir, "b.db"); // did not fetch: only the imported account
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+    let booking_b = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-1'"
+        ),
+    );
+    b.attach_document_link(booking_b, "https://archiv.example/1".into(), "Bon".into())
+        .unwrap();
+
+    merge(&a, &b);
+    let on_bank = |v: &Vault| {
+        text(
+            v,
+            "SELECT a.external_ref || ':' || t.external_id || ':' || (t.deleted_ms IS NULL)
+               FROM document_links l JOIN transactions t ON t.id = l.booking_id
+               JOIN accounts a ON a.id = t.account_id",
+        )
+    };
+    assert_eq!(on_bank(&a), "API1:mm-1:1");
+    assert_eq!(
+        n(&a, "SELECT account_id FROM document_links"),
+        bank,
+        "the account follows too"
+    );
+    assert_eq!(
+        a.list_documents_for_booking(n(
+            &a,
+            &format!(
+                "SELECT id FROM transactions WHERE account_id = {bank} AND external_id = 'mm-1'"
+            ),
+        ))
+        .unwrap()
+        .len(),
+        1
+    );
+    both_ways(&a, &b);
+    assert_eq!(on_bank(&b), "API1:mm-1:1");
+    assert_eq!(merge(&a, &b).changes, 0);
+}
+
+/// Booking and account of the one linked receipt: `external_ref:external_id:live`.
+fn link_target(v: &Vault) -> String {
+    text(
+        v,
+        "SELECT a.external_ref || ':' || t.external_id || ':' || (t.deleted_ms IS NULL)
+           FROM document_links l JOIN transactions t ON t.id = l.booking_id
+           JOIN accounts a ON a.id = t.account_id AND a.id = l.account_id",
+    )
+}
+
+/// The same reference was moved on both devices in the same millisecond, on
+/// one that folded the twin and on one that still has it (#590). The edit
+/// mark decides, and its booking is read after the fold: both merge orders
+/// end on the same booking of the bank account.
+#[test]
+fn a_tie_across_a_folded_twin_ends_the_same_in_both_merge_orders() {
+    for (rev_a, rev_b, winner) in [("r1", "r2", "mm-1"), ("r2", "r1", "mm-2")] {
+        for a_first in [true, false] {
+            let dir = temp_dir("twin-link-tie");
+            let a = open(&dir, "a.db");
+            let c = comdirect(&a);
+            let bank = giro(&a, c, "API1", &["mm-1", "mm-2"]);
+            giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+            drop(a);
+            let a = open(&dir, "a.db"); // folds the twin
+            let b = open(&dir, "b.db");
+            let cb = comdirect(&b);
+            let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+            let link = |account: i64, ext: &str, rev: &str| {
+                format!(
+                    "INSERT INTO document_links(uuid, booking_id, account_id, url, updated_ms, rev)
+                         SELECT 'u1', id, account_id, 'https://archiv.example/1', 7, '{rev}'
+                           FROM transactions WHERE account_id = {account} AND external_id = '{ext}'"
+                )
+            };
+            exec(&a, &link(bank, "mm-2", rev_a));
+            exec(&b, &link(twin_b, "mm-1", rev_b));
+            if a_first {
+                merge(&a, &b);
+                merge(&b, &a);
+            } else {
+                merge(&b, &a);
+                merge(&a, &b);
+            }
+            assert_converged(&a, &b);
+            let want = format!("API1:{winner}:1");
+            assert_eq!(link_target(&a), want, "{rev_a}/{rev_b}, a first: {a_first}");
+            assert_eq!(link_target(&b), want, "{rev_a}/{rev_b}, a first: {a_first}");
+        }
+    }
+}
+
+/// Two identical bookings share a fingerprint, and the fold paired them with
+/// the bank's copies in external-id order. A reference another device makes
+/// afterwards on the second one reaches the second copy, not none (#590).
+#[test]
+fn a_late_reference_on_one_of_two_identical_twin_bookings_finds_its_copy() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    let dir = temp_dir("twin-link-same");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    giro(&a, c, "API1", &["bank-1", "bank-2"]);
+    giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+    exec(&a, identical);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin: mm-1 -> bank-1, mm-2 -> bank-2
+    assert_eq!(
+        n(&a, "SELECT count(*) FROM accounts WHERE deleted_ms IS NULL"),
+        1
+    );
+    assert_eq!(
+        n(
+            &a,
+            "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL"
+        ),
+        2
+    );
+
+    let b = open(&dir, "b.db");
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+    exec(&b, identical);
+    let second = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-2'"
+        ),
+    );
+    b.attach_document_link(second, "https://archiv.example/2".into(), "Bon 2".into())
+        .unwrap();
+
+    merge(&a, &b);
+    assert_eq!(link_target(&a), "API1:bank-2:1");
+    both_ways(&a, &b);
+    assert_eq!(link_target(&b), "API1:bank-2:1");
+}
+
+/// A hold and the posted booking of one payment can share a fingerprint. The
+/// fold pairs the twin's booking with the posted one (a hold pairs only with
+/// a hold, #1134), and a reference another device makes afterwards on the
+/// twin's booking reaches that posted booking, not the hold (#590).
+#[test]
+fn a_late_reference_on_a_twin_booking_never_lands_on_a_hold() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    let dir = temp_dir("twin-link-hold");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    giro(&a, c, "API1", &["pending-hold-0", "z-final"]);
+    giro(&a, c, MM_GIRO, &["mm-1"]);
+    exec(&a, identical);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin: mm-1 -> z-final
+    assert_eq!(
+        n(
+            &a,
+            "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL"
+        ),
+        2
+    );
+
+    let b = open(&dir, "b.db");
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-1"]);
+    exec(&b, identical);
+    let booking = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-1'"
+        ),
+    );
+    b.attach_document_link(booking, "https://archiv.example/2".into(), "Bon".into())
+        .unwrap();
+
+    merge(&a, &b);
+    assert_eq!(link_target(&a), "API1:z-final:1");
+    both_ways(&a, &b);
+    assert_eq!(link_target(&b), "API1:z-final:1");
+}
+
+/// The fold may take over the twin's newer text. The bank's booking then no
+/// longer has the fingerprint they were paired by; a reference made later
+/// on the twin's booking still reaches it.
+#[test]
+fn a_late_reference_finds_the_copy_whose_text_the_fold_changed() {
+    let fp = crate::importers::moneymoney_import::fingerprint("2026-01-01", -102, "", "", "");
+    let twin_text = format!(
+        "UPDATE transactions SET import_fp = '{fp}', purpose = 'Neuer Zweck', text_ms = 99
+          WHERE external_id = 'mm-1'"
+    );
+    let dir = temp_dir("twin-link-text");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    giro(&a, c, "API1", &["mm-0", "mm-8", "bank-1"]);
+    giro(&a, c, MM_GIRO, &["mm-0", "mm-8", "mm-1"]);
+    exec(&a, &twin_text);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin: mm-1 -> bank-1, with its text
+
+    assert_eq!(
+        text(
+            &a,
+            "SELECT purpose FROM transactions WHERE external_id = 'bank-1'"
+        ),
+        "Neuer Zweck",
+        "folded"
+    );
+
+    let b = open(&dir, "b.db");
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-0", "mm-8", "mm-1"]);
+    exec(&b, &twin_text);
+    let booking = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-1'"
+        ),
+    );
+    b.attach_document_link(booking, "https://archiv.example/7".into(), "Bon".into())
+        .unwrap();
+
+    merge(&a, &b);
+    assert_eq!(link_target(&a), "API1:bank-1:1");
+}
+
+/// The fold paired two identical bookings in id order. A third one that
+/// sorts in between arrives later, with a new reference on the second: that
+/// reference still reaches the copy the fold chose.
+#[test]
+fn a_late_reference_follows_the_folds_pairing_not_todays_rank() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    for bank in [
+        &["bank-1", "bank-2", "bank-3"][..],
+        &["bank-1", "bank-2"][..],
+    ] {
+        let dir = temp_dir("twin-link-rank");
+        let a = open(&dir, "a.db");
+        let c = comdirect(&a);
+        giro(&a, c, "API1", bank);
+        giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+        exec(&a, identical);
+        drop(a);
+        let a = open(&dir, "a.db"); // folds the twin: mm-1 -> bank-1, mm-2 -> bank-2
+
+        let b = open(&dir, "b.db");
+        let cb = comdirect(&b);
+        let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-10", "mm-2"]);
+        exec(&b, identical);
+        let second = n(
+            &b,
+            &format!(
+                "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-2'"
+            ),
+        );
+        b.attach_document_link(second, "https://archiv.example/8".into(), "Bon".into())
+            .unwrap();
+
+        merge(&a, &b);
+        assert_eq!(link_target(&a), "API1:bank-2:1", "{bank:?}");
+    }
+}
+
+/// Bookings that reach the twin after the fold can make it stop looking like
+/// one (`twin_score` counts them). What the fold recorded still holds: a
+/// late reference reaches the copy, and takes its account. An account that
+/// is live again keeps its references.
+#[test]
+fn a_late_reference_follows_the_pairing_when_the_twin_no_longer_looks_like_one() {
+    for live_again in [false, true] {
+        let dir = temp_dir("twin-link-outgrown");
+        let a = open(&dir, "a.db");
+        let c = comdirect(&a);
+        giro(&a, c, "API1", &["mm-1", "mm-2"]);
+        let twin_a = giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+        drop(a);
+        let a = open(&dir, "a.db"); // folds the twin: 2 of 2 found
+
+        let b = open(&dir, "b.db");
+        let cb = comdirect(&b);
+        // two more the bank never had: 2 of 4 is not "most"
+        let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2", "mm-7", "mm-8"]);
+        let booking = n(
+            &b,
+            &format!(
+                "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-1'"
+            ),
+        );
+        b.attach_document_link(booking, "https://archiv.example/3".into(), "Bon".into())
+            .unwrap();
+        if live_again {
+            exec(
+                &a,
+                &format!(
+                    "UPDATE accounts SET deleted_ms = NULL, created_ms = 9000000000000 WHERE id = {twin_a}"
+                ),
+            );
+        }
+
+        merge(&a, &b);
+        let target = text(
+            &a,
+            "SELECT a.external_ref || ':' || t.external_id
+               FROM document_links l JOIN transactions t ON t.id = l.booking_id
+               JOIN accounts a ON a.id = t.account_id",
+        );
+        if live_again {
+            assert_ne!(target, "API1:mm-1", "a live account keeps its references");
+            continue;
+        }
+        assert_eq!(target, "API1:mm-1");
+        assert_eq!(link_target(&a), "API1:mm-1:1", "with the copy's account");
+        both_ways(&a, &b);
+        assert_eq!(link_target(&a), "API1:mm-1:1");
+    }
+}
+
+/// A device without the fold's record of the pairing does not guess between
+/// identical bookings: the reference stays with the bank account, without a
+/// booking, to be linked again.
+#[test]
+fn a_late_reference_is_never_guessed_between_identical_bookings() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    let dir = temp_dir("twin-link-no-guess");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    let bank = giro(&a, c, "API1", &["bank-1", "bank-2"]);
+    giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+    exec(&a, identical);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin
+    exec(&a, "DELETE FROM folded_bookings"); // as if another device had folded
+
+    let b = open(&dir, "b.db");
+    let cb = comdirect(&b);
+    let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+    exec(&b, identical);
+    let second = n(
+        &b,
+        &format!(
+            "SELECT id FROM transactions WHERE account_id = {twin_b} AND external_id = 'mm-2'"
+        ),
+    );
+    b.attach_document_link(second, "https://archiv.example/9".into(), "Bon".into())
+        .unwrap();
+
+    merge(&a, &b);
+    let docs = a
+        .list_all_documents(crate::documents::DocumentFilter::default())
+        .unwrap();
+    assert_eq!(docs.len(), 1);
+    assert_eq!((docs[0].booking_id, docs[0].account_id), (None, Some(bank)));
+}
+
+/// The twin's booking and the bank's copy carry the same link when the twin
+/// is folded: both references end up on the bank's copy, like two files.
+#[test]
+fn a_fold_keeps_both_references_where_both_copies_had_the_same_link() {
+    let dir = temp_dir("twin-link-double");
+    let a = open(&dir, "a.db");
+    let c = comdirect(&a);
+    giro(&a, c, "API1", &["mm-1"]);
+    giro(&a, c, MM_GIRO, &["mm-1"]);
+    exec(
+        &a,
+        "INSERT INTO document_links(uuid, booking_id, account_id, url, updated_ms, rev)
+         SELECT 'u' || id, id, account_id, 'https://archiv.example/1', 7, 'r' || id
+           FROM transactions WHERE external_id = 'mm-1'",
+    );
+    assert_eq!(n(&a, "SELECT count(*) FROM document_links"), 2);
+    drop(a);
+    let a = open(&dir, "a.db"); // folds the twin
+    let bank = n(
+        &a,
+        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+          WHERE a.external_ref = 'API1'",
+    );
+    assert_eq!(a.list_documents_for_booking(bank).unwrap().len(), 2);
+}
+
+/// Both devices hold a reference on the second of two identical twin
+/// bookings. One folds the twin (the reference moves to the second bank
+/// copy); the other imports a third identical booking whose id sorts in
+/// between, so pairing by rank would now land on another copy there. The
+/// fold's move is stamped, so both end on the copy the fold chose (#590).
+#[test]
+fn a_fold_decides_the_copy_even_when_the_other_device_gains_an_identical_booking() {
+    let identical = "UPDATE transactions SET amount_cents = -100, import_fp = 'F'";
+    let shared = |account: i64| {
+        format!(
+            "INSERT INTO document_links(uuid, booking_id, account_id, url, updated_ms, rev)
+                 SELECT 'u1', id, account_id, 'https://archiv.example/2', 5, 'r'
+                   FROM transactions WHERE account_id = {account} AND external_id = 'mm-2'"
+        )
+    };
+    for a_first in [true, false] {
+        let dir = temp_dir("twin-link-shift");
+        let a = open(&dir, "a.db");
+        let c = comdirect(&a);
+        giro(&a, c, "API1", &["bank-1", "bank-2"]);
+        let twin_a = giro(&a, c, MM_GIRO, &["mm-1", "mm-2"]);
+        exec(&a, identical);
+        exec(&a, &shared(twin_a));
+        drop(a);
+        let a = open(&dir, "a.db"); // folds: the reference moves to bank-2
+        assert_eq!(link_target(&a), "API1:bank-2:1");
+
+        let b = open(&dir, "b.db");
+        let cb = comdirect(&b);
+        let twin_b = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2", "mm-10"]);
+        exec(&b, identical);
+        exec(&b, &shared(twin_b));
+
+        if a_first {
+            merge(&a, &b);
+            merge(&b, &a);
+        } else {
+            merge(&b, &a);
+            merge(&a, &b);
+        }
+        merge(&a, &b);
+        merge(&b, &a);
+        assert_eq!(link_target(&a), "API1:bank-2:1", "a first: {a_first}");
+        assert_eq!(link_target(&b), "API1:bank-2:1", "a first: {a_first}");
+    }
 }
 
 // ------------------------------------- MoneyMoney twins without a bank login

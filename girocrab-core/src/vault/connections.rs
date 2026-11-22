@@ -213,6 +213,10 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
             "UPDATE booking_documents SET booking_id = ?1 WHERE booking_id = ?2",
             params![k, o],
         )?;
+        // linked receipts (#590) move with the booking, like its documents.
+        // Unlike those they are merged between devices: the move is stamped
+        // as an edit, or another device would bring the old booking back.
+        crate::document_links::hand_over(conn, o, k)?;
     }
     // bookings only in `dup` move over unchanged (with splits / links / documents)
     conn.execute(
@@ -232,6 +236,17 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
     conn.execute(
         "UPDATE booking_documents SET account_id = ?1 WHERE account_id = ?2",
         params![keep, dup],
+    )?;
+    conn.execute(
+        "UPDATE document_links
+            SET account_id = ?1, updated_ms = max(updated_ms + 1, ?3), rev = ?4
+          WHERE account_id = ?2",
+        params![
+            keep,
+            dup,
+            crate::dates::now_ms(),
+            crate::document_links::new_rev()
+        ],
     )?;
     conn.execute(
         "UPDATE loan_links SET loan_account_id = ?1 WHERE loan_account_id = ?2",
@@ -762,6 +777,7 @@ impl Vault {
                   WHERE id = ?1",
                 [stale],
             )?;
+            crate::document_links::hand_over(&tx, stale, live)?;
             if !deleted {
                 crate::sync_merge::soft_delete_booking(&tx, stale)?;
             }
@@ -1913,6 +1929,48 @@ mod tests {
         );
     }
 
+    /// The stale booking hands over its linked receipt (#590) and a fold's
+    /// pairing with it, like what the user set on it.
+    #[test]
+    fn switching_again_hands_receipts_and_pairings_to_the_live_booking() {
+        let dir = crate::test_support::TempDir::new("girocrab-switch-stale-links");
+        let (v, c, giro, _, booking) = comdirect_vault(dir.path(), "v.db");
+        let (stale, twin) = {
+            let db = v.db().unwrap();
+            let add = |ext: &str| {
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES (?1, ?2, '2026-11-03', -8600)",
+                    params![giro, ext],
+                )
+                .unwrap();
+                db.last_insert_rowid()
+            };
+            let ids = (add("mm-switch-rest-1"), add("pending-twin"));
+            db.execute(
+                "INSERT INTO folded_bookings(booking_id, copy_id) VALUES (?1, ?2)",
+                params![ids.1, ids.0],
+            )
+            .unwrap();
+            ids
+        };
+        v.attach_document_link(stale, "https://dms.example/doc/1".into(), "Beleg".into())
+            .unwrap();
+
+        v.switch_comdirect_access(c).unwrap();
+        assert_eq!(v.list_documents_for_booking(booking).unwrap().len(), 1);
+        let copy: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT copy_id FROM folded_bookings WHERE booking_id = ?1",
+                [twin],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(copy, booking);
+    }
+
     // ---------------------------------------------------------------- card holds (#1134)
 
     /// A card payment of 25,00 € the bank reports as hold `id` (no counterparty,
@@ -2341,5 +2399,217 @@ mod tests {
         assert!(take("camt:REF2"), "a marked booking still is");
         add("mm-switch-pending-e2e-1");
         assert!(take("camt:REF3"), "and a marked transfer of the app");
+    }
+
+    /// A linked receipt (#590) on a booking of the duplicate account moves
+    /// to the kept account's booking. Links are merged between devices, so
+    /// the move must be the newest edit: otherwise another device brings the
+    /// old booking back.
+    #[test]
+    fn dedup_moves_linked_receipts_as_an_edit() {
+        let dir = crate::test_support::TempDir::new("girocrab-dedup-links");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![4u8; 32],
+        )
+        .unwrap();
+        let (keep_acc, keep_booking, dup_booking) = {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            let mut ids = Vec::new();
+            for n in [1, 2] {
+                db.execute(
+                    "INSERT INTO bank_connections(connector, display_name, login_name)
+                     VALUES ('fints:52090000', 'VB', '1234567890')",
+                    [],
+                )
+                .unwrap();
+                let c = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, 'DE1', ?3)",
+                    params![c, g, format!("Giro {n}")],
+                )
+                .unwrap();
+                let acc = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES (?1, 'B1', '2026-11-07', -23800)",
+                    [acc],
+                )
+                .unwrap();
+                ids.push((acc, db.last_insert_rowid()));
+            }
+            (ids[0].0, ids[0].1, ids[1].1)
+        };
+        v.attach_document_link(
+            dup_booking,
+            "https://dms.example/doc/1".into(),
+            "Beleg".into(),
+        )
+        .unwrap();
+        let stamp = |v: &Vault| -> (Option<i64>, i64, String) {
+            v.db()
+                .unwrap()
+                .query_row(
+                    "SELECT booking_id, updated_ms, rev FROM document_links",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap()
+        };
+        let before = stamp(&v);
+        assert_eq!(before.0, Some(dup_booking));
+
+        assert_eq!(v.deduplicate_bank_connections().unwrap(), 1);
+        let after = stamp(&v);
+        assert_eq!(after.0, Some(keep_booking));
+        assert!(after.1 > before.1, "a later edit");
+        assert_ne!(after.2, before.2, "with a mark of its own");
+        assert_eq!(v.list_documents_for_booking(keep_booking).unwrap().len(), 1);
+        let _ = keep_acc;
+    }
+
+    /// Both bookings carry the same link when the duplicate bank logins are
+    /// merged: both references end up on the kept booking, like two files (#590).
+    #[test]
+    fn dedup_keeps_both_references_to_the_same_link() {
+        let dir = crate::test_support::TempDir::new("girocrab-dedup-links-double");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![4u8; 32],
+        )
+        .unwrap();
+        let mut bookings = Vec::new();
+        {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            for n in [1, 2] {
+                db.execute(
+                    "INSERT INTO bank_connections(connector, display_name, login_name)
+                     VALUES ('fints:52090000', 'VB', '1234567890')",
+                    [],
+                )
+                .unwrap();
+                let c = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, 'DE1', ?3)",
+                    params![c, g, format!("Giro {n}")],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES (?1, 'B1', '2026-11-07', -23800)",
+                    [db.last_insert_rowid()],
+                )
+                .unwrap();
+                bookings.push(db.last_insert_rowid());
+            }
+        }
+        for booking in &bookings {
+            v.attach_document_link(*booking, "https://dms.example/doc/1".into(), "Beleg".into())
+                .unwrap();
+        }
+
+        assert_eq!(v.deduplicate_bank_connections().unwrap(), 1);
+        assert_eq!(v.list_documents_for_booking(bookings[0]).unwrap().len(), 2);
+    }
+
+    /// The remembered pairing of a twin fold follows a merged duplicate: it
+    /// must never name a deleted booking, whose row id SQLite hands out again.
+    #[test]
+    fn dedup_takes_the_pairing_of_a_fold_along() {
+        let dir = crate::test_support::TempDir::new("girocrab-dedup-pairing");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![4u8; 32],
+        )
+        .unwrap();
+        let mut bookings = Vec::new();
+        let twin_booking: i64;
+        {
+            let db = v.db().unwrap();
+            db.execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+                .unwrap();
+            let g = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO accounts(group_id, external_ref, name) VALUES (?1, 'TWIN', 'Import')",
+                [g],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 VALUES (?1, 'mm-1', '2026-11-07', -23800)",
+                [db.last_insert_rowid()],
+            )
+            .unwrap();
+            twin_booking = db.last_insert_rowid();
+            for n in [1, 2] {
+                db.execute(
+                    "INSERT INTO bank_connections(connector, display_name, login_name)
+                     VALUES ('fints:52090000', 'VB', '1234567890')",
+                    [],
+                )
+                .unwrap();
+                let c = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO accounts(connection_id, group_id, external_ref, name) VALUES (?1, ?2, 'DE1', ?3)",
+                    params![c, g, format!("Giro {n}")],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES (?1, 'B1', '2026-11-07', -23800)",
+                    [db.last_insert_rowid()],
+                )
+                .unwrap();
+                bookings.push(db.last_insert_rowid());
+            }
+            db.execute(
+                "INSERT INTO folded_bookings(booking_id, copy_id) VALUES (?1, ?2)",
+                params![twin_booking, bookings[1]],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(v.deduplicate_bank_connections().unwrap(), 1);
+        let copy: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT copy_id FROM folded_bookings WHERE booking_id = ?1",
+                [twin_booking],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(copy, bookings[0]);
+    }
+
+    /// A paired booking that is removed for good takes the pairing with it.
+    #[test]
+    fn a_pairing_goes_with_the_booking_it_names() {
+        let dir = crate::test_support::TempDir::new("girocrab-pairing-cascade");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![4u8; 32],
+        )
+        .unwrap();
+        let db = v.db().unwrap();
+        db.execute_batch(
+            "INSERT INTO account_groups(id, name) VALUES (901, 'G');
+             INSERT INTO accounts(id, group_id, external_ref, name) VALUES (901, 901, 'P', 'P');
+             INSERT INTO transactions(id, account_id, external_id, booking_date, amount_cents)
+                  VALUES (901, 901, 'twin', '2026-11-07', -1), (902, 901, 'copy', '2026-11-07', -1);
+             INSERT INTO folded_bookings(booking_id, copy_id) VALUES (901, 902);
+             DELETE FROM transactions WHERE id = 902;",
+        )
+        .unwrap();
+        let left: i64 = db
+            .query_row("SELECT count(*) FROM folded_bookings", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 }

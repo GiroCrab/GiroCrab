@@ -57,6 +57,8 @@
 //! - 37: one sidebar section per account kind (#1003): the accounts of the old
 //!   section "Giro & Tagesgeld" move to Girokonten, Tagesgeld / Sparen, Festgeld, Bargeld
 //!   and Zahlungsdienste by `accounts.kind`; the old section is removed.
+//! - 38: linked receipts (#590): table `document_links`, references to documents kept outside
+//!   the vault (URL, title, date); synced by `uuid`, unlike the files in `booking_documents`.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -110,6 +112,7 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Hook(account_kind_groups),                           // 37 (#1003)
+    Step::Sql(crate::document_links::SCHEMA),                  // 38: linked receipts (#590)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -1139,7 +1142,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 37);
+        assert_eq!(SCHEMA_VERSION, 38);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

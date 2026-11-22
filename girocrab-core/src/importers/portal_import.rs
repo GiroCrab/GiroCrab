@@ -1188,7 +1188,11 @@ pub(crate) fn resolve_holds(
                 "SELECT c.id, h.id FROM transactions c JOIN transactions h
                     ON h.account_id = c.account_id AND h.deleted_ms IS NULL
                    AND h.external_id = 'pending-hold-portal-' || c.external_id
-                 WHERE c.account_id = ?1 AND c.deleted_ms IS NULL AND c.external_id LIKE 'id:P%'",
+                 WHERE c.account_id = ?1 AND c.deleted_ms IS NULL AND c.external_id LIKE 'id:P%'
+                   -- a copy with a linked receipt (#590) stays: the hand-over
+                   -- deletes the copy and would leave the receipt on it
+                   AND NOT EXISTS (SELECT 1 FROM document_links l
+                                    WHERE l.booking_id = c.id AND l.deleted_ms IS NULL)",
             )?;
             let rows = q.query_map([account_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect::<Result<_, _>>()?
@@ -1204,6 +1208,8 @@ pub(crate) fn resolve_holds(
               WHERE t.account_id = ?1 AND t.deleted_ms IS NULL AND {}
                 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
                 AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)
+                AND NOT EXISTS (SELECT 1 FROM document_links l
+                                 WHERE l.booking_id = t.id AND l.deleted_ms IS NULL)
               ORDER BY t.booking_date, t.id",
             hold_sql(legacy)
         ))?;
@@ -1302,13 +1308,29 @@ fn convert_legacy_copies(db: &rusqlite::Connection, account_id: i64) -> Result<u
             "SELECT t.id FROM transactions t
               WHERE t.account_id = ?1 AND t.deleted_ms IS NULL AND t.external_id LIKE 'id:P%'
                 AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
-                AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)",
+                AND NOT EXISTS (SELECT 1 FROM booking_documents d WHERE d.booking_id = t.id)
+                AND NOT EXISTS (SELECT 1 FROM document_links l
+                                 WHERE l.booking_id = t.id AND l.deleted_ms IS NULL)",
         )?;
         let rows = q.query_map([account_id], |r| r.get(0))?;
         rows.collect::<Result<_, _>>()?
     };
     for id in &copies {
         db.execute(&copy_sql, [id])?;
+        // the row under the hold id, just made or there before
+        let under_hold_id: Option<i64> = db
+            .query_row(
+                // includes soft-deleted rows: a discarded hold holds the id
+                "SELECT h.id FROM transactions c JOIN transactions h
+                    ON h.account_id = c.account_id AND h.external_id = ?2 || c.external_id
+                  WHERE c.id = ?1",
+                params![id, HOLD_PREFIX],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(to) = under_hold_id {
+            crate::document_links::hand_over(db, *id, to)?;
+        }
         crate::sync_merge::soft_delete_booking(db, *id)?;
     }
     Ok(copies.len() as u32)
@@ -1342,7 +1364,9 @@ fn eref_of(purpose: &str) -> Option<&str> {
 /// the parts' categories, amounts and notes; tags carried over; checked when all parts
 /// were) and the parts are deleted (tombstones, iCloud-safe). Its own category goes
 /// unless set by hand: a split booking is shown by the categories of its parts.
-/// Parts with splits or documents and parts that don't add up stay as they are.
+/// Parts with splits or documents and parts that don't add up stay as they are,
+/// and so does a whole group with a linked receipt (#590) on one of its parts:
+/// the others could add up by chance without it.
 /// Idempotent; returns the number of merged bookings.
 pub(crate) fn merge_imported_split_parts(
     db: &rusqlite::Connection,
@@ -1351,6 +1375,18 @@ pub(crate) fn merge_imported_split_parts(
     // (id, amount, category, note, checked) of imported parts, by reference
     type Part = (i64, i64, Option<i64>, String, bool);
     let mut by_ref: std::collections::BTreeMap<String, Vec<Part>> = Default::default();
+    // asked on its own: a part left out below still protects its group
+    let receipted: std::collections::HashSet<String> = db
+        .prepare(
+            "SELECT t.purpose FROM document_links l JOIN transactions t ON t.id = l.booking_id
+              WHERE t.account_id = ?1 AND t.deleted_ms IS NULL AND l.deleted_ms IS NULL
+                AND t.external_id LIKE 'mm-%'",
+        )?
+        .query_map([account_id], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .filter_map(|purpose| eref_of(purpose).map(str::to_string))
+        .collect();
     {
         let mut q = db.prepare(
             "SELECT t.id, t.purpose, t.amount_cents, t.category_id, t.note, t.checked FROM transactions t
@@ -1383,7 +1419,7 @@ pub(crate) fn merge_imported_split_parts(
     let now = crate::dates::now_ms();
     let mut merged = 0u32;
     for (reference, parts) in by_ref {
-        if parts.len() < 2 || parts.iter().any(|p| p.1 == 0) {
+        if receipted.contains(&reference) || parts.len() < 2 || parts.iter().any(|p| p.1 == 0) {
             continue;
         }
         // the portal booking with this reference (exactly one, not split yet)
@@ -1436,6 +1472,7 @@ pub(crate) fn merge_imported_split_parts(
             )?;
         }
         for (id, ..) in &parts {
+            crate::document_links::hand_over(db, *id, bank_id)?;
             crate::sync_merge::soft_delete_booking(db, *id)?;
         }
         merged += 1;
@@ -1465,6 +1502,7 @@ pub(crate) fn hand_over(db: &rusqlite::Connection, from: i64, to: i64) -> Result
           WHERE id = ?2 AND checked = 0 AND (SELECT checked FROM transactions WHERE id = ?1) = 1",
         params![from, to, now],
     )?;
+    crate::document_links::hand_over(db, from, to)?;
     crate::sync_merge::soft_delete_booking(db, from)
 }
 
@@ -2425,6 +2463,157 @@ mod hold_tests {
         assert!(split_lines(&v, "id:AT260000000000000000001---0005---20260105").is_empty());
     }
 
+    /// A linked receipt (#590) on one part keeps the whole group: without
+    /// that part the others can add up by chance.
+    #[test]
+    fn a_linked_receipt_on_one_part_keeps_the_whole_group() {
+        for amount in ["89,95", "79,95"] {
+            let (v, conn, _dir) = vault();
+            let old = posted("R1", "2026-01-02", "10,00", "SHOP A");
+            sync(&v, conn, &body(std::slice::from_ref(&old), None)).unwrap();
+            let reference = "AT260000000000000000001";
+            imported_parts(&v, reference, -5000, -3995, false);
+            sql(
+                &v,
+                &format!(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents,
+                            currency, counterparty, counterparty_iban, purpose, booking_text)
+                     SELECT id, 'mm-cccc', '2026-01-05', '2026-01-05', 1000, 'EUR', 'SHOP', '',
+                            'SHOP, CITY EREF: {reference}', ''
+                       FROM accounts"
+                ),
+            );
+            let refund: i64 = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT id FROM transactions WHERE external_id = 'mm-cccc'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            v.attach_document_link(refund, "https://archiv.example/9".into(), "Bon".into())
+                .unwrap();
+            // -89,95 is the sum without the linked part, -79,95 the group's:
+            // merged, the part would be deleted under its receipt
+            let whole = posted(
+                "AT260000000000000000001---0005---20260105",
+                "2026-01-05",
+                amount,
+                "SHOP   CITY",
+            );
+            sync(&v, conn, &body(&[old, whole], None)).unwrap();
+            assert!(
+                split_lines(&v, "id:AT260000000000000000001---0005---20260105").is_empty(),
+                "{amount}"
+            );
+            assert_eq!(ids(&v).len(), 5, "nothing merged");
+        }
+    }
+
+    /// So does a linked receipt on a part that stays for a reason of its own
+    /// (a stored document).
+    #[test]
+    fn a_linked_receipt_next_to_a_document_keeps_the_whole_group() {
+        let (v, conn, _dir) = vault();
+        let old = posted("R1", "2026-01-02", "10,00", "SHOP A");
+        sync(&v, conn, &body(std::slice::from_ref(&old), None)).unwrap();
+        let reference = "AT260000000000000000001";
+        imported_parts(&v, reference, -5000, -3995, false);
+        sql(
+            &v,
+            &format!(
+                "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents,
+                        currency, counterparty, counterparty_iban, purpose, booking_text)
+                 SELECT id, 'mm-cccc', '2026-01-05', '2026-01-05', 1000, 'EUR', 'SHOP', '',
+                        'SHOP, CITY EREF: {reference}', ''
+                   FROM accounts"
+            ),
+        );
+        let refund: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE external_id = 'mm-cccc'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        v.attach_document_link(refund, "https://archiv.example/9".into(), "Bon".into())
+            .unwrap();
+        v.attach_document_to_booking(refund, "r.pdf".into(), b"%PDF-1.4 receipt".to_vec())
+            .unwrap();
+        let whole = posted(
+            "AT260000000000000000001---0005---20260105",
+            "2026-01-05",
+            "89,95",
+            "SHOP   CITY",
+        );
+        sync(&v, conn, &body(&[old, whole], None)).unwrap();
+        assert!(split_lines(&v, "id:AT260000000000000000001---0005---20260105").is_empty());
+    }
+
+    /// Wherever a booking hands over to another, what a twin fold paired
+    /// with it goes along (#590): settled hold, converted copy, merged parts.
+    #[test]
+    fn a_pairing_follows_every_hand_over() {
+        let reference = "AT260000000000000000001";
+        for case in ["settled", "converted", "parts"] {
+            let (v, conn, _dir) = vault();
+            let old = posted("R1", "2026-01-02", "10,00", "SHOP A");
+            sync(&v, conn, &body(std::slice::from_ref(&old), None)).unwrap();
+            let db = v.db().unwrap();
+            let account: i64 = db
+                .query_row("SELECT id FROM accounts", [], |r| r.get(0))
+                .unwrap();
+            let add = |ext: &str, cents: i64, purpose: &str| {
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents,
+                            currency, counterparty, counterparty_iban, purpose, booking_text)
+                     VALUES (?1, ?2, '2026-01-05', '2026-01-05', ?3, 'EUR', 'SHOP', '', ?4, 'Kartenumsatz')",
+                    params![account, ext, cents, purpose],
+                )
+                .unwrap();
+                db.last_insert_rowid()
+            };
+            let twin = add("of-a-twin", -1, "");
+            let paired = |copy: i64| {
+                db.execute(
+                    "INSERT INTO folded_bookings(booking_id, copy_id) VALUES (?1, ?2)",
+                    params![twin, copy],
+                )
+                .unwrap();
+            };
+            match case {
+                "settled" => {
+                    let (hold, post) = (add("hold", -500, ""), add("post", -500, ""));
+                    paired(hold);
+                    hand_over(&db, hold, post).unwrap();
+                }
+                "converted" => {
+                    paired(add("id:P7", -500, ""));
+                    convert_legacy_copies(&db, account).unwrap();
+                }
+                _ => {
+                    let purpose = format!("SHOP EREF: {reference}");
+                    paired(add("mm-aaaa", -5000, &purpose));
+                    add("mm-bbbb", -3995, &purpose);
+                    add(&format!("id:{reference}---0005---20260105"), -8995, "");
+                    assert_eq!(merge_imported_split_parts(&db, account).unwrap(), 1);
+                }
+            }
+            let live: bool = db
+                .query_row(
+                    "SELECT t.deleted_ms IS NULL FROM folded_bookings f
+                       JOIN transactions t ON t.id = f.copy_id",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(live, "{case}");
+        }
+    }
+
     #[test]
     fn eref_references() {
         assert_eq!(
@@ -2692,6 +2881,49 @@ mod hold_tests {
                 && ids.contains(&format!("{HOLD_PREFIX}id:P1")),
             "imported row and hold side by side: {ids:?}"
         );
+    }
+
+    /// A pre-#629 copy that carries a linked receipt (#590) is not handed
+    /// over to the hold of its charge: the hand-over deletes the copy, and
+    /// the receipt would be left on a deleted booking.
+    #[test]
+    fn a_pre_629_copy_with_a_linked_receipt_keeps_it() {
+        let (v, conn, _dir) = vault();
+        let old = posted("R1", "2026-01-02", "10,00", "SHOP A");
+        sync(&v, conn, &body(std::slice::from_ref(&old), Some(&[]))).unwrap();
+        sql(
+            &v,
+            "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents,
+                    currency, counterparty, counterparty_iban, purpose, booking_text)
+             SELECT id, 'id:P3', '2026-01-07', '2026-01-07', -500, 'EUR', 'SHOP', '', '', 'Kartenumsatz'
+               FROM accounts;",
+        );
+        let copy: i64 = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE external_id = 'id:P3'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        v.attach_document_link(copy, "https://archiv.example/3".into(), "Bon".into())
+            .unwrap();
+        // P3 is still pending: its hold arrives next to the copy
+        let b = body(&[old], Some(&[pending("P3", "2026-01-07", "5,00", "SHOP")]));
+        sync(&v, conn, &b).unwrap();
+        let on_live_booking: bool = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT t.deleted_ms IS NULL FROM document_links l
+                   JOIN transactions t ON t.id = l.booking_id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(on_live_booking);
+        assert_eq!(v.list_documents_for_booking(copy).unwrap().len(), 1);
     }
 
     #[test]

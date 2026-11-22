@@ -301,6 +301,135 @@ pub(crate) fn folded_into(conn: &Connection, id: i64) -> CoreResult<Option<i64>>
     }
 }
 
+/// [`folded_into`] with the answers kept in `seen`: a merge asks once per account.
+pub(crate) fn folded_account(
+    conn: &Connection,
+    account: i64,
+    seen: &mut HashMap<i64, Option<i64>>,
+) -> CoreResult<Option<i64>> {
+    if let Some(bank) = seen.get(&account) {
+        return Ok(*bank);
+    }
+    let bank = folded_into(conn, account)?;
+    seen.insert(account, bank);
+    Ok(bank)
+}
+
+/// The columns a fingerprint is computed from.
+const TEXT: &str =
+    "import_fp, booking_date, amount_cents, counterparty_iban, counterparty, purpose";
+
+/// The bookings of account ?1 that could be the partner of one with the
+/// fingerprint ?3, date ?4 and amount ?5, without a key match in account ?2.
+/// A union rather than an OR, so each half is answered by an index of its own.
+pub(crate) fn unpaired_sql() -> String {
+    format!(
+        // includes soft-deleted rows
+        "SELECT t.id, t.external_id, {TEXT} FROM transactions t
+          WHERE t.id IN (SELECT id FROM transactions
+                          WHERE account_id = ?1 AND import_fp = ?3 AND import_fp != ''
+                         UNION ALL
+                         SELECT id FROM transactions
+                          WHERE amount_cents = ?5 AND booking_date = ?4 AND account_id = ?1)
+            AND NOT EXISTS (SELECT 1 FROM transactions x
+                             WHERE x.account_id = ?2 AND x.external_id = t.external_id)"
+    )
+}
+
+/// The booking that stands for `booking` once its account is a folded twin
+/// (deleted, its bank account live): the copy the fold on this device paired
+/// it with (`folded_bookings`), else the bank account's copy with the same
+/// external id, else its partner by fingerprint, but only if that is
+/// unambiguous: the one booking of its kind (hold or posted, #1134) without
+/// a key match on either side. Which of several identical bookings the fold
+/// chose cannot be worked out afterwards, so it is never guessed.
+/// `None`: `booking` stands for itself (no folded twin, or no copy known). A
+/// linked receipt (#590) then stays with the bank account without a booking,
+/// where it can be linked again.
+pub(crate) fn folded_booking(
+    conn: &Connection,
+    booking: i64,
+    seen: &mut HashMap<i64, Option<i64>>,
+) -> CoreResult<Option<i64>> {
+    type Text = (String, String, i64, String, String, String);
+    let text = |r: &rusqlite::Row, at: usize| -> rusqlite::Result<Text> {
+        Ok((
+            r.get(at)?,
+            r.get(at + 1)?,
+            r.get(at + 2)?,
+            r.get(at + 3)?,
+            r.get(at + 4)?,
+            r.get(at + 5)?,
+        ))
+    };
+    let fingerprint = |(fp, date, cents, iban, name, purpose): &Text| {
+        super::bookings::match_fingerprint(fp.clone(), date, *cents, iban, name, purpose)
+    };
+    let row: Option<(i64, String, Text)> = conn
+        .query_row(
+            // includes soft-deleted rows: the twin's bookings went with it
+            &format!("SELECT account_id, external_id, {TEXT} FROM transactions WHERE id = ?1"),
+            [booking],
+            |r| Ok((r.get(0)?, r.get(1)?, text(r, 2)?)),
+        )
+        .optional()?;
+    let Some((account, ext, own)) = row else {
+        return Ok(None);
+    };
+    // What the fold recorded comes first, whether or not the twin still
+    // looks like one: bookings that reached it later count in `twin_score`.
+    // It holds while the twin is deleted and the copy's account lives.
+    let paired: Option<i64> = conn
+        .query_row(
+            // includes soft-deleted rows: a deleted copy keeps the reference
+            "SELECT t.id FROM folded_bookings f
+               JOIN transactions t ON t.id = f.copy_id
+               JOIN accounts copy ON copy.id = t.account_id AND copy.deleted_ms IS NULL
+               JOIN accounts twin ON twin.id = ?2 AND twin.deleted_ms IS NOT NULL
+              WHERE f.booking_id = ?1",
+            [booking, account],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if paired.is_some() {
+        return Ok(paired);
+    }
+    let Some(bank) = folded_account(conn, account, seen)? else {
+        return Ok(None);
+    };
+    let by_key: Option<i64> = conn
+        .query_row(
+            // includes soft-deleted rows: a deleted copy keeps the reference
+            "SELECT id FROM transactions WHERE account_id = ?1 AND external_id = ?2",
+            params![bank, ext],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if by_key.is_some() {
+        return Ok(by_key);
+    }
+    let wanted = fingerprint(&own);
+    let hold = super::bookings::is_hold_id(&ext);
+    // bookings of `of` with this fingerprint (and of the same kind, hold or
+    // posted) that `other` does not hold under the same external id
+    let unpaired = |of: i64, other: i64| -> CoreResult<Vec<i64>> {
+        Ok(conn
+            .prepare_cached(&unpaired_sql())?
+            .query_map(params![of, other, wanted, own.1, own.2], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, text(r, 2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|(_, e, t)| fingerprint(t) == wanted && super::bookings::is_hold_id(e) == hold)
+            .map(|(id, _, _)| id)
+            .collect())
+    };
+    match (&unpaired(account, bank)?[..], &unpaired(bank, account)?[..]) {
+        ([only], [copy]) if *only == booking => Ok(Some(*copy)),
+        _ => Ok(None),
+    }
+}
+
 /// Folds every live MoneyMoney twin into its bank account: its bookings
 /// merge into the bank account the way a device merge does (matched by
 /// external id, else import fingerprint; newest edit per field wins), rules,
@@ -376,7 +505,18 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     let rule_map = identity("rules")?;
     let acc_map = HashMap::from([(twin, bank)]);
     let mut stats = crate::vault::MergeStats::default();
-    super::merge_bookings(conn, &acc_map, &cat_map, &rule_map, &mut stats)?;
+    // twin booking -> its copy in the bank account, as the merge paired them
+    let booking_map = super::merge_bookings(conn, &acc_map, &cat_map, &rule_map, &mut stats)?;
+    // which copy each booking became: a linked receipt that arrives later
+    // follows it (`folded_booking`), however the bookings look by then
+    {
+        let mut remember = conn.prepare(
+            "INSERT OR REPLACE INTO main.folded_bookings(booking_id, copy_id) VALUES (?1, ?2)",
+        )?;
+        for (old, copy) in &booking_map {
+            remember.execute([old, copy])?;
+        }
+    }
     // stamped: a device still holding the rule on the twin's key loses
     conn.execute(
         "UPDATE rules SET account_id = ?2, updated_ms = max(updated_ms + 1, ?3) WHERE account_id = ?1",
@@ -406,6 +546,33 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     conn.execute(
         "UPDATE booking_documents SET account_id = ?2 WHERE account_id = ?1",
         params![twin, bank],
+    )?;
+    // linked receipts (#590) follow the exact pairing of the merge above.
+    // Stamped, like the rules: a device still holding the reference on the
+    // twin's booking loses and takes over this booking through its own
+    // booking map, instead of pairing identical bookings anew.
+    let now = crate::dates::now_ms();
+    let rev = crate::document_links::new_rev();
+    let linked: Vec<i64> = conn
+        .prepare(
+            "SELECT DISTINCT booking_id FROM document_links
+              WHERE booking_id IN (SELECT id FROM transactions WHERE account_id = ?1)",
+        )?
+        .query_map([twin], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    for old in linked {
+        if let Some(copy) = booking_map.get(&old) {
+            conn.execute(
+                crate::document_links::MOVE_BOOKING_SQL,
+                params![old, copy, now, rev],
+            )?;
+        }
+    }
+    conn.execute(
+        "UPDATE document_links
+            SET account_id = ?2, updated_ms = max(updated_ms + 1, ?3), rev = ?4
+          WHERE account_id = ?1 AND deleted_ms IS NULL",
+        params![twin, bank, now, rev],
     )?;
     conn.execute(
         &format!(

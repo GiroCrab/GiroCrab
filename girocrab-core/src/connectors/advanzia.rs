@@ -317,7 +317,7 @@ impl Vault {
     pub fn discard_advanzia_hold(&self, connection_id: i64, booking_id: i64) -> CoreResult<()> {
         let db = self.db()?;
         connection(&db, connection_id)?;
-        let eligible: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE a.connection_id=?1 AND a.deleted_ms IS NULL AND a.archived_unix IS NULL AND t.id=?2 AND t.deleted_ms IS NULL AND (t.external_id LIKE 'pending-hold-portal-advanzia-%' OR t.external_id LIKE 'advanzia-hold-%') AND NOT EXISTS(SELECT 1 FROM booking_documents WHERE booking_id=t.id) AND NOT EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=t.id))",params![connection_id,booking_id],|r|r.get(0))?;
+        let eligible: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE a.connection_id=?1 AND a.deleted_ms IS NULL AND a.archived_unix IS NULL AND t.id=?2 AND t.deleted_ms IS NULL AND (t.external_id LIKE 'pending-hold-portal-advanzia-%' OR t.external_id LIKE 'advanzia-hold-%') AND NOT EXISTS(SELECT 1 FROM booking_documents WHERE booking_id=t.id) AND NOT EXISTS(SELECT 1 FROM document_links WHERE booking_id=t.id AND deleted_ms IS NULL) AND NOT EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=t.id))",params![connection_id,booking_id],|r|r.get(0))?;
         if !eligible {
             return Err(invalid("Diese Vormerkung darf nicht verworfen werden."));
         }
