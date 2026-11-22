@@ -245,6 +245,8 @@ struct AccountExpensePie: View {
     @State private var loaded: (key: Key, parts: [HeaderPieSlices.Part])?
 
     private struct Key: Hashable {
+        let vaultRevision: Int
+        let revision: Int
         let ids: [Int64]
         let from: String?
         let to: String?
@@ -253,13 +255,13 @@ struct AccountExpensePie: View {
 
         /// Same accounts and period: slices of an older `version` may stand in until the new ones
         /// arrive, those of another period or selection never (#1413).
-        func covers(_ other: Key) -> Bool { ids == other.ids && from == other.from && to == other.to }
+        func covers(_ other: Key) -> Bool { vaultRevision == other.vaultRevision && ids == other.ids && from == other.from && to == other.to }
     }
 
     var body: some View {
         // the period the header names (#1413), not one still loading
         let (from, to) = model.shownPeriod.range(salaryCycle: model.shownSalaryCycle)
-        let key = Key(ids: model.headerChartAccountIDs, from: from, to: to, version: model.categories.map(\.totalCents))
+        let key = Key(vaultRevision: model.vaultRevision, revision: model.financialReportRevision, ids: model.headerChartAccountIDs, from: from, to: to, version: model.categories.map(\.totalCents))
         Group {
             if let loaded, loaded.key.covers(key) {
                 HeaderPieChart(slices: HeaderPieSlices.fold(loaded.parts, limit: HeaderPieSlices.limit),
@@ -270,8 +272,11 @@ struct AccountExpensePie: View {
         }
         .task(id: key) {
             let parts = try? await model.vaultOffMain { vault in
-                HeaderPieSlices.expenses(try vault.listCategoriesFiltered(
-                    dateFrom: key.from, dateTo: key.to, accountIds: key.ids, checked: nil, direction: .expense))
+                let filter = BookingFilter(accountIds: key.ids, categoryId: nil, includeSubcategories: false,
+                    uncategorizedOnly: false, search: nil, dateFrom: key.from, dateTo: key.to, limit: 0, offset: 0,
+                    scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
+                return try vault.listCategoryExpenses(filter: filter).filter { $0.cents > 0 }
+                    .map { HeaderPieSlices.Part(id: $0.categoryId.map { String($0) } ?? "uncategorized", label: $0.name, cents: $0.cents) }
             }
             guard !Task.isCancelled, let parts else { return }
             loaded = (key, parts)

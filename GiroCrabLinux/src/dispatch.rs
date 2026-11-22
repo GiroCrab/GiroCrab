@@ -1619,6 +1619,8 @@ vault_methods! {
     count_planned_payments() count_active_mandates()
     list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
+    list_category_expenses(filter)
+    list_category_income(filter)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
     // --- Offline-Konten und manuelle Buchungen (OfflineAccountsUI.swift, #679, #81) ---
     create_offline_account(name, kind, currency, opening_cents)
@@ -3118,6 +3120,24 @@ mod tests {
                     "direction": "All" }),
         );
         let cat = cats.as_array().unwrap()[0]["id"].clone();
+        let expenses = call(
+            "list_category_expenses",
+            json!({"filter":girocrab_core::BookingFilter::default()}),
+        );
+        assert!(
+            expenses
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["cents"].is_i64())
+        );
+        assert!(
+            call(
+                "list_category_income",
+                json!({"filter":girocrab_core::BookingFilter::default()})
+            )
+            .is_array()
+        );
         assert!(
             call(
                 "category_history_by_unit",

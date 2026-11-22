@@ -39,6 +39,7 @@
 //! OUT=<file> writes the vault with the app's demo key and stops (open it with
 //! GIROCRAB_DEMO_VAULT=<file> .build/debug/GiroCrabMac --demo-seed).
 //! RULE_INDEX=1 creates the covering indexes by hand on a vault that lacks them.
+//! REFUNDS=n adds n partial refund links for the projection benchmark.
 //! STEP_DAYS (default 183) is the shift between copies: 7 with COPIES=600 spans ~11.5 years.
 //! PAYPAL=n adds a payment-service account with n uncategorised bookings, half of them
 //! mirroring a bank booking (the transfer pairing in `vault/transfer_pairs.rs`).
@@ -56,6 +57,13 @@ use girocrab_core::models::{
     BookingDirection, BookingFilter, BookingScope, MatchKind, Rule, RuleField,
 };
 use girocrab_core::vault::Vault;
+
+struct Cleanup(std::path::PathBuf);
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 fn time<T>(label: &str, mut f: impl FnMut() -> T) -> f32 {
     let mut ms: Vec<f32> = (0..5)
@@ -83,6 +91,7 @@ fn main() {
     };
     let tmp = std::env::temp_dir().join(format!("gc-cat-perf-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp).unwrap();
+    let _cleanup = out.is_none().then(|| Cleanup(tmp.clone()));
     let path = out
         .clone()
         .unwrap_or_else(|| tmp.join("vault.db").to_string_lossy().to_string());
@@ -148,6 +157,16 @@ fn main() {
         if std::env::var("RULE_INDEX").is_ok_and(|v| !v.is_empty()) {
             c.execute_batch("CREATE INDEX tx_rule_live ON transactions(rule_id, deleted_ms); CREATE INDEX tx_acct_live ON transactions(account_id, category_id, checked, deleted_ms); ANALYZE;").unwrap();
         }
+        let originals: Vec<(i64,i64,i64,String,String)> = c.prepare(
+            "SELECT id,account_id,amount_cents,booking_date,currency FROM transactions t WHERE amount_cents<0 AND NOT EXISTS(SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id) ORDER BY id LIMIT ?1"
+        ).unwrap().query_map([env_usize("REFUNDS",0) as i64],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap().collect::<Result<_,_>>().unwrap();
+        for (index, (id, account, amount, date, currency)) in originals.into_iter().enumerate() {
+            let Some(cents) = amount.checked_neg().map(|n| n.min(1000)) else {
+                continue;
+            };
+            c.execute("INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,currency,counterparty) VALUES (?1,?2,date(?3,'+7 days'),?4,?5,'Refund')",rusqlite::params![account,format!("perf-refund-{index}"),date,cents,currency]).unwrap();
+            c.execute("INSERT INTO refund_links(refund_id,original_id,refund_cents,original_cents,created_ms,changed_ms) VALUES (?1,?2,?3,?4,?5,?5)",rusqlite::params![c.last_insert_rowid(),id,cents,amount,index as i64+1]).unwrap();
+        }
     }
     if let Some(out) = out {
         // Open once so WAL data is checkpointed into the file.
@@ -163,6 +182,25 @@ fn main() {
         })
         .unwrap();
     let cats = vault.list_categories(None, None).unwrap();
+    let linked = all
+        .transactions
+        .iter()
+        .filter(|b| b.external_id.starts_with("perf-refund-"))
+        .map(|b| {
+            vault
+                .refund_links(b.id)
+                .expect("refund benchmark links")
+                .iter()
+                .filter(|l| l.allocated_cents > 0)
+                .count()
+        })
+        .sum::<usize>();
+    assert_eq!(
+        linked,
+        env_usize("REFUNDS", 0),
+        "refund benchmark fixture has fewer live links than requested"
+    );
+    println!("live refund links: {linked}");
     println!(
         "bookings: {}, categories: {}\n",
         all.transactions.len(),
@@ -207,6 +245,11 @@ fn main() {
         "sum", total
     );
     println!();
+    time("expense projection: list_category_expenses", || {
+        vault
+            .list_category_expenses(BookingFilter::default())
+            .expect("expense projection benchmark")
+    });
     time("merchant_stats (total only, one pass)", || {
         vault.merchant_stats(b.merchant.key.clone())
     });

@@ -240,6 +240,7 @@ fn default_name_en(de: &str) -> Option<&'static str> {
 /// English text for a German source string; `None` = no translation.
 fn english(de: &str) -> Option<&'static str> {
     Some(match de {
+        "Ohne Kategorie" => "Uncategorized",
         "Bitte das bestehende Advanzia-Konto einmalig für diesen Zugang bestätigen." => {
             "Please confirm the existing Advanzia account once for this connection."
         }

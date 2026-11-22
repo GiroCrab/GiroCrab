@@ -214,6 +214,7 @@ pub struct Vault {
     /// Known recipients of the transfer form, kept until the data changes (#978).
     pub(crate) recipients: cache::ChangeCache<crate::recipients::Recipients>,
     pub(crate) refunds: cache::ChangeCache<crate::refunds::Projection>,
+    pub(crate) projection: cache::ChangeCache<crate::projection::Projection>,
     /// Merchant recognition with the user's changes (#1373), kept while its tables stay
     /// the same (`Vault::merchant_rules`); holds the merchant cache of this vault.
     pub(crate) merchant_rules: Mutex<Arc<crate::merchants::MerchantRules>>,
@@ -542,6 +543,7 @@ impl Vault {
             suggestions: Default::default(),
             recipients: Default::default(),
             refunds: Default::default(),
+            projection: Default::default(),
             merchant_rules: Mutex::new(crate::merchants::MerchantRules::builtin().clone()),
             data_generation: AtomicU64::new(0),
             _open: OpenVault::new(),

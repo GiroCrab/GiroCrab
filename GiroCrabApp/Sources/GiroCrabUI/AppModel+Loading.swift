@@ -86,6 +86,7 @@ extension AppModel {
     }
 
     func reloadCategories() {
+        financialReportRevision &+= 1
         settlePendingSelectionLoad()
         guard let vault else { return }
         let (from, to) = periodRange

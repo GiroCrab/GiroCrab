@@ -28,13 +28,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
-use rusqlite::params_from_iter;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::CoreError;
 use crate::merchants::FlowKind;
-use crate::models::{Booking, BookingDirection, BookingFilter, KpiSide, kpi_side};
+use crate::models::{Booking, BookingDirection, BookingFilter};
 use crate::vault::Vault;
 
 /// Version of the request/response format; a breaking change bumps it.
@@ -630,59 +629,44 @@ impl Vault {
         let filter = BookingFilter {
             date_from: Some(from.clone()),
             date_to: Some(to.clone()),
+            account_ids: accounts.clone(),
             ..Default::default()
         };
         let mut totals: BTreeMap<String, ApiCurrencyTotals> = BTreeMap::new();
         for t in self.booking_page_after(&db, &filter, &accounts, &shared, None, 0)? {
+            let currency = if t.currency.trim().is_empty() {
+                "EUR".to_string()
+            } else {
+                t.currency.trim().to_ascii_uppercase()
+            };
             let e = totals
-                .entry(t.currency.clone())
+                .entry(currency.clone())
                 .or_insert_with(|| ApiCurrencyTotals {
-                    currency: t.currency.clone(),
+                    currency,
                     income_cents: 0,
                     expense_cents: 0,
                     booking_count: 0,
                 });
             e.booking_count += 1;
-            match kpi_side(t.flow, t.amount_cents) {
-                KpiSide::Income => e.income_cents += t.amount_cents,
-                KpiSide::Expense => e.expense_cents -= t.amount_cents,
-                KpiSide::Neutral => {}
+        }
+        let selection = self.projected_selection(
+            &db,
+            &filter,
+            Some(&shared),
+            crate::projection::CurrencyMode::All,
+        )?;
+        for (currency, sums) in selection.currency_totals()? {
+            if let Some(e) = totals.get_mut(&currency) {
+                e.income_cents = sums.income_cents;
+                e.expense_cents = crate::projection::cents(-i128::from(sums.expense_cents))?;
             }
         }
-        // Per category: one split-aware SQL sum over the same bookings; a deleted
-        // category reads as none, like in `transactions`.
+        // Per-category shares of the same scoped projection; deleted categories read as none.
         let paths = Vault::category_paths(&db)?;
-        let ph: Vec<String> = (0..accounts.len()).map(|i| format!("?{}", i + 3)).collect();
-        let sql = format!(
-            "SELECT c.id, e.currency, SUM(e.amount_cents)
-               FROM {} e
-               LEFT JOIN categories c ON c.id = e.category_id AND c.deleted_ms IS NULL
-              GROUP BY c.id, e.currency",
-            crate::planning::effective_sql(
-                ", t.currency AS currency",
-                &format!(
-                    " AND t.account_id IN ({}) AND t.booking_date BETWEEN ?1 AND ?2",
-                    ph.join(",")
-                ),
-            )
-        );
-        let mut args: Vec<rusqlite::types::Value> = vec![from.clone().into(), to.clone().into()];
-        args.extend(accounts.iter().map(|id| (*id).into()));
         let by_category: Vec<ApiCategoryTotal> = if accounts.is_empty() {
             Vec::new()
         } else {
-            let mut stmt = db.prepare(&sql).map_err(CoreError::from)?;
-            let rows = stmt
-                .query_map(params_from_iter(args.iter()), |r| {
-                    Ok((
-                        r.get::<_, Option<i64>>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, i64>(2)?,
-                    ))
-                })
-                .map_err(CoreError::from)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(CoreError::from)?;
+            let rows = selection.category_currencies()?;
             let mut out: Vec<ApiCategoryTotal> = rows
                 .into_iter()
                 .map(|(category_id, currency, net_cents)| ApiCategoryTotal {

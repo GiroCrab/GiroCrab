@@ -2,6 +2,7 @@
 //! German weekday titles, the cashflow chart scale and the budget / top-spending lines.
 //! No Slint here, so everything is unit-tested; `main.rs` maps the results to the window.
 
+use girocrab_core::projection::CategoryFlowTotal;
 use girocrab_core::{CategoryBudgetStatus, PeriodCashflow};
 
 use crate::daily::Row;
@@ -112,22 +113,28 @@ pub struct DayBucket {
     pub currency: String,
 }
 
-/// Groups consecutive rows with the same booking date (the list is sorted by date).
+/// Proof-view bank net per day and currency (the list is sorted by date).
 pub fn group_by_day(rows: &[&Row]) -> Vec<DayBucket> {
     let mut out: Vec<DayBucket> = Vec::new();
+    let mut positions = std::collections::HashMap::<(String, String), usize>::new();
     for (i, r) in rows.iter().enumerate() {
         let date = r.booking_date.get(..10).unwrap_or(&r.booking_date);
-        match out.last_mut() {
-            Some(day) if day.date == date => {
+        let key = (date.to_string(), r.currency.clone());
+        match positions.get(&key).copied() {
+            Some(index) => {
+                let day = &mut out[index];
                 day.indices.push(i);
                 day.sum_cents += r.amount_cents;
             }
-            _ => out.push(DayBucket {
-                date: date.to_string(),
-                indices: vec![i],
-                sum_cents: r.amount_cents,
-                currency: r.currency.clone(),
-            }),
+            None => {
+                positions.insert(key, out.len());
+                out.push(DayBucket {
+                    date: date.to_string(),
+                    indices: vec![i],
+                    sum_cents: r.amount_cents,
+                    currency: r.currency.clone(),
+                });
+            }
         }
     }
     out
@@ -199,57 +206,6 @@ pub fn booking_type_label(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// Cashflow of the last `n` periods ending at `now`, summed from loaded rows (one account).
-/// `gran`: 0 month, 1 quarter, 2 year; keys match the core ("2026-03", "2026-Q1", "2026").
-pub fn cashflow_from_rows(
-    rows: &[Row],
-    gran: i32,
-    now: (i32, u32),
-    n: usize,
-) -> Vec<PeriodCashflow> {
-    let key = |y: i32, m: u32| match gran {
-        1 => format!("{y}-Q{}", (m - 1) / 3 + 1),
-        2 => format!("{y}"),
-        _ => format!("{y}-{m:02}"),
-    };
-    let step = match gran {
-        1 => 3,
-        2 => 12,
-        _ => 1,
-    };
-    let mut keys = Vec::new();
-    let (mut y, mut m) = now;
-    for _ in 0..n {
-        keys.push(key(y, m));
-        let total = y * 12 + (m as i32 - 1) - step;
-        y = total.div_euclid(12);
-        m = total.rem_euclid(12) as u32 + 1;
-    }
-    keys.reverse();
-    let mut out: Vec<PeriodCashflow> = keys
-        .into_iter()
-        .map(|k| PeriodCashflow {
-            key: k,
-            income_cents: 0,
-            expense_cents: 0,
-        })
-        .collect();
-    for r in rows {
-        let Some((y, m, _)) = parse_iso(&r.booking_date) else {
-            continue;
-        };
-        let k = key(y, m);
-        if let Some(p) = out.iter_mut().find(|p| p.key == k) {
-            if r.amount_cents >= 0 {
-                p.income_cents += r.amount_cents;
-            } else {
-                p.expense_cents += -r.amount_cents;
-            }
-        }
-    }
-    out
 }
 
 /// One bar pair of the chart: heights as a fraction (0..=1) of the axis maximum.
@@ -324,24 +280,13 @@ pub fn budgets(status: &[CategoryBudgetStatus]) -> Vec<Budget> {
     v
 }
 
-/// Fallback without budgets: the categories with the highest spending in `year`-`month`
-/// of the loaded rows; bars are relative to the largest one.
-pub fn top_spending(rows: &[Row], year: i32, month: u32, n: usize) -> Vec<Budget> {
-    let mut sums: Vec<(String, String, i64)> = Vec::new();
-    for r in rows.iter().filter(|r| r.amount_cents < 0) {
-        if parse_iso(&r.booking_date).map(|(y, m, _)| (y, m)) != Some((year, month)) {
-            continue;
-        }
-        let name = if r.category_name.is_empty() {
-            "Ohne Kategorie".to_string()
-        } else {
-            r.category_name.clone()
-        };
-        match sums.iter_mut().find(|s| s.0 == name) {
-            Some(s) => s.2 += -r.amount_cents,
-            None => sums.push((name, r.category_color_hex.clone(), -r.amount_cents)),
-        }
-    }
+/// Bars over core expense totals, relative to the largest one.
+pub fn top_spending(totals: &[CategoryFlowTotal], n: usize) -> Vec<Budget> {
+    let mut sums: Vec<(String, String, i64)> = totals
+        .iter()
+        .filter(|t| t.cents > 0)
+        .map(|t| (t.name.clone(), t.color_hex.clone(), t.cents))
+        .collect();
     sums.sort_by_key(|s| std::cmp::Reverse(s.2));
     sums.truncate(n);
     let max = sums.first().map_or(1, |s| s.2).max(1);
@@ -426,6 +371,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn proof_day_nets_keep_currencies_separate() {
+        let a = row("2026-11-13", -100, "A");
+        let mut b = row("2026-11-13", -200, "B");
+        b.currency = "USD".into();
+        let c = row("2026-11-13", -300, "C");
+        let days = group_by_day(&[&a, &b, &c]);
+        assert_eq!(days.len(), 2);
+        assert_eq!((days[0].sum_cents, days[1].sum_cents), (-400, -200));
+        assert_eq!(days[1].currency, "USD");
+    }
+
+    #[test]
     fn period_labels() {
         assert_eq!(period_label("2026-03"), "Mär");
         assert_eq!(period_label("2026-Q1"), "Q1");
@@ -452,24 +409,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn cashflow_sums_rows_per_period() {
-        let rows = [
-            row("2026-11-02", -3000, "A"),
-            row("2026-11-05", 10000, "B"),
-            row("2026-10-30", -500, "A"),
-            row("2025-01-01", -999, "A"),
-        ];
-        let m = cashflow_from_rows(&rows, 0, (2026, 11), 3);
-        let keys: Vec<_> = m.iter().map(|p| p.key.as_str()).collect();
-        assert_eq!(keys, ["2026-09", "2026-10", "2026-11"]);
-        assert_eq!((m[2].income_cents, m[2].expense_cents), (10000, 3000));
-        assert_eq!(m[1].expense_cents, 500);
-        let q = cashflow_from_rows(&rows, 1, (2026, 11), 2);
-        assert_eq!(q[1].key, "2026-Q4");
-        assert_eq!(q[0].key, "2026-Q3");
-        assert_eq!(q[1].expense_cents, 3500);
-        let y = cashflow_from_rows(&rows, 2, (2026, 11), 2);
-        assert_eq!((y[0].key.as_str(), y[0].expense_cents), ("2025", 999));
+    fn cashflow_chart_presents_core_periods() {
+        let (bars, _) = chart(&[PeriodCashflow {
+            key: "2026-11".into(),
+            income_cents: 10000,
+            expense_cents: 3000,
+        }]);
+        assert_eq!(bars.len(), 1);
+        assert!(bars[0].income > bars[0].expense);
+        assert!(bars[0].expense > 0.0);
+        assert!(chart(&[]).0.is_empty());
     }
 
     #[test]
@@ -492,13 +441,22 @@ pub(crate) mod tests {
     #[test]
     fn top_spending_is_relative_to_the_largest() {
         let rows = [
-            row("2026-11-02", -3000, "Essen"),
-            row("2026-11-03", -1500, "Essen"),
-            row("2026-11-04", -1500, "Reisen"),
-            row("2026-10-04", -9000, "Alt"),
-            row("2026-11-05", 5000, "Gehalt"),
+            CategoryFlowTotal {
+                category_id: Some(1),
+                name: "Essen".into(),
+                color_hex: "#ff0000".into(),
+                cents: 4500,
+                booking_count: 2,
+            },
+            CategoryFlowTotal {
+                category_id: Some(2),
+                name: "Reisen".into(),
+                color_hex: "#00ff00".into(),
+                cents: 1500,
+                booking_count: 1,
+            },
         ];
-        let top = top_spending(&rows, 2026, 11, 4);
+        let top = top_spending(&rows, 4);
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].name, "Essen");
         assert_eq!(top[0].spent_cents, 4500);

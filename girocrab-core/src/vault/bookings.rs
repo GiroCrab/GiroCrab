@@ -52,16 +52,6 @@ fn is_account_number_query(compact: &str) -> bool {
     compact.chars().all(|c| c.is_ascii_digit())
 }
 
-/// WHERE clause "booking `t` belongs to the categories `cat_match`" (e.g. `= ?3`,
-/// `IS NULL`), split-aware like `planning::effective_sql`: an unsplit booking by
-/// its own category, a split booking only by the categories of its parts.
-fn category_match_sql(cat_match: &str) -> String {
-    format!(
-        "((t.category_id {cat_match} AND NOT EXISTS (SELECT 1 FROM transaction_splits sp WHERE sp.transaction_id = t.id)) \
-         OR EXISTS (SELECT 1 FROM transaction_splits sp WHERE sp.transaction_id = t.id AND sp.category_id {cat_match}))"
-    )
-}
-
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
 /// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
 /// PayPal account (see `BookingFinisher`).
@@ -250,7 +240,7 @@ pub(crate) fn attach_split_categories(
 /// Everything a raw booking row needs to read like the booking list: category
 /// names, merchant, flow (salary, own transfers, loans), domain overrides.
 /// Only depends on the vault's data, so `ListCache` keeps it between calls.
-pub(super) struct BookingFinisher {
+pub(crate) struct BookingFinisher {
     refunds: Arc<crate::refunds::Projection>,
     language: crate::i18n::Lang,
     category_flows: HashMap<i64, super::categories::CategoryFlow>,
@@ -267,6 +257,10 @@ pub(super) struct BookingFinisher {
 }
 
 impl BookingFinisher {
+    pub(crate) fn loan_account(&self, id: i64) -> Option<i64> {
+        self.loan_links.get(&id).copied()
+    }
+
     fn load(
         db: &rusqlite::Connection,
         merchants: Arc<MerchantRules>,
@@ -313,7 +307,7 @@ impl BookingFinisher {
 
     /// With `visible` accounts (local interface, #136), a payment linked to a
     /// loan outside them reads as a transfer: the loan itself must not show.
-    fn finish(&self, t: &mut Booking, visible: Option<&[i64]>) {
+    pub(crate) fn finish(&self, t: &mut Booking, visible: Option<&[i64]>) {
         if let Some(s) = self.refunds.summaries.get(&t.id) {
             t.refund_marker = s.marker().into();
             t.refund_cents = s.refund_cents;
@@ -407,7 +401,7 @@ impl Vault {
     ) -> Result<(String, String, Vec<Box<dyn ToSql>>, String), CoreError> {
         let mut wh: Vec<String> = vec![LIVE_BOOKINGS_SQL.into()];
         let mut args: Vec<Box<dyn ToSql>> = vec![];
-        let mut cte = String::new();
+        let cte = String::new();
         if !filter.account_ids.is_empty() {
             let ph: Vec<String> = filter
                 .account_ids
@@ -461,34 +455,33 @@ impl Vault {
             ));
             wh.push(format!("({clause})"));
         }
-        // Category filters follow `planning::effective_sql`: a split booking belongs
-        // to the categories of its parts (never to its own category), and only the
-        // parts of the filtered category count in the KPI sums (`share_sql`).
-        let cat_match: Option<String> = if filter.uncategorized_only {
-            Some("IS NULL".into())
-        } else if let Some(cat) = filter.category_id {
-            args.push(Box::new(cat));
-            let n = args.len();
-            if filter.include_subcategories {
-                cte = format!(
-                    "WITH RECURSIVE sub(id) AS (SELECT ?{n} UNION ALL SELECT c.id FROM categories c JOIN sub ON c.parent_id = sub.id WHERE c.deleted_ms IS NULL) "
-                );
-                Some("IN (SELECT id FROM sub)".into())
-            } else {
-                Some(format!("= ?{n}"))
-            }
-        } else {
-            None
-        };
-        let share_sql = match &cat_match {
-            Some(m) => {
-                wh.push(category_match_sql(m));
-                format!(
-                    "COALESCE((SELECT SUM(sp.amount_cents) FROM transaction_splits sp WHERE sp.transaction_id = t.id AND sp.category_id {m}), t.amount_cents)"
-                )
-            }
-            None => "t.amount_cents".to_string(),
-        };
+        if filter.uncategorized_only
+            || filter.category_id.is_some()
+            || filter.scope != BookingScope::All
+        {
+            let mut financial_filter = filter.clone();
+            financial_filter.respect_in_total = false;
+            let ids: HashSet<i64> = self
+                .projected_booking_selection(
+                    db,
+                    &financial_filter,
+                    None,
+                    crate::projection::CurrencyMode::All,
+                )?
+                .rows
+                .into_iter()
+                .map(|r| r.booking_id)
+                .collect();
+            args.push(Box::new(format!(
+                "[{}]",
+                ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+            )));
+            wh.push(format!(
+                "t.id IN (SELECT value FROM json_each(?{}))",
+                args.len()
+            ));
+        }
+        let share_sql = "t.amount_cents".to_string();
         if let Some(from) = filter.date_from.as_ref().filter(|s| !s.is_empty()) {
             args.push(Box::new(from.clone()));
             wh.push(format!("t.booking_date >= ?{}", args.len()));
@@ -751,12 +744,21 @@ impl Vault {
         while let Some(row) = rows.next()? {
             let id: i64 = row.get(0)?;
             let class = classes.as_ref().and_then(|c| c.get(&id));
-            if class.is_some_and(|c| !keeps(filter, c.flow, &c.merchant)) {
+            if class.is_some_and(|c| {
+                filter
+                    .merchant_key
+                    .as_deref()
+                    .is_some_and(|m| m != c.merchant.as_ref())
+            }) {
                 continue;
             }
             let (share, mut t) = booking_from_row(row)?;
             finisher.finish(&mut t, None);
-            if keeps(filter, t.flow, &t.merchant.key) {
+            if filter
+                .merchant_key
+                .as_deref()
+                .is_none_or(|m| m == t.merchant.key)
+            {
                 visit(share, t);
             }
         }
@@ -805,7 +807,7 @@ pub(crate) fn filters_by_class(filter: &BookingFilter) -> bool {
 
 /// Whether a booking of `flow` and `merchant` passes the parts of `filter` SQL
 /// can't apply: scope, merchant and the own transfers "Ohne Kategorie" leaves out.
-fn keeps(filter: &BookingFilter, flow: FlowKind, merchant: &str) -> bool {
+pub(crate) fn keeps(filter: &BookingFilter, flow: FlowKind, merchant: &str) -> bool {
     let in_scope = match filter.scope {
         BookingScope::All => true,
         BookingScope::Everyday => !matches!(flow, FlowKind::Investment | FlowKind::Perk),
@@ -946,37 +948,15 @@ impl Vault {
         &self,
         filter: BookingFilter,
     ) -> Result<Vec<CurrencyFlow>, CoreError> {
-        if filter.account_ids.len() == 1 {
-            return Ok(Vec::new());
-        }
         // one guard for both reads, so eligibility and bookings stay consistent
         let db = self.db()?;
         if !crate::planning::has_other_currencies(&db)? {
             return Ok(Vec::new());
         }
-        // the same effective set as the EUR page sums (#337): the totals set
-        // intersected with the selection
-        let totals = totals_set(&db, &filter)?;
-        let mut per: std::collections::BTreeMap<String, SelectionFlow> = Default::default();
-        self.visit_bookings(&db, &filter, |share, t| {
-            if !crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
-                && totals
-                    .as_ref()
-                    .is_none_or(|set| set.contains(&t.account_id))
-            {
-                per.entry(t.currency.to_uppercase())
-                    .or_default()
-                    .add(t.flow, share);
-            }
-        })?;
-        Ok(per
+        Ok(self
+            .projected_selection(&db, &filter, None, crate::projection::CurrencyMode::Other)?
+            .currencies()?
             .into_iter()
-            .map(|(currency, f)| CurrencyFlow {
-                currency,
-                consumption_cents: f.consumption_cents,
-                invested_cents: f.invested_cents,
-                income_cents: f.income_cents,
-            })
             .filter(|f| f.consumption_cents != 0 || f.invested_cents != 0 || f.income_cents != 0)
             .collect())
     }
@@ -991,32 +971,19 @@ impl Vault {
         db: &rusqlite::Connection,
         filter: &BookingFilter,
     ) -> Result<Vec<(i64, i64)>, CoreError> {
-        let classes = self.booking_classes(db)?;
-        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
-        let sql = format!("{cte}SELECT t.id, {share_sql} {BOOKING_FROM_SQL} WHERE {where_sql}");
-        let mut stmt = db.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(args.iter().map(|b| b.as_ref())), |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (id, share) = row?;
-            // the classes cover every live booking of this connection's data
-            if classes
-                .get(&id)
-                .is_some_and(|c| keeps(filter, c.flow, &c.merchant))
-            {
-                out.push((id, share));
-            }
-        }
-        Ok(out)
+        self.projected_booking_selection(
+            db,
+            filter,
+            None,
+            crate::projection::CurrencyMode::Primary,
+        )?
+        .shares()
     }
 }
 
 /// What filters and sums need of a booking that only exists after
 /// `BookingFinisher::finish`.
 pub(crate) struct BookingClass {
-    pub(crate) flow: FlowKind,
     pub(crate) merchant: Arc<str>,
     /// The shown merchant name in lower case, for the search (#1373).
     pub(crate) name: Arc<str>,
@@ -1068,7 +1035,7 @@ impl ListCache {
 impl Vault {
     /// The `BookingFinisher` of the vault's current data. Built outside the cache lock:
     /// the caller holds the connection, so nobody else builds one meanwhile.
-    fn booking_finisher(
+    pub(crate) fn booking_finisher(
         &self,
         db: &rusqlite::Connection,
     ) -> Result<Arc<BookingFinisher>, CoreError> {
@@ -1131,14 +1098,7 @@ impl Vault {
             finisher.finish(&mut t, None);
             let name = intern(t.merchant.name.to_lowercase());
             let merchant = intern(t.merchant.key);
-            classes.insert(
-                t.id,
-                BookingClass {
-                    flow: t.flow,
-                    merchant,
-                    name,
-                },
-            );
+            classes.insert(t.id, BookingClass { merchant, name });
         }
         let classes = Arc::new(classes);
         self.list_cache
@@ -1236,39 +1196,27 @@ impl Vault {
                 r.get::<_, String>(4)?,
             ))
         })?;
-        let (mut income, mut expense, mut consumption, mut investment, mut perk) =
-            (0i64, 0i64, 0i64, 0i64, 0i64);
-        let mut flow = SelectionFlow::default();
+        let crate::projection::Totals {
+            income_cents: income,
+            expense_cents: expense,
+            consumption_cents: consumption,
+            investment_cents: investment,
+            perk_cents: perk,
+            flow,
+        } = self.projected_totals(db, filter, None, crate::projection::CurrencyMode::Primary)?;
         let mut kept: Vec<(i64, String)> = Vec::new();
         let mut total = 0u32;
-        let totals = totals_set(db, filter)?;
         for row in rows {
-            let (id, date, account_id, share, currency) = row?;
+            let (id, date, _, _, _) = row?;
             let Some(class) = classes.get(&id) else {
                 return Ok(None);
             };
-            if !keeps(filter, class.flow, &class.merchant) {
-                continue;
-            }
-            // Sums skip other currencies unless one account is selected (#1049),
-            // and only accounts of the totals set (#337) contribute to the sums;
-            // counts and rows stay complete either way.
-            let counts_for_totals = totals.as_ref().is_none_or(|set| set.contains(&account_id));
-            if counts_for_totals
-                && crate::planning::counts_in_sums(filter.account_ids.len(), &currency)
+            if filter
+                .merchant_key
+                .as_deref()
+                .is_some_and(|m| m != class.merchant.as_ref())
             {
-                match kpi_side(class.flow, share) {
-                    KpiSide::Income => income += share,
-                    KpiSide::Expense => expense += share,
-                    KpiSide::Neutral => {}
-                }
-                match class.flow {
-                    FlowKind::Consumption => consumption += share,
-                    FlowKind::Investment => investment += share,
-                    FlowKind::Perk => perk += share,
-                    _ => {}
-                }
-                flow.add(class.flow, share);
+                continue;
             }
             total += 1;
             if with_rows {
@@ -1340,39 +1288,17 @@ impl Vault {
             0 => usize::MAX,
             limit => start.saturating_add(limit as usize),
         };
-        let (mut income, mut expense, mut consumption, mut investment, mut perk) =
-            (0i64, 0i64, 0i64, 0i64, 0i64);
-        let mut flow = SelectionFlow::default();
+        let crate::projection::Totals {
+            income_cents: income,
+            expense_cents: expense,
+            consumption_cents: consumption,
+            investment_cents: investment,
+            perk_cents: perk,
+            flow,
+        } = self.projected_totals(db, filter, None, crate::projection::CurrencyMode::Primary)?;
         let mut txs: Vec<Booking> = Vec::new();
         let mut total = 0usize;
-        let totals = totals_set(db, filter)?;
-        self.visit_bookings(db, filter, |share, t| {
-            // One KPI definition (`kpi_side`) for the page sums and `SelectionFlow`;
-            // transfers between own accounts are neutral (else counted on both sides).
-            // `share` is the full amount, or with a category filter only the split
-            // parts of that category. Only accounts of the totals set (#337)
-            // contribute to the sums — the booking itself always stays in the
-            // list and in the counts — and sums skip other currencies unless
-            // one account is selected (#1049); the rows stay.
-            let counts_for_totals = totals
-                .as_ref()
-                .is_none_or(|set| set.contains(&t.account_id));
-            if counts_for_totals
-                && crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
-            {
-                match kpi_side(t.flow, share) {
-                    KpiSide::Income => income += share,
-                    KpiSide::Expense => expense += share,
-                    KpiSide::Neutral => {}
-                }
-                match t.flow {
-                    FlowKind::Consumption => consumption += share,
-                    FlowKind::Investment => investment += share,
-                    FlowKind::Perk => perk += share,
-                    _ => {}
-                }
-                flow.add(t.flow, share);
-            }
+        self.visit_bookings(db, filter, |_, t| {
             // Only the page is kept. `whole_days` adds the rest of its last day:
             // sorted by day, it follows directly.
             let in_page = (start..end).contains(&total)
@@ -1399,25 +1325,6 @@ impl Vault {
             day_balances: Vec::new(),
         })
     }
-}
-
-/// The effective total set behind `BookingFilter.respect_in_total` (#337):
-/// `None` for a proof context (the default). An explicit `account_ids`
-/// selection narrows the set — an empty result means "none" (zero sums),
-/// never "all accounts".
-fn totals_set(
-    db: &rusqlite::Connection,
-    filter: &BookingFilter,
-) -> Result<Option<std::collections::HashSet<i64>>, CoreError> {
-    if !filter.respect_in_total {
-        return Ok(None);
-    }
-    let allowed = crate::user_groups::total_account_ids(db)?;
-    if filter.account_ids.is_empty() {
-        return Ok(Some(allowed));
-    }
-    let want: std::collections::HashSet<i64> = filter.account_ids.iter().copied().collect();
-    Ok(Some(allowed.intersection(&want).copied().collect()))
 }
 
 #[uniffi::export]

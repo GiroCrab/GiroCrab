@@ -8,6 +8,7 @@ use super::Vault;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{role_name, tr};
 use crate::models::*;
+use crate::projection::{CurrencyMode, Side};
 
 /// Classification metadata never passes through a booking's display fields.
 #[derive(Default)]
@@ -127,6 +128,22 @@ fn ensure_not_below(db: &Connection, id: i64, parent_id: Option<i64>) -> CoreRes
 
 #[uniffi::export]
 impl Vault {
+    /// Net expense contributions, including allocated credits on their booking date.
+    pub fn list_category_expenses(
+        &self,
+        mut filter: BookingFilter,
+    ) -> Result<Vec<crate::projection::CategoryFlowTotal>, CoreError> {
+        filter.direction = BookingDirection::All;
+        self.projected_category_flows(&filter, Side::Expense)
+    }
+
+    pub fn list_category_income(
+        &self,
+        mut filter: BookingFilter,
+    ) -> Result<Vec<crate::projection::CategoryFlowTotal>, CoreError> {
+        filter.direction = BookingDirection::All;
+        self.projected_category_flows(&filter, Side::Income)
+    }
     /// All categories in tree order (depth-first, siblings by sort order) with
     /// totals for the optional period.
     pub fn list_categories(
@@ -221,35 +238,20 @@ impl Vault {
             7
         };
         let db = self.db()?;
-        let rows = Self::category_rows(&db)?;
-        let ids = Self::category_subtree(&rows, category_id);
-        let in_list = |v: &[i64]| v.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-        let account_clause = if account_ids.is_empty() {
-            String::new()
-        } else {
-            format!(" AND account_id IN ({})", in_list(&account_ids))
-        };
-        let sql = format!(
-            "SELECT substr(booking_date, 1, {key_length}) AS m, SUM(amount_cents) FROM {}
-             WHERE category_id IN ({}){account_clause}
-               AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
-             GROUP BY m ORDER BY m",
-            crate::planning::effective_sql(
-                ", t.account_id AS account_id",
-                crate::planning::sums_condition(account_ids.len())
-            ),
-            in_list(&ids)
-        );
-        let mut stmt = db.prepare(&sql)?;
-        let out = stmt
-            .query_map(params![date_from, date_to], |r| {
-                Ok(CategoryPeriodSum {
-                    period: r.get(0)?,
-                    cents: r.get(1)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(out)
+        self.projected_selection(
+            &db,
+            &BookingFilter {
+                category_id: Some(category_id),
+                include_subcategories: true,
+                account_ids,
+                date_from,
+                date_to,
+                ..Default::default()
+            },
+            None,
+            CurrencyMode::Primary,
+        )?
+        .history(key_length as usize)
     }
 
     /// What a category (with subcategories) holds in currencies other than EUR, one sum per currency
@@ -262,43 +264,25 @@ impl Vault {
         date_from: Option<String>,
         date_to: Option<String>,
     ) -> Result<Vec<CurrencyAmount>, CoreError> {
-        if account_ids.len() == 1 {
-            return Ok(Vec::new());
-        }
         let db = self.db()?;
         // No booking in another currency (the usual vault): nothing to add, no category tree read.
         if !crate::planning::has_other_currencies(&db)? {
             return Ok(Vec::new());
         }
-        let rows = Self::category_rows(&db)?;
-        let ids = Self::category_subtree(&rows, category_id);
-        let in_list = |v: &[i64]| v.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-        let account_clause = if account_ids.is_empty() {
-            String::new()
-        } else {
-            format!(" AND account_id IN ({})", in_list(&account_ids))
-        };
-        let sql = format!(
-            "SELECT upper(currency), SUM(amount_cents) FROM {}
-             WHERE category_id IN ({}){account_clause}
-               AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
-             GROUP BY upper(currency) ORDER BY upper(currency)",
-            crate::planning::effective_sql(
-                ", t.account_id AS account_id, t.currency AS currency",
-                " AND upper(t.currency) NOT IN ('', 'EUR')"
-            ),
-            in_list(&ids)
-        );
-        let mut stmt = db.prepare(&sql)?;
-        let out = stmt
-            .query_map(params![date_from, date_to], |r| {
-                Ok(CurrencyAmount {
-                    currency: r.get(0)?,
-                    cents: r.get(1)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(out)
+        let selection = self.projected_selection(
+            &db,
+            &BookingFilter {
+                category_id: Some(category_id),
+                include_subcategories: true,
+                account_ids,
+                date_from,
+                date_to,
+                ..Default::default()
+            },
+            None,
+            CurrencyMode::Other,
+        )?;
+        selection.currency_amounts()
     }
 
     /// "Zusätzlich" next to the sidebar totals (#1049): per category (with its subcategories) and
@@ -317,64 +301,38 @@ impl Vault {
         tag_ids: Vec<i64>,
         untagged_only: bool,
     ) -> Result<Vec<CategoryCurrencyAmount>, CoreError> {
-        if account_ids.len() == 1 {
-            return Ok(Vec::new());
-        }
         let db = self.db()?;
         if !crate::planning::has_other_currencies(&db)? {
             return Ok(Vec::new());
         }
-        let rows = Self::category_rows(&db)?;
-        let filters = Self::category_condition(
-            &account_ids,
-            direction,
-            amount_min_cents,
-            amount_max_cents,
-            &tag_ids,
-            untagged_only,
-        );
-        let condition = format!(
-            "{filters} AND upper(t.currency) NOT IN ('', 'EUR') AND (?3 IS NULL OR (t.checked != 0) = ?3)"
-        );
-        let mut stmt = db.prepare(&format!(
-            "SELECT category_id, upper(currency), SUM(amount_cents) FROM {}
-             WHERE category_id IS NOT NULL
-               AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
-             GROUP BY category_id, upper(currency)",
-            crate::planning::effective_sql(", t.currency AS currency", &condition)
-        ))?;
-        let checked = checked.map(i64::from);
-        let own = stmt
-            .query_map(params![date_from, date_to, checked], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        // roll every sum up to its ancestors, like the totals of the tree
-        let parent: HashMap<i64, Option<i64>> = rows.iter().map(|r| (r.0, r.1)).collect();
-        let mut sums: std::collections::BTreeMap<(i64, String), i64> = Default::default();
-        for (cat, currency, cents) in own {
-            let mut at = Some(cat);
-            let mut depth = 0;
-            while let Some(id) = at {
-                *sums.entry((id, currency.clone())).or_insert(0) += cents;
-                at = parent.get(&id).copied().flatten();
-                depth += 1;
-                if depth > 32 {
-                    break;
-                }
-            }
-        }
-        Ok(sums
+        let own = self
+            .projected_selection(
+                &db,
+                &BookingFilter {
+                    date_from,
+                    date_to,
+                    account_ids,
+                    checked,
+                    direction,
+                    amount_min_cents,
+                    amount_max_cents,
+                    tag_ids,
+                    untagged_only,
+                    ..Default::default()
+                },
+                None,
+                CurrencyMode::Other,
+            )?
+            .category_currency_subtrees()?;
+        Ok(own
             .into_iter()
-            .filter(|(_, cents)| *cents != 0)
-            .map(|((category_id, currency), cents)| CategoryCurrencyAmount {
-                category_id,
-                currency,
-                cents,
+            .filter(|(_, _, cents)| *cents != 0)
+            .filter_map(|(category_id, currency, cents)| {
+                Some(CategoryCurrencyAmount {
+                    category_id: category_id?,
+                    currency,
+                    cents,
+                })
             })
             .collect())
     }
@@ -555,76 +513,6 @@ mod reorder_tests;
 mod role_tests;
 
 impl Vault {
-    /// Conditions on `t` shared by the category totals and their "other currencies": accounts,
-    /// direction, amount range (#357) and tags (#1469). Ids and amounts are integers, so inlining them cannot inject anything.
-    fn category_condition(
-        account_ids: &[i64],
-        direction: BookingDirection,
-        amount_min_cents: Option<i64>,
-        amount_max_cents: Option<i64>,
-        tag_ids: &[i64],
-        untagged_only: bool,
-    ) -> String {
-        let accounts = if account_ids.is_empty() {
-            String::new()
-        } else {
-            let list: Vec<String> = account_ids.iter().map(i64::to_string).collect();
-            format!(" AND t.account_id IN ({})", list.join(","))
-        };
-        // `+`: no `tx_amount_date` range scan here (a row lookup per match, 10x slower
-        // than the plain pass that sums every booking anyway).
-        let side = match direction {
-            BookingDirection::All => "",
-            BookingDirection::Income => " AND +t.amount_cents > 0",
-            BookingDirection::Expense => " AND +t.amount_cents < 0",
-        };
-        // absolute amount of the booking, like the list's amount range (#357)
-        let mut amount = String::new();
-        if let Some(min) = amount_min_cents {
-            amount.push_str(&format!(" AND ABS(t.amount_cents) >= {min}"));
-        }
-        if let Some(max) = amount_max_cents {
-            amount.push_str(&format!(" AND ABS(t.amount_cents) <= {max}"));
-        }
-        // tags like the list (`BookingFilter`): none at all, or every listed tag (AND)
-        let mut tags = String::new();
-        if untagged_only {
-            tags.push_str(
-                " AND NOT EXISTS (SELECT 1 FROM transaction_tags x JOIN tags g ON g.id = x.tag_id \
-                 WHERE x.transaction_id = t.id AND g.deleted_ms IS NULL)",
-            );
-        } else {
-            let mut ids = tag_ids.to_vec();
-            ids.sort_unstable();
-            ids.dedup();
-            for tag in ids {
-                tags.push_str(&format!(
-                    " AND EXISTS (SELECT 1 FROM transaction_tags x WHERE x.transaction_id = t.id AND x.tag_id = {tag})"
-                ));
-            }
-        }
-        format!("{accounts}{side}{amount}{tags}")
-    }
-
-    /// `category_id` and all its descendants (capped like the history queries).
-    fn category_subtree(
-        rows: &[(i64, Option<i64>, String, String, String, i32, Option<i64>)],
-        category_id: i64,
-    ) -> Vec<i64> {
-        let mut ids = vec![category_id];
-        let mut i = 0;
-        while i < ids.len() && ids.len() < 4096 {
-            let cur = ids[i];
-            for r in rows.iter().filter(|r| r.1 == Some(cur)) {
-                if !ids.contains(&r.0) {
-                    ids.push(r.0);
-                }
-            }
-            i += 1;
-        }
-        ids
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn categories_with_filters(
         &self,
@@ -638,40 +526,31 @@ impl Vault {
         tag_ids: Vec<i64>,
         untagged_only: bool,
     ) -> Result<Vec<Category>, CoreError> {
-        let db = self.db()?;
-        let rows = Self::category_rows(&db)?;
-        let mut totals: HashMap<Option<i64>, (i64, u32)> = HashMap::new();
-        {
-            let filters = Self::category_condition(
-                &account_ids,
+        self.categories_projected(
+            BookingFilter {
+                date_from,
+                date_to,
+                account_ids,
+                checked,
                 direction,
                 amount_min_cents,
                 amount_max_cents,
-                &tag_ids,
+                tag_ids,
                 untagged_only,
-            );
-            let currency = crate::planning::sums_condition(account_ids.len());
-            let condition =
-                format!("{filters}{currency} AND (?3 IS NULL OR (t.checked != 0) = ?3)");
-            let mut stmt = db.prepare(&format!(
-                "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
-                 WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
-                 GROUP BY category_id",
-                crate::planning::effective_sql("", &condition)
-            ))?;
-            let checked = checked.map(i64::from);
-            let it = stmt.query_map(params![date_from, date_to, checked], |r| {
-                Ok((
-                    r.get::<_, Option<i64>>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)? as u32,
-                ))
-            })?;
-            for row in it {
-                let (c, s, n) = row?;
-                totals.insert(c, (s, n));
-            }
-        }
+                ..Default::default()
+            },
+            Side::Net,
+        )
+    }
+
+    fn categories_projected(
+        &self,
+        filter: BookingFilter,
+        side: Side,
+    ) -> Result<Vec<Category>, CoreError> {
+        let db = self.db()?;
+        let rows = Self::category_rows(&db)?;
+        let totals = self.projected_categories(&db, &filter, side)?;
         let mut children: HashMap<
             Option<i64>,
             Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
@@ -685,29 +564,6 @@ impl Vault {
                     .then_with(|| a.2.to_lowercase().cmp(&b.2.to_lowercase()))
             });
         }
-        fn subtotal(
-            id: i64,
-            children: &HashMap<
-                Option<i64>,
-                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-            >,
-            totals: &HashMap<Option<i64>, (i64, u32)>,
-            depth: u32,
-        ) -> (i64, u32) {
-            let own = totals.get(&Some(id)).copied().unwrap_or((0, 0));
-            if depth > 32 {
-                return own;
-            }
-            let mut sum = own;
-            if let Some(kids) = children.get(&Some(id)) {
-                for k in kids {
-                    let (s, n) = subtotal(k.0, children, totals, depth + 1);
-                    sum.0 += s;
-                    sum.1 += n;
-                }
-            }
-            sum
-        }
         let mut out = Vec::with_capacity(rows.len());
         fn walk(
             parent: Option<i64>,
@@ -717,7 +573,7 @@ impl Vault {
                 Option<i64>,
                 Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
             >,
-            totals: &HashMap<Option<i64>, (i64, u32)>,
+            totals: &crate::projection::CategoryTotals,
             out: &mut Vec<Category>,
         ) {
             if depth > 32 {
@@ -730,8 +586,8 @@ impl Vault {
                     } else {
                         format!("{prefix} › {}", k.2)
                     };
-                    let own = totals.get(&Some(k.0)).copied().unwrap_or((0, 0));
-                    let (total, count) = subtotal(k.0, children, totals, 0);
+                    let own = totals.own.get(&Some(k.0)).copied().unwrap_or((0, 0));
+                    let (total, count) = totals.subtree.get(&Some(k.0)).copied().unwrap_or((0, 0));
                     out.push(Category {
                         id: k.0,
                         parent_id: k.1,

@@ -152,6 +152,7 @@ public final class AppModel {
     /// Bumped when the merchant settings may have changed (own change, iCloud merge, sync):
     /// Einstellungen › Händler reads its list again.
     var merchantSettingsRevision = 0
+    var financialReportRevision = 0
     /// Merchant setting changes queued so far; only the newest reloads the views (`changeMerchants`).
     @ObservationIgnored var merchantWriteCount = 0
     /// Not observed: signets read it in their body (`cachedLogo`), and filling it
@@ -896,7 +897,7 @@ public final class AppModel {
     var isLoadingMoreBookings = false
     @ObservationIgnored var loadMoreTask: Task<Void, Never>?
     /// Bumped by every full reload of the list; a page requested before is dropped.
-    @ObservationIgnored var listGeneration = 0
+    @ObservationIgnored var listGeneration = 0 { didSet { financialReportRevision &+= 1 } }
     /// Day card the stream should scroll to (set by a click in the balance chart);
     /// a fresh token per click, so clicking the same day again scrolls again.
     var scrollToDay: DayJump?

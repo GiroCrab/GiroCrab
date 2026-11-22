@@ -58,6 +58,7 @@ pub mod payday_periods;
 pub mod payment_input;
 pub mod planned;
 pub mod planning;
+pub mod projection;
 pub mod recipients;
 pub mod recurring;
 pub mod refunds;

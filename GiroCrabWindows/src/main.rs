@@ -279,6 +279,10 @@ struct State {
     marked: std::collections::HashSet<i64>,
     /// Drops the result of a superseded background load.
     generation: u64,
+    analytics_generation: u64,
+    dashboard_generation: u64,
+    vault: std::sync::Weak<Vault>,
+    monthly: Option<Vec<girocrab_core::projection::PeriodCurrencyFlow>>,
     /// (account id, label, bank name) of the accounts a transfer can start from.
     transfer_sources: Vec<(i64, String, String)>,
     /// Recipient rule per entry of `transfer_sources` (savings → reference account, #582).
@@ -400,62 +404,104 @@ fn tag_names(rows: &[Row]) -> Vec<String> {
     v
 }
 
-/// Fills the inline analytics (category breakdown, tag evaluation) from the filtered rows.
-fn render_analytics(win: &MainWindow, privacy: bool) {
-    let (inc, exp, exp_cats, inc_cats, tags) = with_state(|st| {
-        let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
-        let (inc, exp, _) = analytics::totals(&shown);
-        (
-            inc,
-            exp,
-            analytics::categories(&shown, true, 6),
-            analytics::categories(&shown, false, 6),
-            analytics::tags(&shown, 8),
-        )
+/// Fills financial analytics independently of booking list paging.
+fn render_analytics(win: &MainWindow) {
+    let request = with_state(|st| {
+        st.analytics_generation += 1;
+        st.monthly = None;
+        st.vault.upgrade().map(|v| {
+            (
+                v,
+                nav::booking_filter(st.target),
+                st.filter.clone(),
+                st.generation,
+                st.analytics_generation,
+            )
+        })
     });
-    let lines = |v: Vec<analytics::Slice>| -> ModelRc<BudgetLine> {
-        ModelRc::new(VecModel::from(
-            v.into_iter()
-                .map(|s| {
-                    let cents = s.cents;
-                    BudgetLine {
-                        name: daily::mask(&s.name, false).into(),
-                        amount: daily::mask(
-                            &format!(
-                                "{} · {} Buch. · {:.0} %",
-                                money(cents, "EUR"),
-                                s.count,
-                                s.share * 100.0
-                            ),
-                            privacy,
-                        )
-                        .into(),
-                        progress: s.share,
-                        over: false,
-                        color: tint(&s.color_hex),
-                    }
-                })
-                .collect::<Vec<_>>(),
-        ))
+    let Some((vault, filter, ui, generation, token)) = request else {
+        return;
     };
-    win.set_analytics_expense_cats(lines(exp_cats));
-    win.set_analytics_income_cats(lines(inc_cats));
-    win.set_analytics_tags(lines(tags));
-    win.set_analytics_summary(
-        daily::mask(
-            &format!(
-                "Einnahmen {} · Ausgaben {} · Saldo {}",
-                money(inc, "EUR"),
-                money(exp, "EUR"),
-                money(inc - exp, "EUR")
-            ),
-            privacy,
-        )
-        .into(),
-    );
+    win.set_analytics_expense_cats(ModelRc::default());
+    win.set_analytics_income_cats(ModelRc::default());
+    win.set_analytics_tags(ModelRc::default());
+    win.set_analytics_summary("".into());
+    let weak = win.as_weak();
+    std::thread::spawn(move || {
+        let report = analytics::load(&vault, filter, &ui);
+        let _ = weak.upgrade_in_event_loop(move |win| {
+            if !is_current(&vault)
+                || with_state(|st| st.generation != generation || st.analytics_generation != token)
+            {
+                return;
+            }
+            let privacy = privacy_on(&win);
+            let report = match report {
+                Ok(report) => report,
+                Err(e) => {
+                    win.set_analytics_expense_cats(ModelRc::default());
+                    win.set_analytics_income_cats(ModelRc::default());
+                    win.set_analytics_tags(ModelRc::default());
+                    win.set_analytics_summary(daily::mask(&e.to_string(), privacy).into());
+                    return;
+                }
+            };
+            let (inc, exp) = (report.income_cents, report.expense_cents);
+            let exp_cats = analytics::categories(&report.category_expenses, 6);
+            let inc_cats = analytics::categories(&report.category_income, 6);
+            let tags = analytics::tags(&report.tags, 8);
+            let lines = |v: Vec<analytics::Slice>| -> ModelRc<BudgetLine> {
+                ModelRc::new(VecModel::from(
+                    v.into_iter()
+                        .map(|s| {
+                            let cents = s.cents;
+                            BudgetLine {
+                                name: daily::mask(&s.name, false).into(),
+                                amount: daily::mask(
+                                    &format!(
+                                        "{} · {} Buch. · {:.0} %",
+                                        money(cents, &report.currency),
+                                        s.count,
+                                        s.share * 100.0
+                                    ),
+                                    privacy,
+                                )
+                                .into(),
+                                progress: s.share,
+                                over: false,
+                                color: tint(&s.color_hex),
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+            };
+            win.set_analytics_expense_cats(lines(exp_cats));
+            win.set_analytics_income_cats(lines(inc_cats));
+            win.set_analytics_tags(lines(tags));
+            win.set_analytics_summary(
+                daily::mask(
+                    &format!(
+                        "Einnahmen {} · Ausgaben {} · Saldo {}",
+                        money(inc, &report.currency),
+                        money(exp, &report.currency),
+                        money(report.net_cents, &report.currency)
+                    ),
+                    privacy,
+                )
+                .into(),
+            );
+            with_state(|st| st.monthly = Some(report.monthly));
+            render_booking_rows(&win);
+        });
+    });
 }
 
 fn render_bookings(win: &MainWindow) {
+    render_analytics(win);
+    render_booking_rows(win);
+}
+
+fn render_booking_rows(win: &MainWindow) {
     let privacy = privacy_on(win);
     let (count, tags) = with_state(|st| (st.shown.len(), tag_names(&st.rows)));
     win.set_booking_count(format!("{count} Buchungen").into());
@@ -465,7 +511,6 @@ fn render_bookings(win: &MainWindow) {
         win.set_tag_index(0);
     }
     win.set_tag_labels(ModelRc::new(VecModel::from(labels)));
-    render_analytics(win, privacy);
     let (days, inspector, cat_index) = with_state(|st| {
         let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
         let buckets = cockpit::group_by_day(&shown);
@@ -475,25 +520,31 @@ fn render_bookings(win: &MainWindow) {
             .map(|d| {
                 let ym = d.date.get(..7).unwrap_or("").to_string();
                 let show_month = ym != last_month;
-                let (mut inc, mut exp) = (0i64, 0i64);
+                let (mut inc, mut exp) = (String::new(), String::new());
                 if show_month {
-                    for r in shown.iter().filter(|r| r.booking_date.starts_with(&ym)) {
-                        if r.amount_cents >= 0 {
-                            inc += r.amount_cents;
-                        } else {
-                            exp += r.amount_cents;
-                        }
+                    if let Some(flows) = &st.monthly {
+                        inc = flows
+                            .iter()
+                            .filter(|f| f.period == ym)
+                            .map(|f| money(f.income_cents, &f.currency))
+                            .collect::<Vec<_>>()
+                            .join(" · ");
+                        exp = flows
+                            .iter()
+                            .filter(|f| f.period == ym)
+                            .map(|f| money(-f.expense_cents, &f.currency))
+                            .collect::<Vec<_>>()
+                            .join(" · ");
                     }
                     last_month = ym;
                 }
-                let cur = d.currency.clone();
-                (d, show_month, inc, exp, cur)
+                (d, show_month, inc, exp)
             })
-            .map(|(d, show_month, inc, exp, cur)| DayGroup {
+            .map(|(d, show_month, inc, exp)| DayGroup {
                 show_month,
                 month: cockpit::month_title(&d.date).into(),
-                month_income: daily::mask(&money(inc, &cur), privacy).into(),
-                month_expense: daily::mask(&money(exp, &cur), privacy).into(),
+                month_income: daily::mask(&inc, privacy).into(),
+                month_expense: daily::mask(&exp, privacy).into(),
                 title: cockpit::day_title(&d.date).into(),
                 sum: daily::mask(
                     &cockpit::day_sum_text(d.sum_cents, &money, &d.currency),
@@ -608,30 +659,43 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
     };
     let (year, month) = cockpit::current_year_month();
     let period = win.get_cashflow_period();
-    let account_flow = with_state(|st| match st.target {
-        Target::Account(_) => Some(cockpit::cashflow_from_rows(
-            &st.rows,
-            period,
-            (year, month),
-            6,
-        )),
-        _ => None,
+    let (target, generation, token) = with_state(|st| {
+        st.dashboard_generation += 1;
+        (st.target, st.generation, st.dashboard_generation)
     });
     let weak = win.as_weak();
     std::thread::spawn(move || {
-        // One account: sum its loaded bookings; everything else: the core's all-account figures.
-        // The overview is an overall money figure (#337): effective total set only.
-        let flow = match account_flow {
-            Some(f) => f,
-            None => vault
-                .cashflow_by_period(gran, 6, None, true)
-                .unwrap_or_default(),
+        let ids = match target {
+            Target::Account(id) => vec![id],
+            _ => Vec::new(),
         };
+        let proof = !ids.is_empty();
+        let flow = vault
+            .cashflow_by_period(
+                gran,
+                6,
+                if proof { Some(ids.clone()) } else { None },
+                !proof,
+            )
+            .unwrap_or_default();
         let status = vault
             .list_category_budget_progress(year, month)
             .unwrap_or_default();
+        let expenses = vault
+            .list_category_expenses(BookingFilter {
+                account_ids: ids,
+                date_from: Some(format!("{year:04}-{month:02}-01")),
+                date_to: Some(format!("{year:04}-{month:02}-31")),
+                respect_in_total: !proof,
+                ..Default::default()
+            })
+            .unwrap_or_default();
+        let fallback = cockpit::top_spending(&expenses, 4);
         let _ = weak.upgrade_in_event_loop(move |win| {
-            if !is_current(&vault) {
+            if !is_current(&vault)
+                || with_state(|st| st.generation != generation || st.dashboard_generation != token)
+                || win.get_cashflow_period() != period
+            {
                 return;
             }
             let privacy = privacy_on(&win);
@@ -653,7 +717,7 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
             let mut lines = cockpit::budgets(&status);
             let has_budgets = !lines.is_empty();
             if !has_budgets {
-                lines = with_state(|st| cockpit::top_spending(&st.rows, year, month, 4));
+                lines = fallback;
             }
             win.set_budget_title(if has_budgets {
                 "Monatsbudgets".into()
@@ -722,6 +786,7 @@ fn apply_filter(win: &MainWindow) {
 fn reload(win: &MainWindow, vault: Arc<Vault>) {
     let target = with_state(|st| st.target);
     let generation = with_state(|st| {
+        st.vault = Arc::downgrade(&vault);
         st.generation += 1;
         st.generation
     });
@@ -1906,7 +1971,7 @@ fn main() -> Result<(), slint::PlatformError> {
         win.on_select_booking(move |id| {
             let Some(win) = weak.upgrade() else { return };
             with_state(|st| st.selected_booking = Some(id as i64));
-            render_bookings(&win);
+            render_booking_rows(&win);
         });
     }
     wire_batch_actions(&win, vault.clone());
@@ -2353,7 +2418,7 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
                     st.marked.insert(id as i64);
                 }
             });
-            render_bookings(&win);
+            render_booking_rows(&win);
         });
     }
     {
@@ -2363,7 +2428,7 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
             with_state(|st| {
                 st.marked = st.shown.iter().map(|&i| st.rows[i].id).collect();
             });
-            render_bookings(&win);
+            render_booking_rows(&win);
         });
     }
     {
@@ -2371,7 +2436,7 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
         win.on_batch_clear(move || {
             let Some(win) = weak.upgrade() else { return };
             with_state(|st| st.marked.clear());
-            render_bookings(&win);
+            render_booking_rows(&win);
         });
     }
     // Runs one vault edit on the marked bookings (or on one id), then updates the cached rows.

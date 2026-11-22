@@ -19,7 +19,7 @@ Item {
     /// load of the same selection may stand in, another selection's never, also not after a
     /// failed load.
     property var loaded: null
-    readonly property string cover: isCategory ? "" : JSON.stringify([AppModel.historyRequest().ids, AppModel.periodRange()])
+    readonly property string cover: isCategory ? "" : JSON.stringify([AppModel.vaultGeneration, AppModel.listGeneration, AppModel.historyRequest().ids, AppModel.periodRange()])
     readonly property bool expensesShown: loaded !== null && loaded.cover === cover
     readonly property var parts: isCategory ? subcategories(Number(AppModel.sidebarSelection.slice(9)), AppModel.categories)
         : expensesShown ? loaded.parts : []
@@ -40,7 +40,7 @@ Item {
     }
     /// HeaderPieSlices.expenses: top-level categories (totals include the subcategories).
     function expenses(categories) {
-        return categories.filter(c => c.depth === 0 && c.total_cents < 0).map(c => ({ id: String(c.id), label: c.name, cents: -c.total_cents }))
+        return categories.filter(c => c.cents > 0).map(c => ({ id: c.category_id === null ? "uncategorized" : String(c.category_id), label: c.name, cents: c.cents }))
     }
     /// HeaderPieSlices.fold: largest first; beyond `limit` slices the rest is folded into „Sonstige“.
     function fold(all, max) {
@@ -62,17 +62,20 @@ Item {
 
     // AccountExpensePie: reloads when the accounts, the period or the category sums change.
     readonly property string loadKey: isCategory || !visible ? ""
-        : JSON.stringify([AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.categories.map(c => c.total_cents)])
+        : JSON.stringify([AppModel.vaultGeneration, AppModel.listGeneration, AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.categories.map(c => c.total_cents)])
     onLoadKeyChanged: if (loadKey !== "") Qt.callLater(load)
     function load() {
         if (loadKey === "" || !AppModel.isUnlocked) return
         let cover = ""
         AppModel.loadOffMain("headerPie", () => {
             const r = AppModel.periodRange(), ids = AppModel.historyRequest().ids
-            cover = JSON.stringify([ids, r])
-            return [["list_categories_filtered", { date_from: r[0], date_to: r[1], account_ids: ids,
-                                                   checked: null, direction: "Expense" }]]
-        }, r => { pie.loaded = { cover: cover, parts: pie.expenses(r[0]) } }, () => {})
+            cover = JSON.stringify([AppModel.vaultGeneration, AppModel.listGeneration, ids, r])
+            return [["list_category_expenses", { filter: {
+                account_ids: ids, category_id: null, include_subcategories: false, uncategorized_only: false,
+                search: null, date_from: r[0], date_to: r[1], limit: 0, offset: 0,
+                scope: "All", merchant_key: null, direction: "All", checked: null, whole_days: false
+            } }]]
+        }, r => { pie.loaded = { cover: cover, parts: pie.expenses(r[0]) } }, () => { pie.loaded = null })
     }
 
     // .contextMenu { ChartStyleInlinePicker() }

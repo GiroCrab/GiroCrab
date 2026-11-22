@@ -949,23 +949,6 @@ pub struct SelectionFlow {
     pub income_cents: i64,
 }
 
-impl SelectionFlow {
-    /// `amount_cents` is the booking's share in the selection: its full amount,
-    /// or with a category filter only the split parts of that category.
-    pub(crate) fn add(&mut self, flow: crate::merchants::FlowKind, amount_cents: i64) {
-        use crate::merchants::FlowKind;
-        match flow {
-            FlowKind::Consumption => self.consumption_cents -= amount_cents,
-            FlowKind::Investment => self.invested_cents -= amount_cents,
-            FlowKind::Perk if amount_cents < 0 => self.invested_cents -= amount_cents,
-            _ => {}
-        }
-        if kpi_side(flow, amount_cents) == KpiSide::Income {
-            self.income_cents += amount_cents;
-        }
-    }
-}
-
 /// Side of a booking in the income / expense KPIs. The one definition used by
 /// `BookingPage`, `SelectionFlow` and the period comparison (`cashflow_by_period`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

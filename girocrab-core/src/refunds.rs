@@ -331,6 +331,25 @@ fn resolve(state: &State) -> Vec<Allocation> {
 }
 
 impl Projection {
+    pub(crate) fn books(&self) -> &HashMap<i64, Book> {
+        &self.state.books
+    }
+
+    pub(crate) fn scoped_allocations(
+        &self,
+        accounts: &HashSet<i64>,
+    ) -> CoreResult<Vec<Allocation>> {
+        let mut state = self.state.clone();
+        for book in state.books.values_mut() {
+            book.live &= accounts.contains(&book.account_id);
+        }
+        state.rows.retain(|r| {
+            state.books.get(&r.key.refund.0).is_some_and(|b| b.live)
+                && state.books.get(&r.key.original.0).is_some_and(|b| b.live)
+        });
+        Ok(Self::from_state(state)?.allocations)
+    }
+
     fn from_state(state: State) -> CoreResult<Self> {
         let mut remaining: HashMap<_, _> = state
             .books

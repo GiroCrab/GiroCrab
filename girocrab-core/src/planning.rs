@@ -34,23 +34,6 @@ CREATE TABLE IF NOT EXISTS transfer_templates (
     default_purpose      TEXT    NOT NULL DEFAULT ''
 );";
 
-/// Whether a booking in `currency` enters the sums (category totals, history, KPI tiles) of a
-/// selection of `account_count` accounts (#1049, as in `balances::chosen` and #569): one account
-/// counts in its own currency, several (or all) only EUR; amounts in other currencies are never
-/// added to them. An empty currency is EUR.
-pub(crate) fn counts_in_sums(account_count: usize, currency: &str) -> bool {
-    account_count == 1 || currency.is_empty() || currency.eq_ignore_ascii_case("EUR")
-}
-
-/// SQL condition on `t` that is `counts_in_sums` for the whole selection.
-pub(crate) fn sums_condition(account_count: usize) -> &'static str {
-    if account_count == 1 {
-        ""
-    } else {
-        " AND t.currency COLLATE NOCASE IN ('', 'EUR')"
-    }
-}
-
 /// Whether any live booking is in a currency other than EUR: the cheap check that lets the
 /// "Zusätzlich" queries return at once for the many vaults that have none.
 pub(crate) fn has_other_currencies(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
@@ -58,26 +41,6 @@ pub(crate) fn has_other_currencies(conn: &rusqlite::Connection) -> rusqlite::Res
         "SELECT EXISTS(SELECT 1 FROM transactions WHERE deleted_ms IS NULL AND upper(currency) NOT IN ('', 'EUR'))",
         [],
         |r| r.get(0),
-    )
-}
-
-/// Bookings as (category_id, amount_cents, booking_date) rows where a split
-/// booking contributes its split amounts instead of the parent category.
-/// `extra`: more columns of `t` (e.g. ", t.currency AS currency"); `condition`:
-/// more conditions on `t` (e.g. " AND t.account_id = ?1"). Both appear in both
-/// halves of the UNION, so `condition` must use numbered parameters.
-pub(crate) fn effective_sql(extra: &str, condition: &str) -> String {
-    format!(
-        "(
-    SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}
-      FROM transactions t
-     WHERE t.deleted_ms IS NULL{condition}
-       AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
-    UNION ALL
-    SELECT s.category_id, s.amount_cents, t.booking_date{extra}
-      FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
-     WHERE t.deleted_ms IS NULL{condition}
-)"
     )
 }
 
@@ -127,21 +90,20 @@ impl Vault {
     ) -> Result<Vec<CategoryBudgetStatus>, CoreError> {
         let (from, to) = month_range(year, month)?;
         let db = self.db()?;
-        let mut own: HashMap<Option<i64>, i64> = HashMap::new();
-        {
-            let mut stmt = db.prepare(&format!(
-                "SELECT category_id, SUM(amount_cents) FROM {}
-                 WHERE booking_date >= ?1 AND booking_date <= ?2 GROUP BY category_id",
-                // budgets are amounts in EUR: other currencies are never added to them (#1049)
-                effective_sql("", sums_condition(0))
-            ))?;
-            for row in stmt.query_map(params![from, to], |r| {
-                Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, i64>(1)?))
-            })? {
-                let (c, s) = row?;
-                own.insert(c, s);
-            }
-        }
+        let own: HashMap<Option<i64>, i64> = self
+            .projected_categories(
+                &db,
+                &BookingFilter {
+                    date_from: Some(from),
+                    date_to: Some(to),
+                    ..Default::default()
+                },
+                crate::projection::Side::Net,
+            )?
+            .subtree
+            .into_iter()
+            .map(|(id, (n, _))| (id, n))
+            .collect();
         let mut stmt = db.prepare(
             "SELECT id, parent_id, name, sf_symbol, color_hex, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL ORDER BY sort_order, name",
         )?;
@@ -160,13 +122,9 @@ impl Vault {
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
         let mut by_id = HashMap::new();
         for r in &rows {
             by_id.insert(r.0, r);
-            if let Some(p) = r.1 {
-                children.entry(p).or_default().push(r.0);
-            }
         }
         let path_of = |id: i64| {
             let mut parts = Vec::new();
@@ -188,20 +146,8 @@ impl Vault {
         let mut out = Vec::new();
         for r in rows.iter().filter(|r| r.5.is_some()) {
             let budget = r.5.unwrap_or(0);
-            let mut stack = vec![r.0];
-            let mut sum = 0i64;
-            let mut guard = 0;
-            while let Some(id) = stack.pop() {
-                guard += 1;
-                if guard > 10_000 {
-                    break;
-                }
-                sum += own.get(&Some(id)).copied().unwrap_or(0);
-                if let Some(ch) = children.get(&id) {
-                    stack.extend(ch);
-                }
-            }
-            let spent = (-sum).max(0);
+            let sum = own.get(&Some(r.0)).copied().unwrap_or(0);
+            let spent = crate::projection::spending(sum)?;
             out.push(CategoryBudgetStatus {
                 category_id: r.0,
                 name: r.2.clone(),
@@ -434,51 +380,15 @@ pub(crate) fn cashflow_for(
     // one guard for both reads, so a merge committing in between can never
     // combine old eligibility with new booking amounts
     let db = v.db()?;
-    let allowed: Option<std::collections::HashSet<i64>> = if respect_in_total {
-        Some(crate::user_groups::total_account_ids(&db)?)
-    } else {
-        None
-    };
     let filter = BookingFilter {
         account_ids: account_ids.to_vec(),
         date_from: Some(from),
+        respect_in_total,
         ..Default::default()
     };
-    let mut acc: HashMap<String, (i64, i64)> = HashMap::new();
-    v.visit_bookings(&db, &filter, |_, b| {
-        // other currencies are never added to the sums, unless one account is
-        // selected (#1049); in a totals context only the effective total set
-        // contributes (#337) — a directly requested account is a proof view
-        if !allowed
-            .as_ref()
-            .is_none_or(|set| set.contains(&b.account_id))
-            || !counts_in_sums(account_ids.len(), &b.currency)
-        {
-            return;
-        }
-        let (date, amt) = (&b.booking_date, b.amount_cents);
-        // Non-ASCII / malformed dates are skipped instead of panicking on a slice.
-        let key = match granularity {
-            PeriodGranularity::Month => date.get(..7).map(str::to_string),
-            PeriodGranularity::Quarter => {
-                let m: u32 = date
-                    .get(5..7)
-                    .and_then(|x| x.parse().ok())
-                    .unwrap_or(1)
-                    .clamp(1, 12);
-                date.get(..4).map(|y| format!("{y}-Q{}", (m - 1) / 3 + 1))
-            }
-            PeriodGranularity::Year => date.get(..4).map(str::to_string),
-        };
-        let Some(key) = key else { return };
-        let e = acc.entry(key).or_default();
-        match kpi_side(b.flow, amt) {
-            KpiSide::Income => e.0 = e.0.saturating_add(amt),
-            // net: refunds reduce the expenses of their period
-            KpiSide::Expense => e.1 = e.1.saturating_sub(amt),
-            KpiSide::Neutral => {}
-        }
-    })?;
+    let acc = v
+        .projected_selection(&db, &filter, None, crate::projection::CurrencyMode::Primary)?
+        .cashflow(granularity)?;
     Ok(keys
         .into_iter()
         .map(|k| {

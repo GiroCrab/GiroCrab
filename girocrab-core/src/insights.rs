@@ -142,14 +142,26 @@ impl Vault {
         // the cashflow card. The booking list itself is never narrowed by this.
         // One guard for both reads, so a merge committing in between cannot mix
         // old amounts with new eligibility.
-        let (all, merchants): (Vec<Booking>, _) = {
+        let (all, merchants, projected_months): (Vec<Booking>, _, _) = {
             let db = self.db()?;
             let allowed = crate::user_groups::total_account_ids(&db)?;
             let all = all_bookings(self, &db, BookingScope::All)?
                 .into_iter()
                 .filter(|b| allowed.contains(&b.account_id))
                 .collect();
-            (all, self.merchant_rules(&db)?)
+            let monthly = self
+                .projected_selection(
+                    &db,
+                    &BookingFilter {
+                        date_from: Some(format!("{first_month}-01")),
+                        respect_in_total: true,
+                        ..Default::default()
+                    },
+                    None,
+                    crate::projection::CurrencyMode::Primary,
+                )?
+                .monthly_flows()?;
+            (all, self.merchant_rules(&db)?, monthly)
         };
 
         // Monthly flows
@@ -167,15 +179,9 @@ impl Vault {
                 )
             })
             .collect();
-        for b in &all {
-            if let Some(mf) = monthly.get_mut(&month_key(&b.booking_date)) {
-                match b.flow {
-                    FlowKind::Consumption => mf.consumption_cents += -b.amount_cents,
-                    FlowKind::Investment => mf.investment_cents += -b.amount_cents,
-                    FlowKind::Perk if b.amount_cents < 0 => mf.investment_cents += -b.amount_cents,
-                    FlowKind::Income => mf.income_cents += b.amount_cents,
-                    _ => {}
-                }
+        for (key, flow) in projected_months {
+            if let Some(mf) = monthly.get_mut(&key) {
+                *mf = flow;
             }
         }
 

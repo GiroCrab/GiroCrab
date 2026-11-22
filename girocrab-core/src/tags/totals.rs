@@ -11,7 +11,6 @@ use rusqlite::params_from_iter;
 use crate::error::CoreError;
 use crate::models::BookingFilter;
 use crate::vault::Vault;
-use crate::vault::bookings::filters_by_class;
 
 /// Bookings and their sum for one tag (or for the untagged bookings).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -59,18 +58,7 @@ impl Vault {
         let db = self.db()?;
         // Ids and shares of the filter, then one pass over the tag links: no lookup of a
         // booking row per link (that read ~200 ms on 41k bookings with a third tagged).
-        let kept = if filters_by_class(&filter) {
-            self.kept_shares(&db, &filter)?
-        } else {
-            let (cte, where_sql, args, share_sql) = self.filter_clauses(&db, &filter)?;
-            let mut stmt = db.prepare(&format!(
-                "{cte}SELECT t.id, {share_sql} {FROM_SQL} WHERE {where_sql}"
-            ))?;
-            let rows = stmt.query_map(params_from_iter(args.iter().map(|b| b.as_ref())), |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
-            })?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
+        let kept = self.kept_shares(&db, &filter)?;
         totals_of(&db, kept)
     }
 
@@ -140,7 +128,10 @@ impl Vault {
 
 /// Bookings and sum per tag of the `(booking id, share)` rows `kept`, plus the
 /// untagged row; one pass over the live tags' links.
-fn totals_of(db: &rusqlite::Connection, kept: Vec<(i64, i64)>) -> Result<Vec<TagTotal>, CoreError> {
+pub(crate) fn totals_of(
+    db: &rusqlite::Connection,
+    kept: Vec<(i64, i64)>,
+) -> Result<Vec<TagTotal>, CoreError> {
     let mut links: HashMap<i64, Vec<i64>> = HashMap::new();
     let mut stmt = db.prepare(
         "SELECT x.transaction_id, x.tag_id FROM transaction_tags x \
@@ -150,37 +141,39 @@ fn totals_of(db: &rusqlite::Connection, kept: Vec<(i64, i64)>) -> Result<Vec<Tag
         let (booking, tag) = row?;
         links.entry(booking).or_default().push(tag);
     }
-    let mut per_tag: HashMap<i64, (u32, i64)> = HashMap::new();
-    let (mut untagged_count, mut untagged_sum) = (0u32, 0i64);
+    let mut per_tag: HashMap<i64, (u32, i128)> = HashMap::new();
+    let (mut untagged_count, mut untagged_sum) = (0u32, 0i128);
     for (id, share) in kept {
         match links.get(&id) {
             Some(tags) => {
                 for tag in tags {
                     let e = per_tag.entry(*tag).or_default();
                     e.0 += 1;
-                    e.1 = e.1.saturating_add(share);
+                    e.1 += i128::from(share);
                 }
             }
             None => {
                 untagged_count += 1;
-                untagged_sum = untagged_sum.saturating_add(share);
+                untagged_sum += i128::from(share);
             }
         }
     }
     let mut out: Vec<TagTotal> = per_tag
         .into_iter()
-        .map(|(tag, (count, sum))| TagTotal {
-            tag_id: Some(tag),
-            booking_count: count,
-            sum_cents: sum,
+        .map(|(tag, (count, sum))| {
+            Ok(TagTotal {
+                tag_id: Some(tag),
+                booking_count: count,
+                sum_cents: crate::projection::cents(sum)?,
+            })
         })
-        .collect();
+        .collect::<Result<_, CoreError>>()?;
     out.sort_by_key(|t| t.tag_id);
     if untagged_count > 0 {
         out.push(TagTotal {
             tag_id: None,
             booking_count: untagged_count,
-            sum_cents: untagged_sum,
+            sum_cents: crate::projection::cents(untagged_sum)?,
         });
     }
     Ok(out)
