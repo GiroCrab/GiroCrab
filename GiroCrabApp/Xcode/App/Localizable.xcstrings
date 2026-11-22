@@ -10834,13 +10834,13 @@
         }
       }
     },
-    "Der gewählte Ordner enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen." : {
+    "Der gewählte Ordner „%@“ enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The selected folder does not contain a GiroCrab vault yet. A new vault will be created there. If you expect your data in another folder, cancel and choose that one."
+            "value" : "The selected folder “%@” does not contain a GiroCrab vault yet. A new vault will be created there. If you expect your data in another folder, cancel and choose that one."
           }
         }
       }
