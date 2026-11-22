@@ -11,9 +11,11 @@ use crate::planning::euro;
 pub const DEFAULT_GROUP_SYMBOL: &str = "folder";
 
 /// Account kinds in the order of the picker.
-pub const KINDS: [(AccountKind, &str); 7] = [
+pub const KINDS: [(AccountKind, &str); 9] = [
     (AccountKind::Checking, "Girokonto"),
     (AccountKind::Savings, "Sparkonto"),
+    (AccountKind::TimeDeposit, "Festgeld"),
+    (AccountKind::BuildingSavings, "Bausparen"),
     (AccountKind::CreditCard, "Kreditkarte"),
     (AccountKind::PaymentService, "Zahlungsdienst"),
     (AccountKind::Brokerage, "Depot"),
@@ -237,8 +239,8 @@ mod tests {
             assert_eq!(kind_at(i as i32), Some(*k));
         }
         assert_eq!(kind_at(-1), None);
-        assert_eq!(kind_at(7), None);
-        assert_eq!(kind_labels().len(), 7);
+        assert_eq!(kind_at(KINDS.len() as i32), None);
+        assert_eq!(kind_labels().len(), KINDS.len());
     }
 
     #[test]

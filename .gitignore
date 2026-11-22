@@ -113,6 +113,9 @@ __pycache__/
 **/merchants/*.json
 **/merchants/*.svg
 
+# --- Design-review tooling (Impeccable: local screenshots and sessions, docs/ui-audit.md) ---
+.impeccable/
+
 # --- Logs / dumps ---
 *.log
 *.jsonl
@@ -135,3 +138,7 @@ github_issues_prs_full.txt
 provenance-dataset.jsonl
 tmp/
 GiroCrabAndroid/.gradle/
+
+# Outputs of scripts/build-rust-android.sh (regenerated, never committed)
+GiroCrabAndroid/app/src/main/jniLibs/
+GiroCrabAndroid/app/src/main/generated/

@@ -207,6 +207,25 @@ struct DepotDetailView: View {
         DepotTabPicker().frame(maxWidth: .infinity)
         #endif
     }
+}
+
+/// Loading spinner of the asset account pages that appears only when loading takes longer than `delay`: a quick
+/// account switch shows no spinner where the chart is about to appear (#1537).
+struct DelayedLoadingIndicator: View {
+    nonisolated static let delay: Duration = .milliseconds(300)
+    @State private var visible = false
+
+    var body: some View {
+        ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.top, 30)
+            .opacity(visible ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: Self.delay)
+                if !Task.isCancelled { visible = true }
+            }
+    }
+}
+
+extension DepotDetailView {
 
     @ViewBuilder
     private func content(wide: Bool) -> some View {
@@ -223,7 +242,7 @@ struct DepotDetailView: View {
                 }
             }
         } else {
-            ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.top, 30)
+            DelayedLoadingIndicator()
         }
     }
 

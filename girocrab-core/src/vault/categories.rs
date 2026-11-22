@@ -157,11 +157,15 @@ impl Vault {
             direction,
             None,
             None,
+            Vec::new(),
+            false,
         )
     }
 
     /// `list_categories_filtered` plus the list's amount range (GitHub #357): only bookings whose
-    /// absolute amount lies between `amount_min_cents` and `amount_max_cents` (`None` = open).
+    /// absolute amount lies between `amount_min_cents` and `amount_max_cents` (`None` = open),
+    /// and its tag filter (#1469): with `untagged_only` only bookings without a tag, otherwise
+    /// only bookings carrying every tag of `tag_ids` (AND, empty = any), like `BookingFilter`.
     #[allow(clippy::too_many_arguments)]
     pub fn list_categories_filtered_amount(
         &self,
@@ -172,6 +176,8 @@ impl Vault {
         direction: BookingDirection,
         amount_min_cents: Option<i64>,
         amount_max_cents: Option<i64>,
+        tag_ids: Vec<i64>,
+        untagged_only: bool,
     ) -> Result<Vec<Category>, CoreError> {
         self.categories_with_filters(
             date_from,
@@ -181,6 +187,8 @@ impl Vault {
             direction,
             amount_min_cents,
             amount_max_cents,
+            tag_ids,
+            untagged_only,
         )
     }
 
@@ -306,6 +314,8 @@ impl Vault {
         direction: BookingDirection,
         amount_min_cents: Option<i64>,
         amount_max_cents: Option<i64>,
+        tag_ids: Vec<i64>,
+        untagged_only: bool,
     ) -> Result<Vec<CategoryCurrencyAmount>, CoreError> {
         if account_ids.len() == 1 {
             return Ok(Vec::new());
@@ -315,8 +325,14 @@ impl Vault {
             return Ok(Vec::new());
         }
         let rows = Self::category_rows(&db)?;
-        let filters =
-            Self::category_condition(&account_ids, direction, amount_min_cents, amount_max_cents);
+        let filters = Self::category_condition(
+            &account_ids,
+            direction,
+            amount_min_cents,
+            amount_max_cents,
+            &tag_ids,
+            untagged_only,
+        );
         let condition = format!(
             "{filters} AND upper(t.currency) NOT IN ('', 'EUR') AND (?3 IS NULL OR (t.checked != 0) = ?3)"
         );
@@ -540,12 +556,14 @@ mod role_tests;
 
 impl Vault {
     /// Conditions on `t` shared by the category totals and their "other currencies": accounts,
-    /// direction and amount range (#357). Ids and amounts are integers, so inlining them cannot inject anything.
+    /// direction, amount range (#357) and tags (#1469). Ids and amounts are integers, so inlining them cannot inject anything.
     fn category_condition(
         account_ids: &[i64],
         direction: BookingDirection,
         amount_min_cents: Option<i64>,
         amount_max_cents: Option<i64>,
+        tag_ids: &[i64],
+        untagged_only: bool,
     ) -> String {
         let accounts = if account_ids.is_empty() {
             String::new()
@@ -568,7 +586,24 @@ impl Vault {
         if let Some(max) = amount_max_cents {
             amount.push_str(&format!(" AND ABS(t.amount_cents) <= {max}"));
         }
-        format!("{accounts}{side}{amount}")
+        // tags like the list (`BookingFilter`): none at all, or every listed tag (AND)
+        let mut tags = String::new();
+        if untagged_only {
+            tags.push_str(
+                " AND NOT EXISTS (SELECT 1 FROM transaction_tags x JOIN tags g ON g.id = x.tag_id \
+                 WHERE x.transaction_id = t.id AND g.deleted_ms IS NULL)",
+            );
+        } else {
+            let mut ids = tag_ids.to_vec();
+            ids.sort_unstable();
+            ids.dedup();
+            for tag in ids {
+                tags.push_str(&format!(
+                    " AND EXISTS (SELECT 1 FROM transaction_tags x WHERE x.transaction_id = t.id AND x.tag_id = {tag})"
+                ));
+            }
+        }
+        format!("{accounts}{side}{amount}{tags}")
     }
 
     /// `category_id` and all its descendants (capped like the history queries).
@@ -600,6 +635,8 @@ impl Vault {
         direction: BookingDirection,
         amount_min_cents: Option<i64>,
         amount_max_cents: Option<i64>,
+        tag_ids: Vec<i64>,
+        untagged_only: bool,
     ) -> Result<Vec<Category>, CoreError> {
         let db = self.db()?;
         let rows = Self::category_rows(&db)?;
@@ -610,6 +647,8 @@ impl Vault {
                 direction,
                 amount_min_cents,
                 amount_max_cents,
+                &tag_ids,
+                untagged_only,
             );
             let currency = crate::planning::sums_condition(account_ids.len());
             let condition =

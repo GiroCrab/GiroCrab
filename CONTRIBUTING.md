@@ -32,7 +32,12 @@ built dependencies and the xcframework; `--deep` also runs `cargo clean` and rem
 Database schema changes are a new migration step plus a fixture vault, see
 [Schema & migrations](docs/ARCHITECTURE.md#schema--migrations).
 
+For lasting architecture decisions, see [how to submit an ADR](docs/adr/README.md#process).
+
 ## Adding a bank in 3 steps
+
+The [ADR 0001 proposal](docs/adr/0001-connector-architecture.md) describes the
+division of work between the connector, core and front end.
 
 1. **Copy the template.** `cp girocrab-core/src/connectors/template.rs girocrab-core/src/connectors/<bank>.rs`
    and implement `begin` (login / challenge), `respond` (TAN/poll) and `fetch` (accounts + bookings).

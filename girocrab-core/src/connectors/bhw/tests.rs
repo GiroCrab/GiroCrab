@@ -137,7 +137,7 @@ fn reads_savings_contracts_and_loans() {
     let c = parse_contracts(&contracts_json()).unwrap();
     assert_eq!(c.len(), 4);
     assert_eq!(c[0].id, "1000000001");
-    assert_eq!(c[0].kind, AccountKind::Savings);
+    assert_eq!(c[0].kind, AccountKind::BuildingSavings);
     assert_eq!(c[0].balance_cents, Some(1_234_567));
     // A loan is debt, whichever sign the BHW uses.
     assert_eq!(c[1].id, "1000000002");
