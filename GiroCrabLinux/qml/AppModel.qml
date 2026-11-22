@@ -2998,8 +2998,9 @@ QtObject {
         if (done === undefined) return
         UndoManager.register(linked ? qsTr("Erstattung zuordnen") : qsTr("Verknüpfung aufheben"), () => setRefundLink(refundId, originalId, part, refundPart, !linked))
         refundLinksRevision++
-        // the marker in the rows and the sums: a linked refund is no income as far as it is assigned
-        reloadBookings(); reloadDashboard(); reloadPlanning()
+        // the marker in the rows and the sums: a linked refund is no income as far as it is
+        // assigned, and counts in the category of what it pays back
+        reloadBookings(); reloadCategories(); reloadDashboard(); reloadPlanning()
     }
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
