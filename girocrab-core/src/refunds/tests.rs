@@ -446,6 +446,14 @@ fn unlink_of_a_part_reaches_the_link_the_other_device_widened() {
     b.set_transaction_splits(bb[1], Vec::new()).unwrap();
     assert_eq!(part_links(&b, bb[2]), vec![(bb[1], 0, Some(50))]);
     a.unlink_refund(aa[2], aa[1], 2).unwrap();
+    // "afterwards" also when both devices wrote within one millisecond
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE refund_links SET changed_ms=changed_ms+100,deleted_ms=deleted_ms+100 WHERE deleted_ms IS NOT NULL",
+            [],
+        )
+        .unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
     b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
     assert!(part_links(&a, aa[2]).is_empty());
