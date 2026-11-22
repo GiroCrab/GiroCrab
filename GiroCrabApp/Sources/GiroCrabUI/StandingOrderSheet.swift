@@ -104,6 +104,7 @@ struct StandingOrderSheet: View {
                                 .accessibilityLabel("IBAN ungültig")
                         }
                     }
+                    .withBankLine(draft.iban)
                 }
                 LabeledContent("Betrag") {
                     TextField("Betrag", text: $model.standingDraft.amountText, prompt: Text("0,00"))
@@ -184,6 +185,7 @@ struct StandingOrderSheet: View {
                 line("Von Konto", account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "")
                 line("Empfänger", draft.name)
                 line("IBAN", draft.iban, mono: true)
+                if let bank = bankNameForIban(iban: draft.iban) { line("Bank", bank) }
                 if !draft.purpose.isEmpty { line("Verwendungszweck", draft.purpose) }
                 line("Erste Ausführung", DateText.medium(DateText.iso(draft.firstDate)), sensitive: false)
                 line("Letzte Ausführung",

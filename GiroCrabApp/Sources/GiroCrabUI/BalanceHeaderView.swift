@@ -46,6 +46,16 @@ func accountHolderLine(_ a: Account) -> String? {
     return owner.isEmpty ? nil : owner
 }
 
+/// One line for the folded account header: "bank · IBAN" and the account's own note, whose line
+/// breaks become spaces (GitHub #1621). Shared by the cash header and the holdings header.
+enum CompactAccountLine {
+    static func text(subtitle: String, note: String) -> String {
+        let flat = note.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        return [subtitle, flat].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
 struct StreamHeaderCard: View {
     @Environment(AppModel.self) private var model
     @Environment(\.reportRedaction) private var redaction
@@ -69,22 +79,49 @@ struct StreamHeaderCard: View {
         return nil
     }
 
+    /// "Offline note · bank · IBAN" under the account name (also in the folded title row, #1621).
+    private func accountSubtitle(_ a: Account) -> String {
+        ([model.isOffline(a.id) ? OfflineAccountOptions.subtitle(a) : ""] + [a.bankName, a.iban.isEmpty ? "" : formatIBAN(a.iban)])
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// The folded title row: the subtitle plus the account's own note on one line (#1621).
+    private func compactAccountLine(_ a: Account) -> String {
+        CompactAccountLine.text(subtitle: accountSubtitle(a), note: model.accountNote(for: a.id))
+    }
+
     private var compactHeaderTitle: LocalizedStringKey {
         compactHeader ? "Kopfbereich einblenden" : "Kopfbereich minimieren"
     }
 
     var body: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: ViewLayout.cardSpacing) {
+        VStack(alignment: .leading, spacing: ViewLayout.sectionSpacing) {
             HStack(alignment: compactHeader ? .center : .top) {
                 // Minimise the header: more room for the booking list (GitHub #358).
                 CardChevron(collapsed: $compactHeader, customTitle: compactHeaderTitle)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.title).sensitive(account == nil ? .labels : .personal).appFont(compactHeader ? .subheadline : .title2, weight: .semibold).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
+                    if compactHeader, let a = account {
+                        // Folded: name and bank · IBAN side by side; the filters sit in the row
+                        // below, once (GitHub #1621).
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(model.title).sensitive(.personal).appFont(.subheadline, weight: .semibold).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
+                                .layoutPriority(1)
+                            let line = compactAccountLine(a)
+                            Text(line)
+                                .sensitive()
+                                .appFont(.caption)
+                                .foregroundStyle(Theme.secondary)
+                                .lineLimit(1)
+                                .help(redaction.masking(line))
+                        }
+                    } else {
+                        Text(model.title).sensitive(account == nil ? .labels : .personal).appFont(compactHeader ? .subheadline : .title2, weight: .semibold).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7)
+                    }
                     if !compactHeader {
                     Group {
                         if let a = account {
-                            Text(([model.isOffline(a.id) ? OfflineAccountOptions.subtitle(a) : ""] + [a.bankName, a.iban.isEmpty ? "" : formatIBAN(a.iban)]).filter { !$0.isEmpty }.joined(separator: " · "))
+                            Text(accountSubtitle(a))
                                 .sensitive()
                             if let holder = accountHolderLine(a) {
                                 Text(holder)
@@ -113,10 +150,6 @@ struct StreamHeaderCard: View {
                 }
                 .contextMenu {
                     if let a = account { AccountCopyMenu(account: a) }
-                }
-                // Folded: period and status filters share the title row (GitHub #603).
-                if compactHeader {
-                    filterRow
                 }
                 #if os(iOS)
                 // long-press is invisible on iPhone/iPad: show an explicit entry too
@@ -182,7 +215,7 @@ struct StreamHeaderCard: View {
                         #if os(iOS)
                         headerChart.frame(height: 44)
                         #else
-                        headerChart.frame(height: 72)
+                        headerChart.frame(height: 56)
                         #endif
                     }
                     // below the chart, also while it is hidden (#634)
@@ -201,7 +234,7 @@ struct StreamHeaderCard: View {
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             #else
-            HStack(spacing: 10) { kpis }
+            HStack(spacing: 0) { kpis }
                 .frame(maxWidth: .infinity)
                 .fixedSize(horizontal: false, vertical: true)
             #endif
@@ -209,7 +242,7 @@ struct StreamHeaderCard: View {
 
             filterRow
         }
-        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: compactHeader))
+        .flatSection(vertical: compactHeader ? 5 : ViewLayout.sectionPadding)
     }
 
     private var isCategory: Bool {
@@ -270,11 +303,21 @@ struct StreamHeaderCard: View {
     private var kpis: some View {
         KPI(title: "Konsumausgaben", subtitle: LocalizedStringKey(model.periodSubtitle), value: kpiValue(-model.consumptionThisMonth), tint: Theme.outflow,
             extra: kpiExtra { -$0.consumptionCents })
+        kpiDivider
         KPI(title: "Investiert", subtitle: "Sparpläne & Perks", value: kpiValue(model.investedThisMonth), tint: Theme.invest,
             extra: kpiExtra { $0.investedCents })
+        kpiDivider
         KPI(title: "Einnahmen", subtitle: LocalizedStringKey(model.periodSubtitle), value: kpiValue(model.incomeThisMonth), tint: Theme.inflow,
             extra: kpiExtra { $0.incomeCents })
+        kpiDivider
         fixedCostsKPI
+    }
+
+    /// Hairline between the flat KPI columns (instead of a bordered tile each).
+    private var kpiDivider: some View {
+        Divider()
+            .frame(height: 30)
+            .padding(.vertical, 4)
     }
 
     /// Recurring expenses still due this month (GitHub #35); opens the overview.
@@ -613,11 +656,9 @@ struct KPI: View {
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.canvas))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 }
@@ -1276,10 +1317,11 @@ struct BalanceChart: View {
                 .appFont(.caption, weight: .semibold, monospacedDigit: true)
                 .foregroundStyle(cents < 0 ? Theme.outflow : Theme.text)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        // A flat, unbordered plate keeps the readout legible over the chart
+        // without turning it into another card.
+        .background(Theme.systemSurface)
     }
 }
 

@@ -68,6 +68,7 @@ fn loose_amounts() {
     assert_eq!(a("1234.56"), Some(123_456));
     assert_eq!(a(" 12,5 "), Some(12_50));
     assert_eq!(a("199.99"), Some(199_99));
+    assert_eq!(a("119.000"), Some(119_00));
     assert_eq!(a("0.00"), None);
     assert_eq!(a("-5.00"), None);
     assert_eq!(a("abc"), None);

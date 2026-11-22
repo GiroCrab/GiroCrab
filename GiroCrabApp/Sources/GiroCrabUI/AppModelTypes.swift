@@ -13,7 +13,7 @@ enum SidebarItem: Hashable {
     case account(Int64)
     case category(Int64)
     case uncategorized
-    /// "Belege & PostBox"
+    /// "Belege & Postbox"
     case documents
     /// „Neue Umsätze“ (GitHub #352): unreviewed bookings of all accounts.
     case newBookings
@@ -76,12 +76,12 @@ enum DocumentsScope: String, CaseIterable, Identifiable {
         switch self {
         case .all: return String(localized: "Alle Dokumente")
         case .receipts: return String(localized: "Belege")
-        case .postbox: return String(localized: "PostBox")
+        case .postbox: return String(localized: "Postbox")
         }
     }
 
     var heading: String {
-        self == .all ? String(localized: "Belege & PostBox") : title
+        self == .all ? String(localized: "Belege & Postbox") : title
     }
 
     var description: String {
@@ -110,7 +110,7 @@ extension DocumentInfo {
         !sourceUrl.isEmpty && !sourceUrl.hasPrefix("demo-doc-")
     }
     var originTitle: String {
-        isBankDocument ? String(localized: "PostBox") : String(localized: "Beleg")
+        isBankDocument ? String(localized: "Postbox") : String(localized: "Beleg")
     }
 }
 
@@ -453,6 +453,9 @@ struct ActiveChallenge: Identifiable {
     var waiting: Bool
     var busy: Bool = false
     var error: String?
+    /// The TAN of a transfer order that was sent (not its login SCA, not a sync's challenge):
+    /// only then does the sheet show the order comparison (#949).
+    var orderApproval = false
 }
 
 /// Missing FinTS product ID / API keys for a bank: shown as a setup form.
@@ -493,6 +496,9 @@ struct TransferDraft {
     /// Terminüberweisung: when on, `executionDate` is sent (FinTS only).
     var scheduled = false
     var executionDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+    /// Filled from a `girocrab://transfer` link (`PaymentLink`): the form warns that another
+    /// app or a web page chose the recipient. A new draft starts without it.
+    var fromLink = false
 
     /// The fields a payment fills (paste, invoice, clipboard check #663).
     static let paymentFields: [WritableKeyPath<TransferDraft, String>] = [\.name, \.iban, \.bic, \.amountText, \.purpose]
@@ -633,6 +639,8 @@ let settingLabels: [String: String] = [
     "paypal.client_id": String(localized: "PayPal Client-ID"),
     "paypal.client_secret": String(localized: "PayPal Secret"),
     "kontist.client_id": String(localized: "Kontist Client-ID"),
+    "bitcoin_core.datadir": String(localized: "Bitcoin-Core-Datenverzeichnis"),
+    "bitcoin_core.rpc_url": String(localized: "Bitcoin-Core-RPC-Adresse"),
     "kontist.client_secret": String(localized: "Kontist Client-Secret"),
     "enablebanking.application_id": String(localized: "Enable Banking Application-ID"),
     "enablebanking.private_key_pem": String(localized: "Enable Banking Private Key"),
@@ -722,12 +730,14 @@ extension Result where Failure == Error {
 
 /// Account kinds the user can pick (import, Konto-Einstellungen), on Mac and iPhone.
 extension AccountKind {
-    static let importChoices: [AccountKind] = [.checking, .savings, .creditCard, .paymentService, .brokerage, .cash, .loan]
+    static let importChoices: [AccountKind] = [.checking, .savings, .timeDeposit, .buildingSavings, .creditCard, .paymentService, .brokerage, .cash, .loan]
 
     var label: String {
         switch self {
         case .checking: return String(localized: "Girokonto")
         case .savings: return String(localized: "Tagesgeld / Sparen")
+        case .timeDeposit: return String(localized: "Festgeld")
+        case .buildingSavings: return String(localized: "Bausparen")
         case .creditCard: return String(localized: "Kreditkarte")
         case .paymentService: return String(localized: "Zahlungsdienst")
         case .brokerage: return String(localized: "Depot")
@@ -779,6 +789,40 @@ enum TagEntryIntent: Equatable {
 enum KeyAdoptionState: Equatable {
     case idle, working, done
     case failed(String)
+    /// No vault where this device looked (#1503): the sheet names the place and
+    /// offers „Ordner wählen …“, since a Mac without the app's iCloud container
+    /// syncs via the folder „GiroCrab“ in iCloud Drive.
+    /// `searched`: the place looked in, shown redacted under the message.
+    case notFound(String, searched: String?)
+
+    /// „Ordner wählen …“ stays offered after a failure too: the picked folder
+    /// may hold a vault the pasted key cannot open (#1503).
+    var offersFolderPick: Bool {
+        switch self {
+        case .notFound, .failed: return true
+        case .idle, .working, .done: return false
+        }
+    }
+
+    /// Why nothing was found where the device looked; the sheet shows the place
+    /// itself (`CloudSyncManager.folderName`, redacted like in Settings).
+    static func notFoundMessage(location: CloudSyncManager.Location) -> String {
+        if location == .container {
+            return String(localized: "Im iCloud-Speicher der App liegt noch kein Tresor. Synchronisiert Ihr anderes Gerät (etwa die Mac-App) über den Ordner „GiroCrab“ in iCloud Drive, wählen Sie diesen Ordner aus. Sonst aktivieren Sie iCloud Sync auf dem anderen Gerät, warten auf den ersten Upload und versuchen es erneut.")
+        }
+        return String(localized: "Im gewählten Ordner liegt noch kein Tresor. Wählen Sie den Ordner, den Ihr anderes Gerät nutzt, oder aktivieren Sie dort iCloud Sync, warten auf den ersten Upload und versuchen es erneut.")
+    }
+
+    /// The picked folder holds no vault (#1503); nothing is created there.
+    static func pickedFolderMessage(_ picked: ICloudFolderMigration.PickedFolder) -> String? {
+        switch picked {
+        case .found: return nil
+        case .subfolder(let name):
+            return String(localized: "Der gewählte Ordner enthält einen Unterordner „\(name)“ mit Ihrem Tresor. Wählen Sie bitte genau diesen Unterordner aus.")
+        case .empty:
+            return String(localized: "Der gewählte Ordner enthält keinen GiroCrab-Tresor. Wählen Sie den Ordner, den Ihr anderes Gerät nutzt (meist „GiroCrab“ in iCloud Drive).")
+        }
+    }
 }
 
 /// What the tag sheet changed but has not stored yet (#228): names, colours,

@@ -43,9 +43,10 @@ private struct NewBookingsCardHeader: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 10) {
+            // signet size, gap and inset match `BookingRow`, so the name lines up with the rows below (#1556)
+            HStack(alignment: .top, spacing: 12) {
                 if let a = section.account {
-                    AccountSignet(account: a, size: 28, color: model.accountColor(a.id), onSelection: false)
+                    AccountSignet(account: a, size: 36, color: model.accountColor(a.id), onSelection: false)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(section.title)
@@ -79,10 +80,10 @@ private struct NewBookingsCardHeader: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14)
             .padding(.vertical, 12)
             Rectangle().fill(Theme.border).frame(height: 1)
         }
-        .modifier(DayCardSegment(isTop: true, isBottom: false))
+        .modifier(DayCardSegment())
     }
 }

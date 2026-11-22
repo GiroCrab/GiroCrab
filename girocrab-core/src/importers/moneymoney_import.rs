@@ -215,26 +215,13 @@ fn decode(data: &[u8]) -> String {
     }
 }
 
+/// Amount cell; a currency code or symbol next to the number is ignored.
 fn amount(s: &str) -> Option<i64> {
     let cleaned: String = s
         .chars()
-        .filter(|c| !matches!(c, '€' | '$' | '£') && !c.is_alphabetic())
+        .filter(|c| !matches!(c, '$' | '£') && !c.is_alphabetic())
         .collect();
-    let t = cleaned.trim();
-    if t.is_empty() {
-        return None;
-    }
-    if let Ok(v) = parse_cents(t) {
-        return Some(v);
-    }
-    // "1.234" / "-1.234.567": German grouping without decimals.
-    static GROUPED: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^([+-]?)(\d{1,3}(?:\.\d{3})+)$").unwrap());
-    GROUPED.captures(t).and_then(|c| {
-        let digits: String = c[2].chars().filter(|c| c.is_ascii_digit()).collect();
-        let v: i64 = digits.parse::<i64>().ok()?.checked_mul(100)?;
-        Some(if &c[1] == "-" { -v } else { v })
-    })
+    parse_cents(&cleaned).ok()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

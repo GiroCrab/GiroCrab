@@ -45,6 +45,7 @@ struct HeaderChartControls<Unit: View>: View {
             .controlSize(.small)
             .fixedSize()
             .help("Diagrammart")
+            if !collapsed && style == .pie { PieValueModeMenu() }
             if !collapsed { unitMenu }
             Spacer(minLength: 0)
         }
@@ -102,6 +103,8 @@ enum HeaderPieSlices {
         let label: String
         /// Positive share (expenses as magnitude).
         let cents: Int64
+        /// Account names in the cash pie are personal; category names and „Sonstige“ are labels.
+        var personal = false
     }
 
     /// Shares of a category's direct subcategories (incl. their own children) plus the bookings
@@ -127,7 +130,7 @@ enum HeaderPieSlices {
         let sorted = parts.sorted { $0.cents != $1.cents ? $0.cents > $1.cents : $0.label < $1.label }
         let head = sorted.count > limit ? Array(sorted.prefix(max(limit - 1, 0))) : sorted
         var out = head.enumerated().map { i, p in
-            WealthSlice(id: p.id, label: p.label, cents: p.cents, color: WealthPalette.color(i))
+            WealthSlice(id: p.id, label: p.label, cents: p.cents, color: WealthPalette.color(i), personal: p.personal)
         }
         let rest = sorted.dropFirst(head.count).reduce(Int64(0)) { $0 + $1.cents }
         if rest > 0 { out.append(WealthSlice(id: "rest", label: String(localized: "Sonstige"), cents: rest, color: WealthPalette.rest)) }
@@ -148,6 +151,10 @@ struct HeaderPieChart: View {
     /// Click on a legend entry (category slices only).
     var onSelect: ((String) -> Void)? = nil
     @Environment(\.textScale) private var textScale
+    /// Legend shows the share or the amount; the hover card shows both (#889).
+    @AppStorage(PieValueMode.headerPieKey) private var mode: PieValueMode = .share
+    @State private var hovered: String?
+    @State private var spot: HoverCardSpot?
 
     #if os(iOS)
     private let rows = 2
@@ -168,12 +175,19 @@ struct HeaderPieChart: View {
                     SectorMark(angle: .value("Betrag", p.cents), innerRadius: .ratio(0.55), angularInset: 1)
                         .cornerRadius(2)
                         .foregroundStyle(p.color)
+                        .opacity(hovered == nil || hovered == p.id ? 1 : 0.35)
                 }
                 .chartLegend(.hidden)
+                .pieHover(parts: slices.map { ($0.id, $0.cents) }, innerRatio: 0.55, hovered: $hovered, spot: $spot)
                 .aspectRatio(1, contentMode: .fit)
                 .accessibilityHidden(true)
                 legend(total: total)
                 Spacer(minLength: 0)
+            }
+            .hoverCardHost(spot) { id in
+                if let s = slices.first(where: { $0.id == id }) {
+                    PieDetailCard(label: s.label, cents: s.cents, total: total, personal: s.personal)
+                }
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Anteile")
@@ -197,16 +211,23 @@ struct HeaderPieChart: View {
         let row = HStack(spacing: 5) {
             Circle().fill(s.color).frame(width: 7, height: 7)
             Text(s.label)
-                .sensitive(.labels)
+                .sensitive(s.personal ? .personal : .labels)
                 .lineLimit(1)
                 .foregroundStyle(Theme.text)
-            Text(Double(s.cents) / Double(total), format: .percent.precision(.fractionLength(0)))
-                .sensitive()
-                .monospacedDigit()
-                .foregroundStyle(Theme.secondary)
-                .fixedSize()
+            Group {
+                switch mode {
+                case .share: Text(Double(s.cents) / Double(total), format: .percent.precision(.fractionLength(0)))
+                case .amount: Text(Money.format(s.cents))
+                }
+            }
+            .sensitive(.amounts)
+            .monospacedDigit()
+            .foregroundStyle(Theme.secondary)
+            .fixedSize()
         }
         .appFont(.caption2)
+        .opacity(hovered == nil || hovered == s.id ? 1 : 0.5)
+        .sliceHover(id: s.id, hovered: $hovered, spot: $spot)
         if let onSelect, Int64(s.id) != nil {
             Button { onSelect(s.id) } label: { row.contentShape(Rectangle()) }
                 .buttonStyle(.plain)

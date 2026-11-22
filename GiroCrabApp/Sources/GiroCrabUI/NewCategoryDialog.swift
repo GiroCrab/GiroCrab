@@ -5,6 +5,7 @@ import GiroCrabCore
 struct NewCategoryRequest: Identifiable, Equatable {
     let id = UUID()
     var parent: Int64?
+    var bookingIDs: [Booking.ID] = []
 }
 
 /// Sheet for a new category: name, symbol and colour (#168), driven by
@@ -29,7 +30,7 @@ struct NewCategorySheet: View {
     let request: NewCategoryRequest
 
     @State private var name = ""
-    @State private var symbol = "tag.fill"
+    @State private var symbol = SymbolCatalog.defaultCategorySymbol
     @State private var colorHex = "#7A808A"
 
     private static let palette = accountColorPalette()
@@ -91,7 +92,8 @@ struct NewCategorySheet: View {
 
     private func create() {
         guard !trimmed.isEmpty else { return }
-        model.createCategory(name: trimmed, parent: request.parent, symbol: symbol, color: colorHex)
+        model.createCategory(name: trimmed, parent: request.parent, symbol: symbol, color: colorHex,
+                             assigning: request.bookingIDs)
         dismiss()
     }
 }

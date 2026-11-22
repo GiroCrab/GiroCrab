@@ -117,6 +117,28 @@ final class CategoryAssignTests: XCTestCase {
         XCTAssertEqual(model.categorizeTargets(for: rows[2]).map(\.id), [rows[2].id])
     }
 
+    func testNewSubcategoryIsAssignedToTheBookingsFromTheMenu() throws {
+        let rows = Array(model.bookings.prefix(3))
+        XCTAssertEqual(rows.count, 3)
+        let parent = try XCTUnwrap(model.categoryTree.first)
+        let targets = Set(rows.prefix(2).map(\.id))
+        model.selectedBookingIDs = targets
+        let request = NewCategoryRequest(parent: parent.id,
+                                         bookingIDs: model.categorizeTargets(for: rows[0]).map(\.id))
+        // The request still targets the original rows if the selection changes.
+        model.selectedBookingIDs = [rows[2].id]
+        model.createCategory(name: "New menu category", parent: request.parent, symbol: "tag", color: "#123456",
+                             assigning: request.bookingIDs)
+        let new = try XCTUnwrap(model.categories.first { $0.name == "New menu category" })
+        XCTAssertEqual(new.parentId, parent.id)
+        for id in targets {
+            XCTAssertEqual(model.bookings.first { $0.id == id }?.categoryId, new.id)
+        }
+        XCTAssertEqual(model.bookings.first { $0.id == rows[2].id }?.categoryId, rows[2].categoryId)
+        XCTAssertEqual(model.selectedBookingIDs, [rows[2].id])
+        XCTAssertNil(model.errorMessage)
+    }
+
     /// Bookings dropped onto a sidebar category get it; foreign drags change nothing.
     func testDroppedBookingsGetTheCategory() async throws {
         let (b, c) = try uncategorizedBooking()

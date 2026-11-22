@@ -3,18 +3,25 @@ import GiroCrabCore
 @testable import GiroCrabUI
 
 final class CategorySumChartTests: XCTestCase {
-    func testBarsParseMonthsAndFlipExpenseOnlySeries() {
+    func testBarsParseMonthsAndFlipNetExpenseSeries() {
         let bars = CategorySumChart.bars([
             CategoryPeriodSum(period: "2025-01", cents: -1500),
             CategoryPeriodSum(period: "2025-03", cents: -2000),
         ])
         XCTAssertEqual(bars.count, 2)
         XCTAssertTrue(CategorySumChart.flipsSign(bars))
-        let mixed = CategorySumChart.bars([
+        // a refund month keeps a net-expense series flipped (#1506)
+        let refund = CategorySumChart.bars([
             CategoryPeriodSum(period: "2025-01", cents: -1500),
             CategoryPeriodSum(period: "2025-02", cents: 500),
         ])
-        XCTAssertFalse(CategorySumChart.flipsSign(mixed))
+        XCTAssertTrue(CategorySumChart.flipsSign(refund))
+        let netIncome = CategorySumChart.bars([
+            CategoryPeriodSum(period: "2025-01", cents: -500),
+            CategoryPeriodSum(period: "2025-02", cents: 1500),
+        ])
+        XCTAssertFalse(CategorySumChart.flipsSign(netIncome))
+        XCTAssertFalse(CategorySumChart.flipsSign(CategorySumChart.bars([CategoryPeriodSum(period: "2025-01", cents: 0)])))
         XCTAssertFalse(CategorySumChart.flipsSign([]))
     }
 
