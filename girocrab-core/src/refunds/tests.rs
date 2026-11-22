@@ -852,6 +852,44 @@ fn removed_split_reaches_the_other_device_as_a_link_to_the_whole_booking() {
     assert_eq!(part_links(&a, aa[2]), vec![(aa[1], 0, Some(50))]);
 }
 
+/// A split that was synced before step 37 could lie in two orders (the merge wrote it sorted,
+/// the device it was made on kept the order it was entered in). The step gives both the same
+/// order, so a link to a part names the same part on both devices after the merge.
+#[test]
+fn split_synced_before_the_step_has_one_order_on_both_devices() {
+    let d = TempDir::new("refunds-split-order");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    let part = |amount: i64, note: &str| crate::models::TransactionSplitInput {
+        category_id: None,
+        amount_cents: amount,
+        note: note.into(),
+    };
+    // as entered on A, and as the merge of before wrote it on B
+    a.set_transaction_splits(aa[1], vec![part(-50, "small"), part(-150, "big")])
+        .unwrap();
+    b.set_transaction_splits(bb[1], vec![part(-150, "big"), part(-50, "small")])
+        .unwrap();
+    for v in [&a, &b] {
+        let db = v.db().unwrap();
+        db.execute("UPDATE transactions SET splits_ms=5 WHERE splits_ms>0", [])
+            .unwrap();
+        super::schema_step(&db).unwrap();
+    }
+    b.link_refund(bb[2], bb[1], 1).unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    let label = |v: &Vault, refund: i64| {
+        v.refund_links(refund).unwrap().originals[0]
+            .part_label
+            .clone()
+    };
+    assert_eq!(label(&b, bb[2]), "big");
+    assert_eq!(label(&a, aa[2]), "big");
+}
+
 /// The part of a split refund a link names reaches the other device with the link.
 #[test]
 fn link_of_a_refund_part_reaches_the_other_device() {

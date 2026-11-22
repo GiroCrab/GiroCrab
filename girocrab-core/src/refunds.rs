@@ -35,6 +35,28 @@ CREATE TABLE IF NOT EXISTS refund_links (
 CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id);
 ";
 
+/// Step 37: the table, and one order for the parts of the splits there are. A link names a
+/// part by its position, but until this step the merge compared the parts of a split sorted
+/// (category uuid, amount, note) and wrote them that way, while the device the split was made
+/// on kept the order they were entered in: two devices could hold the same split in two
+/// orders. Before the first link exists every split gets the sorted order, on every device
+/// and in every file that is merged (it is migrated first). Later splits keep the order they
+/// are entered in; the merge takes it over as it is.
+pub(crate) fn schema_step(conn: &Connection) -> CoreResult<()> {
+    conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(
+        "CREATE TEMP TABLE split_order AS
+           SELECT s.transaction_id, s.category_id, s.amount_cents, s.note
+             FROM transaction_splits s LEFT JOIN categories c ON c.id = s.category_id
+            ORDER BY s.transaction_id, c.uuid, s.amount_cents, s.note, s.id;
+         DELETE FROM transaction_splits;
+         INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, note)
+           SELECT transaction_id, category_id, amount_cents, note FROM split_order ORDER BY rowid;
+         DROP TABLE split_order;",
+    )?;
+    Ok(())
+}
+
 /// What a booking is in a refund link, for the marker in the booking list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
