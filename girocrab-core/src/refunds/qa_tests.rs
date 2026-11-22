@@ -146,8 +146,8 @@ fn suggestions_exclude_only_links_of_the_selected_own_part() {
         let (_d, v, a) = fixture();
         let (ca, cb) = categories(&v);
         let sign = if pays_back { 1 } else { -1 };
-        let own = booking(&v, a, sign * 10000);
-        let other = booking(&v, a, -sign * 20000);
+        let own = add(&v, a, sign * 10000, "2025-02-10", "QA vendor", "");
+        let other = add(&v, a, -sign * 20000, "2025-02-10", "QA vendor", "");
         split(&v, own, ca, cb, sign);
         let link = |part| {
             if pays_back {
