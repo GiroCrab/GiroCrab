@@ -456,23 +456,20 @@ extension AppModel {
         }.map(\.id))
     }
 
-    /// Trade Republic: restarts the history in the next sync.
+    /// Trade Republic: restarts the history in the next sync. Synchronous (a few settings rows): a sync
+    /// started right after must read the cleared state, or it writes the old cursors back (#1660).
     func resetTradeRepublicHistory(_ id: Int64) {
-        guard syncingConnectionID == nil, let pin = pinVault() else { return }
-        Task {
-            do {
-                try await pin.run { try $0.resetTradeRepublicHistory(connectionId: id) }
-                guard isCurrent(pin) else { return }
-                let message = String(localized: "Historie wird neu aufgebaut")
-                historyIncomplete[id] = HistoryProgress(remaining: 0, total: 0)
-                toast = message
-                logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
-            } catch {
-                guard isCurrent(pin) else { return }
-                let message = describe(error)
-                toast = message
-                logSync(connectionID: id, source: .manual, outcome: .error, message: message)
-            }
+        guard syncingConnectionID == nil, let vault else { return }
+        do {
+            try vault.resetTradeRepublicHistory(connectionId: id)
+            let message = String(localized: "Historie wird neu aufgebaut")
+            historyIncomplete[id] = HistoryProgress(remaining: 0, total: 0)
+            toast = message
+            logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
+        } catch {
+            let message = describe(error)
+            toast = message
+            logSync(connectionID: id, source: .manual, outcome: .error, message: message)
         }
     }
 

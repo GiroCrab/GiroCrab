@@ -157,6 +157,95 @@ fn history_bookings_arrive_checked_and_stored_documents_get_linked() {
     );
 }
 
+/// The document pass can reach a known receipt only in a later sync than its booking (#1660).
+#[test]
+fn a_known_receipt_reached_later_links_to_its_booking_unless_unlinked() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-history-docs-later");
+    let v = Vault::open(
+        p_dir.join("v.db").to_string_lossy().into_owned(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let conn = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
+        .unwrap();
+    let mut base = fetch_with_document();
+    let account = base.accounts.remove(0);
+    let doc = |bytes: &[u8], booking: Option<&str>, url: &str| crate::documents::RemoteDocument {
+        booking_external_id: booking.map(str::to_string),
+        bytes: bytes.to_vec(),
+        source_url: url.into(),
+        ..base.documents[0].clone()
+    };
+    let booking = |id: &str| RemoteTransaction {
+        account_ref: "tr:cash".into(),
+        external_id: id.into(),
+        booking_date: "2024-05-02".into(),
+        value_date: "2024-05-02".into(),
+        amount_cents: -7500,
+        currency: "EUR".into(),
+        counterparty: "Beispiel".into(),
+        checked: true,
+        ..Default::default()
+    };
+    let store = |transactions: Vec<RemoteTransaction>, documents| {
+        let fetched = FetchResult {
+            accounts: vec![account.clone()],
+            transactions,
+            documents,
+            ..Default::default()
+        };
+        store_fetch(&v, ConnectorKind::TradeRepublic, conn, fetched).unwrap();
+    };
+    // both receipts stored without a booking, then both bookings arrive while the pass is full
+    store(
+        vec![],
+        vec![
+            doc(b"%PDF-1.4 a", None, "tr:doc:a"),
+            doc(b"%PDF-1.4 b", None, "tr:doc:b"),
+        ],
+    );
+    store(vec![booking("item-a"), booking("item-b")], vec![]);
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    let id_of = |url: &str| docs.iter().find(|d| d.source_url == url).unwrap().id;
+    let (a, b) = (id_of("tr:doc:a"), id_of("tr:doc:b"));
+    let booking_a = v
+        .list_all_documents(Default::default())
+        .unwrap()
+        .iter()
+        .find(|d| d.id == a)
+        .and_then(|d| d.booking_id);
+    assert_eq!(booking_a, None, "no link without the receipt in the fetch");
+    // the user unlinks receipt b from a booking it was put to by hand
+    let other = v.list_accounts().unwrap()[0].id;
+    let any_booking: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE account_id = ?1 ORDER BY id LIMIT 1",
+            [other],
+            |r| r.get(0),
+        )
+        .unwrap();
+    v.link_document(b, Some(any_booking)).unwrap();
+    v.link_document(b, None).unwrap();
+    // a later pass reaches both known receipts (link-only, no bytes)
+    store(
+        vec![],
+        vec![
+            doc(&[], Some("item-a"), "tr:doc:a"),
+            doc(&[], Some("item-b"), "tr:doc:b"),
+        ],
+    );
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    let linked = |id: i64| docs.iter().find(|d| d.id == id).unwrap().booking_id;
+    assert!(
+        linked(a).is_some(),
+        "the booking of an earlier sync gets its receipt"
+    );
+    assert_eq!(linked(b), None, "a manual unlink stays");
+}
+
 #[test]
 fn unread_depot_keeps_its_positions_and_value() {
     // A sync that could not read the depot (Trade Republic: portfolio request failed)

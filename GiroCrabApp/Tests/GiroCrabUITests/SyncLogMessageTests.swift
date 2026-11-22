@@ -59,4 +59,25 @@ final class SyncLogMessageTests: XCTestCase {
         XCTAssertTrue(model.demoActive)
         XCTAssertTrue(model.historyIncomplete.isEmpty)
     }
+
+    func testOnlyAWholeLoginSyncOfThisVaultUpdatesTheHistoryProgress() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let conn = try XCTUnwrap(model.connections.first)
+        let account = try XCTUnwrap(model.allAccounts.first { $0.connectionId == conn.id })
+        let open = HistoryProgress(remaining: 5, total: 10)
+        func finish(account: Int64?, revision: Int) {
+            model.historyIncomplete[conn.id] = open
+            model.syncingAccountID = account
+            model.syncVaultRevision = revision
+            model.handle(.finished(summary: summary()), connection: conn)
+        }
+        // one account leaves the history (and its documents) for the next whole sync
+        finish(account: account.id, revision: model.vaultRevision)
+        XCTAssertEqual(model.historyIncomplete[conn.id], open)
+        // a result that started under another vault does not touch this one
+        finish(account: nil, revision: model.vaultRevision &- 1)
+        XCTAssertEqual(model.historyIncomplete[conn.id], open)
+        finish(account: nil, revision: model.vaultRevision)
+        XCTAssertNil(model.historyIncomplete[conn.id])
+    }
 }

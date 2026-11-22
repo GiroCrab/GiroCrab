@@ -2267,21 +2267,21 @@ impl BankConnector for TradeRepublicConnector {
                     if parsed.scheme() != "https" {
                         continue;
                     }
-                    // Stored earlier: no second download, only the link to the booking (if it exists now).
+                    // Stored earlier: no second download, only the link to the booking. The booking can
+                    // come with this fetch or with an earlier one (the document pass was full then);
+                    // storing looks it up and links only a receipt that has none yet.
                     if known_item {
-                        if out.transactions.iter().any(|t| t.external_id == *item_id) {
-                            out.documents.push(crate::documents::RemoteDocument {
-                                account_ref: "tr:cash".into(),
-                                booking_external_id: Some(item_id.clone()),
-                                title: String::new(),
-                                doc_type: String::new(),
-                                mime_type: String::new(),
-                                file_name: String::new(),
-                                bytes: Vec::new(),
-                                source_url: url.split('?').next().unwrap_or(&url).to_string(),
-                                date: candidate.date.clone(),
-                            });
-                        }
+                        out.documents.push(crate::documents::RemoteDocument {
+                            account_ref: "tr:cash".into(),
+                            booking_external_id: Some(item_id.clone()),
+                            title: String::new(),
+                            doc_type: String::new(),
+                            mime_type: String::new(),
+                            file_name: String::new(),
+                            bytes: Vec::new(),
+                            source_url: url.split('?').next().unwrap_or(&url).to_string(),
+                            date: candidate.date.clone(),
+                        });
                         continue;
                     }
                     // Only send the session cookie to Trade Republic hosts; presigned

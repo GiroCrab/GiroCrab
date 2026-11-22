@@ -420,6 +420,7 @@ extension AppModel {
         let quiet = quietSyncConnectionID == connection.id
         syncingConnectionID = connection.id
         syncingAccountID = statementsFor ?? accountOnly
+        syncVaultRevision = vaultRevision
         syncGeneration &+= 1
         Task {
             var started: SyncSession?
@@ -503,10 +504,11 @@ extension AppModel {
             activeChallenge = nil
             syncingConnectionID = nil
             activeSession = nil
-            if s.historyIncomplete {
-                historyIncomplete[connection.id] = HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal))
-            } else {
-                historyIncomplete[connection.id] = nil
+            // Only a sync of the whole login in this vault tells the history's state: one account
+            // ("<Konto> abrufen", statements) leaves the history and its documents for later.
+            if syncingAccountID == nil, syncVaultRevision == vaultRevision {
+                historyIncomplete[connection.id] = s.historyIncomplete
+                    ? HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal)) : nil
             }
             let statementsFetch = statementsAccountID != nil
             if let accountID = statementsAccountID {

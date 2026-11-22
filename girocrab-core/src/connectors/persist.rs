@@ -959,15 +959,20 @@ pub(crate) fn store_fetch(
                 }
                 (booking, _) => booking,
             };
-            // A known history receipt can get a direct link when its cash booking first arrives.
+            // A known history receipt gets its direct link once its cash booking exists, also when the
+            // document pass reaches it only in a later sync. Never against the user's own unlink, never
+            // to a deleted booking; a receipt that already has a booking keeps it.
             if kind == ConnectorKind::TradeRepublic
                 && d.bytes.is_empty()
                 && !d.source_url.is_empty()
-                && let Some(booking_id) = booking_id.filter(|id| new_booking_ids.contains(id))
+                && let Some(booking_id) = booking_id
             {
                 tx.execute(
                     "UPDATE booking_documents SET booking_id = ?1
                       WHERE source_url = ?2 AND booking_id IS NULL
+                        AND NOT EXISTS (SELECT 1 FROM settings
+                              WHERE key = 'doc.unlinked.' || booking_documents.id)
+                        AND EXISTS (SELECT 1 FROM transactions WHERE id = ?1 AND deleted_ms IS NULL)
                         AND account_id IN (SELECT id FROM accounts WHERE connection_id = ?3
                               AND deleted_ms IS NULL AND archived_unix IS NULL)",
                     params![booking_id, d.source_url, connection_id],

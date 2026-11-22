@@ -758,6 +758,9 @@ public final class AppModel {
     /// ("<Konto> abrufen", statements), nil for the whole login. Set with it by
     /// `startSync`; read only through `isSyncing(_:)` (#1572).
     var syncingAccountID: Int64?
+    /// `vaultRevision` when the running sync started: a result from another vault must not
+    /// write this vault's per-connection state (`historyIncomplete`, #1660).
+    @ObservationIgnored var syncVaultRevision = 0
     var toast: String?
     /// Text of the error alert. Clearing it also clears title and retry.
     var errorMessage: String? {
