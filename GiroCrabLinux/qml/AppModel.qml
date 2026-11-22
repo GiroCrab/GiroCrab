@@ -55,12 +55,12 @@ QtObject {
     /// more with fresh arguments when it is back, so fast clicking queues nothing.
     /// The demo vault (small, launch options and screenshots expect its data at once)
     /// loads synchronously.
-    function loadOffMain(channel, request, apply, failed) {
+    function loadOffMain(channel, request, apply, failed, forceAsync) {
         if (!vaultLoaded) return
         const l = loads[channel] || (loads[channel] = { gen: 0, busy: false, again: false })
         l.gen++
         l.request = request; l.apply = apply; l.failed = failed || null
-        if (demoActive) {
+        if (demoActive && !forceAsync) {
             const req = loadRequest(request)
             if (!req) return
             let results
@@ -490,6 +490,9 @@ QtObject {
     /// A different vault is in front (or none): answers still on their way belong to the old one.
     function vaultSwitched() {
         vaultGeneration++
+        refundBooking = null
+        refundEditing = false
+        UndoManager.busy = false
         dropPendingPage()   // a "load more" page of the previous vault must not land in this list
         vaultLoaded = true
         afterAccountsQueue = []
@@ -577,6 +580,7 @@ QtObject {
     /// Everything of the vault on screen. The accounts come first: `then` runs as soon as
     /// they are there (the main view can show), the rest fills in off the GUI thread.
     function reloadAll(then, failed) {
+        refundLinksRevision++
         reloadSettings()
         reloadAccounts(() => {
             if (then) then()
@@ -2996,6 +3000,32 @@ QtObject {
     property var iconColorCategoryID: null
     /// The booking whose SplitSheet is open.
     property var splitBooking: null
+    property var refundBooking: null
+    property int refundLinksRevision: 0
+    property bool refundEditing: false
+
+    function changeRefundLink(pair, action, token) {
+        if (refundEditing || !isUnlocked) return
+        const phase = UndoManager.phase, generation = vaultGeneration
+        refundEditing = true
+        UndoManager.busy = true
+        const args = Object.assign({}, pair, { action: action, token: token === undefined ? null : token })
+        loadOffMain("refundMutation", () => [["edit_refund", args]], results => {
+            refundEditing = false; UndoManager.busy = false
+            if (!results[0].changed) return
+            const inverse = action === "unlink" ? "restore" : "unlink"
+            const undoToken = results[0].token
+            UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
+                if (vaultGeneration === generation) changeRefundLink(pair, inverse, undoToken)
+            }, phase)
+            refundLinksRevision++
+            reloadBookings(); reloadCategories(); reloadDashboard(); reloadPlanning()
+        }, message => {
+            refundEditing = false; UndoManager.busy = false
+            errorMessage = message
+            refundLinksRevision++
+        }, true)
+    }
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
     readonly property var colorNames: ({
@@ -3059,7 +3089,7 @@ QtObject {
         reloadAccounts(); reloadCategories(); reloadBookings(); reloadPlanning()
         // rule counts and the investment dashboard (Swift: rulesStale / dashboardStale)
         if (showRuleEditor) reloadRules()
-        if (scope === "Investments") reloadDashboard()
+        reloadDashboard()
     }
 
     function createCategory(name, parent, symbol, color) {
@@ -3080,6 +3110,7 @@ QtObject {
         reloadCategories()
         reloadBookings() // the booking list shows a category's name, symbol and colour
         reloadPlanning() // budget cards show name, symbol, colour and the parent
+        reloadDashboard()
     }
     function renameCategory(id, name) {
         const t = (name || "").trim()
@@ -3129,7 +3160,8 @@ QtObject {
     /// Error text, or "" on success.
     function saveSplits(parts, booking) {
         try { core("set_transaction_splits", { transaction_id: booking.id, splits: parts }) } catch (e) { return e.message }
-        reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning()
+        refundLinksRevision++
+        reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning(); reloadDashboard()
         return ""
     }
 
@@ -4173,6 +4205,14 @@ QtObject {
     function presentDemoSheet(name) {
         const top = categories.find(c => c.depth === 0)
         switch (name) {
+        case "refund": case "refund-reverse": case "refund-before": case "refund-linked":
+            loadOffMain("refundDemo", () => [["seed_refund_demo", { date: new Date().toISOString().slice(0, 10), linked: name === "refund-linked" }]], r => {
+                reloadAll()
+                sidebarSelection = "account:" + r[0].account
+                reloadBookings()
+                if (name === "refund" || name === "refund-reverse") refundBooking = { id: name === "refund" ? r[0].refund : r[0].original }
+            }, undefined, true)
+            break
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.length ? connections[connections.length - 1] : null

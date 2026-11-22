@@ -1481,6 +1481,9 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         // overview card. Not in the macro below because it carries no
         // `respect_in_total` from QML.
         "cashflow_by_period" => Some(cashflow_by_period_totals(v, a)),
+        "refund_sheet" => Some(crate::refunds::sheet(v, a)),
+        "seed_refund_demo" => Some(crate::refunds::seed(v, a)),
+        "edit_refund" => Some(crate::refunds::edit(v, a)),
         _ => dispatch_vault_methods(v, method, a),
     }
 }
@@ -1621,6 +1624,11 @@ vault_methods! {
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
     list_category_expenses(filter)
     list_category_income(filter)
+    link_refund(refund_id, refund_part, original_id, original_part)
+    unlink_refund(refund_id, refund_part, original_id, original_part)
+    restore_refund(refund_id, refund_part, original_id, original_part, token)
+    refund_links(transaction_id) refund_candidates(transaction_id, own_part, query, limit)
+    refund_suggestions(transaction_id, own_part)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
     // --- Offline-Konten und manuelle Buchungen (OfflineAccountsUI.swift, #679, #81) ---
     create_offline_account(name, kind, currency, opening_cents)

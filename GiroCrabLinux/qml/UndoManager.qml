@@ -18,28 +18,30 @@ QtObject {
     property var redoStack: []
     /// 0 = normal action, 1 = undoing, 2 = redoing.
     property int phase: 0
+    property bool busy: false
     readonly property string undoName: undoStack.length ? undoStack[undoStack.length - 1].name : ""
     readonly property string redoName: redoStack.length ? redoStack[redoStack.length - 1].name : ""
-    readonly property bool canUndo: undoStack.length > 0
-    readonly property bool canRedo: redoStack.length > 0
+    readonly property bool canUndo: !busy && undoStack.length > 0
+    readonly property bool canRedo: !busy && redoStack.length > 0
 
     /// Records `fn` (no arguments) as the undo of the action just done, shown as `name`.
-    function register(name, fn) {
+    function register(name, fn, recordedPhase) {
+        const p = recordedPhase === undefined ? phase : recordedPhase
         const entry = { name: name, fn: fn }
-        if (phase === 1) redoStack = redoStack.concat([entry])
+        if (p === 1) redoStack = redoStack.concat([entry])
         else {
             undoStack = undoStack.concat([entry])
-            if (phase === 0) redoStack = []
+            if (p === 0) redoStack = []
         }
     }
     function undo() {
-        if (!undoStack.length || phase !== 0) return
+        if (busy || !undoStack.length || phase !== 0) return
         const e = undoStack[undoStack.length - 1]
         undoStack = undoStack.slice(0, -1)
         perform(e, 1)
     }
     function redo() {
-        if (!redoStack.length || phase !== 0) return
+        if (busy || !redoStack.length || phase !== 0) return
         const e = redoStack[redoStack.length - 1]
         redoStack = redoStack.slice(0, -1)
         perform(e, 2)
