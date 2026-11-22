@@ -490,6 +490,7 @@ QtObject {
     /// A different vault is in front (or none): answers still on their way belong to the old one.
     function vaultSwitched() {
         vaultGeneration++
+        refundBooking = null   // the refund sheet shows bookings of the vault that is gone
         dropPendingPage()   // a "load more" page of the previous vault must not land in this list
         vaultLoaded = true
         afterAccountsQueue = []
