@@ -1866,6 +1866,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = render_header(&win, &v, sel);
             render_bookings(&win);
             views_ui::rerender(&win);
+            refunds_ui::privacy_changed(&win, v);
         });
     }
     {

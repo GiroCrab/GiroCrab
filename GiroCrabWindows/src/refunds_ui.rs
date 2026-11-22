@@ -21,6 +21,8 @@ type VaultSlot = Arc<Mutex<Option<Arc<Vault>>>>;
 struct Ui {
     /// The booking the dialog is open for: (id, amount in cents, currency).
     booking: Option<(i64, i64, String)>,
+    /// Its counterparty, for the dialog's title.
+    title: String,
     search: String,
     /// Linked right now, as (id, part of the split original): a click on one of them removes
     /// the link.
@@ -46,6 +48,26 @@ fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
 pub fn on_lock(win: &MainWindow) {
     win.set_refunds_open(false);
     with_ui(|u| *u = Ui::default());
+}
+
+/// The booking the dialog is open for, in its head.
+fn head(win: &MainWindow) {
+    let Some(((_, cents, currency), title)) =
+        with_ui(|u| Some((u.booking.clone()?, u.title.clone())))
+    else {
+        return;
+    };
+    let privacy = privacy_on(win);
+    win.set_rf_title(daily::mask(&title, privacy).into());
+    win.set_rf_amount(daily::mask(&money(cents, &currency), privacy).into());
+}
+
+/// Privacy mode was switched: an open dialog shows its names and amounts accordingly.
+pub fn privacy_changed(win: &MainWindow, v: Arc<Vault>) {
+    if win.get_refunds_open() {
+        head(win);
+        refresh(win, v);
+    }
 }
 
 /// What the dialog shows for one booking.
@@ -402,10 +424,7 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         if cents == 0 {
             return;
         }
-        let privacy = privacy_on(&win);
         win.set_rf_from_refund(cents > 0);
-        win.set_rf_title(daily::mask(&title, privacy).into());
-        win.set_rf_amount(daily::mask(&money(cents, &currency), privacy).into());
         win.set_rf_sums(SharedString::new());
         win.set_rf_hint(SharedString::new());
         win.set_rf_status(SharedString::new());
@@ -414,9 +433,11 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
         with_ui(|u| {
             *u = Ui {
                 booking: Some((id, cents, currency)),
+                title,
                 ..Ui::default()
             }
         });
+        head(&win);
         win.set_refunds_open(true);
         refresh(&win, v);
     });
