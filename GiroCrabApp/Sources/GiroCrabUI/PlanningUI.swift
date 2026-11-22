@@ -466,6 +466,7 @@ struct CashflowCard: View {
             // account is a proof view and keeps its sums
             if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6, accountIds: accountIds,
                                                  respectInTotal: model.sidebarSelection?.usesTotalsContext ?? true) {
+                guard !Task.isCancelled else { return }
                 rows = loaded
             }
         }

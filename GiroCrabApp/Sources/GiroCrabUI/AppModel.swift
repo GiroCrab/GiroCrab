@@ -23,6 +23,8 @@ public final class AppModel {
     private(set) var vault: Vault? {
         didSet {
             vaultRevision &+= 1
+            refundPickerBooking = nil
+            refundUndo = nil
             showRuleEditor = false
             ruleDraft = nil
             advanziaWorkflow?.cancel()
@@ -842,6 +844,10 @@ public final class AppModel {
     /// The user cancelled, but the bank did not confirm it (re-check or retry).
     var transferCancelNotice: UnconfirmedTransferCancel?
     var splitBooking: Booking?
+    var refundPickerBooking: Booking?
+    var refundUndo: RefundUndo?
+    var refundBusy = false
+    var refundRevision = 0
     var transferBusy = false
     var syncQueue: [BankConnection] = []
     /// "Alle abrufen": number of logins in the running batch (0 = single sync).
@@ -1041,10 +1047,12 @@ public final class AppModel {
                 selectAssetItem(item.id)
             }
             if let sheet = options.demoSheetName {
+                let demoPin = pinVault()
                 // --demo-sheet report:<sheet> opens the bug report over that sheet
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 600_000_000)
-                    self?.presentDemoSheet(sheet)
+                    guard let self, let demoPin, self.isCurrent(demoPin), self.demoActive else { return }
+                    self.presentDemoSheet(sheet)
                 }
             }
             if let settings = options.demoSettings {
@@ -1069,6 +1077,9 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "refund-split", "refund-negative", "refund-linked":
+            guard demoActive else { return }
+            Task { await prepareRefundDemo(name) }
         case "mandate", "collection", "collection-files", "mandate-select":
             // Lastschriften (#143): the mandate form / the collection sheet
             Task { @MainActor [weak self] in
@@ -1299,7 +1310,7 @@ public final class AppModel {
     }()
 
     nonisolated private static func makeDemoVault() throws -> Vault {
-        let url = Self.tempVaultURL("GiroCrab-Demo")
+        let url = Self.tempVaultURL(runningUnitTests ? "GiroCrab-Demo-\(UUID().uuidString)" : "GiroCrab-Demo")
         for suffix in ["", "-wal", "-shm"] {
             try? FileManager.default.removeItem(atPath: url.path + suffix)
         }
@@ -1327,7 +1338,7 @@ public final class AppModel {
     }
 
     private func openDemoVault() {
-        let url = Self.tempVaultURL("GiroCrab-Demo")
+        let url = Self.tempVaultURL(Self.runningUnitTests ? "GiroCrab-Demo-\(UUID().uuidString)" : "GiroCrab-Demo")
         // (developer) GIROCRAB_DEMO_VAULT=<file>: a ready demo vault (e.g. 30k bookings from
         // `OUT=<file> cargo run --release --example category_perf`) opened as is, for profiling.
         let prepared = ProcessInfo.processInfo.environment["GIROCRAB_DEMO_VAULT"].flatMap { $0.isEmpty ? nil : $0 }
