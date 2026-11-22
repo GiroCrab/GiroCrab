@@ -64,6 +64,8 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
 
     // Own vault snapshot is kept while demo is shown so switching back loses nothing.
     private var ownSnapshot: VaultSnapshot? = null
+    /** A background lock that arrived before the vault did (import still running). */
+    private var pendingBackgroundLock = false
 
     init { bootstrap() }
 
@@ -81,10 +83,14 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
 
     private fun adoptOwn(snapshot: VaultSnapshot) {
         ownSnapshot = snapshot
+        // Imported while the app was in the background: the window starts locked.
+        val locked = pendingBackgroundLock
+        pendingBackgroundLock = false
         _state.update {
             it.copy(
                 vaultState = VaultState.Own, vaultMayHoldRealData = true, loading = false,
                 data = snapshot, scope = Scope.All, filter = BookingFilter(), search = "", error = null,
+                backgroundLocked = locked,
             )
         }
     }
@@ -123,14 +129,23 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
      * here would mean reading the whole vault again on every app switch for nothing.
      */
     fun lockForBackground() {
-        if (_state.value.vaultState != VaultState.Own) return
+        if (_state.value.vaultState != VaultState.Own) {
+            // A running import: the vault arrives after the app is gone. Remember the lock, or the
+            // imported data would be readable on return without a new prompt.
+            pendingBackgroundLock = true
+            return
+        }
         _state.update { it.copy(backgroundLocked = true) }
     }
 
-    fun clearBackgroundLock() = _state.update { it.copy(backgroundLocked = false) }
+    fun clearBackgroundLock() {
+        pendingBackgroundLock = false
+        _state.update { it.copy(backgroundLocked = false) }
+    }
 
     fun lock() {
         ownSnapshot = null
+        pendingBackgroundLock = false
         _state.update { AppUiState(privacyMode = it.privacyMode, vaultMayHoldRealData = it.vaultMayHoldRealData) }
     }
 

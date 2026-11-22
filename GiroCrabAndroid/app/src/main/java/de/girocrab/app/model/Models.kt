@@ -145,20 +145,29 @@ data class Holding(
     /** Total purchase cost in EUR cents. */
     val costBasisCents: Long,
     val wkn: String = "",
-    /** Native holding currency (#625); [priceCents] is quoted in it. */
-    val currency: String = "EUR",
-    /** EUR per one unit of [currency]. */
+    /**
+     * Currency of [priceCents] and [costBasisCents]. The core reports holdings in the currency of
+     * their account, never in the position's own one (#625) — so a EUR amount must not be labelled
+     * with the share's native code.
+     */
+    val quoteCurrency: String = "EUR",
+    /** Native currency of the position; "" = same as [quoteCurrency]. */
+    val currency: String = "",
+    /** Price per unit in [currency]; null when the core has no native figure. */
+    val nativePriceCents: Long? = null,
+    /** Purchase price per unit in [currency]; null when the core has no native figure. */
+    val nativePurchasePriceCents: Long? = null,
+    /** Factor from the position's own currency to [quoteCurrency]. */
     val fxRateToEur: Double = 1.0,
 ) {
-    /** Current value in EUR cents. */
+    /** Current value in cents of [quoteCurrency]. */
     // Rounded, not truncated: a derived rate (see the mapper) lands on x.9999… often enough that
     // truncating would lose a cent per position (#1429).
     val valueCents get() = kotlin.math.round(quantity * priceCents * fxRateToEur).toLong()
     val gainCents get() = valueCents - costBasisCents
     val gainPct get() = if (costBasisCents > 0) gainCents * 100.0 / costBasisCents else 0.0
-    /** Average purchase price per unit in the native currency (cents). */
-    val purchasePriceNativeCents get() =
-        if (quantity > 0 && fxRateToEur > 0) (costBasisCents / quantity / fxRateToEur).toLong() else 0L
+    /** Currency to print the native figures in; the account currency when the core has none. */
+    val nativeCurrency get() = currency.ifEmpty { quoteCurrency }
 }
 
 data class ManualLoan(

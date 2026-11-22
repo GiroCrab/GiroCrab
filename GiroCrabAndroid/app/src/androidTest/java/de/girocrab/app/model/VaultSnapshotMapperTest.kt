@@ -15,6 +15,7 @@ import uniffi.girocrab_core.SelectionFlow as CoreFlow
 import java.security.SecureRandom
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -109,6 +110,8 @@ class VaultSnapshotMapperTest {
         assertNull(filter.dateFrom)
         assertNull(filter.dateTo)
         assertNull(filter.checked)
+        // Whole days let the core return more rows than the limit — the page has to stay capped.
+        assertFalse("a capped page must not be extended to whole days", filter.wholeDays)
     }
 
     /**
@@ -128,6 +131,8 @@ class VaultSnapshotMapperTest {
             valueCents = 52_000,
             profitLossPurchaseCents = 2_000,
             currency = "USD",
+            nativePriceCents = 5_200,
+            nativePurchasePriceCents = 4_100,
         )
 
         val snapshot = VaultSnapshotMapper.map(
@@ -150,6 +155,43 @@ class VaultSnapshotMapperTest {
             52_000L,
             holding.valueCents,
         )
+        // The core reports prices in the account's currency and keeps the position's own one next
+        // to it (#625) — labelling an EUR amount as "USD" was the wrong way round.
+        assertEquals("quote currency is the account's", "EUR", holding.quoteCurrency)
+        assertEquals("native code survives the mapping", "USD", holding.currency)
+        assertEquals("the native price comes from the core", 5_200L, holding.nativePriceCents)
+        assertEquals("so does the native purchase price", 4_100L, holding.nativePurchasePriceCents)
+        assertEquals("printed in the native currency", "USD", holding.nativeCurrency)
+    }
+
+    /** A position without a native figure must not invent one — the price line stays bare. */
+    @Test
+    fun holdingWithoutNativePriceStaysWithoutOne() {
+        val row = CoreHolding(
+            isin = "DE0007164600",
+            wkn = "716460",
+            name = "SAP SE",
+            quantity = 5.0,
+            currentPriceCents = 10_000,
+            purchasePriceCents = 9_000,
+            valueCents = 50_000,
+            currency = "",
+        )
+
+        val snapshot = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            page = emptyPage(),
+            categories = emptyList(),
+            tags = emptyList(),
+            holdingsByAccount = mapOf(7L to listOf(row)),
+            assets = emptyList(),
+        )
+
+        val holding = snapshot.holdings.single()
+        assertEquals("blank native currency means the account's", "EUR", holding.nativeCurrency)
+        assertNull("no native price in the core, none in the app", holding.nativePurchasePriceCents)
+        assertNull(holding.nativePriceCents)
     }
 
     /** #1429 (3.2): a tangible asset carries the setup's name and date and the holding's value. */

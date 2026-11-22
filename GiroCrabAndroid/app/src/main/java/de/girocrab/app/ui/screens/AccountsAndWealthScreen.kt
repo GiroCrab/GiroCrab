@@ -147,11 +147,18 @@ data class WealthBreakdown(
 
 fun wealthBreakdown(s: AppUiState): WealthBreakdown {
     val d = s.data
-    val visible = d.accounts.filterNot { it.hidden }
+    // `includeInTotal` is the core's own flag: an account excluded there must not appear in any
+    // overall sum, however visible it is in the list.
+    val visible = d.accounts.filterNot { it.hidden || !it.includeInTotal }
     fun sumOf(vararg kinds: AccountKind) =
         visible.filter { it.kind in kinds }.sumOf { it.balanceCents }
-    val depotFromHoldings = d.holdings.sumOf { it.valueCents }
-    val depotAccounts = sumOf(AccountKind.Depot)
+    // A tangible asset sits in an account that already carries its value: counting both would
+    // double it. Its account drops out of the depot term, the asset itself is added below.
+    val tangibleAccountIds = d.assets.map { it.accountId }.filter { it.isNotBlank() }.toSet()
+    val depotFromHoldings = d.holdings.filter { it.accountId !in tangibleAccountIds }.sumOf { it.valueCents }
+    val depotAccounts = visible
+        .filter { it.kind == AccountKind.Depot && it.id !in tangibleAccountIds }
+        .sumOf { it.balanceCents }
     val cards = sumOf(AccountKind.CreditCard)
     val loanAccounts = sumOf(AccountKind.Loan)
     return WealthBreakdown(
@@ -547,7 +554,7 @@ fun DepotSection(holdings: List<Holding>, masked: Boolean, modifier: Modifier = 
                         Column(Modifier.weight(1f)) {
                             Text(h.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${h.isin.ifBlank { h.wkn }} · ${if (masked) "••" else "%.4g".format(Locale.GERMANY, h.quantity)} Stk. · " +
-                                formatMoney(h.priceCents, h.currency, masked),
+                                formatMoney(h.priceCents, h.quoteCurrency, masked),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Column(horizontalAlignment = Alignment.End) {

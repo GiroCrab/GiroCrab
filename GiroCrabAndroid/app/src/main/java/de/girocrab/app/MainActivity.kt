@@ -138,8 +138,10 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    // Backup = the vault file copied as-is, so it stays encrypted. Assumes the core keeps it at filesDir/girocrab.vault.
-    private val vaultFile get() = File(filesDir, "girocrab.vault")
+    // Backup = the vault file copied as-is, so it stays encrypted. The path has to come from the
+    // opener: a hardcoded name pointed at a file that never exists (`vaults/girocrab.sqlcipher`),
+    // so "Sicherung erstellen" silently did nothing.
+    private val vaultFile get() = File(NativeVaultOpener().defaultVaultPath(filesDir))
 
     private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         if (uri != null && vaultFile.exists()) runCatching {
@@ -150,8 +152,9 @@ class MainActivity : FragmentActivity() {
     // Restore replaces the vault file, then locks so the next unlock re-reads it.
     private val restoreLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching {
-            contentResolver.openInputStream(uri)?.use { input -> vaultFile.outputStream().use { input.copyTo(it) } }
+            // Lock first: the file underneath is about to be replaced, nothing should still show it.
             vm.lock()
+            contentResolver.openInputStream(uri)?.use { input -> vaultFile.outputStream().use { input.copyTo(it) } }
         }
     }
 
@@ -238,24 +241,28 @@ fun GiroCrabRoot(
                     unlockMessage = "Im Zwischenspeicher ließ sich keine Datei anlegen."
                     return@launch
                 }
-            val copied = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
-                    } ?: error("no stream")
-                }.isSuccess
-            }
-            // Another selection was made while this one copied: its result wins, this one goes.
-            if (mine != backupGeneration.get()) {
-                target.delete()
-                return@launch
-            }
-            if (copied) {
-                pendingBackup?.delete()
-                pendingBackup = target
-            } else {
-                target.delete()
-                unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+            // Whatever ends this copy — success, a read error, or a cancellation on rotation —
+            // the staging file is dropped unless it was handed to the password dialog.
+            var published = false
+            try {
+                val copied = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            target.outputStream().use { output -> input.copyTo(output) }
+                        } ?: error("no stream")
+                    }.isSuccess
+                }
+                // Another selection was made while this one copied: its result wins, this one goes.
+                if (mine != backupGeneration.get()) return@launch
+                if (copied) {
+                    pendingBackup?.delete()
+                    pendingBackup = target
+                    published = true
+                } else {
+                    unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+                }
+            } finally {
+                if (!published) target.delete()
             }
         }
     }

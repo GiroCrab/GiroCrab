@@ -168,15 +168,18 @@ class VaultUnlocker(
         }
     }
 
-    /** Distinguishes a missing key from a Keystore that merely failed to hand it over. */
-    private fun unreadableKey(cause: Exception): UnlockResult {
-        val gone = runCatching { keyStore.state() }.getOrNull() == VaultKeyStore.State.NotSetUp
-        return if (gone) {
-            UnlockResult.KeyInvalidated
-        } else {
-            UnlockResult.Refused("Entsperren nicht möglich (${cause.javaClass.simpleName}: ${cause.message})")
+    /** Distinguishes a key that cannot come back from a Keystore that merely failed to hand it over. */
+    private fun unreadableKey(cause: Exception): UnlockResult =
+        when (runCatching { keyStore.state() }.getOrNull()) {
+            // Both are final: no entry at all, or one the Keystore rejected after biometrics changed.
+            // Telling the user to retry would loop a prompt that cannot succeed — and the soft-lock
+            // screen hides the import that is the way out.
+            VaultKeyStore.State.NotSetUp, VaultKeyStore.State.Invalidated -> UnlockResult.KeyInvalidated
+            // `Ready` or an unreadable state: the file may be fine, so a retry stays honest.
+            else -> UnlockResult.Refused(
+                "Entsperren nicht möglich (${cause.javaClass.simpleName}: ${cause.message})",
+            )
         }
-    }
 
     /** Proves the key is still usable without opening anything: read it, then wipe it. */
     private fun proveKey(authenticated: Cipher, expected: Cipher): UnlockResult {

@@ -66,22 +66,34 @@ class VaultImporter(
         if (running) {
             return onResult(ImportResult.Failed("Es läuft bereits ein Import."))
         }
-        if (!File(backupPath).isFile) {
-            return onResult(ImportResult.Failed("Sicherungsdatei wurde nicht gefunden."))
+        // Claimed before anything is read or reset: a second importer that loses the race would
+        // otherwise reset the key and delete the vault file the running import depends on.
+        if (!busy.compareAndSet(false, true)) {
+            return onResult(ImportResult.Failed("Es läuft bereits ein Import."))
         }
-        if (!opener.available) return onResult(ImportResult.Unavailable)
+        // Gives the claim back on every exit that never reaches the prompt.
+        fun giveUp(result: ImportResult) {
+            busy.set(false)
+            onResult(result)
+        }
+        if (!File(backupPath).isFile) {
+            return giveUp(ImportResult.Failed("Sicherungsdatei wurde nicht gefunden."))
+        }
+        if (!opener.available) return giveUp(ImportResult.Unavailable)
 
         val vaultPath = File(opener.defaultVaultPath(filesDir))
         val state = try {
             keyStore.state()
         } catch (e: Exception) {
-            return onResult(
+            return giveUp(
                 ImportResult.Failed("Geräteschlüssel nicht lesbar (${e.javaClass.simpleName}: ${e.message})."),
             )
         }
-        // There is only something to lose when both parts exist: a usable key and its vault.
-        if (state == VaultKeyStore.State.Ready && vaultPath.exists()) {
-            return onResult(
+        // Something is only worth protecting when both parts are usable: a key that still unwraps
+        // **and** a vault with content. A zero-byte leftover is not a vault — `unlock` sends the
+        // user here for exactly that case, so refusing to replace it would close the only way out.
+        if (state == VaultKeyStore.State.Ready && vaultPath.length() > 0L) {
+            return giveUp(
                 ImportResult.Failed(
                     "Auf diesem Gerät liegt schon ein Tresor. Ein Import würde ihn ersetzen — " +
                         "erst den vorhandenen Tresor entfernen.",
@@ -95,17 +107,14 @@ class VaultImporter(
             keyStore.resetForNewSetup()
         } catch (e: Exception) {
             // The Keystore deletion throws by contract; without a result the caller waits forever.
-            return onResult(
+            return giveUp(
                 ImportResult.Failed(
                     "Geräteschlüssel ließ sich nicht zurücksetzen (${e.javaClass.simpleName}: ${e.message}).",
                 ),
             )
         }
-        if (vaultPath.exists() && !vaultPath.delete()) {
-            return onResult(
-                ImportResult.Failed("Reste eines früheren Imports ließen sich nicht entfernen."),
-            )
-        }
+        // The old vault file is **not** touched here: a cancelled prompt or a wrong backup password
+        // must leave it where it is. `restore` moves it aside and puts it back on failure.
 
         val key = ByteArray(NativeVaultOpener.MASTER_KEY_BYTES)
         SecureRandom().nextBytes(key)
@@ -114,16 +123,12 @@ class VaultImporter(
             keyStore.setupCipher()
         } catch (e: Exception) {
             key.fill(0)
-            return onResult(
+            return giveUp(
                 ImportResult.Failed("Geräteschlüssel ließ sich nicht anlegen (${e.javaClass.simpleName}: ${e.message})."),
             )
         }
 
-        // The prompt-and-write phase runs once on the device, not once per importer instance.
-        if (!busy.compareAndSet(false, true)) {
-            key.fill(0)
-            return onResult(ImportResult.Failed("Es läuft bereits ein Import."))
-        }
+        // The claim from the top now covers the prompt-and-write phase; `finish` releases it.
         running = true
         val finished = AtomicBoolean(false)
         // Delivered on Main: the prompt callback runs there and callers update UI state.
@@ -185,9 +190,21 @@ class VaultImporter(
         finish: (ImportResult) -> Unit,
     ) {
         var vault: OwnVault? = null
+        // The new key cannot open the old file, but the old file must survive a failed attempt:
+        // it is moved aside first and only dropped once the restore worked.
+        val previous = if (vaultPath.exists()) File("${vaultPath.path}.replaced") else null
         val outcome: ImportResult = try {
+            if (previous != null) {
+                previous.delete()
+                if (!vaultPath.renameTo(previous)) {
+                    throw ImportFailed("Vorhandene Tresordatei ließ sich nicht beiseitelegen.")
+                }
+            }
             val opened = opener.open(vaultPath.path, key)
-                ?: return finish(ImportResult.Unavailable)
+            if (opened == null) {
+                restorePrevious(previous, vaultPath)
+                return finish(ImportResult.Unavailable)
+            }
             vault = opened
 
             try {
@@ -202,11 +219,14 @@ class VaultImporter(
             // Published only after the data is in place — see the class comment.
             keyStore.storeWrapped(key, authenticated)
             vault = null // ownership moves to the caller
+            previous?.delete()
             ImportResult.Imported(opened)
         } catch (e: Throwable) {
             runCatching { vault?.close() }
             keyStore.clearWrapped()
             vaultPath.delete()
+            // Cancelled or failed: the untouched vault goes back where it was.
+            restorePrevious(previous, vaultPath)
             val reason = if (e is ImportFailed) {
                 e.message
             } else {
@@ -218,6 +238,13 @@ class VaultImporter(
         }
         // Outside the rollback scope: a caller that throws must not undo a committed import.
         finish(outcome)
+    }
+
+    /** Puts a vault file that was moved aside back in place; leaves the target alone otherwise. */
+    private fun restorePrevious(previous: File?, vaultPath: File) {
+        if (previous == null || !previous.exists()) return
+        vaultPath.delete()
+        runCatching { previous.renameTo(vaultPath) }
     }
 
     /** Marks a failure that is already phrased for the lock screen. */

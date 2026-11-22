@@ -258,6 +258,67 @@ class VaultUnlockerTest {
 
     // --- helpers ---------------------------------------------------------------------------
 
+    /**
+     * A zero-byte file is not a vault: the core would initialise an empty database there and the
+     * screen would look unlocked with nothing behind it. Same answer as a missing file — and no
+     * prompt, because there is nothing worth asking for.
+     */
+    @Test
+    fun emptyVaultFileIsReportedWithoutPrompt() {
+        storeWrappedKey(createVault = false)
+        vaultFile.parentFile?.mkdirs()
+        assertTrue("the empty file has to exist for this case", vaultFile.createNewFile())
+        var prompted = false
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            prompted = true
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.VaultMissing, result)
+        assertFalse("a zero-byte file must not reach the prompt", prompted)
+        assertEquals("the file must not be initialised", 0L, vaultFile.length())
+    }
+
+    /** The file disappears between prompt and open: the guard behind the prompt has to catch it. */
+    @Test
+    fun vaultFileVanishesDuringThePrompt() {
+        storeWrappedKey(createVault = true)
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            vaultFile.delete()
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.unlock { result = it }
+
+        assertEquals(UnlockResult.VaultMissing, result)
+        assertFalse("no vault may be created behind the prompt", vaultFile.exists())
+    }
+
+    /**
+     * A key the Keystore rejected after biometrics changed cannot be retried, and the soft-lock
+     * screen hides the import — so this has to travel as `KeyInvalidated`, not as "try again".
+     */
+    @Test
+    fun invalidatedKeyDuringSoftReleaseIsReported() {
+        storeWrappedKey(createVault = true)
+        deleteAlias()
+        var prompted = false
+        val unlocker = unlocker { cipher, _, _, onResult ->
+            prompted = true
+            onResult(PromptResult.Succeeded(cipher))
+        }
+
+        var result: UnlockResult? = null
+        unlocker.releaseSoftLock { result = it }
+
+        assertEquals(UnlockResult.KeyInvalidated, result)
+        assertFalse("a dead key must not reach a prompt", prompted)
+    }
+
     private fun createVaultFile(key: ByteArray) {
         val vault = opener.open(opener.defaultVaultPath(testDir), key.copyOf())
         checkNotNull(vault) { "native core not linked" }.close()

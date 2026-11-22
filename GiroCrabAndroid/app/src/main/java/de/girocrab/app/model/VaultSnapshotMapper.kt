@@ -51,7 +51,9 @@ object VaultSnapshotMapper {
         merchantKey = null,
         direction = BookingDirection.ALL,
         checked = null,
-        wholeDays = true,
+        // Capped, not whole days: the core may extend a page to complete the last day, which would
+        // hand back more rows than PAGE_SIZE — and the truncation notice would stay silent.
+        wholeDays = false,
     )
 
     fun map(
@@ -62,16 +64,23 @@ object VaultSnapshotMapper {
         tags: List<CoreTag>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
-    ): VaultSnapshot = VaultSnapshot(
-        groups = groups.map { group(it, accounts) },
-        bookingsTotal = page.totalCount.toInt(),
-        accounts = accounts.map(::account),
-        bookings = page.transactions.map(::booking),
-        categories = categories.map(::category),
-        tags = tags.map(::tag),
-        holdings = holdingsByAccount.flatMap { (accountId, rows) -> rows.map { holding(accountId, it) } },
-        assets = assets.map(::asset),
-    )
+    ): VaultSnapshot {
+        // Holdings come back in the currency of their account; that is the label for their prices.
+        val quoteCurrencies = accounts.associate { it.id to it.currency.ifBlank { "EUR" } }
+        return VaultSnapshot(
+            groups = groups.map { group(it, accounts) },
+            bookingsTotal = page.totalCount.toInt(),
+            accounts = accounts.map(::account),
+            bookings = page.transactions.map(::booking),
+            categories = categories.map(::category),
+            tags = tags.map(::tag),
+            holdings = holdingsByAccount.flatMap { (accountId, rows) ->
+                val quote = quoteCurrencies[accountId] ?: "EUR"
+                rows.map { holding(accountId, it, quote) }
+            },
+            assets = assets.map(::asset),
+        )
+    }
 
     private fun group(group: CoreGroup, accounts: List<CoreAccount>): AccountGroup {
         // The core's groups carry no connector; the kind is taken from their accounts so that the
@@ -143,7 +152,7 @@ object VaultSnapshotMapper {
      * `quantity * priceCents * fxRateToEur`. Instead of assuming a rate, the rate is derived, so the
      * app's own arithmetic lands on the core's value to the cent.
      */
-    private fun holding(accountId: Long, row: CoreHolding): Holding {
+    private fun holding(accountId: Long, row: CoreHolding, quoteCurrency: String): Holding {
         val costBasis = row.profitLossPurchaseCents?.let { row.valueCents - it } ?: row.valueCents
         val fx = if (row.quantity > 0.0 && row.currentPriceCents > 0L) {
             row.valueCents.toDouble() / (row.quantity * row.currentPriceCents)
@@ -159,7 +168,11 @@ object VaultSnapshotMapper {
             priceCents = row.currentPriceCents,
             costBasisCents = costBasis,
             wkn = row.wkn,
-            currency = row.currency.ifBlank { "EUR" },
+            quoteCurrency = quoteCurrency,
+            // Native code as the core reports it: "" means "the account's currency".
+            currency = row.currency,
+            nativePriceCents = row.nativePriceCents,
+            nativePurchasePriceCents = row.nativePurchasePriceCents,
             fxRateToEur = fx,
         )
     }

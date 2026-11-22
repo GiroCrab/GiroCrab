@@ -199,6 +199,94 @@ class VaultImporterTest {
         assertTrue("an Error must end the import, was $result", result is ImportResult.Failed)
     }
 
+    /**
+     * The import may replace an unusable vault, but a cancelled prompt must leave the old file
+     * alone: deleting it up front would destroy data nobody agreed to lose.
+     */
+    @Test
+    fun cancelledPromptKeepsTheExistingVaultFile() {
+        createVaultWithAccountsAndBackup(wipeDevice = false)
+        deleteAlias() // key invalid: the import is allowed to replace
+        val before = vaultPath.length()
+        assertTrue("the old vault file has to be there", before > 0)
+
+        val importer = VaultImporter(
+            keyStore = keyStore(),
+            opener = opener,
+            prompt = { _, _, _, onResult -> onResult(PromptResult.Cancelled) },
+            filesDir = dir,
+        )
+        val result = runImport(importer, backupFile.path, BACKUP_PASSWORD)
+
+        assertEquals(ImportResult.RefusedByUser, result)
+        assertTrue("the old vault file must survive a cancelled prompt", vaultPath.exists())
+        assertEquals("and stay untouched", before, vaultPath.length())
+        assertFalse(
+            "no moved-aside copy may stay behind",
+            File("${vaultPath.path}.replaced").exists(),
+        )
+    }
+
+    /**
+     * `unlock` answers `VaultMissing` for a zero-byte file and sends the user into this import —
+     * so the guard has to treat it as "nothing to lose", or the only way out stays closed.
+     */
+    @Test
+    fun zeroByteVaultFileIsReplaced() {
+        createVaultWithAccountsAndBackup(wipeDevice = false)
+        vaultPath.writeBytes(ByteArray(0))
+        assertEquals(0L, vaultPath.length())
+
+        val result = runImport(importerThatSucceeds(), backupFile.path, BACKUP_PASSWORD)
+
+        val imported = importedOrFail(result)
+        try {
+            assertEquals(2, imported.vault.accountCount)
+        } finally {
+            imported.vault.close()
+        }
+        assertTrue("the imported vault has to carry data", vaultPath.length() > 0)
+    }
+
+    /**
+     * A second import that loses the claim must return before it reads the key state or touches the
+     * vault file — it used to reset the key and delete the file the running import depended on.
+     */
+    @Test
+    fun secondImportIsRefusedWithoutTouchingAnything() {
+        createVaultWithAccountsAndBackup(wipeDevice = false)
+        deleteAlias()
+        val before = vaultPath.length()
+
+        val atPrompt = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        var firstResult: ImportResult? = null
+        val first = VaultImporter(
+            keyStore = keyStore(),
+            opener = opener,
+            prompt = { _, _, _, onResult ->
+                atPrompt.countDown()
+                release.await(10, TimeUnit.SECONDS)
+                onResult(PromptResult.Cancelled)
+            },
+            filesDir = dir,
+        )
+        val runner = Thread { firstResult = runImport(first, backupFile.path, BACKUP_PASSWORD) }
+        runner.start()
+        try {
+            assertTrue("the first import has to reach its prompt", atPrompt.await(10, TimeUnit.SECONDS))
+
+            val second = runImport(importerThatSucceeds(), backupFile.path, BACKUP_PASSWORD)
+
+            assertTrue("the second import must be refused, was $second", second is ImportResult.Failed)
+            assertEquals("the running import's vault file must stay", before, vaultPath.length())
+        } finally {
+            release.countDown()
+            runner.join(60_000)
+        }
+        assertEquals(ImportResult.RefusedByUser, firstResult)
+    }
+
     // --- helpers ---------------------------------------------------------------------------
 
     private fun importerThatSucceeds() = VaultImporter(
