@@ -22,7 +22,7 @@ export struct BarGroup { label: string, income: float, expense: float }
 export struct BudgetLine { name: string, amount: string, progress: float, color: color, over: bool }
 export struct TileRow { index: int, name: string, color: color }
 export struct SideRow { kind: int, key: string, label: string, detail: string, badge: string, amount: string, negative: bool, progress: float, dot: color, has-dot: bool, icon: string, depth: int, fold: int }
-export struct TableRow { id: int, c0: string, c1: string, c2: string, c3: string, c4: string, negative: bool }
+export struct TableRow { id: int, c0: string, c1: string, c2: string, c3: string, c4: string, negative: bool, unread: bool }
 export struct KpiTile { label: string, value: string, negative: bool }
 export struct ShareBar { label: string, value: string, share: float, color: color }
 export struct RuleItem { title: string, detail: string }
@@ -338,7 +338,7 @@ component TableLine inherits Rectangle {
         padding-left: 14px;
         padding-right: 14px;
         spacing: 10px;
-        Text { text: data.c0; color: Theme.text; font-size: 12px; font-weight: 600; horizontal-stretch: 3; vertical-alignment: center; overflow: elide; }
+        Text { text: data.c0; color: Theme.text; font-size: 12px; font-weight: data.unread ? 800 : 600; horizontal-stretch: 3; vertical-alignment: center; overflow: elide; }
         Text { text: data.c1; color: Theme.muted; font-size: 12px; horizontal-stretch: 2; vertical-alignment: center; overflow: elide; }
         Text { text: data.c2; color: Theme.text; font-size: 12px; horizontal-stretch: 2; horizontal-alignment: right; vertical-alignment: center; overflow: elide; }
         Text { text: data.c3; color: Theme.text; font-size: 12px; horizontal-stretch: 2; horizontal-alignment: right; vertical-alignment: center; overflow: elide; }
@@ -847,6 +847,12 @@ export component MainWindow inherits Window {
     callback doc-open();
     callback doc-link-open();
     callback doc-unlink();
+    in-out property <bool> docs-unseen-only: false;
+    in property <bool> doc-seen: true;
+    in property <bool> doc-unread-any: false;
+    callback docs-filter-changed();
+    callback doc-mark-seen(bool);
+    callback doc-mark-all-seen();
     in-out property <bool> link-open: false;
     in property <[TableRow]> link-results;
     in-out property <string> link-query;
@@ -1639,6 +1645,11 @@ export component MainWindow inherits Window {
                                     current-index <=> root.doc-account-index;
                                 }
                             }
+                            CheckBox {
+                                text: "Nur ungelesene";
+                                checked <=> root.docs-unseen-only;
+                                toggled => { root.docs-filter-changed(); }
+                            }
                             GhostButton { y: (parent.height - self.height) / 2; text: "Datei hinzufügen …"; enabled: !root.busy && root.doc-accounts.length > 0; clicked => { root.doc-attach(); } }
                         }
                     }
@@ -1681,6 +1692,16 @@ export component MainWindow inherits Window {
                     GhostButton { text: "Öffnen"; enabled: root.doc-selected && !root.busy; clicked => { root.doc-open(); } }
                     GhostButton { text: "Mit Umsatz verknüpfen …"; enabled: root.doc-selected && !root.busy; clicked => { root.doc-link-open(); } }
                     GhostButton { text: "Verknüpfung lösen"; enabled: root.doc-linked && !root.busy; clicked => { root.doc-unlink(); } }
+                    Button {
+                        text: root.doc-seen ? "Als ungelesen markieren" : "Als gelesen markieren";
+                        enabled: root.table-selected >= 0;
+                        clicked => { root.doc-mark-seen(!root.doc-seen); }
+                    }
+                    Button {
+                        text: "Alle als gelesen markieren";
+                        enabled: root.doc-unread-any;
+                        clicked => { root.doc-mark-all-seen(); }
+                    }
                     Rectangle { horizontal-stretch: 1; }
                 }
                 if root.view-status != "": Text { text: root.view-status; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
@@ -2007,7 +2028,8 @@ export component MainWindow inherits Window {
                     color: Theme.muted; font-size: 11px; wrap: word-wrap;
                 }
                 if root.transfer-status != "": Text { text: root.transfer-status; color: Theme.negative; font-size: 12px; wrap: word-wrap; }
-                if root.girocode-open: VerticalLayout {
+                // The QR image shows name, IBAN and amount: hidden in privacy mode and while locked.
+                if root.girocode-open && !root.privacy && root.unlocked: VerticalLayout {
                     spacing: 6px;
                     Rectangle {
                         height: 232px;
@@ -2019,10 +2041,12 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Button {
                             text: "Bild kopieren";
+                            enabled: !root.privacy && root.unlocked;
                             clicked => { root.transfer-girocode-copy(); }
                         }
                         Button {
                             text: "Als PNG speichern…";
+                            enabled: !root.privacy && root.unlocked;
                             clicked => { root.transfer-girocode-save(); }
                         }
                     }
@@ -2035,7 +2059,11 @@ export component MainWindow inherits Window {
                     alignment: end;
                     spacing: 8px;
                     Button { text: "Abbrechen"; clicked => { root.transfer-open = false; } }
-                    Button { text: "Als GiroCode anzeigen"; clicked => { root.transfer-girocode(); } }
+                    Button {
+                        text: "Als GiroCode anzeigen";
+                        enabled: !root.privacy && root.unlocked;
+                        clicked => { root.transfer-girocode(); }
+                    }
                     Button {
                         text: "Senden";
                         primary: true;

@@ -192,6 +192,13 @@ struct BookingStreamView: View {
         }
         .onKeyPress(.downArrow) { model.moveSelection(1); return .handled }
         .onKeyPress(.upArrow) { model.moveSelection(-1); return .handled }
+        // Bild↓/Bild↑ page through the list, Pos1/Ende jump to its ends (GitHub #1561);
+        // `SelectionScroller` keeps the selected row in view, also when the target row
+        // is already selected (`keyboardScrollToken`).
+        .onKeyPress(.pageDown) { model.moveSelection(AppModel.keyboardPageStep); return .handled }
+        .onKeyPress(.pageUp) { model.moveSelection(-AppModel.keyboardPageStep); return .handled }
+        .onKeyPress(.home) { model.moveSelection(-Int.max); return .handled }
+        .onKeyPress(.end) { model.moveSelection(Int.max); return .handled }
         .onKeyPress(.return) {
             // The balance chart sits inside the list: with keyboard focus there,
             // Return belongs to the chart (jump to the chosen day).
@@ -1199,14 +1206,24 @@ private struct SelectionScroller: View {
                 guard let id else { return }
                 // the day jump already scrolled to the day: do not override it
                 if model.jumpSelectedBookingID == id { model.jumpSelectedBookingID = nil; return }
-                // Every row is an element of the lazy stream, so the proxy finds it
-                // even while it is off-screen; its target is its position (`StreamItem`).
-                guard let slot = model.streamSlots.booking[id] else { return }
-                withAnimation(Motion.animation(.easeOut(duration: 0.15))) {
-                    // Expanded rows can exceed the viewport: keep their title visible.
-                    proxy.scrollTo(slot, anchor: density == .standard ? nil : .top)
-                }
+                scroll(to: id)
             }
+            // A keyboard move onto the row that is already selected (Pos1 on the first row,
+            // Ende/Bild↓ on the last) changes no selection: scroll to it anyway.
+            .onChange(of: model.keyboardScrollToken) { _, _ in
+                guard let id = model.selectedBookingID else { return }
+                scroll(to: id)
+            }
+    }
+
+    private func scroll(to id: Booking.ID) {
+        // Every row is an element of the lazy stream, so the proxy finds it
+        // even while it is off-screen; its target is its position (`StreamItem`).
+        guard let slot = model.streamSlots.booking[id] else { return }
+        withAnimation(Motion.animation(.easeOut(duration: 0.15))) {
+            // Expanded rows can exceed the viewport: keep their title visible.
+            proxy.scrollTo(slot, anchor: density == .standard ? nil : .top)
+        }
     }
 }
 
@@ -1220,7 +1237,9 @@ struct BookingCategoryLabel: View {
         let none = booking.categoryName.isEmpty
         let color = none ? Theme.warning : Color.readable(hex: booking.categoryColorHex)
         HStack(spacing: 3) {
-            Image(systemName: none ? "questionmark.folder" : (booking.categorySymbol.isEmpty ? "tag.fill" : booking.categorySymbol))
+            Image(systemName: none
+                ? "questionmark.folder"
+                : (booking.categorySymbol.isEmpty ? SymbolCatalog.defaultCategorySymbol : booking.categorySymbol))
                 .appFont(.caption)
             Text(none ? model.uncategorizedLabel : booking.categoryName)
                 .sensitive(.labels)

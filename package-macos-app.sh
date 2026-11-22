@@ -115,6 +115,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleLocalizations</key><array><string>de</string><string>en</string></array>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${BUILD_VERSION}</string>
+    <key>CFBundleURLTypes</key><array><dict>
+      <key>CFBundleURLName</key><string>app.girocrab.link</string>
+      <key>CFBundleURLSchemes</key><array><string>girocrab</string></array>
+    </dict></array>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSFaceIDUsageDescription</key><string>GiroCrab nutzt Face ID / Touch ID, um Ihren verschlüsselten Tresor zu entsperren.</string>

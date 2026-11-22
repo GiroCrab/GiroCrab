@@ -608,7 +608,7 @@ fn split_booking_goes_onto_a_bank_booking_already_there() {
     let v = vault();
     let acc = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
@@ -830,7 +830,7 @@ fn a_bank_booking_like_a_part_does_not_take_the_split_apart() {
     let v = vault();
     let acc = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
@@ -865,7 +865,7 @@ fn iban_match_merges_into_existing_synced_account() {
         .unwrap();
     let existing = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (?1, ?2, 'abc-123', 'Mein Giro', 'DE89 3704 0044 0532 0130 00', 'EUR', 'checking', 123456)",
@@ -3577,7 +3577,7 @@ fn accounts_sharing_an_iban_are_merged_into_different_vault_accounts() {
     let v = vault();
     let existing = {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         db.execute(
             "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
              VALUES (NULL, ?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
@@ -3655,7 +3655,7 @@ fn import_goes_to_the_bank_account_a_twin_was_folded_into() {
     let mut ids = Vec::new();
     {
         let db = v.db().unwrap();
-        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
         for r in ["API1", ext.as_str()] {
             db.execute(
                 "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)

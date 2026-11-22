@@ -953,7 +953,7 @@ fn removed_split_reaches_the_other_device_as_a_link_to_the_whole_booking() {
     assert_eq!(part_links(&a, aa[2]), vec![(aa[1], 0, Some(50))]);
 }
 
-/// A split that was synced before step 37 could lie in two orders (the merge wrote it sorted,
+/// A split that was synced before step 38 could lie in two orders (the merge wrote it sorted,
 /// the device it was made on kept the order it was entered in). The step gives both the same
 /// order, so a link to a part names the same part on both devices after the merge.
 #[test]

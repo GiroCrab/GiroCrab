@@ -35,6 +35,7 @@ activeTransferIsDebit debitRun failDebitRun debitOutcomeUnknown finishDebitGroup
 activeTransferComparison visibleTanComparison
 merchantWriteCount leaveStaleMerchantFocus
 patchLoadedRows refreshAfterEdit
+pendingPaymentLink presentPendingPaymentLink resumePaymentLink accountsLoaded transferKindSwitching
 "
 READ_ONLY="
 accountMarkers accountsByID autoReviewTask customPeriodFrom customPeriodTo dayGroups

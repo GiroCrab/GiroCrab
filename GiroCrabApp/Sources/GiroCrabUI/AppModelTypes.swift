@@ -496,6 +496,9 @@ struct TransferDraft {
     /// Terminüberweisung: when on, `executionDate` is sent (FinTS only).
     var scheduled = false
     var executionDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+    /// Filled from a `girocrab://transfer` link (`PaymentLink`): the form warns that another
+    /// app or a web page chose the recipient. A new draft starts without it.
+    var fromLink = false
 
     /// The fields a payment fills (paste, invoice, clipboard check #663).
     static let paymentFields: [WritableKeyPath<TransferDraft, String>] = [\.name, \.iban, \.bic, \.amountText, \.purpose]

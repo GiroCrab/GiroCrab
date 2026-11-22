@@ -1,6 +1,6 @@
 //! Explicit refund links (#714): a refund (incoming booking) points at the booking it pays back
 //! (outgoing). One original can have several refunds and one refund can pay back several originals
-//! (schema step 37 holds all of it); links do not chain. A link to a split booking names one of
+//! (schema step 38 holds all of it); links do not chain. A link to a split booking names one of
 //! its parts (`original_part`): the refund pays back that part only. A link whose part is gone
 //! (the split was removed or has no such part any more) becomes a link to the whole booking (`split_changed`);
 //! such a link to a split booking fills its parts from the last to the first. A split refund
@@ -17,7 +17,7 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 
-/// Step 37: the links between refunds and the bookings they pay back. A refund may pay back
+/// Step 38: the links between refunds and the bookings they pay back. A refund may pay back
 /// several bookings and a booking may have several refunds, so the key is the pair with the
 /// parts it names: `original_part` / `refund_part` are the position of a split booking's part
 /// (from 1), 0 is the whole booking. A removed link stays as a tombstone (`deleted_ms`).

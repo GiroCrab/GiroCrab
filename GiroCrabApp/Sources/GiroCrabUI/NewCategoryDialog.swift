@@ -30,7 +30,7 @@ struct NewCategorySheet: View {
     let request: NewCategoryRequest
 
     @State private var name = ""
-    @State private var symbol = "tag.fill"
+    @State private var symbol = SymbolCatalog.defaultCategorySymbol
     @State private var colorHex = "#7A808A"
 
     private static let palette = accountColorPalette()
