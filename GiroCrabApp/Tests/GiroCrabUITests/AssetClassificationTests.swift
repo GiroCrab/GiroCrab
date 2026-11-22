@@ -180,6 +180,60 @@ import GiroCrabCore
         XCTAssertEqual(WealthGrouping.assetClass.effective(in: .cash), .account)
         XCTAssertEqual(WealthGrouping.instrument.effective(in: .cash), .account)
     }
+    func testLiquidityGradeFollowsKindClassAndDirectHolding() {
+        XCTAssertEqual([AccountKind.checking, .savings, .paymentService, .creditCard, .cash].map(LiquidityGrade.of), Array(repeating: .immediate, count: 5))
+        XCTAssertEqual(LiquidityGrade.of(.timeDeposit), .shortTerm)
+        XCTAssertEqual(LiquidityGrade.of(.buildingSavings), .longTerm)
+        // a depot's positions decide, a loan is a debt
+        XCTAssertNil(LiquidityGrade.of(.brokerage))
+        XCTAssertNil(LiquidityGrade.of(.loan))
+        func c(_ asset: AssetClass, _ instrument: InstrumentKind = .etf, key: String = "isin:X") -> AssetClassification {
+            AssetClassification(securityKey: key, assetClass: asset, assetClassSource: .rule, instrument: instrument, instrumentSource: .rule)
+        }
+        XCTAssertEqual(LiquidityGrade.of(c(.cash), tangible: false), .immediate)
+        XCTAssertEqual(LiquidityGrade.of(c(.equity), tangible: false), .shortTerm)
+        XCTAssertEqual(LiquidityGrade.of(c(.unclassified, .unclassified, key: ""), tangible: false), .shortTerm)
+        XCTAssertEqual(LiquidityGrade.of(c(.realEstate, .directHolding), tangible: false), .illiquid)
+        XCTAssertEqual(LiquidityGrade.of(c(.crypto, .directHolding), tangible: false), .shortTerm)
+        XCTAssertEqual(LiquidityGrade.of(c(.commodity, .directHolding, key: "asset:1"), tangible: false), .illiquid)
+        // the remainder of a Sachwerte account has no position, its tab decides
+        XCTAssertEqual(LiquidityGrade.of(c(.unclassified, .unclassified, key: ""), tangible: true), .illiquid)
+    }
+    func testLiquidityGroupingSplitsOneDepotAndKeepsTheGrossTotal() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        func account(_ kind: AccountKind, _ cents: Int64) throws -> Account {
+            var a = try XCTUnwrap(model.allAccounts.first { $0.kind == kind && !model.isTangible($0.id) } ?? model.allAccounts.first)
+            a.kind = kind; a.balanceCents = cents; a.currency = "EUR"; a.inTotal = true; a.archivedUnix = nil
+            return a
+        }
+        var checking = try account(.checking, 1000), fixed = try account(.timeDeposit, 2000), bauspar = try account(.buildingSavings, 4000)
+        var card = try account(.creditCard, 50), depot = try account(.brokerage, 30000)
+        checking.id = 1; fixed.id = 2; bauspar.id = 3; card.id = 4; depot.id = 5
+        func holding(_ name: String, _ cents: Int64, _ asset: AssetClass) -> ClassifiedAsset {
+            ClassifiedAsset(holding: Holding(isin: "DE\(name)", wkn: "", name: name, quantity: 1, currentPriceCents: cents, purchasePriceCents: cents, valueCents: cents),
+                            classification: AssetClassification(securityKey: "isin:DE\(name)", assetClass: asset, assetClassSource: .rule, instrument: .etf, instrumentSource: .rule),
+                            assetItemId: nil)
+        }
+        let summary = WealthSummary(accounts: [checking, fixed, bauspar, card, depot])
+        let rows = WealthClassRow.make(summary, assets: [depot.id: [holding("Geldmarkt", 10000, .cash), holding("Welt", 20000, .equity)]])
+        func total(_ grade: LiquidityGrade) -> Int64 { rows.filter { $0.group(by: .liquidity) == grade.group }.reduce(0) { $0 + $1.cents } }
+        // the depot lands on two grades; the positive card balance is at hand
+        XCTAssertEqual(total(.immediate), 1000 + 50 + 10000)
+        XCTAssertEqual(total(.shortTerm), 2000 + 20000)
+        XCTAssertEqual(total(.longTerm), 4000)
+        XCTAssertEqual(total(.illiquid), 0)
+        XCTAssertEqual(LiquidityGrade.allCases.map(total).reduce(0, +), summary.grossCents)
+        // the row says why it is there
+        XCTAssertTrue(try XCTUnwrap(rows.first { $0.kind == .timeDeposit }).subtitle(by: .liquidity).hasSuffix(AccountKind.timeDeposit.label))
+        XCTAssertTrue(try XCTUnwrap(rows.first { $0.name == "Geldmarkt" }).subtitle(by: .liquidity).hasSuffix(AssetClass.cash.title))
+    }
+    func testLiquidityGroupingIsOfferedInAllOnly() {
+        XCTAssertEqual(WealthGrouping.available(in: .all), [.account, .assetClass, .liquidity])
+        for scope in [WealthScope.cash, .securities, .tangibles] {
+            XCTAssertFalse(WealthGrouping.available(in: scope).contains(.liquidity))
+            XCTAssertEqual(WealthGrouping.liquidity.effective(in: scope), .account)
+        }
+    }
     func testSliceFilterLimitsListsAndTreatsSonstigeAsEverythingElse() {
         let slices = [WealthSlice(id: "a", label: "A", cents: 3, color: .blue), WealthSlice(id: "b", label: "B", cents: 2, color: .red),
                       WealthSlice(id: "rest", label: "Sonstige", cents: 1, color: .gray)]

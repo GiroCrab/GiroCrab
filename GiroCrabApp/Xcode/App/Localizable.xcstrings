@@ -11432,6 +11432,28 @@
         }
       }
     },
+    "Die Liquiditätsgrade zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades show gross assets. Subtracting liabilities gives the net worth shown above."
+          }
+        }
+      }
+    },
+    "Die Liquiditätsgrade zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades show gross assets. Liabilities are currently not deducted above."
+          }
+        }
+      }
+    },
     "Die PIN wird nicht gespeichert." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17693,6 +17715,17 @@
         }
       }
     },
+    "Illiquide" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Illiquid"
+          }
+        }
+      }
+    },
     "Im Browser anmelden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21357,6 +21390,17 @@
         }
       }
     },
+    "Kurzfristig verfügbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available Short-Term"
+          }
+        }
+      }
+    },
     "Käufe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21375,6 +21419,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Country"
+          }
+        }
+      }
+    },
+    "Langfristig gebunden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tied Up Long-Term"
           }
         }
       }
@@ -21749,6 +21804,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cash & money market"
+          }
+        }
+      }
+    },
+    "Liquiditätsgrade · Vermögenswerte (brutto)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades · assets (gross)"
           }
         }
       }
@@ -22959,6 +23025,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "By Account Type"
+          }
+        }
+      }
+    },
+    "Nach Liquidität" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By Liquidity"
           }
         }
       }
@@ -28583,6 +28660,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Immediately (instant transfer)"
+          }
+        }
+      }
+    },
+    "Sofort verfügbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available Immediately"
           }
         }
       }
