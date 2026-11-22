@@ -1,6 +1,9 @@
 import Foundation
 import GiroCrabCore
 
+/// A schedule as the rhythm picker offers it: unit (`M` / `W`) and interval.
+struct StandingRhythm: Hashable { var unit: String; var interval: Int }
+
 /// The standing order being created, changed or deleted (#496).
 struct StandingDraft {
     var action: StandingOrderAction = .create
@@ -224,6 +227,31 @@ struct StandingDraft {
         case 12: return String(localized: "jährlich")
         default: return String(localized: "alle \(interval) Monate")
         }
+    }
+
+    var rhythm: StandingRhythm { StandingRhythm(unit: unit, interval: interval) }
+
+    /// The text of another schedule ("monatlich", "alle 2 Monate", "wöchentlich" …).
+    func rhythmText(of r: StandingRhythm) -> String {
+        var d = self
+        d.unit = r.unit
+        d.interval = r.interval
+        return d.rhythmText
+    }
+
+    /// What the rhythm picker offers. Without limits from the bank: weekly, monthly, every 2 months, quarterly,
+    /// half-yearly, yearly. With limits: what the bank reports for weeks and for months (up to a year of months),
+    /// so a rhythm outside the usual ones that the bank supports can be picked. `keeping` (the order's own rhythm
+    /// when the form was opened) stays offered, so a held order is not lost by choosing another rhythm and back.
+    func rhythmChoices(_ l: StandingOrderLimits?, keeping: StandingRhythm? = nil) -> [StandingRhythm] {
+        func values(_ reported: [UInt32]?, usual: [Int], top: Int) -> [Int] {
+            let list = (reported ?? []).map(Int.init).filter { (1...top).contains($0) }
+            return list.isEmpty ? usual : Array(Set(list)).sorted()
+        }
+        var list = values(l?.weeks, usual: [1], top: 52).map { StandingRhythm(unit: "W", interval: $0) }
+            + values(l?.months, usual: [1, 2, 3, 6, 12], top: 12).map { StandingRhythm(unit: "M", interval: $0) }
+        for r in [keeping, rhythm].compactMap({ $0 }) where !list.contains(r) { list.append(r) }
+        return list
     }
 
     /// "am 15." / "am letzten Tag des Monats" / "montags".
