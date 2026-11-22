@@ -13,16 +13,9 @@ struct TransferSheetView: View {
     @Environment(\.textScale) private var textScale
     @State private var step: Step = .form
     @State private var exportingGiroCode: PNGFileDocument?
-    @State private var suggestions: [KnownRecipient] = []
-    @FocusState private var nameFocused: Bool
+    /// The recipient list under the name field (shared with the standing order form, #1475).
+    @State private var suggestions = RecipientSuggestions()
     @FocusState private var amountFocused: Bool
-    /// Row of the recipient list chosen with the arrow keys.
-    @State private var highlighted: Int?
-    /// Row to highlight once the list has changed because one was hidden (#978): the next one
-    /// moves into its place. Any other change of the list (typing) clears the highlight.
-    @State private var keepHighlight: Int?
-    /// Name just taken from the list: typing it must not reopen the list.
-    @State private var pickedName: String?
     /// "Empfänger verwalten" (#978).
     @State private var managingRecipients = false
     @State private var dropTargeted = false
@@ -43,21 +36,15 @@ struct TransferSheetView: View {
     enum Step { case form, review, giroCode }
 
     /// Own accounts that can receive a transfer: any kind, but with an IBAN, not archived, not the sender.
-    private var ownTargets: [Account] {
-        // Tagesgeld books only to own checking accounts (#582).
-        if let a = account, a.kind == .savings { return model.internalTransferTargets(from: a) }
-        return model.allAccounts.filter {
-            !$0.iban.isEmpty && !$0.isArchived && $0.id != model.transferDraft.accountID
-        }
-    }
+    private var ownTargets: [Account] { model.ownTransferTargets(from: account) }
 
     /// Fills name and IBAN from the chosen own account (owner, else account name).
     private func applyOwnTarget(_ id: Int64?) {
         guard let t = ownTargets.first(where: { $0.id == id }) else { return }
-        model.transferDraft.name = t.owner.isEmpty ? t.name : t.owner
+        model.transferDraft.name = AppModel.ownRecipientName(t)
         model.transferDraft.iban = t.iban
         model.transferDraft.bic = ""
-        suggestions = []
+        suggestions.items = []
     }
 
     /// "Umbuchung": the recipient is one of the user's own accounts. Kept in the
@@ -199,7 +186,7 @@ struct TransferSheetView: View {
             case "transfer-confirm": step = .review
             case "transfer-girocode": step = .giroCode
             case "transfer-recipients": managingRecipients = true
-            case "transfer-suggestions": keepHighlight = 0; suggestions = recipients("n")
+            case "transfer-suggestions": suggestions.keepHighlight = 0; suggestions.items = suggestions.recipients("n", model: model)
             default: break
             }
         }
@@ -220,7 +207,7 @@ struct TransferSheetView: View {
             }
         }
         // what was hidden or shown again there applies to an open list at once
-        .capturableSheet(isPresented: $managingRecipients, onDismiss: refreshSuggestions) { KnownRecipientsSheet() }
+        .capturableSheet(isPresented: $managingRecipients, onDismiss: { suggestions.refresh(model: model) }) { KnownRecipientsSheet() }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             guard step == .form, let p = providers.first else { return false }
             _ = p.loadObject(ofClass: URL.self) { url, _ in
@@ -248,23 +235,8 @@ struct TransferSheetView: View {
             if !ownTargets.contains(where: { $0.id == ownTargetID }) { ownTargetID = ownTargets.first?.id }
             applyOwnTarget(ownTargetID)
         }
-        .onChange(of: model.transferDraft.iban) { _, new in
-            let f = Self.groupedIBAN(new)
-            if f != new { model.transferDraft.iban = f }
-        }
         .onChange(of: model.transferDraft.purpose) { _, new in
             if new.count > maxPurpose { model.transferDraft.purpose = String(new.prefix(maxPurpose)) }
-        }
-        .onChange(of: model.transferDraft.name) { _, new in
-            if new != pickedName { pickedName = nil }
-            refreshSuggestions()
-        }
-        .onChange(of: nameFocused) { refreshSuggestions() }
-        // here, not on the list: that one only exists while it has rows, so it would miss the
-        // list appearing and emptying
-        .onChange(of: suggestions.map(\.iban)) { _, new in
-            highlighted = keepHighlight.flatMap { new.isEmpty ? nil : min($0, new.count - 1) }
-            keepHighlight = nil
         }
     }
 
@@ -341,41 +313,15 @@ struct TransferSheetView: View {
 
             Section {
                 if ownTransfer {
-                    Picker("Zielkonto", selection: Binding(get: { ownTargetID }, set: { ownTargetID = $0; applyOwnTarget($0) })) {
-                        ForEach(ownTargets) { a in
-                            Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id)).sensitive()
-                        }
-                    }
-                    LabeledContent("Empfänger") {
-                        Text(draft.wrappedValue.name).appFont(.body).sensitive()
-                    }
+                    OwnTargetFields(targets: ownTargets, selection: $ownTargetID, name: draft.wrappedValue.name,
+                                    select: applyOwnTarget)
                 } else {
                     LabeledContent("Empfänger") {
-                        TextField("Empfänger", text: draft.name)
-                            .transferField()
-                            .focused($nameFocused)
-                            .onKeyPress(.downArrow) { moveHighlight(1) }
-                            .onKeyPress(.upArrow) { moveHighlight(-1) }
-                            .onKeyPress(.return) {
-                                guard let h = highlighted, suggestions.indices.contains(h) else { return .ignored }
-                                pick(suggestions[h])
-                                return .handled
-                            }
-                            .onKeyPress(.escape) {
-                                guard !suggestions.isEmpty else { return .ignored }
-                                suggestions = []
-                                return .handled
-                            }
-                            .sensitive()
-                            .anchorPreference(key: NameFieldBounds.self, value: .bounds) { $0 }
+                        RecipientNameField(name: draft.name, suggestions: suggestions, pick: pick)
                     }
                     LabeledContent("IBAN") {
                         HStack(spacing: 8) {
-                            TextField("IBAN", text: draft.iban, prompt: Text("DE00 0000 0000 0000 0000 00"))
-                                .transferField()
-                                .appFont(.body, design: .monospaced)
-                                .autocorrectionDisabled()
-                                .sensitive()
+                            IBANInput(iban: draft.iban)
                             validity(draft.wrappedValue.iban.isEmpty ? nil : ibanValid,
                                      valid: "Prüfsumme korrekt", invalid: "IBAN ungültig (Prüfsumme/Länge)")
                         }
@@ -450,16 +396,7 @@ struct TransferSheetView: View {
         .formStyle(.grouped)
         // The list floats over the form below the name field (a row would clip
         // it), so the sheet keeps its size while typing (#881).
-        .overlayPreferenceValue(NameFieldBounds.self) { anchor in
-            GeometryReader { g in
-                if let anchor, !suggestions.isEmpty {
-                    let field = g[anchor]
-                    suggestionList
-                        .frame(width: field.width)
-                        .offset(x: field.minX, y: field.maxY + 4)
-                }
-            }
-        }
+        .recipientSuggestionList(suggestions, pick: pick)
         .scrollIndicators(formFitsSheet ? .never : .automatic)
         .reportsFormFit($formFit)
     }
@@ -475,13 +412,8 @@ struct TransferSheetView: View {
     }
 
     /// Check mark or cross after a field that has a value.
-    @ViewBuilder private func validity(_ ok: Bool?, valid: LocalizedStringKey, invalid: LocalizedStringKey) -> some View {
-        if let ok {
-            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(ok ? Theme.inflow : Theme.negative)
-                .help(ok ? valid : invalid)
-                .accessibilityLabel(ok ? valid : invalid)
-        }
+    private func validity(_ ok: Bool?, valid: LocalizedStringKey, invalid: LocalizedStringKey) -> some View {
+        FieldValidity(ok: ok, valid: valid, invalid: invalid)
     }
 
     /// Not while the bank's refusal is shown below the form: that box says it all.
@@ -513,92 +445,11 @@ struct TransferSheetView: View {
         }
     }
 
-    /// Known recipients as a drop-down under the name (#881): one row per IBAN with
-    /// its last use, pick with the mouse or ↑/↓ and Return; Esc closes it. The row under
-    /// the pointer offers "Nicht mehr vorschlagen" (#978), as does its context menu.
-    private var suggestionList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(suggestions.enumerated()), id: \.element.iban) { i, r in
-                HStack(spacing: 4) {
-                    Button { pick(r) } label: {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(r.name).appFont(.body).lineLimit(1).sensitive()
-                                Spacer(minLength: 8)
-                                Text("zuletzt \(DateText.medium(r.lastUsed))").appFont(.caption)
-                                    .foregroundStyle(Theme.tertiary).fixedSize()
-                            }
-                            RecipientIBANLine(iban: r.iban)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 8).padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Button { hide(r) } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.tertiary)
-                            .padding(.trailing, 8).padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Nicht mehr vorschlagen")
-                    .opacity(i == highlighted ? 1 : 0)
-                    .disabled(i != highlighted)
-                    .accessibilityHidden(true)
-                }
-                .background(RoundedRectangle(cornerRadius: 6).fill(i == highlighted ? Theme.selection : .clear))
-                .onHover { if $0 { highlighted = i } }
-                .contextMenu {
-                    Button("Nicht mehr vorschlagen", systemImage: "eye.slash") { hide(r) }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(i == highlighted ? .isSelected : [])
-                .accessibilityAction { pick(r) }
-                .accessibilityAction(named: "Nicht mehr vorschlagen") { hide(r) }
-            }
-        }
-        .padding(4)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
-    }
-
-    /// Known recipients for what was typed: only once something is typed, one
-    /// row per IBAN (the most used spelling), the most recently used first, at most five.
-    private func recipients(_ query: String) -> [KnownRecipient] {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return model.suggestRecipients(query)
-    }
-
-    /// The list for the name as typed: only while the field has the focus and the name was not
-    /// just taken from the list.
-    private func refreshSuggestions() {
-        let name = model.transferDraft.name
-        suggestions = nameFocused && name != pickedName ? recipients(name) : []
-    }
-
-    /// "Nicht mehr vorschlagen": the IBAN leaves the list at once, the highlight keeps its
-    /// place; "Empfänger" shows it again.
-    private func hide(_ r: KnownRecipient) {
-        let before = suggestions.map(\.iban), place = highlighted
-        model.setRecipientHidden(r.iban, true)
-        refreshSuggestions()
-        if suggestions.map(\.iban) != before { keepHighlight = place }
-    }
-
-    private func moveHighlight(_ step: Int) -> KeyPress.Result {
-        guard !suggestions.isEmpty else { return .ignored }
-        highlighted = min(max((highlighted ?? -1) + step, 0), suggestions.count - 1)
-        return .handled
-    }
-
     /// Takes name and IBAN, closes the list and goes on to the amount.
     private func pick(_ r: KnownRecipient) {
-        pickedName = r.name
+        suggestions.take(r)
         model.transferDraft.name = r.name
         model.transferDraft.iban = r.iban
-        suggestions = []
-        highlighted = nil
         amountFocused = true
     }
 
@@ -946,7 +797,7 @@ struct RecipientIBANLine: View {
     }
 }
 
-private extension View {
+extension View {
     /// A text field of the transfer form. macOS: bezeled, so an empty field
     /// reads as a field (#881); iOS keeps the inline trailing style.
     func transferField(alignment: TextAlignment = .leading) -> some View {
@@ -960,15 +811,7 @@ private extension View {
 
 /// The edge a `transferField`'s text starts from (for the bank line under it).
 #if os(macOS)
-private let transferFieldEdge = Alignment.leading
+let transferFieldEdge = Alignment.leading
 #else
-private let transferFieldEdge = Alignment.trailing
+let transferFieldEdge = Alignment.trailing
 #endif
-
-/// Where the recipient name field is, for the suggestion list over the form.
-private struct NameFieldBounds: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = value ?? nextValue()
-    }
-}

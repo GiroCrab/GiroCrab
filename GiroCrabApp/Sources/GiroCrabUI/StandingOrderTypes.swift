@@ -7,6 +7,8 @@ struct StandingDraft {
     /// `standing_orders.id` of the order to change or delete.
     var orderRowID: Int64?
     var accountID: Int64?
+    /// Umbuchung (#1475): name and IBAN come from an own account.
+    var ownTransfer = false
     var name = ""
     var iban = ""
     var bic = ""

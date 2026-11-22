@@ -55,10 +55,28 @@ extension AppModel {
         openStandingSheet(StandingDraft(order: order, action: .delete))
     }
 
+    /// A template, a paste or an invoice names a recipient (#1475): that is an order to someone else,
+    /// so it leaves Umbuchung first, as in the transfer form. A running order keeps its form.
+    func fillStandingDraft(_ p: ParsedPayment, onlyEmpty: Bool = false) {
+        guard activeTransfer == nil else { return }
+        standingDraft.ownTransfer = false
+        p.apply(to: &standingDraft, onlyEmpty: onlyEmpty)
+    }
+
     /// Screenshots only (`--demo-sheet`): opens the sheet for a draft without the bank checks.
     func openStandingDemo(_ draft: StandingDraft) { openStandingSheet(draft) }
 
+    /// Identifies the open sheet; a late result for an earlier one is dropped (`fillStandingDraft(_:ifToken:)`).
+    var standingImportToken: UUID { standingDraftToken }
+
+    func fillStandingDraft(_ p: ParsedPayment, ifToken token: UUID) -> Bool {
+        guard token == standingDraftToken, showStandingSheet else { return false }
+        fillStandingDraft(p)
+        return true
+    }
+
     private func openStandingSheet(_ draft: StandingDraft) {
+        standingDraftToken = UUID()
         standingDraft = draft
         standingLimits = nil
         transferError = nil
@@ -80,6 +98,7 @@ extension AppModel {
     }
 
     func cancelStandingSheet() {
+        standingDraftToken = UUID()
         showStandingSheet = false
         standingDraft.pin = ""
         transferError = nil

@@ -44,20 +44,25 @@ extension AppModel {
         (try? await vaultOffMain { try $0.listTransferTemplates() }) ?? []
     }
 
-    func saveTransferTemplate(named name: String) {
+    /// Saves the recipient of the open form as a template: the transfer's, or with `standing` the
+    /// standing order's (#1475).
+    func saveTransferTemplate(named name: String, standing: Bool = false) {
         guard let vault else { return }
-        let d = transferDraft
+        let f = standing
+            ? (standingDraft.name, standingDraft.iban, standingDraft.bic, standingDraft.amountText, standingDraft.purpose)
+            : (transferDraft.name, transferDraft.iban, transferDraft.bic, transferDraft.amountText, transferDraft.purpose)
         let t = TransferTemplate(
-            id: 0, name: name, recipientName: d.name, recipientIban: d.iban, recipientBic: d.bic,
-            defaultAmountCents: Money.parseCents(d.amountText).flatMap { $0 > 0 ? $0 : nil },
-            defaultPurpose: d.purpose)
+            id: 0, name: name, recipientName: f.0, recipientIban: f.1, recipientBic: f.2,
+            defaultAmountCents: Money.parseCents(f.3).flatMap { $0 > 0 ? $0 : nil },
+            defaultPurpose: f.4)
         do { _ = try vault.saveTransferTemplate(template: t) } catch { transferError = "\(error)" }
     }
 
-    func applyTransferTemplate(_ t: TransferTemplate) {
-        fillTransferDraft(ParsedPayment(name: t.recipientName, iban: t.recipientIban, bic: t.recipientBic,
-                                        amountText: t.defaultAmountCents.map { Money.plain($0) } ?? "",
-                                        purpose: t.defaultPurpose))
+    func applyTransferTemplate(_ t: TransferTemplate, standing: Bool = false) {
+        let p = ParsedPayment(name: t.recipientName, iban: t.recipientIban, bic: t.recipientBic,
+                              amountText: t.defaultAmountCents.map { Money.plain($0) } ?? "",
+                              purpose: t.defaultPurpose)
+        if standing { fillStandingDraft(p) } else { fillTransferDraft(p) }
     }
 
     func deleteTransferTemplate(_ id: Int64) {
@@ -652,6 +657,10 @@ struct SplitSheet: View {
 
 struct TransferTemplatesMenu: View {
     @Environment(AppModel.self) private var model
+    /// In the standing order form (#1475): applies to and saves from its draft.
+    var standing = false
+    private var draftName: String { standing ? model.standingDraft.name : model.transferDraft.name }
+    private var draftIban: String { standing ? model.standingDraft.iban : model.transferDraft.iban }
     @State private var templates: [TransferTemplate] = []
     @State private var naming = false
     @State private var deleting: TransferTemplate?
@@ -660,7 +669,7 @@ struct TransferTemplatesMenu: View {
     var body: some View {
         Menu {
             ForEach(templates, id: \.id) { t in
-                Button("\(t.name) · \(t.recipientName)") { model.applyTransferTemplate(t) }
+                Button("\(t.name) · \(t.recipientName)") { model.applyTransferTemplate(t, standing: standing) }
             }
             if !templates.isEmpty {
                 Divider()
@@ -671,10 +680,10 @@ struct TransferTemplatesMenu: View {
                 }
             }
             Button("Als Vorlage speichern …", systemImage: "square.and.arrow.down") {
-                name = model.transferDraft.name
+                name = draftName
                 naming = true
             }
-            .disabled(model.transferDraft.name.trimmingCharacters(in: .whitespaces).isEmpty || model.transferDraft.iban.isEmpty)
+            .disabled(draftName.trimmingCharacters(in: .whitespaces).isEmpty || draftIban.isEmpty)
         } label: { Label("Vorlagen", systemImage: "doc.on.doc") }
         .menuStyle(.borderlessButton).fixedSize()
         .task { templates = await model.transferTemplates() }
@@ -686,7 +695,7 @@ struct TransferTemplatesMenu: View {
         }
         .alert("Vorlage speichern", isPresented: $naming) {
             TextField("Name der Vorlage", text: $name)
-            Button("Speichern") { model.saveTransferTemplate(named: name); Task { templates = await model.transferTemplates() } }
+            Button("Speichern") { model.saveTransferTemplate(named: name, standing: standing); Task { templates = await model.transferTemplates() } }
             Button("Abbrechen", role: .cancel) {}
         }
     }
