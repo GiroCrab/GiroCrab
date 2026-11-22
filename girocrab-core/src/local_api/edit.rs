@@ -172,17 +172,42 @@ fn not_found(id: i64) -> ApiEditResult {
 }
 
 impl Vault {
-    /// All live tags, in list order.
-    pub(super) fn api_tags(&self) -> ApiResult<Vec<ApiTag>> {
-        Ok(self
-            .list_tags()?
-            .into_iter()
-            .map(|t| ApiTag {
-                id: t.id,
-                name: t.name,
-                booking_count: t.booking_count,
+    /// All live tags, in list order. Tag names are shared whole, like category
+    /// names (labels, no account data); `booking_count` counts only live
+    /// bookings on shared accounts, so it never reveals activity elsewhere.
+    pub(super) fn api_tags(&self, scope: &ShareScope) -> ApiResult<Vec<ApiTag>> {
+        let db = self.db()?;
+        let shared = shared_account_ids(&db, scope)?;
+        let ph = vec!["?"; shared.len()].join(",");
+        // No shared account: every count is 0 (`IN ()` is not valid SQL).
+        let in_shared = if shared.is_empty() {
+            "0".to_string()
+        } else {
+            format!("t.account_id IN ({ph})")
+        };
+        let mut stmt = db
+            .prepare(&format!(
+                "SELECT g.id, g.name,
+                        (SELECT count(*) FROM transaction_tags x
+                           JOIN transactions t ON t.id = x.transaction_id
+                          WHERE x.tag_id = g.id AND t.deleted_ms IS NULL AND {in_shared})
+                   FROM tags g
+                  WHERE g.deleted_ms IS NULL
+                  ORDER BY g.sort_order, g.name COLLATE NOCASE, g.id"
+            ))
+            .map_err(CoreError::from)?;
+        let tags = stmt
+            .query_map(params_from_iter(&shared), |r| {
+                Ok(ApiTag {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    booking_count: r.get::<_, i64>(2)? as u32,
+                })
             })
-            .collect())
+            .map_err(CoreError::from)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(CoreError::from)?;
+        Ok(tags)
     }
 
     pub(super) fn api_set_category(
@@ -219,8 +244,10 @@ impl Vault {
             };
             let status = if t.split {
                 "split"
-            } else if t.category_id == p.category_id {
-                // Same category (or none): nothing to write, whoever set it.
+            } else if t.category_id == p.category_id && t.source != "rule" {
+                // Same category set by hand (or none at all): nothing to write. The
+                // same category from a rule is taken over as the user's own below,
+                // so a later rule run no longer changes it.
                 "unchanged"
             } else if t.source == "manual" && !p.overwrite_manual {
                 "skipped_manual"
@@ -254,6 +281,19 @@ impl Vault {
         let ids = check_ids(p.transaction_ids)?;
         if p.add.is_empty() && p.remove.is_empty() {
             return Err(ApiError::invalid("add or remove must name a tag"));
+        }
+        // The same tag in both lists has no clear outcome (and would not repeat
+        // as `unchanged`): refuse it.
+        let removing: HashSet<String> = p.remove.iter().map(|n| crate::tags::fold(n)).collect();
+        if let Some(both) = p
+            .add
+            .iter()
+            .find(|n| removing.contains(&crate::tags::fold(n)))
+        {
+            return Err(ApiError::invalid(format!(
+                "tag {:?} is both in add and remove",
+                both.trim()
+            )));
         }
         let db = self.db()?;
         let targets = targets(&db, scope, &ids)?;

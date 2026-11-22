@@ -65,7 +65,7 @@ Schlüsselprüfung beantwortet.
 | `info` | – | Version, Anzahl geteilter Konten, geteilte Felder, `allows_edits`, letzter Abruf |
 | `accounts` | – | geteilte Konten mit Saldo, Art, Währung, letztem Abruf |
 | `categories` | – | Kategorienbaum (`id`, `parent_id`, `name`, `path`, `depth`) |
-| `tags` | – | Tags (`id`, `name`, `booking_count`) |
+| `tags` | – | Tags (`id`, `name`, `booking_count`: nur Buchungen geteilter Konten) |
 | `transactions` | `account_ids`, `date_from`, `date_to`, `category_id`, `include_subcategories`, `uncategorized_only`, `direction` (`income`/`expense`/`all`), `search`, `cursor`, `limit` (1–500, Standard 100; größere Werte werden auf 500 begrenzt) | Buchungen, neueste zuerst, mit `next_cursor` |
 | `summary` | `date_from`, `date_to` (höchstens drei Jahre), `account_ids` | Einnahmen/Ausgaben je Währung, Netto-Summen je Kategorie |
 | `set_category` | `transaction_ids` (1–500), `category_id` (`null` entfernt sie), `overwrite_manual` | je Buchung `status`, vorherige Kategorie und Quelle |
@@ -86,11 +86,13 @@ geteilt) meldet `not_found`. Alle Änderungen einer Anfrage laufen in einer Tran
 Änderungen in der App per iCloud an die anderen Geräte.
 
 - `set_category`: Eine so gesetzte Kategorie gilt als vom Nutzer gesetzt (`manual`), Regeln ändern sie
-  nicht mehr. Eine von Hand gesetzte Kategorie bleibt (`skipped_manual`), außer mit
+  nicht mehr (nur „Speichern & anwenden › Alle Buchungen“ einer Regel kann sie ersetzen). Das gilt auch,
+  wenn eine Regel schon dieselbe Kategorie vergeben hatte: Sie wird dann übernommen (`changed`). Eine von Hand gesetzte Kategorie bleibt (`skipped_manual`), außer mit
   `"overwrite_manual": true`; eine von einer Regel gesetzte wird ersetzt. Aufgeteilte Buchungen melden
   `split` (die Kategorie gehört zu den Teilen). Sonst `changed` oder `unchanged`.
 - `set_tags`: Tags nach Namen, ohne Unterschied von Groß- und Kleinschreibung. Ein Tag aus `add`, den es
-  noch nicht gibt, wird angelegt (`created_tags`); unbekannte Namen in `remove` werden übergangen.
+  noch nicht gibt, wird angelegt (`created_tags`); unbekannte Namen in `remove` werden übergangen. Derselbe
+  Tag in `add` und `remove` ist ein Fehler (`invalid_params`).
 
 Nach einer Änderung lädt GiroCrab die Anzeige neu.
 
@@ -139,7 +141,7 @@ Socket-Pfad lässt sich mit `--socket` oder `GIROCRAB_API_SOCKET` ändern.
 | `set_tags` | `set_tags` | nur mit erlaubten Änderungen |
 
 Alle Tools außer `set_category` und `set_tags` sind als nur lesend markiert (`readOnlyHint`); die beiden
-tragen `destructiveHint: false` und `idempotentHint: true`. Beschreibungen und Eingabeschemas liefert
+tragen `destructiveHint: true` (eine Kategorie kann ersetzt werden) und `idempotentHint: true`. Beschreibungen und Eingabeschemas liefert
 `tools/list`. Ist GiroCrab gesperrt, ausgeschaltet oder nicht gestartet, sind alle Verbindungen belegt
 (`busy`) oder passt bzw. fehlt der Schlüssel, liefert der Tool-Aufruf einen lesbaren Fehler (`isError`),
 den der Assistent weitergeben kann. Unterstützte MCP-Versionen: 2025-06-18, 2025-03-26, 2024-11-05.

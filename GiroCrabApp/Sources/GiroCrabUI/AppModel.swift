@@ -718,8 +718,8 @@ public final class AppModel {
     @ObservationIgnored var localApiQueue: Task<Void, Never>?
     /// Counts queued jobs: only the newest one publishes the whole scope.
     @ObservationIgnored var localApiJobs = 0
-    /// A reload after edits through the local API is already scheduled (AppModel+LocalApi).
-    @ObservationIgnored var localApiReloadPending = false
+    /// The vault a reload after edits through the local API is scheduled for (AppModel+LocalApi).
+    @ObservationIgnored var localApiReloadPending: ObjectIdentifier?
     var activeChallenge: ActiveChallenge?
     var payeeCheck: PendingPayeeCheck?
     var syncingConnectionID: Int64? { didSet { if syncingConnectionID == nil { resumePaymentLink() } } }

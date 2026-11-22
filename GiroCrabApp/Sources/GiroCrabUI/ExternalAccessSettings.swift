@@ -106,7 +106,7 @@ struct ExternalAccessSettings: View {
     private var editsSection: some View {
         Section {
             Toggle("Kategorien und Tags ändern erlauben", isOn: field(\.allowEdits))
-            Text("Programme können dann Buchungen der geteilten Konten eine Kategorie zuweisen und Tags hinzufügen oder entfernen, auch neue Tags anlegen. So gesetzte Kategorien gelten als von Ihnen gesetzt: Regeln ändern sie nicht mehr. Kategorien, die Sie selbst gesetzt haben, bleiben, außer das Programm verlangt ausdrücklich das Überschreiben. Beträge, Texte, Konten und Regeln bleiben unverändert.")
+            Text("Programme können dann Buchungen der geteilten Konten eine Kategorie zuweisen und Tags hinzufügen oder entfernen, auch neue Tags anlegen. So gesetzte Kategorien gelten als von Ihnen gesetzt: Regeln ändern sie nicht mehr, außer Sie wenden eine Regel mit „Speichern & anwenden › Alle Buchungen“ an. Kategorien, die Sie selbst gesetzt haben, bleiben, außer das Programm verlangt ausdrücklich das Überschreiben. Beträge, Texte, Konten und Regeln bleiben unverändert.")
                 .appFont(.callout).foregroundStyle(.secondary)
         } header: { Text("Änderungen").appSectionHeader() }
     }

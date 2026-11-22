@@ -456,7 +456,7 @@ impl Vault {
             "info" => to_value(self.api_info(&scope)?),
             "accounts" => to_value(self.shared_accounts(&scope)?),
             "categories" => to_value(self.api_categories()?),
-            "tags" => to_value(self.api_tags()?),
+            "tags" => to_value(self.api_tags(&scope)?),
             "transactions" => to_value(self.api_transactions(&scope, params(req.params)?)?),
             "summary" => to_value(self.api_summary(&scope, params(req.params)?)?),
             "set_category" => {

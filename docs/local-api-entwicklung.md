@@ -20,8 +20,8 @@ LocalApiServer im Core (läuft im App-Prozess)  →  Vault::local_api_socket_req
 
 - **Core** (`girocrab-core/src/local_api.rs`): Freigabeumfang (`ShareScope`), Schlüssel (nur SHA-256 gespeichert),
   die Methoden `info`, `accounts`, `categories`, `transactions`, `summary` und die Maskierung (`shared_text`).
-  Schreibend nur `local_api/edit.rs`: `tags`, `set_category`, `set_tags`, abgesichert durch
-  `ShareScope::allow_edits` (sonst `read_only`).
+  In `local_api/edit.rs`: die lesende Methode `tags` (Zähler nur über geteilte Konten) und die einzigen
+  schreibenden `set_category`, `set_tags`, abgesichert durch `ShareScope::allow_edits` (sonst `read_only`).
 - **Socket-Server** (`girocrab-core/src/local_api/server.rs`): `LocalApiServer` mit Lock-Datei
   (`girocrab.sock.lock`), Peer-UID-Prüfung, Grenzen (4 Verbindungen, 64 KiB, 10 s je Anfrage, 60 s Leerlauf) und
   Takt. Hält den Tresor nur `Weak`; nach `stop()` geht keine Antwort mehr raus. Hat eine Anfrage Buchungen
@@ -30,7 +30,7 @@ LocalApiServer im Core (läuft im App-Prozess)  →  Vault::local_api_socket_req
   `localApiTarget` legt fest, wann er laufen darf: eigener Tresor, entsperrt, angezeigt, nur macOS.
   Ausgelöst durch die `didSet` von `ownVault`, `demoActive` und `vaultState` (`reconcileLocalApiServer`).
   Meldet der Server Änderungen (`LocalApiChangeListener` in `AppModelTypes.swift`), lädt
-  `localApiChangedBookings` höchstens einmal je 300 ms neu (`reloadAllInBackground`). Alle
+  `localApiChangedBookings` je Tresor höchstens einmal je 300 ms neu (`reloadAllInBackground`). Alle
   Einstellungs- und Schlüsselaufrufe laufen über eine Warteschlange (`localApiJob`). Oberfläche:
   `ExternalAccessSettings.swift` (Einstellungen › Analyse).
 - **MCP-Adapter** (`girocrab-mcp/`): eigenes Crate, hängt zur Laufzeit nur von `serde_json` ab (der Core ist

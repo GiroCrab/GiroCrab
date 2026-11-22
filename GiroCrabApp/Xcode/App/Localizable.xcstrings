@@ -26539,13 +26539,13 @@
         }
       }
     },
-    "Programme können dann Buchungen der geteilten Konten eine Kategorie zuweisen und Tags hinzufügen oder entfernen, auch neue Tags anlegen. So gesetzte Kategorien gelten als von Ihnen gesetzt: Regeln ändern sie nicht mehr. Kategorien, die Sie selbst gesetzt haben, bleiben, außer das Programm verlangt ausdrücklich das Überschreiben. Beträge, Texte, Konten und Regeln bleiben unverändert." : {
+    "Programme können dann Buchungen der geteilten Konten eine Kategorie zuweisen und Tags hinzufügen oder entfernen, auch neue Tags anlegen. So gesetzte Kategorien gelten als von Ihnen gesetzt: Regeln ändern sie nicht mehr, außer Sie wenden eine Regel mit „Speichern & anwenden › Alle Buchungen“ an. Kategorien, die Sie selbst gesetzt haben, bleiben, außer das Programm verlangt ausdrücklich das Überschreiben. Beträge, Texte, Konten und Regeln bleiben unverändert." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Programs can then assign a category to transactions of the shared accounts and add or remove tags, including new ones. Categories set this way count as set by you: rules no longer change them. Categories you set yourself stay unless the program explicitly asks to overwrite them. Amounts, texts, accounts and rules stay unchanged."
+            "value" : "Programs can then assign a category to transactions of the shared accounts and add or remove tags, including new ones. Categories set this way count as set by you: rules no longer change them, unless you apply a rule with “Save & Apply › All Transactions”. Categories you set yourself stay unless the program explicitly asks to overwrite them. Amounts, texts, accounts and rules stay unchanged."
           }
         }
       }

@@ -289,3 +289,87 @@ fn tags_are_added_by_name_created_when_missing_and_removed() {
     assert_eq!(booking(&v, a)["tags"], json!([]));
     assert_eq!(booking(&v, b)["tags"], json!(["Dienstreise"]));
 }
+
+#[test]
+fn tag_counts_stay_within_the_shared_accounts() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    let other = v
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.id != giro)
+        .unwrap()
+        .id;
+    share(&v, &[other], true);
+    let (hidden, _, _) = {
+        share(&v, &[giro], true);
+        uncategorized(&v, giro)
+    };
+    ok(
+        &v,
+        "set_tags",
+        json!({ "transaction_ids": [hidden], "add": ["Nur Giro"] }),
+    );
+    let count = |v: &Vault| {
+        ok(v, "tags", Value::Null)
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "Nur Giro")
+            .unwrap()["booking_count"]
+            .clone()
+    };
+    assert_eq!(count(&v), 1);
+    // The giro account is no longer shared: the name stays, its use does not show.
+    share(&v, &[other], false);
+    assert_eq!(count(&v), 0);
+    share(&v, &[], false);
+    assert_eq!(count(&v), 0);
+}
+
+#[test]
+fn the_same_category_from_a_rule_becomes_the_users_own() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    share(&v, &[giro], true);
+    let ruled = ok(
+        &v,
+        "transactions",
+        json!({ "account_ids": [giro], "limit": 500 }),
+    )["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["category_source"] == "rule")
+        .expect("the demo has rule-categorised bookings")
+        .clone();
+    let r = ok(
+        &v,
+        "set_category",
+        json!({ "transaction_ids": [ruled["id"]], "category_id": ruled["category_id"] }),
+    );
+    assert_eq!(statuses(&r), ["changed"]);
+    assert_eq!(r["results"][0]["previous_source"], "rule");
+    let b = booking(&v, ruled["id"].as_i64().unwrap());
+    assert_eq!(b["category_id"], ruled["category_id"]);
+    assert_eq!(b["category_source"], "manual");
+    // now it is the user's: the same request again writes nothing
+    let r = ok(
+        &v,
+        "set_category",
+        json!({ "transaction_ids": [ruled["id"]], "category_id": ruled["category_id"] }),
+    );
+    assert_eq!(statuses(&r), ["unchanged"]);
+}
+
+#[test]
+fn a_tag_cannot_be_added_and_removed_at_once() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    share(&v, &[giro], true);
+    let (id, _, _) = uncategorized(&v, giro);
+    let both = json!({ "transaction_ids": [id], "add": ["Probe"], "remove": [" probe "] });
+    assert_eq!(err_code(&v, "set_tags", both), "invalid_params");
+    assert_eq!(booking(&v, id)["tags"], json!([]));
+}

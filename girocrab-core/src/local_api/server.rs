@@ -927,6 +927,11 @@ mod tests {
             tag(&mut c, "Probe")["result"]["results"][0]["status"],
             "changed"
         );
+        // The listener is told after the answer went out: wait for it, bounded.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while changes.0.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert_eq!(changes.0.load(Ordering::SeqCst), 1);
         // reads and edits that change nothing are not reported
         assert_eq!(

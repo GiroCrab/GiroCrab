@@ -188,15 +188,18 @@ extension AppModel {
 
     /// A client set categories or tags (only while the user allows edits): reload
     /// like after an iCloud merge, at most once per burst of requests (an
-    /// assistant often sends several in a row).
+    /// assistant often sends several in a row). The burst belongs to one vault:
+    /// a reload still pending for a vault that was swapped meanwhile never
+    /// swallows the change of the one served now.
     func localApiChangedBookings(in vault: Vault) {
-        guard !localApiReloadPending else { return }
-        localApiReloadPending = true
-        Task { [weak self] in
+        let id = ObjectIdentifier(vault)
+        guard localApiReloadPending != id else { return }
+        localApiReloadPending = id
+        Task { [weak self, weak vault] in
             try? await Task.sleep(for: .milliseconds(300))
             guard let self else { return }
-            self.localApiReloadPending = false
-            guard self.localApiTarget === vault else { return }
+            if self.localApiReloadPending == id { self.localApiReloadPending = nil }
+            guard let vault, self.localApiTarget === vault else { return }
             self.reloadAllInBackground()
         }
     }

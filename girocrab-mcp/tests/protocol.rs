@@ -117,7 +117,7 @@ fn tools_are_listed_with_object_schemas_and_only_two_write() {
         let writes = matches!(t["name"].as_str(), Some("set_category" | "set_tags"));
         assert_eq!(t["annotations"]["readOnlyHint"], !writes, "{}", t["name"]);
         if writes {
-            assert_eq!(t["annotations"]["destructiveHint"], false);
+            assert_eq!(t["annotations"]["destructiveHint"], true);
             assert_eq!(t["annotations"]["idempotentHint"], true);
         }
         assert!(!t["description"].as_str().unwrap().is_empty());

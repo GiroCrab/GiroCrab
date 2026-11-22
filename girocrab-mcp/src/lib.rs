@@ -58,7 +58,8 @@ struct Tool {
     method: &'static str,
     description: &'static str,
     schema: fn() -> Value,
-    /// Changes bookings (category, tags); announced without `readOnlyHint`.
+    /// Changes bookings (category, tags): announced as writing and destructive,
+    /// since `set_category` can replace a category the user set by hand.
     writes: bool,
 }
 
@@ -588,7 +589,7 @@ fn tools_list() -> Value {
                 "description": t.description,
                 "inputSchema": (t.schema)(),
                 "annotations": if t.writes {
-                    json!({ "readOnlyHint": false, "destructiveHint": false,
+                    json!({ "readOnlyHint": false, "destructiveHint": true,
                             "idempotentHint": true, "openWorldHint": false })
                 } else {
                     json!({ "readOnlyHint": true, "openWorldHint": false })

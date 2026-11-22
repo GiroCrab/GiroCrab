@@ -181,7 +181,8 @@ fn the_adapter_speaks_the_cores_protocol() {
     let sample = |name: &str, schema: &Value| -> Value {
         match name {
             "category_id" => category.clone(),
-            "add" | "remove" => json!(["Probe"]),
+            "add" => json!(["Probe"]),
+            "remove" => json!(["Andere"]),
             "date_from" => json!("2026-01-01"),
             "date_to" => json!("2026-06-30"),
             "direction" => json!("all"),
