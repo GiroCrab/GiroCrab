@@ -235,9 +235,15 @@ export component SettingsImportPanel inherits VerticalLayout {
             CheckBox { text: "Kategorie"; checked <=> SettingsImportState.col-category; }
             CheckBox { text: "Notiz"; checked <=> SettingsImportState.col-note; }
             CheckBox { text: "Kontostand (Kopfzeile)"; checked <=> SettingsImportState.col-balance; }
+        }
+        HorizontalLayout {
+            spacing: 12px;
             CheckBox { text: "Gegen-IBAN"; checked <=> SettingsImportState.col-iban; }
             CheckBox { text: "Saldo (mitlaufend)"; checked <=> SettingsImportState.col-running-balance; }
             CheckBox { text: "Pro Konto eine Datei"; checked <=> SettingsImportState.per-account; }
+        }
+        HorizontalLayout {
+            spacing: 12px;
             Rectangle { horizontal-stretch: 1; }
             Button { text: "CSV speichern …"; primary: true; enabled: !SettingsImportState.busy; clicked => { SettingsImportState.export-csv(); } }
         }

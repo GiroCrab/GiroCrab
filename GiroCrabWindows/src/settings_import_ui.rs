@@ -194,6 +194,16 @@ fn write_bytes(path: &PathBuf, data: &[u8]) -> Result<(), String> {
 /// (by another program), the next free `-N` name is used.
 fn write_new(dir: &std::path::Path, name: &str, data: &[u8]) -> Result<(), String> {
     use std::io::Write;
+    write_new_with(dir, name, |f| f.write_all(data))
+}
+
+/// `write_new` with the writing step passed in. A failed write removes the file it just created
+/// (no half-written export next to a retry); files that existed before are never touched.
+fn write_new_with(
+    dir: &std::path::Path,
+    name: &str,
+    write: impl Fn(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), String> {
     let failed = |e: std::io::Error| format!("Die Datei konnte nicht geschrieben werden: {e}");
     for i in 1..=100 {
         let path = dir.join(view::numbered_file_name(name, i));
@@ -202,7 +212,18 @@ fn write_new(dir: &std::path::Path, name: &str, data: &[u8]) -> Result<(), Strin
             .create_new(true)
             .open(&path)
         {
-            Ok(mut f) => return f.write_all(data).map_err(failed),
+            Ok(mut f) => {
+                let written = write(&mut f);
+                // close before removing: Windows cannot delete an open file
+                drop(f);
+                return match written {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&path);
+                        Err(failed(e))
+                    }
+                };
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(failed(e)),
         }
@@ -679,7 +700,6 @@ fn wire_export(win: &MainWindow) {
             running_balance: gs.get_col_running_balance(),
         };
         let with_balance = gs.get_col_balance();
-        let accounts = with_ui(|u| u.accounts.clone());
         spawn(
             &win,
             "Wird exportiert …",
@@ -693,6 +713,14 @@ fn wire_export(win: &MainWindow) {
                     write_bytes(&path, csv.as_bytes())?;
                     return Ok(format!("{n} Umsätze exportiert."));
                 }
+                // Current accounts, not the menu cache: an import in this dialog may have
+                // created an archive account since it was opened.
+                let accounts: Vec<(i64, String)> = v
+                    .list_accounts()
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|a| (a.id, a.name))
+                    .collect();
                 if accounts.is_empty() {
                     return Err("Kein Konto vorhanden.".to_string());
                 }
@@ -1140,16 +1168,38 @@ fn wire_news(win: &MainWindow) {
 
 #[cfg(test)]
 mod tests {
-    use super::write_new;
+    use super::{write_new, write_new_with};
 
-    #[test]
-    fn per_account_write_never_replaces_a_file() {
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
         let dir =
-            std::env::temp_dir().join(format!("girocrab-write-new-{}-{nanos}", std::process::id()));
+            std::env::temp_dir().join(format!("girocrab-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn failed_write_leaves_no_partial_file() {
+        use std::io::Write;
+        let dir = temp_dir("write-fail");
+        std::fs::write(dir.join("vorher.csv"), b"alt").unwrap();
+        let r = write_new_with(&dir, "a.csv", |f| {
+            f.write_all(b"teil")?;
+            Err(std::io::Error::other("Datenträger voll"))
+        });
+        assert!(r.is_err());
+        assert!(!dir.join("a.csv").exists());
+        assert!(!dir.join("a-2.csv").exists());
+        // files written before stay untouched
+        assert_eq!(std::fs::read(dir.join("vorher.csv")).unwrap(), b"alt");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn per_account_write_never_replaces_a_file() {
+        let dir = temp_dir("write-new");
         // appeared after the names were planned
         std::fs::write(dir.join("a.csv"), b"fremd").unwrap();
         write_new(&dir, "a.csv", b"neu").unwrap();
