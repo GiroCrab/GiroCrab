@@ -58,7 +58,7 @@ Rectangle {
         case "abrechnung": return qsTr("Abrechnung")
         case "steuer": return qsTr("Steuer")
         case "kontoauszug": return qsTr("Kontoauszug")
-        case "postbox": return qsTr("PostBox")
+        case "postbox": return qsTr("Postbox")
         case "beleg": return qsTr("Beleg")
         }
         return t
