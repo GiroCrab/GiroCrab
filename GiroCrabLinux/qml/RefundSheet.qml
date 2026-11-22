@@ -137,7 +137,7 @@ Sheet {
                 Layout.fillWidth: true
                 spacing: 1
                 Text { text: rr.row.display_name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
-                Text { text: [Fmt.medium(rr.row.booking_date), rr.row.account_name, sheet.partLabel(rr.row)].filter(t => t !== "").join(" · "); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                Text { text: [Fmt.medium(rr.row.booking_date), rr.row.account_name, sheet.partLabel(rr.row)].filter(t => t !== "").join(" · "); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} Sensitive { amounts: true; when: sheet.partLabel(rr.row) !== "" } }
                 Text { visible: text !== ""; text: rr.row.purpose; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
             }
             Text {
@@ -186,7 +186,10 @@ Sheet {
             currentIndex: Math.max(0, sheet.ownParts.findIndex(p => p.part === sheet.ownPart))
             onActivated: index => sheet.ownPart = sheet.ownParts[index].part
             Accessible.name: sheet.fromRefund ? qsTr("Erstattung aus") : qsTr("Erstattung für")
-            Sensitive { labels: true; amounts: true }
+            // category names, amounts and notes of the parts: one cover per kind, `Sensitive`
+            // looks at one kind only
+            Sensitive { labels: true }
+            Sensitive { amounts: true }
         }
         TextField {
             Layout.fillWidth: true
