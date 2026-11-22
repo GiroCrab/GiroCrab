@@ -618,8 +618,13 @@ Rectangle {
     // shown for the row that was right-clicked. A menu per row was rebuilt with every list
     // reload and made switching accounts slow with many bookings.
     property var menuBooking: null
+    property bool menuBookingIsSplit: false
     function openRowMenu(booking, item, x, y) {
         menuBooking = booking
+        menuBookingIsSplit = false
+        if (booking.amount_cents === 0) AppModel.splits(booking, parts => {
+            if (menuBooking === booking) menuBookingIsSplit = parts !== null && parts.length > 0
+        })
         rowMenu.popup(item, x, y)
     }
     AppMenu {
@@ -634,7 +639,7 @@ Rectangle {
         // RefundsUI.swift › RefundLinkMenu (#714): incoming bookings get their originals, outgoing ones their refunds
         AppMenuItem {
             readonly property var b: stream.menuBooking
-            visible: b !== null && b.amount_cents !== 0
+            visible: b !== null && (b.amount_cents !== 0 || stream.menuBookingIsSplit)
             height: visible ? implicitHeight : 0
             text: !b ? "" : b.amount_cents > 0
                 ? (b.refund_link === "Refund" ? qsTr("Ursprüngliche Buchungen bearbeiten …") : qsTr("Ursprüngliche Buchung zuordnen …"))
