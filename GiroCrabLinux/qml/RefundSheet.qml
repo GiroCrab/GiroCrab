@@ -136,9 +136,9 @@ Sheet {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 1
-                Text { text: rr.row.display_name; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
-                Text { text: [Fmt.medium(rr.row.booking_date), rr.row.account_name, sheet.partLabel(rr.row)].filter(t => t !== "").join(" · "); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} Sensitive { amounts: true; when: sheet.partLabel(rr.row) !== "" } }
-                Text { visible: text !== ""; text: rr.row.purpose; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                Text { text: rr.row.display_name; textFormat: Text.PlainText; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
+                Text { text: [Fmt.medium(rr.row.booking_date), rr.row.account_name, sheet.partLabel(rr.row)].filter(t => t !== "").join(" · "); textFormat: Text.PlainText; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} Sensitive { amounts: true; when: sheet.partLabel(rr.row) !== "" } }
+                Text { visible: text !== ""; text: rr.row.purpose; textFormat: Text.PlainText; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
             }
             Text {
                 visible: rr.reason !== ""
@@ -171,6 +171,7 @@ Sheet {
         }
         Text {
             text: sheet.booking ? sheet.booking.merchant_name + " · " + Fmt.money(sheet.booking.amount_cents, sheet.booking.currency) : ""
+            textFormat: Text.PlainText
             font.pixelSize: Theme.body; color: Theme.secondary
             Sensitive { amounts: true }
         }
