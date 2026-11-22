@@ -1683,6 +1683,10 @@ fn sample(r: &MmRow, i: i64, account_id: i64, merchants: &MerchantRules) -> Book
         creditor_id: r.creditor_id.clone(),
         external_id: String::new(),
         tags: Vec::new(),
+        refund_marker: "none".into(),
+        refund_cents: 0,
+        refunded_cents: 0,
+        split_count: 0,
     };
     // preview of an import: no connection yet, a payment service reads as before
     let paypal = b.account_kind == AccountKind::PaymentService;

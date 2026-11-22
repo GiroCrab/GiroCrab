@@ -3,6 +3,7 @@ use std::sync::Arc;
 use rusqlite::{Connection, params};
 
 use super::*;
+use crate::offline::ManualBookingSetup;
 use crate::vault::Vault;
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -2719,6 +2720,62 @@ fn edited_text_syncs() {
 }
 
 #[test]
+fn incoming_splits_must_match_the_kept_manual_booking_amount() {
+    let dir = temp_dir("split-amount-sync");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let account = a
+        .create_offline_account(
+            "Wallet".into(),
+            crate::models::AccountKind::Cash,
+            "EUR".into(),
+            0,
+        )
+        .unwrap();
+    let mut setup = ManualBookingSetup {
+        booking_date: "2026-01-01".into(),
+        amount_cents: -500,
+        counterparty: "Shop".into(),
+        purpose: String::new(),
+        category_id: None,
+        note: String::new(),
+    };
+    let id = a.save_manual_booking(account, None, setup.clone()).unwrap();
+    a.set_transaction_splits(id, vec![split(None, -200), split(None, -300)])
+        .unwrap();
+    merge(&b, &a);
+    let other_id = n(&b, "SELECT id FROM transactions LIMIT 1");
+    let before: Vec<_> = b
+        .list_transaction_splits(other_id)
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.uuid, p.amount_cents))
+        .collect();
+    let stamp = n(&b, "SELECT splits_ms FROM transactions LIMIT 1");
+    setup.amount_cents = -1000;
+    a.save_manual_booking_with_splits(
+        account,
+        Some(id),
+        setup,
+        Some(vec![split(None, -400), split(None, -600)]),
+    )
+    .unwrap();
+    merge(&b, &a);
+    assert_eq!(n(&b, "SELECT amount_cents FROM transactions LIMIT 1"), -500);
+    assert_eq!(n(&b, "SELECT splits_ms FROM transactions LIMIT 1"), stamp);
+    assert_eq!(
+        b.list_transaction_splits(other_id)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.uuid, p.amount_cents))
+            .collect::<Vec<_>>(),
+        before
+    );
+    a.set_transaction_splits(id, vec![]).unwrap();
+    merge(&b, &a);
+    assert!(b.list_transaction_splits(other_id).unwrap().is_empty());
+}
+
+#[test]
 fn split_merge_preserves_uuids_and_winners_order() {
     for a_first in [true, false] {
         let (a, b) = booking_pair("split-identities");
@@ -4374,6 +4431,142 @@ fn bank_label_of_a_twin_goes_with_the_fold() {
         ),
         "Haushalt"
     );
+}
+
+#[test]
+fn twin_refund_links_use_the_exact_booking_map_and_full_row_collision_rank() {
+    for tombstone_wins in [false, true] {
+        let dir = temp_dir("twin-refund");
+        let v = open(&dir, "a.db");
+        let c = comdirect(&v);
+        let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2"]);
+        let bank = giro(&v, c, "API1", &["mm-1", "mm-2", "bank-only"]);
+        let refund = n(
+            &v,
+            &format!(
+                "SELECT id FROM transactions WHERE account_id={bank} AND external_id='bank-only'"
+            ),
+        );
+        let source = n(
+            &v,
+            &format!("SELECT id FROM transactions WHERE account_id={twin} AND external_id='mm-1'"),
+        );
+        let destination = n(
+            &v,
+            &format!("SELECT id FROM transactions WHERE account_id={bank} AND external_id='mm-1'"),
+        );
+        exec(
+            &v,
+            &format!("UPDATE transactions SET external_id='bank-stable-id' WHERE id={destination}"),
+        );
+        exec(
+            &v,
+            &format!("UPDATE transactions SET amount_cents=100 WHERE id={refund}"),
+        );
+        v.link_refund(refund, String::new(), source, String::new())
+            .unwrap();
+        exec(
+            &v,
+            &format!(
+                "UPDATE refund_links SET created_ms=20,changed_ms=50 WHERE original_id={source}"
+            ),
+        );
+        // The destination key loses by rank, not by being the row already on the bank.
+        exec(&v,&format!("INSERT INTO refund_links(refund_id,refund_part,original_id,original_part,refund_cents,original_cents,created_ms,changed_ms,deleted_ms)
+            VALUES ({refund},'',{destination},'',100,-100,10,50,{})",if tombstone_wins{"50"}else{"NULL"}));
+        let cached = {
+            let db = v.db().unwrap();
+            v.refund_projection(&db).unwrap()
+        };
+        {
+            let db = v.db().unwrap();
+            assert_eq!(super::twins::fold_twins(&db).unwrap(), 1);
+        }
+        let db = v.db().unwrap();
+        assert!(!Arc::ptr_eq(&cached, &v.refund_projection(&db).unwrap()));
+        drop(db);
+        assert_eq!(
+            n(
+                &v,
+                &format!("SELECT COUNT(*) FROM refund_links WHERE original_id={source}")
+            ),
+            0
+        );
+        assert_eq!(n(&v, "SELECT COUNT(*) FROM refund_links"), 1);
+        assert_eq!(n(&v, "SELECT original_id FROM refund_links"), destination);
+        assert_eq!(
+            n(&v, "SELECT created_ms FROM refund_links"),
+            if tombstone_wins { 10 } else { 20 }
+        );
+        assert_eq!(
+            v.refund_links(refund).unwrap().len(),
+            usize::from(!tombstone_wins)
+        );
+    }
+}
+
+#[test]
+fn twin_refund_part_uuids_are_not_remapped_to_winning_vector_positions() {
+    let dir = temp_dir("twin-refund-parts");
+    let v = open(&dir, "a.db");
+    let c = comdirect(&v);
+    let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2"]);
+    let bank = giro(&v, c, "API1", &["mm-1", "mm-2", "refund"]);
+    let source = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id={twin} AND external_id='mm-1'"),
+    );
+    let destination = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id={bank} AND external_id='mm-1'"),
+    );
+    let refund = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id={bank} AND external_id='refund'"),
+    );
+    exec(
+        &v,
+        &format!("UPDATE transactions SET amount_cents=100 WHERE id={refund}"),
+    );
+    v.set_transaction_splits(source, vec![split(None, -70), split(None, -30)])
+        .unwrap();
+    v.set_transaction_splits(destination, vec![split(None, -30), split(None, -70)])
+        .unwrap();
+    let source_uuid = v.list_transaction_splits(source).unwrap()[0].uuid.clone();
+    let winners = v
+        .list_transaction_splits(destination)
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.uuid, p.amount_cents))
+        .collect::<Vec<_>>();
+    exec(
+        &v,
+        &format!(
+            "UPDATE transactions SET splits_ms=1 WHERE id={source};UPDATE transactions SET splits_ms=2 WHERE id={destination}"
+        ),
+    );
+    v.link_refund(refund, String::new(), source, source_uuid.clone())
+        .unwrap();
+    {
+        let db = v.db().unwrap();
+        assert_eq!(super::twins::fold_twins(&db).unwrap(), 1);
+    }
+    assert_eq!(
+        v.list_transaction_splits(destination)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.uuid, p.amount_cents))
+            .collect::<Vec<_>>(),
+        winners
+    );
+    let l = v.refund_links(refund).unwrap();
+    assert_eq!(l[0].original_id, destination);
+    assert_eq!(l[0].original_part, source_uuid);
+    assert_eq!(
+        l[0].resolved_original_part.as_deref(),
+        Some(winners[1].0.as_str())
+    );
+    assert_eq!(l[0].allocated_cents, 70);
 }
 
 /// Issue #94: a closed MoneyMoney account and its successor share the

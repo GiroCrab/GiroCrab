@@ -563,6 +563,7 @@ pub(crate) fn store_splits(
         "UPDATE transactions SET splits_ms = MAX(splits_ms + 1, ?2) WHERE id = ?1",
     )?
     .execute(params![id, crate::dates::now_ms()])?;
+    crate::refunds::reconcile(conn, id)?;
     Ok(())
 }
 

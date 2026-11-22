@@ -1680,6 +1680,9 @@ fn english(de: &str) -> Option<&'static str> {
             "A split booking needs at least two non-zero parts."
         }
         "Die Teilbeträge sind zu groß." => "The split amounts are too large.",
+        "Diese Erstattungszuordnung ist nicht möglich." => {
+            "This refund assignment is not possible."
+        }
         "Die Teilbuchung existiert nicht oder wurde mehrfach angegeben." => {
             "The split part does not exist or was specified more than once."
         }

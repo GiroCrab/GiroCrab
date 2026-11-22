@@ -56,7 +56,9 @@ impl Vault {
         // tags (by uuid, newest edit wins), before the bookings that carry them
         crate::tags::merge::merge_attached(&tx)?;
         // bookings, splits and tag sets (newest edit per field wins, deletions stay)
-        crate::sync_merge::merge_bookings(&tx, &acc_map, &cat_map, &rule_map, &mut st)?;
+        let booking_map =
+            crate::sync_merge::merge_bookings(&tx, &acc_map, &cat_map, &rule_map, &mut st)?;
+        crate::refunds::merge_attached(&tx, &booking_map)?;
         crate::loans::merge_attached(&tx, &acc_map)?;
         crate::opening_balance::merge_attached(&tx, &acc_map)?;
         crate::assets::merge_attached(&tx, &acc_map)?;

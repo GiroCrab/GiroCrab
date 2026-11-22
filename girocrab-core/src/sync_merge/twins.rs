@@ -354,13 +354,16 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
          DROP TABLE IF EXISTS other.transaction_splits;
          DROP TABLE IF EXISTS other.tags;
          DROP TABLE IF EXISTS other.transaction_tags;
+         DROP TABLE IF EXISTS other.refund_links;
          CREATE TABLE other.accounts AS SELECT * FROM main.accounts WHERE id = {twin};
          CREATE TABLE other.transactions AS SELECT * FROM main.transactions WHERE account_id = {twin};
          CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits
              WHERE transaction_id IN (SELECT id FROM other.transactions);
          CREATE TABLE other.tags AS SELECT * FROM main.tags;
          CREATE TABLE other.transaction_tags AS SELECT * FROM main.transaction_tags
-             WHERE transaction_id IN (SELECT id FROM other.transactions);"
+             WHERE transaction_id IN (SELECT id FROM other.transactions);
+         CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links
+             WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions);"
     ))?;
     // Transfer the twin's UUIDs through `other` without violating global uniqueness.
     conn.execute(
@@ -381,7 +384,12 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     let rule_map = identity("rules")?;
     let acc_map = HashMap::from([(twin, bank)]);
     let mut stats = crate::vault::MergeStats::default();
-    super::merge_bookings(conn, &acc_map, &cat_map, &rule_map, &mut stats)?;
+    let moved = super::merge_bookings(conn, &acc_map, &cat_map, &rule_map, &mut stats)?;
+    let mut booking_map:HashMap<i64,i64>=conn.prepare("SELECT id,id FROM main.transactions WHERE id NOT IN (SELECT id FROM other.transactions)")?
+        .query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
+    booking_map.extend(moved);
+    conn.execute("DELETE FROM main.refund_links WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions)",[])?;
+    crate::refunds::merge_attached(conn, &booking_map)?;
     // stamped: a device still holding the rule on the twin's key loses
     conn.execute(
         "UPDATE rules SET account_id = ?2, updated_ms = max(updated_ms + 1, ?3) WHERE account_id = ?1",

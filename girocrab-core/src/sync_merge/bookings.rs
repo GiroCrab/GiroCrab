@@ -118,6 +118,7 @@ fn load_splits(
 struct OtherBooking {
     id: i64,
     account_id: i64,
+    amount_cents: i64,
     external_id: String,
     import_fp: String,
     /// `import_fp`, or one computed from the booking (see `match_fingerprint`)
@@ -205,7 +206,7 @@ pub(crate) fn merge_bookings(
     cat_map: &HashMap<i64, i64>,
     rule_map: &HashMap<i64, i64>,
     stats: &mut crate::vault::MergeStats,
-) -> CoreResult<()> {
+) -> CoreResult<HashMap<i64, i64>> {
     // live local categories: id <-> uuid
     let live_cats: Vec<(i64, String)> = conn
         .prepare("SELECT id, uuid FROM categories WHERE deleted_ms IS NULL AND uuid IS NOT NULL")?
@@ -228,6 +229,8 @@ pub(crate) fn merge_bookings(
     // (account, import_fp) -> (external_id, id) of local fingerprinted rows
     let mut fp_rows: Vec<((i64, String, bool), (String, i64))> = Vec::new();
     let mut local: HashMap<i64, BookingFields> = HashMap::new();
+    let mut local_amounts: HashMap<i64, i64> = HashMap::new();
+    let mut id_map = HashMap::new();
     {
         let mut st = conn.prepare(
             // includes soft-deleted rows
@@ -240,6 +243,7 @@ pub(crate) fn merge_bookings(
         let mut rows = st.query([])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
+            local_amounts.insert(id, r.get(17)?);
             let acc: i64 = r.get(1)?;
             let ext: String = r.get(2)?;
             by_key.insert((acc, ext.clone()), id);
@@ -285,6 +289,7 @@ pub(crate) fn merge_bookings(
             Ok(OtherBooking {
                 id,
                 account_id: r.get(1)?,
+                amount_cents: r.get(6)?,
                 external_id: r.get(2)?,
                 import_fp: r.get(3)?,
                 match_fp: match_fingerprint(
@@ -399,10 +404,20 @@ pub(crate) fn merge_bookings(
         };
         match existing {
             Some((id, renamed)) => {
+                id_map.insert(o.id, id);
                 let old = local[&id].clone();
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
+                if !m.splits.is_empty()
+                    && m.splits
+                        .iter()
+                        .try_fold(0i64, |sum, p| sum.checked_add(p.2))
+                        != Some(local_amounts[&id])
+                {
+                    m.splits = old.splits.clone();
+                    m.splits_ms = old.splits_ms;
+                }
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
                 if m == old {
                     if renamed {
@@ -462,6 +477,8 @@ pub(crate) fn merge_bookings(
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
+                id_map.insert(o.id, id);
+                local_amounts.insert(id, o.amount_cents);
                 insert_splits(conn, id, &f.splits, &cat_id)?;
                 if !f.tags.is_empty() {
                     tag_ids.write(conn, id, &f.tags)?;
@@ -490,7 +507,7 @@ pub(crate) fn merge_bookings(
     if !cleared.is_empty() {
         crate::vault::Vault::apply_rules_to(conn, &cleared)?;
     }
-    Ok(())
+    Ok(id_map)
 }
 
 fn insert_splits(

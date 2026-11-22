@@ -386,6 +386,8 @@ impl Vault {
         };
         if let Some(parts) = &splits {
             crate::planning::store_splits(&tx, id, parts)?;
+        } else {
+            crate::refunds::reconcile(&tx, id)?;
         }
         finish(&tx, account_id)?;
         tx.commit()?;
@@ -403,6 +405,7 @@ impl Vault {
             "UPDATE transactions SET deleted_ms = ?1 WHERE id = ?2",
             params![now_ms(), booking_id],
         )?;
+        crate::refunds::reconcile(&tx, booking_id)?;
         crate::opening_balance::refresh(&tx, account_id)?;
         tx.commit()?;
         Ok(())
