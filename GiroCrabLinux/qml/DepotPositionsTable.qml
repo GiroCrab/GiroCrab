@@ -30,8 +30,10 @@ Rectangle {
         id: clickTimer
         property var position: null
         interval: Qt.styleHints.mouseDoubleClickInterval
-        onTriggered: table.selected(position)
+        onTriggered: { if (table.visible) table.selected(position) }
     }
+    // a scope switch within the interval hides the table: the pending click no longer selects
+    onVisibleChanged: if (!visible) clickTimer.stop()
     signal copyAll()
     /// Extra context-menu entries of the host: position => [{ title, action, separator }]
     property var rowActions: null
@@ -146,9 +148,21 @@ Rectangle {
                 Layout.fillWidth: true
                 spacing: 0
                 Rectangle {
+                    id: rowArea
                     Layout.fillWidth: true
                     implicitHeight: (table.wide ? Math.max(44, wideRow.implicitHeight) : Math.max(44, narrowRow.implicitHeight) + (rowBox.open ? details.implicitHeight + 14 : 0)) + 10
                     color: table.selectedID !== "" && table.selectedID === rowBox.p.id ? Theme.selection : "transparent"
+                    // a selectable row is a button for the keyboard too: Tab reaches it, Space selects,
+                    // Return / Enter opens like the double click
+                    activeFocusOnTab: table.selectable
+                    Keys.onSpacePressed: table.selected(rowBox.p)
+                    Keys.onReturnPressed: table.opened(rowBox.p)
+                    Keys.onEnterPressed: table.opened(rowBox.p)
+                    Accessible.role: table.selectable ? Accessible.Button : Accessible.Row
+                    Accessible.name: AppModel.masking(rowBox.p.displayName, rowBox.p.isOwnItem ? undefined : AppModel.redactLabels)
+                    Accessible.onPressAction: { if (table.selectable) table.opened(rowBox.p) }
+                    Rectangle { visible: rowArea.activeFocus; anchors.fill: parent; anchors.margins: 1
+                                radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
                     MouseArea {
                         anchors.fill: parent
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
