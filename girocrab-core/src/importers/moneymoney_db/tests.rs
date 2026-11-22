@@ -4195,8 +4195,14 @@ fn archived_unix(v: &Vault, id: i64) -> Option<i64> {
 #[test]
 fn a_taken_over_account_without_imported_bookings_returns_when_its_source_is_open() {
     // #998: step 38 cannot see it (no reference, no imported bookings); its own MoneyMoney
-    // account, found by IBAN, can – open brings it back, closed keeps it archived
-    for (closed, stays_archived) in [(false, false), (true, true)] {
+    // account, found by IBAN, can – open brings it back, closed keeps it archived. Both are
+    // stamped as step 38 and a following import would leave them: a repair of the account
+    // that arrives from another device later (stamped 1_790_001_000_124) does not undo the
+    // closed result
+    for (closed, unix, ms) in [
+        (false, None, 1_790_001_000_124),
+        (true, Some(1_790_001_000), 1_790_001_000_125),
+    ] {
         let v = vault();
         let giro = taken_over_giro(&v, Some((1_790_000_000, 1_790_001_000_123)));
         let extra = if closed {
@@ -4205,11 +4211,16 @@ fn a_taken_over_account_without_imported_bookings_returns_when_its_source_is_ope
             ""
         };
         import_with(&v, &fake_db_with(false, extra), |_| {});
-        assert_eq!(
-            archived_unix(&v, giro).is_some(),
-            stays_archived,
-            "closed: {closed}"
-        );
+        let state: (Option<i64>, i64, bool) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT archived_unix, archived_ms, archive_unknown != 0 FROM accounts WHERE id = ?1",
+                [giro],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(state, (unix, ms, false), "closed: {closed}");
     }
 }
 

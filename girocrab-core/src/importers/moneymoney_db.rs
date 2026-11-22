@@ -3197,7 +3197,7 @@ impl ImportCtx<'_> {
             } else {
                 ""
             };
-            let (own, wrongly_archived, unknown): (bool, bool, bool) = conn.query_row(
+            let (own, wrongly_archived, marked): (bool, bool, bool) = conn.query_row(
                 "SELECT external_ref = ?2
                         OR (?3 <> '' AND external_ref NOT LIKE 'moneymoney-db:%'
                             AND upper(replace(IFNULL(iban, ''), ' ', '')) = ?3
@@ -3214,7 +3214,7 @@ impl ImportCtx<'_> {
                 ],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
-            let unknown = own && unknown;
+            let unknown = own && marked;
             if a.closed && unknown {
                 // closed in its own MoneyMoney account: archived, stamped just after the
                 // repair like the repair itself, so a choice made since on any device still
@@ -3222,6 +3222,17 @@ impl ImportCtx<'_> {
                 conn.execute(
                     "UPDATE accounts SET archived_unix = (archived_ms + 1) / 1000,
                                          archived_ms = archived_ms + 1, archive_unknown = 0
+                      WHERE id = ?1",
+                    [id],
+                )?;
+            } else if a.closed && own && wrongly_archived {
+                // closed in its own MoneyMoney account and still archived by the import of
+                // v0.8.5 (step 38 could not tell, or a repair from another device has not
+                // arrived yet): recorded as that repair and this import would leave it, so
+                // the repair does not bring it back
+                conn.execute(
+                    "UPDATE accounts SET archived_unix = (archived_ms + 2) / 1000,
+                                         archived_ms = archived_ms + 2, archive_unknown = 0
                       WHERE id = ?1",
                     [id],
                 )?;
