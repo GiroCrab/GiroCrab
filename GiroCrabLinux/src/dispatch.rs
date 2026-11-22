@@ -1620,7 +1620,7 @@ vault_methods! {
     list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
     // Buchungsliste: Betragsfilter (#357, ListFilters.qml)
-    list_categories_filtered_amount(date_from, date_to, account_ids, checked, direction, amount_min_cents, amount_max_cents)
+    list_categories_filtered_amount(date_from, date_to, account_ids, checked, direction, amount_min_cents, amount_max_cents, tag_ids, untagged_only)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
     // --- Offline-Konten und manuelle Buchungen (OfflineAccountsUI.swift, #679, #81) ---
     create_offline_account(name, kind, currency, opening_cents)
@@ -3539,7 +3539,8 @@ mod tests {
             call(
                 "list_categories_filtered_amount",
                 json!({ "date_from": null, "date_to": null, "account_ids": [], "checked": null,
-                        "direction": "All", "amount_min_cents": min, "amount_max_cents": max }),
+                        "direction": "All", "amount_min_cents": min, "amount_max_cents": max,
+                        "tag_ids": [], "untagged_only": false }),
             )
         };
         let open = cats(Value::Null, Value::Null);

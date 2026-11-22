@@ -655,7 +655,9 @@ QtObject {
     function categoriesCall(r) {
         const f = categorySumFilter()
         return ["list_categories_filtered_amount", { date_from: r[0], date_to: r[1], account_ids: f.accounts, checked: f.checked,
-                                                     direction: f.direction, amount_min_cents: f.amountMin, amount_max_cents: f.amountMax }]
+                                                     direction: f.direction, amount_min_cents: f.amountMin, amount_max_cents: f.amountMax,
+                                                     // the sidebar sums ignore the tag filter, like the Mac (tagIds: [], #1469)
+                                                     tag_ids: [], untagged_only: false }]
     }
     /// uncategorizedCountFilter (#357): the query behind the filtered „Ohne Kategorie“ badge; null while
     /// no filter narrows the sums (the accounts' own counts apply). Not tied to the period.
