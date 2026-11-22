@@ -26,11 +26,22 @@ enum ViewLayout {
     static let lastFetchKey = "showLastFetch"
     /// Header chart folded to its title row; balance, KPIs and filters stay (#634).
     static let headerChartCollapsedKey = "headerChartCollapsed"
+    /// Flat sections of the main columns: tighter than the old cards, but with
+    /// enough air for labels and controls. The card constants stay for the
+    /// unrelated screens that still use `.card()`.
+    static let sectionInset: CGFloat = 12
+    static let sectionPadding: CGFloat = 8
+    static let sectionSpacing: CGFloat = 4
     /// Shared card spacing so the three cards above the list line up (GitHub #603).
     static let cardPadding: CGFloat = 12
     static let cardSpacing: CGFloat = 8
     /// Outer gap between the stacked cards above the booking list (demo banner, header, cashflow, budgets, first day).
     static let cardGap: CGFloat = 4
+    /// Gap between the blocks of an asset account view (header, metrics, analysis, content).
+    static let assetBlockSpacing: CGFloat = 14
+    /// Bottom padding for the demo banner inside a stack with `stackSpacing`, so the
+    /// banner sits `cardGap` above the next card in every view (#1538).
+    static func demoBannerBottomPadding(stackSpacing: CGFloat) -> CGFloat { cardGap - stackSpacing }
     /// Top/bottom inset of a folded card: one compact row.
     static let collapsedCardVerticalPadding: CGFloat = 4
     static func cardVerticalPadding(collapsed: Bool) -> CGFloat { collapsed ? collapsedCardVerticalPadding : cardPadding }

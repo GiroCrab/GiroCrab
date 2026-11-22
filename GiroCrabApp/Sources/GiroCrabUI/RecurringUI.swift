@@ -151,7 +151,7 @@ struct RecurringCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .flatSection()
     }
 }
 

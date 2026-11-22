@@ -237,6 +237,10 @@ Rectangle {
                     onClicked: { nameField.text = rc.booking.counterparty; purposeField.text = rc.booking.purpose; editPopup.open() }
                     Popup {
                         id: editPopup
+                        // ReportDialogs.swift › capturablePopover (#384): drawn into the bug report picture
+                        onOpened: ReportDialogs.track(editPopup)
+                        onClosed: ReportDialogs.untrack(editPopup)
+                        Component.onDestruction: ReportDialogs.untrack(editPopup)
                         y: parent.height; x: parent.width - width
                         width: 340; padding: 14
                         ColumnLayout {
@@ -305,6 +309,23 @@ Rectangle {
                 SFIcon { symbol: "calendar"; size: 12; color: Theme.tertiary }
                 Text { text: Fmt.longDate(rc.booking.booking_date); font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true }
                 FlowBadge { flow: rc.booking.flow }
+            }
+            // BookingDetailView.swift › ReceiptCard (#574): why this booking counts as an internal transfer
+            RowLayout {
+                visible: rc.booking.flow === "Transfer"
+                Layout.fillWidth: true; spacing: 6
+                SFIcon { symbol: "arrow.left.arrow.right"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop; Layout.topMargin: 2 }
+                Text {
+                    readonly property string iban: rc.booking.counterparty_iban.replace(/ /g, "").toUpperCase()
+                    readonly property bool ownIban: iban !== "" && Object.values(AppModel.accountsByID)
+                        .some(a => a.iban.replace(/ /g, "").toUpperCase() === iban)
+                    text: !visible ? ""
+                        : ownIban ? qsTr("Umbuchung erkannt: Die Gegenkonto-IBAN gehört zu einem eigenen Konto.")
+                        : rc.booking.category_name === "Umbuchungen" || rc.booking.category_path.startsWith("Umbuchungen")
+                          ? qsTr("Umbuchung erkannt: Die Buchung hat die Kategorie „Umbuchungen“.")
+                        : qsTr("Umbuchung erkannt: Der Buchungstext deutet auf eine Übertragung zwischen eigenen Konten oder eine Abrechnung hin.")
+                    font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.Wrap; Layout.fillWidth: true
+                }
             }
             // Amazon order: one item per line instead of the ";" purpose run;
             // an item with a stored ASIN opens its product page (#354)
@@ -646,6 +667,14 @@ Rectangle {
                 Text { text: cg.booking.category_path || SidebarModel.uncategorizedLabel; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.maximumWidth: 160
                        Sensitive { labels: true; when: cg.booking.category_path !== "" } }
             }
+            // BookingDetailView.swift › CategoryGridCard: the history's suggestion (#664)
+            CategorySuggestionBox {
+                Layout.fillWidth: true
+                booking: cg.booking
+                suggestion: CategorySuggestions.forSelected(cg.booking)
+                category: CategorySuggestions.category(suggestion)
+                visible: suggestion !== null && category !== null
+            }
             ChipGrid { card: cg; Layout.fillWidth: true; nodes: AppModel.categoryTree; selectedId: cg.path.length ? cg.path[0] : -1; level: 0; minimum: 104 }
             Repeater {
                 model: cg.path
@@ -665,6 +694,57 @@ Rectangle {
             Button { Layout.fillWidth: true; text: qsTr("Regel für diesen Händler erstellen …"); icon.name: SF.icon("wand.and.stars"); highlighted: true
                      onClicked: AppModel.openRuleEditor(cg.booking) }
             Text { text: qsTr("In der Liste: C kategorisieren · R Regel erstellen"); font.pixelSize: Theme.caption2; color: Theme.tertiary }
+        }
+    }
+
+    // BookingDetailView.swift › CategorySuggestionBox: „Vorschlag (aus Historie)“ (#664), the
+    // category earlier bookings of this payee got, to accept with one click or to turn into a
+    // rule. Dashed, so it never reads as an assigned category.
+    component CategorySuggestionBox: Item {
+        id: sb
+        property var booking
+        property var suggestion: null
+        property var category: null
+        implicitHeight: sbCol.implicitHeight + 20
+        Rectangle { anchors.fill: parent; radius: 8; color: Theme.canvas }
+        DashedFrame { anchors.fill: parent; radius: 8; lineWidth: 1; dash: [4, 3]; strokeColor: Theme.accent }
+        ColumnLayout {
+            id: sbCol
+            x: 10; y: 10; width: parent.width - 20
+            spacing: 8
+            RowLayout {
+                spacing: 5
+                SFIcon { symbol: "clock.arrow.circlepath"; size: Theme.caption; color: Theme.secondary }
+                Text { text: qsTr("Vorschlag (aus Historie)"); font.pixelSize: Theme.caption; font.weight: Font.DemiBold; color: Theme.secondary }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                SFIcon { symbol: sb.category ? sb.category.sf_symbol : ""; size: Theme.subheadline; color: Theme.text }
+                Text { text: sb.category ? sb.category.path : ""; font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.text
+                       wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true
+                       Sensitive { labels: true } }
+            }
+            Text { text: sb.suggestion ? CategorySuggestions.reason(sb.suggestion) : ""; font.pixelSize: Theme.caption2; color: Theme.secondary
+                   wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            // side by side while both labels fit, else stacked (ViewThatFits: narrow inspector, larger text)
+            GridLayout {
+                Layout.fillWidth: true
+                columns: takeButton.implicitWidth + ruleButton.implicitWidth + 6 <= sbCol.width ? 2 : 1
+                columnSpacing: 6; rowSpacing: 6
+                Button {
+                    id: takeButton
+                    Layout.fillWidth: true
+                    text: qsTr("Übernehmen"); icon.name: SF.icon("checkmark"); highlighted: true
+                    onClicked: if (sb.category) AppModel.setCategory(sb.booking, sb.category.id)
+                }
+                Button {
+                    id: ruleButton
+                    Layout.fillWidth: true
+                    text: qsTr("Als Regel …"); icon.name: SF.icon("wand.and.stars")
+                    onClicked: CategorySuggestions.openRule(sb.booking, sb.suggestion)
+                }
+            }
         }
     }
 
@@ -774,6 +854,7 @@ Rectangle {
         FolderDialog { id: exportFolder; title: qsTr("Ordner für die exportierten Belege wählen"); acceptLabel: qsTr("Exportieren")
                        onAccepted: AppModel.exportAllDocuments(AppModel.localPath(selectedFolder)) }
         Sheet {
+            reportCapturable: false   // a confirmation dialog on the Mac (ReportDialogs.qml)
             visible: dc.docToDelete !== null
             onClosed: dc.docToDelete = null
             sheetWidth: 380

@@ -351,7 +351,9 @@ pub(crate) fn account_kind(category: &str) -> AccountKind {
         "KREDITKARTENKONTO" | "VISA" | "MASTERCARD" | "AMERICANEXPRESS" | "DINERSCLUB"
         | "SONSTIGEKARTE" => AccountKind::CreditCard,
         "KREDITKONTO" => AccountKind::Loan,
-        "BAUSPARVERTRAG" | "TAGESGELDKONTO" | "SPARKONTO" | "FESTGELDKONTO" => AccountKind::Savings,
+        "BAUSPARVERTRAG" => AccountKind::BuildingSavings,
+        "TAGESGELDKONTO" | "SPARKONTO" => AccountKind::Savings,
+        "FESTGELDKONTO" => AccountKind::TimeDeposit,
         _ => AccountKind::Checking,
     }
 }
@@ -922,10 +924,16 @@ mod tests {
     }
 
     #[test]
+    fn maps_festgeldkonto_to_time_deposit() {
+        assert_eq!(account_kind("FESTGELDKONTO"), AccountKind::TimeDeposit);
+        assert_eq!(account_kind("TAGESGELDKONTO"), AccountKind::Savings);
+    }
+
+    #[test]
     fn parses_alh_accounts_only_by_default() {
         let a = parse_accounts(&accounts_json(), false, "2026-11-10");
         assert_eq!(a.len(), 2);
-        assert_eq!(a[0].1.kind, AccountKind::Savings);
+        assert_eq!(a[0].1.kind, AccountKind::BuildingSavings);
         assert_eq!(a[0].1.balance_cents, 432_110);
         assert_eq!(a[0].1.balance_date, "2026-10-31");
         assert_eq!(a[0].1.external_ref, "fin4u:a1");

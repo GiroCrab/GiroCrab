@@ -205,8 +205,7 @@ fn parse_accounting(
     since: &str,
 ) -> CoreResult<(RemoteAccount, Vec<RemoteTransaction>)> {
     let balance_cents = element_by_id(html, "total")
-        .map(text)
-        .and_then(|t| parse_amount(&t))
+        .and_then(parse_amount)
         .ok_or_else(invalid)?;
     let account_ref = format!("{REF_PREFIX}{asteroid}");
     let mut ids = ContentIds::default();
@@ -221,7 +220,7 @@ fn parse_accounting(
         let Some(date) = parse_date(&text(row[0])) else {
             continue;
         };
-        let amount_cents = parse_amount(&text(row[2])).ok_or_else(invalid)?;
+        let amount_cents = parse_amount(row[2]).ok_or_else(invalid)?;
         let mut t = RemoteTransaction {
             account_ref: account_ref.clone(),
             booking_date: date.clone(),

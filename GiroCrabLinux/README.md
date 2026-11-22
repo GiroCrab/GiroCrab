@@ -228,7 +228,7 @@ Bedeutung. Die Entwickler-Optionen der Mac-App (`--fresh-vault`, `--keep-fresh-v
 ```sh
 cargo run -- --demo-seed                     # Wegwerf-Tresor mit Demo-Daten (auch GIROCRAB_DEMO_SEED=1|true|yes)
 cargo run -- --demo-sync                     # (Demo) „Alle abrufen“ sofort, mit simulierter PIN/TAN
-cargo run -- --view alltag|sparplaene|belege # (Demo) Start in „Alltag & Konsum“, „Sparpläne & Perks“ oder „Belege & PostBox“
+cargo run -- --view alltag|sparplaene|belege # (Demo) Start in „Alltag & Konsum“, „Sparpläne & Perks“ oder „Belege & Postbox“
 cargo run -- --view vermoegen[-wertpapiere|-sachwerte]  # (Demo) Start in „Vermögen“ (Alles, Wertpapiere bzw. Sachwerte)
 cargo run -- --select visa                   # (Demo) Konto vorwählen, dessen Name den Text enthält
 cargo run -- --select einzeltitel --depot-tab activities  # (Demo) Wertpapierdepot auf dem Reiter „Aktivitäten“

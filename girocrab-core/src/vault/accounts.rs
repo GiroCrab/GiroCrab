@@ -10,8 +10,10 @@ use crate::i18n::{role_name, tr, trf};
 use crate::models::*;
 
 /// The account's own switch for the overall total (`a`, its user group `g`);
-/// `excluded_from_total` adds the groups a parent group excludes.
-pub(crate) const IN_TOTAL_SQL: &str = "(IFNULL(g.include_in_total, 1) AND a.archived_unix IS NULL)";
+/// `excluded_from_total` adds the groups a parent group excludes. Includes the
+/// per-account switch `a.include_in_total` (#337).
+pub(crate) const IN_TOTAL_SQL: &str =
+    "(a.include_in_total AND IFNULL(g.include_in_total, 1) AND a.archived_unix IS NULL)";
 
 impl Vault {
     /// Fills `initial_balance_cents` from the largest historical absolute
@@ -471,7 +473,7 @@ impl Vault {
                     a.initial_balance_cents, g.uuid, {in_total},
                     a.color_hex, IFNULL(c.connector, ''), IFNULL(c.bank_code, ''), IFNULL(c.login_name, ''), a.external_ref,
                     a.archived_unix, a.access_revoked,
-                    o.opening_cents, IFNULL(o.opening_date, ''), {derived}, a.note
+                    o.opening_cents, IFNULL(o.opening_date, ''), {derived}, a.note, a.include_in_total, a.bank_label
              FROM accounts a LEFT JOIN bank_connections c ON c.id = a.connection_id
              LEFT JOIN user_groups g ON g.uuid = a.user_group_uuid AND g.deleted_ms IS NULL
              LEFT JOIN opening_balances o ON o.account_id = a.id
@@ -508,6 +510,7 @@ impl Vault {
                     .map(i64::abs)
                     .filter(|c| *c > 0),
                 user_group_uuid: r.get(19)?,
+                include_in_total: r.get(32)?,
                 in_total: r.get(20)?,
                 // filled in below for accounts without a chosen colour
                 color_hex: match r.get::<_, Option<String>>(21)? {
@@ -531,6 +534,7 @@ impl Vault {
                 opening_balance_date: r.get(29)?,
                 balance_derived: r.get(30)?,
                 note: r.get(31)?,
+                bank_label: r.get(33)?,
             })
         })?;
         let mut accounts = rows.collect::<Result<Vec<_>, _>>()?;
@@ -590,10 +594,12 @@ impl Vault {
                     .filter(|a| a.group_id == id)
                     .cloned()
                     .collect();
-                // archived accounts stay listed but don't count (GiroCrab/GiroCrab#208)
+                // Archived and switched-out accounts stay listed but don't
+                // count (GiroCrab/GiroCrab#208, #337); `in_total` is the
+                // effective flag (own switch, group, archiving).
                 let balance = accs
                     .iter()
-                    .filter(|a| a.currency == "EUR" && a.archived_unix.is_none())
+                    .filter(|a| a.currency == "EUR" && a.in_total)
                     .map(|a| a.balance_cents)
                     .sum();
                 AccountGroup {
@@ -877,6 +883,72 @@ impl Vault {
                 what: trf("Konto {0}", &[&account_id]),
             });
         }
+        Ok(())
+    }
+
+    /// What the sidebar shows in place of the bank name (#1467): `None` the
+    /// bank name, `Some` the trimmed text, `""` nothing. Syncs like the note:
+    /// the newer edit wins; the same choice again is no edit.
+    pub fn set_account_bank_label(
+        &self,
+        account_id: i64,
+        label: Option<String>,
+    ) -> Result<(), CoreError> {
+        let label = label.map(|l| l.trim().to_string());
+        let db = self.db()?;
+        let (current, stamp): (Option<String>, i64) = db
+            .query_row(
+                "SELECT bank_label, bank_label_ms FROM accounts
+                  WHERE id = ?1 AND deleted_ms IS NULL",
+                [account_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| CoreError::NotFound {
+                what: trf("Konto {0}", &[&account_id]),
+            })?;
+        if current == label {
+            return Ok(());
+        }
+        let now = crate::dates::now_ms().max(stamp + 1);
+        db.execute(
+            "UPDATE accounts SET bank_label = ?2, bank_label_ms = ?3 WHERE id = ?1",
+            params![account_id, label, now],
+        )?;
+        Ok(())
+    }
+
+    /// Whether this account counts towards the overall money totals (#337).
+    /// Its own switch: the group (or a group that group is in) and archiving
+    /// can still keep the account out — see the effective `Account.in_total`.
+    /// Syncs like the group flag: a per-field stamp, the newer edit wins (an
+    /// equal stamp breaks the tie towards `true` in the merge).
+    pub fn set_account_include_in_total(
+        &self,
+        account_id: i64,
+        include_in_total: bool,
+    ) -> Result<(), CoreError> {
+        let db = self.db()?;
+        let (current, stamp): (bool, i64) = db
+            .query_row(
+                "SELECT include_in_total != 0, total_ms FROM accounts
+                  WHERE id = ?1 AND deleted_ms IS NULL",
+                [account_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| CoreError::NotFound {
+                what: trf("Konto {0}", &[&account_id]),
+            })?;
+        if current == include_in_total {
+            return Ok(()); // no change, no new stamp (sync keeps its win)
+        }
+        // strictly above the stored stamp, so a merge can order every edit
+        let now = crate::dates::now_ms().max(stamp + 1);
+        db.execute(
+            "UPDATE accounts SET include_in_total = ?2, total_ms = ?3 WHERE id = ?1",
+            params![account_id, include_in_total, now],
+        )?;
         Ok(())
     }
 }

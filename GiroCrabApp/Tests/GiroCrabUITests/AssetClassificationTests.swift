@@ -168,6 +168,18 @@ import GiroCrabCore
         XCTAssertEqual(WealthGrouping.instrument.effective(in: .all), .assetClass)
         XCTAssertEqual(WealthGrouping.account.effective(in: .tangibles), .account)
     }
+    func testAccountKindGroupingIsOfferedForCashOnly() {
+        XCTAssertEqual(WealthGrouping.available(in: .cash), [.account, .accountKind])
+        XCTAssertEqual(WealthGrouping.accountKind.effective(in: .cash), .accountKind)
+        // elsewhere it falls back to the account view, never to the class view
+        for scope in [WealthScope.all, .securities, .tangibles] {
+            XCTAssertFalse(WealthGrouping.available(in: scope).contains(.accountKind))
+            XCTAssertEqual(WealthGrouping.accountKind.effective(in: scope), .account)
+        }
+        // cash offers no class view: every cash account has the class "Liquidität & Geldmarkt"
+        XCTAssertEqual(WealthGrouping.assetClass.effective(in: .cash), .account)
+        XCTAssertEqual(WealthGrouping.instrument.effective(in: .cash), .account)
+    }
     func testSliceFilterLimitsListsAndTreatsSonstigeAsEverythingElse() {
         let slices = [WealthSlice(id: "a", label: "A", cents: 3, color: .blue), WealthSlice(id: "b", label: "B", cents: 2, color: .red),
                       WealthSlice(id: "rest", label: "Sonstige", cents: 1, color: .gray)]

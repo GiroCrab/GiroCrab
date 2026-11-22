@@ -310,7 +310,12 @@ Rectangle {
                 Text { Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: Theme.body; font.weight: Font.Medium; color: Theme.text
                        text: mr.mandate ? mr.mandate.debtor_name : ""; Sensitive {} }
                 Text { Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: Theme.callout; color: Theme.secondary
-                       text: mr.mandate ? mr.mandate.reference + " · " + DirectDebits.schemeTitle(mr.mandate.scheme) : ""; Sensitive {} }
+                       text: mr.mandate ? mr.mandate.reference + " · " + DirectDebits.schemeTitle(mr.mandate.scheme) + " · " + DirectDebits.typeText(mr.mandate) : ""
+                       // .help(m.typeHelp) (#673)
+                       HoverHandler { id: typeHover }
+                       ToolTip.visible: typeHover.hovered && !!mr.mandate; ToolTip.delay: 500
+                       ToolTip.text: mr.mandate ? DirectDebits.typeHelp(mr.mandate) : ""
+                       Sensitive {} }
                 RowLayout {
                     visible: mr.hasReturns
                     spacing: 4
@@ -346,6 +351,6 @@ Rectangle {
             onDoubleClicked: m => { if (m.button === Qt.LeftButton) DirectDebits.editMandate(mr.mandate) }
         }
         Accessible.role: Accessible.Button
-        Accessible.name: mandate ? mandate.debtor_name + ", " + mandate.reference : ""
+        Accessible.name: mandate ? AppModel.masking(mandate.debtor_name) + ", " + AppModel.masking(mandate.reference) : ""
     }
 }

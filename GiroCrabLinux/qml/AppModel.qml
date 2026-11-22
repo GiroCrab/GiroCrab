@@ -216,6 +216,12 @@ QtObject {
     /// AppModel.swift › reloadAfterFilterChange: the list and the sidebar sums (#621, #357).
     function reloadAfterFilterChange() { reloadBookings(); reloadCategories() }
     property string searchText: ""
+    /// AppModel+Selection.swift › coreSearchText: the typed text with German plurals cut back to
+    /// the stem („kredite“ → „kredit“), so the substring search also finds the singular. Always a
+    /// superset of the literal search; the field keeps showing what was typed.
+    function coreSearchText() {
+        try { return core("literal_search_term", { text: searchText }) } catch (e) { return searchText }
+    }
     property Timer searchTimer: Timer { interval: 250; onTriggered: model.reloadBookings() }
     onSearchTextChanged: searchTimer.restart()
     /// AccountSidebarMode (byGroup | byBank | byKind): the explicit choice, else "Nach Gruppe" once a group exists.
@@ -336,12 +342,17 @@ QtObject {
     /// `--demo-sync`: "Alle abrufen" right away (simulated PIN / TAN dialogs).
     readonly property bool optionDemoSync: launchArgs.indexOf("--demo-sync") >= 0
     /// `--demo-sheet <name>`, `--demo-settings <tab>[:edit|add|remove]` (opened by presentLaunchOptions).
-    readonly property string demoSheet: launchValue("--demo-sheet")
+    /// `--demo-sheet report[:<sheet>]` (#384): `demoSheet` is the name without the `report:`
+    /// prefix (LaunchOptions.demoSheetName); the bug report opens over the view or that sheet.
+    readonly property string demoSheetOption: launchValue("--demo-sheet")
+    readonly property bool demoSheetOpensReport: demoSheetOption === "report" || demoSheetOption.startsWith("report:")
+    readonly property string demoSheet: demoSheetOption === "report" ? ""
+        : demoSheetOption.startsWith("report:") ? demoSheetOption.slice(7) : demoSheetOption
     readonly property string demoSettings: launchValue("--demo-settings")
     /// `--demo-seed` or GIROCRAB_DEMO_SEED=1|true|yes; `--screenshot`, `--demo-sync`,
     /// `--demo-sheet` and `--demo-settings` imply it (reproducible pictures).
     readonly property bool optionDemoSeed: launchArgs.indexOf("--demo-seed") >= 0 || vaultInfo.demo_seed === true
-        || screenshotMode || optionDemoSync || demoSheet !== "" || demoSettings !== ""
+        || screenshotMode || optionDemoSync || demoSheetOption !== "" || demoSettings !== ""
 
     // MARK: - Vault lifecycle
 
@@ -598,6 +609,10 @@ QtObject {
                 sidebarSelection = "all"
             if (sidebarSelection.startsWith("bank:") && !bankGroup(sidebarSelection.slice(5)))
                 sidebarSelection = "all"
+            // a section whose last account left (another kind, #1630): no account ids would
+            // filter as "all accounts" while the sidebar still names the section
+            if (sidebarSelection.startsWith("group:") && !groups.some(g => "group:" + g.id === sidebarSelection && g.accounts.length > 0))
+                sidebarSelection = "all"
             rebuildAccountIndex()
             applyAssets(r[3], r[4])
             const queue = afterAccountsQueue
@@ -640,7 +655,9 @@ QtObject {
     function categoriesCall(r) {
         const f = categorySumFilter()
         return ["list_categories_filtered_amount", { date_from: r[0], date_to: r[1], account_ids: f.accounts, checked: f.checked,
-                                                     direction: f.direction, amount_min_cents: f.amountMin, amount_max_cents: f.amountMax }]
+                                                     direction: f.direction, amount_min_cents: f.amountMin, amount_max_cents: f.amountMax,
+                                                     // the sidebar sums ignore the tag filter, like the Mac (tagIds: [], #1469)
+                                                     tag_ids: [], untagged_only: false }]
     }
     /// uncategorizedCountFilter (#357): the query behind the filtered „Ohne Kategorie“ badge; null while
     /// no filter narrows the sums (the accounts' own counts apply). Not tied to the period.
@@ -1281,7 +1298,7 @@ QtObject {
             category_id: sel.startsWith("category:") ? Number(sel.slice(9)) : null,
             include_subcategories: true,
             uncategorized_only: sel === "uncategorized",
-            search: searchText === "" ? null : searchText,
+            search: searchText === "" ? null : coreSearchText(),
             date_from: r[0], date_to: r[1],
             limit: listLimit, offset: 0,
             scope: scope,
@@ -1515,7 +1532,7 @@ QtObject {
         if (sel === "newBookings") return qsTr("Neue Umsätze")
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.name : qsTr("Bank") }
         if (sel === "uncategorized") return SidebarModel.uncategorizedLabel
-        if (sel === "documents") return qsTr("Belege & PostBox")
+        if (sel === "documents") return qsTr("Belege & Postbox")
         if (sel === "wealth") return qsTr("Vermögen")
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.name : qsTr("Gruppe") }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? g.name : qsTr("Gruppe") }
@@ -1821,7 +1838,9 @@ QtObject {
     /// Returns true when a retry should follow.
     function recoverFromMissingProductID() {
         if (!fintsBuiltinAvailable || fintsProductIDMode === "builtin") return false
-        run(() => core("set_fints_product_id_mode", { mode: "builtin" }))
+        // only a stored switch is worth a retry; a failed write stays visible as the error (null)
+        try { core("set_fints_product_id_mode", { mode: "builtin" }) }
+        catch (e) { errorMessage = e.message; return null }
         reloadSettings()
         reloadProductIDState()
         return true
@@ -2013,7 +2032,7 @@ QtObject {
             || quietSyncConnectionID === connection.id)
             statementsAccountID = null
         const statementsFor = statementsAccountID
-        // "PostBox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
+        // "Postbox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
         if (postboxConnectionID !== connection.id || quietSyncConnectionID === connection.id) postboxConnectionID = null
         const postboxNow = postboxConnectionID !== null
         const quiet = quietSyncConnectionID === connection.id
@@ -2028,7 +2047,7 @@ QtObject {
             }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
         }
         if (quiet) {
-            // no new approval in the background (e.g. the comdirect PostBox, #838); prepared
+            // no new approval in the background (e.g. the comdirect Postbox, #838); prepared
             // off the GUI thread like the rest of the automatic fetch
             coreAsync("begin_quiet_sync", { connection_id: connection.id, secret: secret, demo: isDemo }, id => {
                 if (gen !== syncGeneration) { coreAsync("session_cancel", { session: id }, null, () => {}); return }
@@ -2058,9 +2077,16 @@ QtObject {
             quietSyncConnectionID = null
             const s = activeSession
             activeSession = null
-            syncingConnectionID = null
-            if (s !== null) coreAsync("session_cancel", { session: s }, null, () => {})
-            syncNextInQueue()   // never leave a queued login waiting behind a skipped automatic fetch
+            // The next login may be the same bank: go on only once this bank dialog has ended
+            // (as skipCurrentSync); a newer sync meanwhile owns the state.
+            const gen = ++syncGeneration
+            const next = () => {
+                if (gen !== syncGeneration) return
+                syncingConnectionID = null
+                syncNextInQueue()   // never leave a queued login waiting behind a skipped automatic fetch
+            }
+            if (s !== null) coreAsync("session_cancel", { session: s }, next, next)
+            else next()
             return
         }
         if (step.NeedsChallenge) {
@@ -2075,7 +2101,8 @@ QtObject {
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             const s = step.Finished.summary
-            logSync(connection.id, "Ok", "", s.transactions_imported, syncLogSource(connection.id))
+            // what the bank would not give is no success (#1627)
+            logSync(connection.id, s.warnings.length > 0 ? "Partial" : "Ok", s.warnings.concat(s.hints).join(" / "), s.transactions_imported, syncLogSource(connection.id))
             activeChallenge = null
             syncingConnectionID = null
             activeSession = null
@@ -2218,6 +2245,16 @@ QtObject {
     /// Extra actions of the error alert ([{ title, action }]) after the bank rejected the
     /// FinTS registration in use: replace the own one, or switch to the other one.
     property var errorAlternatives: []
+    /// AppModel.swift › errorCloseTitle: title of the closing button ("" = "OK").
+    property string errorCloseTitle: ""
+    /// AppModel.swift › errorOnClose: runs when the alert is closed with that button (not with
+    /// retry or an alternative): "Alle abrufen" goes on with the next login only once the
+    /// error was closed (#1041). Main.qml › errorDialog runs and clears it.
+    property var errorOnClose: null
+    /// AppModel+Sync.swift › errorOpensPrompt: errors answered with a prompt (setup form,
+    /// browser login, FinTS registration) instead of a failure: in "Alle abrufen" the batch
+    /// waits for the prompt, whose "Überspringen" goes on with the next login (#1041).
+    function errorOpensPrompt(e) { return isMissingProductID(e) || e.kind === "BrowserLoginRequired" || e.kind === "MissingSetting" }
     /// PIN of the sync that just failed (memory only, cleared in finishSync).
     property string failedSyncSecret: ""
     function finishSync(err, connection) {
@@ -2245,20 +2282,66 @@ QtObject {
         activeSession = null; activeChallenge = null; syncingConnectionID = null
         const missingID = isMissingProductID(e)
         // Fall back to GiroCrab's registration (once) and retry with the same login; the batch stays
-        if (missingID && recoverFromMissingProductID()) {
+        const recovered = missingID ? recoverFromMissingProductID() : false
+        if (recovered === true) {
             const c = connections.find(x => x.id === connection.id)
             if (c) { statementsAccountID = retryStatements; startSync(c, retrySecret) }
             else syncNextInQueue()
             return
         }
-        resetSyncBatch()
+        // the switch could not be stored: its error stays the message, no retry
+        if (recovered === null) {
+            resetSyncBatch()
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
+            return
+        }
+        // Kontist on its stored refresh token alone (no password given, none stored) whose
+        // token expired: ask for the password instead of showing an error. Like the Mac
+        // (AppModel+Sync.swift), before "Alle abrufen": the prompt keeps the batch.
+        if (e.kind === "Authentication" && retrySecret === "" && connection.connector === "Kontist") {
+            const st = connectionStatus(connection.id)
+            if (!(st && st.has_pin)) { toast = e.message; pendingLogin = connection; return }
+        }
+        // AppModel+Sync.swift › finishSync: in "Alle abrufen" (#1041) an error ends only this
+        // login. Its alert shows right away; the batch goes on once it is closed
+        // ("Überspringen"), retries this login, or ends.
+        if (syncBatchTotal > 1 && !errorOpensPrompt(e)) {
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
+            errorRetry = () => { const c = connections.find(x => x.id === connection.id); if (c) requestSync(c) }   // the batch goes on after it
+            const alternatives = productIDAlternatives(connection, e, retrySecret)
+            if (!syncQueue.length) {
+                errorAlternatives = alternatives
+            } else {
+                // At most three buttons: Überspringen, one retry, Alle abbrechen. A rejected
+                // FinTS registration is retried with the other one, not the same.
+                const alts = []
+                if (alternatives.length) { errorRetry = null; alts.push(alternatives[alternatives.length - 1]) }
+                alts.push({ title: qsTr("Alle abbrechen"), action: cancelAllSync })
+                errorAlternatives = alts
+                errorCloseTitle = qsTr("Überspringen")
+            }
+            errorOnClose = syncNextInQueue
+            errorMessage = e.message
+            return
+        }
+        // A prompt (browser login, setup form, retry with GiroCrab's registration) keeps the
+        // batch: done, it syncs this login and goes on; cancelled, it skips it.
         if (e.kind === "BrowserLoginRequired") { toast = e.message; webLoginConnection = connection; return }
         if (missingID) {
             // Never a setup form for the optional FinTS registration: it would be an empty,
-            // seemingly mandatory field. Offer the own ID instead.
+            // seemingly mandatory field. Offer the own ID instead; in "Alle abrufen" (#1041) the
+            // batch stays: "Überspringen" goes on, "Eigene Registrierung eintragen …" ends it.
             errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
             errorRetry = null
-            errorAlternatives = [{ title: qsTr("Eigene Registrierung eintragen …"), action: enterOwnProductID }]
+            const own = { title: qsTr("Eigene Registrierung eintragen …"), action: enterOwnProductID }
+            if (syncBatchTotal > 1 && syncQueue.length) {
+                errorAlternatives = [own, { title: qsTr("Alle abbrechen"), action: cancelAllSync }]
+                errorCloseTitle = qsTr("Überspringen")
+                errorOnClose = syncNextInQueue
+            } else {
+                resetSyncBatch()
+                errorAlternatives = [own]
+            }
             errorMessage = qsTr("Diese Version enthält keine FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein.")
             return
         }
@@ -2269,12 +2352,7 @@ QtObject {
             setupRequest = { connection: connection, keys: keys }
             return
         }
-        // Kontist on its stored refresh token alone (no password given, none stored) whose
-        // token expired: ask for the password instead of showing an error.
-        if (e.kind === "Authentication" && retrySecret === "" && connection.connector === "Kontist") {
-            const st = connectionStatus(connection.id)
-            if (!(st && st.has_pin)) { toast = e.message; pendingLogin = connection; return }
-        }
+        resetSyncBatch()
         errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connection.display_name)
         errorRetry = () => { const c = connections.find(x => x.id === connection.id); if (c) requestSync(c) }
         errorAlternatives = productIDAlternatives(connection, e, retrySecret)
@@ -2311,6 +2389,9 @@ QtObject {
     /// After a rejected registration: switch to the own one, open Settings › Banken (FinTS
     /// registration) and put the cursor into its field (no extra field in the alert).
     function enterOwnProductID() {
+        // Off to Settings: a waiting "Alle abrufen" ends here instead of stalling (#1041);
+        // the login is fetched again by hand once the registration is in.
+        resetSyncBatch()
         // Mode `own` only once an ID is stored (OwnProductIDField.commit), or an existing one is replaced:
         // an empty field must not leave the user in a mode without a registration.
         const own = settingEntry("fints.product_id")
@@ -2581,10 +2662,10 @@ QtObject {
     /// Bumped whenever documents change, so lists re-read them.
     property int documentsVersion: 0
     property var documentsAccountFilter: null
-    /// `documentsAccountFilter` value for documents without an account (e.g. PostBox, #838).
+    /// `documentsAccountFilter` value for documents without an account (e.g. Postbox, #838).
     readonly property int documentsWithoutAccount: -1
     property var statementsAccountID: null
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     property var postboxConnectionID: null
     property int statementsCountBefore: 0
     property var accountDocumentsFor: null      // AccountDocumentsSheet
@@ -2719,7 +2800,7 @@ QtObject {
         let unmatched = 0
         const finish = () => {
             if (linked.length) toast = qsTr("Beleg zugeordnet: %1").arg(linked.join(", "))
-            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
+            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             documentsChanged()
         }
         const next = i => {
@@ -2752,7 +2833,7 @@ QtObject {
     }
     function autoStatements(a) { return run(() => core("auto_statements_enabled", { account_id: a.id })) || false }
     function setAutoStatements(a, on) { run(() => core("set_auto_statements", { account_id: a.id, enabled: on })) }
-    /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
+    /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     function comdirectPostbox(id) { return run(() => core("comdirect_postbox_enabled", { connection_id: id })) || false }
     function setComdirectPostbox(id, on) { run(() => core("set_comdirect_postbox", { connection_id: id, enabled: on })) }
     /// AppModel+Connections.swift (#954): the connection's bank delivers documents (the switch
@@ -2802,9 +2883,9 @@ QtObject {
                 : qsTr("%1 neue Dokumente aus dem Online-Archiv").arg(n)
         }
         if (s.postbox_documents === null || s.postbox_documents === undefined)
-            return qsTr("PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
-        return s.postbox_documents === 0 ? qsTr("keine neuen PostBox-Dokumente")
-            : qsTr("%1 neue PostBox-Dokumente").arg(s.postbox_documents)
+            return qsTr("Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
+        return s.postbox_documents === 0 ? qsTr("keine neuen Postbox-Dokumente")
+            : qsTr("%1 neue Postbox-Dokumente").arg(s.postbox_documents)
     }
     function docSymbol(d) {
         switch (d.doc_type) {
@@ -2975,11 +3056,15 @@ QtObject {
     }
     /// AccountGroupsModel.swift › setAccountKind ("Kontoart ändern …").
     function setAccountKind(id, kind) {
-        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(); reloadDashboard() }
+        // the kind decides what "Verfügbar" and its history count (Bausparen does not, #1630) and
+        // moves the account to another section: once the accounts with the new kind are published,
+        // the history and the selection (list and sums of a section) reload
+        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(() => { reloadHistory(); reloadSelection(false) }); reloadDashboard() }
     }
     /// AccountKind.importChoices with their labels.
     readonly property var accountKindChoices: [
-        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") },
+        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") }, { id: "TimeDeposit", text: qsTr("Festgeld") },
+        { id: "BuildingSavings", text: qsTr("Bausparen") },
         { id: "CreditCard", text: qsTr("Kreditkarte") }, { id: "PaymentService", text: qsTr("Zahlungsdienst") },
         { id: "Brokerage", text: qsTr("Depot") }, { id: "Cash", text: qsTr("Bargeld") }, { id: "Loan", text: qsTr("Darlehen") }
     ]
@@ -4117,20 +4202,19 @@ QtObject {
     property string fintsProductIDMode: ""
     property bool offerProductIDChoice: false
     onSettingsChanged: reloadProductIDState()
-    /// New users start with GiroCrab's registration; users who already entered their own are asked once.
+    /// AppModel+Connections.swift › reloadProductIDState (v0.8.6, #1092): with GiroCrab's
+    /// registration on board it is always used (no choice any more); the own ID stays stored.
     function reloadProductIDState() {
         if (!isUnlocked) return
         try {
             let mode = core("fints_product_id_mode")
-            const own = settingEntry("fints.product_id")
-            const hasOwn = !!(own && own.has_value)
-            if (fintsBuiltinAvailable && mode === "" && !hasOwn && !isDemo) {
+            if (fintsBuiltinAvailable && mode !== "builtin" && !isDemo) {
                 core("set_fints_product_id_mode", { mode: "builtin" })
                 mode = "builtin"
                 fintsProductIDSource = core("fints_product_id_source")
             }
             fintsProductIDMode = mode
-            offerProductIDChoice = fintsBuiltinAvailable && mode === "" && hasOwn && !isDemo
+            offerProductIDChoice = false
         } catch (e) { console.warn(e.message) }
     }
     /// Stores the choice. The user's own ID always stays in the vault.
@@ -4149,6 +4233,8 @@ QtObject {
         "paypal.client_id": qsTr("PayPal Client-ID"),
         "paypal.client_secret": qsTr("PayPal Secret"),
         "kontist.client_id": qsTr("Kontist Client-ID"),
+        "bitcoin_core.datadir": qsTr("Bitcoin-Core-Datenverzeichnis"),
+        "bitcoin_core.rpc_url": qsTr("Bitcoin-Core-RPC-Adresse"),
         "kontist.client_secret": qsTr("Kontist Client-Secret"),
         "enablebanking.application_id": qsTr("Enable Banking Application-ID"),
         "enablebanking.private_key_pem": qsTr("Enable Banking Private Key"),
@@ -4276,7 +4362,7 @@ QtObject {
             syncLogVersion++
         } catch (e) { /* the log must never get in the way of a sync */ }
     }
-    readonly property var syncLogOutcomeTitles: ({ Ok: qsTr("Erfolgreich"), Error: qsTr("Fehler"), Cancelled: qsTr("Abgebrochen") })
+    readonly property var syncLogOutcomeTitles: ({ Ok: qsTr("Erfolgreich"), Partial: qsTr("Teilweise"), Error: qsTr("Fehler"), Cancelled: qsTr("Abgebrochen") })
     readonly property var syncLogSourceTitles: ({ Manual: qsTr("Manuell"), Automatic: qsTr("Automatisch"), Statements: qsTr("Kontoauszüge") })
     /// CSV of the rows the log window shows.
     function syncLogCSV(entries) {
@@ -4352,7 +4438,14 @@ QtObject {
             }
         }
         if (demoSheet !== "" && !Payments.presentDemoSheet(demoSheet) && !DirectDebits.presentDemoSheet(demoSheet)) presentDemoSheet(demoSheet)
+        // `report[:<sheet>]` (RootView.swift): the bug report over the view or the demo sheet,
+        // once that is laid out; `--screenshot` then saves the report window
+        if (demoSheetOpensReport) {
+            screenshotWindow = qsTr("Problem melden")
+            demoReportTimer.start()
+        }
     }
+    property Timer demoReportTimer: Timer { interval: 1200; onTriggered: model.showBugReport = true }
     /// The one switch for `--demo-sheet <name>` (AppModel.swift › presentDemoSheet):
     /// opens that sheet pre-filled with fictional data.
     function presentDemoSheet(name) {
@@ -4420,6 +4513,8 @@ QtObject {
         case "recurring": showRecurringSheet = true; break
         case "rules": openRuleEditor(null); break
         case "rule-edit": reloadRules(); ruleDraft = rules.length ? rules[0] : null; showRuleEditor = true; break
+        // a rule that only adds tags (#580)
+        case "rule-tags": reloadRules(); ruleDraft = rules.find(r => r.category_id === 0) || (rules.length ? rules[0] : null); showRuleEditor = true; break
         case "palette": showCommandPalette = true; break
         case "categorizer":
             if (selectedBookingID === null && bookings.length) selectedBookingID = bookings[0].id
@@ -4433,6 +4528,15 @@ QtObject {
             errorAlternatives = [{ title: qsTr("Eigene Registrierung ersetzen …"), action: enterOwnProductID },
                                  { title: qsTr("Mit GiroCrab-Registrierung erneut versuchen"), action: () => {} }]
             errorMessage = "Bank meldet 9078: Das Produkt ist nicht registriert."
+            break
+        case "error-batch":
+            // the error alert of "Alle abrufen" with logins still waiting (#1041)
+            if (!connections.length) break
+            errorTitle = qsTr("Abruf von „%1“ fehlgeschlagen").arg(connections[0].display_name)
+            errorRetry = () => {}
+            errorAlternatives = [{ title: qsTr("Alle abbrechen"), action: () => {} }]
+            errorCloseTitle = qsTr("Überspringen")
+            errorMessage = "Die Verbindung zur Bank ist fehlgeschlagen."
             break
         case "payee-match": case "payee-close": case "payee-nomatch": {
             const connection = connections.length ? connections[0] : null
