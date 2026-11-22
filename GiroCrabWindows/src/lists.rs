@@ -565,6 +565,21 @@ mod tests {
     }
 
     #[test]
+    fn unread_filter_follows_the_new_selection() {
+        let rows = document_rows(
+            &[
+                doc(1, "A", "2026-01-01", "", 1),
+                unseen(doc(2, "B", "2026-02-01", "", 1)),
+            ],
+            &plain,
+        );
+        let ids = |v: &[Cells]| v.iter().map(|r| r.id).collect::<Vec<_>>();
+        // Read A was open and kept; selecting unread B drops A from the filtered list.
+        assert_eq!(ids(&unread_only(rows.clone(), true, Some(1))), [2, 1]);
+        assert_eq!(ids(&unread_only(rows, true, Some(2))), [2]);
+    }
+
+    #[test]
     fn mark_all_takes_only_listed_unread_ids() {
         let rows = document_rows(
             &[

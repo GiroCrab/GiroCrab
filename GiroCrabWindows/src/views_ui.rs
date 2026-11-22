@@ -78,6 +78,15 @@ struct Ui {
     rule_gate: DeleteGate,
 }
 
+impl Ui {
+    /// The shown table was emptied: "Alle als gelesen markieren" only ever takes ids of the
+    /// displayed list. The selection stays, so "Nur ungelesene" keeps the open document after
+    /// the reload that follows "Als gelesen markieren".
+    fn forget_shown_list(&mut self) {
+        self.doc_unread.clear();
+    }
+}
+
 thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
 }
@@ -430,6 +439,9 @@ fn clear_table(win: &MainWindow, empty: &str) {
     win.set_kpis(ModelRc::new(VecModel::from(Vec::<KpiTile>::new())));
     win.set_shares(ModelRc::new(VecModel::from(Vec::<ShareBar>::new())));
     win.set_view_note(SharedString::new());
+    // The next render_view restores both from the list it shows.
+    with_ui(Ui::forget_shown_list);
+    win.set_doc_unread_any(false);
 }
 
 fn set_shares(win: &MainWindow, shares: &[portfolio::Share]) {
@@ -783,6 +795,12 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         let _ = &slot2;
         let doc = with_ui(|u| u.doc_rows.get(i as usize).copied());
         with_ui(|u| u.selected_doc = doc);
+        if win.get_view_mode() == MODE_DOCUMENTS && win.get_docs_unseen_only() {
+            // "Nur ungelesene" keeps the open document: rebuild the rows for the new selection,
+            // so a read document kept for the previous one disappears.
+            render_view(&win);
+            return;
+        }
         win.set_table_selected(if doc.is_some() { i } else { -1 });
         set_doc_flags(&win);
         win.set_doc_seen(!with_ui(|u| {
@@ -1431,6 +1449,18 @@ mod tests {
             );
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn emptied_table_drops_mark_all_ids_but_keeps_the_selection() {
+        let mut u = Ui {
+            doc_unread: vec![4, 6],
+            selected_doc: Some(6),
+            ..Ui::default()
+        };
+        u.forget_shown_list();
+        assert!(u.doc_unread.is_empty());
+        assert_eq!(u.selected_doc, Some(6));
     }
 
     #[test]
