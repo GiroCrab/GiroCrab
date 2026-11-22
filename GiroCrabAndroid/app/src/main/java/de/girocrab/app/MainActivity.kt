@@ -225,7 +225,13 @@ fun GiroCrabRoot(
         // A slow provider must not block the lock screen: copy off the main thread, publish on it.
         scope.launch {
             // One file per selection: a second choice must not truncate the file the dialog reads.
-            val target = File.createTempFile("import-", ".gcbackup", context.cacheDir)
+            // A cache that cannot be written (full, permission gone) must not end the coroutine
+            // with an uncaught IOException — the lock screen has to say something instead.
+            val target = runCatching { File.createTempFile("import-", ".gcbackup", context.cacheDir) }
+                .getOrElse {
+                    unlockMessage = "Im Zwischenspeicher ließ sich keine Datei anlegen."
+                    return@launch
+                }
             val copied = withContext(Dispatchers.IO) {
                 runCatching {
                     context.contentResolver.openInputStream(uri)?.use { input ->
