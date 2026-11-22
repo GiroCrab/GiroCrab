@@ -1167,6 +1167,8 @@ impl Vault {
         {
             return Ok(finisher);
         }
+        // kept for every reader: never the limited view of the caller that builds it
+        let _all = crate::refunds::unlimited();
         let finisher = Arc::new(BookingFinisher::load(db, self.merchant_rules(db)?)?);
         self.list_cache
             .keep(db, stamp, |s| s.finisher = Some(finisher.clone()));
@@ -1185,6 +1187,8 @@ impl Vault {
             return Ok(classes);
         }
         let stamp = self.data_stamp(db);
+        // kept for every reader, like the finisher
+        let _all = crate::refunds::unlimited();
         let finisher = self.booking_finisher(db)?;
         let (cte, where_sql, args, share_sql) =
             self.filter_clauses(db, &BookingFilter::default())?;

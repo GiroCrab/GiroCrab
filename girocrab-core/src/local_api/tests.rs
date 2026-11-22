@@ -737,3 +737,53 @@ fn refund_link_to_an_unshared_account_changes_nothing() {
     // and the app itself is not limited by a request that came before
     assert!(v.refund_links(refund.id).unwrap().originals.len() == 1);
 }
+
+/// What the vault keeps for all readers must not be the limited view of a request that
+/// happened to be the first read after a change.
+#[test]
+fn request_before_the_app_reads_leaves_the_app_every_refund_link() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    let all = v.list_transactions(BookingFilter::default()).unwrap();
+    let refund = all
+        .transactions
+        .iter()
+        .find(|t| t.account_id == giro && t.amount_cents > 0 && t.currency == "EUR")
+        .unwrap();
+    let private = all
+        .transactions
+        .iter()
+        .find(|t| {
+            t.account_id != giro && t.amount_cents < -refund.amount_cents && t.currency == "EUR"
+        })
+        .unwrap();
+    share(&v, &[giro], |_| {});
+    // the link is a write: nothing is kept, so the request is the first to read
+    v.link_refund(refund.id, private.id, 0).unwrap();
+    let (from, to) = summary_range();
+    ok(
+        &v,
+        "summary",
+        json!({ "account_ids": [giro], "date_from": from, "date_to": to }),
+    );
+    all_pages(&v, json!({ "account_ids": [giro] }), 200);
+    let shown = v.list_transactions(BookingFilter::default()).unwrap();
+    let part = |id: i64| {
+        shown
+            .transactions
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .refund_part_cents
+    };
+    assert_eq!(part(private.id), Some(refund.amount_cents));
+    assert_eq!(
+        shown
+            .transactions
+            .iter()
+            .find(|t| t.id == refund.id)
+            .unwrap()
+            .refund_income_cents,
+        0
+    );
+}

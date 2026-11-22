@@ -360,16 +360,21 @@ thread_local! {
 /// of this thread (shares, moved amounts, markers). For the local interface (#136): what it
 /// returns for the shared accounts must not depend on a booking of another account, so a
 /// refund whose original is not shared reads as not linked there.
-pub(crate) struct Within(());
+pub(crate) struct Within(Option<Vec<i64>>);
 
 pub(crate) fn within(accounts: &[i64]) -> Within {
-    WITHIN.with(|w| *w.borrow_mut() = Some(accounts.to_vec()));
-    Within(())
+    Within(WITHIN.with(|w| w.replace(Some(accounts.to_vec()))))
+}
+
+/// Every link again while it lives: for what is worked out once and kept for all readers
+/// (the vault's list cache), also when a limited reader is the first to ask for it.
+pub(crate) fn unlimited() -> Within {
+    Within(WITHIN.with(|w| w.replace(None)))
 }
 
 impl Drop for Within {
     fn drop(&mut self) {
-        WITHIN.with(|w| *w.borrow_mut() = None);
+        WITHIN.with(|w| *w.borrow_mut() = self.0.take());
     }
 }
 
