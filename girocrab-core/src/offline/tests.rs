@@ -161,6 +161,59 @@ fn manual_amount_and_date_edits_merge_as_one_value_without_resurrecting_refunds(
 }
 
 #[test]
+fn synced_manual_sign_flip_removes_concurrently_created_refund_link() {
+    let a = vault("offline-sign-sync-a");
+    let b = vault("offline-sign-sync-b");
+    let acc = a
+        .create_offline_account("Cash".into(), AccountKind::Cash, "EUR".into(), 1000)
+        .unwrap();
+    let original = a
+        .save_manual_booking(acc, None, setup("2026-01-01", -500, "Shop"))
+        .unwrap();
+    a.save_manual_booking(acc, None, setup("2026-01-02", 200, "Refund"))
+        .unwrap();
+    let merge = |target: &Vault, source: &Vault| {
+        target
+            .merge_other_vault(source.file_path(), vec![7; 32])
+            .unwrap();
+    };
+    merge(&b, &a);
+    let booking = |v: &Vault, who: &str| -> i64 {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE counterparty=?1",
+                [who],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let b_original = booking(&b, "Shop");
+    let b_refund = booking(&b, "Refund");
+    a.save_manual_booking(acc, Some(original), setup("2026-01-01", 300, "Shop"))
+        .unwrap();
+    b.link_refund(b_refund, b_original, 0).unwrap();
+    merge(&b, &a);
+    merge(&a, &b);
+    for (v, id) in [(&a, original), (&b, b_original)] {
+        assert!(v.refund_links(id).unwrap().refunds.is_empty());
+        let (live, stamped): (i64, i64) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FILTER (WHERE deleted_ms IS NULL),
+                        count(*) FILTER (WHERE deleted_ms IS NOT NULL AND deleted_ms=changed_ms)
+                 FROM refund_links",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((live, stamped), (0, 1));
+        assert_eq!(balance(v, v.list_accounts().unwrap()[0].id), 1500);
+    }
+}
+
+#[test]
 fn bookings_move_the_balance_and_can_be_edited_and_deleted() {
     let v = vault("offline-edit");
     let acc = v

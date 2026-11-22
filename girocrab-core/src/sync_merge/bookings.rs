@@ -511,6 +511,7 @@ pub(crate) fn merge_bookings(
     }
 
     crate::refunds::merge(conn, &booking_ids)?;
+    crate::refunds::drop_invalid_manual_sides(conn)?;
 
     // nothing points at a deleted category (derived, no stamps)
     conn.execute(

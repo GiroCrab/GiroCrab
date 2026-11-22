@@ -1281,6 +1281,38 @@ pub(crate) fn side_changed(conn: &Connection, id: i64) -> CoreResult<()> {
     Ok(())
 }
 
+pub(crate) fn drop_invalid_manual_sides(conn: &Connection) -> CoreResult<()> {
+    let links: Vec<(i64, i64, i64, i64, i64, i64)> = conn
+        .prepare(
+            "SELECT l.refund_id,l.original_id,l.original_part,l.refund_part,r.amount_cents,o.amount_cents
+             FROM refund_links l JOIN transactions r ON r.id=l.refund_id
+             JOIN transactions o ON o.id=l.original_id
+             WHERE l.deleted_ms IS NULL AND (r.manual_value_ms>0 OR o.manual_value_ms>0)",
+        )?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    if links.is_empty() {
+        return Ok(());
+    }
+    let parts = split_parts(conn)?;
+    for (refund, original, part, refund_part, r, o) in links {
+        if Shares::fits(&parts, refund, r, refund_part, Role::Refund)
+            && Shares::fits(&parts, original, o, part, Role::Original)
+        {
+            continue;
+        }
+        let changed = next_change(conn)?;
+        conn.execute(
+            "UPDATE refund_links SET deleted_ms=?5,changed_ms=?5
+             WHERE refund_id=?1 AND original_id=?2 AND original_part=?3 AND refund_part=?4",
+            params![refund, original, part, refund_part, changed],
+        )?;
+    }
+    Ok(())
+}
+
 fn next_change(conn: &Connection) -> CoreResult<i64> {
     // later than every other link too: the shares are filled in the order the links were made
     let previous: Option<i64> =
