@@ -4,10 +4,12 @@ import QtQuick.Layouts
 
 // DepotPositionsTable.swift (#564, #625): the positions of a holdings view – a compact sortable
 // table in wide windows, two-line rows with unfoldable details in narrow ones. Shares are relative
-// to the whole inventory, so a search changes the rows but never the percentages.
+// to the whole inventory, so a search changes the rows but never the percentages. One table for the
+// depot, the Sachwerte account and the Vermögen tabs; a view that lets rows be selected or opened
+// sets `selectable` and handles `selected` / `opened`, and adds its own menu entries (`rowActions`).
 Rectangle {
     id: table
-    /// DepotPosition list (DepotMetrics.makePositions), sorted and filtered.
+    /// DepotPosition list (DepotMetrics.makePositions / mergedPositions / tangiblePositions), sorted and filtered.
     property var positions: []
     /// Positions of the whole inventory (the rows shown may be a search result).
     property int totalCount: 0
@@ -18,7 +20,23 @@ Rectangle {
     property string currency: "EUR"
     /// Securities without a bank figure get one from the cost price: the table says so (not Sachwerte).
     property bool notesCalculatedGain: true
+    property string selectedID: ""
+    property bool selectable: false
+    signal selected(var position)
+    signal opened(var position)
+    /// RowTaps (macOS): a double click first – a single click may leave the view, so it waits
+    /// out the double-click interval before `selected`.
+    Timer {
+        id: clickTimer
+        property var position: null
+        interval: Qt.styleHints.mouseDoubleClickInterval
+        onTriggered: table.selected(position)
+    }
     signal copyAll()
+    /// Extra context-menu entries of the host: position => [{ title, action, separator }]
+    property var rowActions: null
+    /// Which depot(s) hold a position, where the table spans several (Vermögen).
+    property var depotLabel: null
     /// Rows unfolded in the narrow layout (`--expand-rows`: the first two).
     property var expanded: ({})
     /// `--expand-rows`: the first two rows start unfolded, once there are rows (screenshots).
@@ -130,11 +148,19 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: (table.wide ? Math.max(44, wideRow.implicitHeight) : Math.max(44, narrowRow.implicitHeight) + (rowBox.open ? details.implicitHeight + 14 : 0)) + 10
-                    color: "transparent"
+                    color: table.selectedID !== "" && table.selectedID === rowBox.p.id ? Theme.selection : "transparent"
                     MouseArea {
                         anchors.fill: parent
-                        acceptedButtons: Qt.RightButton
-                        onClicked: { rowMenu.position = rowBox.p; rowMenu.popup() }
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: m => {
+                            if (m.button === Qt.RightButton) { rowMenu.position = rowBox.p; rowMenu.rebuild(); rowMenu.popup(); return }
+                            if (table.selectable) { clickTimer.position = rowBox.p; clickTimer.restart() }
+                        }
+                        onDoubleClicked: m => {
+                            if (m.button !== Qt.LeftButton || !table.selectable) return
+                            clickTimer.stop()
+                            table.opened(rowBox.p)
+                        }
                     }
                     // wide: the columns
                     RowLayout {
@@ -177,7 +203,10 @@ Rectangle {
                                 // quantity and price are figures: protected like amounts
                                 Text { text: table.narrowSubline(rowBox.p); Layout.fillWidth: true; elide: Text.ElideRight
                                        font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.secondary
-                                       Sensitive { amounts: true } } }
+                                       Sensitive { amounts: true } }
+                                Text { readonly property var label: table.depotLabel ? table.depotLabel(rowBox.p) : null
+                                       visible: !!label; text: label || ""; Layout.fillWidth: true; elide: Text.ElideRight
+                                       font.pixelSize: Theme.caption; color: Theme.tertiary; Sensitive {} } }
                             ColumnLayout { spacing: 2
                                 Text { Layout.alignment: Qt.AlignRight; text: Fmt.money(rowBox.p.holding.value_cents, table.currency)
                                        font.pixelSize: Theme.body; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text; Sensitive { amounts: true } }
@@ -278,10 +307,24 @@ Rectangle {
         }
     }
 
-    // MARK: context menu – classification, copying
+    // MARK: context menu – classification, the host's entries, copying
+    Component { id: actionEntry; AppMenuItem { property var run; onTriggered: run() } }
+    Component { id: actionDivider; AppMenuSeparator {} }
     AppMenu {
         id: rowMenu
         property var position: null
+        property var entries: []
+        function rebuild() {
+            for (const o of entries) removeItem(o)
+            const built = []
+            const actions = table.rowActions && position ? table.rowActions(position) : []
+            for (const a of actions) {
+                if (a.separator) built.push(actionDivider.createObject(null))
+                else built.push(actionEntry.createObject(null, { text: a.title, run: a.action }))
+            }
+            built.forEach((o, i) => insertItem(i + 1, o))
+            entries = built
+        }
         AppMenuItem { text: qsTr("Klassifizierung bearbeiten"); icon.name: SF.icon("pencil")
                       visible: !!rowMenu.position && !!rowMenu.position.asset.classification.security_key; height: visible ? implicitHeight : 0
                       onTriggered: table.classify(rowMenu.position) }
@@ -330,10 +373,13 @@ Rectangle {
             spacing: 3
             Text { visible: nb.p.identifier !== ""; text: nb.p.identifier + " ·"; font.pixelSize: Theme.callout; color: Theme.secondary; Sensitive {} }
             Text { text: AssetClassification.compactTitle(nb.p.asset.classification); font.pixelSize: Theme.callout; color: Theme.secondary
-                   Layout.fillWidth: true; elide: Text.ElideRight
+                   Layout.fillWidth: !depotText.visible; elide: Text.ElideRight
                    Sensitive { labels: true }
                    HoverHandler { id: classHover }
                    ToolTip.visible: classHover.hovered; ToolTip.delay: 600; ToolTip.text: AssetClassification.sourceDescription(nb.p.asset.classification) }
+            Text { id: depotText; readonly property var label: table.depotLabel ? table.depotLabel(nb.p) : null
+                   visible: !!label; text: "· " + (label || ""); Layout.fillWidth: true; elide: Text.ElideRight
+                   font.pixelSize: Theme.callout; color: Theme.secondary; Sensitive {} }
         }
     }
     component GainBlock: ColumnLayout {

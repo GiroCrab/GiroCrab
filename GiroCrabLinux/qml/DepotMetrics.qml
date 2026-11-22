@@ -152,6 +152,35 @@ QtObject {
                      isOwnItem: has(a.asset_item_id), displayName: displayName(h), identifier: h.isin || h.wkn }
         })
     }
+    /// One row per security across several depots: quantity, value, share and gain add up.
+    function mergedPositions(items) {
+        // keyed by name when there is no ISIN/WKN: no prototype ("constructor" is a name too)
+        const groups = Object.create(null)
+        for (const p of items) { const k = compositionKey(p.holding); (groups[k] = groups[k] || []).push(p) }
+        const seen = Object.create(null), out = []
+        for (const item of items) {
+            const key = compositionKey(item.holding)
+            if (seen[key]) continue
+            seen[key] = true
+            const group = groups[key]
+            if (group.length < 2) { out.push(item); continue }
+            const lead = group.reduce((m, p) => p.holding.value_cents > m.holding.value_cents ? p : m, group[0])
+            const h = Object.assign({}, lead.holding)
+            h.quantity = group.reduce((t, p) => t + p.holding.quantity, 0)
+            h.value_cents = group.reduce((t, p) => t + p.holding.value_cents, 0)
+            h.prev_day_value_cents = null
+            h.profit_loss_purchase_cents = null
+            const gains = group.map(p => p.gain).filter(g => g)
+            const gain = gains.length === 0 ? null : makeGain(gains.reduce((t, g) => t + g.cents, 0), gains.reduce((t, g) => t + g.costCents, 0),
+                                                             gains.length === group.length && gains.every(g => g.reported))
+            const shares = group.map(p => p.share).filter(s => s !== null)
+            const asset = { holding: h, classification: lead.asset.classification, asset_item_id: lead.asset.asset_item_id }
+            out.push({ id: key, asset: asset, holding: h, basis: lead.basis, gain: gain,
+                       share: shares.length ? shares.reduce((t, s) => t + s, 0) : null, hidesPrice: group.every(p => p.hidesPrice),
+                       isOwnItem: has(lead.asset.asset_item_id), displayName: displayName(h), identifier: h.isin || h.wkn })
+        }
+        return out
+    }
     function compareNames(a, b) { return a.displayName.localeCompare(b.displayName, undefined, { numeric: true, sensitivity: "base" }) }
     /// Positions without a figure always come last, whatever the direction.
     function sortedPositions(items, sort) {
@@ -426,5 +455,94 @@ QtObject {
               missing: qsTr("Keine Aktivitäten im Zeitraum erfasst"),
               help: qsTr("Gebühren und Steuern aus den erfassten Wertpapieraktivitäten, eigene Zeilen und eingebettete Beträge ohne Doppelzählung. Fehlende Einträge bedeuten nicht, dass keine Kosten anfielen.") }
         ]
+    }
+
+    // MARK: Sachwerte (WealthView.tangibleGain / tangibleDayChange, TangiblePositions)
+    /// Gain against the purchase data: the exact total paid while nothing changed, else the cost price.
+    function tangibleGain(item) {
+        const h = item.holding, paid = item.setup.purchase_price_cents
+        if (has(paid) && paid > 0 && h.value_cents >= 0 && h.quantity > 0 && h.quantity === item.setup.quantity) {
+            const g = h.value_cents - paid
+            return { cents: g, percent: g / paid * 100 }
+        }
+        return calculatedGain(h)
+    }
+    /// Today's price of one piece against yesterday's, times the pieces held; manual items have no
+    /// daily price. Per piece, so an unchanged price is exactly 0.
+    function tangibleDayChange(item, previousUnitCents) {
+        const h = item.holding
+        if (item.setup.price_source === "manual" || item.sold || !has(previousUnitCents) || !(previousUnitCents > 0)
+                || !(h.current_price_cents > 0) || !isFinite(h.quantity) || !(h.quantity > 0)) return null
+        const change = Math.round(h.quantity * (h.current_price_cents - previousUnitCents))
+        return isFinite(change) ? change : null
+    }
+    function tangibleTiles(items, previousUnits, currency) {
+        const held = items.filter(i => !i.sold)
+        const rows = held.map(item => ({ value: item.holding.value_cents, gain: tangibleGain(item),
+                                         day: tangibleDayChange(item, previousUnits[item.id]) }))
+        const largest = held.reduce((m, i) => m === null || i.holding.value_cents > m.holding.value_cents ? i : m, null)
+        return tangibleTilesFrom(rows.reduce((t, r) => t + r.value, 0), rows.length,
+            rows.map(r => r.gain ? makeGain(r.gain.cents, r.value - r.gain.cents, false) : null),
+            rows.filter(r => r.day !== null).map(r => ({ cents: r.day, previousValueCents: r.value - r.day })),
+            held.filter(i => i.setup.price_source !== "manual").length,
+            largest ? { name: largest.setup.name, cents: largest.holding.value_cents } : null, currency)
+    }
+    function tangibleTilesFrom(valueCents, count, gains, days, automaticCount, largest, currency) {
+        const largestShare = largest && valueCents > 0 ? { name: largest.name, percent: largest.cents / valueCents * 100 } : null
+        const unreal = unrealized(gains)
+        const known = gains.filter(g => g)
+        const cost = known.reduce((t, g) => t + Math.max(g.costCents, 0), 0)
+        const dayCents = days.reduce((t, d) => t + d.cents, 0)
+        const dayBase = days.reduce((t, d) => t + d.previousValueCents, 0)
+        const cov = (covered, total) => covered < total ? qsTr("für %1 von %2 Positionen").arg(covered).arg(total) : null
+        return [
+            { title: qsTr("Einstandswert"), value: known.length > 0 ? Fmt.money(cost, currency) : null, detail: null, tint: Theme.text,
+              footnote: [qsTr("Aktueller Bestand"), cov(known.length, count)].filter(x => x).join(" · "),
+              missing: qsTr("Keine Einstandsdaten vorhanden"),
+              help: qsTr("Summe der Einstandswerte der gehaltenen Objekte, soweit bekannt.") },
+            { title: qsTr("Unrealisierte GuV"),
+              value: unreal ? signedMoney(unreal.amountCents, currency) : null,
+              detail: unreal && unreal.percent !== null ? percent(unreal.percent, true) : null,
+              tint: unreal ? tint(unreal.amountCents) : Theme.text,
+              footnote: [qsTr("Aktueller Bestand seit Einstand"), cov(known.length, count)].filter(x => x).join(" · "),
+              missing: qsTr("Keine Einstandsdaten vorhanden"),
+              help: qsTr("Wert heute gegenüber dem Einstand, nicht realisiert. Nur Objekte mit bekanntem Einstandspreis.") },
+            { title: qsTr("Tagesveränderung"),
+              value: days.length === 0 ? null : signedMoney(dayCents, currency),
+              detail: days.length === 0 || dayBase <= 0 ? null : percent(dayCents / dayBase * 100, true),
+              tint: days.length === 0 ? Theme.text : tint(dayCents),
+              footnote: [qsTr("Aktueller Bestand zum Vortag"), cov(days.length, automaticCount)].filter(x => x).join(" · "),
+              missing: qsTr("Keine Tagespreise vorhanden"),
+              help: qsTr("Nur automatisch bepreiste Objekte (Edelmetalle) haben einen Tagespreis; manuelle Bewertungen ändern sich nicht täglich.") },
+            { title: qsTr("Größte Position"),
+              value: largestShare ? percent(largestShare.percent, false, 1) : null,
+              detail: largestShare ? largestShare.name : null, detailPersonal: true, tint: Theme.text,
+              footnote: qsTr("Anteil am gesamten Sachwert"),
+              missing: qsTr("Noch keine Sachwerte"),
+              help: qsTr("Das Objekt mit dem höchsten Wert und sein Anteil am gesamten Sachwert.") }
+        ]
+    }
+    /// The held items as ClassifiedAssets: built from the items, classification attached where loaded.
+    function tangibleAssets(items, classified) {
+        return items.filter(i => !i.sold).map(item => {
+            const holding = Object.assign({}, item.holding, { name: item.setup.name })
+            const c = classified.find(a => a.asset_item_id === item.id)
+            const classification = c ? c.classification
+                : { security_key: null, asset_class: "unclassified", asset_class_source: "Unknown", instrument: "unclassified", instrument_source: "Unknown" }
+            return { holding: holding, classification: classification, asset_item_id: item.id }
+        })
+    }
+    function tangiblePositions(items, classified) {
+        const byId = {}
+        for (const i of items) byId[i.id] = i
+        return makePositions(tangibleAssets(items, classified), a => {
+            const item = byId[a.asset_item_id]
+            const g = item ? tangibleGain(item) : null
+            return g ? makeGain(g.cents, a.holding.value_cents - g.cents, false) : null
+        }, a => {
+            // one piece of a manually valued item (house, car) has no market price of its own
+            const item = byId[a.asset_item_id]
+            return !!item && item.setup.price_source === "manual" && item.holding.quantity === 1
+        })
     }
 }

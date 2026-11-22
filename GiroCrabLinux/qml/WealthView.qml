@@ -28,6 +28,13 @@ Rectangle {
     /// ClassifiedAsset lists per depot / Sachwerte account id (loaded for all owners).
     property var classified: ({})
     property var income: ({ dividends: 0, fees: 0, taxes: 0 })
+    /// Securities activities of all depots (the tiles of the securities tab filter them to the shown depots).
+    property var securityTransactions: []
+    /// Yesterday's value of one piece per automatically priced Sachwert (item id): the day change.
+    property var tangiblePreviousUnit: ({})
+    property var positionsSort: ({ key: "value", ascending: false })
+    /// The positions behind the slice clicked in the composition card of the securities / Sachwerte tab (null: all).
+    property var compositionFilter: null
     readonly property bool incomeEmpty: income.dividends === 0 && income.fees === 0 && income.taxes === 0
 
     // MARK: WealthGrouping
@@ -47,11 +54,11 @@ Rectangle {
     /// WealthOwnerFilter: "all", "owner:<name>" or "unassigned".
     property string ownerFilter: "all"
 
-    onScopeChanged: classFilter = "all"
-    onOwnerFilterChanged: classFilter = "all"
+    onScopeChanged: { classFilter = "all"; compositionFilter = null }
+    onOwnerFilterChanged: { classFilter = "all"; compositionFilter = null }
     Connections {
         target: prefs
-        function onGroupingChanged() { wv.classFilter = "all" }
+        function onGroupingChanged() { wv.classFilter = "all"; wv.compositionFilter = null }
         function onHideDirectPropertyChanged() { wv.classFilter = "all" }
         function onHideUnclassifiedInChartChanged() { if (prefs.hideUnclassifiedInChart && wv.classFilter === "unclassified") wv.classFilter = "all" }
     }
@@ -252,15 +259,25 @@ Rectangle {
         const gen = ++positionsGeneration
         const since = new Date(); since.setFullYear(since.getFullYear() - 1)
         const sinceISO = Fmt.iso(since)
+        const y = new Date(); y.setDate(y.getDate() - 1)
+        const yesterday = Fmt.iso(y)
+        const priced = [].concat(...allSummary.tangibles.map(a => AppModel.assetItems(a.id)))
+            .filter(i => !i.sold && i.setup.price_source !== "manual").map(i => i.id)
         Promise.all([
             Promise.all(all.map(id => AppModel.corePromise("classified_assets", { account_id: id }))),
-            Promise.all(depots.map(id => AppModel.corePromise("list_security_transactions", { account_id: id })))
+            Promise.all(depots.map(id => AppModel.corePromise("list_security_transactions", { account_id: id }))),
+            // a missing price leaves the day change unknown, it does not fail the load
+            Promise.all(priced.map(id => AppModel.corePromise("asset_unit_value_on", { item_id: id, date: yesterday }).then(v => v, () => null)))
         ]).then(r => {
             if (gen !== positionsGeneration) return
             const map = {}
             all.forEach((id, i) => map[id] = r[0][i])
             classified = map
-            income = makeIncome([].concat(...r[1]), sinceISO)
+            const units = {}
+            priced.forEach((id, i) => { if (r[2][i] !== null && r[2][i] !== undefined) units[id] = r[2][i] })
+            tangiblePreviousUnit = units
+            securityTransactions = [].concat(...r[1])
+            income = makeIncome(securityTransactions, sinceISO)
             // (developer) `--demo-sheet classification`: the assign queue of the open positions
             if (AppModel.demoSheet === "classification" && !demoQueueShown) {
                 demoQueueShown = true
@@ -273,20 +290,15 @@ Rectangle {
 
     // MARK: WealthPosition.aggregate
     function addOpt(a, b) { return a === null ? b : b === null ? a : a + b }
-    /// HoldingsCard.calculatedGain: cost = quantity × purchase price.
-    function calculatedGain(h) {
-        if (!(h.quantity > 0) || h.purchase_price_cents <= 0 || h.value_cents < 0) return null
-        const cost = Math.round(h.quantity * h.purchase_price_cents)
-        if (!(cost >= 1)) return null
-        return h.value_cents - cost
-    }
     function aggregate(perDepot) {
         const byKey = {}
         for (const depot of perDepot) for (const h of depot) {
             const key = h.isin ? h.isin : (h.wkn ? h.wkn : h.name)
-            const day = h.prev_day_value_cents !== null && h.prev_day_value_cents !== undefined ? h.value_cents - h.prev_day_value_cents : null
-            const reported = h.profit_loss_purchase_cents
-            const gain = reported !== null && reported !== undefined ? reported : calculatedGain(h)
+            // the same rules as the depot view: previous-day value, bank P&L or cost-price calculation
+            const d = DepotMetrics.dayChange(h)
+            const day = d ? d.cents : null
+            const g = DepotMetrics.gainOf(h, DepotMetrics.priceBasis(h, false))
+            const gain = g ? g.cents : null
             const p = byKey[key]
             if (p) {
                 p.quantity += h.quantity; p.valueCents += h.value_cents
@@ -301,16 +313,8 @@ Rectangle {
     }
     // MARK: WealthIncome.make
     function makeIncome(txs, since) {
-        const r = { dividends: 0, fees: 0, taxes: 0 }
-        for (const t of txs) {
-            if (t.currency !== "EUR" || t.booking_date < since) continue
-            if (t.direction === "Dividend") r.dividends += t.value_cents
-            else if (t.direction === "Fee") r.fees += Math.abs(t.value_cents)
-            else if (t.direction === "Tax") r.taxes += Math.abs(t.value_cents)
-            if (t.direction !== "Fee") r.fees += t.fees_cents
-            if (t.direction !== "Tax") r.taxes += t.taxes_cents
-        }
-        return r
+        const t = DepotMetrics.activityTotals(txs, "EUR", since, null)
+        return { dividends: t.distributionsCents, fees: t.feesCents, taxes: t.taxesCents }
     }
 
     // MARK: Sachwerte rows
@@ -325,7 +329,7 @@ Rectangle {
         const out = []
         for (const a of summary.tangibles)
             for (const item of AppModel.assetItems(a.id))
-                if (!item.sold && !hidden[item.id]) out.push({ id: "i" + item.id, name: item.setup.name, subtitle: tangibleSubtitle(item), valueCents: item.holding.value_cents })
+                if (!item.sold && !hidden[item.id]) out.push({ id: "i" + item.id, item: item, name: item.setup.name, subtitle: tangibleSubtitle(item), valueCents: item.holding.value_cents })
         return out.sort((a, b) => b.valueCents - a.valueCents)
     }
     /// WealthView.tangibleSubtitle: pieces (when not exactly one), „Edelmetall“, the note.
@@ -415,8 +419,70 @@ Rectangle {
     readonly property var cashAccounts: scope === "cash" ? summary.cash.filter(a => keeps(String(a.id))) : summary.cash
     readonly property bool showSecurities: !classMode && (scope === "all" || scope === "securities") && section("securities")
     readonly property var shownPositions: scope === "securities" ? positions.filter(p => keeps(p.id)) : positions
-    readonly property var shownTangibleRows: tangibleRows.filter(r => keeps(r.id))
     readonly property var debtAccounts: classMode ? summary.liabilities.filter(a => a.balance_cents < 0) : summary.liabilities
+
+    // MARK: shared holdings parts (securities and Sachwerte tabs, #564)
+    /// The securities and Sachwerte tabs use the same building blocks as the depot and Sachwerte views:
+    /// the composition card, the figure tiles and the positions table.
+    readonly property bool sharedHoldingsScope: scope === "securities" || scope === "tangibles"
+    readonly property bool wide: content.width >= 740 * Theme.textScale
+    /// Grouping and drawing are the card's; its grouping is the wealth grouping ("by position" is the account view).
+    readonly property string compositionMode: grouping === "account" ? "position" : grouping
+    /// The held assets of the shown tab: the selected owner's depots, direct property as chosen, no sold Sachwerte.
+    readonly property var heldAssets: {
+        if (scope === "securities") return [].concat(...selection.summary.securities.map(a => selection.assets[a.id] || []))
+        if (scope === "tangibles") return [].concat(...selection.summary.tangibles.map(a => selection.assets[a.id] || []))
+            .filter(a => { const it = DepotMetrics.has(a.asset_item_id) ? AppModel.assetItem(a.asset_item_id) : null; return it ? !it.sold : true })
+        return []
+    }
+    /// The four figures of the tab, the same tiles as in the depot (securities) or for the Sachwerte.
+    readonly property var figureTiles: {
+        if (scope === "securities") {
+            const ids = selection.summary.securities.map(a => a.id)
+            const r = DepotState.depotPeriodRange
+            return DepotMetrics.securitiesTiles(heldAssets, securityTransactions.filter(t => ids.indexOf(t.account_id) >= 0), "EUR",
+                                                DepotState.depotPeriodTitle, r[0], r[1])
+        }
+        if (scope === "tangibles") return DepotMetrics.tangibleTiles(tangibleRows.map(r => r.item), tangiblePreviousUnit, "EUR")
+        return []
+    }
+    /// Positions of all shown depots in one table; the same security in several depots is one row.
+    readonly property var securitiesPositions: scope === "securities" ? DepotMetrics.mergedPositions(DepotMetrics.makePositions(heldAssets)) : []
+    /// Which depot(s) hold a position: the same security in two depots names both.
+    readonly property var depotNames: {
+        const names = Object.create(null)
+        for (const depot of selection.summary.securities)
+            for (const a of selection.assets[depot.id] || []) {
+                const key = DepotMetrics.compositionKey(a.holding)
+                names[key] = names[key] || []
+                if (names[key].indexOf(depot.name) < 0) names[key].push(depot.name)
+            }
+        const out = Object.create(null)
+        for (const k in names) out[k] = names[k].join(", ")
+        return out
+    }
+    readonly property var tangibleItems: tangibleRows.map(r => r.item)
+    readonly property var tangibleTablePositions: scope === "tangibles"
+        ? DepotMetrics.tangiblePositions(tangibleItems, [].concat(...Object.values(classified))) : []
+    /// The click filter of the composition card: by position it filters the table, by class or instrument
+    /// the class cards below (`classFilter`).
+    readonly property var holdingsSlices: DepotMetrics.compositionGroups(heldAssets, compositionMode)
+    readonly property var holdingsFilter: {
+        if (!classMode) return compositionFilter
+        const hit = activeFilter === "all" ? null : holdingsSlices.find(sl => sl.id === activeFilter)
+        return hit ? hit.memberKeys : null
+    }
+    function requestHoldingsFilter(keys) {
+        if (!classMode) { compositionFilter = keys; return }
+        const hit = keys ? holdingsSlices.find(sl => DepotMetrics.sameKeys(sl.memberKeys, keys)) : null
+        classFilter = hit ? hit.id : "all"
+    }
+    /// A click opens the account with the item selected.
+    function showTangible(item) {
+        AppModel.sidebarSelection = "account:" + item.account_id
+        // `selectAssetItem` toggles: an item that is still selected stays selected
+        if (AppModel.selectedAssetItemID !== item.id) AppModel.selectAssetItem(item.id)
+    }
 
     Flickable {
         id: flick
@@ -436,20 +502,29 @@ Rectangle {
             Text { text: qsTr("Vermögen"); font.pixelSize: Theme.title2; font.weight: Font.DemiBold; color: Theme.text }
             OwnerChips { visible: wv.ownerOptions.length > 0; Layout.fillWidth: true }
 
-            // side by side when there is room, else stacked
-            GridLayout {
+            // full width like the header of a depot: title and options left, the total right
+            SummaryCard { Layout.fillWidth: true }
+            CompositionCard { visible: !wv.sharedHoldingsScope; Layout.fillWidth: true }
+            AssetCompositionCard {
+                visible: wv.sharedHoldingsScope
                 Layout.fillWidth: true
-                columns: content.width >= 340 + 16 + 420 ? 2 : 1
-                columnSpacing: 16; rowSpacing: 16
-                SummaryCard {
-                    Layout.fillWidth: parent.columns === 1
-                    Layout.preferredWidth: parent.columns === 1 ? -1 : 340
-                    Layout.alignment: Qt.AlignTop
-                }
-                CompositionCard { Layout.fillWidth: true; Layout.alignment: Qt.AlignTop }
+                assets: wv.heldAssets
+                currency: "EUR"
+                modes: wv.scope === "securities" ? ["position", "assetClass", "instrument"] : ["position", "assetClass"]
+                mode: wv.compositionMode
+                filter: wv.holdingsFilter
+                expandedKey: wv.scope === "securities" ? "wealthSecuritiesCompositionExpanded" : "wealthTangiblesCompositionExpanded"
+                displayKey: wv.scope === "securities" ? "wealthSecuritiesCompositionDisplay" : "wealthTangiblesCompositionDisplay"
+                onModeRequested: m => prefs.grouping = m === "position" ? "account" : m
+                onFilterRequested: keys => wv.requestHoldingsFilter(keys)
             }
-            // income and costs come from the depots: next to them in the securities tab (every grouping)
-            IncomeCard { visible: wv.scope === "securities" && !wv.incomeEmpty; Layout.fillWidth: true }
+            // the four figures of the securities and Sachwerte tabs: before the classes, the depot list or the table
+            DepotMetricGrid {
+                visible: wv.sharedHoldingsScope && (wv.classMode || wv.scope === "tangibles" || wv.showSecurities)
+                Layout.fillWidth: true
+                wide: wv.wide
+                tiles: wv.figureTiles
+            }
 
             // MARK: grouped by class or instrument
             RowLayout {
@@ -470,10 +545,58 @@ Rectangle {
             ListCard { shown: wv.showSecurities; Layout.fillWidth: true
                        title: qsTr("Wertpapiere"); total: wv.summary.securitiesCents; accounts: wv.summary.securities; tint: Theme.invest }
             IncomeCard { visible: wv.showSecurities && wv.scope === "all" && !wv.incomeEmpty; Layout.fillWidth: true }
-            PositionsCard { visible: wv.showSecurities && wv.shownPositions.length > 0; Layout.fillWidth: true }
+            PositionsCard { visible: wv.showSecurities && wv.scope === "all" && wv.shownPositions.length > 0; Layout.fillWidth: true }
+            // DepotPositionsTable of all shown depots (Vermögen › Wertpapiere)
+            ColumnLayout {
+                visible: wv.showSecurities && wv.scope === "securities" && wv.securitiesPositions.length > 0
+                Layout.fillWidth: true
+                spacing: 8
+                Text { text: qsTr("Positionen aller Depots"); font.pixelSize: Theme.subheadline + 2; font.weight: Font.DemiBold; color: Theme.text }
+                DepotPositionsTable {
+                    Layout.fillWidth: true
+                    positions: DepotMetrics.sortedPositions(DepotMetrics.filteredByKeys(wv.securitiesPositions, wv.compositionFilter), wv.positionsSort)
+                    totalCount: wv.securitiesPositions.length
+                    sort: wv.positionsSort
+                    wide: wv.wide
+                    currency: "EUR"
+                    depotLabel: p => wv.depotNames[DepotMetrics.compositionKey(p.holding)] || null
+                    onSortRequested: s => wv.positionsSort = s
+                    onCopyAll: AppModel.copyToClipboard(wv.securitiesPositions.map(p => DepotMetrics.clipboardLine(p.holding)).join("\n"))
+                }
+            }
             ListCard { shown: !wv.classMode && wv.scope === "all" && wv.section("tangibles"); Layout.fillWidth: true
                        title: qsTr("Sachwerte"); total: wv.summary.tangiblesCents; accounts: wv.summary.tangibles; tint: Theme.invest }
-            TangiblesCard { visible: !wv.classMode && wv.scope === "tangibles" && wv.shownTangibleRows.length > 0; Layout.fillWidth: true }
+            // held Sachwerte in the same table; a click opens the account with the item selected, a double click the editor
+            ColumnLayout {
+                visible: !wv.classMode && wv.scope === "tangibles" && wv.tangibleTablePositions.length > 0
+                Layout.fillWidth: true
+                spacing: 8
+                Text { text: qsTr("Positionen der Sachwerte"); font.pixelSize: Theme.subheadline + 2; font.weight: Font.DemiBold; color: Theme.text }
+                DepotPositionsTable {
+                    Layout.fillWidth: true
+                    positions: DepotMetrics.sortedPositions(DepotMetrics.filteredByKeys(wv.tangibleTablePositions, wv.compositionFilter), wv.positionsSort)
+                    totalCount: wv.tangibleTablePositions.length
+                    sort: wv.positionsSort
+                    wide: wv.wide
+                    currency: "EUR"
+                    notesCalculatedGain: false
+                    selectable: true
+                    onSortRequested: s => wv.positionsSort = s
+                    onCopyAll: AppModel.copyToClipboard(wv.tangibleTablePositions.map(p => DepotMetrics.clipboardLine(p.holding)).join("\n"))
+                    onSelected: p => { const it = wv.tangibleItems.find(i => i.id === p.asset.asset_item_id); if (it) wv.showTangible(it) }
+                    onOpened: p => { const it = wv.tangibleItems.find(i => i.id === p.asset.asset_item_id); if (it) AppModel.openAssetEditor(it.account_id, it.id) }
+                    rowActions: p => {
+                        const it = wv.tangibleItems.find(i => i.id === p.asset.asset_item_id)
+                        if (!it) return []
+                        const out = [{ title: qsTr("Sachwert bearbeiten …"), action: () => AppModel.openAssetEditor(it.account_id, it.id) }]
+                        // gold follows the price API; only manual items carry own values
+                        if (it.setup.price_source === "manual") out.push({ title: qsTr("Bewertungen bearbeiten …"), action: () => AppModel.openAssetAction("values", it.id) })
+                        out.push({ title: qsTr("Anzahl bearbeiten …"), action: () => AppModel.openAssetAction("quantities", it.id) })
+                        out.push({ title: qsTr("Sachwert verkaufen …"), action: () => AppModel.openAssetAction("sell", it.id) })
+                        return out
+                    }
+                }
+            }
 
             Text {
                 visible: wv.classMode && wv.scope === "all" && wv.debtAccounts.length > 0
@@ -556,21 +679,37 @@ Rectangle {
         readonly property bool propertyHidden: prefs.hideDirectProperty && properties > 0
         /// No loan is tied to a property: say so instead of showing a silent, too low figure.
         readonly property bool loanWarning: propertyHidden && wv.scope === "all" && prefs.includeLiabilities && debts > 0
-        implicitWidth: 340
         ColumnLayout {
             width: parent.width; spacing: 14
-            Text {
-                text: wv.scope === "all" ? (sc.propertyHidden ? qsTr("Nettovermögen ohne Immobilien") : qsTr("Nettovermögen"))
-                    : wv.scope === "cash" ? qsTr("Cash") : wv.scope === "securities" ? qsTr("Wertpapiere") : qsTr("Sachwerte")
-                font.pixelSize: Theme.caption; color: Theme.secondary
-            }
-            Text {
+            // title (and the period of the securities tab) on the left, the total right-aligned with its label under it
+            RowLayout {
                 Layout.fillWidth: true
-                text: Fmt.money(wv.netCents(sc.s))
-                font.pixelSize: 36; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
-                color: Theme.text
-                fontSizeMode: Text.HorizontalFit; minimumPixelSize: 22; elide: Text.ElideNone
-                Sensitive { amounts: true }
+                spacing: 16
+                ColumnLayout {
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 6
+                    Text { visible: wv.scope !== "all"; text: wv.scope === "cash" ? qsTr("Cash") : wv.scope === "securities" ? qsTr("Wertpapiere") : qsTr("Sachwerte")
+                           font.pixelSize: Theme.title3 + 2; font.weight: Font.DemiBold; color: Theme.text }
+                    PeriodMenuButton { visible: wv.scope === "securities"; forDepot: true }
+                }
+                Item { Layout.fillWidth: true }
+                ColumnLayout {
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 2
+                    Text {
+                        Layout.alignment: Qt.AlignRight
+                        text: Fmt.money(wv.netCents(sc.s))
+                        font.pixelSize: Theme.largeTitle + 4; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
+                        color: Theme.text
+                        Sensitive { amounts: true }
+                    }
+                    Text {
+                        Layout.alignment: Qt.AlignRight
+                        text: wv.scope === "all" ? (sc.propertyHidden ? qsTr("Nettovermögen ohne Immobilien") : qsTr("Nettovermögen"))
+                            : wv.scope === "cash" ? qsTr("Cash gesamt") : wv.scope === "securities" ? qsTr("Depotwert gesamt") : qsTr("Sachwert gesamt")
+                        font.pixelSize: Theme.caption; color: Theme.secondary
+                    }
+                }
             }
             Bar { visible: wv.scope === "all"; title: qsTr("Vermögenswerte"); cents: sc.assets; fraction: sc.assets / sc.maxCents; tint: Theme.accent }
             Bar { visible: wv.scope === "all"; title: qsTr("Verbindlichkeiten"); cents: -sc.debts; fraction: sc.debts / sc.maxCents; tint: Theme.negative
@@ -641,74 +780,32 @@ Rectangle {
         }
     }
 
-    // MARK: composition donut
-    component CompositionCard: Card {
+    // MARK: composition („Alles“ and „Cash“): the same card as the depot and Sachwerte, drawn from the
+    // tab's slices; a click on a slice is the tab's filter (`classFilter`)
+    component CompositionCard: SliceCompositionCard {
         id: cc
-        padding: 18
         readonly property var allParts: wv.composition.slices
         readonly property var parts: wv.classMode && prefs.hideUnclassifiedInChart ? allParts.filter(p => p.id !== "unclassified") : allParts
-        readonly property real total: parts.filter(p => p.cents > 0).reduce((t, p) => t + p.cents, 0)
-        readonly property var selected: parts.find(p => p.id === wv.classFilter) || null
-        /// ViewThatFits: donut and legend side by side, else stacked
-        readonly property bool vertical: width - 36 < 190 + 36 + legend.implicitWidth
-        ColumnLayout {
-            width: parent.width; spacing: 12
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 10
-                Text { text: wv.composition.title; font.pixelSize: Theme.caption; color: Theme.secondary; Layout.fillWidth: true; elide: Text.ElideRight }
-                IconButton {
-                    visible: cc.selected !== null
-                    symbol: "xmark.circle.fill"; symbolSize: 12; tint: Theme.accent
-                    text: qsTr("Alle anzeigen"); textColor: Theme.accent; font.pixelSize: Theme.caption
-                    onClicked: wv.classFilter = "all"
-                }
-                // always names the active grouping; one more grouping is one more entry
-                Segmented {
-                    visible: wv.scope !== "cash"
-                    options: wv.groupings.map(g => ({ id: g, title: wv.groupingTitle(g) }))
-                    current: wv.grouping
-                    onActivated: id => prefs.grouping = id
-                }
-            }
-            Text { visible: cc.parts.length === 0; text: qsTr("Keine Daten"); color: Theme.secondary; font.pixelSize: Theme.body
-                   Layout.fillWidth: true; Layout.minimumHeight: 120; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-            GridLayout {
-                visible: cc.parts.length > 0
-                Layout.alignment: Qt.AlignHCenter
-                columns: cc.vertical ? 1 : 2
-                columnSpacing: 36; rowSpacing: 16
-                Donut { parts: cc.parts; total: cc.total; selected: cc.selected; Layout.alignment: Qt.AlignHCenter }
-                ColumnLayout {
-                    id: legend
-                    Layout.alignment: Qt.AlignVCenter | (cc.vertical ? Qt.AlignHCenter : Qt.AlignLeft)
-                    spacing: 12
-                    Repeater {
-                        model: cc.parts
-                        RowLayout {
-                            id: entry
-                            required property var modelData
-                            readonly property bool isSelected: cc.selected !== null && cc.selected.id === modelData.id
-                            spacing: 8
-                            Item {
-                                implicitWidth: 14; implicitHeight: 14
-                                Rectangle { visible: !entry.isSelected; anchors.centerIn: parent; width: 9; height: 9; radius: 4.5; color: entry.modelData.color }
-                                SFIcon { visible: entry.isSelected; anchors.centerIn: parent; symbol: "checkmark.circle.fill"; size: 13; color: entry.modelData.color }
-                            }
-                            ColumnLayout { spacing: 0
-                                Text { text: entry.modelData.label; font.pixelSize: Theme.callout + 1; font.weight: entry.isSelected ? Font.DemiBold : Font.Normal
-                                       color: Theme.text; Sensitive {} }
-                                Text { text: Fmt.money(entry.modelData.cents) + " (" + wv.percent(entry.modelData.cents / Math.max(cc.total, 1)) + ")"
-                                       font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.secondary; Sensitive { amounts: true } } }
-                            TapHandler { cursorShape: Qt.PointingHandCursor; onTapped: wv.toggleClassFilter(entry.modelData.id) }
-                            Accessible.role: Accessible.Button
-                            Accessible.name: entry.modelData.label
-                            Accessible.checked: entry.isSelected
-                            Accessible.description: qsTr("Positionen dieser Gruppe anzeigen oder Filter aufheben")
-                        }
-                    }
-                }
-            }
+        slices: parts.filter(p => p.cents > 0).map(p => ({ id: p.id, label: p.label, cents: p.cents, count: 1, color: p.color,
+                                                          unclassified: wv.classMode && p.id === "unclassified",
+                                                          personal: !wv.classMode && wv.scope === "cash", memberKeys: [p.id] }))
+        currency: "EUR"
+        foldsRing: !wv.classMode
+        filter: parts.some(p => p.id === wv.classFilter) ? [wv.classFilter] : null
+        onFilterRequested: keys => wv.classFilter = keys ? keys[0] : "all"
+        expandedKey: "wealth." + wv.scope + "CompositionExpanded"
+        displayKey: "wealth." + wv.scope + "CompositionDisplay"
+        note: wv.classMode || wv.scope === "all" ? "" : wv.composition.title
+        emptyText: qsTr("Keine Daten")
+        // always names the active grouping; one more grouping is one more entry
+        grouping: Segmented {
+            visible: wv.scope !== "cash"
+            fontSize: Theme.caption
+            options: wv.groupings.map(g => ({ id: g, title: wv.groupingTitle(g) }))
+            current: wv.grouping
+            onActivated: id => prefs.grouping = id
+        }
+        footer: [
             CheckBox {
                 visible: wv.classMode && cc.allParts.some(p => p.id === "unclassified")
                 text: qsTr("Nicht klassifizierte im Diagramm ausblenden")
@@ -716,89 +813,14 @@ Rectangle {
                 checked: prefs.hideUnclassifiedInChart
                 onToggled: prefs.hideUnclassifiedInChart = checked
                 leftPadding: 0
-            }
+            },
             Text {
                 visible: wv.classMode && prefs.hideUnclassifiedInChart && cc.allParts.some(p => p.id === "unclassified")
                 Layout.fillWidth: true; wrapMode: Text.Wrap
                 text: qsTr("Diagramm und Anteile zeigen nur zugeordnete Werte. Summen und Positionen bleiben vollständig.")
                 font.pixelSize: Theme.caption2; color: Theme.secondary
             }
-            Text {
-                visible: wv.scope === "securities" && wv.classMode
-                Layout.fillWidth: true; wrapMode: Text.Wrap
-                text: wv.grouping === "instrument"
-                      ? qsTr("Instrumente innerhalb der Depotkonten; Cash-Konten sind nicht enthalten.")
-                      : qsTr("Anlageklassen innerhalb der Depotkonten; Cash-Konten sind nicht enthalten.")
-                font.pixelSize: Theme.caption2; color: Theme.secondary
-            }
-        }
-    }
-    component Donut: Item {
-        id: donut
-        property var parts: []
-        property real total: 0
-        property var selected: null
-        /// Only positive values are drawn (negative class values stay in the sums).
-        readonly property var drawn: parts.filter(p => p.cents > 0)
-        implicitWidth: 190; implicitHeight: 190
-        onPartsChanged: canvas.requestPaint()
-        onSelectedChanged: canvas.requestPaint()
-        Connections { target: Theme; function onDarkChanged() { canvas.requestPaint() } }
-        Canvas {
-            id: canvas
-            anchors.fill: parent
-            onPaint: {
-                const ctx = getContext("2d")
-                ctx.reset()
-                const sum = donut.drawn.reduce((t, p) => t + p.cents, 0)
-                if (sum <= 0) return
-                const cx = width / 2, cy = height / 2, r = Math.min(width, height) / 2, inner = r * 0.62
-                // angularInset 1.5 pt on each side of a sector
-                const inset = donut.drawn.length > 1 ? 1.5 : 0
-                let a = -Math.PI / 2
-                for (const p of donut.drawn) {
-                    const span = p.cents / sum * 2 * Math.PI
-                    const o = inset / r, i = inset / inner
-                    if (span > 2 * o) {
-                        ctx.beginPath()
-                        ctx.arc(cx, cy, r, a + o, a + span - o, false)
-                        ctx.arc(cx, cy, inner, a + span - Math.min(i, span / 2), a + Math.min(i, span / 2), true)
-                        ctx.closePath()
-                        ctx.globalAlpha = donut.selected === null || donut.selected.id === p.id ? 1 : 0.25
-                        ctx.fillStyle = p.color
-                        ctx.fill()
-                    }
-                    a += span
-                }
-                ctx.globalAlpha = 1
-            }
-        }
-        /// A click on a sector filters by it (again: shows all); the hole clears the filter.
-        TapHandler {
-            onTapped: ev => {
-                const dx = ev.position.x - donut.width / 2, dy = ev.position.y - donut.height / 2
-                const distance = Math.hypot(dx, dy), radius = Math.min(donut.width, donut.height) / 2
-                if (distance < radius * 0.62) { wv.classFilter = "all"; return }
-                if (distance > radius) return
-                let angle = Math.atan2(dx, -dy)
-                if (angle < 0) angle += 2 * Math.PI
-                const sum = donut.drawn.reduce((t, p) => t + p.cents, 0)
-                let end = 0
-                for (const p of donut.drawn) {
-                    end += p.cents / sum * 2 * Math.PI
-                    if (angle < end) { wv.toggleClassFilter(p.id); return }
-                }
-            }
-        }
-        ColumnLayout {
-            anchors.centerIn: parent
-            width: 100; spacing: 0
-            Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: Fmt.money(donut.selected ? donut.selected.cents : donut.total)
-                   font.pixelSize: Theme.callout + 1; font.weight: Font.DemiBold; font.features: { "tnum": 1 }; color: Theme.text
-                   fontSizeMode: Text.HorizontalFit; minimumPixelSize: 8; Sensitive { amounts: true } }
-            Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: donut.selected ? qsTr("Auswahl") : qsTr("Summe")
-                   font.pixelSize: Theme.caption2; color: Theme.secondary }
-        }
+        ]
     }
 
     // MARK: class cards
@@ -917,6 +939,7 @@ Rectangle {
                                    elide: Text.ElideRight; Layout.fillWidth: true; Layout.minimumWidth: 0; Sensitive {} }
                         } }
                     Text { text: Fmt.money(modelData.balance_cents); font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.text; Sensitive { amounts: true } }
+                    SFIcon { symbol: "chevron.right"; size: 10; color: Theme.tertiary }
                     TapHandler { cursorShape: Qt.PointingHandCursor; onTapped: AppModel.sidebarSelection = "account:" + modelData.id }
                 }
             }
@@ -976,32 +999,6 @@ Rectangle {
         spacing: 6
         Text { text: parent.title; font.pixelSize: Theme.caption; color: Theme.secondary }
         Text { text: Fmt.signed(parent.cents); font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: wv.tone(parent.cents); Sensitive { amounts: true } }
-    }
-
-    component TangiblesCard: Card {
-        id: tc
-        padding: 18
-        readonly property real total: wv.summary.tangiblesCents
-        ColumnLayout {
-            width: parent.width; spacing: 8
-            CardTitle { title: qsTr("Positionen der Sachwerte") }
-            Divider {}
-            Repeater {
-                model: wv.shownTangibleRows
-                RowLayout {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    ColumnLayout { spacing: 1; Layout.fillWidth: true
-                        Text { text: modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
-                        Text { visible: modelData.subtitle !== ""; text: modelData.subtitle; font.pixelSize: Theme.caption2; color: Theme.secondary
-                               elide: Text.ElideRight; Layout.fillWidth: true; Sensitive { amounts: true } } }
-                    ColumnLayout { spacing: 1
-                        Text { Layout.alignment: Qt.AlignRight; text: Fmt.money(modelData.valueCents); font.pixelSize: Theme.body; font.features: { "tnum": 1 }; color: Theme.text; Sensitive { amounts: true } }
-                        Text { Layout.alignment: Qt.AlignRight; visible: tc.total > 0; text: wv.percent(modelData.valueCents / Math.max(tc.total, 1))
-                               font.pixelSize: Theme.caption2; font.features: { "tnum": 1 }; color: Theme.secondary; Sensitive { amounts: true } } }
-                }
-            }
-        }
     }
 
     /// Distributions, fees and taxes of the depots over the last twelve months.

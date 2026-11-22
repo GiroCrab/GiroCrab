@@ -11,13 +11,10 @@ Rectangle {
     readonly property bool isOverview: AppModel.sidebarSelection === "all"
     readonly property bool isNewBookings: AppModel.sidebarSelection === "newBookings"
     /// Cashflow and budget cards: overview always, a single account only when toggled on; never in „Neue Umsätze“
-    /// and never for a depot (BookingListView.swift, #611). Each card follows its own switch
+    /// (BookingListView.swift, #611; depots have their own view since #564). Each card follows its own switch
     /// (ViewLayout.cards, #544): the budgets stay when „Auswertungen anzeigen“ is off.
     readonly property bool showsAnalytics: (AppModel.showStatistics || AppModel.showBudgets) && !isNewBookings && AppModel.allAccounts.length > 0
-                                           && (isOverview || showAnalytics) && AppModel.scope !== "Investments" && !isDepot
-    readonly property bool isDepot: AppModel.selectedAccount !== null
-        && (AppModel.selectedAccount.kind === "Brokerage" || AppModel.selectedAccount.name.toLowerCase().indexOf("depot") >= 0)
-    readonly property bool isTangible: AppModel.selectedAccount !== null && AppModel.isTangible(AppModel.selectedAccount.id)
+                                           && (isOverview || showAnalytics) && AppModel.scope !== "Investments"
     /// @AppStorage("showAccountAnalytics")
     readonly property bool showAnalytics: AppModel.uiDefaults.showAccountAnalytics
     /// No accounts in the personal vault: the welcome card replaces header and placeholder.
@@ -71,7 +68,7 @@ Rectangle {
             DemoBanner { visible: AppModel.demoActive && !AppModel.screenshotMode; Layout.fillWidth: true }
             StreamHeaderCard { visible: !stream.emptyVault; Layout.fillWidth: true }
             RowLayout {
-                visible: !stream.emptyVault && AppModel.showStatistics && !stream.isOverview && !stream.isDepot && AppModel.scope !== "Investments" && AppModel.allAccounts.length > 0
+                visible: !stream.emptyVault && AppModel.showStatistics && !stream.isOverview && AppModel.scope !== "Investments" && AppModel.allAccounts.length > 0
                 Rectangle {
                     implicitWidth: an.implicitWidth + 20; implicitHeight: an.implicitHeight + 8; radius: height / 2
                     color: stream.showAnalytics ? Theme.withAlpha(Theme.accent, 0.18) : Theme.withAlpha(Theme.secondary, 0.12)
@@ -152,13 +149,6 @@ Rectangle {
                     visible: stream.showsAnalytics && AppModel.showBudgets
                     Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                 }
-                // DepotPositionsView (Sachwerte, #87): held and sold items instead of bookings
-                Loader {
-                    active: stream.isTangible
-                    visible: active
-                    Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                    sourceComponent: Component { AssetPositionsView { account: AppModel.selectedAccount } }
-                }
                 // ProgressView while a slow selection load runs (AppModel.isLoadingSelection)
                 BusyIndicator {
                     visible: AppModel.isLoadingSelection
@@ -166,20 +156,8 @@ Rectangle {
                     Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 40
                     implicitWidth: 24; implicitHeight: 24; padding: 0
                 }
-                // ContentUnavailableView "Keine Buchungen im Depot", in the middle of the visible area
                 ColumnLayout {
-                    visible: AppModel.dayGroups.length === 0 && stream.isDepot && !stream.isTangible && AppModel.searchText === "" && !AppModel.isLoadingSelection
-                    Layout.alignment: Qt.AlignHCenter // the column is only as wide as its texts
-                    Layout.topMargin: Math.max(40, (list.height - implicitHeight) / 2 - 20)
-                    spacing: 6
-                    SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: "chart.line.uptrend.xyaxis"; size: 32 }
-                    Text { Layout.alignment: Qt.AlignHCenter; text: qsTr("Keine Buchungen im Depot"); font.pixelSize: Theme.title2; font.weight: Font.Bold; color: Theme.text }
-                    Text { Layout.alignment: Qt.AlignHCenter; Layout.maximumWidth: Math.min(460, list.width - 40); horizontalAlignment: Text.AlignHCenter
-                           wrapMode: Text.WordWrap; color: Theme.secondary; font.pixelSize: Theme.body
-                           text: qsTr("Ein Depot zeigt seine Positionen oben. Käufe, Verkäufe und Sparpläne stehen als Buchungen im Verrechnungskonto.") }
-                }
-                ColumnLayout {
-                    visible: AppModel.dayGroups.length === 0 && !(stream.isDepot && AppModel.searchText === "") && !stream.emptyVault && !stream.isNewBookings && !AppModel.isLoadingSelection
+                    visible: AppModel.dayGroups.length === 0 && !stream.emptyVault && !stream.isNewBookings && !AppModel.isLoadingSelection
                     Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 40
                     spacing: 6
                     SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: AppModel.searchText ? "magnifyingglass" : "tray"; size: 32 }
