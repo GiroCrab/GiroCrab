@@ -90,6 +90,77 @@ fn empty_name_becomes_cash_and_loans_are_refused() {
 }
 
 #[test]
+fn manual_amount_and_date_edits_merge_as_one_value_without_resurrecting_refunds() {
+    let a = vault("offline-sync-a");
+    let b = vault("offline-sync-b");
+    let acc = a
+        .create_offline_account("Cash".into(), AccountKind::Cash, "EUR".into(), 1000)
+        .unwrap();
+    let original = a
+        .save_manual_booking(acc, None, setup("2026-01-01", -500, "Shop"))
+        .unwrap();
+    let refund = a
+        .save_manual_booking(acc, None, setup("2026-01-02", 200, "Refund"))
+        .unwrap();
+    a.link_refund(refund, original, 0).unwrap();
+    let merge = |target: &Vault, source: &Vault| {
+        target
+            .merge_other_vault(source.file_path(), vec![7; 32])
+            .unwrap();
+    };
+    merge(&b, &a);
+    let b_acc = b.list_accounts().unwrap()[0].id;
+    let b_original: i64 = b
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE counterparty = 'Shop'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    a.save_manual_booking(acc, Some(original), setup("2026-01-04", 300, "Shop"))
+        .unwrap();
+    merge(&b, &a);
+    let value = |v: &Vault, id| -> (String, String, i64) {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT booking_date, value_date, amount_cents FROM transactions WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        value(&b, b_original),
+        ("2026-01-04".into(), "2026-01-04".into(), 300)
+    );
+    assert_eq!(balance(&b, b_acc), 1500);
+    assert!(b.refund_links(b_original).unwrap().refunds.is_empty());
+
+    a.save_manual_booking(acc, Some(original), setup("2026-01-06", 400, "Shop"))
+        .unwrap();
+    b.save_manual_booking(b_acc, Some(b_original), setup("2026-01-05", 900, "Shop"))
+        .unwrap();
+    for (v, id) in [(&a, original), (&b, b_original)] {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET manual_value_ms = 99 WHERE id=?1",
+                [id],
+            )
+            .unwrap();
+    }
+    merge(&a, &b);
+    merge(&b, &a);
+    let winner = ("2026-01-06".into(), "2026-01-06".into(), 400);
+    assert_eq!(value(&a, original), winner);
+    assert_eq!(value(&b, b_original), winner);
+    assert_eq!(balance(&b, b_acc), 1600);
+}
+
+#[test]
 fn bookings_move_the_balance_and_can_be_edited_and_deleted() {
     let v = vault("offline-edit");
     let acc = v

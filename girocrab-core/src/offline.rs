@@ -327,15 +327,18 @@ impl Vault {
                     return Err(not_found(trf("Buchung {0}", &[&id])));
                 }
                 let ms = now_ms();
-                let old: (Option<i64>, String, String, i64) = tx.query_row(
-                    "SELECT category_id, note, counterparty || char(31) || purpose, amount_cents FROM transactions WHERE id = ?1",
+                let old: (Option<i64>, String, String, i64, String) = tx.query_row(
+                    "SELECT category_id, note, counterparty || char(31) || purpose, amount_cents, booking_date FROM transactions WHERE id = ?1",
                     [id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )?;
-                tx.execute(
-                    "UPDATE transactions SET booking_date = ?1, value_date = ?1, amount_cents = ?2 WHERE id = ?3",
-                    params![date, setup.amount_cents, id],
-                )?;
+                if old.3 != setup.amount_cents || old.4 != date {
+                    tx.execute(
+                        "UPDATE transactions SET booking_date = ?1, value_date = ?1, amount_cents = ?2,
+                             manual_value_ms = MAX(?4, manual_value_ms + 1) WHERE id = ?3",
+                        params![date, setup.amount_cents, id, ms],
+                    )?;
+                }
                 // an outgoing booking that is an incoming one now (or the other way round) is
                 // no original or refund of its refund links any more (#714)
                 if old.3.signum() != setup.amount_cents.signum() {

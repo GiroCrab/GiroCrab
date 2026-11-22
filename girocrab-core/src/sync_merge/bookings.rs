@@ -13,6 +13,8 @@ type SplitLine = (Option<String>, i64, String);
 /// categories. `cat` is the manual category; a rule result counts as none.
 #[derive(Clone, PartialEq)]
 struct BookingFields {
+    manual_value: Option<(String, String, i64)>,
+    manual_value_ms: i64,
     cat: Option<String>,
     category_ms: i64,
     note: String,
@@ -46,6 +48,15 @@ fn take_ranked<T: Clone, K: Ord>(
 impl BookingFields {
     /// Joins `o` into `self`; the same result in either order.
     fn merge(&mut self, o: &BookingFields) {
+        // Date, value date and amount are one edit. Equal stamps compare the full value,
+        // so two offline devices agree without deciding by their local ids or merge order.
+        take_ranked(
+            &mut self.manual_value,
+            &mut self.manual_value_ms,
+            &o.manual_value,
+            o.manual_value_ms,
+            Clone::clone,
+        );
         // manual beats none; two manual categories: the lower uuid
         take_ranked(
             &mut self.cat,
@@ -138,7 +149,7 @@ const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
         imported_unix, purpose_code, gvc, salary_flag,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms
+        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms, manual_value_ms
      FROM other.transactions ORDER BY account_id, external_id";
 
 /// The id both sides keep for one booking known under two ids: the bank's
@@ -234,7 +245,7 @@ pub(crate) fn merge_bookings(
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms
+                    tags_ms, value_date, manual_value_ms
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
@@ -254,9 +265,16 @@ pub(crate) fn merge_bookings(
             fp_rows.push(((acc, fp, is_hold_id(&ext)), (ext, id)));
             let source: String = r.get(5)?;
             let manual = if source == "manual" { r.get(4)? } else { None };
+            let manual_value_ms = r.get(21)?;
             local.insert(
                 id,
                 BookingFields {
+                    manual_value: if manual_value_ms > 0 {
+                        Some((r.get(16)?, r.get(20)?, r.get(17)?))
+                    } else {
+                        None
+                    },
+                    manual_value_ms,
                     cat: local_uuid(manual),
                     category_ms: r.get(6)?,
                     note: r.get(7)?,
@@ -282,6 +300,7 @@ pub(crate) fn merge_bookings(
             let id: i64 = r.get(0)?;
             let source: String = r.get(15)?;
             let cat: Option<i64> = r.get(14)?;
+            let manual_value_ms = r.get(32)?;
             Ok(OtherBooking {
                 id,
                 account_id: r.get(1)?,
@@ -300,6 +319,12 @@ pub(crate) fn merge_bookings(
                 category_id: cat,
                 rule_id: r.get(16)?,
                 fields: BookingFields {
+                    manual_value: if manual_value_ms > 0 {
+                        Some((r.get(4)?, r.get(5)?, r.get(6)?))
+                    } else {
+                        None
+                    },
+                    manual_value_ms,
                     cat: if source == "manual" {
                         other_uuid(cat)
                     } else {
@@ -378,8 +403,9 @@ pub(crate) fn merge_bookings(
         );
         o.fields.splits = other_splits.remove(&o.id).unwrap_or_default();
         o.fields.tags = other_tags.remove(&o.id).unwrap_or_default();
-        let existing = match by_key.get(&(acc, o.external_id.clone())) {
-            Some(&id) => Some((id, false)),
+        let exact = by_key.get(&(acc, o.external_id.clone())).copied();
+        let existing = match exact {
+            Some(id) => Some((id, false)),
             None => match by_fp.get_mut(&(acc, o.match_fp.clone(), is_hold_id(&o.external_id))) {
                 Some(bucket) if !bucket.is_empty() => {
                     let (ext, id) = bucket.remove(0);
@@ -404,6 +430,11 @@ pub(crate) fn merge_bookings(
                 let old = local[&id].clone();
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
+                if exact.is_none() {
+                    // A fingerprint twin is not the same manually edited booking.
+                    o.fields.manual_value = None;
+                    o.fields.manual_value_ms = 0;
+                }
                 m.merge(&o.fields);
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
                 if m == old {
@@ -453,14 +484,15 @@ pub(crate) fn merge_bookings(
                 ]);
                 p.extend(o.sepa_refs.iter().cloned());
                 p.push(f.tags_ms.into());
+                p.push(f.manual_value_ms.into());
                 conn.execute(
                     "INSERT INTO transactions(account_id, external_id, import_fp,
                         booking_date, value_date, amount_cents, currency, counterparty_iban, booking_text,
                         imported_unix, purpose_code, gvc, salary_flag,
                         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
                         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31)",
+                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms, manual_value_ms)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32)",
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
@@ -553,6 +585,15 @@ fn write_booking(
     if m.deleted_ms.is_some() && old.deleted_ms.is_none() {
         // what a deletion does besides the stamp (see soft_delete_booking)
         conn.execute("DELETE FROM loan_links WHERE transaction_id = ?1", [id])?;
+    }
+    if (m.manual_value_ms, &m.manual_value) != (old.manual_value_ms, &old.manual_value)
+        && let Some((date, value_date, amount)) = &m.manual_value
+    {
+        conn.execute(
+            "UPDATE transactions SET booking_date = ?2, value_date = ?3, amount_cents = ?4,
+                 manual_value_ms = ?5 WHERE id = ?1",
+            params![id, date, value_date, amount, m.manual_value_ms],
+        )?;
     }
     conn.execute(
         "UPDATE transactions SET category_ms = ?2, note = ?3, note_ms = ?4, checked = ?5,

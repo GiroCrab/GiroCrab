@@ -56,6 +56,7 @@
 //!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
 //! - 37: explicit refund links (#714): table `refund_links`, keyed by the pair (refund, original) with the
 //!   split parts it names (`original_part`, `refund_part`; 0 = the whole booking).
+//! - 38: edit stamp for syncing a manual booking's date and amount together (`manual_value_ms`).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -109,7 +110,17 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Sql(crate::refunds::SCHEMA),                         // 37: refund links (#714)
+    Step::Hook(manual_booking_value_stamp),                    // 38: manual booking date and amount
 ];
+
+fn manual_booking_value_stamp(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "transactions", "manual_value_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE transactions ADD COLUMN manual_value_ms INTEGER NOT NULL DEFAULT 0",
+        )?;
+    }
+    Ok(())
+}
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
 /// this device's account id and never merged) to `accounts.note` with its edit stamp `note_ms`,
@@ -1085,7 +1096,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 37);
+        assert_eq!(SCHEMA_VERSION, 38);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
