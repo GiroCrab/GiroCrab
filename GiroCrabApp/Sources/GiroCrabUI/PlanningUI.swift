@@ -25,8 +25,9 @@ extension AppModel {
     func saveSplits(_ parts: [TransactionSplitInput], for booking: Booking) -> String? {
         guard let vault else { return nil }
         do { try vault.setTransactionSplits(transactionId: booking.id, splits: parts) } catch { return "\(error)" }
-        // another split moves the refund links of its parts to the whole booking (#714)
-        if booking.refundLink != .none { refundLinksRevision += 1 }
+        // another split moves the refund links of its parts to the whole booking (#714); always,
+        // since `booking` is from when the sheet opened and a link may have come since
+        refundLinksRevision += 1
         reloadBookings(); reloadCategories(); reloadAccounts()
         return nil
     }
