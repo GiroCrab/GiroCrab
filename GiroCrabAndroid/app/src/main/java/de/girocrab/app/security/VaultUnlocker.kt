@@ -213,7 +213,8 @@ class VaultUnlocker(
             // zero-byte leftover counts as missing for the same reason (see `unlock`).
             val file = File(path)
             if (!file.isFile || file.length() == 0L) {
-                onResult(UnlockResult.NoVaultOnDevice)
+                // Same answer as in `unlock`: the key is fine, the vault file is not there.
+                onResult(UnlockResult.VaultMissing)
                 return
             }
             val vault = opener.open(path, key)

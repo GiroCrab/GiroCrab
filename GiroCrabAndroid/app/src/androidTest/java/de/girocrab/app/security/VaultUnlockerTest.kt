@@ -239,16 +239,20 @@ class VaultUnlockerTest {
         assertEquals("the vault file must stay as it was", before, vaultBytes())
     }
 
-    /** A stored key without its vault is not a vault: nothing may be created behind the prompt. */
+    /**
+     * A stored key without its vault is not a vault: nothing may be created behind the prompt.
+     * The answer is `VaultMissing`, not `NoVaultOnDevice` — the key exists, only the file is gone,
+     * and that is exactly the situation the import path from 2.4 is for.
+     */
     @Test
-    fun storedKeyWithoutVaultFileIsNoVaultOnDevice() {
+    fun storedKeyWithoutVaultFileReportsAMissingVault() {
         storeWrappedKey(createVault = false)
         val unlocker = unlocker { cipher, _, _, onResult -> onResult(PromptResult.Succeeded(cipher)) }
 
         var result: UnlockResult? = null
         unlocker.unlock { result = it }
 
-        assertEquals(UnlockResult.NoVaultOnDevice, result)
+        assertEquals(UnlockResult.VaultMissing, result)
         assertFalse("no vault may be created", vaultFile.exists())
     }
 
