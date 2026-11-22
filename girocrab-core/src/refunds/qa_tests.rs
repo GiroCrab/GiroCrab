@@ -439,6 +439,27 @@ fn totals(v: &Vault, cat: i64) -> (i64, u32) {
     (c.own_total_cents, c.transaction_count)
 }
 
+/// A refund is one booking of a category, however many bookings of it it pays back; in the
+/// category of a booking it pays back it is listed and counted with it.
+#[test]
+fn linked_refund_counts_once_per_category() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let (o1, o2) = (booking(&v, a, -3000), booking(&v, a, -2000));
+    let r = booking(&v, a, 6000);
+    for id in [o1, o2, r] {
+        v.set_transaction_category(id, Some(ca)).unwrap();
+    }
+    assert_eq!(totals(&v, ca), (1000, 3));
+    v.link_refund(r, o1, 0).unwrap();
+    v.link_refund(r, o2, 0).unwrap();
+    assert_eq!(totals(&v, ca), (1000, 3));
+    v.set_transaction_category(r, Some(cb)).unwrap();
+    assert_eq!(totals(&v, ca), (0, 3));
+    assert_eq!(page(&v, Some(ca)).transactions.len(), 3);
+    assert_eq!(totals(&v, cb), (1000, 1));
+}
+
 /// What a refund pays back counts in the category of the booking it pays back, the rest in
 /// the refund's own category: in the filtered list and in the category totals.
 #[test]
