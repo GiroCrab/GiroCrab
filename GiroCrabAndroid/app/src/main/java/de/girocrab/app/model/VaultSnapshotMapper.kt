@@ -13,6 +13,7 @@ import uniffi.girocrab_core.BookingScope
 import uniffi.girocrab_core.Category as CoreCategory
 import uniffi.girocrab_core.CategorySource as CoreCategorySource
 import uniffi.girocrab_core.ConnectorKind as CoreConnector
+import uniffi.girocrab_core.FlowKind as CoreFlowKind
 import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Tag as CoreTag
 
@@ -63,6 +64,7 @@ object VaultSnapshotMapper {
         assets: List<CoreAssetItem>,
     ): VaultSnapshot = VaultSnapshot(
         groups = groups.map { group(it, accounts) },
+        bookingsTotal = page.totalCount.toInt(),
         accounts = accounts.map(::account),
         bookings = page.transactions.map(::booking),
         categories = categories.map(::category),
@@ -70,9 +72,6 @@ object VaultSnapshotMapper {
         holdings = holdingsByAccount.flatMap { (accountId, rows) -> rows.map { holding(accountId, it) } },
         assets = assets.map(::asset),
     )
-
-    /** True when the core held back bookings: the list is a page, not the vault. */
-    fun isTruncated(page: CorePage): Boolean = page.totalCount.toLong() > page.transactions.size
 
     private fun group(group: CoreGroup, accounts: List<CoreAccount>): AccountGroup {
         // The core's groups carry no connector; the kind is taken from their accounts so that the
@@ -101,6 +100,7 @@ object VaultSnapshotMapper {
         balanceCents = row.balanceCents,
         currency = row.currency,
         holder = row.owner,
+        includeInTotal = row.inTotal,
     )
 
     private fun booking(row: CoreBooking): Booking = Booking(
@@ -116,6 +116,11 @@ object VaultSnapshotMapper {
         currency = row.currency,
         checked = row.checked,
         counterpartyIban = row.counterpartyIban,
+        // Existing data has to arrive too, or a search by note finds nothing on this device.
+        note = row.note,
+        tagIds = row.tags.map { it.id.toString() }.toSet(),
+        documentCount = row.documentCount.toInt(),
+        isTransfer = row.flow == CoreFlowKind.TRANSFER,
     )
 
     private fun category(row: CoreCategory): Category = Category(
@@ -161,6 +166,7 @@ object VaultSnapshotMapper {
 
     private fun asset(row: CoreAssetItem): TangibleAsset = TangibleAsset(
         id = row.id.toString(),
+        accountId = row.accountId.toString(),
         name = row.setup.name,
         valueCents = row.holding.valueCents,
         acquiredDate = date(row.setup.purchaseDate),

@@ -109,7 +109,13 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
 
     fun showOwnVault() {
         val own = ownSnapshot
-        if (own != null) adoptOwn(own) else bootstrap()
+        if (own != null) {
+            adoptOwn(own)
+        } else {
+            // Nothing read yet: back to the unlock screen. Falling into the demo here looked like
+            // the own vault had been opened, only to reload demo data (#1429).
+            _state.update { it.copy(vaultState = VaultState.Locked, loading = false, error = null) }
+        }
     }
 
     /**
@@ -275,8 +281,13 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
 
     fun netWorthCents(): Long {
         val d = _state.value.data
-        return d.accounts.filterNot { it.hidden }.sumOf { it.balanceCents } +
-            d.assets.sumOf { it.valueCents } - d.loans.sumOf { it.remainingCents }
+        val counted = d.accounts.filter { !it.hidden && it.includeInTotal }
+        val countedIds = counted.map { it.id }.toSet()
+        // A tangible asset whose account is already in the sum would be counted twice: the account
+        // balance contains it. Only assets without a counted account add to the total (#1429).
+        val looseAssets = d.assets.filterNot { it.accountId in countedIds }
+        return counted.sumOf { it.balanceCents } + looseAssets.sumOf { it.valueCents } -
+            d.loans.sumOf { it.remainingCents }
     }
 
     companion object {

@@ -205,6 +205,40 @@ class VaultSnapshotMapperTest {
         assertEquals("1 oz", asset.note)
     }
 
+    /** A truncated page has to say how much the core really holds — not how much arrived. */
+    @Test
+    fun truncatedPageKeepsTheCoreTotal() {
+        val snapshot = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            page = emptyPage(total = 5_000u),
+            categories = emptyList(),
+            tags = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+        )
+
+        assertEquals("the page may hold fewer rows, but the total must survive", 5_000, snapshot.bookingsTotal)
+        assertTrue("empty page is smaller than the total", snapshot.bookings.isEmpty())
+    }
+
+    /** A derived rate lands on x.9999… easily; truncating would lose a cent per position. */
+    @Test
+    fun holdingValueIsRoundedNotTruncated() {
+        val holding = Holding(
+            id = "1/DE000",
+            accountId = "1",
+            name = "Test",
+            isin = "DE000",
+            quantity = 3.0,
+            priceCents = 333,
+            costBasisCents = 900,
+            fxRateToEur = 1.001,
+        )
+
+        assertEquals("3 × 333 × 1,001 = 999,999 — rounded to 1000", 1_000L, holding.valueCents)
+    }
+
     // --- helpers ---------------------------------------------------------------------------
 
     private fun newKey() = ByteArray(NativeVaultOpener.MASTER_KEY_BYTES).also { SecureRandom().nextBytes(it) }
@@ -212,9 +246,9 @@ class VaultSnapshotMapperTest {
     private fun open(key: ByteArray) =
         opener.open(vaultPath.path, key) ?: throw AssertionError("native core is not linked")
 
-    private fun emptyPage() = CoreBookingPage(
+    private fun emptyPage(total: UInt = 0u) = CoreBookingPage(
         transactions = emptyList(),
-        totalCount = 0u,
+        totalCount = total,
         incomeCents = 0,
         expenseCents = 0,
         consumptionCents = 0,
