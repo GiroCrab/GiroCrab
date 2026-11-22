@@ -23,7 +23,7 @@ extension Account {
             .filter { !$0.isEmpty }
     }
 
-    /// Name, Kontoinhaber, bank, IBAN or account number. Spaces in IBANs /
+    /// Name, Kontoinhaber, bank (or its label), IBAN or account number. Spaces in IBANs /
     /// Kontonummern are ignored so "DE89 3704 …" finds the stored value.
     func matchesSidebarSearch(_ raw: String) -> Bool {
         let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -33,7 +33,8 @@ extension Account {
             return true
         }
         let terms = q.split(whereSeparator: \.isWhitespace).map { String($0).lowercased() }
-        let text = [name, owner, bankName].map { $0.lowercased() }
+        // the bank as stored and as the sidebar shows it (#1467)
+        let text = [name, owner, bankName, sidebarBankName].map { $0.lowercased() }
         return terms.allSatisfy { term in
             let compactTerm = term.filter { !$0.isWhitespace }
             return text.contains { $0.contains(term) }
@@ -310,6 +311,41 @@ func accountDetail(_ a: Account) -> String {
     return a.isArchived ? String(localized: "Archiviert · \(id)") : id
 }
 
+/// What the sidebar shows in place of the bank name (#1467), as picked in Kontoeinstellungen.
+enum BankLabelChoice: Hashable, CaseIterable {
+    case standard, custom, hidden
+
+    init(_ label: String?) {
+        switch label {
+        case nil: self = .standard
+        case ""?: self = .hidden
+        default: self = .custom
+        }
+    }
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .standard: "Standard"
+        case .custom: "Eigener Name"
+        case .hidden: "Ausblenden"
+        }
+    }
+
+    /// The stored label: `nil` the bank name, `""` none, else the trimmed text (blank = none).
+    func label(custom text: String) -> String? {
+        switch self {
+        case .standard: nil
+        case .hidden: ""
+        case .custom: text.trimmingCharacters(in: .whitespaces)
+        }
+    }
+}
+
+extension Account {
+    /// The bank in the sidebar row (#1467): the user's label, else the bank name.
+    var sidebarBankName: String { bankLabel ?? bankName }
+}
+
 /// IBAN, else account number, else bank.
 func accountIdentity(_ a: Account) -> String {
     if !a.iban.isEmpty { return formatIBAN(a.iban) }
@@ -544,20 +580,27 @@ extension AppModel {
             ?? String(localized: "Nicht in der Gesamtsumme")
     }
 
+    /// The kind decides what "Verfügbar" and its history count (Bausparen does not, #1630):
+    /// reload them like any other change to the totals.
     func setAccountKind(_ accountId: Int64, to kind: AccountKind) {
         guard let vault else { return }
         do {
             try vault.setAccountKind(accountId: accountId, kind: kind)
-            reloadAccounts()
-            dashboardStale = true
+            afterGroupChange()
         } catch {
             errorMessage = describe(error)
         }
     }
 
+    /// Accounts of a bank login whose sidebar shows a label of their own or none (#1467),
+    /// so the login's settings can say why a new display name doesn't show there.
+    func accountsWithOwnBankLabel(connectionID: Int64) -> Int {
+        allAccounts.filter { $0.connectionId == connectionID && $0.bankLabel != nil }.count
+    }
+
     /// „Sichern“ in Kontoeinstellungen: writes the fields that differ from `original`, the account
     /// when the sheet opened, so a value a sync brought in meanwhile is no edit (#980). One reload.
-    func saveAccountEdits(_ original: Account, name: String, owner: String, kind: AccountKind, note: String) {
+    func saveAccountEdits(_ original: Account, name: String, owner: String, kind: AccountKind, note: String, bankLabel: String?) {
         guard let vault else { return }
         let id = original.id
         let kindChanged = kind != original.kind && !isOffline(id)
@@ -566,11 +609,12 @@ extension AppModel {
             if owner != original.owner.trimmingCharacters(in: .whitespaces) { try vault.setAccountOwner(accountId: id, owner: owner) }
             if kindChanged { try vault.setAccountKind(accountId: id, kind: kind) }
             if note != original.note.trimmingCharacters(in: .whitespacesAndNewlines) { try vault.setAccountNote(accountId: id, note: note) }
+            if bankLabel != original.bankLabel { try vault.setAccountBankLabel(accountId: id, label: bankLabel) }
         } catch {
             errorMessage = describe(error)
         }
-        reloadAccounts()
-        if kindChanged { dashboardStale = true }
+        // a new kind can change "Verfügbar" and its history (see `setAccountKind`)
+        if kindChanged { afterGroupChange() } else { reloadAccounts() }
     }
 
     func renameAccount(_ accountId: Int64, to name: String) {

@@ -76,6 +76,24 @@ enum ICloudFolderMigration {
         return nil
     }
 
+    /// What a folder from „Ordner wählen …“ holds.
+    enum PickedFolder: Equatable {
+        case found
+        /// The vault is in this direct subfolder (the user picked a parent, #456).
+        case subfolder(String)
+        case empty
+    }
+
+    /// Looks into a folder the user picked (security scope included); waits up to
+    /// `wait` seconds for iCloud to list it before calling it empty.
+    static func inspectPicked(_ url: URL, wait: TimeInterval = 6) async -> PickedFolder {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if await waitForVault(in: url, wait: wait) { return .found }
+        if let sub = vaultSubfolder(in: url) { return .subfolder(sub) }
+        return .empty
+    }
+
     /// Whether the picked folder holds a vault. A folder iCloud is still listing looks empty at
     /// first: it is asked to download, and checked again for up to `wait` seconds.
     static func waitForVault(in dir: URL, wait: TimeInterval, fm: FileManager = .default) async -> Bool {

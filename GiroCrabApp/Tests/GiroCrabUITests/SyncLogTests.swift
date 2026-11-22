@@ -36,10 +36,57 @@ final class SyncLogTests: XCTestCase {
         XCTAssertFalse(newest.message.contains(conn.loginName))
     }
 
+    func testResortingDocumentsReportsTheResultInTheSyncLog() async throws {
+        let id = try XCTUnwrap(model.connections.first { $0.connector == .tradeRepublic }).id
+        let before = model.syncLogVersion
+
+        await model.resortPortalDocuments(id)
+
+        XCTAssertEqual(model.syncLogVersion, before + 1)
+        let filter = SyncLogFilter(connectionId: id, onlyErrors: false, search: nil, limit: 1)
+        let entry = try XCTUnwrap(rows(filter).first)
+        XCTAssertEqual(entry.outcome, .ok)
+        XCTAssertEqual(entry.source, .manual)
+        XCTAssertEqual(model.toast, entry.message)
+    }
+
     func testOnlyErrorsFilter() throws {
         let errors = try rows(SyncLogFilter(connectionId: nil, onlyErrors: true, search: nil, limit: 0))
         XCTAssertFalse(errors.isEmpty)
-        XCTAssertTrue(errors.allSatisfy { $0.outcome == .error })
+        XCTAssertTrue(errors.allSatisfy { $0.outcome == .error || $0.outcome == .partial })
+    }
+
+    /// #1627: a sync that stored balances but could not read the bookings is no success.
+    func testFinishedSyncWithWarningsIsLoggedAsPartial() throws {
+        let conn = try XCTUnwrap(model.connections.first)
+        func finished(_ warnings: [String], hints: [String] = []) -> SyncStep {
+            .finished(summary: SyncSummary(accountsUpdated: 1, transactionsImported: 0, transactionsCategorized: 0,
+                                           transactionsSkippedArchived: 0, newAccounts: [], revokedAccounts: [],
+                                           postboxDocuments: nil, warnings: warnings, hints: hints))
+        }
+        let filter = SyncLogFilter(connectionId: conn.id, onlyErrors: false, search: nil, limit: 1)
+
+        model.handle(finished(["Girokonto: Umsätze (HKCAZ/camt.052) – TAN verlangt", "Visa: Kartenumsätze – TAN verlangt"],
+                              hints: ["Zeitraum auf 90 Tage stellen"]),
+                     connection: conn)
+        let partial = try XCTUnwrap(rows(filter).first)
+        XCTAssertEqual(partial.outcome, .partial)
+        XCTAssertTrue(partial.message.contains("Girokonto"), partial.message)
+        XCTAssertTrue(partial.message.contains(" / "), partial.message)
+        // the log row says what to do about it, too
+        XCTAssertTrue(partial.message.hasSuffix("Zeitraum auf 90 Tage stellen"), partial.message)
+        let problems = try rows(SyncLogFilter(connectionId: conn.id, onlyErrors: true, search: nil, limit: 1))
+        XCTAssertEqual(problems.first?.id, partial.id)
+
+        model.handle(finished([]), connection: conn)
+        XCTAssertEqual(try XCTUnwrap(rows(filter).first).outcome, .ok)
+    }
+
+    func testPartialHasItsOwnTitleAndSymbol() {
+        XCTAssertEqual(SyncLogOutcome.partial.title, "Teilweise")
+        // shape, not colour alone, tells the results apart
+        let symbols = [SyncLogOutcome.ok, .partial, .error, .cancelled].map(\.symbol)
+        XCTAssertEqual(Set(symbols).count, symbols.count)
     }
 
     func testCSVHasHeaderAndOneLinePerEntry() throws {

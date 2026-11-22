@@ -21,7 +21,8 @@ Geräte (neueste Änderung gewinnt).
 
 - Erst sobald etwas im Feld „Empfänger“ steht; höchstens fünf, ausgeblendete nie. Die Suche trifft jede Schreibweise
   des Namens und die IBAN.
-- Zeile: Name und „zuletzt <Datum>“, darunter die IBAN. Klick, Tippen oder ↑/↓ und Return übernehmen Name und IBAN.
+- Zeile: Name und „zuletzt <Datum>“, darunter die IBAN mit ihrer Bank (`RecipientIBANLine`, aus der BLZ-Liste der
+  Bundesbank, nur deutsche IBANs; #1563). Klick, Tippen oder ↑/↓ und Return übernehmen Name und IBAN.
 - Ausblenden: das ✕ der Zeile unter dem Zeiger (Mac), das Kontextmenü (Rechtsklick, langes Drücken) oder die
   Bedienungshilfen-Aktion. Die Liste rechnet sofort neu, die Markierung bleibt an ihrem Platz (die nächste Zeile
   rückt nach). Schließt das Blatt „Empfänger“, rechnet eine offene Liste ebenfalls neu.
@@ -36,15 +37,15 @@ Geräte (neueste Änderung gewinnt).
 
 Geöffnet über „Empfänger“ im Kopf des Formulars. Oben ein Satz, was die Liste ist, und die Suche (Name oder IBAN,
 gefiltert im Core; nur das Ergebnis der jüngsten Suche wird gezeigt). Darunter „Ausgeblendet“ zuerst (meist wenige
-Zeilen, so ist Rückgängigmachen nah), dann „Vorgeschlagen“. Jede Zeile hat „Ausblenden“ bzw. „Einblenden“ und
-dasselbe im Kontextmenü. Scheitert das Lesen, bleiben die zuletzt gelesenen Zeilen stehen; unter der Suche steht
-„Empfänger konnten nicht geladen werden“ mit „Erneut versuchen“ (nie „Noch keine Empfänger“). Ein Tresorwechsel
-(Demo ↔ eigene Daten) bei offenem Blatt liest die Liste neu.
+Zeilen, so ist Rückgängigmachen nah), dann „Vorgeschlagen“. Jede Zeile zeigt wie die Vorschläge Name, IBAN und Bank
+und hat „Ausblenden“ bzw. „Einblenden“ und dasselbe im Kontextmenü. Scheitert das Lesen, bleiben die zuletzt
+gelesenen Zeilen stehen; unter der Suche steht „Empfänger konnten nicht geladen werden“ mit „Erneut versuchen“ (nie
+„Noch keine Empfänger“). Ein Tresorwechsel (Demo ↔ eigene Daten) bei offenem Blatt liest die Liste neu.
 
 ## Regeln
 
-- Namen, IBANs und das Suchfeld tragen `.sensitive()`; Anzahl und Datum bleiben im Bild „Problem melden“ sichtbar. Das Blatt wird
-  mit `.capturableSheet` gezeigt.
+- Namen, IBANs (mit ihrer Bank: sie verrät einen Teil der IBAN) und das Suchfeld tragen `.sensitive()`; Anzahl und Datum
+  bleiben im Bild „Problem melden“ sichtbar. Das Blatt wird mit `.capturableSheet` gezeigt.
 - Keine Löschfunktion für Buchungen und kein „Bearbeiten“ von Namen oder IBANs hier: Das wäre eine Änderung an
   Buchungen bzw. eine Vorlage (dafür gibt es „Vorlagen“).
 - Neue Filter oder Sortierungen gehören in den Core (`matching_recipients`), damit Mac, iPhone und Linux dieselbe

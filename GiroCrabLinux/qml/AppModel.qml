@@ -606,6 +606,10 @@ QtObject {
                 sidebarSelection = "all"
             if (sidebarSelection.startsWith("bank:") && !bankGroup(sidebarSelection.slice(5)))
                 sidebarSelection = "all"
+            // a section whose last account left (another kind, #1630): no account ids would
+            // filter as "all accounts" while the sidebar still names the section
+            if (sidebarSelection.startsWith("group:") && !groups.some(g => "group:" + g.id === sidebarSelection && g.accounts.length > 0))
+                sidebarSelection = "all"
             rebuildAccountIndex()
             applyAssets(r[3], r[4])
             const queue = afterAccountsQueue
@@ -860,7 +864,7 @@ QtObject {
         if (!sel.startsWith("category:")) return null
         const r = periodRange()
         return ["category_history_by_unit", { category_id: Number(sel.slice(9)), account_ids: categoryAccountIDs,
-                                              date_from: r[0], date_to: r[1], key_length: 7 }]
+                                              date_from: r[0], date_to: r[1], key_length: BalanceChartPrefs.categoryKeyLength }]
     }
     /// AppModel+Loading.swift › reloadCategoryHistory (cheap SQL aggregate, still off the GUI
     /// thread). Callers check `selectionLoadTakes` first: a running selection load brings it.
@@ -1422,7 +1426,7 @@ QtObject {
         if (sel === "newBookings") return qsTr("Neue Umsätze")
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.name : qsTr("Bank") }
         if (sel === "uncategorized") return SidebarModel.uncategorizedLabel
-        if (sel === "documents") return qsTr("Belege & PostBox")
+        if (sel === "documents") return qsTr("Belege & Postbox")
         if (sel === "wealth") return qsTr("Vermögen")
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.name : qsTr("Gruppe") }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? g.name : qsTr("Gruppe") }
@@ -1430,7 +1434,34 @@ QtObject {
         if (sel.startsWith("category:")) { const c = categories.find(c => "category:" + c.id === sel); return c ? c.path : qsTr("Kategorie") }
         return ""
     }
+    /// AppModel+Loading.swift › headerTotalAccounts: accounts behind the header total of the
+    /// current selection (null: single account / not a total).
+    readonly property var headerTotalAccounts: {
+        const sel = sidebarSelection
+        if (sel === "all") return liquidAccounts
+        if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? g.accounts : null }
+        if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? g.accounts : null }
+        if (sel.startsWith("userGroup:")) { const ids = userGroupAccountIDs(sel.slice(10)); return allAccounts.filter(a => ids.indexOf(a.id) >= 0) }
+        return null
+    }
+    /// headerTotalSplit (#569, AllAccountsRoot.swift › HeaderTotal.split): the header total in the
+    /// base currency (EUR, or the single shared currency when no EUR account is there) plus every
+    /// further currency (alphabetical) – never mixed into one number. null: one currency only.
+    readonly property var headerTotalSplit: {
+        const accounts = headerTotalAccounts
+        if (!accounts) return null
+        const sums = {}
+        for (const a of accounts) { const c = a.currency ? a.currency.toUpperCase() : "EUR"; sums[c] = (sums[c] || 0) + a.balance_cents }
+        const codes = Object.keys(sums)
+        const primary = sums["EUR"] !== undefined || codes.length !== 1 ? "EUR" : codes[0]
+        const others = codes.filter(c => c !== primary).sort().map(c => ({ currency: c, cents: sums[c] }))
+        return others.length ? { currency: primary, cents: sums[primary] || 0, others: others } : null
+    }
     readonly property var headerBalance: {
+        const hb = headerBalanceUnsplit, split = headerTotalSplit
+        return hb && split ? { label: hb.label, cents: split.cents } : hb
+    }
+    readonly property var headerBalanceUnsplit: {
         const sel = sidebarSelection
         if (sel === "all") return { label: qsTr("Verfügbar (Giro, Tagesgeld, Karten)"), cents: liquidBalance }
         if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : qsTr("Kontostand"), cents: a.balance_cents } : null }
@@ -1875,7 +1906,7 @@ QtObject {
             || quietSyncConnectionID === connection.id)
             statementsAccountID = null
         const statementsFor = statementsAccountID
-        // "PostBox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
+        // "Postbox jetzt abrufen" (#838) only for exactly this login, never in an automatic sync
         if (postboxConnectionID !== connection.id || quietSyncConnectionID === connection.id) postboxConnectionID = null
         const postboxNow = postboxConnectionID !== null
         const quiet = quietSyncConnectionID === connection.id
@@ -1890,7 +1921,7 @@ QtObject {
             }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
         }
         if (quiet) {
-            // no new approval in the background (e.g. the comdirect PostBox, #838); prepared
+            // no new approval in the background (e.g. the comdirect Postbox, #838); prepared
             // off the GUI thread like the rest of the automatic fetch
             coreAsync("begin_quiet_sync", { connection_id: connection.id, secret: secret, demo: isDemo }, id => {
                 if (gen !== syncGeneration) { coreAsync("session_cancel", { session: id }, null, () => {}); return }
@@ -1944,7 +1975,8 @@ QtObject {
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             const s = step.Finished.summary
-            logSync(connection.id, "Ok", "", s.transactions_imported, syncLogSource(connection.id))
+            // what the bank would not give is no success (#1627)
+            logSync(connection.id, s.warnings.length > 0 ? "Partial" : "Ok", s.warnings.concat(s.hints).join(" / "), s.transactions_imported, syncLogSource(connection.id))
             activeChallenge = null
             syncingConnectionID = null
             activeSession = null
@@ -2498,10 +2530,10 @@ QtObject {
     /// Bumped whenever documents change, so lists re-read them.
     property int documentsVersion: 0
     property var documentsAccountFilter: null
-    /// `documentsAccountFilter` value for documents without an account (e.g. PostBox, #838).
+    /// `documentsAccountFilter` value for documents without an account (e.g. Postbox, #838).
     readonly property int documentsWithoutAccount: -1
     property var statementsAccountID: null
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     property var postboxConnectionID: null
     property int statementsCountBefore: 0
     property var accountDocumentsFor: null      // AccountDocumentsSheet
@@ -2586,7 +2618,7 @@ QtObject {
         let unmatched = 0
         const finish = () => {
             if (linked.length) toast = qsTr("Beleg zugeordnet: %1").arg(linked.join(", "))
-            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & PostBox“ abgelegt")
+            else if (unmatched > 0) toast = qsTr("Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             documentsChanged()
         }
         const next = i => {
@@ -2615,21 +2647,21 @@ QtObject {
     }
     function autoStatements(a) { return run(() => core("auto_statements_enabled", { account_id: a.id })) || false }
     function setAutoStatements(a, on) { run(() => core("set_auto_statements", { account_id: a.id, enabled: on })) }
-    /// comdirect via FinTS: also fetch the PostBox through comdirect's API (#838).
+    /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     function comdirectPostbox(id) { return run(() => core("comdirect_postbox_enabled", { connection_id: id })) || false }
     function setComdirectPostbox(id, on) { run(() => core("set_comdirect_postbox", { connection_id: id, enabled: on })) }
-    /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
+    /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     function fetchComdirectPostbox(c) {
         if (syncingConnectionID !== null) return
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect PostBox.
+    /// Toast suffix of a sync with the comdirect Postbox.
     function postboxNote(s) {
         if (s.postbox_documents === null || s.postbox_documents === undefined)
-            return qsTr("PostBox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
-        return s.postbox_documents === 0 ? qsTr("keine neuen PostBox-Dokumente")
-            : qsTr("%1 neue PostBox-Dokumente").arg(s.postbox_documents)
+            return qsTr("Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
+        return s.postbox_documents === 0 ? qsTr("keine neuen Postbox-Dokumente")
+            : qsTr("%1 neue Postbox-Dokumente").arg(s.postbox_documents)
     }
     function docSymbol(d) {
         switch (d.doc_type) {
@@ -2800,11 +2832,15 @@ QtObject {
     }
     /// AccountGroupsModel.swift › setAccountKind ("Kontoart ändern …").
     function setAccountKind(id, kind) {
-        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(); reloadDashboard() }
+        // the kind decides what "Verfügbar" and its history count (Bausparen does not, #1630) and
+        // moves the account to another section: once the accounts with the new kind are published,
+        // the history and the selection (list and sums of a section) reload
+        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(() => { reloadHistory(); reloadSelection(false) }); reloadDashboard() }
     }
     /// AccountKind.importChoices with their labels.
     readonly property var accountKindChoices: [
-        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") },
+        { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") }, { id: "TimeDeposit", text: qsTr("Festgeld") },
+        { id: "BuildingSavings", text: qsTr("Bausparen") },
         { id: "CreditCard", text: qsTr("Kreditkarte") }, { id: "PaymentService", text: qsTr("Zahlungsdienst") },
         { id: "Brokerage", text: qsTr("Depot") }, { id: "Cash", text: qsTr("Bargeld") }, { id: "Loan", text: qsTr("Darlehen") }
     ]
@@ -3919,6 +3955,8 @@ QtObject {
         "paypal.client_id": qsTr("PayPal Client-ID"),
         "paypal.client_secret": qsTr("PayPal Secret"),
         "kontist.client_id": qsTr("Kontist Client-ID"),
+        "bitcoin_core.datadir": qsTr("Bitcoin-Core-Datenverzeichnis"),
+        "bitcoin_core.rpc_url": qsTr("Bitcoin-Core-RPC-Adresse"),
         "kontist.client_secret": qsTr("Kontist Client-Secret"),
         "enablebanking.application_id": qsTr("Enable Banking Application-ID"),
         "enablebanking.private_key_pem": qsTr("Enable Banking Private Key"),
@@ -4046,7 +4084,7 @@ QtObject {
             syncLogVersion++
         } catch (e) { /* the log must never get in the way of a sync */ }
     }
-    readonly property var syncLogOutcomeTitles: ({ Ok: qsTr("Erfolgreich"), Error: qsTr("Fehler"), Cancelled: qsTr("Abgebrochen") })
+    readonly property var syncLogOutcomeTitles: ({ Ok: qsTr("Erfolgreich"), Partial: qsTr("Teilweise"), Error: qsTr("Fehler"), Cancelled: qsTr("Abgebrochen") })
     readonly property var syncLogSourceTitles: ({ Manual: qsTr("Manuell"), Automatic: qsTr("Automatisch"), Statements: qsTr("Kontoauszüge") })
     /// CSV of the rows the log window shows.
     function syncLogCSV(entries) {
@@ -4192,6 +4230,8 @@ QtObject {
         case "recurring": showRecurringSheet = true; break
         case "rules": openRuleEditor(null); break
         case "rule-edit": reloadRules(); ruleDraft = rules.length ? rules[0] : null; showRuleEditor = true; break
+        // a rule that only adds tags (#580)
+        case "rule-tags": reloadRules(); ruleDraft = rules.find(r => r.category_id === 0) || (rules.length ? rules[0] : null); showRuleEditor = true; break
         case "palette": showCommandPalette = true; break
         case "categorizer":
             if (selectedBookingID === null && bookings.length) selectedBookingID = bookings[0].id

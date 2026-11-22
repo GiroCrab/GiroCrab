@@ -495,6 +495,28 @@ pub(crate) fn merge_note_from(
     )? as u32)
 }
 
+/// When a bank label `?2` with stamp `?3` wins over an account's own (#1467):
+/// a newer stamp, or on an equal one the later in the order bank name (NULL),
+/// hidden (`''`), text.
+const LABEL_WINS: &str = "(bank_label_ms < ?3 OR (bank_label_ms = ?3 AND ?2 IS NOT NULL
+     AND (bank_label IS NULL OR bank_label < ?2)))";
+
+/// The bank label of a folded twin goes on to its bank account when it wins there.
+pub(crate) fn pass_bank_label_on(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
+    let (label, stamp): (Option<String>, i64) = conn.query_row(
+        "SELECT bank_label, bank_label_ms FROM accounts WHERE id = ?1",
+        [from],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    conn.execute(
+        &format!(
+            "UPDATE accounts SET bank_label = ?2, bank_label_ms = ?3 WHERE id = ?1 AND {LABEL_WINS}"
+        ),
+        params![to, label, stamp],
+    )?;
+    Ok(())
+}
+
 /// The note of account `from` merged into account `to` (a folded twin's note
 /// goes to its bank account).
 pub(crate) fn pass_note_on(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
@@ -555,27 +577,27 @@ pub(crate) fn merge_attached(
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
         (Option<i64>, i64, String, i64, String, i64),
-        (bool, i64),
+        (bool, i64, Option<String>, i64),
     )> = tx
         .prepare(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
                     archived_unix, archived_ms, sf_symbol, symbol_ms, note, note_ms,
-                    include_in_total != 0, total_ms
+                    include_in_total != 0, total_ms, bank_label, bank_label_ms
              FROM other.accounts",
         )?
         .query_map([], |r| {
             Ok((
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
                 (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?),
-                (r.get(14)?, r.get(15)?),
+                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?),
             ))
         })?
         .collect::<Result<_, _>>()?;
     for (
         (oid, uuid, order, placed, name, named, color, colored),
         (archived, archived_ms, symbol, symbol_ms, note, noted),
-        (in_total, total_ms),
+        (in_total, total_ms, label, label_ms),
     ) in rows
     {
         let Some(&id) = acc_map.get(&oid) else {
@@ -608,6 +630,20 @@ pub(crate) fn merge_attached(
               WHERE id = ?1 AND (?4 OR total_ms < ?3 OR (total_ms = ?3 AND include_in_total < ?2))",
             params![id, in_total, total_ms, fresh],
         )? as u32;
+        // the sidebar's bank label (#1467): the newer edit wins; an equal stamp
+        // takes the later choice in a fixed order (bank name, hidden, text), so
+        // every device ends up with the same one. Edited on a twin folded here,
+        // it goes on to the bank account, like the note.
+        let label_rows = tx.execute(
+            &format!("UPDATE accounts SET bank_label = ?2, bank_label_ms = ?3 WHERE id = ?1 AND (?4 OR {LABEL_WINS})"),
+            params![id, label, label_ms, fresh],
+        )?;
+        if label_rows > 0
+            && let Some(bank) = crate::sync_merge::twins::folded_into(tx, id)?
+        {
+            pass_bank_label_on(tx, id, bank)?;
+        }
+        changed += label_rows as u32;
         // only a user's choice travels; the type's default stays local
         changed += tx.execute(
             "UPDATE accounts SET sf_symbol = ?2, symbol_ms = ?3 WHERE id = ?1 AND symbol_ms < ?3",
@@ -920,7 +956,7 @@ pub(crate) fn set_parent(
     Ok(())
 }
 
-/// Order of kinds inside a group: Giro → Karten → Depots → Darlehen.
+/// Order of kinds inside a group: Giro → Tagesgeld → Festgeld → Bargeld → Zahlungsdienste → Karten → Depots → Darlehen.
 fn kind_rank(a: &Account) -> i32 {
     group_for(a.kind).2
 }
@@ -1252,14 +1288,7 @@ impl Vault {
     /// rule runs skip their bookings and they leave the overall total. The
     /// state syncs like the account's name (newest change wins).
     pub fn set_account_archived(&self, account_id: i64, archived: bool) -> Result<(), CoreError> {
-        // keeps the original date when archiving an already archived account
-        let n = self.db()?.execute(
-            "UPDATE accounts SET archived_unix = CASE WHEN ?2 THEN IFNULL(archived_unix, strftime('%s','now')) END,
-                                 archived_ms = ?3
-             WHERE id = ?1",
-            params![account_id, archived, now_ms()],
-        )?;
-        if n == 0 {
+        if set_archived_inner(&*self.db()?, account_id, archived)? == 0 {
             return Err(CoreError::NotFound {
                 what: trf("Konto {0}", &[&account_id]),
             });
@@ -1401,6 +1430,25 @@ fn renumber(tx: &Connection, ids: &[i64]) -> CoreResult<()> {
         )?;
     }
     Ok(())
+}
+
+/// [`Vault::set_account_archived`] on a held connection; the number of accounts
+/// changed (0: no such account). Time and stamp come from the same second, and
+/// archiving an archived account keeps both: the MoneyMoney import of v0.8.5
+/// left archives whose time lies before their stamp (#998), and an archive made
+/// here must never look like one of those.
+pub(crate) fn set_archived_inner(
+    conn: &Connection,
+    account_id: i64,
+    archived: bool,
+) -> CoreResult<usize> {
+    let now = now_ms();
+    Ok(conn.execute(
+        "UPDATE accounts SET archived_unix = CASE WHEN ?2 THEN IFNULL(archived_unix, ?3) END,
+                             archived_ms = CASE WHEN ?2 AND archived_unix IS NOT NULL THEN archived_ms ELSE ?4 END
+         WHERE id = ?1",
+        params![account_id, archived, now / 1000, now],
+    )?)
 }
 
 #[cfg(test)]

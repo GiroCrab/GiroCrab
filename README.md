@@ -237,6 +237,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
+| Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verifiziert |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
@@ -265,6 +266,12 @@ FNZ Bank / ebase / finvesto: Einrichtung, Konto- und Depotumsätze, Fondspositio
 
 Eine neue Bank anzubinden dauert meist unter 100 Zeilen: siehe
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) und [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### 🔗 Zusammenspiel mit anderen Apps
+
+- **Buchungen in andere Apps ziehen (macOS):** Eine oder mehrere Buchungen lassen sich aus der Liste in andere Programme ziehen; sie tragen alle Angaben der Buchung als JSON mit, dazu die Belege, die an ihr hängen (Format: [docs/booking-drag.md](docs/booking-drag.md)). Die Belegverwaltung [Receipts Space](https://receipts-app.com/) legt daraus Einträge an, mit Beleg oder als Platzhalter, dem nur noch der Beleg fehlt.
+- **Lesende lokale Schnittstelle (macOS):** Ausgewählte Konten, Buchungen, Kategorien und Summen für Programme auf demselben Mac, standardmäßig aus und nur mit Zugangsschlüssel, auch für KI-Assistenten per MCP ([docs/local-api.md](docs/local-api.md)).
+- **Rechnungen bezahlen:** ZUGFeRD / Factur-X, GiroCode / EPC-QR und PDF-Text aus der Zwischenablage füllen die Überweisung vor.
 
 ### Schnellstart
 
@@ -490,6 +497,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
+| Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verified |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
@@ -514,6 +522,12 @@ Further German banks with FinTS 3.0 (PIN/TAN) can be connected via bank code and
 
 Adding a bank usually takes under 100 lines – start from
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) and read [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### 🔗 Working with other apps
+
+- **Drag bookings into other apps (macOS):** One or more bookings can be dragged from the list into other programs; they carry all of the booking's details as JSON, together with the receipts attached to it (format: [docs/booking-drag.md](docs/booking-drag.md)). The receipt manager [Receipts Space](https://receipts-app.com/) turns them into entries, with the receipt or as a placeholder that only lacks it.
+- **Read-only local interface (macOS):** Selected accounts, bookings, categories and totals for programs on the same Mac, off by default and only with an access key, also for AI assistants via MCP ([docs/local-api.md](docs/local-api.md)).
+- **Paying invoices:** ZUGFeRD / Factur-X, GiroCode / EPC QR and PDF text from the clipboard pre-fill the transfer.
 
 ### Download (macOS)
 

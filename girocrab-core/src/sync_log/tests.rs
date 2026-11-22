@@ -171,6 +171,8 @@ fn logs_lists_newest_first_and_filters() {
         (a, SyncLogOutcome::Ok, ""),
         (b, SyncLogOutcome::Error, "Zeitüberschreitung beim Abruf"),
         (a, SyncLogOutcome::Error, "PIN falsch (kunde-a)"),
+        // #1627: stored what it could, but not the bookings: a problem, not a success
+        (b, SyncLogOutcome::Partial, "Girokonto: Umsätze – TAN nötig"),
         (b, SyncLogOutcome::Cancelled, ""),
     ]
     .into_iter()
@@ -185,9 +187,11 @@ fn logs_lists_newest_first_and_filters() {
         .unwrap();
     }
     let log = all(&v);
-    assert_eq!(log.len(), 4);
+    assert_eq!(log.len(), 5);
     assert_eq!(log[0].outcome, SyncLogOutcome::Cancelled);
     assert_eq!(log[0].connection_name, "ING");
+    assert_eq!(log[1].outcome, SyncLogOutcome::Partial);
+    assert_eq!(log[1].message, "Girokonto: Umsätze – TAN nötig");
     // the login never reaches the log
     assert!(log.iter().all(|e| !e.message.contains("kunde-a")));
 
@@ -197,7 +201,8 @@ fn logs_lists_newest_first_and_filters() {
             ..Default::default()
         })
         .unwrap();
-    assert_eq!(errors.len(), 2);
+    // failed and partial syncs, not the cancelled one
+    assert_eq!(errors.len(), 3);
     let of_a = v
         .list_sync_log(SyncLogFilter {
             connection_id: Some(a),

@@ -25,7 +25,7 @@ struct StandingDraft {
     static var tomorrow: Date { Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date() }
 
     var cents: Int64? {
-        guard let c = try? parseAmountToCents(text: amountText), c > 0 else { return nil }
+        guard let c = Money.parseCents(amountText), c > 0 else { return nil }
         return c
     }
     var ibanValid: Bool { validateIban(iban: iban) }

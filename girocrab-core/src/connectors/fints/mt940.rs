@@ -5,7 +5,7 @@ use jiff::civil::Date;
 
 use crate::connectors::RemoteTransaction;
 use crate::dates::{clamped_ymd, iso, year};
-use crate::money::parse_cents;
+use crate::money::{cents, decimal};
 
 #[derive(Debug, Default, Clone)]
 pub struct Mt940Statement {
@@ -187,7 +187,7 @@ pub fn parse(
                     let sign = if v.starts_with('D') { -1 } else { 1 };
                     stmt.closing_date = yymmdd(date).map(iso);
                     stmt.currency = cur.to_string();
-                    if let Ok(c) = parse_cents(amt) {
+                    if let Some(c) = decimal(amt, ',').and_then(cents) {
                         stmt.closing_balance_cents = Some(sign * c);
                     }
                 }
@@ -233,10 +233,7 @@ pub fn parse(
                 let amount_end = rest
                     .find(|c: char| !(c.is_ascii_digit() || c == ',' || c == '.'))
                     .unwrap_or(rest.len());
-                if rest[..amount_end].contains('.') {
-                    continue;
-                }
-                let Ok(amount) = parse_cents(&rest[..amount_end]) else {
+                let Some(amount) = decimal(&rest[..amount_end], ',').and_then(cents) else {
                     continue;
                 };
                 let reference = rest[amount_end..].to_string();

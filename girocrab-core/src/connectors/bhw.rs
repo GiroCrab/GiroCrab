@@ -420,7 +420,8 @@ fn parse_contracts(v: &Value) -> CoreResult<Vec<Contract>> {
         {
             AccountKind::Loan
         } else {
-            AccountKind::Savings
+            // every other BHW contract is a Bausparvertrag in its savings phase (#1630)
+            AccountKind::BuildingSavings
         };
         // A loan is debt: shown as a negative balance like the other loan accounts.
         let balance_cents = balance.map(|b| {

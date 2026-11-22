@@ -52,6 +52,11 @@
 //!   excluded (stamp 0, so any explicit user choice wins on sync).
 //! - 35: merchant recognition settings (#1373): tables `merchant_switches` (master switch and
 //!   switched-off bundled merchants) and `custom_merchants` (own merchants), both merged.
+//! - 36: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
+//!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
+//! - 37: one sidebar section per account kind (#1003): the accounts of the old
+//!   section "Giro & Tagesgeld" move to Girokonten, Tagesgeld / Sparen, Festgeld, Bargeld
+//!   and Zahlungsdienste by `accounts.kind`; the old section is removed.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -103,6 +108,8 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::recipients::SCHEMA),                      // 33: hidden recipients (#978)
     Step::Hook(account_total_flag),                            // 34 (#337)
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
+    Step::Hook(account_bank_label),                            // 36 (#1467)
+    Step::Hook(account_kind_groups),                           // 37 (#1003)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -278,13 +285,13 @@ fn builtin_roles(conn: &Connection) -> CoreResult<()> {
         }
     }
     if groups_need_roles {
-        for kind in [
-            crate::models::AccountKind::Checking,
-            crate::models::AccountKind::CreditCard,
-            crate::models::AccountKind::Brokerage,
-            crate::models::AccountKind::Loan,
+        // The sections as this step found them (frozen: `group_for` has changed since, #1003).
+        for (name, symbol, order) in [
+            ("Giro & Tagesgeld", "building.columns", 1),
+            ("Kreditkarten", "creditcard", 2),
+            ("Depots & ETFs", "chart.pie", 3),
+            ("Darlehen & Kredite", "house", 4),
         ] {
-            let (name, symbol, order) = crate::connectors::group_for(kind);
             conn.execute("UPDATE account_groups SET builtin_role=?1 WHERE name=?1 AND sf_symbol=?2 AND sort_order=?3",
             rusqlite::params![name, symbol, order])?;
         }
@@ -896,6 +903,73 @@ fn account_total_flag(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// Step 36 (#1467): what the sidebar shows in place of the bank name, with
+/// its sync stamp; NULL keeps the bank name.
+fn account_bank_label(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "bank_label")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN bank_label TEXT;")?;
+    }
+    if !has_column(conn, "main", "accounts", "bank_label_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN bank_label_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
+/// Step 37 (#1003): the sidebar's "by kind" view had one section for checking,
+/// savings, time deposit, cash and payment accounts. Each kind now has its own
+/// (`connectors::group_for`). The accounts of the old section move by `kind`
+/// (the sections are fixed, nothing in them was editable), the other built-in
+/// sections only take their new place in the order, and the old section goes.
+fn account_kind_groups(conn: &Connection) -> CoreResult<()> {
+    use rusqlite::OptionalExtension;
+    // The sections of this step (frozen, like the step itself).
+    fn section(kind: &str) -> (&'static str, &'static str, i32) {
+        match kind {
+            "savings" => ("Tagesgeld / Sparen", "banknote", 2),
+            "time_deposit" => ("Festgeld", "lock", 3),
+            "cash" => ("Bargeld", "eurosign.circle", 4),
+            "payment_service" => ("Zahlungsdienste", "wallet.pass", 5),
+            "credit_card" => ("Kreditkarten", "creditcard", 6),
+            "brokerage" => ("Depots & ETFs", "chart.pie", 7),
+            "loan" => ("Darlehen & Kredite", "house", 8),
+            _ => ("Girokonten", "building.columns", 1),
+        }
+    }
+    for kind in ["credit_card", "brokerage", "loan"] {
+        let (name, _, order) = section(kind);
+        conn.execute(
+            "UPDATE account_groups SET sort_order = ?2 WHERE builtin_role = ?1",
+            rusqlite::params![name, order],
+        )?;
+    }
+    let old: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM account_groups WHERE builtin_role = 'Giro & Tagesgeld'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(old) = old else {
+        return Ok(());
+    };
+    let accounts: Vec<(i64, String)> = conn
+        .prepare("SELECT id, kind FROM accounts WHERE group_id = ?1")?
+        .query_map([old], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, kind) in accounts {
+        let (name, symbol, order) = section(&kind);
+        let group = crate::vault::Vault::ensure_group(conn, name, symbol, order)?;
+        conn.execute(
+            "UPDATE accounts SET group_id = ?2 WHERE id = ?1",
+            rusqlite::params![id, group],
+        )?;
+    }
+    conn.execute("DELETE FROM account_groups WHERE id = ?1", [old])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1065,7 +1139,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 35);
+        assert_eq!(SCHEMA_VERSION, 37);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
@@ -1113,5 +1187,99 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, 10);
+    }
+
+    fn migrate_to_latest(conn: &mut Connection) {
+        migrate(conn).unwrap();
+    }
+
+    /// #1003: the accounts of the old "Giro & Tagesgeld" section move by kind,
+    /// the other sections keep their accounts and only change place; the old
+    /// section is gone, and sections without accounts are not created.
+    #[test]
+    fn account_kind_groups_split_the_old_section() {
+        let mut conn = schema_at(36);
+        for (name, symbol, order) in [
+            ("Giro & Tagesgeld", "building.columns", 1),
+            ("Kreditkarten", "creditcard", 2),
+            ("Depots & ETFs", "chart.pie", 3),
+        ] {
+            conn.execute(
+                "INSERT INTO account_groups(name, sf_symbol, sort_order, builtin_role) VALUES (?1, ?2, ?3, ?1)",
+                rusqlite::params![name, symbol, order],
+            )
+            .unwrap();
+        }
+        let group = |name: &str| -> i64 {
+            conn.query_row(
+                "SELECT id FROM account_groups WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        for (i, (kind, group_name)) in [
+            ("checking", "Giro & Tagesgeld"),
+            ("savings", "Giro & Tagesgeld"),
+            ("time_deposit", "Giro & Tagesgeld"),
+            ("cash", "Giro & Tagesgeld"),
+            ("payment_service", "Giro & Tagesgeld"),
+            ("credit_card", "Kreditkarten"),
+            ("brokerage", "Depots & ETFs"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            conn.execute(
+                "INSERT INTO accounts(group_id, external_ref, name, kind) VALUES (?1, ?2, ?2, ?3)",
+                rusqlite::params![group(group_name), format!("a{i}"), kind],
+            )
+            .unwrap();
+        }
+        migrate_to_latest(&mut conn);
+        let section_of = |kind: &str| -> (String, i32) {
+            conn.query_row(
+                "SELECT g.name, g.sort_order FROM accounts a JOIN account_groups g ON g.id = a.group_id
+                 WHERE a.kind = ?1",
+                [kind],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        for (kind, name, order) in [
+            ("checking", "Girokonten", 1),
+            ("savings", "Tagesgeld / Sparen", 2),
+            ("time_deposit", "Festgeld", 3),
+            ("cash", "Bargeld", 4),
+            ("payment_service", "Zahlungsdienste", 5),
+            ("credit_card", "Kreditkarten", 6),
+            ("brokerage", "Depots & ETFs", 7),
+        ] {
+            assert_eq!(section_of(kind), (name.to_string(), order), "{kind}");
+            let (expected, _, expected_order) =
+                crate::connectors::group_for(crate::models::AccountKind::from_str(kind));
+            assert_eq!((expected, expected_order), (name, order), "{kind}");
+        }
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM account_groups ORDER BY sort_order")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(!names.iter().any(|n| n == "Giro & Tagesgeld"));
+        assert!(!names.iter().any(|n| n == "Darlehen & Kredite"));
+        assert_eq!(names.len(), 7);
+    }
+
+    /// A vault without the old section (new or empty) is left as it is.
+    #[test]
+    fn account_kind_groups_leave_a_vault_without_the_old_section() {
+        let mut conn = schema_at(36);
+        migrate_to_latest(&mut conn);
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM account_groups", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
     }
 }

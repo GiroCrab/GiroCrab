@@ -99,6 +99,19 @@ ApplicationWindow {
             Action { text: qsTr("Budgets anzeigen"); checkable: true; checked: AppModel.showBudgets; enabled: AppModel.isUnlocked; onToggled: AppModel.showBudgets = checked }
             // RootView.swift › Toggle("Kopfbereich minimieren") (#358)
             Action { text: qsTr("Kopfbereich minimieren"); checkable: true; checked: AppModel.compactHeader; enabled: AppModel.isUnlocked; onToggled: AppModel.compactHeader = checked }
+            // the header chart (#634): same switches as the row below it
+            Action { text: qsTr("Diagramm anzeigen"); checkable: true; checked: !BalanceChartPrefs.collapsed; enabled: AppModel.isUnlocked
+                     onToggled: { BalanceChartPrefs.setCollapsed(!checked); checked = Qt.binding(() => !BalanceChartPrefs.collapsed) } }
+            AppMenu {
+                title: qsTr("Diagramm")
+                enabled: AppModel.isUnlocked
+                Repeater {
+                    model: BalanceChartPrefs.styles
+                    AppMenuItem { required property var modelData; text: modelData.title; checkable: true
+                                  checked: BalanceChartPrefs.style === modelData.id
+                                  onTriggered: { checked = Qt.binding(() => BalanceChartPrefs.style === modelData.id); BalanceChartPrefs.setStyle(modelData.id) } }
+                }
+            }
             // RootView.swift › Toggle("Privatmodus") ⇧⌘H (#719): hides amounts (or all personal data, Einstellungen › Allgemein)
             Action { text: qsTr("Privatmodus"); shortcut: "Ctrl+Shift+H"; checkable: true; checked: PrivacyMode.enabled; onToggled: PrivacyMode.setEnabled(checked) }
             AppMenuSeparator {}
@@ -320,7 +333,7 @@ ApplicationWindow {
                 onActivated: id => AppModel.wealthScope = id
                 Accessible.name: qsTr("Ansicht")
             }
-            // DocumentsScopePicker (DocumentsUI.swift, #526) in „Belege & PostBox“
+            // DocumentsScopePicker (DocumentsUI.swift, #526) in „Belege & Postbox“
             Segmented {
                 visible: AppModel.sidebarSelection === "documents"
                 options: DocumentsScope.options
@@ -454,6 +467,7 @@ ApplicationWindow {
     // SystemLanguageChangedAlert: the system language moved away from the chosen app language.
     Sheet {
         id: systemLanguageChanged
+        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
         readonly property string newCode: window.languageQuestion.startsWith("changed:") ? window.languageQuestion.slice(8) : ""
         readonly property string newName: ({ de: "Deutsch", en: "English" })[newCode] || newCode
         readonly property string currentName: ({ de: "Deutsch", en: "English" })[(AppModel.run(() => AppModel.core("language_state")) || { running: "de" }).running] || ""
@@ -665,6 +679,8 @@ ApplicationWindow {
             AppModel.errorCloseTitle = ""; AppModel.errorOnClose = null
         }
         property bool answered: false
+        // reopened for a newer alert during the exit transition: `closed` never came for the old one
+        onOpened: answered = false
         /// A button: clears this alert, closes it, then runs `action` (none: its `errorOnClose`).
         function answer(action) {
             const next = action || AppModel.errorOnClose

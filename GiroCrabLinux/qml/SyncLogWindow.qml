@@ -108,9 +108,9 @@ ApplicationWindow {
                 onActivated: i => win.connectionID = model[i].id
             }
             IconButton {
-                symbol: "exclamationmark.triangle"; text: qsTr("Nur Fehler")
+                symbol: "exclamationmark.triangle"; text: qsTr("Nur Fehler und Teilweise")
                 checkable: true; checked: win.onlyErrors; onToggled: win.onlyErrors = checked
-                ToolTip.text: qsTr("Nur fehlgeschlagene Abrufe zeigen")
+                ToolTip.text: qsTr("Nur fehlgeschlagene und unvollständige Abrufe zeigen")
             }
             Item { Layout.fillWidth: true }
             IconButton { symbol: "square.and.arrow.up"; text: qsTr("Exportieren …"); enabled: win.entries.length > 0
@@ -161,7 +161,7 @@ ApplicationWindow {
                 width: table.width
                 implicitHeight: Math.max(26, msg.implicitHeight + 10)
                 color: selected ? Theme.selection : index % 2 ? Theme.withAlpha(Theme.secondary, 0.05) : "transparent"
-                readonly property var outcomeColor: modelData.outcome === "Ok" ? Theme.inflow : modelData.outcome === "Error" ? Theme.negative : Theme.secondary
+                readonly property var outcomeColor: modelData.outcome === "Ok" ? Theme.inflow : modelData.outcome === "Partial" ? Theme.warning : modelData.outcome === "Error" ? Theme.negative : Theme.secondary
                 RowLayout {
                     anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10
                     spacing: 10
@@ -170,7 +170,7 @@ ApplicationWindow {
                     Text { Layout.preferredWidth: win.connectionWidth; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight
                            text: rowItem.modelData.connection_name === "" ? "–" : rowItem.modelData.connection_name }
                     RowLayout { Layout.preferredWidth: win.outcomeWidth; Layout.fillWidth: false; spacing: 5
-                        SFIcon { symbol: rowItem.modelData.outcome === "Ok" ? "checkmark.circle.fill" : rowItem.modelData.outcome === "Error" ? "exclamationmark.triangle.fill" : "minus.circle.fill"
+                        SFIcon { symbol: rowItem.modelData.outcome === "Ok" ? "checkmark.circle.fill" : rowItem.modelData.outcome === "Partial" ? "exclamationmark.circle.fill" : rowItem.modelData.outcome === "Error" ? "exclamationmark.triangle.fill" : "minus.circle.fill"
                                  size: 13; color: rowItem.outcomeColor }
                         Text { text: AppModel.syncLogOutcomeTitles[rowItem.modelData.outcome]; font.pixelSize: Theme.body; color: rowItem.outcomeColor } }
                     Text { id: msg; Layout.fillWidth: true; font.pixelSize: Theme.body; color: Theme.text; wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight

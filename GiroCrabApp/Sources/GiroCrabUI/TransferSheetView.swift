@@ -97,10 +97,12 @@ struct TransferSheetView: View {
         return GiroCode.payload(name: d.name, iban: d.iban, bic: bicText, amountCents: cents, purpose: d.purpose)
     }
     private var ibanValid: Bool { validateIban(iban: model.transferDraft.iban) }
+    /// The recipient's bank from the Bundesbank BLZ list (#1563); German IBANs only.
+    private var recipientBank: String? { bankNameForIban(iban: model.transferDraft.iban) }
     private var bicText: String { model.transferDraft.bic.trimmingCharacters(in: .whitespaces) }
     private var bicValid: Bool { bicText.isEmpty || Self.looksLikeBIC(bicText) }
     private var cents: Int64? {
-        guard let c = try? parseAmountToCents(text: model.transferDraft.amountText), c > 0 else { return nil }
+        guard let c = Money.parseCents(model.transferDraft.amountText), c > 0 else { return nil }
         return c
     }
     private var isBunq: Bool { account?.connector == .bunq }
@@ -157,6 +159,9 @@ struct TransferSheetView: View {
             if step == .form, let offer = clipboardOffer {
                 ClipboardPaymentBanner(offer: offer, apply: { acceptClipboard($0) }, ignore: { clipboardOffer = nil })
                     .padding(.horizontal, 20).padding(.bottom, 10)
+            }
+            if step == .form && model.transferDraft.fromLink {
+                linkWarning.padding(.horizontal, 20).padding(.bottom, 10)
             }
             Divider()
             switch step {
@@ -296,6 +301,25 @@ struct TransferSheetView: View {
         .padding(.horizontal, 20).padding(.vertical, 14)
     }
 
+    /// The form was filled from a `girocrab://transfer` link (`PaymentLink`): another app or a
+    /// web page chose recipient and IBAN, so the user checks them before anything is sent.
+    private var linkWarning: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Aus einem Link übernommen").appFont(.callout, weight: .semibold)
+                Text("Empfänger, IBAN und Betrag stammen aus einer anderen App oder Webseite. Bitte mit der Rechnung vergleichen, bevor Sie die Überweisung freigeben.")
+                    .appFont(.caption)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.shield").foregroundStyle(Theme.warning)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Theme.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     // MARK: form
 
     private func form(draft: Binding<TransferDraft>) -> some View {
@@ -355,6 +379,7 @@ struct TransferSheetView: View {
                             validity(draft.wrappedValue.iban.isEmpty ? nil : ibanValid,
                                      valid: "Prüfsumme korrekt", invalid: "IBAN ungültig (Prüfsumme/Länge)")
                         }
+                        .withBankLine(draft.wrappedValue.iban, alignment: transferFieldEdge)
                     }
                     LabeledContent("BIC") {
                         HStack(spacing: 8) {
@@ -503,8 +528,7 @@ struct TransferSheetView: View {
                                 Text("zuletzt \(DateText.medium(r.lastUsed))").appFont(.caption)
                                     .foregroundStyle(Theme.tertiary).fixedSize()
                             }
-                            Text(formatIBAN(r.iban)).appFont(.caption, design: .monospaced)
-                                .foregroundStyle(Theme.secondary).lineLimit(1).sensitive()
+                            RecipientIBANLine(iban: r.iban)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, 8).padding(.vertical, 4)
@@ -630,6 +654,7 @@ struct TransferSheetView: View {
                     amountHeadline
                     summaryRow("An", d.name)
                     summaryRow("IBAN", d.iban)
+                    if let recipientBank { summaryRow("Bank", recipientBank) }
                     if !bicText.isEmpty { summaryRow("BIC", bicText.uppercased()) }
                     summaryRow("Zweck", d.purpose.isEmpty ? "–" : d.purpose)
                     summaryRow("Von", account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "–")
@@ -695,13 +720,14 @@ struct TransferSheetView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
             }
-            // Same rows and labels as the form, without headings (#881).
+            // Same rows and labels as the form (the bank as a row of its own), without headings (#881).
             Section {
                 reviewRow("Von", account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "–")
             }
             Section {
                 reviewRow("Empfänger", d.name)
                 reviewRow("IBAN", d.iban, monospaced: true)
+                if let recipientBank { reviewRow("Bank", recipientBank) }
                 if !bicText.isEmpty { reviewRow("BIC", bicText.uppercased(), monospaced: true) }
             }
             Section {
@@ -871,6 +897,55 @@ struct SourceAccountPicker: View {
     }
 }
 
+/// The recipient's bank under the IBAN field of the transfer, standing order and
+/// mandate forms (#1563), from the Bundesbank BLZ list (German IBANs only). One line,
+/// laid out also without a bank: the form must not jump (nor the fitted transfer
+/// sheet grow) while the IBAN is typed (#881).
+struct IBANBankLine: View {
+    let iban: String
+
+    var body: some View {
+        let bank = bankNameForIban(iban: iban)
+        Text(bank ?? " ")
+            .appFont(.caption)
+            .foregroundStyle(Theme.secondary)
+            .lineLimit(1)
+            .help(bank ?? "")
+            .sensitive() // follows from the IBAN, often names the city
+            .opacity(bank == nil ? 0 : 1)
+            .accessibilityHidden(bank == nil)
+    }
+}
+
+extension View {
+    /// An IBAN field with its `IBANBankLine` under it, on the edge the field's text starts from.
+    func withBankLine(_ iban: String, alignment: Alignment = .trailing) -> some View {
+        VStack(spacing: 4) {
+            self
+            IBANBankLine(iban: iban).frame(maxWidth: .infinity, alignment: alignment)
+        }
+    }
+}
+
+/// A known recipient's IBAN with its bank (#1563), under the name in the form's
+/// suggestions and in "Empfänger verwalten": tells apart several IBANs of one name.
+/// The IBAN never truncates, the bank does.
+struct RecipientIBANLine: View {
+    let iban: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(formatIBAN(iban)).appFont(.caption, design: .monospaced).fixedSize()
+            if let bank = bankNameForIban(iban: iban) {
+                Text(verbatim: " · \(bank)").appFont(.caption)
+            }
+        }
+        .foregroundStyle(Theme.secondary)
+        .lineLimit(1)
+        .sensitive()
+    }
+}
+
 private extension View {
     /// A text field of the transfer form. macOS: bezeled, so an empty field
     /// reads as a field (#881); iOS keeps the inline trailing style.
@@ -882,6 +957,13 @@ private extension View {
         #endif
     }
 }
+
+/// The edge a `transferField`'s text starts from (for the bank line under it).
+#if os(macOS)
+private let transferFieldEdge = Alignment.leading
+#else
+private let transferFieldEdge = Alignment.trailing
+#endif
 
 /// Where the recipient name field is, for the suggestion list over the form.
 private struct NameFieldBounds: PreferenceKey {
