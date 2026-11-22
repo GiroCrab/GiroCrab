@@ -405,6 +405,11 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
     win.on_refund_part_picked(move |index| {
         with_ui(|u| u.own_part = u.parts.get(index as usize).copied().unwrap_or(0));
         if let (Some(win), Some(v)) = (weak.upgrade(), vault()) {
+            // the rows on screen belong to the part shown before: a click on one is refused,
+            // so they go until the new ones are there (and stay away if the load fails)
+            win.set_rf_sums(SharedString::new());
+            win.set_rf_hint(SharedString::new());
+            win.set_rf_rows(ModelRc::new(VecModel::from(Vec::<RefundRow>::new())));
             refresh(&win, v);
         }
     });
