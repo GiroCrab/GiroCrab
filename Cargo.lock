@@ -827,7 +827,7 @@ version = "0.8.7"
 
 [[package]]
 name = "gen-fints-directory"
-version = "0.8.6"
+version = "0.8.7"
 
 [[package]]
 name = "getrandom"
