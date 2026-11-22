@@ -876,7 +876,7 @@ fn split_synced_before_the_step_has_one_order_on_both_devices() {
         let db = v.db().unwrap();
         db.execute("UPDATE transactions SET splits_ms=5 WHERE splits_ms>0", [])
             .unwrap();
-        super::schema_step(&db).unwrap();
+        db.execute_batch(super::SCHEMA).unwrap();
     }
     b.link_refund(bb[2], bb[1], 1).unwrap();
     a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();

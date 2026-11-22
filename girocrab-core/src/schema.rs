@@ -55,8 +55,7 @@
 //! - 36: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
 //!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
 //! - 37: explicit refund links (#714): table `refund_links`, keyed by the pair (refund, original) with the
-//!   split parts it names (`original_part`, `refund_part`; 0 = the whole booking). The parts of
-//!   every split booking are put into one order all devices agree on (`refunds::schema_step`).
+//!   split parts it names (`original_part`, `refund_part`; 0 = the whole booking).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -109,7 +108,7 @@ const STEPS: &[Step] = &[
     Step::Hook(account_total_flag),                            // 34 (#337)
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
-    Step::Hook(crate::refunds::schema_step),                   // 37: refund links (#714)
+    Step::Sql(crate::refunds::SCHEMA),                         // 37: refund links (#714)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
