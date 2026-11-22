@@ -192,6 +192,12 @@ struct BookingStreamView: View {
         }
         .onKeyPress(.downArrow) { model.moveSelection(1); return .handled }
         .onKeyPress(.upArrow) { model.moveSelection(-1); return .handled }
+        // Bild↓/Bild↑ page through the list, Pos1/Ende jump to its ends (GitHub #1561);
+        // the selection-follow scroll above keeps the selected row in view.
+        .onKeyPress(.pageDown) { model.moveSelection(AppModel.keyboardPageStep); return .handled }
+        .onKeyPress(.pageUp) { model.moveSelection(-AppModel.keyboardPageStep); return .handled }
+        .onKeyPress(.home) { model.moveSelection(-Int.max); return .handled }
+        .onKeyPress(.end) { model.moveSelection(Int.max); return .handled }
         .onKeyPress(.return) {
             // The balance chart sits inside the list: with keyboard focus there,
             // Return belongs to the chart (jump to the chosen day).

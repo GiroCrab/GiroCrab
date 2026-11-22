@@ -593,11 +593,22 @@ extension AppModel {
 
     // MARK: - Keyboard navigation
 
+    /// Rows per Bild↑/Bild↓ step in the booking list (GitHub #1561).
+    nonisolated static let keyboardPageStep = 10
+
+    /// Target row for keyboard navigation. `current` nil = nothing selected (as if
+    /// just above the first row). Clamped to the list; `delta` may be `±Int.max`
+    /// (Pos1/Ende) without overflowing. Nil for an empty list.
+    nonisolated static func selectionTarget(from current: Int?, delta: Int, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        let step = max(-count, min(count, delta))
+        return max(0, min(count - 1, (current ?? -1) + step))
+    }
+
     func moveSelection(_ delta: Int) {
         let list = visibleBookings
-        guard !list.isEmpty else { return }
-        let idx = selectedBookingID.flatMap { id in list.firstIndex { $0.id == id } } ?? -1
-        let next = max(0, min(list.count - 1, idx + delta))
+        let idx = selectedBookingID.flatMap { id in list.firstIndex { $0.id == id } }
+        guard let next = Self.selectionTarget(from: idx, delta: delta, count: list.count) else { return }
         selectedBookingIDs = []
         selectedBookingID = list[next].id
     }
