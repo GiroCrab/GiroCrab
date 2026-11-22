@@ -152,12 +152,14 @@ fn raw_tx(v: &Value) -> CoreResult<Option<RawTx>> {
         .ok_or_else(incomplete)?
         .to_string();
     let status = v.get("status");
-    if status
+    // a missing or malformed flag is no reason to skip: the history would be incomplete
+    match status
         .and_then(|s| s.get("confirmed"))
         .and_then(Value::as_bool)
-        != Some(true)
     {
-        return Ok(None);
+        Some(true) => {}
+        Some(false) => return Ok(None),
+        None => return Err(incomplete()),
     }
     let latest = jiff::Timestamp::now().as_second() + 86_400;
     let time = status
@@ -346,30 +348,43 @@ struct Esplora {
     base: String,
 }
 
-/// Earliest time of the next request of any Bitcoin sync in this process, so
+/// When the next request of any Bitcoin sync in this process may go out, so
 /// that parallel syncs together keep the public servers' rate limits.
-static NEXT_SLOT: std::sync::Mutex<Option<tokio::time::Instant>> = std::sync::Mutex::new(None);
+struct Slots {
+    /// Earliest time of the next request (`REQUEST_GAP` after the previous one).
+    next: Option<tokio::time::Instant>,
+    /// End of the pause after an "HTTP 429".
+    cooldown: Option<tokio::time::Instant>,
+}
 
-/// End of the pause after an "HTTP 429"; requests already waiting for their
-/// slot look at it again before they go out.
-static COOLDOWN: std::sync::Mutex<Option<tokio::time::Instant>> = std::sync::Mutex::new(None);
+static SLOTS: std::sync::Mutex<Slots> = std::sync::Mutex::new(Slots {
+    next: None,
+    cooldown: None,
+});
 
-/// Reserves the next request slot `gap` after the previous one and waits for
-/// it and for a pause another request started meanwhile.
+/// Waits until a request may go out and reserves its slot, `gap` before the
+/// next one. Slot and pause are checked and taken in one step: a request that
+/// waited looks again, so a pause started meanwhile (or another request that
+/// took the slot) holds it back, and requests leave `gap` apart after a pause.
 async fn wait_for_slot(gap: std::time::Duration) {
-    let slot = {
-        let mut next = NEXT_SLOT.lock().unwrap_or_else(|e| e.into_inner());
-        let now = tokio::time::Instant::now();
-        let slot = next.map_or(now, |t| t.max(now));
-        *next = Some(slot + gap);
-        slot
-    };
-    tokio::time::sleep_until(slot).await;
     loop {
-        let until = *COOLDOWN.lock().unwrap_or_else(|e| e.into_inner());
-        match until {
-            Some(t) if t > tokio::time::Instant::now() => tokio::time::sleep_until(t).await,
-            _ => break,
+        let wait = {
+            let mut s = SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+            let now = tokio::time::Instant::now();
+            let start = [s.next, s.cooldown]
+                .into_iter()
+                .flatten()
+                .fold(now, |a, b| a.max(b));
+            if start <= now {
+                s.next = Some(now + gap);
+                None
+            } else {
+                Some(start)
+            }
+        };
+        match wait {
+            None => return,
+            Some(t) => tokio::time::sleep_until(t).await,
         }
     }
 }
@@ -378,10 +393,8 @@ async fn wait_for_slot(gap: std::time::Duration) {
 /// requests that already wait for their slot.
 fn push_back_all(pause: std::time::Duration) {
     let until = tokio::time::Instant::now() + pause;
-    let mut cooldown = COOLDOWN.lock().unwrap_or_else(|e| e.into_inner());
-    *cooldown = Some(cooldown.map_or(until, |t| t.max(until)));
-    let mut next = NEXT_SLOT.lock().unwrap_or_else(|e| e.into_inner());
-    *next = Some(next.map_or(until, |t| t.max(until)));
+    let mut s = SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+    s.cooldown = Some(s.cooldown.map_or(until, |t| t.max(until)));
 }
 
 /// Pause between two requests to the Esplora server.
@@ -422,23 +435,39 @@ async fn send(http: &reqwest::Client, url: &str) -> CoreResult<reqwest::Response
     }))
 }
 
+/// One try of [`get_json`]: a final answer, or a connection that broke while
+/// the answer was being read (worth asking again).
+enum Attempt {
+    Done(CoreResult<Value>),
+    ReadFailed(CoreError),
+}
+
 async fn get_json(http: &reqwest::Client, url: &str) -> CoreResult<Value> {
     let mut attempt = 0;
     loop {
         match get_json_once(http, url).await {
-            // the connection broke while the answer was being read: ask again
-            Err(CoreError::Network { .. }) if attempt < 3 => {
+            Attempt::Done(result) => return result,
+            // `send` already retried the request itself; only a broken read is repeated
+            Attempt::ReadFailed(e) if attempt >= 3 => return Err(e),
+            Attempt::ReadFailed(_) => {
                 attempt += 1;
                 crate::depot_debug::log("bitcoin: connection lost while reading, retrying");
                 tokio::time::sleep(std::time::Duration::from_secs(2 * attempt)).await;
             }
-            other => return other,
         }
     }
 }
 
-async fn get_json_once(http: &reqwest::Client, url: &str) -> CoreResult<Value> {
-    let mut resp = send(http, url).await?;
+async fn get_json_once(http: &reqwest::Client, url: &str) -> Attempt {
+    match get_json_try(http, url).await {
+        Ok(v) => Attempt::Done(Ok(v)),
+        Err(e) => e,
+    }
+}
+
+async fn get_json_try(http: &reqwest::Client, url: &str) -> Result<Value, Attempt> {
+    let done = |e: CoreError| Attempt::Done(Err(e));
+    let mut resp = send(http, url).await.map_err(done)?;
     for wait in BACKOFF_SECS {
         if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
             break;
@@ -452,20 +481,30 @@ async fn get_json_once(http: &reqwest::Client, url: &str) -> CoreResult<Value> {
         let pause = std::time::Duration::from_secs(named.unwrap_or(wait));
         crate::depot_debug::log(&format!("bitcoin: HTTP 429, waiting {} s", pause.as_secs()));
         push_back_all(pause);
-        resp = send(http, url).await?;
+        resp = send(http, url).await.map_err(done)?;
     }
     let status = resp.status();
     if !status.is_success() {
         crate::depot_debug::log(&format!("bitcoin: HTTP {}", status.as_u16()));
-        return Err(CoreError::invalid(format!(
+        return Err(done(CoreError::invalid(format!(
             "{} (HTTP {})",
             tr("Der Bitcoin-Server hat die Anfrage abgelehnt"),
             status.as_u16()
-        )));
+        ))));
     }
-    let text = super::read_text_limited(resp).await?;
-    serde_json::from_str(&text)
-        .map_err(|_| CoreError::invalid(tr("Der Bitcoin-Server hat unerwartet geantwortet.")))
+    // An oversized answer stays oversized: it is final. A body that broke off
+    // while being read is worth another try.
+    let body = super::read_body_checked(resp, super::MAX_TEXT_BYTES)
+        .await
+        .map_err(|e| match e {
+            super::BodyError::TooLarge(e) => done(e),
+            super::BodyError::Read(e) => Attempt::ReadFailed(e),
+        })?;
+    serde_json::from_str(&crate::text::decode_bank_bytes(&body)).map_err(|_| {
+        done(CoreError::invalid(tr(
+            "Der Bitcoin-Server hat unerwartet geantwortet.",
+        )))
+    })
 }
 
 // ------------------------------------------------------------------ prices

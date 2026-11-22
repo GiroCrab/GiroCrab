@@ -112,6 +112,11 @@ impl ExtendedPubKey {
         if !matches!(path.trim(), "" | "<0;1>/*" | "0/*" | "1/*") {
             return Err(KeyError::Unsupported);
         }
+        // `wpkh(xpub…)` without a path is one fixed script, not the account's
+        // chains: only a bare key (no wrapper) stands for the whole account
+        if kind.is_some() && path.trim().is_empty() {
+            return Err(KeyError::Unsupported);
+        }
         let mut key = Self::parse(bare.trim())?;
         match key.depth {
             0 | 1 | 3 => {}

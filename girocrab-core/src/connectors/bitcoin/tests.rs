@@ -539,7 +539,25 @@ async fn a_wallet_beyond_the_address_cap_is_not_reported_as_complete() {
         all_used: true,
         ..Default::default()
     };
-    assert!(scan(&k, &fake).await.is_err());
+    let err = scan(&k, &fake).await.unwrap_err().to_string();
+    assert!(err.contains("5000"), "the cap is named: {err}");
+    // the receive chain was scanned up to the cap, then the scan stopped
+    assert_eq!(fake.asked.lock().unwrap().len(), MAX_ADDRESSES as usize);
+}
+
+#[test]
+fn a_transaction_without_a_confirmation_flag_is_an_error() {
+    let own: HashSet<String> = ["mine".to_string()].into();
+    let mut no_status = tx("n", Some(5), &[("x", 1)], &[("mine", 600)]);
+    no_status["status"] = json!({});
+    assert!(wallet_transactions(&[no_status], &own).is_err());
+    let mut unconfirmed = tx("u", Some(5), &[("x", 1)], &[("mine", 600)]);
+    unconfirmed["status"] = json!({"confirmed": false});
+    assert!(
+        wallet_transactions(&[unconfirmed], &own)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -574,19 +592,22 @@ fn descriptor_checksums_paths_and_depths_are_checked() {
         Err(KeyError::Malformed)
     );
     // paths the scan does not derive
-    for path in ["/<2;3>/*", "/5/*", "/0h/*", "/0/0"] {
+    // a wrapper without a path is one fixed script, not the account's chains
+    for path in ["/<2;3>/*", "/5/*", "/0h/*", "/0/0", ""] {
         assert_eq!(
             ExtendedPubKey::parse_input(&format!("wpkh({ZPUB}{path})")),
             Err(KeyError::Unsupported),
             "{path}"
         );
     }
-    for path in ["", "/<0;1>/*", "/0/*", "/1/*"] {
+    for path in ["/<0;1>/*", "/0/*", "/1/*"] {
         assert!(
             ExtendedPubKey::parse_input(&format!("wpkh({ZPUB}{path})")).is_ok(),
             "{path}"
         );
     }
+    // a bare account key (no wrapper, no path) stands for the whole account
+    assert!(ExtendedPubKey::parse_input(ZPUB).is_ok());
     // a coin-type key (depth 2) cannot reach its accounts
     let mut raw = keys::base58check_decode(ZPUB).unwrap();
     raw[4] = 2;
