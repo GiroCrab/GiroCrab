@@ -1137,6 +1137,42 @@ fn split_refund_with_a_fee_part_counts_alike_in_list_and_sidebar() {
     check(&v, [5000, -5000, 0]);
 }
 
+#[test]
+fn mixed_sign_split_remainders_keep_their_unlinked_classification() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let cc = third_category(&v);
+    let r = booking(&v, a, 10000);
+    let o = booking(&v, a, -10000);
+    v.set_transaction_category(o, Some(cc)).unwrap();
+    v.set_transaction_splits(r, vec![part(ca, 15000), part(cb, -5000)])
+        .unwrap();
+    let check = |linked, expected_totals, expected_flows, expected_expenses| {
+        let sidebar = [ca, cb, cc].map(|c| totals(&v, c).0);
+        let filtered = [ca, cb, cc].map(|c| sums(&page(&v, Some(c))));
+        let expenses = [ca, cb, cc].map(|c| expenses(&v, vec![], None, None, c));
+        println!(
+            "linked={linked}: sidebar={sidebar:?}; filtered(income,expense)={filtered:?}; expenses={expenses:?}"
+        );
+        assert_eq!(sidebar, expected_totals);
+        assert_eq!(filtered, expected_flows);
+        assert_eq!(expenses, expected_expenses);
+    };
+    check(
+        false,
+        [15000, -5000, -10000],
+        [(15000, 0), (-5000, 0), (0, -10000)],
+        [0, 0, -10000],
+    );
+    v.link_refund_parts(r, 1, o, 0).unwrap();
+    check(
+        true,
+        [5000, -5000, 0],
+        [(5000, 0), (-5000, 0), (0, 0)],
+        [0, 0, 0],
+    );
+}
+
 fn kinds(v: &Vault, ids: &[i64]) -> Vec<RefundLinkKind> {
     let rows = page(v, None).transactions;
     ids.iter()

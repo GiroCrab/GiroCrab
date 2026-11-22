@@ -982,10 +982,18 @@ impl CategoryRefunds {
                 (i128::from(open) * i128::from(share_cents) / i128::from(amount_cents)) as i64
             }
         };
-        let income = if refund_income_cents > 0 { rest } else { 0 };
+        let income = if refund_income_cents > 0
+            || (amount_cents > 0
+                && flow == crate::merchants::FlowKind::Consumption
+                && this.out_of.contains_key(&id))
+        {
+            rest
+        } else {
+            0
+        };
         let (into, into_income) = this.into.get(&id).copied().unwrap_or((0, 0));
-        // `rest`: what the refund's own category keeps in the filter. It is income when the
-        // refund still has an unassigned remainder, else it stays in the booking's own flow.
+        // `rest`: what the refund's own category keeps in the filter. Split remainders keep
+        // their income classification even when the booking's net remainder is zero.
         // `into`: what refunds pay back of bookings in the filter (an expense reduction there),
         // `into_income`: the part of that the core books as income.
         [
