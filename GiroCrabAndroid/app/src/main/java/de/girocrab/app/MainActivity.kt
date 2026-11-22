@@ -21,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import de.girocrab.app.model.Booking
 import de.girocrab.app.ui.screens.AccountsAndWealthScreen
 import de.girocrab.app.ui.screens.AccountsBadges
@@ -36,6 +37,9 @@ import de.girocrab.app.ui.screens.RuleEditorDialog
 import de.girocrab.app.ui.screens.SettingsScreen
 import de.girocrab.app.ui.screens.TagManagerDialog
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -215,15 +219,21 @@ fun GiroCrabRoot(
         }
     }
     var pendingBackup by remember { mutableStateOf<File?>(null) }
+    val scope = rememberCoroutineScope()
     val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val target = File(context.cacheDir, "import.gcbackup")
-        val copied = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            } ?: error("no stream")
-        }.isSuccess
-        if (copied) pendingBackup = target else unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+        // A slow provider must not block the lock screen: copy off the main thread, publish on it.
+        scope.launch {
+            val target = File(context.cacheDir, "import.gcbackup")
+            val copied = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    } ?: error("no stream")
+                }.isSuccess
+            }
+            if (copied) pendingBackup = target else unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+        }
     }
 
     if (state.loading && state.vaultState == VaultState.Locked) {
@@ -265,9 +275,16 @@ fun GiroCrabRoot(
                     } else {
                         unlockMessage = "Sicherung wird eingespielt …"
                         request.import(file.path, password) { result ->
-                            unlockMessage = describeImport(result)
-                            demoEscape = result is ImportResult.Imported
-                            file.delete()
+                            try {
+                                unlockMessage = describeImport(result)
+                            } catch (e: Exception) {
+                                // The import is committed; only reading it back failed.
+                                unlockMessage = "Sicherung eingespielt, Inhalt aber nicht lesbar " +
+                                    "(${e.javaClass.simpleName}: ${e.message})."
+                            } finally {
+                                demoEscape = result is ImportResult.Imported
+                                file.delete()
+                            }
                         }
                     }
                 },

@@ -19,6 +19,12 @@ sealed interface UnlockResult {
     data object KeyInvalidated : UnlockResult
 
     /**
+     * A wrapped key exists but its vault file does not. Opening would silently create an empty
+     * vault and make "your data is gone" look like "you never had data".
+     */
+    data object VaultMissing : UnlockResult
+
+    /**
      * Nothing to authenticate with — no biometric hardware, nothing enrolled — or no native core
      * linked. Distinct from [Refused] on purpose: retrying cannot help, importing can.
      */
