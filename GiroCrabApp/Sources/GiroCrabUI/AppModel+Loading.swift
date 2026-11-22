@@ -50,8 +50,12 @@ extension AppModel {
         reloadTags()
         reloadSettings()
         reloadDashboard()
+        // Cached merchant totals are stale whatever the load's outcome; a scan still
+        // running from before the change must not write back. The selected booking's
+        // history restarts once the selection load has published the new page:
+        // started now, it would read the booking's old row.
+        merchantStatsTask?.cancel()
         merchantStatsCache = [:]
-        loadMerchantStats(keepShown: true)
         startSelectionLoad(keepingShown: true)
         // merchant settings from another device may leave the merchant filter empty (#1373)
         if merchantFocus != nil { Task { [weak self] in await self?.leaveStaleMerchantFocus() } }

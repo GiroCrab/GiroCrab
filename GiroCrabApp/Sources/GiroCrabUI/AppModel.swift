@@ -339,6 +339,12 @@ public final class AppModel {
     /// Recurring bookings of the current month: booked vs. still due.
     var recurringMonth: RecurringMonthOverview?
     var showRecurringSheet = false
+    var showDuplicatesSheet = false
+    /// Pairs offered in "Mögliche Doppel …" (bank booking vs. imported MoneyMoney row).
+    var possibleDuplicates: [PossibleDuplicate] = []
+    /// Vault the shown pairs were loaded from (actions refuse any other).
+    var duplicatesPin: VaultPin?
+    var duplicatesTask: Task<Void, Never>?
     var showAddBank = false
     /// Series hidden with "Nicht wiederkehrend" (can be shown again).
     var recurringHidden: [IgnoredRecurring] = []
@@ -1737,6 +1743,7 @@ public final class AppModel {
         newCategoryRequest = nil
         scheduledBankSyncPaused = false
         reportPick = nil
+        closeDuplicates()
         scopeLoadTask?.cancel()
         categoryRefreshTask?.cancel()
         dashboardTask?.cancel()

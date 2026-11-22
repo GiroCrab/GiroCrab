@@ -29,6 +29,7 @@ pub(crate) mod bookings;
 pub(crate) mod cache;
 mod categories;
 pub(crate) mod connections;
+mod duplicates;
 pub(crate) mod enable_banking_apps;
 mod merge;
 mod rah10;
