@@ -100,7 +100,7 @@ private struct RefundBookingLine: View {
                         .appFont(.caption, weight: .medium)
                         .foregroundStyle(Theme.accent)
                         .lineLimit(1)
-                        .sensitive(.labels)
+                        .sensitive([.personal, .labels])
                 }
                 if showsPurpose, !purpose.isEmpty {
                     Text(purpose)
@@ -253,7 +253,7 @@ struct RefundPickerSheet: View {
                     Picker(fromRefund ? "Erstattung aus" : "Erstattung für", selection: $ownPart) {
                         ForEach(ownParts, id: \.part) { Text(partTitle($0)).tag($0.part) }
                     }
-                    .sensitive([.labels, .amounts])
+                    .sensitive([.personal, .labels, .amounts])
                 }
                 TextField("Name oder Verwendungszweck suchen", text: $search)
                     .textFieldStyle(.roundedBorder)
