@@ -208,12 +208,17 @@ struct RefundPickerSheet: View {
     private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The list below the suggestions; a search shows every hit, also a suggested one.
     private var others: [RefundBooking] {
-        var ids = Set(linked.map(Self.key))
-        if !isSearching { ids.formUnion(top.map { Self.key($0.booking) }) }
-        return candidates.filter { !ids.contains(Self.key($0)) }
+        var ids = linkedEnds
+        if !isSearching { ids.formUnion(top.map { otherEnd($0.booking) }) }
+        return candidates.filter { !ids.contains(otherEnd($0)) }
     }
-    /// A split booking appears once per part.
-    private static func key(_ r: RefundBooking) -> String { "\(r.id)-\(r.part)-\(r.refundPart)" }
+    /// The end a row stands for: the booking and its part on the other side of the link. The
+    /// own part is not in it, a linked row carries it and a row that can be chosen does not.
+    private func otherEnd(_ r: RefundBooking) -> String { "\(r.id)-\(fromRefund ? r.part : r.refundPart)" }
+    /// What the selected part (else the booking) is linked to already.
+    private var linkedEnds: Set<String> {
+        Set(linked.filter { ownPart == 0 || (fromRefund ? $0.refundPart : $0.part) == ownPart }.map(otherEnd))
+    }
     private func partTitle(_ p: (part: UInt32, split: TransactionSplit)) -> String {
         let category = p.split.categoryId.flatMap { id in model.categories.first { $0.id == id }?.name } ?? ""
         return ([String(localized: "Teil \(Int(p.part))"), category, p.split.note].filter { !$0.isEmpty } + [Money.format(p.split.amountCents, currency: booking.currency.isEmpty ? "EUR" : booking.currency.uppercased())])
@@ -431,8 +436,8 @@ struct RefundPickerSheet: View {
             links = result.0
             loadedOpen = result.4
             // a linked booking is shown on top only
-            let linkedIDs = Set(linked.map(Self.key))
-            loadedTop = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
+            let linkedIDs = linkedEnds
+            loadedTop = result.1.filter { !linkedIDs.contains(otherEnd($0.booking)) }
             loadedCandidates = result.2
             rowsFor = "\(part)|\(paysBack)"
             // parts count from 1 in the order of the split; the sheet starts with a part on the

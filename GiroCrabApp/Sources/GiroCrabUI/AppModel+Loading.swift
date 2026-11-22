@@ -43,6 +43,8 @@ extension AppModel {
         invalidateTotals()
         assetClassificationVersion += 1
         merchantSettingsRevision += 1
+        // a merge can bring or remove refund links without a change the pie or the card sees
+        refundLinksRevision += 1
         reloadAccounts()
         refreshSidebarCounts()
         mirrorDocumentsIfEnabled()

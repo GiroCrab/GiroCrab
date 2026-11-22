@@ -21,7 +21,12 @@ extension AppModel {
         guard !linked else { return }
         do { try vault.linkRefundParts(refundId: refundID, refundPart: refundPart, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.unlinkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart) }
+            // the ids belong to this vault: after a lock or a swap the step does nothing
+            let revision = vaultRevision
+            um.registerUndo(withTarget: self) { m in
+                guard m.vaultRevision == revision else { return }
+                m.unlinkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart)
+            }
             um.setActionName(String(localized: "Erstattung zuordnen"))
         }
         refundLinksChanged([refundID, originalID])
@@ -36,7 +41,11 @@ extension AppModel {
         } catch { errorMessage = describe(error); return }
         do { try vault.unlinkRefundParts(refundId: refundID, refundPart: refundPart, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.linkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart) }
+            let revision = vaultRevision
+            um.registerUndo(withTarget: self) { m in
+                guard m.vaultRevision == revision else { return }
+                m.linkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart)
+            }
             um.setActionName(String(localized: "Verknüpfung aufheben"))
         }
         refundLinksChanged([refundID, originalID])
@@ -76,6 +85,8 @@ extension AppModel {
         }
         refundLinksRevision += 1
         reloadDashboard()
+        // the bars of the selected category count the linked amounts too
+        reloadCategoryHistory()
         refreshAfterEdit()
     }
 }
