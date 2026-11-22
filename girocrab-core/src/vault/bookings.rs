@@ -10,7 +10,9 @@ use super::cache::DataStamp;
 use crate::error::CoreError;
 use crate::i18n::trf;
 use crate::iban::normalize_iban;
-use crate::merchants::{FlowKind, MerchantResolver, classify, clean_purpose, payment_method};
+use crate::merchants::{
+    FlowKind, MerchantResolver, MerchantRules, classify_by_kind, clean_purpose, payment_method,
+};
 use crate::models::*;
 use crate::money::parse_cents;
 
@@ -61,9 +63,12 @@ fn category_match_sql(cat_match: &str) -> String {
 }
 
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
-/// `paypal`: its account is a PayPal account (see `BookingFinisher`).
-pub(crate) fn enrich(t: &mut Booking, paypal: bool, top_role: &str) {
-    t.merchant = MerchantResolver::resolve(&t.counterparty, &t.purpose);
+/// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
+/// PayPal account (see `BookingFinisher`).
+pub(crate) fn enrich(t: &mut Booking, rules: &MerchantRules, paypal: bool, top_role: &str) {
+    // flow and recurring series read the bundled merchant: the user's changes only rename
+    let (merchant, bundled) = rules.resolve_with_bundled(&t.counterparty, &t.purpose);
+    t.merchant = merchant;
     t.merchant_name = t.merchant.name.clone();
     t.merchant_domain = Some(t.merchant.domain.clone()).filter(|d| !d.is_empty());
     t.merchant_svg_path = Some(t.merchant.svg_path.clone()).filter(|d| !d.is_empty());
@@ -71,12 +76,12 @@ pub(crate) fn enrich(t: &mut Booking, paypal: bool, top_role: &str) {
     // Only the category role classifies: a custom category named like a built-in has no role
     // and must not be treated as an investment by its name.
     let role = top_role;
-    t.flow = classify(
+    t.flow = classify_by_kind(
         t.amount_cents,
         &t.counterparty,
         &t.purpose,
         &t.booking_text,
-        &t.merchant,
+        bundled.kind,
         role,
         t.account_kind,
     );
@@ -88,7 +93,7 @@ pub(crate) fn enrich(t: &mut Booking, paypal: bool, top_role: &str) {
         paypal,
     );
     t.clean_purpose = clean_purpose(&t.purpose);
-    t.recurrence_key = crate::recurring::series_key(t);
+    t.recurrence_key = crate::recurring::series_key_with(t, &bundled.key);
 }
 
 /// Tables behind a booking row; a deleted category or rule reads as none
@@ -252,10 +257,12 @@ pub(super) struct BookingFinisher {
     pair_transfers: HashSet<i64>,
     loan_links: HashMap<i64, i64>,
     paypal_accounts: HashSet<i64>,
+    /// Merchant recognition with the user's changes (#1373).
+    merchants: Arc<MerchantRules>,
 }
 
 impl BookingFinisher {
-    fn load(db: &rusqlite::Connection) -> Result<Self, CoreError> {
+    fn load(db: &rusqlite::Connection, merchants: Arc<MerchantRules>) -> Result<Self, CoreError> {
         let paths = Vault::category_paths(db)?;
         let category_flows = Vault::category_flows(db)?;
         let loan_links = crate::loans::link_map(db)?;
@@ -290,6 +297,7 @@ impl BookingFinisher {
             pair_transfers,
             loan_links,
             paypal_accounts,
+            merchants,
         })
     }
 
@@ -305,7 +313,12 @@ impl BookingFinisher {
         let category_flow = t.category_id.and_then(|c| self.category_flows.get(&c));
         let top_role = category_flow.map(|c| c.top_role.as_str()).unwrap_or("");
         let transfer_category = category_flow.is_some_and(|c| c.is_transfer);
-        enrich(t, self.paypal_accounts.contains(&t.account_id), top_role);
+        enrich(
+            t,
+            &self.merchants,
+            self.paypal_accounts.contains(&t.account_id),
+            top_role,
+        );
         t.is_salary = crate::salary::is_salary(t, &self.salary_ibans);
         // A salary stays income although its booking text names a transfer
         // (comdirect: "Übertrag / Überweisung"); a transfer category still wins.
@@ -331,7 +344,12 @@ impl BookingFinisher {
         {
             t.flow = FlowKind::Transfer;
         }
-        if let Some(d) = self.overrides.get(&t.merchant.key) {
+        // a logo domain set by hand, unless the recognition (and with it every logo) is off
+        if let Some(d) = self
+            .overrides
+            .get(&t.merchant.key)
+            .filter(|_| self.merchants.enabled())
+        {
             t.merchant.domain = d.clone();
             t.merchant.domain_candidates = vec![d.clone()];
             t.merchant.domain_source = "override".into();
@@ -367,6 +385,7 @@ impl Vault {
     /// expression) of a `BookingFilter`; shared by the list and bulk updates.
     #[allow(clippy::type_complexity)]
     pub(crate) fn filter_clauses(
+        &self,
         db: &rusqlite::Connection,
         filter: &BookingFilter,
     ) -> Result<(String, String, Vec<Box<dyn ToSql>>, String), CoreError> {
@@ -531,6 +550,7 @@ impl Vault {
                      OR REPLACE(UPPER(IFNULL(a.account_number, '')), ' ', '') LIKE ?{n} ESCAPE '\\')"
                 ));
             } else {
+                let merchants = self.merchant_rules(db)?;
                 let mut ors = Vec::new();
                 for term in q.split_whitespace() {
                     let like = format!(
@@ -543,7 +563,8 @@ impl Vault {
                     let n = args.len();
                     let mut alt = format!(
                         "(t.counterparty LIKE ?{n} ESCAPE '\\' OR t.purpose LIKE ?{n} ESCAPE '\\' OR t.booking_text LIKE ?{n} ESCAPE '\\' \
-                         OR t.counterparty_iban LIKE ?{n} ESCAPE '\\' OR cat.name LIKE ?{n} ESCAPE '\\' OR a.name LIKE ?{n} ESCAPE '\\'"
+                         OR t.counterparty_iban LIKE ?{n} ESCAPE '\\' OR cat.name LIKE ?{n} ESCAPE '\\' OR a.name LIKE ?{n} ESCAPE '\\' \
+                         OR t.note LIKE ?{n} ESCAPE '\\'"
                     );
                     let compact: String = term
                         .chars()
@@ -569,6 +590,15 @@ impl Vault {
                             args.push(Box::new(cents.abs()));
                             alt.push_str(&format!(" OR ABS(t.amount_cents) = ?{}", args.len()));
                         }
+                    }
+                    // The shown merchant name (#1373): an own merchant's name or a bundled
+                    // one ("Amazon" for "AMZN Mktp") is in no booking text.
+                    if let Some(ids) = self.shown_merchant_ids(db, &merchants, term)? {
+                        args.push(Box::new(ids));
+                        alt.push_str(&format!(
+                            " OR t.id IN (SELECT value FROM json_each(?{}))",
+                            args.len()
+                        ));
                     }
                     alt.push(')');
                     ors.push(alt);
@@ -620,7 +650,7 @@ impl Vault {
         if only_accounts.is_empty() {
             return Ok(Vec::new());
         }
-        let (cte, mut where_sql, mut args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, mut where_sql, mut args, share_sql) = self.filter_clauses(db, filter)?;
         let ph: Vec<String> = only_accounts
             .iter()
             .map(|id| {
@@ -693,7 +723,7 @@ impl Vault {
         filter: &BookingFilter,
         mut visit: impl FnMut(i64, Booking),
     ) -> Result<(), CoreError> {
-        let (cte, where_sql, args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
         let sql = booking_select(&cte, &where_sql, &share_sql);
         let args = params_from_iter(args.iter().map(|b| b.as_ref()));
         let classes = filters_by_class(filter)
@@ -816,7 +846,7 @@ impl Vault {
             return Ok(ids);
         }
         let mut db = self.db()?;
-        let (cte, where_sql, args, _) = Self::filter_clauses(&db, &filter)?;
+        let (cte, where_sql, args, _) = self.filter_clauses(&db, &filter)?;
         let tx = db.transaction()?;
         let ids: Vec<i64> = {
             let sql = format!(
@@ -855,7 +885,7 @@ impl Vault {
             return Ok(self.list_page(filter, false)?.total_count);
         }
         let db = self.db()?;
-        let (cte, where_sql, args, _) = Self::filter_clauses(&db, &filter)?;
+        let (cte, where_sql, args, _) = self.filter_clauses(&db, &filter)?;
         let sql = format!(
             "{cte}SELECT count(*) FROM transactions t JOIN accounts a ON a.id = t.account_id \
              LEFT JOIN categories cat ON cat.id = t.category_id AND cat.deleted_ms IS NULL \
@@ -874,22 +904,28 @@ impl Vault {
     }
 
     /// `flow_other_currencies` for the plain selection of `selection_flow`: accounts and period.
+    /// `respect_in_total`: in a totals context (#337) only the effective total
+    /// set contributes — the same rule as the EUR sums this figure supplements.
+    #[uniffi::method(default(respect_in_total = false))]
     pub fn selection_flow_other_currencies(
         &self,
         account_ids: Vec<i64>,
         date_from: Option<String>,
         date_to: Option<String>,
+        respect_in_total: bool,
     ) -> Result<Vec<CurrencyFlow>, CoreError> {
         self.flow_other_currencies(BookingFilter {
             account_ids,
             date_from,
             date_to,
+            respect_in_total,
             ..Default::default()
         })
     }
 
     /// The KPI tiles of the currencies other than EUR (#1049) for the same filter: what the page
     /// sums leave out. Empty for a single account; no scan when no booking has another currency.
+    /// In a totals context (#337) only the effective total set contributes.
     pub fn flow_other_currencies(
         &self,
         filter: BookingFilter,
@@ -897,13 +933,21 @@ impl Vault {
         if filter.account_ids.len() == 1 {
             return Ok(Vec::new());
         }
+        // one guard for both reads, so eligibility and bookings stay consistent
         let db = self.db()?;
         if !crate::planning::has_other_currencies(&db)? {
             return Ok(Vec::new());
         }
+        // the same effective set as the EUR page sums (#337): the totals set
+        // intersected with the selection
+        let totals = totals_set(&db, &filter)?;
         let mut per: std::collections::BTreeMap<String, SelectionFlow> = Default::default();
         self.visit_bookings(&db, &filter, |share, t| {
-            if !crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency) {
+            if !crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
+                && totals
+                    .as_ref()
+                    .is_none_or(|set| set.contains(&t.account_id))
+            {
                 per.entry(t.currency.to_uppercase())
                     .or_default()
                     .add(t.flow, share);
@@ -932,7 +976,7 @@ impl Vault {
         filter: &BookingFilter,
     ) -> Result<Vec<(i64, i64)>, CoreError> {
         let classes = self.booking_classes(db)?;
-        let (cte, where_sql, args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
         let sql = format!("{cte}SELECT t.id, {share_sql} {BOOKING_FROM_SQL} WHERE {where_sql}");
         let mut stmt = db.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(args.iter().map(|b| b.as_ref())), |r| {
@@ -958,6 +1002,8 @@ impl Vault {
 pub(crate) struct BookingClass {
     pub(crate) flow: FlowKind,
     pub(crate) merchant: Arc<str>,
+    /// The shown merchant name in lower case, for the search (#1373).
+    pub(crate) name: Arc<str>,
 }
 
 type BookingClasses = Arc<HashMap<i64, BookingClass>>;
@@ -1020,7 +1066,7 @@ impl Vault {
         {
             return Ok(finisher);
         }
-        let finisher = Arc::new(BookingFinisher::load(db)?);
+        let finisher = Arc::new(BookingFinisher::load(db, self.merchant_rules(db)?)?);
         self.list_cache
             .keep(db, stamp, |s| s.finisher = Some(finisher.clone()));
         Ok(finisher)
@@ -1040,7 +1086,7 @@ impl Vault {
         let stamp = self.data_stamp(db);
         let finisher = self.booking_finisher(db)?;
         let (cte, where_sql, args, share_sql) =
-            Self::filter_clauses(db, &BookingFilter::default())?;
+            self.filter_clauses(db, &BookingFilter::default())?;
         let sql = format!(
             "{cte}SELECT {} {BOOKING_FROM_SQL} WHERE {where_sql}",
             booking_columns(&share_sql)
@@ -1050,25 +1096,27 @@ impl Vault {
             params_from_iter(args.iter().map(|b| b.as_ref())),
             booking_from_row,
         )?;
-        // Thousands of bookings share a few hundred merchants: one key each.
-        let mut merchants: HashSet<Arc<str>> = HashSet::new();
+        // Thousands of bookings share a few hundred merchants: one key and name each.
+        let mut shared: HashSet<Arc<str>> = HashSet::new();
+        let mut intern = |s: String| -> Arc<str> {
+            shared.get(s.as_str()).cloned().unwrap_or_else(|| {
+                let s: Arc<str> = s.into();
+                shared.insert(s.clone());
+                s
+            })
+        };
         let mut classes = HashMap::new();
         for row in rows {
             let (_, mut t) = row?;
             finisher.finish(&mut t, None);
-            let merchant = merchants
-                .get(t.merchant.key.as_str())
-                .cloned()
-                .unwrap_or_else(|| {
-                    let key: Arc<str> = t.merchant.key.into();
-                    merchants.insert(key.clone());
-                    key
-                });
+            let name = intern(t.merchant.name.to_lowercase());
+            let merchant = intern(t.merchant.key);
             classes.insert(
                 t.id,
                 BookingClass {
                     flow: t.flow,
                     merchant,
+                    name,
                 },
             );
         }
@@ -1076,6 +1124,29 @@ impl Vault {
         self.list_cache
             .keep(db, stamp, |s| s.classes = Some(classes.clone()));
         Ok(classes)
+    }
+
+    /// The bookings whose shown merchant name contains `term` (a JSON id array), or
+    /// `None` when no own or bundled merchant name in use contains it. The other names
+    /// come from the counterparty or the purpose, which the text search covers, so a
+    /// search for anything else never builds the booking classes.
+    fn shown_merchant_ids(
+        &self,
+        db: &rusqlite::Connection,
+        merchants: &MerchantRules,
+        term: &str,
+    ) -> Result<Option<String>, CoreError> {
+        let term = term.to_lowercase();
+        if !merchants.names_contain(&term) {
+            return Ok(None);
+        }
+        let ids: Vec<i64> = self
+            .booking_classes(db)?
+            .iter()
+            .filter(|(_, c)| c.name.contains(term.as_str()))
+            .map(|(id, _)| *id)
+            .collect();
+        Ok(Some(format!("[{}]", sql_int_list(&ids))))
     }
 
     /// `booking_classes` if no write happened since they were built. For callers
@@ -1124,14 +1195,14 @@ impl Vault {
         with_rows: bool,
     ) -> Result<Option<BookingPage>, CoreError> {
         let classes = self.booking_classes(db)?;
-        let (cte, where_sql, args, share_sql) = Self::filter_clauses(db, filter)?;
+        let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
         let order = if with_rows {
             " ORDER BY t.booking_date DESC, t.id DESC"
         } else {
             ""
         };
         let sql = format!(
-            "{cte}SELECT t.id, t.booking_date, {share_sql}, t.currency {BOOKING_FROM_SQL} WHERE {where_sql}{order}"
+            "{cte}SELECT t.id, t.booking_date, t.account_id, {share_sql}, t.currency {BOOKING_FROM_SQL} WHERE {where_sql}{order}"
         );
         let mut stmt = db.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(args.iter().map(|b| b.as_ref())), |r| {
@@ -1141,7 +1212,8 @@ impl Vault {
                 r.get::<_, i64>(0)?,
                 date,
                 r.get::<_, i64>(2)?,
-                r.get::<_, String>(3)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
             ))
         })?;
         let (mut income, mut expense, mut consumption, mut investment, mut perk) =
@@ -1149,16 +1221,22 @@ impl Vault {
         let mut flow = SelectionFlow::default();
         let mut kept: Vec<(i64, String)> = Vec::new();
         let mut total = 0u32;
+        let totals = totals_set(db, filter)?;
         for row in rows {
-            let (id, date, share, currency) = row?;
+            let (id, date, account_id, share, currency) = row?;
             let Some(class) = classes.get(&id) else {
                 return Ok(None);
             };
             if !keeps(filter, class.flow, &class.merchant) {
                 continue;
             }
-            // Sums skip other currencies unless one account is selected (#1049); the rows stay.
-            if crate::planning::counts_in_sums(filter.account_ids.len(), &currency) {
+            // Sums skip other currencies unless one account is selected (#1049),
+            // and only accounts of the totals set (#337) contribute to the sums;
+            // counts and rows stay complete either way.
+            let counts_for_totals = totals.as_ref().is_none_or(|set| set.contains(&account_id));
+            if counts_for_totals
+                && crate::planning::counts_in_sums(filter.account_ids.len(), &currency)
+            {
                 match kpi_side(class.flow, share) {
                     KpiSide::Income => income += share,
                     KpiSide::Expense => expense += share,
@@ -1194,7 +1272,7 @@ impl Vault {
             }
             let page_ids: Vec<i64> = kept[start..end].iter().map(|(id, _)| *id).collect();
             if !page_ids.is_empty() {
-                let (cte, mut where_sql, mut args, share_sql) = Self::filter_clauses(db, filter)?;
+                let (cte, mut where_sql, mut args, share_sql) = self.filter_clauses(db, filter)?;
                 // One JSON parameter instead of one per id: no variable limit to hit.
                 let json = format!(
                     "[{}]",
@@ -1247,11 +1325,21 @@ impl Vault {
         let mut flow = SelectionFlow::default();
         let mut txs: Vec<Booking> = Vec::new();
         let mut total = 0usize;
+        let totals = totals_set(db, filter)?;
         self.visit_bookings(db, filter, |share, t| {
             // One KPI definition (`kpi_side`) for the page sums and `SelectionFlow`;
             // transfers between own accounts are neutral (else counted on both sides).
-            // Sums skip other currencies unless one account is selected (#1049); the rows stay.
-            if crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency) {
+            // `share` is the full amount, or with a category filter only the split
+            // parts of that category. Only accounts of the totals set (#337)
+            // contribute to the sums — the booking itself always stays in the
+            // list and in the counts — and sums skip other currencies unless
+            // one account is selected (#1049); the rows stay.
+            let counts_for_totals = totals
+                .as_ref()
+                .is_none_or(|set| set.contains(&t.account_id));
+            if counts_for_totals
+                && crate::planning::counts_in_sums(filter.account_ids.len(), &t.currency)
+            {
                 match kpi_side(t.flow, share) {
                     KpiSide::Income => income += share,
                     KpiSide::Expense => expense += share,
@@ -1291,6 +1379,25 @@ impl Vault {
             day_balances: Vec::new(),
         })
     }
+}
+
+/// The effective total set behind `BookingFilter.respect_in_total` (#337):
+/// `None` for a proof context (the default). An explicit `account_ids`
+/// selection narrows the set — an empty result means "none" (zero sums),
+/// never "all accounts".
+fn totals_set(
+    db: &rusqlite::Connection,
+    filter: &BookingFilter,
+) -> Result<Option<std::collections::HashSet<i64>>, CoreError> {
+    if !filter.respect_in_total {
+        return Ok(None);
+    }
+    let allowed = crate::user_groups::total_account_ids(db)?;
+    if filter.account_ids.is_empty() {
+        return Ok(Some(allowed));
+    }
+    let want: std::collections::HashSet<i64> = filter.account_ids.iter().copied().collect();
+    Ok(Some(allowed.intersection(&want).copied().collect()))
 }
 
 #[uniffi::export]
@@ -1888,6 +1995,37 @@ mod paging_tests {
     }
 
     #[test]
+    fn search_finds_the_note() {
+        let (v, p) = demo();
+        let search = |q: &str| {
+            v.list_transactions(BookingFilter {
+                search: Some(q.into()),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        assert_eq!(search("Zebrapinguin").total_count, 0);
+        let b = v
+            .list_transactions(BookingFilter::default())
+            .unwrap()
+            .transactions[0]
+            .clone();
+        v.update_transaction_note(b.id, "Zebrapinguin für Anna".into())
+            .unwrap();
+        let hits = search("zebrapinguin");
+        assert_eq!(hits.total_count, 1);
+        assert_eq!(hits.transactions[0].id, b.id);
+        // several terms must all match, each in any field: note + counterparty
+        let both = search(&format!(
+            "Anna {}",
+            b.counterparty.split_whitespace().next().unwrap()
+        ));
+        assert!(both.transactions.iter().any(|t| t.id == b.id));
+        assert_eq!(search("Anna Nirgendwo").total_count, 0);
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
     fn checked_filter_selects_new_or_checked_bookings() {
         let (v, p) = demo();
         let all = v
@@ -2429,6 +2567,8 @@ mod list_cache_tests {
                     BookingDirection::All,
                     min,
                     max,
+                    vec![],
+                    false,
                 )
                 .unwrap())
         };

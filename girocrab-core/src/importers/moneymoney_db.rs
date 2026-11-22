@@ -51,6 +51,7 @@ use super::moneymoney_import::{
 };
 use crate::asset_classification::{AssetClass, ClassificationValues, InstrumentKind};
 use crate::connectors::bank_directory::{Psd2Bank, match_psd2_bank, psd2_catalog};
+use crate::connectors::fints_directory::{MILES_AND_MORE_BLZ, digits};
 use crate::connectors::group_for;
 use crate::dates::now_ms;
 use crate::depot_values::observations::{self, ObservedValue};
@@ -66,6 +67,16 @@ use templates::SrcTemplate;
 
 /// `accounts.external_ref` prefix of accounts created by this importer.
 const EXT_PREFIX: &str = "moneymoney-db:";
+
+/// Bit of `accounts.refresh` that MoneyMoney sets for a closed account
+/// (found with a real database: ticking and unticking the checkbox flips only it).
+const MM_CLOSED: i64 = 16;
+
+/// Archives an account closed in MoneyMoney (offline, stays readable).
+fn archive_closed(conn: &Connection, account_id: i64) -> CoreResult<()> {
+    crate::user_groups::set_archived_inner(conn, account_id, true)?;
+    Ok(())
+}
 
 // ------------------------------------------------------------------ FFI types
 
@@ -110,6 +121,12 @@ pub struct MoneyMoneyDbAccount {
     pub computed_balance_cents: i64,
     /// Where the starting value of the balance came from (German, for the UI).
     pub balance_source: String,
+    /// Closed in MoneyMoney: imported archived. A login whose imported
+    /// accounts are all closed gets no connection unless chosen (#1437).
+    pub closed: bool,
+    /// Where a target of `None` ("new account") goes: the account an earlier import created,
+    /// or the bank-synced one it was folded into; `None` = a new account (#1437).
+    pub reused_account_id: Option<i64>,
 }
 
 /// One bank login in MoneyMoney. Secrets are never part of this record.
@@ -216,6 +233,14 @@ pub struct MoneyMoneyDbPreview {
     /// Transfer templates GiroCrab can take over (recipient and valid IBAN,
     /// euro).
     pub transfer_template_count: u32,
+    /// GiroCrab accounts an earlier import created and still owns. An account imported
+    /// into a new one or one of these links its login; one merged into a bank-synced
+    /// account brings its bookings only, and its login gets no connection for it (#1437).
+    pub owned_account_ids: Vec<i64>,
+    /// Those of [`Self::owned_account_ids`] already under a bank login: only their own
+    /// MoneyMoney account (`reused_account_id`) links them again, another one merged
+    /// into them leaves them where they are.
+    pub connected_account_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -458,9 +483,10 @@ struct SrcAccount {
     /// Balance MoneyMoney displays (`accounts.balances` blob): (cents, currency).
     shown_balance: Option<(i64, String)>,
     balance_ts: Option<i64>,
-    /// `accounts.cancel_tsp`: when the account was deactivated/closed in MoneyMoney
-    /// (Unix seconds); `None` = still active.
-    cancelled_ts: Option<i64>,
+    /// "Account is closed" in MoneyMoney's account settings: bit 16 of
+    /// `accounts.refresh` (the low bits are its refresh settings). MoneyMoney
+    /// keeps no date for it. Not `cancel_tsp`, a cancelled refresh (#998).
+    closed: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -603,26 +629,9 @@ fn get(r: &Row, i: usize) -> rusqlite::Result<Value> {
 /// MoneyMoney stores amounts as REAL. Converted via the shortest decimal
 /// representation, rounded half away from zero (0.285 → 29 cents, not 28).
 pub(crate) fn real_to_cents(x: f64) -> Option<i64> {
-    if !x.is_finite() {
-        return None;
-    }
-    let s = format!("{}", x.abs());
-    let (int, frac) = s.split_once('.').unwrap_or((s.as_str(), ""));
-    let d: Vec<i64> = frac
-        .bytes()
-        .chain(std::iter::repeat(b'0'))
-        .take(3)
-        .map(|b| (b - b'0') as i64)
-        .collect();
-    let mut cents = int
-        .parse::<i64>()
-        .ok()?
-        .checked_mul(100)?
-        .checked_add(d[0] * 10 + d[1])?;
-    if d[2] >= 5 {
-        cents += 1;
-    }
-    Some(if x < 0.0 { -cents } else { cents })
+    // f64 `Display` prints the shortest round-trip form and never an exponent;
+    // NaN and infinities are no decimal.
+    crate::money::decimal(&x.to_string(), '.').and_then(crate::money::cents_rounded)
 }
 
 /// MoneyMoney dates are Unix seconds at 12:00 UTC → `YYYY-MM-DD` (UTC).
@@ -747,24 +756,31 @@ fn has_any(hay: &str, needles: &[&str]) -> bool {
 }
 
 /// Suggested GiroCrab kind. MoneyMoney's `type` codes are undocumented, so the
-/// guess uses `portfolio` and keywords in the account / bank name.
-fn suggest_kind(a: &SrcAccount, bank_name: &str) -> AccountKind {
+/// guess uses `portfolio`, card-only bank codes and keywords in the account /
+/// bank name.
+fn suggest_kind(a: &SrcAccount, bank: Option<&SrcBank>) -> AccountKind {
     let name = a.name.to_lowercase();
+    let bank_name = bank.map_or("", |b| b.name.as_str());
     let both = format!("{name} {}", bank_name.to_lowercase());
     if a.portfolio {
         AccountKind::Brokerage
-    } else if has_any(
-        &both,
-        &[
-            "kreditkarte",
-            "credit card",
-            "creditcard",
-            "visa",
-            "mastercard",
-            "american express",
-            "amex",
-        ],
-    ) {
+    } else if has_any(&name, &["festgeld", "termingeld", "time deposit"]) {
+        // before the card words, which are also searched in the bank name (#1002)
+        AccountKind::TimeDeposit
+    } else if bank.is_some_and(SrcBank::card_only)
+        || has_any(
+            &both,
+            &[
+                "kreditkarte",
+                "credit card",
+                "creditcard",
+                "visa",
+                "mastercard",
+                "american express",
+                "amex",
+            ],
+        )
+    {
         AccountKind::CreditCard
     } else if has_any(&both, &["paypal"]) {
         AccountKind::PaymentService
@@ -774,7 +790,6 @@ fn suggest_kind(a: &SrcAccount, bank_name: &str) -> AccountKind {
             "tagesgeld",
             "sparkonto",
             "sparbuch",
-            "festgeld",
             "geldmarkt",
             "savings",
             "extra-konto",
@@ -809,7 +824,7 @@ fn connector_for(bankcode: &str, name: &str) -> Option<ConnectorKind> {
 /// FinTS banks that have a preset, e.g. Postbank or Sparda).
 fn connector_key_for(bankcode: &str, name: &str) -> Option<(ConnectorKind, String)> {
     let kind = connector_for_inner(bankcode, name)?;
-    let code: String = bankcode.chars().filter(|c| c.is_ascii_digit()).collect();
+    let code = digits(bankcode);
     let key = if kind == ConnectorKind::FinTsGeneric {
         ConnectorKind::fints_key(&code)
     } else {
@@ -827,7 +842,7 @@ fn connector_key_for(bankcode: &str, name: &str) -> Option<(ConnectorKind, Strin
 ///  3. otherwise `None`: the preview then suggests Enable Banking (PSD2)
 ///     from the catalogue (`MoneyMoneyDbBank::psd2_bank`).
 fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
-    let code: String = bankcode.chars().filter(|c| c.is_ascii_digit()).collect();
+    let code = digits(bankcode);
     match code.as_str() {
         "52090000" => return Some(ConnectorKind::VolksbankKasselGoettingen),
         "50050201" => return Some(ConnectorKind::Direkt1822),
@@ -866,7 +881,7 @@ const BUNQ_DE_BLZ: &str = "37019000";
 /// Open Bank S.A. (Santander, issuer of the Amazon Visa via Zinia): German
 /// bank code 50034200 (OPENDEFF), or the login's name.
 fn is_openbank(bankcode: &str, name: &str) -> bool {
-    let code: String = bankcode.chars().filter(|c| c.is_ascii_digit()).collect();
+    let code = digits(bankcode);
     let n = name.to_lowercase();
     code == "50034200" || n.contains("openbank") || n.contains("open bank") || n.contains("zinia")
 }
@@ -886,7 +901,7 @@ fn is_bunq_account(bic: &str, iban: &str, bankcode: &str) -> bool {
     if is_bunq_bic(bic) || is_bunq_bic(bankcode) {
         return true;
     }
-    let code: String = bankcode.chars().filter(|c| c.is_ascii_digit()).collect();
+    let code = digits(bankcode);
     if code == BUNQ_DE_BLZ {
         return true;
     }
@@ -1198,6 +1213,11 @@ fn read_source(path: &str, password: &SecretString) -> CoreResult<Source> {
     }
     if have.contains("banks") {
         src.banks = read_banks(&conn)?;
+        for b in &mut src.banks {
+            if is_deutsche_bank_card_login(b, &src.accounts) {
+                b.bankcode = MILES_AND_MORE_BLZ.to_string();
+            }
+        }
     }
     if have.contains("account_groups") {
         src.account_groups = read_account_groups(&conn)?;
@@ -1232,7 +1252,7 @@ fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
             "balances",
             "balance_tsp",
             "bic",
-            "cancel_tsp",
+            "refresh",
         ],
         "ORDER BY sort, rowid",
     )?;
@@ -1256,7 +1276,7 @@ fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
             shown_balance: parse_balances_blob(get(r, 11)?),
             balance_ts: vint(get(r, 12)?).filter(|t| *t > 0),
             bic: vtext(get(r, 13)?),
-            cancelled_ts: vint(get(r, 14)?).filter(|t| *t > 0),
+            closed: vint(get(r, 14)?).is_some_and(|f| f & MM_CLOSED != 0),
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -1345,6 +1365,37 @@ fn read_banks(conn: &Connection) -> CoreResult<Vec<SrcBank>> {
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// MoneyMoney's bank code for the Miles & More card logins (#1017).
+const MILES_AND_MORE_PSEUDO_CODE: &str = "Miles & More Credit Card";
+/// DKB, the issuer of the Miles & More cards before 10/2025.
+const DKB_BLZ: &str = "12030000";
+
+impl SrcBank {
+    fn has_miles_and_more_pseudo_code(&self) -> bool {
+        self.bankcode
+            .trim()
+            .eq_ignore_ascii_case(MILES_AND_MORE_PSEUDO_CODE)
+    }
+
+    /// A login that holds credit cards only: the Miles & More pseudo code or
+    /// the cards' own bank code.
+    fn card_only(&self) -> bool {
+        self.has_miles_and_more_pseudo_code() || digits(&self.bankcode) == MILES_AND_MORE_BLZ
+    }
+}
+
+/// Since 10/2025 Deutsche Bank issues the Miles & More cards, over FinTS under
+/// a bank code of their own; a login of the former issuer DKB keeps the pseudo
+/// code (no connector): its name says so or its cards carry DKB's bank code.
+/// The name alone is not enough, MoneyMoney lets the user rename the login.
+fn is_deutsche_bank_card_login(b: &SrcBank, accounts: &[SrcAccount]) -> bool {
+    b.has_miles_and_more_pseudo_code()
+        && !b.name.to_lowercase().contains("dkb")
+        && !accounts
+            .iter()
+            .any(|a| a.bank_key == Some(b.id) && digits(&a.bankcode) == DKB_BLZ)
 }
 
 fn read_account_groups(conn: &Connection) -> CoreResult<HashMap<i64, (String, i64, i64)>> {
@@ -1876,7 +1927,7 @@ impl Source {
             (is_openbank(&b.bankcode, &b.name)
                 && accounts.any(|a| {
                     a.name.to_lowercase().contains("amazon")
-                        || suggest_kind(a, &b.name) == AccountKind::CreditCard
+                        || suggest_kind(a, Some(b)) == AccountKind::CreditCard
                 }))
             .then(|| keyed(ConnectorKind::AmazonVisa))
         })
@@ -2191,6 +2242,19 @@ fn into_split(row: &mut MmRow, parts: Vec<MmRow>) -> Result<(), Vec<MmRow>> {
 
 // ------------------------------------------------------------------ vault side
 
+/// The account an earlier import of `a` created (soft-deleted ones too: the import revives
+/// them), or the bank account a twin of it was folded into: where a target of `None` goes.
+fn reused_account(conn: &Connection, a: &SrcAccount) -> CoreResult<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
+        [ext_ref(a)],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()?
+    .map(|id| crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id)))
+    .transpose()
+}
+
 /// The vault account each MoneyMoney account is merged into, keyed by its
 /// MoneyMoney rowid. A vault account is claimed at most once: MoneyMoney keeps
 /// closed / duplicate accounts with the same IBAN (issue #94), and without this
@@ -2198,35 +2262,18 @@ fn into_split(row: &mut MmRow, parts: Vec<MmRow>) -> Result<(), Vec<MmRow>> {
 /// (an earlier import) win over IBAN matches.
 fn find_existing_accounts(
     conn: &Connection,
-    accounts: &[SrcAccount],
+    src: &Source,
 ) -> CoreResult<HashMap<i64, (i64, String)>> {
+    let accounts = &src.accounts;
     let mut out: HashMap<i64, (i64, String)> = HashMap::new();
     let mut claimed: HashSet<i64> = HashSet::new();
     for a in accounts {
-        let by_ref: Option<(i64, String)> = conn
-            .query_row(
-                // includes soft-deleted rows: the import revives a deleted account
-                "SELECT id, name FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
-                [ext_ref(a)],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        // a twin folded into its bank account: the import goes there
-        let by_ref = match by_ref {
-            Some((id, name)) => match crate::sync_merge::twins::folded_into(conn, id)? {
-                Some(bank) => Some((
-                    bank,
-                    conn.query_row("SELECT name FROM accounts WHERE id = ?1", [bank], |r| {
-                        r.get(0)
-                    })?,
-                )),
-                None => Some((id, name)),
-            },
-            None => None,
-        };
-        if let Some(found) = by_ref {
-            claimed.insert(found.0);
-            out.insert(a.id, found);
+        if let Some(id) = reused_account(conn, a)? {
+            let name = conn.query_row("SELECT name FROM accounts WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })?;
+            claimed.insert(id);
+            out.insert(a.id, (id, name));
         }
     }
     for a in accounts.iter().filter(|a| !a.iban.is_empty()) {
@@ -2244,6 +2291,47 @@ fn find_existing_accounts(
         if let Some(found) = candidates.into_iter().find(|c| !claimed.contains(&c.0)) {
             claimed.insert(found.0);
             out.insert(a.id, found);
+        }
+    }
+    // a card already synced through the bank login the import would use (set
+    // up by hand before): MoneyMoney has no IBAN for it, the number decides
+    for b in &src.banks {
+        let cards: Vec<&SrcAccount> = accounts
+            .iter()
+            .filter(|a| a.bank_key == Some(b.id) && a.iban.is_empty() && !out.contains_key(&a.id))
+            .filter(|a| suggest_kind(a, Some(b)) == AccountKind::CreditCard)
+            .collect();
+        if cards.is_empty() {
+            continue;
+        }
+        let Some((kind, key)) = src.connector_key(b) else {
+            continue;
+        };
+        let Some(connection_id) = find_connection(conn, kind, &key, &b.username)? else {
+            continue;
+        };
+        let mut st = conn.prepare(
+            "SELECT id, name, IFNULL(account_number, '') FROM accounts
+             WHERE connection_id = ?1 AND kind = ?2 AND deleted_ms IS NULL
+               AND external_ref NOT LIKE 'moneymoney-db:%'",
+        )?;
+        let synced: Vec<(i64, String, String)> = st
+            .query_map(
+                params![connection_id, AccountKind::CreditCard.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?
+            .collect::<Result<_, _>>()?;
+        for a in cards {
+            let free = synced
+                .iter()
+                .enumerate()
+                .filter(|(_, (id, _, _))| !claimed.contains(id))
+                .map(|(i, (_, _, number))| (i, number.as_str()));
+            if let CardMatch::One(i) = card_by_number(free, &a.account) {
+                let (id, name, _) = &synced[i];
+                claimed.insert(*id);
+                out.insert(a.id, (*id, name.clone()));
+            }
         }
     }
     Ok(out)
@@ -2271,15 +2359,19 @@ fn find_connection(
 
 /// Called by `store_fetch` when a synced account is not known yet: takes over
 /// an account created by this importer instead of adding a second one. Matched
-/// by IBAN; without one (credit cards, PayPal) only when exactly one imported
-/// account of that kind is linked to this bank login.
+/// by IBAN; without one (credit cards, PayPal) by the card number among the
+/// imported accounts of that kind linked to this bank login, else only when
+/// exactly one of them is. `fetched_cards`: the numbers of every card in this
+/// fetch, so the fallback never takes a card another fetched card matches.
 pub(crate) fn adopt_account(
     conn: &Connection,
     connection_id: i64,
     external_ref: &str,
     iban: &str,
+    account_number: &str,
     currency: &str,
     kind: AccountKind,
+    fetched_cards: &[&str],
 ) -> CoreResult<Option<i64>> {
     let iban = normalize_iban(iban);
     // „Abrufweg umstellen“ marked it: the same way back finds it by its old
@@ -2300,41 +2392,115 @@ pub(crate) fn adopt_account(
         // includes soft-deleted rows: `store_fetch` revives or skips them;
         // archived (closed in MoneyMoney) accounts are never guessed, or an old
         // card next to the active one would block the takeover (#816)
-        let single = |iban_filter: &str| -> CoreResult<Option<i64>> {
-            let mut st = conn.prepare(&format!(
-                "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
-                   AND kind = ?2 AND archived_unix IS NULL {iban_filter} LIMIT 2"
-            ))?;
-            let ids: Vec<i64> = st
-                .query_map(params![connection_id, kind.as_str()], |r| r.get(0))?
-                .collect::<Result<_, _>>()?;
-            Ok((ids.len() == 1).then(|| ids[0]))
-        };
+        let mut st = conn.prepare(
+            "SELECT id, IFNULL(account_number, ''), replace(IFNULL(iban, ''), ' ', '') <> '',
+                    upper(IFNULL(currency, ''))
+             FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
+               AND kind = ?2 AND archived_unix IS NULL",
+        )?;
+        let rows: Vec<(i64, String, bool, String)> = st
+            .query_map(params![connection_id, kind.as_str()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
+            .collect::<Result<_, _>>()?;
+        // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade
+        // Republic clearing account) may still adopt a single imported account
+        // of the same kind and currency on this login (#1114); an account with
+        // an IBAN of its own is otherwise never taken over without matching it
+        let widen = kind == AccountKind::CreditCard
+            || (kind == AccountKind::Checking && external_ref == "tr:cash");
+        let rows: Vec<_> = rows
+            .into_iter()
+            .filter(|(_, _, has_iban, _)| widen || !has_iban)
+            .collect();
         let currency = currency.trim().to_uppercase();
-        let single_cur = |extra_filter: &str| -> CoreResult<Option<i64>> {
-            let mut st = conn.prepare(&format!(
-                "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
-                   AND kind = ?2 AND archived_unix IS NULL
-                   AND (?3 = '' OR upper(IFNULL(currency, '')) IN ('', ?3)) {extra_filter} LIMIT 2"
-            ))?;
+        let card = kind == AccountKind::CreditCard;
+        // the other way reports a marked account under another reference
+        // (FinTS `<number>-Depot`, REST its depot id): the only live one of
+        // its kind and currency is it, deleted leftovers and archived ones
+        // (the switch marks those too) don't count
+        let marked = {
+            let mut st = conn.prepare(
+                "SELECT id FROM accounts WHERE connection_id = ?1 AND kind = ?2
+                   AND external_ref LIKE ?4 || '%' AND deleted_ms IS NULL
+                   AND archived_unix IS NULL
+                   AND replace(IFNULL(iban, ''), ' ', '') = ''
+                   AND (?3 = '' OR upper(IFNULL(currency, '')) IN ('', ?3)) LIMIT 2",
+            )?;
             let ids: Vec<i64> = st
-                .query_map(params![connection_id, kind.as_str(), currency], |r| {
-                    r.get(0)
-                })?
+                .query_map(
+                    params![
+                        connection_id,
+                        kind.as_str(),
+                        currency,
+                        crate::vault::connections::SWITCH_MARK
+                    ],
+                    |r| r.get(0),
+                )?
                 .collect::<Result<_, _>>()?;
-            Ok((ids.len() == 1).then(|| ids[0]))
+            (ids.len() == 1).then(|| ids[0])
         };
-        match single("AND replace(IFNULL(iban, ''), ' ', '') = ''")? {
-            Some(id) => Some(id),
-            // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade Republic
-            // clearing account) may still adopt a single imported account of the same kind
-            // and currency on this login (#1114).
-            None if kind == AccountKind::CreditCard
-                || (kind == AccountKind::Checking && external_ref == "tr:cash") =>
-            {
-                single_cur("")?
+        // goes through the update below like any other match: the marker
+        // is replaced, so no second account of this fetch finds it again
+        if let Some(id) = marked {
+            Some(id)
+        } else {
+            // several cards on one login (main and partner card): the number
+            // decides; other kinds have no card number to compare
+            let by_number = if card {
+                card_by_number(
+                    rows.iter().map(|(id, number, _, _)| (*id, number.as_str())),
+                    account_number,
+                )
+            } else {
+                CardMatch::None
+            };
+            let tie = by_number == CardMatch::Tie;
+            let by_number = match by_number {
+                CardMatch::One(id) => Some(id),
+                _ => None,
+            };
+            // an imported card that several fetched cards fit (`**** 1234` for two
+            // cards ending in 1234) is not handed to whichever comes first
+            let contested = by_number.is_some_and(|id| {
+                rows.iter().any(|(row, number, _, _)| {
+                    *row == id
+                        && fetched_cards
+                            .iter()
+                            .filter(|fetched| same_card_number(number, fetched))
+                            .count()
+                            > 1
+                })
+            });
+            // a number that fits several imported cards, or a contested one: no
+            // guess at all, the fallback below would hand over an unrelated card
+            if contested || tie {
+                return Ok(None);
             }
-            None => None,
+            // else the only one of its kind (also a replacement card with a new
+            // number), preferring those without an IBAN; widened: the only one in
+            // that currency, with or without an IBAN. A card that another card of
+            // this fetch matches by number waits for that one, whatever the order.
+            let taken_by_number = |number: &str| {
+                card && fetched_cards
+                    .iter()
+                    .any(|fetched| same_card_number(number, fetched))
+            };
+            let single = |widened: bool| {
+                unique(rows.iter().filter(|(_, number, has_iban, cur)| {
+                    if taken_by_number(number) {
+                        false
+                    } else if widened {
+                        currency.is_empty() || cur.is_empty() || *cur == currency
+                    } else {
+                        !has_iban
+                    }
+                }))
+                .map(|(id, _, _, _)| *id)
+            };
+            by_number
+                .or_else(|| single(false))
+                .or_else(|| if widen { single(true) } else { None })
         }
     } else {
         // Wallets in several currencies can share one IBAN (Finom EUR/USD):
@@ -2370,6 +2536,75 @@ pub(crate) fn adopt_account(
     Ok(id)
 }
 
+/// Whether a stored card number hides digits (`5232 •••• •••• 1234`).
+fn masked(s: &str) -> bool {
+    s.chars()
+        .any(|c| !c.is_ascii_digit() && !matches!(c, ' ' | '-'))
+}
+
+/// A complete card number: 12 digits or more, nothing masked out.
+fn full_card_number(s: &str) -> bool {
+    !masked(s) && digits(s).len() >= 12
+}
+
+/// Whether two card (account) numbers name the same card: two complete ones
+/// by all digits, a masked or shortened one (`5232 •••• •••• 1234`, `1234`) by
+/// the last four – only if all four are shown (not `5232 12•• •••• ••••` or
+/// `5232 •••• •••• ••34`).
+fn same_card_number(a: &str, b: &str) -> bool {
+    if full_card_number(a) && full_card_number(b) {
+        return digits(a) == digits(b);
+    }
+    // the shown digits at the end, reversed: separators skipped, a mask stops
+    let last_four = |s: &str| {
+        let tail: String = s
+            .chars()
+            .rev()
+            .filter(|c| !matches!(c, ' ' | '-'))
+            .take_while(char::is_ascii_digit)
+            .take(4)
+            .collect();
+        (tail.len() == 4).then_some(tail)
+    };
+    last_four(a).is_some_and(|x| last_four(b) == Some(x))
+}
+
+/// Which candidate a card number names (`card_by_number`).
+#[derive(Debug, PartialEq, Eq)]
+enum CardMatch<T> {
+    None,
+    One(T),
+    /// several fit: never guessed
+    Tie,
+}
+
+/// The candidate whose card number names the same card: a match between two
+/// complete numbers first, a masked one by its last four second. Used by the
+/// preview and the first sync, so both decide alike.
+fn card_by_number<'a, T: Copy>(
+    candidates: impl Iterator<Item = (T, &'a str)>,
+    number: &str,
+) -> CardMatch<T> {
+    let (mut exact, mut any) = (Vec::new(), Vec::new());
+    for (item, candidate) in candidates.filter(|(_, c)| same_card_number(c, number)) {
+        if full_card_number(candidate) && full_card_number(number) {
+            exact.push(item);
+        }
+        any.push(item);
+    }
+    match (exact.as_slice(), any.as_slice()) {
+        ([one], _) | ([], [one]) => CardMatch::One(*one),
+        (_, []) => CardMatch::None,
+        _ => CardMatch::Tie,
+    }
+}
+
+/// The only item, `None` for none or several.
+fn unique<T>(mut it: impl Iterator<Item = T>) -> Option<T> {
+    let first = it.next()?;
+    it.next().is_none().then_some(first)
+}
+
 /// MoneyMoney's tree replaces the starter categories only in a vault without
 /// bookings: nothing can be assigned to them yet, so nothing is lost.
 fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bool> {
@@ -2398,7 +2633,7 @@ fn connection_options(
         .collect();
     // comdirect: FinTS as an alternative to its own API (which stays the
     // default). Only with a real bank code, FinTS needs the one of the IBAN.
-    let code: String = b.bankcode.chars().filter(|c| c.is_ascii_digit()).collect();
+    let code = digits(&b.bankcode);
     if out.iter().any(|o| o.connector == ConnectorKind::Comdirect)
         && crate::connectors::fints_directory::COMDIRECT_BLZ.contains(&code.as_str())
     {
@@ -2407,7 +2642,11 @@ fn connection_options(
             ConnectorKind::fints_key(&code),
         ));
     }
-    if let Some(bank) = match_psd2_bank(&b.name, catalog) {
+    // a card login is not the bank's current-account login the name finds in
+    // the catalogue
+    if !b.card_only()
+        && let Some(bank) = match_psd2_bank(&b.name, catalog)
+    {
         out.push(MoneyMoneyDbConnectionOption::enable_banking(bank));
     }
     out
@@ -2423,7 +2662,7 @@ fn preview(
     let (mut total, mut pending, mut notes, mut parts) = (0u32, 0u32, 0u32, 0u32);
     let mut first: Option<String> = None;
     let mut last: Option<String> = None;
-    let mut existing_accounts = find_existing_accounts(conn, &src.accounts)?;
+    let mut existing_accounts = find_existing_accounts(conn, src)?;
     for a in &src.accounts {
         let r = src.rows_for(a);
         let bank = src.bank(a.bank_key);
@@ -2456,7 +2695,7 @@ fn preview(
                 .map(|b| b.bankcode.clone())
                 .filter(|c| !c.is_empty())
                 .unwrap_or_else(|| a.bankcode.clone()),
-            suggested_kind: suggest_kind(a, &bank_name),
+            suggested_kind: suggest_kind(a, bank),
             bank_name,
             owner: a.owner.clone(),
             group_name: src
@@ -2479,6 +2718,8 @@ fn preview(
             last_date: l,
             computed_balance_cents: r.balance_cents,
             balance_source: r.balance_source,
+            closed: a.closed,
+            reused_account_id: reused_account(conn, a)?,
         });
     }
     let mut banks = Vec::new();
@@ -2542,6 +2783,18 @@ fn preview(
         date_range_end: last,
         replaces_starter_categories: replaces_starter_categories(conn, src)?,
         transfer_template_count: templates::usable_count(&src.templates),
+        // the rule of `import_account`; soft-deleted ones too, the import revives them
+        owned_account_ids: conn
+            .prepare("SELECT id FROM accounts WHERE external_ref LIKE 'moneymoney-db:%'")?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?,
+        connected_account_ids: conn
+            .prepare(
+                "SELECT id FROM accounts
+                  WHERE external_ref LIKE 'moneymoney-db:%' AND connection_id IS NOT NULL",
+            )?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?,
     })
 }
 
@@ -2807,9 +3060,9 @@ struct ImportCtx<'a> {
     files: Option<StatementFiles>,
     cat_cache: HashMap<String, i64>,
     res: MoneyMoneyDbImportResult,
-    /// (account id, MoneyMoney bank rowid) of the importer's own accounts,
-    /// linked to the bank's login once the connections exist
-    to_link: Vec<(i64, i64)>,
+    /// (account id, MoneyMoney bank rowid, closed there, may move it to that login) of
+    /// the importer's own accounts, linked to the bank's login once the connections exist
+    to_link: Vec<(i64, i64, bool, bool)>,
     /// (MoneyMoney group rowid, uuid) of the groups this import creates
     created_groups: Vec<(i64, String)>,
 }
@@ -2852,10 +3105,14 @@ impl ImportCtx<'_> {
         let (account_id, currency) = self.target_account(choice, a)?;
         // Accounts owned by the importer (not synced with a bank) follow MoneyMoney:
         // chosen kind and MoneyMoney's balance. Bank-synced accounts keep theirs.
-        let owned: bool = conn.query_row(
-            "SELECT external_ref LIKE 'moneymoney-db:%' FROM accounts WHERE id = ?1",
-            [account_id],
-            |r| r.get(0),
+        // One already under a login keeps it when another MoneyMoney account's bookings
+        // go into it (a fetch of the wrong login could take it over); only its own
+        // MoneyMoney account moves it to the way chosen now.
+        let (owned, linkable): (bool, bool) = conn.query_row(
+            "SELECT external_ref LIKE 'moneymoney-db:%', connection_id IS NULL OR external_ref = ?2
+               FROM accounts WHERE id = ?1",
+            params![account_id, ext_ref(a)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         let mut st = Stats {
             total: r.rows.len() as u32,
@@ -2912,7 +3169,7 @@ impl ImportCtx<'_> {
             !owned,
         )?);
         if let (true, Some(bank)) = (owned, a.bank_key) {
-            self.to_link.push((account_id, bank));
+            self.to_link.push((account_id, bank, a.closed, linkable));
         }
         Ok(())
     }
@@ -2930,21 +3187,15 @@ impl ImportCtx<'_> {
         let kind = choice.kind;
         let target = match choice.target_account_id {
             Some(id) => Some(id),
-            None => conn
-                .query_row(
-                    // includes soft-deleted rows: revived below
-                    "SELECT id FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
-                    [&ext],
-                    |r| r.get::<_, i64>(0),
-                )
-                .optional()?
-                .map(|id| {
-                    crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id))
-                })
-                .transpose()?,
+            // revived below when it was deleted
+            None => reused_account(conn, a)?,
         };
         if let Some(id) = target {
-            crate::sync_merge::revive_account_if_deleted(conn, id)?;
+            // Nobody chose the archive state of a revived account (it comes back
+            // active): MoneyMoney's applies.
+            if crate::sync_merge::revive_account_if_deleted(conn, id)? && a.closed {
+                archive_closed(conn, id)?;
+            }
             let cur: String = conn
                 .query_row("SELECT currency FROM accounts WHERE id = ?1", [id], |r| {
                     r.get(0)
@@ -2983,11 +3234,17 @@ impl ImportCtx<'_> {
             ],
         )?;
         self.res.accounts_created += 1;
-        Ok((conn.last_insert_rowid(), a.currency.clone()))
+        let id = conn.last_insert_rowid();
+        // Closed in MoneyMoney: archived here. Only a new account: a re-import
+        // leaves the archive state the user set (#890).
+        if a.closed {
+            archive_closed(conn, id)?;
+        }
+        Ok((id, a.currency.clone()))
     }
 
-    /// An account the importer owns takes MoneyMoney's kind, balance, archive
-    /// state, opening balance and positions.
+    /// An account the importer owns takes MoneyMoney's kind, balance, opening
+    /// balance and positions.
     fn follow_moneymoney(
         &mut self,
         account_id: i64,
@@ -3004,14 +3261,6 @@ impl ImportCtx<'_> {
         )?;
         if kind == AccountKind::Loan {
             Vault::derive_initial_balance(conn, account_id)?;
-        }
-        // Deactivated in MoneyMoney: archived here too (offline account that
-        // stays readable). Never un-archives what the user archived.
-        if let Some(ts) = a.cancelled_ts {
-            conn.execute(
-                "UPDATE accounts SET archived_unix = ?1, archived_ms = ?2 WHERE id = ?3 AND archived_unix IS NULL",
-                params![ts, now_ms(), account_id],
-            )?;
         }
         // #212: MoneyMoney's opening balance becomes the account's. MoneyMoney
         // has no cut-off date: the Startsaldo applies before the first
@@ -3112,12 +3361,30 @@ impl ImportCtx<'_> {
     /// Finds or creates the bank logins the user chose, then links the
     /// imported accounts and lists the Enable Banking connections.
     fn connect_banks(&mut self) -> CoreResult<()> {
+        // an account several sources went into links the login of the first one that may
+        // move it, or another login would get a connection that stays empty; the other
+        // sources of that login all count, moving it or not (one of them open: the login
+        // is not all closed)
+        let mut login_of = HashMap::new();
+        for (account, bank, _, moves) in &self.to_link {
+            if *moves {
+                login_of.entry(*account).or_insert(*bank);
+            }
+        }
+        self.to_link
+            .retain(|(account, bank, _, _)| login_of.get(account) == Some(bank));
         let (conn, src, options) = (self.conn, self.src, self.options);
         // MoneyMoney bank rowid -> connection id
         let mut bank_connection: HashMap<i64, i64> = HashMap::new();
         // Enable Banking connections set up here: (connection id, bank name, created)
         let mut psd2 = Vec::new();
-        for b in &src.banks {
+        // Only logins this import links an account to, or they would stay empty;
+        // `true`: all of those accounts are closed in MoneyMoney (#1437)
+        let mut logins: HashMap<i64, bool> = HashMap::new();
+        for (_, bank, closed, _) in &self.to_link {
+            *logins.entry(*bank).or_insert(true) &= *closed;
+        }
+        for b in src.banks.iter().filter(|b| logins.contains_key(&b.id)) {
             let default = src
                 .connector_key(b)
                 .map(|(kind, key)| MoneyMoneyDbConnectionOption::direct(kind, key));
@@ -3131,6 +3398,8 @@ impl ImportCtx<'_> {
             }
             let chosen = match options.bank_choices.iter().find(|c| c.mm_bank_id == b.id) {
                 Some(c) => c.connection.clone(),
+                // every account closed: nothing left to fetch (#1437)
+                None if logins[&b.id] => None,
                 None => default,
             };
             let Some(chosen) = chosen else { continue };
@@ -3201,14 +3470,15 @@ impl ImportCtx<'_> {
             self.count_connection(false);
             return Ok(id);
         }
-        let (id, created) = Vault::add_bank_connection_keyed(
-            conn,
-            kind,
-            key,
-            ConnectorKind::fints_blz(key),
-            b.name.clone(),
-            b.username.clone(),
-        )?;
+        let blz = ConnectorKind::fints_blz(key);
+        // a card login, next to a current-account login MoneyMoney may name the
+        // same ("Deutsche Bank"): named after the card's directory entry
+        let name = blz
+            .filter(|_| b.card_only())
+            .and_then(crate::connectors::fints_directory::lookup)
+            .map_or_else(|| b.name.clone(), |info| info.name);
+        let (id, created) =
+            Vault::add_bank_connection_keyed(conn, kind, key, blz, name, b.username.clone())?;
         self.count_connection(created);
         Ok(id)
     }
@@ -3216,10 +3486,14 @@ impl ImportCtx<'_> {
     /// Shows imported accounts under their bank login right away; the first
     /// sync then takes them over (adopt_account) instead of adding new ones.
     fn link_accounts(&self, bank_connection: &HashMap<i64, i64>) -> CoreResult<()> {
-        for (account_id, bank) in &self.to_link {
-            if let Some(cid) = bank_connection.get(bank) {
+        for (account_id, bank, _, moves) in &self.to_link {
+            if let (true, Some(cid)) = (*moves, bank_connection.get(bank)) {
+                // an account still under the import's reference was never taken over by a
+                // fetch: it follows the way chosen now (a re-import may switch it), so a
+                // connection set up here never stays empty
                 self.conn.execute(
-                    "UPDATE accounts SET connection_id = ?1 WHERE id = ?2 AND connection_id IS NULL",
+                    "UPDATE accounts SET connection_id = ?1
+                      WHERE id = ?2 AND (connection_id IS NULL OR external_ref LIKE 'moneymoney-db:%')",
                     params![cid, account_id],
                 )?;
             }
@@ -3397,39 +3671,3 @@ fn statement_files(explicit: Option<String>, found: Option<PathBuf>) -> Option<S
 
 #[cfg(test)]
 pub(crate) mod tests;
-
-#[cfg(test)]
-mod inactive_account_tests {
-    use super::tests::{PW, fake_db, options_from};
-    use super::*;
-
-    #[test]
-    fn inactive_moneymoney_account_is_imported_archived() {
-        let path = fake_db();
-        {
-            let c = Connection::open(&path).unwrap();
-            c.execute_batch(&format!("PRAGMA key = '{}';", PW.replace('\'', "''")))
-                .unwrap();
-            c.execute_batch("UPDATE accounts SET cancel_tsp = 1700000000 WHERE rowid = 2;")
-                .unwrap();
-        }
-        let v = Vault::open(
-            crate::test_support::thread_temp_path("mmdb-inactive-vault.db")
-                .to_string_lossy()
-                .to_string(),
-            vec![7u8; 32],
-        )
-        .unwrap();
-        let p = v
-            .preview_moneymoney_database(path.clone(), PW.into(), None)
-            .unwrap();
-        v.import_moneymoney_database(path, PW.into(), options_from(&p, false))
-            .unwrap();
-        let accounts = v.list_accounts().unwrap();
-        let find = |name: &str| accounts.iter().find(|a| a.name == name).unwrap();
-        let card = find("Visa-Karte");
-        assert!(card.archived_unix.is_some());
-        assert_eq!(card.archived_unix, Some(1_700_000_000));
-        assert!(find("Girokonto").archived_unix.is_none());
-    }
-}

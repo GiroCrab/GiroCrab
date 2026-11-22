@@ -48,6 +48,8 @@ pub enum ConnectorKind {
     VolkswagenBank,
     /// Uberspace hosting accounts (balance and bookings per Asteroid) via the web dashboard.
     Uberspace,
+    /// A wallet in the user's own Bitcoin Core node, over its local JSON-RPC interface.
+    BitcoinCore,
     /// Advanzia credit card via an authenticated WebKit session.
     Advanzia,
     /// Bausparkasse Schwäbisch Hall (Bausparverträge, postbox PDFs) via the
@@ -70,6 +72,9 @@ pub enum ConnectorKind {
     /// Kontist business account via the official GraphQL API (own OAuth2
     /// client, approval in the Kontist app).
     Kontist,
+    /// Hanseatic Bank credit cards, savings products and Postbox PDFs via the online banking's
+    /// JSON API (approval in the bank's app).
+    HanseaticBank,
 }
 
 impl ConnectorKind {
@@ -94,6 +99,7 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
             ConnectorKind::Uberspace => "uberspace",
+            ConnectorKind::BitcoinCore => "bitcoincore",
             ConnectorKind::Advanzia => "advanzia",
             ConnectorKind::SchwaebischHall => "schwaebischhall",
             ConnectorKind::EquatePlus => "equateplus",
@@ -103,6 +109,7 @@ impl ConnectorKind {
             ConnectorKind::Bhw => "bhw",
             ConnectorKind::Finpension => "finpension",
             ConnectorKind::Kontist => "kontist",
+            ConnectorKind::HanseaticBank => "hanseatic",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -156,12 +163,14 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,
             ConnectorKind::Uberspace,
+            ConnectorKind::BitcoinCore,
             ConnectorKind::Advanzia,
             ConnectorKind::SchwaebischHall,
             ConnectorKind::EquatePlus,
             ConnectorKind::Ffb,
             ConnectorKind::FordMoney,
             ConnectorKind::OpelDirektbank,
+            ConnectorKind::HanseaticBank,
             ConnectorKind::Bhw,
             ConnectorKind::Finpension,
             ConnectorKind::Kontist,
@@ -174,6 +183,11 @@ impl ConnectorKind {
 pub enum AccountKind {
     Checking,
     Savings,
+    /// Fixed-term deposit (Festgeld, #1002): money is tied up until maturity.
+    TimeDeposit,
+    /// Building savings contract (Bausparvertrag, #1630) in its savings phase: a credit, but
+    /// bound by contract, so it is no money at hand. Its loan phase is a `Loan`.
+    BuildingSavings,
     CreditCard,
     PaymentService,
     Brokerage,
@@ -187,6 +201,8 @@ impl AccountKind {
         match self {
             AccountKind::Checking => "checking",
             AccountKind::Savings => "savings",
+            AccountKind::TimeDeposit => "time_deposit",
+            AccountKind::BuildingSavings => "building_savings",
             AccountKind::CreditCard => "credit_card",
             AccountKind::PaymentService => "payment_service",
             AccountKind::Brokerage => "brokerage",
@@ -197,6 +213,8 @@ impl AccountKind {
     pub fn from_str(s: &str) -> Self {
         match s {
             "savings" => AccountKind::Savings,
+            "time_deposit" => AccountKind::TimeDeposit,
+            "building_savings" => AccountKind::BuildingSavings,
             "credit_card" => AccountKind::CreditCard,
             "payment_service" => AccountKind::PaymentService,
             "brokerage" => AccountKind::Brokerage,
@@ -210,6 +228,8 @@ impl AccountKind {
         match self {
             AccountKind::Checking => "building.columns",
             AccountKind::Savings => "banknote",
+            AccountKind::TimeDeposit => "lock.circle",
+            AccountKind::BuildingSavings => "house.circle",
             AccountKind::CreditCard => "creditcard",
             AccountKind::PaymentService => "envelope.circle",
             AccountKind::Brokerage => "chart.line.uptrend.xyaxis",
@@ -217,6 +237,16 @@ impl AccountKind {
             AccountKind::Loan => "house",
         }
     }
+}
+
+/// The section an account kind has in the "Kontoart" sidebar view (`connectors::account_kind_section`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AccountKindSection {
+    /// The section's name in the current language ("Girokonten", "Checking accounts").
+    pub name: String,
+    /// Its place among the sections, smallest first.
+    pub sort_order: i32,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -368,8 +398,13 @@ pub struct Account {
     pub initial_balance_cents: Option<i64>,
     /// User-defined group ("Nach Gruppe" view); `None` = "Ohne Gruppe".
     pub user_group_uuid: Option<String>,
-    /// Counts towards the overall total (false if its user group, or a group
-    /// that one is in, is excluded).
+    /// The account's own switch for the overall money totals (#337): whether
+    /// the user let it count. Order accounts (Amazon) start with `false`.
+    #[uniffi(default = true)]
+    #[cfg_attr(feature = "serde", serde(default = "default_true"))]
+    pub include_in_total: bool,
+    /// Counts towards the overall total: the own switch is on AND its user
+    /// group (or a group that one is in) is included AND it is not archived.
     pub in_total: bool,
     /// Marker colour (`#RRGGBB`): the user's choice or a default derived
     /// from the account's sync identity (same on every device).
@@ -392,6 +427,12 @@ pub struct Account {
     /// The user's note on the account (#512), `""` = none. Syncs like the
     /// name: the newer edit wins (#980).
     pub note: String,
+    /// What the sidebar shows in place of `bank_name` (#1467): `None` the
+    /// bank name, `Some("")` nothing, else the user's own text. Fetches
+    /// never change it; syncs like the note.
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub bank_label: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -637,11 +678,30 @@ pub struct BookingFilter {
     #[uniffi(default = None)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub amount_max_cents: Option<i64>,
+    /// Overall money figures only (#337): the sums below (`income_cents` …
+    /// `perk_cents`, `flow`) count accounts of the effective total set (own
+    /// switch, group, archiving) — an empty selection after that exclusion
+    /// means "none" (zero sums), never "all accounts". It never touches the
+    /// booking list itself: selection, `total_count`, paging, exports and
+    /// documents are proof views and stay complete. Default `false` keeps the
+    /// proof semantics of every existing caller (single account, category,
+    /// documents, API share, menu bar).
+    #[uniffi(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub respect_in_total: bool,
+}
+
+/// Serde default of [`Account::include_in_total`].
+#[cfg(feature = "serde")]
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BookingPage {
+    /// Proof view: every booking of the filter, regardless of
+    /// `BookingFilter.respect_in_total` — that flag only narrows the sums.
     pub transactions: Vec<Booking>,
     pub total_count: u32,
     /// Sum of `FlowKind::Income` bookings (= `flow.income_cents`).

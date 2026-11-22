@@ -102,11 +102,10 @@ struct KnownRecipientsSheet: View {
                 Text(r.name).appDefaultFont().lineLimit(1)
                     .foregroundStyle(r.hidden ? Theme.secondary : .primary)
                     .sensitive()
-                Text(formatIBAN(r.iban)).appFont(.caption, design: .monospaced)
-                    .foregroundStyle(Theme.secondary).lineLimit(1)
-                    .sensitive()
+                RecipientIBANLine(iban: r.iban)
             }
-            Spacer()
+            // takes the free width (not a Spacer), so a short bank name is not cut early
+            .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 1) {
                 // spelled out like the export sheet: the plural rule of the catalog is not in every build
                 if r.timesUsed == 1 { Text("1 Buchung") } else { Text("\(Int(r.timesUsed)) Buchungen") }

@@ -107,7 +107,7 @@ struct SidebarView: View {
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
                 Image(systemName: "doc.on.doc").foregroundStyle(Theme.secondary).frame(width: 20)
-                Text("Belege & PostBox").fontWeight(.medium).appDefaultFont()
+                Text("Belege & Postbox").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
             .badge(model.unseenDocumentCount)
@@ -164,9 +164,11 @@ struct SidebarView: View {
                 Group {
                     HStack(spacing: DisclosureChevron.gap) {
                         SidebarLeadingSlot()
-                        Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                        Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
-                        Spacer()
+                        HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
+                            Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                            Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                            Spacer()
+                        }
                     }
                     .contextMenu {
                         Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
@@ -186,10 +188,6 @@ struct SidebarView: View {
         .refreshable { await model.refreshCurrentView() }
         .background(Theme.sidebar)
         .navigationTitle("GiroCrab")
-        #if os(macOS)
-        // Keep traffic lights / sidebar toggle clear of the first row.
-        .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 28) }
-        #endif
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 6) {
                 // Marketing screenshots (`--screenshot`) look like a real vault: no demo banner.
@@ -282,7 +280,7 @@ struct SidebarView: View {
                 isLoanGroup: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .loan },
                 open: open, toggle: toggle
             )
-                .padding(.top, 10)
+                .padding(.vertical, 6) // as the „Gruppen“ headers: room above and below the text alike (#1534)
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.group(group.id), toggle: toggle)
                 #if os(iOS)
@@ -292,6 +290,8 @@ struct SidebarView: View {
                 #endif
             ForEach(open ? listed : []) { account in
                 accountRow(account)
+                    // icon on the section header's icon axis, as under „Gruppen“ (#1534)
+                    .padding(.leading, DisclosureChevron.iconInset)
             }
             }
         }
@@ -316,7 +316,7 @@ struct SidebarView: View {
                     nameRedaction: [],
                     open: open, toggle: toggle
                 )
-                .padding(.top, 10)
+                .padding(.vertical, 6)
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.bank(group.id), toggle: toggle)
                 #if os(iOS)
@@ -326,6 +326,8 @@ struct SidebarView: View {
                 #endif
                 ForEach(open ? listed : []) { account in
                     accountRow(account)
+                        // icon on the bank header's icon axis, as under „Gruppen“ (#1534)
+                        .padding(.leading, DisclosureChevron.iconInset)
                 }
             }
         }
@@ -340,7 +342,9 @@ struct SidebarView: View {
             let toggle = { withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.toggleCollapsed(group) } }
             let indent = CGFloat(group.depth) * DisclosureChevron.indentStep
             UserGroupHeader(group: group, open: open, toggle: toggle)
-                .padding(.vertical, 3) // taller hit area for the drop zones
+                // The same room above and below, so the selection pill sits around the text, and a taller
+                // hit area for the drop zones (#1534)
+                .padding(.vertical, group.depth == 0 ? 6 : 4)
                 // an account goes to the top of this group; a group above it
                 // (upper half) or into it as a subgroup (lower half)
                 .modifier(DropSlot(key: "g:" + group.uuid, inset: 0, line: $dropLine, edge: { half in
@@ -350,7 +354,6 @@ struct SidebarView: View {
                 }, perform: { items, edge in
                     handleDrop(items, into: group, row: nil, edge: edge)
                 }, freeLeading: DisclosureChevron.width))  // the expand/collapse arrow
-                .padding(.top, group.depth == 0 ? 10 : 4)
                 .padding(.leading, indent)
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.userGroup(group.uuid), toggle: toggle)
@@ -444,7 +447,7 @@ struct SidebarView: View {
     /// `drop` sits inside the context menu (and the caller's drag), so its drop
     /// zones don't cover the row for clicks.
     private func accountRow(_ account: Account, drop: DropSlot? = nil) -> some View {
-        AccountRow(account: account, syncing: model.syncingConnectionID != nil && model.syncingConnectionID == account.connectionId)
+        AccountRow(account: account, syncing: model.isSyncing(account))
             .dropSlot(drop)
             .background {
                 if dialogAccountID == account.id {
@@ -472,6 +475,15 @@ struct SidebarView: View {
         Button("Einstellungen …", systemImage: "gearshape") { editedAccount = IDBox(id: account.id) }
         CategoryChipToggle(accountID: account.id)
         AccountGroupMenu(account: account)
+        // the account's own switch for the overall money totals (#337); the
+        // group (or a group that group is in) and archiving can still keep it
+        // out — the row's tooltip explains that precedence
+        Toggle(isOn: Binding(
+            get: { account.includeInTotal },
+            set: { model.setAccountIncludeInTotal(account, $0) }
+        )) {
+            Label("In Gesamtsummen zählen", systemImage: "plus.forwardslash.minus")
+        }
         Divider()
         Button("Alle Buchungen als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: [account.id]) }
         ManualLoanAccountMenu(model: model, account: account)
@@ -636,7 +648,14 @@ private struct SidebarSelectionList<Content: View>: View {
 
     var body: some View {
         #if os(macOS)
-        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) { content }
+        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) {
+            // The first row starts at the height of the middle column's heading (#1544), e.g. „Belege & Postbox“:
+            // just below the toolbar, which also keeps the traffic lights / sidebar toggle clear.
+            // The list's own top margin does that; an extra row (the earlier 28 pt one) could not be
+            // made smaller, as the list gives every row a minimum height.
+            content
+        }
+        .safeAreaPadding(.top, 14)
         #else
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) { content }
@@ -770,6 +789,12 @@ struct AccountRow: View {
                         ProgressView().controlSize(.mini)
                             .accessibilityLabel(Text("Wird synchronisiert"))
                     }
+                    // outside the overall money totals (#337): like a group's
+                    // eye.slash — the effective flag (own switch, group, archiving)
+                    if account.showsTotalExclusionIndicator {
+                        AccountTotalExclusionIndicator(
+                            help: model.totalExclusionIconHelp(account, redaction: redaction))
+                    }
                 }
                 // row 2: bank / loan progress left, balance right
                 HStack(spacing: 6) {
@@ -791,7 +816,7 @@ struct AccountRow: View {
                             .help("Archiviert – wird nicht mehr abgerufen")
                     } else {
                         Text(searchAwareSubtitle)
-                            .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
+                            .sensitive(searchAwareSubtitle == account.bankName && account.bankLabel == nil ? [] : .personal) // owner / IBAN hits, own bank label
                             .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -809,18 +834,21 @@ struct AccountRow: View {
             }
         }
         .padding(.vertical, 1)
-        .opacity(account.isArchived ? 0.55 : 1)
+        .opacity(account.isArchived ? 0.55 : (account.showsTotalExclusionIndicator ? 0.6 : 1))
+        // reachable explanation (#337): why the account stays out of the totals
+        // although its own switch is on — the group that wins, or archiving
+        .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
         // one element per account: unread count, name, bank / loan progress, balance
         .accessibilityElement(children: .combine)
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
-    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
+    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
         let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
         // the owner tells accounts of the same name apart
         let owner = model.accountDistinction(account)
-        return [account.bankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        return [account.sidebarBankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private var searchAwareSubtitle: String {
@@ -846,13 +874,15 @@ struct AccountRow: View {
 }
 
 struct CategoryRow: View {
+    /// Gap between a category's symbol and its name.
+    static let symbolGap: CGFloat = 8
     @Environment(AppModel.self) private var model
     let category: GiroCrabCore.Category
 
     var body: some View {
         // "Zusätzlich" (#1049): what the category holds in currencies other than EUR, under its total.
         let other = (model.categoryOtherTotals[category.id] ?? []).map { Money.format($0.cents, currency: $0.currency) }.joined(separator: " · ")
-        HStack(spacing: 8) {
+        HStack(spacing: Self.symbolGap) {
             Image(systemName: category.sfSymbol)
                 .foregroundStyle(Color.readable(hex: category.colorHex).opacity(0.85))
                 .frame(width: 20)

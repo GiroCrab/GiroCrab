@@ -94,8 +94,9 @@ fn overview(v: &Value) -> CoreResult<FetchResult> {
         if !is_currency_code(currency) {
             return Err(invalid("FNZ: Unbekannte Kontowährung."));
         }
-        let cents = crate::money::parse_cents(amount)
-            .map_err(|_| invalid("FNZ: Ungültiger Saldo in der Kontoübersicht."))?;
+        let cents = crate::money::decimal(amount, '.')
+            .and_then(crate::money::cents)
+            .ok_or_else(|| invalid("FNZ: Ungültiger Saldo in der Kontoübersicht."))?;
         if !seen.insert(number.to_string()) {
             continue;
         }
@@ -260,7 +261,7 @@ impl Vault {
             None,
             Some(account_id),
             title,
-            "postbox",
+            crate::documents::account_document_type(title),
             "application/pdf",
             &name,
             &bytes,

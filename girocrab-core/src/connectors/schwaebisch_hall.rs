@@ -84,25 +84,13 @@ fn vtn(v: &Value) -> CoreResult<String> {
 }
 
 /// Portal amount (`&#43; 1.234,56`, `- 12,00 €`, `−5,00`, or a JSON number) in cents.
-/// Strict: anything but a leading sign, digits, separators, spaces and a
-/// currency (`€`/`EUR`) is rejected, so a debit/credit marker such as a
-/// trailing `S`/`H` or `-` can never be dropped and flip the sign.
+/// Strict: [`crate::money::parse_cents`] rejects letters, so a debit/credit
+/// marker such as a trailing `S`/`H` can never be dropped and flip the sign.
 fn amount(v: &Value) -> CoreResult<i64> {
     match v {
         Value::Number(_) => crate::money::json_number_to_cents_rounded(v),
         Value::String(s) => {
-            let decoded = decode_html_entities(s).replace(['\u{2212}', '\u{2013}'], "-");
-            let mut t = decoded.trim();
-            for currency in ["EUR", "eur", "€"] {
-                t = t.strip_suffix(currency).unwrap_or(t).trim_end();
-                t = t.strip_prefix(currency).unwrap_or(t).trim_start();
-            }
-            let cleaned: String = t.chars().filter(|c| !c.is_whitespace()).collect();
-            let allowed = |c: char| c.is_ascii_digit() || matches!(c, '+' | '-' | ',' | '.');
-            if !cleaned.chars().all(allowed) || !cleaned.bytes().any(|b| b.is_ascii_digit()) {
-                return Err(invalid());
-            }
-            crate::money::parse_cents(&cleaned).map_err(|_| invalid())
+            crate::money::parse_cents(&decode_html_entities(s)).map_err(|_| invalid())
         }
         _ => Err(invalid()),
     }
@@ -293,7 +281,8 @@ fn account_kind(contract: &Value, details: &Value) -> AccountKind {
     if words.contains("darlehen") || words.contains("kredit") {
         AccountKind::Loan
     } else {
-        AccountKind::Savings
+        // a Bausparvertrag in its savings phase (#1630)
+        AccountKind::BuildingSavings
     }
 }
 
@@ -626,15 +615,9 @@ mod tests {
         );
         assert!(amount(&json!("")).is_err());
         assert!(amount(&json!("n/a")).is_err());
+        assert_eq!(amount(&json!("1.234,56-")).unwrap(), -123_456);
         // debit/credit markers must never be dropped (the sign would flip)
-        for bad in [
-            "12,00 S",
-            "5,00 H",
-            "1.234,56-",
-            "+ -5,00",
-            "--5,00",
-            "5,00 USD",
-        ] {
+        for bad in ["12,00 S", "5,00 H", "+ -5,00", "--5,00", "5,00 USD"] {
             assert!(amount(&json!(bad)).is_err(), "{bad}");
         }
         assert!(amount(&Value::Null).is_err());
@@ -722,7 +705,7 @@ mod tests {
         assert_eq!(a.external_ref, "bsh:0012345600101");
         assert_eq!(a.name, "Bausparvertrag 123456 A 01");
         assert_eq!(a.account_number, "123456 A 01");
-        assert_eq!(a.kind, AccountKind::Savings);
+        assert_eq!(a.kind, AccountKind::BuildingSavings);
         assert_eq!((a.balance_cents, a.balance_date.as_str()), (109_050, TODAY));
         let mut got: Vec<_> = r
             .transactions
@@ -774,7 +757,7 @@ mod tests {
         );
         c["details"] = portal_sample_details();
         let r = parse(json!([c])).unwrap();
-        assert_eq!(r.accounts[0].kind, AccountKind::Savings);
+        assert_eq!(r.accounts[0].kind, AccountKind::BuildingSavings);
         let got: Vec<_> = r
             .transactions
             .iter()

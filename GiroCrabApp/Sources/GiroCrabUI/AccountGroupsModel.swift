@@ -11,6 +11,11 @@ extension Account {
     var isArchived: Bool { archivedUnix != nil }
     var archivedDate: Date? { archivedUnix.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
 
+    /// Whether the sidebar row marks the account as outside the overall money
+    /// totals (eye.slash + dimming, #337) — its own switch is off, an above
+    /// group is excluded or it is archived; `inTotal` is the effective flag.
+    var showsTotalExclusionIndicator: Bool { !inTotal }
+
     /// IBAN and account number without spaces, for sidebar / list search.
     var compactAccountIds: [String] {
         [iban, accountNumber]
@@ -18,7 +23,7 @@ extension Account {
             .filter { !$0.isEmpty }
     }
 
-    /// Name, Kontoinhaber, bank, IBAN or account number. Spaces in IBANs /
+    /// Name, Kontoinhaber, bank (or its label), IBAN or account number. Spaces in IBANs /
     /// Kontonummern are ignored so "DE89 3704 …" finds the stored value.
     func matchesSidebarSearch(_ raw: String) -> Bool {
         let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -28,12 +33,21 @@ extension Account {
             return true
         }
         let terms = q.split(whereSeparator: \.isWhitespace).map { String($0).lowercased() }
-        let text = [name, owner, bankName].map { $0.lowercased() }
+        // the bank as stored and as the sidebar shows it (#1467)
+        let text = [name, owner, bankName, sidebarBankName].map { $0.lowercased() }
         return terms.allSatisfy { term in
             let compactTerm = term.filter { !$0.isWhitespace }
             return text.contains { $0.contains(term) }
                 || (!compactTerm.isEmpty && compactAccountIds.contains { $0.contains(compactTerm) })
         }
+    }
+}
+
+extension View {
+    /// `.help` with the text only when there is one (no empty tooltip frame).
+    @ViewBuilder
+    func helpIfPresent(_ text: String?) -> some View {
+        if let text { help(text) } else { self }
     }
 }
 
@@ -125,8 +139,10 @@ extension AppModel {
             return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
         }.map { key in
             let accounts = buckets[key] ?? []
+            // like the other group sums: only effectively included accounts
+            // count (#337; `inTotal` also covers archiving and the own switch)
             let balance = accounts
-                .filter { $0.currency == "EUR" && !$0.isArchived }
+                .filter { $0.currency == "EUR" && $0.inTotal }
                 .reduce(Int64(0)) { $0 + $1.balanceCents }
             let symbol: String = {
                 if let cid = accounts.first?.connectionId,
@@ -295,6 +311,41 @@ func accountDetail(_ a: Account) -> String {
     return a.isArchived ? String(localized: "Archiviert · \(id)") : id
 }
 
+/// What the sidebar shows in place of the bank name (#1467), as picked in Kontoeinstellungen.
+enum BankLabelChoice: Hashable, CaseIterable {
+    case standard, custom, hidden
+
+    init(_ label: String?) {
+        switch label {
+        case nil: self = .standard
+        case ""?: self = .hidden
+        default: self = .custom
+        }
+    }
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .standard: "Standard"
+        case .custom: "Eigener Name"
+        case .hidden: "Ausblenden"
+        }
+    }
+
+    /// The stored label: `nil` the bank name, `""` none, else the trimmed text (blank = none).
+    func label(custom text: String) -> String? {
+        switch self {
+        case .standard: nil
+        case .hidden: ""
+        case .custom: text.trimmingCharacters(in: .whitespaces)
+        }
+    }
+}
+
+extension Account {
+    /// The bank in the sidebar row (#1467): the user's label, else the bank name.
+    var sidebarBankName: String { bankLabel ?? bankName }
+}
+
 /// IBAN, else account number, else bank.
 func accountIdentity(_ a: Account) -> String {
     if !a.iban.isEmpty { return formatIBAN(a.iban) }
@@ -337,17 +388,25 @@ extension AppModel {
     }
 
     /// Accounts behind the group's sum, like the core's `balance_cents`: no
-    /// archived accounts, no subgroups taken out of the total on their own (#208).
+    /// archived accounts, no subgroups taken out of the total on their own
+    /// (#208), and only effectively included accounts (#337 — the account's
+    /// own switch, its group or a group that group is in, archiving).
     func userGroupBalanceAccountIDs(_ uuid: String) -> [Int64] {
         var skipBelow: UInt32?
         var ids: [Int64] = []
+        // an excluded selection sums its own accounts (review point 1 on
+        // #1100): the chart follows the header's own-sum rule, not the
+        // effective flag that the group's exclusion has switched off
+        let ownSum = userGroups.first(where: { $0.uuid == uuid })?.inTotal == false
         for (n, g) in userGroupSubtree(uuid).enumerated() {
             if let d = skipBelow {
                 if g.depth > d { continue }
                 skipBelow = nil
             }
             if n > 0 && !g.includeInTotal { skipBelow = g.depth; continue }
-            ids += g.accounts.filter { !$0.isArchived }.map(\.id)
+            ids += ownSum
+                ? g.accounts.filter { $0.includeInTotal && !$0.isArchived }.map(\.id)
+                : g.accounts.filter(\.inTotal).map(\.id)
         }
         return ids
     }
@@ -413,9 +472,15 @@ extension AppModel {
     }
 
     private func afterGroupChange() {
+        invalidateTotals()
         reloadAccounts()
         reloadHistory()
+        // A cancelled category refresh may not have published its totals yet.
+        reloadCategories()
         reloadBookings()
+        // the dashboard shows overall money figures: reload it when visible,
+        // else mark it stale so the next visit loads it fresh (#337)
+        if scope == .investments { loadDashboard() } else { dashboardStale = true }
     }
 
     /// Creates a group (and moves `accountID` into it). Returns the uuid.
@@ -471,20 +536,71 @@ extension AppModel {
         }
     }
 
-    func setAccountKind(_ accountId: Int64, to kind: AccountKind) {
+    /// The account's own switch for the overall money totals (#337). The same
+    /// full refresh as a group change: accounts, group sums, bookings / KPIs,
+    /// history — and the dashboard when it is (or becomes) visible.
+    func setAccountIncludeInTotal(_ account: Account, _ include: Bool) {
         guard let vault else { return }
         do {
-            try vault.setAccountKind(accountId: accountId, kind: kind)
-            reloadAccounts()
-            dashboardStale = true
+            try vault.setAccountIncludeInTotal(accountId: account.id, includeInTotal: include)
+            afterGroupChange()
         } catch {
             errorMessage = describe(error)
         }
     }
 
+    /// Why the account is outside the overall money figures despite its own
+    /// switch being on (the group it is in, or a group that group is in), for
+    /// the account row's tooltip; `nil` when nothing needs explaining (#337).
+    /// Archiving is named as its own reason. Names the group that wins.
+    func totalExclusionReason(_ account: Account, redaction: ReportRedaction = []) -> String? {
+        if account.isArchived {
+            return String(localized: "Dieses Konto ist archiviert und zählt nicht zu den Gesamtsummen.")
+        }
+        guard account.includeInTotal, !account.inTotal else { return nil }
+        var cur = account.userGroupUuid
+        while let u = cur {
+            guard let g = userGroups.first(where: { $0.uuid == u }) else { break }
+            if !g.includeInTotal {
+                // `.help` cannot carry `.sensitive(.labels)`: substitute the
+                // name for both report captures and the view's redaction mode.
+                if redaction.union(reportRedaction).contains(.labels) {
+                    return String(localized: "Eine Gruppe ist ausgeschlossen – dieses Konto zählt deshalb trotz eingeschaltetem Kontoschalter nicht zu den Gesamtsummen.")
+                }
+                return String(localized: "Gruppe „\(g.name)“ ist ausgeschlossen – dieses Konto zählt deshalb trotz eingeschaltetem Kontoschalter nicht zu den Gesamtsummen.")
+            }
+            cur = g.parentUuid
+        }
+        return nil
+    }
+
+    /// The exclusion indicator has its own help region, independent of the row.
+    func totalExclusionIconHelp(_ account: Account, redaction: ReportRedaction = []) -> String {
+        totalExclusionReason(account, redaction: redaction)
+            ?? String(localized: "Nicht in der Gesamtsumme")
+    }
+
+    /// The kind decides what "Verfügbar" and its history count (Bausparen does not, #1630):
+    /// reload them like any other change to the totals.
+    func setAccountKind(_ accountId: Int64, to kind: AccountKind) {
+        guard let vault else { return }
+        do {
+            try vault.setAccountKind(accountId: accountId, kind: kind)
+            afterGroupChange()
+        } catch {
+            errorMessage = describe(error)
+        }
+    }
+
+    /// Accounts of a bank login whose sidebar shows a label of their own or none (#1467),
+    /// so the login's settings can say why a new display name doesn't show there.
+    func accountsWithOwnBankLabel(connectionID: Int64) -> Int {
+        allAccounts.filter { $0.connectionId == connectionID && $0.bankLabel != nil }.count
+    }
+
     /// „Sichern“ in Kontoeinstellungen: writes the fields that differ from `original`, the account
     /// when the sheet opened, so a value a sync brought in meanwhile is no edit (#980). One reload.
-    func saveAccountEdits(_ original: Account, name: String, owner: String, kind: AccountKind, note: String) {
+    func saveAccountEdits(_ original: Account, name: String, owner: String, kind: AccountKind, note: String, bankLabel: String?) {
         guard let vault else { return }
         let id = original.id
         let kindChanged = kind != original.kind && !isOffline(id)
@@ -493,11 +609,12 @@ extension AppModel {
             if owner != original.owner.trimmingCharacters(in: .whitespaces) { try vault.setAccountOwner(accountId: id, owner: owner) }
             if kindChanged { try vault.setAccountKind(accountId: id, kind: kind) }
             if note != original.note.trimmingCharacters(in: .whitespacesAndNewlines) { try vault.setAccountNote(accountId: id, note: note) }
+            if bankLabel != original.bankLabel { try vault.setAccountBankLabel(accountId: id, label: bankLabel) }
         } catch {
             errorMessage = describe(error)
         }
-        reloadAccounts()
-        if kindChanged { dashboardStale = true }
+        // a new kind can change "Verfügbar" and its history (see `setAccountKind`)
+        if kindChanged { afterGroupChange() } else { reloadAccounts() }
     }
 
     func renameAccount(_ accountId: Int64, to name: String) {

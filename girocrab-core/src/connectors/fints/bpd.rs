@@ -12,6 +12,8 @@ const IMPLEMENTED: &[(&str, &[u32])] = &[
     ("HKSAL", &[5, 6, 7, 8]),
     ("HKCAZ", &[1]),
     ("HKCCS", &[1]),
+    // SEPA-Umbuchung between the login's own accounts (#1513)
+    ("HKCUM", &[1]),
     ("HKIPZ", &[1]),
     ("HKCSE", &[1]),
     ("HKCCM", &[1]),
@@ -309,6 +311,7 @@ impl FinTsConnector {
             ("HIIPZS", "HKIPZ"),
             ("HICSES", "HKCSE"),
             ("HICCMS", "HKCCM"),
+            ("HICUMS", "HKCUM"),
             ("HICDBS", "HKCDB"),
             ("HICDES", "HKCDE"),
             ("HICDNS", "HKCDN"),
@@ -335,7 +338,9 @@ impl FinTsConnector {
                 for v in el {
                     let t = v.text();
                     let targets: &[&str] = if t.contains("pain.001.") {
-                        &["HKCCS", "HKCSE", "HKCCM", "HKCDE", "HKCDN", "HKCDL"]
+                        &[
+                            "HKCCS", "HKCUM", "HKCSE", "HKCCM", "HKCDE", "HKCDN", "HKCDL",
+                        ]
                     } else if t.contains("pain.008.") {
                         &["HKDSE", "HKDME", "HKDSC", "HKDMC", "HKBSE", "HKBME"]
                     } else {
