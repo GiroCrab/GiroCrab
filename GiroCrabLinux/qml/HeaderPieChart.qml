@@ -60,9 +60,9 @@ Item {
     /// .percent.precision(.fractionLength(0))
     function percent(x) { const n = Math.round(x * 100); return Fmt.english ? n + "%" : n + " %" }
 
-    // AccountExpensePie: reloads when the accounts, the period or the category sums change.
+    // AccountExpensePie: reloads when the accounts, the period or the booking data change.
     readonly property string loadKey: isCategory || !visible ? ""
-        : JSON.stringify([AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.categories.map(c => c.total_cents), AppModel.refundLinksRevision])
+        : JSON.stringify([AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.listGeneration, AppModel.refundLinksRevision])
     onLoadKeyChanged: if (loadKey !== "") Qt.callLater(load)
     function load() {
         if (loadKey === "" || !AppModel.isUnlocked) return
