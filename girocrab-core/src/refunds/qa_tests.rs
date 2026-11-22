@@ -1,6 +1,49 @@
 //! The QA review's tests of the refund links against the public `Vault` API (#714).
 use super::*;
 use crate::{models::*, offline::ManualBookingSetup, test_support::TempDir};
+#[test]
+fn restore_whole_purchase_link_after_splitting_preserves_allocation() {
+    let (_d, v, a) = fixture();
+    let (ca, cb) = categories(&v);
+    let r = booking(&v, a, 5000);
+    let o = booking(&v, a, -10000);
+    v.link_refund(r, o, 0).unwrap();
+    let created = || -> i64 {
+        v.db().unwrap().query_row(
+            "SELECT created_ms FROM refund_links WHERE refund_id=?1 AND original_id=?2 AND original_part=0 AND refund_part=0",
+            params![r, o], |r| r.get(0),
+        ).unwrap()
+    };
+    let stamp = created();
+    split(&v, o, ca, cb, -1);
+    assert_eq!(allocations(&v, r), [(o, Some(5000))]);
+    v.unlink_refund_parts(r, 0, o, 0).unwrap();
+    assert!(allocations(&v, r).is_empty());
+    v.restore_refund_parts(r, 0, o, 0).unwrap();
+    assert_eq!(allocations(&v, r), [(o, Some(5000))]);
+    assert_eq!(created(), stamp);
+    assert_eq!(v.refund_links(r).unwrap().originals[0].part, 0);
+    v.restore_refund_parts(r, 0, o, 0).unwrap();
+    v.restore_refund_parts(r, 0, o, 1).unwrap();
+    assert_eq!(allocations(&v, r), [(o, Some(5000))]);
+    v.unlink_refund_parts(r, 0, o, 0).unwrap();
+    assert!(v.link_refund_parts(r, 0, o, 0).is_err());
+    v.save_manual_booking(
+        a,
+        Some(o),
+        ManualBookingSetup {
+            booking_date: crate::dates::today_iso(),
+            amount_cents: 10000,
+            counterparty: "QA vendor".into(),
+            purpose: String::new(),
+            category_id: None,
+            note: String::new(),
+        },
+    )
+    .unwrap();
+    v.set_transaction_splits(o, Vec::new()).unwrap();
+    assert!(v.restore_refund_parts(r, 0, o, 0).is_err());
+}
 
 fn fixture() -> (TempDir, std::sync::Arc<Vault>, i64) {
     let d = TempDir::new("refund-qa");

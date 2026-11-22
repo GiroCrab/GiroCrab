@@ -1415,7 +1415,7 @@ impl Vault {
         if !deleted {
             return Ok(());
         }
-        validate_link_parts(
+        validate(
             &db,
             &split_parts(&db)?,
             refund_id,
