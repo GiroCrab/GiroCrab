@@ -4256,6 +4256,28 @@ fn paypal_through_enable_banking_adopts_the_import_of_the_direct_login() {
 }
 
 #[test]
+fn own_import_wins_over_an_unsynced_twin_login() {
+    let _dir = crate::test_support::TempDir::new("girocrab-paypal-834d");
+    let v = Vault::open(
+        _dir.join("v.db").to_string_lossy().to_string(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let direct = v
+        .add_bank_connection(
+            ConnectorKind::PayPal,
+            String::new(),
+            "erika@example.org".into(),
+        )
+        .unwrap();
+    let db = v.db().unwrap();
+    imported_paypal(&db, direct, "pp-1");
+    let eb = enable_banking_login(&db, "PayPal", "Privat");
+    let own = imported_paypal(&db, eb, "pp-own");
+    assert_eq!(adopt_paypal(&db, eb, "EUR"), Some(own));
+}
+
+#[test]
 fn imports_of_used_or_unrelated_logins_are_not_taken_over() {
     let _dir = crate::test_support::TempDir::new("girocrab-paypal-834b");
     let v = Vault::open(

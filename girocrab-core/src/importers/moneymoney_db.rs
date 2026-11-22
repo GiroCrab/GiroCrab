@@ -2388,6 +2388,7 @@ pub(crate) fn adopt_account(
                AND kind = ?2 AND archived_unix IS NULL",
         )?;
         let mut rows: Vec<(i64, String, bool, String)> = Vec::new();
+        let mut own_ids: Vec<i64> = Vec::new();
         for login in
             std::iter::once(connection_id).chain(unsynced_twin_logins(conn, connection_id)?)
         {
@@ -2396,6 +2397,9 @@ pub(crate) fn adopt_account(
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
+            if login == connection_id {
+                own_ids.extend(found.iter().map(|r| r.0));
+            }
             rows.extend(found);
         }
         // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade
@@ -2410,10 +2414,13 @@ pub(crate) fn adopt_account(
             .collect();
         let currency = currency.trim().to_uppercase();
         // one account per currency (PayPal EUR/USD): another currency is never the same account
-        let rows: Vec<_> = rows
+        let mut rows: Vec<_> = rows
             .into_iter()
             .filter(|(_, _, _, cur)| currency.is_empty() || cur.is_empty() || *cur == currency)
             .collect();
+        if rows.iter().any(|r| own_ids.contains(&r.0)) {
+            rows.retain(|r| own_ids.contains(&r.0));
+        }
         let card = kind == AccountKind::CreditCard;
         // the other way reports a marked account under another reference
         // (FinTS `<number>-Depot`, REST its depot id): the only live one of
