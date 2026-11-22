@@ -2159,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "girocrab-core"
-version = "0.8.7"
+version = "0.8.8"
 dependencies = [
  "aes",
  "async-trait",
