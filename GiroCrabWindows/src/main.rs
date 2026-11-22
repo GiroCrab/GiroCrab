@@ -887,6 +887,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                     });
                     apply_filter(&win);
                     request_logos(&win, vault.clone());
+                    refunds_ui::rows_reloaded(&win, vault.clone());
                     refresh_dashboard(&win, vault);
                 }
                 (Err(e), _) | (_, Err(e)) => win.set_sync_status(e.into()),

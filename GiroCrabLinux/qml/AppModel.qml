@@ -578,6 +578,8 @@ QtObject {
     /// Everything of the vault on screen. The accounts come first: `then` runs as soon as
     /// they are there (the main view can show), the rest fills in off the GUI thread.
     function reloadAll(then, failed) {
+        // a sync or a merge can bring bookings and refund links: the pie and an open RefundSheet read again
+        refundLinksRevision++
         reloadSettings()
         reloadAccounts(() => {
             if (then) then()
@@ -3137,6 +3139,8 @@ QtObject {
     /// Error text, or "" on success.
     function saveSplits(parts, booking) {
         try { core("set_transaction_splits", { transaction_id: booking.id, splits: parts }) } catch (e) { return e.message }
+        // the parts decide what a link pays back: the pie shares can change with equal category sums
+        refundLinksRevision++
         reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning()
         return ""
     }

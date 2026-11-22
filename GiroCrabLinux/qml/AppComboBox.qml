@@ -7,6 +7,10 @@ import QtQuick.Controls
 // a divider (Picker › Divider).
 ComboBox {
     id: control
+    /// The entries name categories or carry amounts: the open popup covers each entry like
+    /// `Sensitive` covers the closed box (which only reaches the box itself).
+    property bool sensitiveLabels: false
+    property bool sensitiveAmounts: false
     delegate: AppMenuItem {
         required property var model
         required property var modelData
@@ -23,5 +27,7 @@ ComboBox {
         font.weight: isHeader ? Font.DemiBold : Font.Normal
         highlighted: control.highlightedIndex === index && !isHeader
         hoverEnabled: control.hoverEnabled
+        Sensitive { when: control.sensitiveLabels; labels: true }
+        Sensitive { when: control.sensitiveAmounts; amounts: true }
     }
 }

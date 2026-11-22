@@ -124,6 +124,10 @@ thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
 }
 
+/// Counts the loads of the dialog: only the newest one may show its result. Not part of `Ui`,
+/// which starts over with every opened dialog while an earlier load may still run.
+static LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
     UI.with(|u| f(&mut u.borrow_mut()))
 }
@@ -144,6 +148,29 @@ fn head(win: &MainWindow) {
     let privacy = privacy_on(win);
     win.set_rf_title(daily::mask(&title, privacy).into());
     win.set_rf_amount(daily::mask(&money(cents, &currency), privacy).into());
+}
+
+/// The bookings were read again (a sync, a merge, an edit): an open dialog takes its booking's
+/// amount and name from the new rows and loads again, so nothing in it is from before.
+pub fn rows_reloaded(win: &MainWindow, v: Arc<Vault>) {
+    if !win.get_refunds_open() {
+        return;
+    }
+    let Some(id) = with_ui(|u| u.booking.as_ref().map(|b| b.0)) else {
+        return;
+    };
+    let row = with_state(|st| {
+        let r = st.rows.iter().find(|r| r.id == id)?;
+        Some((r.counterparty.clone(), r.amount_cents, r.currency.clone()))
+    });
+    if let Some((title, cents, currency)) = row {
+        with_ui(|u| {
+            u.booking = Some((id, cents, currency));
+            u.title = title;
+        });
+        head(win);
+    }
+    refresh(win, v);
 }
 
 /// Privacy mode was switched: an open dialog shows its names and amounts accordingly.
@@ -318,10 +345,14 @@ fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<Re
         }));
         out.extend(linked.iter().map(|b| row(b, 1, "")));
     }
+    // the booking and its part on the other side of the link: a linked row carries the own
+    // part, a row that can be chosen does not
+    let other_end = |b: &RefundBooking| (b.id, if from_refund { b.part } else { b.refund_part });
     let shown = |c: &RefundBooking| {
-        linked
-            .iter()
-            .any(|b| (b.id, b.part, b.refund_part) == (c.id, c.part, c.refund_part))
+        linked.iter().any(|b| {
+            let own = if from_refund { b.refund_part } else { b.part };
+            (l.own_part == 0 || own == l.own_part) && other_end(b) == other_end(c)
+        })
     };
     let top: Vec<&RefundSuggestion> = l
         .suggestions
@@ -342,13 +373,7 @@ fn rows(l: &Loaded, from_refund: bool, searching: bool, privacy: bool) -> Vec<Re
     let others: Vec<&RefundBooking> = l
         .candidates
         .iter()
-        .filter(|c| {
-            !shown(c)
-                && !top.iter().any(|s| {
-                    (s.booking.id, s.booking.part, s.booking.refund_part)
-                        == (c.id, c.part, c.refund_part)
-                })
-        })
+        .filter(|c| !shown(c) && !top.iter().any(|s| other_end(&s.booking) == other_end(c)))
         .collect();
     if !others.is_empty() {
         out.push(header(
@@ -466,11 +491,13 @@ fn refresh(win: &MainWindow, v: Arc<Vault>) {
         return;
     };
     let weak = win.as_weak();
+    let run = LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     std::thread::spawn(move || {
         let loaded = load(&v, booking, &search, cents, own_part, &currency);
         let _ = weak.upgrade_in_event_loop(move |win| {
-            // an answer for another vault session, an earlier booking, search or part is dropped
-            if !crate::is_current(&v) {
+            // an answer for another vault session, an earlier booking, search or part is dropped,
+            // and so is one a later load of the same request has overtaken (a link was changed)
+            if !crate::is_current(&v) || run != LOADS.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
             let current = with_ui(|u| {
@@ -519,7 +546,9 @@ fn edit_link(win: &MainWindow, v: Arc<Vault>, edit: LinkEdit, link: Link) {
                     refresh(&win, v.clone());
                 }
                 reload(&win, v.clone());
-                refresh_dashboard(&win, v);
+                if !with_state(|st| matches!(st.target, crate::nav::Target::Account(_))) {
+                    refresh_dashboard(&win, v);
+                }
             }
         });
     });
@@ -533,6 +562,11 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
     win.on_refund_part_picked(move |index| {
         with_ui(|u| u.own_part = u.parts.get(index as usize).copied().unwrap_or(0));
         if let (Some(win), Some(v)) = (weak.upgrade(), vault()) {
+            // the rows on screen belong to the part shown before: a click on one is refused,
+            // so they go until the new ones are there (and stay away if the load fails)
+            win.set_rf_sums(SharedString::new());
+            win.set_rf_hint(SharedString::new());
+            win.set_rf_rows(ModelRc::new(VecModel::from(Vec::<RefundRow>::new())));
             refresh(&win, v);
         }
     });
@@ -881,6 +915,21 @@ mod tests {
                 .iter()
                 .filter(|r| r.kind == 3)
                 .all(|r| r.blocked.contains("Teil"))
+        );
+        // the booking part 2 is linked to is in the list once, as the linked row
+        let listed = |l: &Loaded| {
+            rows(l, true, true, false)
+                .iter()
+                .filter(|r| r.id == rent.id as i32)
+                .map(|r| r.kind)
+                .collect::<Vec<_>>()
+        };
+        let named = v.refund_links(income.id).unwrap().originals[0]
+            .display_name
+            .clone();
+        assert_eq!(
+            listed(&load(&v, income.id, &named, 280000, 2, "EUR").unwrap()),
+            [1]
         );
         assert!(load(&v, income.id, "", 280000, 1, "EUR").unwrap().open > 0);
         v.unlink_refund_parts(income.id, 2, rent.id, 0).unwrap();

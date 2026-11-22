@@ -31,8 +31,9 @@ extension AppModel {
             }
         } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
+            let revision = vaultRevision
             um.registerUndo(withTarget: self) { [weak vault] m in
-                guard let vault, m.vault === vault else { return }
+                guard let vault, m.vault === vault, m.vaultRevision == revision else { return }
                 m.unlinkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart)
             }
             um.setActionName(String(localized: "Erstattung zuordnen"))
@@ -42,12 +43,16 @@ extension AppModel {
 
     /// Removes the link of `refundID` to `originalID`; both bookings and their other links stay.
     func unlinkRefund(refundID: Int64, originalID: Int64, part: UInt32 = 0, refundPart: UInt32 = 0) {
-        guard let vault,
-              (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID && $0.part == part && $0.refundPart == refundPart }) == true else { return }
+        guard let vault else { return }
+        do {
+            // a link that is gone already is no error and leaves no undo step
+            guard try vault.refundLinks(transactionId: refundID).originals.contains(where: { $0.id == originalID && $0.part == part && $0.refundPart == refundPart }) else { return }
+        } catch { errorMessage = describe(error); return }
         do { try vault.unlinkRefundParts(refundId: refundID, refundPart: refundPart, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
+            let revision = vaultRevision
             um.registerUndo(withTarget: self) { [weak vault] m in
-                guard let vault, m.vault === vault else { return }
+                guard let vault, m.vault === vault, m.vaultRevision == revision else { return }
                 m.linkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart, restoring: true)
             }
             um.setActionName(String(localized: "Verknüpfung aufheben"))
@@ -57,7 +62,9 @@ extension AppModel {
 
     /// Removes every link of the refund `refundID` (context menu of a refund), as one undo step.
     func unlinkRefundOriginals(refundID: Int64) {
-        guard let vault, let originals = try? vault.refundLinks(transactionId: refundID).originals else { return }
+        guard let vault else { return }
+        let originals: [RefundBooking]
+        do { originals = try vault.refundLinks(transactionId: refundID).originals } catch { errorMessage = describe(error); return }
         windowUndoManager?.beginUndoGrouping()
         for original in originals { unlinkRefund(refundID: refundID, originalID: original.id, part: original.part, refundPart: original.refundPart) }
         windowUndoManager?.endUndoGrouping()
@@ -87,6 +94,8 @@ extension AppModel {
         }
         refundLinksRevision += 1
         reloadDashboard()
+        // the bars of the selected category count the linked amounts too
+        reloadCategoryHistory()
         refreshAfterEdit()
     }
 }

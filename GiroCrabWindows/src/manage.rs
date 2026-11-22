@@ -12,6 +12,7 @@ pub enum Modal {
     Categories,
     Rules,
     Link,
+    Refunds,
     About,
 }
 
@@ -25,6 +26,7 @@ pub struct Modals {
     pub categories: bool,
     pub rules: bool,
     pub link: bool,
+    pub refunds: bool,
     pub about: bool,
 }
 
@@ -37,6 +39,7 @@ impl Modals {
             (self.add_bank, Modal::AddBank),
             (self.account, Modal::Account),
             (self.link, Modal::Link),
+            (self.refunds, Modal::Refunds),
             (self.rules, Modal::Rules),
             (self.categories, Modal::Categories),
             (self.about, Modal::About),

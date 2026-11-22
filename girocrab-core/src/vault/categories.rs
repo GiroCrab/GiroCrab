@@ -728,7 +728,7 @@ impl Vault {
             let condition =
                 format!("{filters}{currency} AND (?3 IS NULL OR (t.checked != 0) = ?3)");
             let mut stmt = db.prepare(&format!(
-                "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
+                "SELECT category_id, SUM(amount_cents), COUNT(DISTINCT counted) FROM {}
                  WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
                  GROUP BY category_id",
                 crate::planning::effective_sql_own(&db, "", &condition, expenses)?

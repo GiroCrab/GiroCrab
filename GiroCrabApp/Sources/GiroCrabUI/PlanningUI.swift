@@ -464,12 +464,13 @@ struct CashflowCard: View {
         // but changes proof (#337) vs. totals sums. `totalsVersion` catches the
         // account/group switches that change the effective set without moving
         // the (proof) booking count (invalidateTotals in afterGroupChange/reloadAll).
-        .task(id: "\(granularity)#\(model.bookings.count)#\(accountIds)#\(model.sidebarSelection?.usesTotalsContext ?? true)#\(model.totalsVersion)") {
+        .task(id: "\(granularity)#\(model.bookings.count)#\(accountIds)#\(model.sidebarSelection?.usesTotalsContext ?? true)#\(model.totalsVersion)#\(model.refundLinksRevision)") {
             // calculation context like `currentFilter` (#337): overview, group,
             // kind / bank = overall money figure; a directly requested single
             // account is a proof view and keeps its sums
             if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6, accountIds: accountIds,
-                                                 respectInTotal: model.sidebarSelection?.usesTotalsContext ?? true) {
+                                                 respectInTotal: model.sidebarSelection?.usesTotalsContext ?? true),
+               !Task.isCancelled { // a newer read (after a refund link) has taken over
                 rows = loaded
             }
         }

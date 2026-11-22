@@ -750,6 +750,8 @@ Rectangle {
         readonly property real nameLineWidth: width - 28 - (compact ? 80 * Theme.textScale + 8 : 0) - Theme.scaled(signetSize) - 8
             - (checkIcon.visible ? checkIcon.width + 8 : 0) - (pendingIcon.visible ? pendingIcon.width + 8 : 0)
             - (amountLabel.visible ? amountLabel.implicitWidth : orderAmount.implicitWidth + 16) - 8
+        /// What the refund marker and its amount take of the name line (0 without a link).
+        readonly property real refundRoom: (refundIcon.visible ? refundIcon.width + 6 : 0) + (refundPart.visible ? Math.ceil(refundPart.implicitWidth) + 6 : 0)
         implicitHeight: Math.max((effectiveDensity === "compact" ? 28 : 44) * Theme.textScale, column.implicitHeight) + 2 * verticalPadding
 
         ColumnLayout {
@@ -795,7 +797,7 @@ Rectangle {
                             elide: br.showsDetails ? Text.ElideNone : Text.ElideRight
                             Layout.fillWidth: true; Layout.maximumWidth: Math.ceil(implicitWidth)
                             // the name first: in a single line the purpose yields (layoutPriority)
-                            Layout.minimumWidth: br.isSingleLine ? Math.min(Math.ceil(implicitWidth), Math.max(0, br.nameLineWidth - 30)) : 0
+                            Layout.minimumWidth: br.isSingleLine ? Math.min(Math.ceil(implicitWidth), Math.max(0, br.nameLineWidth - br.refundRoom - 30)) : 0
                             Sensitive {}
                         }
                         SFIcon { id: docIcon; visible: br.booking && br.booking.document_count > 0; symbol: "doc.text.fill"; size: 11; color: Theme.withAlpha(Theme.accent, 0.8)
@@ -806,11 +808,13 @@ Rectangle {
                         SFIcon { id: repeatIcon; visible: br.booking !== null && AppModel.recurringSeries(br.booking) !== null; symbol: "repeat"; size: 11 }
                         // RefundLinkMarker (#714): the same sign for a refund and its original; the amount only while covered in part
                         SFIcon {
+                            id: refundIcon
                             visible: br.booking !== null && br.booking.refund_link !== undefined && br.booking.refund_link !== "None"
                             symbol: "arrow.uturn.backward"; size: 11
                             Accessible.name: br.booking && br.booking.refund_link === "Refund" ? qsTr("Verknüpfte Erstattung") : qsTr("Hat verknüpfte Erstattung")
                         }
                         Text {
+                            id: refundPart
                             readonly property var part: br.booking && br.booking.refund_link !== "None" ? br.booking.refund_part_cents : null
                             visible: part !== null && part !== undefined
                             text: visible ? Fmt.money(part, br.booking.currency) : ""
@@ -823,7 +827,7 @@ Rectangle {
                             id: singleLineCategory
                             booking: br.booking
                             // from widths outside the line's own layout (no recursive rearrange)
-                            readonly property real room: br.nameLineWidth - Math.ceil(nameText.implicitWidth)
+                            readonly property real room: br.nameLineWidth - br.refundRoom - Math.ceil(nameText.implicitWidth)
                                 - (docIcon.visible ? docIcon.width + 5 : 0) - (repeatIcon.visible ? repeatIcon.width + 5 : 0) - 5
                             visible: br.isSingleLine && br.showsCategoryChip && room >= implicitWidth
                         }

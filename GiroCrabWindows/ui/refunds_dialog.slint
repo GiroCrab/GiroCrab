@@ -40,7 +40,10 @@ export component RefundsPanel inherits VerticalLayout {
     if root.sums != "": Text { text: root.sums; color: root.muted; font-size: 12px; wrap: word-wrap; }
     if root.hint != "": Text { text: root.hint; color: root.muted; font-size: 12px; wrap: word-wrap; }
     Rectangle {
-        height: 340px;
+        // shrinks in a short window: the footer stays in reach
+        min-height: 120px;
+        preferred-height: 340px;
+        vertical-stretch: 1;
         border-width: 1px;
         border-color: root.line;
         border-radius: 8px;

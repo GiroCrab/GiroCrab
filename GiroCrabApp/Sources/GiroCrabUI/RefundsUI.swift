@@ -100,7 +100,7 @@ private struct RefundBookingLine: View {
                         .appFont(.caption, weight: .medium)
                         .foregroundStyle(Theme.accent)
                         .lineLimit(1)
-                        .sensitive([.personal, .labels])
+                        .sensitive([.personal, .labels]) // the label holds the split note
                 }
                 if showsPurpose, !purpose.isEmpty {
                     Text(purpose)
@@ -180,8 +180,11 @@ struct RefundPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let booking: Booking
     @State private var links: RefundLinks?
-    @State private var candidates: [RefundBooking] = []
-    @State private var top: [RefundSuggestion] = []
+    @State private var loadedCandidates: [RefundBooking] = []
+    @State private var loadedTop: [RefundSuggestion] = []
+    /// The part and direction `loadedTop` and `loadedCandidates` were read for: rows read for
+    /// another part (or the other direction) are not offered while the new ones load or fail.
+    @State private var rowsFor: String?
     @State private var loaded = false
     @State private var search = ""
     /// The parts of a split booking the sheet was opened from, and the one the next link is
@@ -193,21 +196,32 @@ struct RefundPickerSheet: View {
     /// Counts the loads: only the newest one may show its result.
     @State private var loads = 0
 
+    /// The booking as the list has it now: a sync can change its amount while the sheet is open.
+    private var current: Booking { model.bookings.first { $0.id == booking.id } ?? booking }
+
     /// The booking (its chosen part) pays back: the bookings it pays back are chosen. Otherwise
     /// what pays it back is collected.
     private var fromRefund: Bool {
-        ownParts.first { $0.part == ownPart }.map { $0.split.amountCents > 0 } ?? (booking.amountCents > 0)
+        ownParts.first { $0.part == ownPart }.map { $0.split.amountCents > 0 } ?? (current.amountCents > 0)
     }
+    private var rowsKey: String { "\(ownPart)|\(fromRefund)" }
+    private var candidates: [RefundBooking] { rowsFor == rowsKey ? loadedCandidates : [] }
+    private var top: [RefundSuggestion] { rowsFor == rowsKey ? loadedTop : [] }
     private var linked: [RefundBooking] { (fromRefund ? links?.originals : links?.refunds) ?? [] }
     private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The list below the suggestions; a search shows every hit, also a suggested one.
     private var others: [RefundBooking] {
-        var ids = Set(linked.map(Self.key))
-        if !isSearching { ids.formUnion(top.map { Self.key($0.booking) }) }
-        return candidates.filter { !ids.contains(Self.key($0)) }
+        var ids = linkedEnds
+        if !isSearching { ids.formUnion(top.map { otherEnd($0.booking) }) }
+        return candidates.filter { !ids.contains(otherEnd($0)) }
     }
-    /// A split booking appears once per part.
-    private static func key(_ r: RefundBooking) -> String { "\(r.id)-\(r.part)-\(r.refundPart)" }
+    /// The end a row stands for: the booking and its part on the other side of the link. The
+    /// own part is not in it, a linked row carries it and a row that can be chosen does not.
+    private func otherEnd(_ r: RefundBooking) -> String { "\(r.id)-\(fromRefund ? r.part : r.refundPart)" }
+    /// What the selected part (else the booking) is linked to already.
+    private var linkedEnds: Set<String> {
+        Set(linked.filter { ownPart == 0 || (fromRefund ? $0.refundPart : $0.part) == ownPart }.map(otherEnd))
+    }
     private func partTitle(_ p: (part: UInt32, split: TransactionSplit)) -> String {
         let category = p.split.categoryId.flatMap { id in model.categories.first { $0.id == id }?.name } ?? ""
         return ([String(localized: "Teil \(Int(p.part))"), category, p.split.note].filter { !$0.isEmpty } + [Money.format(p.split.amountCents, currency: booking.currency.isEmpty ? "EUR" : booking.currency.uppercased())])
@@ -237,7 +251,7 @@ struct RefundPickerSheet: View {
                             .sensitive()
                     }
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                    AmountLabel(cents: booking.amountCents, currency: booking.currency).fixedSize()
+                    AmountLabel(cents: current.amountCents, currency: current.currency).fixedSize()
                 }
                 Text(fromRefund
                      ? "Wählen Sie die Buchungen, die mit dieser Erstattung zurückgezahlt wurden, auch mehrere. Zur Auswahl stehen Ausgaben aller Konten aus den zwölf Monaten davor, mit der Suche alle, auch spätere."
@@ -253,7 +267,7 @@ struct RefundPickerSheet: View {
                     Picker(fromRefund ? "Erstattung aus" : "Erstattung für", selection: $ownPart) {
                         ForEach(ownParts, id: \.part) { Text(partTitle($0)).tag($0.part) }
                     }
-                    .sensitive([.personal, .labels, .amounts])
+                    .sensitive([.personal, .labels, .amounts]) // with the split note
                 }
                 TextField("Name oder Verwendungszweck suchen", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -285,7 +299,7 @@ struct RefundPickerSheet: View {
             }
         }
         .macFrame(minWidth: 540, idealWidth: 580, minHeight: 520)
-        .task(id: "\(model.vaultRevision)|\(model.refundLinksRevision)|\(search)|\(ownPart)") { await reload() }
+        .task(id: "\(model.vaultRevision)|\(model.refundLinksRevision)|\(search)|\(rowsKey)") { await reload() }
         #if os(macOS)
         .onExitCommand { dismiss() }
         #endif
@@ -341,7 +355,8 @@ struct RefundPickerSheet: View {
     /// Why an unlinked row cannot be chosen: this booking or that one has nothing left to link.
     /// What this booking has left for a further link, in the role the sheet shows.
     /// Of the selected part when the booking is split: another part may still have something left.
-    @State private var ownOpen: Int64?
+    @State private var loadedOpen: Int64?
+    private var ownOpen: Int64? { rowsFor == rowsKey ? loadedOpen : nil }
 
     private var partUsedUp: Bool { ownOpen == 0 && ownParts.count > 1 && ownPart > 0 }
 
@@ -422,16 +437,17 @@ struct RefundPickerSheet: View {
             }
             guard run == loads, let result else { return }
             links = result.0
-            ownOpen = result.4
+            loadedOpen = result.4
             // a linked booking is shown on top only
-            let linkedIDs = Set(linked.map(Self.key))
-            top = result.1.filter { !linkedIDs.contains(Self.key($0.booking)) }
-            candidates = result.2
+            let linkedIDs = linkedEnds
+            loadedTop = result.1.filter { !linkedIDs.contains(otherEnd($0.booking)) }
+            loadedCandidates = result.2
+            rowsFor = "\(part)|\(paysBack)"
             // parts count from 1 in the order of the split; the sheet starts with a part on the
             // booking's own side
             ownParts = result.3.enumerated().map { (part: UInt32($0.offset + 1), split: $0.element) }
             if !ownParts.contains(where: { $0.part == ownPart }) {
-                ownPart = (ownParts.first { ($0.split.amountCents > 0) == (booking.amountCents > 0) } ?? ownParts.first)?.part ?? 0
+                ownPart = (ownParts.first { ($0.split.amountCents > 0) == (current.amountCents > 0) } ?? ownParts.first)?.part ?? 0
             }
             loadError = nil
         } catch {
@@ -447,7 +463,10 @@ struct RefundPickerSheet: View {
 struct RefundLinksCard: View {
     @Environment(AppModel.self) private var model
     let booking: Booking
-    @State private var links: RefundLinks?
+    @State private var loaded: (id: Int64, links: RefundLinks)?
+    /// Only the links read for the booking on screen: the card keeps its state when the
+    /// selection moves on, and the links of the booking before are not this one's.
+    private var links: RefundLinks? { loaded?.id == booking.id ? loaded?.links : nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -493,7 +512,7 @@ struct RefundLinksCard: View {
             let id = booking.id
             let read = try? await model.vaultOffMain { try $0.refundLinks(transactionId: id) }
             guard !Task.isCancelled else { return }
-            links = read ?? nil
+            loaded = (read ?? nil).map { (id, $0) }
         }
     }
 

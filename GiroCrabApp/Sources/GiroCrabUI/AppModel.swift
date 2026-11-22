@@ -1134,7 +1134,8 @@ public final class AppModel {
         case "refund", "refund-linked", "refund-split", "refund-split-out", "refund-split-in", "refund-credit":
             // "Ursprüngliche Buchung zuordnen …" (#714) for the first incoming booking the core
             // has suggestions for (else the first one); `refund-linked`: already linked to the
-            // nearest candidate
+            // nearest candidate. It links and splits bookings: only ever those of the demo vault.
+            guard demoActive else { break }
             let incoming = bookings.filter { $0.amountCents > 0 }
             let suggested = incoming.prefix(40).first { ((try? vault?.refundSuggestions(transactionId: $0.id))?.count ?? 0) > 1 }
             if let refund = suggested ?? incoming.first {
@@ -1150,10 +1151,16 @@ public final class AppModel {
                    let first = try? vault.createCategory(name: "Garten", parentId: nil, sfSymbol: "leaf", colorHex: "#4C9A2A"),
                    let second = try? vault.createCategory(name: "Werkzeug", parentId: nil, sfSymbol: "hammer", colorHex: "#8A6D3B") {
                     let half = original.amountCents / 2
-                    try? vault.setTransactionSplits(transactionId: original.id, splits: [
-                        TransactionSplitInput(categoryId: first, amountCents: half, note: ""),
-                        TransactionSplitInput(categoryId: second, amountCents: original.amountCents - half, note: ""),
-                    ])
+                    do {
+                        try vault.setTransactionSplits(transactionId: original.id, splits: [
+                            TransactionSplitInput(categoryId: first, amountCents: half, note: ""),
+                            TransactionSplitInput(categoryId: second, amountCents: original.amountCents - half, note: ""),
+                        ])
+                    } catch {
+                        // no sheet that claims to show a split booking
+                        errorMessage = describe(error)
+                        break
+                    }
                     reloadAll()
                     if name == "refund-split-out", let split = booking(withID: original.id) {
                         selectedBookingID = split.id

@@ -180,8 +180,10 @@ fn main() {
     let b = all.transactions[0].clone();
     let (c1, c2) = (cats[3].id, cats[5].id);
     let refunds = env_usize("REFUNDS", 0);
-    if refunds > 0 {
-        refund_links(&vault, &all.transactions, refunds);
+    if refunds > 0 && !refund_links(&vault, &all.transactions, refunds) {
+        drop(vault);
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::process::exit(1);
     }
 
     // The UI's list filter: newest 3000 bookings, all accounts, current period.
@@ -454,41 +456,62 @@ fn main() {
 }
 
 /// REFUNDS=n links n incoming bookings to an outgoing one each (#714), before every other
-/// timing: the list and the category sums then read those links.
-fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize) {
+/// timing: the list and the category sums then read those links. `false` when the vault has
+/// fewer pairs than that or a link fails for another reason.
+fn refund_links(vault: &Vault, all: &[girocrab_core::models::Booking], n: usize) -> bool {
     let incoming = all.iter().filter(|t| t.amount_cents > 0);
     let outgoing = all.iter().filter(|t| t.amount_cents < 0);
     let pairs: Vec<(i64, i64)> = incoming.zip(outgoing).map(|(r, o)| (r.id, o.id)).collect();
     let t = std::time::Instant::now();
-    let linked: Vec<(i64, i64)> = pairs
-        .into_iter()
-        .filter(|&(r, o)| vault.link_refund(r, o, 0).is_ok())
-        .take(n)
-        .collect();
+    let mut linked: Vec<(i64, i64)> = Vec::new();
+    for (r, o) in pairs {
+        if linked.len() == n {
+            break;
+        }
+        match vault.link_refund(r, o, 0) {
+            Ok(()) => linked.push((r, o)),
+            // a pair that cannot be linked (a transfer, a used-up booking)
+            Err(girocrab_core::CoreError::InvalidInput { .. }) => {}
+            // anything else (a full disk) is the cause to report, not too few pairs
+            Err(e) => {
+                eprintln!("REFUNDS={n}: link_refund failed: {e}");
+                return false;
+            }
+        }
+    }
     let per_link = t.elapsed().as_secs_f32() * 1000.0 / linked.len().max(1) as f32;
     println!(
         "refund links: {} ({per_link:.1} ms per link_refund)",
         linked.len()
     );
+    if linked.len() < n {
+        // timings with fewer links are not the workload that was asked for
+        eprintln!(
+            "REFUNDS={n}: the vault has only {} pairs to link; raise COPIES",
+            linked.len()
+        );
+        return false;
+    }
     let Some(&(r, o)) = linked.first() else {
-        return;
+        return true;
     };
     time("refunds: refund_links (inspector)", || {
-        vault.refund_links(r)
+        vault.refund_links(r).unwrap()
     });
     time("refunds: refund_suggestions", || {
-        vault.refund_suggestions(o)
+        vault.refund_suggestions(o).unwrap()
     });
     time("refunds: refund_candidates(limit 200)", || {
-        vault.refund_candidates(o, String::new(), 200)
+        vault.refund_candidates(o, String::new(), 200).unwrap()
     });
     time("refunds: refund_candidates(search, limit 200)", || {
-        vault.refund_candidates(o, "a".into(), 200)
+        vault.refund_candidates(o, "a".into(), 200).unwrap()
     });
     time("refunds: list_category_expenses (header pie)", || {
-        vault.list_category_expenses(None, None, vec![])
+        vault.list_category_expenses(None, None, vec![]).unwrap()
     });
     println!();
+    true
 }
 
 /// Calls that return a handful of bookings or only sums.
