@@ -1407,7 +1407,14 @@ pub(crate) fn merge_imported_split_parts(
         }
         let lines: Vec<_> = parts
             .iter()
-            .map(|(_, cents, cat, note, _)| (*cat, *cents, note.as_str()))
+            .map(
+                |(_, cents, cat, note, _)| crate::models::TransactionSplitInput {
+                    uuid: None,
+                    category_id: *cat,
+                    amount_cents: *cents,
+                    note: note.clone(),
+                },
+            )
             .collect();
         crate::planning::store_splits(db, bank_id, &lines)?;
         crate::planning::clear_split_category(db, bank_id)?;

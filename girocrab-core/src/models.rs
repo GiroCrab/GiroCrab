@@ -1189,6 +1189,7 @@ pub struct CategoryBudgetStatus {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransactionSplit {
     pub id: i64,
+    pub uuid: String,
     pub transaction_id: i64,
     pub category_id: Option<i64>,
     pub amount_cents: i64,
@@ -1198,8 +1199,10 @@ pub struct TransactionSplit {
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransactionSplitInput {
+    /// Existing part to retain; `None` creates a new UUID.
+    pub uuid: Option<String>,
     pub category_id: Option<i64>,
-    /// Same sign as the parent booking; all parts must add up to it.
+    /// All parts must add up to the parent booking.
     pub amount_cents: i64,
     pub note: String,
 }

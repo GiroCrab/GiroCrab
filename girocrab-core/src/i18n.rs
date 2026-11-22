@@ -1680,6 +1680,12 @@ fn english(de: &str) -> Option<&'static str> {
             "A split booking needs at least two non-zero parts."
         }
         "Die Teilbeträge sind zu groß." => "The split amounts are too large.",
+        "Die Teilbuchung existiert nicht oder wurde mehrfach angegeben." => {
+            "The split part does not exist or was specified more than once."
+        }
+        "Bitte passen Sie die Aufteilung zusammen mit dem Buchungsbetrag an." => {
+            "Please update the split together with the booking amount."
+        }
         "Die Teilbeträge ({0} ¢) ergeben nicht den Buchungsbetrag ({1} ¢)." => {
             "The parts ({0} ¢) do not add up to the booking amount ({1} ¢)."
         }

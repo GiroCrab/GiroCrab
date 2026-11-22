@@ -601,11 +601,13 @@ mod split_rule_tests {
                 id,
                 vec![
                     TransactionSplitInput {
+                        uuid: None,
                         category_id: Some(cat),
                         amount_cents: -2000,
                         note: String::new(),
                     },
                     TransactionSplitInput {
+                        uuid: None,
                         category_id: None,
                         amount_cents: -350,
                         note: String::new(),

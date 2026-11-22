@@ -542,6 +542,7 @@ struct SplitSheet: View {
 
     private struct Part: Identifiable {
         let id = UUID()
+        var uuid: String?
         var categoryID: Int64?
         var amount = ""
         var note = ""
@@ -621,7 +622,7 @@ struct SplitSheet: View {
                 Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Speichern") {
                     let inputs = parts.map {
-                        TransactionSplitInput(categoryId: $0.categoryID, amountCents: sign * cents($0), note: $0.note)
+                        TransactionSplitInput(uuid: $0.uuid, categoryId: $0.categoryID, amountCents: sign * cents($0), note: $0.note)
                     }
                     error = model.saveSplits(inputs, for: booking)
                     if error == nil { dismiss() }
@@ -641,7 +642,7 @@ struct SplitSheet: View {
             if existing.isEmpty {
                 parts = [Part(categoryID: booking.categoryId, amount: Money.plain(total)), Part()]
             } else {
-                parts = existing.map { Part(categoryID: $0.categoryId, amount: Money.plain(sign * $0.amountCents), note: $0.note) }
+                parts = existing.map { Part(uuid: $0.uuid, categoryID: $0.categoryId, amount: Money.plain(sign * $0.amountCents), note: $0.note) }
             }
         }
     }

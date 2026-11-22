@@ -6,8 +6,8 @@ use rusqlite::{Connection, params};
 
 use crate::error::CoreResult;
 
-/// One split line: (category uuid, amount, note).
-type SplitLine = (Option<String>, i64, String);
+/// One split line: (part uuid, category uuid, amount, note).
+type SplitLine = (String, Option<String>, i64, String);
 
 /// The synced fields of a booking, categories as uuids of live local
 /// categories. `cat` is the manual category; a rule result counts as none.
@@ -93,24 +93,23 @@ impl BookingFields {
     }
 }
 
-/// transaction id -> its split lines (sorted), categories as uuids.
+/// transaction id -> its split lines in user order, categories as uuids.
 fn load_splits(
     conn: &Connection,
     schema: &str,
     uuid_of: impl Fn(Option<i64>) -> Option<String>,
 ) -> CoreResult<HashMap<i64, Vec<SplitLine>>> {
     let mut out: HashMap<i64, Vec<SplitLine>> = HashMap::new();
-    let rows: Vec<(i64, Option<i64>, i64, String)> = conn
+    let rows: Vec<(i64, String, Option<i64>, i64, String)> = conn
         .prepare(&format!(
-            "SELECT transaction_id, category_id, amount_cents, note FROM {schema}.transaction_splits"
+            "SELECT transaction_id, uuid, category_id, amount_cents, note FROM {schema}.transaction_splits ORDER BY position, id"
         ))?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
         .collect::<Result<_, _>>()?;
-    for (t, c, amount, note) in rows {
-        out.entry(t).or_default().push((uuid_of(c), amount, note));
-    }
-    for lines in out.values_mut() {
-        lines.sort();
+    for (t, uuid, c, amount, note) in rows {
+        out.entry(t)
+            .or_default()
+            .push((uuid, uuid_of(c), amount, note));
     }
     Ok(out)
 }
@@ -500,11 +499,11 @@ fn insert_splits(
     lines: &[SplitLine],
     cat_id: &impl Fn(&Option<String>) -> Option<i64>,
 ) -> CoreResult<()> {
-    for (cat, amount, note) in lines {
+    for (position, (uuid, cat, amount, note)) in lines.iter().enumerate() {
         conn.execute(
-            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, note)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![id, cat_id(cat), amount, note],
+            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, note, uuid, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, cat_id(cat), amount, note, uuid, position as i64],
         )?;
     }
     Ok(())

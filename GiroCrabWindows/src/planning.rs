@@ -103,6 +103,7 @@ pub fn moved_order(ids: &[i64], index: usize, step: i32) -> Option<Vec<i64>> {
 /// One row of the split form as typed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SplitDraft {
+    pub uuid: Option<String>,
     /// 0 = no category, n = the n-th category (1-based).
     pub category_index: i32,
     pub amount: String,
@@ -156,6 +157,7 @@ pub fn build_splits(
             ),
         };
         out.push(TransactionSplitInput {
+            uuid: d.uuid.clone(),
             category_id,
             amount_cents: cents,
             note: d.note.trim().to_string(),
@@ -422,6 +424,7 @@ mod tests {
 
     fn draft(c: i32, a: &str) -> SplitDraft {
         SplitDraft {
+            uuid: None,
             category_index: c,
             amount: a.into(),
             note: String::new(),

@@ -406,11 +406,13 @@ fn editing_a_booking_stamps_only_that_field() {
                     1,
                     vec![
                         crate::models::TransactionSplitInput {
+                            uuid: None,
                             category_id: Some(cat),
                             amount_cents: 3,
                             note: String::new(),
                         },
                         crate::models::TransactionSplitInput {
+                            uuid: None,
                             category_id: None,
                             amount_cents: 2,
                             note: String::new(),
@@ -623,12 +625,12 @@ fn deleting_a_category_soft_deletes_it_its_children_and_rules() {
             .unwrap();
         }
         db.execute(
-            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents) VALUES (1, 2, ?1, -3)",
+            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents, uuid, position) VALUES (1, 2, ?1, -3, 'part-1', 0)",
             [child],
         )
         .unwrap();
         db.execute(
-            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents) VALUES (2, 2, ?1, -2)",
+            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents, uuid, position) VALUES (2, 2, ?1, -2, 'part-2', 1)",
             [other],
         )
         .unwrap();
@@ -1333,6 +1335,7 @@ fn soft_delete_world(v: &Vault) {
     v.set_category_budget(supermarkt, Some(250_00)).unwrap();
     v.set_category_budget(wohnen, Some(1500_00)).unwrap();
     let split = |cat: Option<i64>, cents: i64| crate::models::TransactionSplitInput {
+        uuid: None,
         category_id: cat,
         amount_cents: cents,
         note: "Teil".into(),
@@ -2084,7 +2087,7 @@ fn independently_created_same_name_categories_are_combined() {
         )
         .unwrap();
         db.execute(
-            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents) VALUES (1, ?1, -5)",
+            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, uuid, position) VALUES (1, ?1, -5, 'part-1', 0)",
             [c],
         )
         .unwrap();
@@ -2430,6 +2433,7 @@ fn each_order(tag: &str, setup: impl Fn(&Vault, &Vault), check: impl Fn(&Vault))
 
 fn split(category_id: Option<i64>, amount_cents: i64) -> crate::models::TransactionSplitInput {
     crate::models::TransactionSplitInput {
+        uuid: None,
         category_id,
         amount_cents,
         note: String::new(),
@@ -2712,6 +2716,53 @@ fn edited_text_syncs() {
             );
         },
     );
+}
+
+#[test]
+fn split_merge_preserves_uuids_and_winners_order() {
+    for a_first in [true, false] {
+        let (a, b) = booking_pair("split-identities");
+        a.set_transaction_splits(
+            1,
+            vec![split(None, -200), split(Some(cat(&a, "Food")), -300)],
+        )
+        .unwrap();
+        let parts = a.list_transaction_splits(1).unwrap();
+        merge(&b, &a);
+        assert_eq!(
+            a.list_transaction_splits(1)
+                .unwrap()
+                .iter()
+                .map(|p| &p.uuid)
+                .collect::<Vec<_>>(),
+            b.list_transaction_splits(1)
+                .unwrap()
+                .iter()
+                .map(|p| &p.uuid)
+                .collect::<Vec<_>>()
+        );
+        let mut retained = split(None, -250);
+        retained.uuid = Some(parts[0].uuid.clone());
+        let mut moved = split(Some(cat(&b, "Fun")), -250);
+        moved.uuid = Some(parts[1].uuid.clone());
+        b.set_transaction_splits(1, vec![moved, retained]).unwrap();
+        exec(&a, "UPDATE transactions SET splits_ms=100 WHERE id=1");
+        exec(&b, "UPDATE transactions SET splits_ms=200 WHERE id=1");
+        if a_first {
+            both_ways(&a, &b);
+        } else {
+            both_ways(&b, &a);
+        }
+        for v in [&a, &b] {
+            let result = v.list_transaction_splits(1).unwrap();
+            assert_eq!(
+                result.iter().map(|p| p.uuid.as_str()).collect::<Vec<_>>(),
+                vec![parts[1].uuid.as_str(), parts[0].uuid.as_str()]
+            );
+            assert!(result.iter().all(|p| p.amount_cents == -250));
+        }
+        assert_eq!(merge(&b, &a).bookings_updated, 0);
+    }
 }
 
 #[test]
@@ -4409,6 +4460,46 @@ fn rule_account_set_merges_across_vaults() {
     assert_eq!(refs, vec!["A1", "A3"]);
     both_ways(&a, &b);
     assert_eq!(a.list_rules().unwrap()[0].account_ids, vec![ids[0], ids[2]]);
+}
+
+#[test]
+fn folded_twin_preserves_split_uuids() {
+    let dir = temp_dir("twin-split-identities");
+    let v = open(&dir, "a.db");
+    let c = comdirect(&v);
+    let bank = giro(&v, c, "API1", &["mm-1", "mm-2"]);
+    let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2"]);
+    let id = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id={twin} AND external_id='mm-1'"),
+    );
+    let amount = n(
+        &v,
+        &format!("SELECT amount_cents FROM transactions WHERE id={id}"),
+    );
+    v.set_transaction_splits(id, vec![split(None, amount - 1), split(None, 1)])
+        .unwrap();
+    let expected: Vec<_> = v
+        .list_transaction_splits(id)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.uuid)
+        .collect();
+    drop(v);
+    let v = open(&dir, "a.db");
+    let id = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id={bank} AND external_id='mm-1'"),
+    );
+    assert_eq!(
+        v.list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.uuid)
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(n(&v, "SELECT COUNT(*) FROM transaction_splits"), 2);
 }
 
 #[test]
