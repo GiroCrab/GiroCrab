@@ -1735,6 +1735,111 @@ mod tests {
         let _ = std::fs::remove_dir_all(run);
     }
 
+    #[test]
+    fn refund_parts_and_expense_pie_roundtrip() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-dispatch-refunds-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let v = Vault::open(path.to_string_lossy().into(), vec![7; 32]).unwrap();
+        let call = |method: &str, args: Value| {
+            crate::dispatch::dispatch_vault(&v, method, &args)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{method}: {e}"))
+        };
+        let cat = call(
+            "create_category",
+            json!({"name":"Shopping", "parent_id":null, "sf_symbol":"tag", "color_hex":"#2563EB"}),
+        );
+        let account = call(
+            "create_offline_account",
+            json!({"name":"Pie", "kind":"Cash", "currency":"EUR", "opening_cents":0}),
+        );
+        let booking = |amount, date| {
+            call(
+                "save_manual_booking",
+                json!({"account_id":account, "booking_id":null, "setup":{"booking_date":date, "amount_cents":amount, "counterparty":"Shop", "purpose":"Order", "category_id":cat, "note":""}}),
+            )
+        };
+        let original = booking(-10000, "2026-11-01");
+        let refund = booking(6000, "2026-11-02");
+        call(
+            "set_transaction_splits",
+            json!({"transaction_id":refund, "splits":[{"uuid":null, "category_id":cat, "amount_cents":2000, "note":"First"}, {"uuid":null, "category_id":cat, "amount_cents":4000, "note":"Second"}]}),
+        );
+        let parts = call("list_transaction_splits", json!({"transaction_id":refund}));
+        let total = |filter| {
+            let rows = call("list_category_expenses", json!({"filter":filter}));
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["category_id"] == cat)
+                .and_then(|r| r["cents"].as_i64())
+                .unwrap_or(0)
+        };
+        let range = girocrab_core::BookingFilter {
+            account_ids: vec![account.as_i64().unwrap()],
+            ..Default::default()
+        };
+        assert_eq!(total(range.clone()), 10000);
+        let pair = json!({"refund_id":refund, "refund_part":parts[1]["uuid"], "original_id":original, "original_part":""});
+        call("link_refund", pair.clone());
+        let sheet = |own: Value, query: &str| {
+            call(
+                "refund_sheet",
+                json!({"transaction_id":refund, "own_part":own, "query":query}),
+            )
+        };
+        let first = sheet(json!(""), "");
+        assert_eq!(first["own_part"], parts[0]["uuid"]);
+        assert_eq!(first["own_open"], 2000);
+        let second = sheet(parts[1]["uuid"].clone(), "shop");
+        assert_eq!(second["own_open"], 0);
+        assert_eq!(second["linked"][0]["allocated_cents"], 4000);
+        assert_eq!(second["suggestions"], json!([]));
+        assert_eq!(second["candidates"], json!([]));
+        assert_eq!(
+            sheet(parts[0]["uuid"].clone(), "not present")["candidates"],
+            json!([])
+        );
+        assert_eq!(total(range.clone()), 6000);
+        assert_eq!(
+            total(girocrab_core::BookingFilter {
+                date_from: Some("2026-11-01".into()),
+                date_to: Some("2026-11-01".into()),
+                ..range.clone()
+            }),
+            10000
+        );
+        assert_eq!(
+            total(girocrab_core::BookingFilter {
+                account_ids: vec![-1],
+                ..Default::default()
+            }),
+            0
+        );
+        let mut invalid = pair.clone();
+        invalid["refund_part"] = json!("missing");
+        assert!(
+            crate::dispatch::dispatch_vault(&v, "link_refund", &invalid)
+                .unwrap()
+                .is_err()
+        );
+        let token = call("unlink_refund", pair.clone());
+        assert_eq!(total(range.clone()), 10000);
+        assert_eq!(sheet(parts[1]["uuid"].clone(), "")["linked"], json!([]));
+        let mut restore = pair;
+        restore["token"] = token;
+        call("restore_refund", restore);
+        assert_eq!(total(range), 6000);
+        drop(v);
+        let _ = std::fs::remove_file(path);
+    }
+
     /// Automatischer Abruf (#546, AutoSync.qml): `begin_quiet_sync` registers a SyncSession in
     /// the registry that `session_start` drives like a manual one (demo bank, no network).
     #[test]

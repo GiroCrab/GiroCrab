@@ -840,6 +840,130 @@ mod tests {
     }
 
     #[test]
+    fn a_linked_refund_counts_as_income_only_for_its_unassigned_rest() {
+        let (_dir, v, _) = fixture();
+        let account = v
+            .create_offline_account(
+                "Analytics".into(),
+                girocrab_core::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let categories = ["A", "B", "C"].map(|name| {
+            v.create_category(name.into(), None, "tag".into(), "#123456".into())
+                .unwrap()
+        });
+        let add = |amount, category, date: &str| {
+            v.save_manual_booking(
+                account,
+                None,
+                girocrab_core::offline::ManualBookingSetup {
+                    booking_date: date.into(),
+                    amount_cents: amount,
+                    counterparty: "QA vendor".into(),
+                    purpose: String::new(),
+                    category_id: Some(category),
+                    note: String::new(),
+                },
+            )
+            .unwrap()
+        };
+        let first = add(-10000, categories[0], "2025-01-01");
+        let second = add(-3000, categories[1], "2025-01-01");
+        let full = add(10000, categories[0], "2025-02-01");
+        let partial = add(5000, categories[1], "2025-02-01");
+        add(10200, categories[2], "2025-02-01");
+        v.link_refund(full, String::new(), first, String::new())
+            .unwrap();
+        v.link_refund(partial, String::new(), second, String::new())
+            .unwrap();
+        let report = || {
+            crate::analytics::load(
+                &v,
+                BookingFilter {
+                    account_ids: vec![account],
+                    date_from: Some("2025-02-01".into()),
+                    date_to: Some("2025-02-28".into()),
+                    ..Default::default()
+                },
+                &daily::Filter::default(),
+            )
+            .unwrap()
+        };
+        let r = report();
+        assert_eq!(
+            (r.income_cents, r.expense_cents, r.net_cents),
+            (12200, -13000, 25200)
+        );
+        let slices = crate::analytics::categories(&r.category_income, 5);
+        assert_eq!(
+            slices
+                .iter()
+                .map(|s| (s.name.as_str(), s.cents))
+                .collect::<Vec<_>>(),
+            [("C", 10200), ("B", 2000)]
+        );
+        add(-20000, categories[0], "2025-02-01");
+        let r = report();
+        assert_eq!(
+            (r.income_cents, r.expense_cents, r.net_cents),
+            (12200, 7000, 5200)
+        );
+    }
+
+    #[test]
+    fn candidates_keep_distinct_income_parts_and_linked_rows_keep_the_exact_part() {
+        let (_dir, v, _) = fixture();
+        let account = v
+            .create_offline_account(
+                "Parts".into(),
+                girocrab_core::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let add = |amount, name: &str| {
+            v.save_manual_booking(
+                account,
+                None,
+                girocrab_core::offline::ManualBookingSetup {
+                    booking_date: "2025-02-10".into(),
+                    amount_cents: amount,
+                    counterparty: name.into(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap()
+        };
+        let original = add(-300, "Purchase");
+        let refund = add(200, "Distinct income");
+        v.set_transaction_splits(
+            refund,
+            ["First", "Second"]
+                .map(|note| girocrab_core::TransactionSplitInput {
+                    uuid: None,
+                    category_id: None,
+                    amount_cents: 100,
+                    note: note.into(),
+                })
+                .to_vec(),
+        )
+        .unwrap();
+        let parts = v.list_transaction_splits(refund).unwrap();
+        v.link_refund(refund, parts[0].uuid.clone(), original, String::new())
+            .unwrap();
+        let x = load(&v, original, "", "Distinct income").unwrap();
+        assert_eq!(x.links.len(), 1);
+        assert_eq!(x.links[0].refund_part, parts[0].uuid);
+        assert_eq!(x.candidates.len(), 1);
+        assert_eq!(x.candidates[0].transaction_id, refund);
+        assert_eq!(x.candidates[0].part, parts[1].uuid);
+    }
+
+    #[test]
     fn uuid_selection_suggestions_search_and_errors() {
         let (_dir, v, f) = fixture();
         let d = load(&v, f.refund, "", "").unwrap();

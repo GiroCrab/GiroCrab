@@ -296,6 +296,146 @@ fn every_report_entry_point_uses_the_same_refund_adjusted_fixture() {
     assert_eq!(f.spending(), baseline);
 }
 
+mod previous_pr_regressions {
+    use super::*;
+
+    #[test]
+    fn new_category_of_a_part_keeps_its_refund() {
+        let f = Fixture::new();
+        let other =
+            f.v.create_category("Other".into(), None, "tag".into(), "#abcdef".into())
+                .unwrap();
+        let original = f.add(-10000, None);
+        let refund = f.add(1000, None);
+        let parts = f.split(original, &[(-6000, Some(f.cost)), (-4000, Some(f.income))]);
+        f.link(refund, "", original, &parts[0]);
+        let replacement = f.split(original, &[(-6000, Some(other)), (-4000, Some(f.income))]);
+        assert_eq!(replacement[0], parts[0]);
+        assert_eq!(
+            [f.cost, f.income, other].map(|id| f.category_total(id)),
+            [0, -4000, -5000]
+        );
+        assert_eq!(f.v.refund_links(refund).unwrap()[0].allocated_cents, 1000);
+    }
+
+    #[test]
+    fn odd_cent_split_refund_keeps_every_cent_in_category_views() {
+        let f = Fixture::new();
+        let refund = f.add(10001, None);
+        let original = f.add(-3000, None);
+        let parts = f.split(refund, &[(6000, Some(f.cost)), (4001, Some(f.income))]);
+        f.link(refund, &parts[0], original, "");
+        let page = |category_id| {
+            f.v.list_transactions(BookingFilter {
+                category_id,
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        assert_eq!(page(None).income_cents, 7001);
+        assert_eq!(
+            page(Some(f.cost)).income_cents + page(Some(f.income)).income_cents,
+            7001
+        );
+        assert_eq!(f.category_total(f.cost) + f.category_total(f.income), 7001);
+    }
+
+    #[test]
+    fn category_sums_under_a_direction_follow_the_list() {
+        let f = Fixture::new();
+        let original = f.add(-3000, Some(f.cost));
+        let refund = f.add(1000, Some(f.cost));
+        f.link(refund, "", original, "");
+        for (direction, sum) in [
+            (BookingDirection::All, -2000),
+            (BookingDirection::Expense, -3000),
+            (BookingDirection::Income, 1000),
+        ] {
+            let page =
+                f.v.list_transactions(BookingFilter {
+                    category_id: Some(f.cost),
+                    direction,
+                    ..Default::default()
+                })
+                .unwrap();
+            let sidebar =
+                f.v.list_categories_filtered(None, None, vec![], None, direction)
+                    .unwrap()
+                    .into_iter()
+                    .find(|c| c.id == f.cost)
+                    .unwrap()
+                    .own_total_cents;
+            assert_eq!(
+                (sidebar, page.income_cents + page.expense_cents),
+                (sum, sum),
+                "{direction:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn linked_refund_counts_once_per_category() {
+        let f = Fixture::new();
+        let first = f.add(-3000, Some(f.cost));
+        let second = f.add(-2000, Some(f.cost));
+        let refund = f.add(6000, Some(f.cost));
+        let totals = |id| {
+            let c =
+                f.v.list_categories(None, None)
+                    .unwrap()
+                    .into_iter()
+                    .find(|c| c.id == id)
+                    .unwrap();
+            (c.own_total_cents, c.transaction_count)
+        };
+        assert_eq!(totals(f.cost), (1000, 3));
+        f.link(refund, "", first, "");
+        f.link(refund, "", second, "");
+        assert_eq!(totals(f.cost), (1000, 3));
+        f.v.set_transaction_category(refund, Some(f.income))
+            .unwrap();
+        assert_eq!(totals(f.cost), (0, 3));
+        assert_eq!(
+            f.v.list_transactions(BookingFilter {
+                category_id: Some(f.cost),
+                ..Default::default()
+            })
+            .unwrap()
+            .transactions
+            .len(),
+            3
+        );
+        assert_eq!(totals(f.income), (1000, 1));
+    }
+
+    #[test]
+    fn qa_wording_consumption_partial_refund_remainder_is_income() {
+        let f = Fixture::new();
+        let refund = f.add(10000, None);
+        let original = f.add(-3000, None);
+        f.v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET purpose='Rückerstattung Retoure Erstattung' WHERE id=?1",
+                [refund],
+            )
+            .unwrap();
+        let before = f.v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!(
+            before
+                .transactions
+                .iter()
+                .find(|b| b.id == refund)
+                .unwrap()
+                .flow,
+            crate::merchants::FlowKind::Income
+        );
+        f.link(refund, "", original, "");
+        let after = f.v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!((after.income_cents, after.expense_cents), (7000, 0));
+    }
+}
+
 #[test]
 fn expense_parts_of_zero_net_and_income_originals_are_expenses() {
     for income in [1000, 1500] {

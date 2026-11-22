@@ -1102,6 +1102,92 @@ use super::*;
 use crate::models::{AccountKind, BookingFilter, TransactionSplitInput};
 use crate::offline::ManualBookingSetup;
 
+mod previous_pr_regressions {
+    use super::*;
+
+    #[test]
+    fn qa_a_changed_split_keeps_the_link_order_of_a_collective_refund() {
+        let f = Fixture::new();
+        let first = f.add("first", -10000);
+        let second = f.add("second", -5000);
+        let refund = f.add("refund", 10000);
+        let parts = f.split(first, &[-6000, -4000]);
+        f.link(refund, "", first, &parts[0]);
+        f.link(refund, "", second, "");
+        assert_eq!(shares(&f.v, refund), [6000, 4000]);
+        f.v.set_transaction_splits(
+            first,
+            vec![
+                part(Some(parts[0].clone()), -7000),
+                part(Some(parts[1].clone()), -3000),
+            ],
+        )
+        .unwrap();
+        assert_eq!(shares(&f.v, refund), [7000, 3000]);
+        f.unlink(refund, "", first, &parts[0]);
+        f.link(refund, "", first, &parts[0]);
+        let links = f.v.refund_links(refund).unwrap();
+        assert_eq!(
+            links.iter().map(|l| l.original_id).collect::<Vec<_>>(),
+            [second, first]
+        );
+        assert_eq!(shares(&f.v, refund), [5000, 5000]);
+    }
+
+    #[test]
+    fn qa_vendor_window_is_62_days() {
+        let f = Fixture::new();
+        let refund = f.add("refund", 10000);
+        let boundary = f.add("boundary", -3000);
+        let too_old = f.add("too-old", -2000);
+        raw(
+            &f.v,
+            &format!(
+                "UPDATE transactions SET counterparty='QA vendor'; UPDATE transactions SET booking_date='2025-04-30' WHERE id={refund}; UPDATE transactions SET booking_date='2025-02-27' WHERE id={boundary}; UPDATE transactions SET booking_date='2025-02-26' WHERE id={too_old}"
+            ),
+        );
+        let ids =
+            f.v.refund_suggestions(refund, String::new())
+                .unwrap()
+                .into_iter()
+                .map(|s| s.candidate.transaction_id)
+                .collect::<Vec<_>>();
+        assert!(ids.contains(&boundary));
+        assert!(!ids.contains(&too_old));
+    }
+
+    #[test]
+    fn error_texts_have_english() {
+        let de = "Diese Erstattungszuordnung ist nicht möglich.";
+        assert_ne!(crate::i18n::tr_in(crate::i18n::Lang::En, de), de);
+    }
+
+    #[test]
+    fn part_of_a_split_income_is_suggested_by_its_amount() {
+        let f = Fixture::new();
+        let original = f.add("purchase", -2000);
+        let income = f.add("income", 32000);
+        let parts = f.split(income, &[30000, 2000]);
+        raw(
+            &f.v,
+            &format!(
+                "UPDATE transactions SET booking_date='2025-03-01' WHERE id={original}; UPDATE transactions SET booking_date='2025-03-20' WHERE id={income}"
+            ),
+        );
+        let suggestions = f.v.refund_suggestions(original, String::new()).unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].candidate.transaction_id, income);
+        assert_eq!(suggestions[0].candidate.part, parts[1]);
+        assert_eq!(suggestions[0].reason, RefundMatch::SameAmount);
+        f.link(income, &parts[1], original, "");
+        assert!(
+            f.v.refund_suggestions(original, String::new())
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
 struct Fixture {
     v: Arc<Vault>,
     account: i64,
