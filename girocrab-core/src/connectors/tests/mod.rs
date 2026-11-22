@@ -203,9 +203,13 @@ fn a_known_receipt_reached_later_links_to_its_booking_unless_unlinked() {
         vec![
             doc(b"%PDF-1.4 a", None, "tr:doc:a"),
             doc(b"%PDF-1.4 b", None, "tr:doc:b"),
+            doc(b"%PDF-1.4 c", None, "tr:doc:c"),
         ],
     );
-    store(vec![booking("item-a"), booking("item-b")], vec![]);
+    store(
+        vec![booking("item-a"), booking("item-b"), booking("item-c")],
+        vec![],
+    );
     let docs = v.list_all_documents(Default::default()).unwrap();
     let id_of = |url: &str| docs.iter().find(|d| d.source_url == url).unwrap().id;
     let (a, b) = (id_of("tr:doc:a"), id_of("tr:doc:b"));
@@ -229,12 +233,14 @@ fn a_known_receipt_reached_later_links_to_its_booking_unless_unlinked() {
         .unwrap();
     v.link_document(b, Some(any_booking)).unwrap();
     v.link_document(b, None).unwrap();
-    // a later pass reaches both known receipts (link-only, no bytes)
+    // a later pass reaches the known receipts (link-only, no bytes); c is no longer remembered
+    // as known and comes downloaded again
     store(
         vec![],
         vec![
             doc(&[], Some("item-a"), "tr:doc:a"),
             doc(&[], Some("item-b"), "tr:doc:b"),
+            doc(b"%PDF-1.4 c", Some("item-c"), "tr:doc:c"),
         ],
     );
     let docs = v.list_all_documents(Default::default()).unwrap();
@@ -244,6 +250,12 @@ fn a_known_receipt_reached_later_links_to_its_booking_unless_unlinked() {
         "the booking of an earlier sync gets its receipt"
     );
     assert_eq!(linked(b), None, "a manual unlink stays");
+    let c = id_of("tr:doc:c");
+    assert!(
+        linked(c).is_some(),
+        "a receipt downloaded again gets its link"
+    );
+    assert_eq!(docs.len(), 3, "the copy is not stored twice");
 }
 
 #[test]

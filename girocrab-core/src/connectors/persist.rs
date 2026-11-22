@@ -961,9 +961,9 @@ pub(crate) fn store_fetch(
             };
             // A known history receipt gets its direct link once its cash booking exists, also when the
             // document pass reaches it only in a later sync. Never against the user's own unlink, never
-            // to a deleted booking; a receipt that already has a booking keeps it.
+            // to a deleted booking; a receipt that already has a booking keeps it. Also for a receipt
+            // downloaded again (no longer remembered as known): storing it again ignores the copy.
             if kind == ConnectorKind::TradeRepublic
-                && d.bytes.is_empty()
                 && !d.source_url.is_empty()
                 && let Some(booking_id) = booking_id
             {
