@@ -192,6 +192,7 @@ Sheet {
             Layout.fillWidth: true
             placeholderText: qsTr("Name oder Verwendungszweck suchen")
             onTextEdited: sheet.search = text
+            Sensitive { when: parent.text !== "" }
         }
         Text { visible: sheet.error !== ""; text: sheet.error; font.pixelSize: Theme.callout + 1; color: Theme.negative; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         ScrollView {
