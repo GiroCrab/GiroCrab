@@ -31,7 +31,10 @@ extension AppModel {
             }
         } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.unlinkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart) }
+            um.registerUndo(withTarget: self) { [weak vault] m in
+                guard let vault, m.vault === vault else { return }
+                m.unlinkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart)
+            }
             um.setActionName(String(localized: "Erstattung zuordnen"))
         }
         refundLinksChanged([refundID, originalID])
@@ -43,7 +46,10 @@ extension AppModel {
               (try? vault.refundLinks(transactionId: refundID).originals.contains { $0.id == originalID && $0.part == part && $0.refundPart == refundPart }) == true else { return }
         do { try vault.unlinkRefundParts(refundId: refundID, refundPart: refundPart, originalId: originalID, originalPart: part) } catch { errorMessage = describe(error); return }
         if let um = windowUndoManager {
-            um.registerUndo(withTarget: self) { m in m.linkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart, restoring: true) }
+            um.registerUndo(withTarget: self) { [weak vault] m in
+                guard let vault, m.vault === vault else { return }
+                m.linkRefund(refundID: refundID, originalID: originalID, part: part, refundPart: refundPart, restoring: true)
+            }
             um.setActionName(String(localized: "Verknüpfung aufheben"))
         }
         refundLinksChanged([refundID, originalID])

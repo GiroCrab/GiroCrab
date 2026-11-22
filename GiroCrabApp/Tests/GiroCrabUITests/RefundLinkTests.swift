@@ -1,5 +1,8 @@
 import XCTest
 import GiroCrabCore
+#if os(macOS)
+import AppKit
+#endif
 @testable import GiroCrabUI
 
 /// Refund links (#714): the model writes the link, patches the loaded rows' markers without a
@@ -31,6 +34,49 @@ final class RefundLinkTests: XCTestCase {
     }
 
     private func kind(_ id: Int64) -> RefundLinkKind? { model.booking(withID: id)?.refundLink }
+
+    #if os(macOS)
+    func testRefundUndoDoesNotWriteIntoAnotherVault() throws {
+        try assertRefundUndoStaysInVault(unlink: false)
+    }
+
+    func testRefundRestoreUndoDoesNotWriteIntoAnotherVault() throws {
+        try assertRefundUndoStaysInVault(unlink: true)
+    }
+
+    private func assertRefundUndoStaysInVault(unlink: Bool) throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 100),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        let undo = try XCTUnwrap(model.windowUndoManager)
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        let (refund, originals) = try pair()
+        let vault = try XCTUnwrap(model.vault)
+        undo.beginUndoGrouping()
+        model.linkRefund(refundID: refund.id, originalID: originals[0].id)
+        undo.endUndoGrouping()
+        if unlink {
+            undo.beginUndoGrouping()
+            model.unlinkRefund(refundID: refund.id, originalID: originals[0].id)
+            undo.endUndoGrouping()
+        }
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(undo.canUndo)
+        let other = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let otherVault = try XCTUnwrap(other.vault)
+        if !unlink {
+            try otherVault.linkRefundParts(refundId: refund.id, refundPart: 0, originalId: originals[0].id, originalPart: 0)
+        }
+        model.useVault(otherVault, demo: true)
+        undo.undo()
+        XCTAssertEqual(try otherVault.refundLinks(transactionId: refund.id).originals.count, unlink ? 0 : 1)
+        XCTAssertEqual(try vault.refundLinks(transactionId: refund.id).originals.count, unlink ? 0 : 1)
+    }
+    #endif
 
     func testLinkingMarksBothRowsWithoutChangingAmountsOrCategories() throws {
         let (refund, originals) = try pair()
