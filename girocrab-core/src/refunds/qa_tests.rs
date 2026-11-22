@@ -45,6 +45,40 @@ fn restore_whole_purchase_link_after_splitting_preserves_allocation() {
     assert!(v.restore_refund_parts(r, 0, o, 0).is_err());
 }
 
+#[test]
+fn suggestions_exclude_only_links_of_the_selected_own_part() {
+    for pays_back in [true, false] {
+        let (_d, v, a) = fixture();
+        let (ca, cb) = categories(&v);
+        let sign = if pays_back { 1 } else { -1 };
+        let own = booking(&v, a, sign * 10000);
+        let other = booking(&v, a, -sign * 20000);
+        split(&v, own, ca, cb, sign);
+        let link = |part| {
+            if pays_back {
+                v.link_refund_parts(own, part, other, 0)
+            } else {
+                v.link_refund_parts(other, 0, own, part)
+            }
+        };
+        let suggested = |part| {
+            v.refund_part_suggestions(own, pays_back, part)
+                .unwrap()
+                .iter()
+                .any(|s| s.booking.id == other)
+        };
+        assert!(suggested(1));
+        assert!(suggested(2));
+        link(1).unwrap();
+        assert!(!suggested(1));
+        assert!(!suggested(0));
+        assert!(!suggested(99));
+        assert!(suggested(2));
+        link(2).unwrap();
+        assert!(!suggested(2));
+    }
+}
+
 fn fixture() -> (TempDir, std::sync::Arc<Vault>, i64) {
     let d = TempDir::new("refund-qa");
     let v = Vault::open(d.join("v").to_string_lossy().into(), vec![7; 32]).unwrap();

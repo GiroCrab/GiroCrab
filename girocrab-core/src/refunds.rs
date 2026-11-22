@@ -1655,15 +1655,17 @@ impl Vault {
         if pool.open == 0 {
             return Ok(Vec::new());
         }
+        let parts = split_parts(db)?;
+        let linked_part =
+            named(&parts, transaction_id, i64::from(own_part), role).map_or(0, |_| own_part);
         let linked: std::collections::HashSet<(i64, u32)> = db
             .prepare(match role {
-                Role::Refund => "SELECT original_id,original_part FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL",
-                Role::Original => "SELECT refund_id,refund_part FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",
+                Role::Refund => "SELECT original_id,original_part FROM refund_links WHERE refund_id=?1 AND deleted_ms IS NULL AND (?2=0 OR refund_part=?2)",
+                Role::Original => "SELECT refund_id,refund_part FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL AND (?2=0 OR original_part=?2)",
             })?
-            .query_map([transaction_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .query_map(params![transaction_id, linked_part], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<_, _>>()?;
         // the amounts of the booking that can be linked: all of it, or one of its parts
-        let parts = split_parts(db)?;
         let own_amounts = match named(&parts, transaction_id, i64::from(own_part), role) {
             // the sheet links one part: its amount, and nothing when it is used up
             Some(p) if own_part > 0 => {
