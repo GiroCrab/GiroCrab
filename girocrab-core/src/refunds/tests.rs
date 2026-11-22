@@ -242,6 +242,34 @@ fn unlink_survives_older_peer_and_relink_revives() {
     assert_eq!(originals(&a, aa[2]), vec![aa[1]]);
 }
 
+/// An unlink from the other device reaches the link of a booking that is deleted here, so
+/// the booking does not come back with the link.
+#[test]
+fn unlink_reaches_the_link_of_a_deleted_booking() {
+    let d = TempDir::new("refunds-sync-deleted");
+    let a = open(&d, "a");
+    let b = open(&d, "b");
+    let aa = seed(&a);
+    let bb = seed(&b);
+    a.link_refund(aa[2], aa[0], 0).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert_eq!(originals(&b, bb[2]), vec![bb[0]]);
+    a.unlink_refund(aa[2], aa[0], 0).unwrap();
+    let deleted = |v: &Vault, id: i64, ms: Option<i64>| {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET deleted_ms=?2 WHERE id=?1",
+                rusqlite::params![id, ms],
+            )
+            .unwrap();
+    };
+    deleted(&b, bb[0], Some(i64::MAX / 2));
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    deleted(&b, bb[0], None);
+    assert!(originals(&b, bb[2]).is_empty());
+}
+
 #[test]
 fn equal_stamp_merges_agree_in_both_orders() {
     for deleted in [false, true] {

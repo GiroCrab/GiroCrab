@@ -1151,10 +1151,13 @@ pub(crate) fn merge(conn: &Connection, ids: &HashMap<i64, i64>) -> CoreResult<()
         let (Some(&r), Some(&o)) = (ids.get(&r), ids.get(&o)) else {
             continue;
         };
+        // a removal also reaches the link of a deleted booking: it may come back (its account
+        // is restored) and must not bring the link along; only a live link needs live ends
         for id in [r, o] {
             match live(conn, id) {
                 Ok(_) => {}
-                Err(CoreError::InvalidInput { .. }) => continue 'links,
+                Err(CoreError::InvalidInput { .. }) if deleted.is_none() => continue 'links,
+                Err(CoreError::InvalidInput { .. }) => {}
                 Err(error) => return Err(error),
             }
         }
