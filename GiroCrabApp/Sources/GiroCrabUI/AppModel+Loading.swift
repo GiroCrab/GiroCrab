@@ -15,6 +15,7 @@ extension AppModel {
 
     func reloadAll() {
         invalidateTotals()
+        refundLinksRevision += 1
         assetClassificationVersion += 1
         merchantSettingsRevision += 1
         let all = Perf.signposter.beginInterval("reloadAll")
@@ -41,6 +42,7 @@ extension AppModel {
         // a sync can change the effective total set: supersede edit snapshots
         // that still carry the pre-sync totals (#337), like `reloadAll` does
         invalidateTotals()
+        refundLinksRevision += 1
         assetClassificationVersion += 1
         merchantSettingsRevision += 1
         reloadAccounts()
