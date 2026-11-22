@@ -148,7 +148,7 @@ extension AppModel {
     func presentPendingPaymentLink() {
         // `vaultState`, not only `vault`: the lock-screen preview keeps the demo vault loaded.
         guard let payment = pendingPaymentLink, vault != nil, vaultState == .open, accountsLoaded,
-              syncingConnectionID == nil, activeTransfer == nil,
+              syncingConnectionID == nil, activeTransfer == nil, !transferKindSwitching,
               !showTransferSheet, !showBatchSheet, !showStandingSheet else { return }
         pendingPaymentLink = nil
         // The link names a recipient, and a savings account books only to own accounts:

@@ -127,6 +127,25 @@ final class PaymentLinkTests: XCTestCase {
         XCTAssertTrue(model.transferDraft.fromLink)
     }
 
+    /// Switching the open form to the batch form: the waiting link must not slip in between
+    /// (two sheets at once); it waits for the batch form to close.
+    func testLinkWaitsWhileTheFormSwitchesToBatch() async throws {
+        let model = demoModel()
+        try XCTSkipUnless(model.canBatchTransfer, "demo vault without batch accounts")
+        model.openTransfer()
+        model.openLink(link)
+        model.switchToBatchTransfer()
+        for _ in 0..<20 where !model.showBatchSheet { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertTrue(model.showBatchSheet)
+        XCTAssertFalse(model.showTransferSheet)
+        XCTAssertNotNil(model.pendingPaymentLink)
+        model.showBatchSheet = false
+        for _ in 0..<20 where !model.showTransferSheet { await Task.yield() }
+        XCTAssertTrue(model.showTransferSheet)
+        XCTAssertTrue(model.transferDraft.fromLink)
+    }
+
     func testNewerLinkReplacesAWaitingOne() async throws {
         let model = demoModel()
         try XCTSkipUnless(model.canTransfer, "demo vault without transfer accounts")

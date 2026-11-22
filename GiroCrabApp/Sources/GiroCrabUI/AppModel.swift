@@ -806,8 +806,11 @@ public final class AppModel {
     /// accounts still loading, a sync running): shown once that is over (`presentPendingPaymentLink`).
     var pendingPaymentLink: ParsedPayment?
     /// The open vault's accounts have been loaded once (`applyAccountGroups`): an empty list then
-    /// means no accounts, not "not loaded yet". Reset with the vault (`releaseVaultState`).
+    /// means no accounts, not "not loaded yet". Reset with the vault (`releaseVaultState`, `useVault`).
     @ObservationIgnored var accountsLoaded = false
+    /// A transfer form is being swapped for the batch form or back: closing the one must not let a
+    /// waiting link take the form before the other opens (`switchToBatchTransfer`, `switchToSingleTransfer`).
+    @ObservationIgnored var transferKindSwitching = false
     /// Opt-in clipboard check (#663): pasteboard `changeCount` last looked at, so the same
     /// content is offered once. Never the content itself; in memory only.
     var clipboardChangeCountHandled: Int?
@@ -1635,6 +1638,9 @@ public final class AppModel {
     func useVault(_ v: Vault, demo: Bool) {
         vault = v
         demoActive = demo
+        // The accounts loaded so far are the previous vault's (demo ↔ own): a waiting link
+        // waits for this vault's (`applyAccountGroups`).
+        accountsLoaded = false
         if !demo { AppDefaults.store.set(true, forKey: Self.realDataKey) }
         vaultState = .open
         selectedBookingID = nil
