@@ -351,6 +351,28 @@ impl Shares {
     }
 }
 
+thread_local! {
+    // The accounts whose links count on this thread (`within`); `None` = all.
+    static WITHIN: std::cell::RefCell<Option<Vec<i64>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// While it lives, only links between bookings of the given accounts exist for every read
+/// of this thread (shares, moved amounts, markers). For the local interface (#136): what it
+/// returns for the shared accounts must not depend on a booking of another account, so a
+/// refund whose original is not shared reads as not linked there.
+pub(crate) struct Within(());
+
+pub(crate) fn within(accounts: &[i64]) -> Within {
+    WITHIN.with(|w| *w.borrow_mut() = Some(accounts.to_vec()));
+    Within(())
+}
+
+impl Drop for Within {
+    fn drop(&mut self) {
+        WITHIN.with(|w| *w.borrow_mut() = None);
+    }
+}
+
 /// What every live link pays back, filled in the order the links were made (links made in the
 /// same millisecond on two devices: by what both devices know of the bookings, not by their
 /// local ids): a link takes at
@@ -362,13 +384,21 @@ impl Shares {
 /// get no share.
 fn shares(conn: &Connection, parts: &HashMap<i64, Vec<Part>>) -> CoreResult<Shares> {
     type Row = (i64, i64, i64, i64, i64, i64, String, String);
+    // account ids are integers, so inlining them cannot inject anything
+    let within = WITHIN.with(|w| {
+        w.borrow().as_ref().map_or(String::new(), |accounts| {
+            let ids: Vec<String> = accounts.iter().map(i64::to_string).collect();
+            let ids = ids.join(",");
+            format!(" AND r.account_id IN ({ids}) AND o.account_id IN ({ids})")
+        })
+    });
     let links: Vec<Row> = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT l.refund_id,l.original_id,l.original_part,l.refund_part,r.amount_cents,o.amount_cents,r.currency,o.currency
              FROM refund_links l JOIN transactions r ON r.id=l.refund_id JOIN transactions o ON o.id=l.original_id
-             WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL
-             ORDER BY l.created_ms,l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,l.refund_id,l.original_id",
-        )?
+             WHERE l.deleted_ms IS NULL AND r.deleted_ms IS NULL AND o.deleted_ms IS NULL{within}
+             ORDER BY l.created_ms,l.changed_ms,r.booking_date,o.booking_date,r.external_id,o.external_id,l.original_part,l.refund_part,l.refund_id,l.original_id"
+        ))?
         .query_map([], |r| {
             Ok((
                 r.get(0)?,

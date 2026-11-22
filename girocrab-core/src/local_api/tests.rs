@@ -687,3 +687,53 @@ fn merchant_names_are_masked_like_the_texts_they_come_from() {
         "shown when shared"
     );
 }
+
+/// A refund link to a booking of an account that is not shared does not exist for the
+/// interface (#714): neither the totals nor the categories of the shared account may depend on it.
+#[test]
+fn refund_link_to_an_unshared_account_changes_nothing() {
+    let (_d, v) = demo();
+    let giro = account_id(&v, "Musterbank Girokonto");
+    let all = v.list_transactions(BookingFilter::default()).unwrap();
+    let refund = all
+        .transactions
+        .iter()
+        .find(|t| t.account_id == giro && t.amount_cents > 0 && t.currency == "EUR")
+        .unwrap();
+    let private = all
+        .transactions
+        .iter()
+        .find(|t| {
+            t.account_id != giro
+                && t.amount_cents < 0
+                && t.currency == "EUR"
+                && t.category_id.is_some()
+                && t.category_id != refund.category_id
+        })
+        .unwrap();
+    let (from, to) = summary_range();
+    let params = json!({ "account_ids": [giro], "date_from": from, "date_to": to });
+    share(&v, &[giro], |_| {});
+    let before = ok(&v, "summary", params.clone());
+    v.link_refund(refund.id, private.id, 0).unwrap();
+    assert_eq!(ok(&v, "summary", params.clone()), before);
+    let in_category = |v: &Vault| {
+        all_pages(
+            v,
+            json!({ "account_ids": [giro], "category_id": private.category_id }),
+            200,
+        )
+        .len()
+    };
+    let listed = in_category(&v);
+    // with both accounts shared the link counts, as in the app
+    share(&v, &[giro, private.account_id], |_| {});
+    assert_ne!(ok(&v, "summary", params), before);
+    assert_eq!(
+        in_category(&v),
+        listed + 1,
+        "the refund counts in the category it pays back"
+    );
+    // and the app itself is not limited by a request that came before
+    assert!(v.refund_links(refund.id).unwrap().originals.len() == 1);
+}

@@ -560,6 +560,8 @@ impl Vault {
     ) -> ApiResult<ApiTransactionPage> {
         let db = self.db()?;
         let shared = shared_account_ids(&db, scope)?;
+        // a refund link to a booking of an account that is not shared does not exist here
+        let _links = crate::refunds::within(&shared);
         let accounts = requested_accounts(&shared, &p.account_ids)?;
         let search = check_search(scope, p.search)?;
         let direction = match p.direction.as_deref() {
@@ -624,6 +626,8 @@ impl Vault {
         // One lock for both reads, so totals and categories see the same vault.
         let db = self.db()?;
         let shared = shared_account_ids(&db, scope)?;
+        // a refund link to a booking of an account that is not shared does not exist here
+        let _links = crate::refunds::within(&shared);
         let accounts = requested_accounts(&shared, &p.account_ids)?;
         // Totals: the enriched bookings (flow decides the KPI side), like the
         // app's tiles and `cashflow_by_period`.

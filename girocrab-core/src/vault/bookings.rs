@@ -315,7 +315,14 @@ impl BookingFinisher {
 
     /// With `visible` accounts (local interface, #136), a payment linked to a
     /// loan outside them reads as a transfer: the loan itself must not show.
-    fn finish(&self, t: &mut Booking, visible: Option<&[i64]>) {
+    fn finish(
+        &self,
+        t: &mut Booking,
+        visible: Option<&[i64]>,
+        covered: Option<&crate::refunds::Covered>,
+    ) {
+        // the caller's own view of the refund links (`refunds::within`), else everything
+        let refund_covered = covered.unwrap_or(&self.refund_covered);
         if let Some((name, path, color, sym)) = t.category_id.and_then(|c| self.paths.get(&c)) {
             t.category_name = name.clone();
             t.category_path = path.clone();
@@ -368,12 +375,12 @@ impl BookingFinisher {
             t.merchant_domain = Some(d.clone());
         }
         // what the booking pays back, else what is paid back of it: (covered, at most)
-        let pays = self.refund_covered.refund.get(&t.id).copied();
+        let pays = refund_covered.refund.get(&t.id).copied();
         t.refund_part_cents = pays
-            .or(self.refund_covered.original.get(&t.id).copied())
+            .or(refund_covered.original.get(&t.id).copied())
             .filter(|(covered, total)| {
                 // a link that takes nothing (the other links use everything up) shows no 0,00
-                (1..*total).contains(covered) && !self.refund_covered.mixed.contains(&t.id)
+                (1..*total).contains(covered) && !refund_covered.mixed.contains(&t.id)
             })
             .map(|(covered, _)| covered);
         // A refund the user linked to its original booking (#714) is no income: like a refund
@@ -384,7 +391,7 @@ impl BookingFinisher {
         if pays.is_some() && t.flow == FlowKind::Income {
             // what pays back an outgoing part of an income (a fee) raises that income: only
             // what pays back an expense lowers the expenses
-            let paid = self.refund_covered.expense.get(&t.id).copied().unwrap_or(0);
+            let paid = refund_covered.expense.get(&t.id).copied().unwrap_or(0);
             t.flow = FlowKind::Consumption;
             t.refund_income_cents = (t.amount_cents - paid).max(0);
         }
@@ -817,7 +824,7 @@ impl Vault {
                 continue;
             }
             let (share, mut t) = booking_from_row(row)?;
-            finisher.finish(&mut t, None);
+            finisher.finish(&mut t, None, None);
             if keeps(filter, t.flow, &t.merchant.key) {
                 visit(share, t);
             }
@@ -845,12 +852,17 @@ impl Vault {
         visible: Option<&[i64]>,
     ) -> Result<Vec<Booking>, CoreError> {
         let finisher = self.booking_finisher(db)?;
+        // the finisher is cached with every link; a caller with a limited view reads its own
+        let covered = match visible {
+            Some(_) => Some(crate::refunds::covered(db)?),
+            None => None,
+        };
         let mut stmt = db.prepare(sql)?;
         let mut out = stmt
             .query_map(params, booking_from_row)?
             .map(|row| {
                 let (_, mut t) = row?;
-                finisher.finish(&mut t, visible);
+                finisher.finish(&mut t, visible, covered.as_ref());
                 Ok(t)
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
@@ -1197,7 +1209,7 @@ impl Vault {
         let mut classes = HashMap::new();
         for row in rows {
             let (_, mut t) = row?;
-            finisher.finish(&mut t, None);
+            finisher.finish(&mut t, None, None);
             let name = intern(t.merchant.name.to_lowercase());
             let merchant = intern(t.merchant.key);
             classes.insert(
