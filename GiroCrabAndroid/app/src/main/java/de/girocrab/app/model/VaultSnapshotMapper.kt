@@ -2,6 +2,7 @@ package de.girocrab.app.model
 
 import java.time.LocalDate
 import uniffi.girocrab_core.Account as CoreAccount
+import uniffi.girocrab_core.AssetItem as CoreAssetItem
 import uniffi.girocrab_core.AccountGroup as CoreGroup
 import uniffi.girocrab_core.AccountKind as CoreAccountKind
 import uniffi.girocrab_core.Booking as CoreBooking
@@ -12,6 +13,7 @@ import uniffi.girocrab_core.BookingScope
 import uniffi.girocrab_core.Category as CoreCategory
 import uniffi.girocrab_core.CategorySource as CoreCategorySource
 import uniffi.girocrab_core.ConnectorKind as CoreConnector
+import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -57,12 +59,16 @@ object VaultSnapshotMapper {
         page: CorePage,
         categories: List<CoreCategory>,
         tags: List<CoreTag>,
+        holdingsByAccount: Map<Long, List<CoreHolding>>,
+        assets: List<CoreAssetItem>,
     ): VaultSnapshot = VaultSnapshot(
         groups = groups.map { group(it, accounts) },
         accounts = accounts.map(::account),
         bookings = page.transactions.map(::booking),
         categories = categories.map(::category),
         tags = tags.map(::tag),
+        holdings = holdingsByAccount.flatMap { (accountId, rows) -> rows.map { holding(accountId, it) } },
+        assets = assets.map(::asset),
     )
 
     /** True when the core held back bookings: the list is a page, not the vault. */
@@ -125,6 +131,40 @@ object VaultSnapshotMapper {
         id = row.id.toString(),
         name = row.name,
         colorHex = color(row.colorHex, 0xFF1976D2),
+    )
+
+    /**
+     * The core keeps the EUR value of a holding; the app recomputes it as
+     * `quantity * priceCents * fxRateToEur`. Instead of assuming a rate, the rate is derived, so the
+     * app's own arithmetic lands on the core's value to the cent.
+     */
+    private fun holding(accountId: Long, row: CoreHolding): Holding {
+        val costBasis = row.profitLossPurchaseCents?.let { row.valueCents - it } ?: row.valueCents
+        val fx = if (row.quantity > 0.0 && row.currentPriceCents > 0L) {
+            row.valueCents.toDouble() / (row.quantity * row.currentPriceCents)
+        } else {
+            1.0
+        }
+        return Holding(
+            id = "$accountId/${row.isin.ifBlank { row.wkn.ifBlank { row.name } }}",
+            accountId = accountId.toString(),
+            name = row.name,
+            isin = row.isin,
+            quantity = row.quantity,
+            priceCents = row.currentPriceCents,
+            costBasisCents = costBasis,
+            wkn = row.wkn,
+            currency = row.currency.ifBlank { "EUR" },
+            fxRateToEur = fx,
+        )
+    }
+
+    private fun asset(row: CoreAssetItem): TangibleAsset = TangibleAsset(
+        id = row.id.toString(),
+        name = row.setup.name,
+        valueCents = row.holding.valueCents,
+        acquiredDate = date(row.setup.purchaseDate),
+        note = row.setup.note,
     )
 
     private fun date(raw: String): LocalDate = LocalDate.parse(raw)

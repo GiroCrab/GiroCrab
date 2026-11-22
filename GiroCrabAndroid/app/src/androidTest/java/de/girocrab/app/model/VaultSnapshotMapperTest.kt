@@ -5,6 +5,13 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.girocrab.app.security.NativeVaultOpener
 import de.girocrab.app.security.OwnVault
 import java.io.File
+import java.time.LocalDate
+import uniffi.girocrab_core.AssetInterpolation
+import uniffi.girocrab_core.AssetItem as CoreAssetItem
+import uniffi.girocrab_core.AssetItemSetup as CoreAssetSetup
+import uniffi.girocrab_core.BookingPage as CoreBookingPage
+import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.SelectionFlow as CoreFlow
 import java.security.SecureRandom
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -104,12 +111,117 @@ class VaultSnapshotMapperTest {
         assertNull(filter.checked)
     }
 
+    /**
+     * #1429 (3.2): the core keeps the EUR value of a holding, the app recomputes it. The mapper
+     * derives the factor from the core's numbers, so both sides land on the same value — the test
+     * checks the app's own arithmetic, not the copied value.
+     */
+    @Test
+    fun holdingsReproduceTheCoreValueInTheAppsOwnArithmetic() {
+        val row = CoreHolding(
+            isin = "US0378331005",
+            wkn = "865985",
+            name = "Apple Inc.",
+            quantity = 10.0,
+            currentPriceCents = 5_000,
+            purchasePriceCents = 4_000,
+            valueCents = 52_000,
+            profitLossPurchaseCents = 2_000,
+            currency = "USD",
+        )
+
+        val snapshot = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            page = emptyPage(),
+            categories = emptyList(),
+            tags = emptyList(),
+            holdingsByAccount = mapOf(7L to listOf(row)),
+            assets = emptyList(),
+        )
+
+        val holding = snapshot.holdings.single()
+        assertEquals("the account has to come from the loop's side", "7", holding.accountId)
+        assertEquals(5_000L, holding.priceCents)
+        assertEquals("cost basis is what was paid: value minus gain", 50_000L, holding.costBasisCents)
+        assertEquals(1.04, holding.fxRateToEur, 1e-9)
+        assertEquals(
+            "the app's own valueCents has to hit the core's EUR value",
+            52_000L,
+            holding.valueCents,
+        )
+    }
+
+    /** #1429 (3.2): a tangible asset carries the setup's name and date and the holding's value. */
+    @Test
+    fun tangibleAssetsCarryTheSetupAndTheHoldingValue() {
+        val item = CoreAssetItem(
+            id = 3,
+            accountId = 9,
+            setup = CoreAssetSetup(
+                name = "Goldbarren",
+                priceSource = "XAU",
+                weightGrams = 31.1035,
+                purityPermille = 999.9,
+                interpolation = AssetInterpolation.STEP,
+                purchaseDate = "2024-03-01",
+                quantity = 1.0,
+                purchasePriceCents = 210_000,
+                startValueCents = null,
+                note = "1 oz",
+                symbol = "",
+            ),
+            holding = CoreHolding(
+                isin = "",
+                wkn = "",
+                name = "Goldbarren",
+                quantity = 1.0,
+                currentPriceCents = 260_000,
+                purchasePriceCents = 210_000,
+                valueCents = 260_000,
+            ),
+            quantities = emptyList(),
+            values = emptyList(),
+            valueDate = "2026-11-22",
+            missingPriceDate = null,
+            sold = false,
+        )
+
+        val snapshot = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            page = emptyPage(),
+            categories = emptyList(),
+            tags = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = listOf(item),
+        )
+
+        val asset = snapshot.assets.single()
+        assertEquals("3", asset.id)
+        assertEquals("Goldbarren", asset.name)
+        assertEquals(260_000L, asset.valueCents)
+        assertEquals(LocalDate.of(2024, 3, 1), asset.acquiredDate)
+        assertEquals("1 oz", asset.note)
+    }
+
     // --- helpers ---------------------------------------------------------------------------
 
     private fun newKey() = ByteArray(NativeVaultOpener.MASTER_KEY_BYTES).also { SecureRandom().nextBytes(it) }
 
     private fun open(key: ByteArray) =
         opener.open(vaultPath.path, key) ?: throw AssertionError("native core is not linked")
+
+    private fun emptyPage() = CoreBookingPage(
+        transactions = emptyList(),
+        totalCount = 0u,
+        incomeCents = 0,
+        expenseCents = 0,
+        consumptionCents = 0,
+        investmentCents = 0,
+        perkCents = 0,
+        flow = CoreFlow(consumptionCents = 0, investedCents = 0, incomeCents = 0),
+    )
 
     /** Runs [block] on a fresh handle and closes it afterwards — one place, so no test leaks. */
     private fun <T> withVault(key: ByteArray, block: (OwnVault) -> T): T {

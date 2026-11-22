@@ -6,9 +6,11 @@ import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import uniffi.girocrab_core.Account as CoreAccount
+import uniffi.girocrab_core.AssetItem as CoreAssetItem
 import uniffi.girocrab_core.AccountGroup as CoreGroup
 import uniffi.girocrab_core.BookingPage as CorePage
 import uniffi.girocrab_core.Category as CoreCategory
+import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -162,7 +164,15 @@ class NativeVaultOpener {
                 ?: throw IllegalStateException("listCategories did not return a list")
             val tags = callNoArgs("listTags") as? List<CoreTag>
                 ?: throw IllegalStateException("listTags did not return a list")
-            return VaultSnapshotMapper.map(groups, accounts, page, categories, tags)
+            // The core asks per account here; the flat list is assembled on this side.
+            val holdings = accounts.associate { account ->
+                val rows = callWith("listHoldings", account.id) as? List<CoreHolding>
+                    ?: throw IllegalStateException("listHoldings did not return a list")
+                account.id to rows
+            }
+            val assets = callNoArgs("listAllAssetItems") as? List<CoreAssetItem>
+                ?: throw IllegalStateException("listAllAssetItems did not return a list")
+            return VaultSnapshotMapper.map(groups, accounts, page, categories, tags, holdings, assets)
         }
 
         /**
