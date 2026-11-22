@@ -761,12 +761,18 @@ fn reload_docs(win: &MainWindow, vault: &Arc<Vault>, status: String) {
     win.set_view_status(status.into());
 }
 
-/// One small UPDATE: runs synchronously, then the list reloads right away.
+/// The vault part of "Als gelesen markieren" / "Alle als gelesen markieren": one UPDATE per id,
+/// so it runs on a worker thread (`run_doc_job`). An empty message keeps the status line clear.
+fn mark_seen_job(vault: &Vault, ids: Vec<i64>, seen: bool) -> Result<String, String> {
+    vault
+        .mark_documents_seen(ids, seen)
+        .map(|_| String::new())
+        .map_err(|e| e.to_string())
+}
+
+/// Marks documents read or unread on a worker thread; the list reloads afterwards.
 fn mark_seen(win: &MainWindow, vault: &Arc<Vault>, ids: Vec<i64>, seen: bool) {
-    match vault.mark_documents_seen(ids, seen) {
-        Ok(_) => reload_docs(win, vault, String::new()),
-        Err(e) => win.set_view_status(e.to_string().into()),
-    }
+    run_doc_job(win, vault, move |vault| mark_seen_job(vault, ids, seen));
 }
 
 fn run_doc_job(
@@ -1461,6 +1467,24 @@ mod tests {
         u.forget_shown_list();
         assert!(u.doc_unread.is_empty());
         assert_eq!(u.selected_doc, Some(6));
+    }
+
+    #[test]
+    fn mark_seen_job_writes_the_read_status_without_a_status_text() {
+        let (vault, path) = demo_vault();
+        let ids: Vec<i64> = vault
+            .list_all_documents(DocumentFilter::default())
+            .unwrap()
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        // Mark all, then back to unread, then again: every round trip succeeds quietly.
+        assert_eq!(mark_seen_job(&vault, ids.clone(), true), Ok(String::new()));
+        assert_eq!(mark_seen_job(&vault, ids.clone(), false), Ok(String::new()));
+        assert_eq!(mark_seen_job(&vault, ids, true), Ok(String::new()));
+        // An id that no longer exists (deleted meanwhile) changes nothing and is no error.
+        assert_eq!(mark_seen_job(&vault, vec![-1], true), Ok(String::new()));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
