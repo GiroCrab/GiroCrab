@@ -350,6 +350,15 @@ ApplicationWindow {
                 HoverHandler { id: docScopeHover }
                 ToolTip.text: qsTr("Alle Dokumente, eigene Belege oder Bankdokumente anzeigen"); ToolTip.visible: docScopeHover.hovered; ToolTip.delay: 600
             }
+            // DepotTabPicker (DepotDetailView.swift, #564)
+            Segmented {
+                visible: DepotState.presentation === "securities"
+                options: DepotState.depotTabs
+                current: DepotState.depotTab
+                onActivated: id => DepotState.depotTab = id
+                HoverHandler { id: depotTabHover }
+                ToolTip.text: qsTr("Positionen oder Wertpapieraktivitäten (Strg+1, Strg+2)"); ToolTip.visible: depotTabHover.hovered; ToolTip.delay: 600
+            }
             Segmented {
                 visible: AppModel.sidebarSelection !== "wealth" && AppModel.sidebarSelection !== "documents" && DepotState.presentation === "bookings"
                 options: AppModel.scopes

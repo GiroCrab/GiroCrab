@@ -2709,8 +2709,8 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    /// Depot view (DepotDetailView.qml, DepotPositionsTable.qml, #564/#625): the fields
-    /// DepotMetrics.qml reads, round-tripped as JSON.
+    /// Depot view (DepotDetailView.qml, DepotPositionsTable.qml, DepotActivitiesView.qml, #564/#625):
+    /// the fields DepotMetrics.qml reads, round-tripped as JSON.
     #[test]
     fn depot_view_calls() {
         let path =
