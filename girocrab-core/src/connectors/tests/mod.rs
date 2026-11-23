@@ -536,6 +536,82 @@ fn card_holds_are_replaced_on_each_sync() {
     std::fs::remove_file(path).ok();
 }
 
+/// A FinTS fetch whose hold list is incomplete (camt failed or was cut at its page
+/// limit, #1043) leaves the stored holds alone, also older ones; optimistic transfer
+/// bookings still go after 14 days.
+#[test]
+fn incomplete_fints_hold_list_keeps_old_holds() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::FinTsGeneric, String::new(), "u".into())
+        .unwrap();
+    let acc = RemoteAccount {
+        external_ref: "f:1".into(),
+        name: "Giro".into(),
+        owner: String::new(),
+        iban: "DE02120300000000202051".into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let pending = |id: &str| RemoteTransaction {
+        account_ref: "f:1".into(),
+        external_id: id.into(),
+        booking_date: "2026-10-01".into(),
+        value_date: "2026-10-01".into(),
+        amount_cents: -12_00,
+        currency: "EUR".into(),
+        counterparty: "Hotel".into(),
+        ..Default::default()
+    };
+    let hold = format!("{}1", crate::connectors::fints::camt::HOLD_PREFIX);
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        FetchResult {
+            accounts: vec![acc.clone()],
+            transactions: vec![pending(&hold), pending("pending-transfer-1")],
+            hold_prefix: Some(crate::connectors::fints::camt::HOLD_PREFIX.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET imported_unix = strftime('%s','now') - 30*86400
+              WHERE external_id LIKE 'pending-%'",
+            [],
+        )
+        .unwrap();
+    // no `hold_prefix`: the list of open holds is not complete
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        FetchResult {
+            accounts: vec![acc],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let open: Vec<String> = {
+        let db = v.db().unwrap();
+        let mut q = db
+            .prepare("SELECT external_id FROM transactions WHERE external_id LIKE 'pending-%' AND deleted_ms IS NULL")
+            .unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    assert_eq!(open, vec![hold]);
+    std::fs::remove_file(path).ok();
+}
+
 #[test]
 fn pending_batch_booking_is_replaced_by_the_banks_booking_whatever_its_iban() {
     let (v, path) = demo_vault();
