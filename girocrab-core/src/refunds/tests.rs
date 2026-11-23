@@ -174,6 +174,36 @@ mod self_review {
     }
 
     #[test]
+    fn staged_inactive_whole_endpoint_does_not_tombstone_a_direct_link() {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let old = f.add("old", -100);
+        let next = f.add("next", -100);
+        f.link(r, "", next, "");
+        f.link(r, "", old, "");
+        f.split(old, &[-60, -40]);
+        let db = f.v.db().unwrap();
+        db.execute_batch(
+            "ATTACH DATABASE ':memory:' AS other;
+            CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+            CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+            CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;
+            DELETE FROM main.refund_links;",
+        )
+        .unwrap();
+        store::merge_folded(&db, &HashMap::from([(r, r), (old, next), (next, next)])).unwrap();
+        drop(db);
+        assert_eq!(
+            f.v.refund_links(r)
+                .unwrap()
+                .iter()
+                .map(|l| l.allocated_cents)
+                .sum::<i64>(),
+            100
+        );
+    }
+
+    #[test]
     fn fold_does_not_reactivate_an_inactive_whole_endpoint() {
         let f = Fixture::new();
         let r = f.add("refund", 100);

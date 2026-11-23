@@ -151,7 +151,7 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                     target.1 = part;
                 }
             }
-            if previous != row.key {
+            if previous.refund.1 != row.key.refund.1 || previous.original.1 != row.key.original.1 {
                 remapped.insert(row.key.clone());
                 rows.push(retire_part_key(conn, &mut row, previous)?);
             } else {
