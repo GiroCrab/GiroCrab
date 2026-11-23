@@ -744,6 +744,8 @@ export component MainWindow inherits Window {
     callback cashflow-changed();
     in property <string> selected-name;
     in property <string> selected-balance;
+    // "Abgerufen vor …" of the selected account (#815); empty = nothing shown.
+    in property <string> selected-fetched;
     in property <string> liquid-balance;
     in-out property <bool> show-liquid: false;
     in property <string> selected-currency;
@@ -1329,6 +1331,11 @@ export component MainWindow inherits Window {
                             }
                         }
                         bal := Text { text: (root.selected == 0 && root.show-liquid) ? root.liquid-balance : root.selected-balance; font-size: 18px; font-weight: 700; color: Theme.text; vertical-alignment: bottom; overflow: elide; wrap: no-wrap; }
+                        if root.selected-fetched != "": Text {
+                            text: root.selected-fetched;
+                            font-size: 11px;
+                            color: Theme.muted;
+                        }
                     }
                     HorizontalLayout {
                         horizontal-stretch: 0;

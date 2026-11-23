@@ -648,9 +648,14 @@ pub fn apply_header(win: &MainWindow) {
         Target::Category(_) => "Kategorie inklusive Unterkategorien".into(),
         _ => String::new(),
     };
+    let fetched = match target {
+        Target::Account(id) => crate::fetched_label(id),
+        _ => String::new(),
+    };
     win.set_selected_subtitle(subtitle.into());
     win.set_selected_name(name.into());
     win.set_selected_balance(balance.into());
+    win.set_selected_fetched(fetched.into());
 }
 
 /// Privacy toggled: redraw sidebar and view from the cached data.

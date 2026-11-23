@@ -1109,6 +1109,43 @@ fn tokio_runtime() -> Result<tokio::runtime::Runtime, String> {
         .map_err(|e| e.to_string())
 }
 
+thread_local! {
+    /// Last successful fetch (Unix ms) per account id, taken from its bank connection (#815).
+    /// Filled by `render_header`; `apply_header` reads it without touching the vault.
+    static FETCHED_MS: std::cell::RefCell<std::collections::HashMap<i64, i64>> =
+        Default::default();
+}
+
+/// Remembers when each account's bank connection last fetched successfully. Accounts without a
+/// connection (offline, import) or connections that never synced get no entry.
+fn remember_fetch_times(vault: &Vault, accounts: &[girocrab_core::Account]) {
+    let synced: std::collections::HashMap<i64, i64> = vault
+        .list_bank_connections()
+        .map(|cs| {
+            cs.into_iter()
+                .filter_map(|c| Some((c.id, c.last_sync_unix?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let map = accounts
+        .iter()
+        .filter_map(|a| Some((a.id, synced.get(&a.connection_id?)? * 1_000)))
+        .collect();
+    FETCHED_MS.with(|f| *f.borrow_mut() = map);
+}
+
+/// "Abgerufen vor 5 Minuten" for the header of an account; empty without a fetch. Not masked:
+/// dates and times stay visible in privacy mode.
+fn fetched_label(account_id: i64) -> String {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
+    let fetched = FETCHED_MS.with(|f| f.borrow().get(&account_id).copied());
+    daily::format_last_fetch(now_ms, fetched)
+        .map(|t| format!("Abgerufen {t}"))
+        .unwrap_or_default()
+}
+
 /// Redraws the account list and header (balances follow privacy mode).
 /// `selected`: account id, 0 = all accounts, `None` = the first account. Returns the selection.
 fn render_header(
@@ -1142,6 +1179,7 @@ fn render_header(
             .map(|a| a.balance_cents)
             .sum();
         win.set_liquid_balance(daily::mask(&money(liquid, "EUR"), win.get_privacy()).into());
+        remember_fetch_times(vault, &accts);
     }
     let sel = selected.or(Some(0));
     win.set_selected(sel.map_or(-1, |s| s as i32));
@@ -1157,6 +1195,8 @@ fn render_header(
     win.set_selected_name(cur.0.into());
     win.set_selected_balance(cur.1.into());
     win.set_selected_currency(cur.2.into());
+    // "Alle Konten" (0) has no entry, so it stays empty.
+    win.set_selected_fetched(sel.map(fetched_label).unwrap_or_default().into());
     Ok(sel)
 }
 
