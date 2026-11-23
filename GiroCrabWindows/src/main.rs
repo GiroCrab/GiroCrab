@@ -256,15 +256,30 @@ fn account_rows(vault: &Vault, privacy: bool) -> Result<(Vec<AccountRow>, String
 /// Most bookings the list keeps in memory per account scope; filters run on these without the vault.
 const ROW_LIMIT: u32 = 2000;
 
-/// Bookings of a listing target (one account, all, unchecked, uncategorized or one category).
-fn load_rows(vault: &Vault, target: Target) -> Result<Vec<Row>, String> {
+/// Bookings of a listing target (one account, all, unchecked, uncategorized or one category),
+/// plus the running and day balances when the target is one account (#577).
+fn load_rows(vault: &Vault, target: Target) -> Result<(Vec<Row>, daily::Balances), String> {
+    let single = matches!(target, Target::Account(_));
     let page = vault
         .list_transactions(BookingFilter {
             limit: ROW_LIMIT,
+            with_balances: single,
             ..nav::booking_filter(target)
         })
         .map_err(|e| e.to_string())?;
-    Ok(page.transactions.iter().map(Row::from).collect())
+    let rows: Vec<Row> = page.transactions.iter().map(Row::from).collect();
+    let running = page
+        .running_balances
+        .iter()
+        .map(|b| (b.booking_id, b.balance_cents))
+        .collect();
+    let days = page
+        .day_balances
+        .iter()
+        .map(|d| (d.date.clone(), d.balance_cents))
+        .collect();
+    let balances = daily::Balances::for_scope(single, &rows, running, days);
+    Ok((rows, balances))
 }
 
 /// UI-thread state behind the booking list, filter bar and inspector.
@@ -287,6 +302,8 @@ struct State {
     logos: std::collections::HashMap<String, slint::Image>,
     /// Keys already requested this session (hit or miss), so a miss is not retried on every redraw.
     logos_requested: std::collections::HashSet<String>,
+    /// Running/day balances of a one-account scope (#577); empty otherwise.
+    balances: daily::Balances,
 }
 
 /// One-booking edit run against the vault for the selected booking id.
@@ -354,6 +371,7 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
         category_color: tint(&b.category_color_hex),
         detail: daily::mask(&detail, privacy).into(),
         amount: daily::mask(&money(b.amount_cents, &b.currency), privacy).into(),
+        balance: st.balances.row(&st.filter, b.id, privacy, money).into(),
         negative: b.amount_cents < 0 && !privacy,
         checked: b.checked,
         marked: st.marked.contains(&b.id),
@@ -499,6 +517,7 @@ fn render_bookings(win: &MainWindow) {
                 )
                 .into(),
                 negative: d.sum_cents < 0 || privacy,
+                balance: st.balances.day(&st.filter, &d.date, privacy, money).into(),
                 rows: ModelRc::new(VecModel::from(
                     d.indices
                         .iter()
@@ -733,7 +752,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                 return;
             }
             match (rows, cats) {
-                (Ok(rows), Ok(cats)) => {
+                (Ok((rows, balances)), Ok(cats)) => {
                     let mut names = vec![SharedString::from("Ohne Kategorie")];
                     names.extend(cats.iter().map(|c| SharedString::from(c.path.as_str())));
                     win.set_category_names(ModelRc::new(VecModel::from(names)));
@@ -750,6 +769,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                     win.set_category_tiles(ModelRc::new(VecModel::from(tiles)));
                     with_state(|st| {
                         st.rows = rows;
+                        st.balances = balances;
                         st.categories = cats;
                     });
                     apply_filter(&win);
@@ -1180,8 +1200,11 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 // First paint: load the scope's bookings synchronously (selects the first one);
                 // the background reload in `apply_view` then refreshes them.
                 let target = with_state(|st| st.target);
-                if let Ok(rows) = load_rows(vault, target) {
-                    with_state(|st| st.rows = rows);
+                if let Ok((rows, balances)) = load_rows(vault, target) {
+                    with_state(|st| {
+                        st.rows = rows;
+                        st.balances = balances;
+                    });
                     apply_filter(win);
                 }
                 views_ui::apply_view(win, vault);
@@ -1189,6 +1212,7 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 with_state(|st| {
                     st.rows.clear();
                     st.shown.clear();
+                    st.balances = daily::Balances::default();
                     st.selected_booking = None;
                 });
                 render_bookings(win);
@@ -2497,12 +2521,12 @@ mod tests {
         let (rows, _) = account_rows(&vault, false).unwrap();
         assert!(!rows.is_empty());
         let first = Target::Account(rows[0].id as i64);
-        assert!(!load_rows(&vault, first).unwrap().is_empty());
+        assert!(!load_rows(&vault, first).unwrap().0.is_empty());
         // All accounts (scope 0) holds at least as many rows as one account.
-        assert!(
-            load_rows(&vault, Target::AllAccounts).unwrap().len()
-                >= load_rows(&vault, first).unwrap().len()
-        );
+        let (all, all_balances) = load_rows(&vault, Target::AllAccounts).unwrap();
+        assert!(all.len() >= load_rows(&vault, first).unwrap().0.len());
+        // Several accounts never get a balance column (#569).
+        assert_eq!(all_balances, daily::Balances::default());
         // Privacy hides balances and the IBAN tail.
         let (hidden, total) = account_rows(&vault, true).unwrap();
         assert!(
