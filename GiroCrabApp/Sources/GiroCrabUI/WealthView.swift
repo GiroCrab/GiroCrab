@@ -23,7 +23,8 @@ enum WealthBucket: CaseIterable {
     /// Sachwerte (property, car, gold …) are stored as a depot-like account, but they are no securities.
     static func bucket(for account: Account, tangible: Bool = false) -> WealthBucket {
         switch account.kind {
-        case .checking, .savings, .timeDeposit, .cash, .paymentService: .cash
+        // a Bausparvertrag is a credit, tied up but no debt (#1630)
+        case .checking, .savings, .timeDeposit, .buildingSavings, .cash, .paymentService: .cash
         case .brokerage: tangible ? .tangibles : .securities
         case .creditCard, .loan: .liabilities
         }
@@ -79,15 +80,11 @@ struct WealthSummary: Equatable {
     }
 
     /// The cash accounts by kind (#1631), largest subtotal first like the donut; equal subtotals in
-    /// the order of the "Kontoart" sidebar sections (#1620). Kinds without an account are left out.
+    /// the order of the "Kontoart" sidebar sections. Kinds without an account are left out.
     var cashByKind: [CashKindGroup] {
-        let order = CashKindGroup.sectionOrder
-        return Dictionary(grouping: cash, by: \.kind)
+        Dictionary(grouping: cash, by: \.kind)
             .map { CashKindGroup(kind: $0.key, accounts: $0.value) }
-            .sorted {
-                $0.cents != $1.cents ? $0.cents > $1.cents
-                    : (order.firstIndex(of: $0.kind) ?? order.count) < (order.firstIndex(of: $1.kind) ?? order.count)
-            }
+            .sorted { $0.cents != $1.cents ? $0.cents > $1.cents : $0.section.sortOrder < $1.section.sortOrder }
     }
 }
 
@@ -98,18 +95,11 @@ struct CashKindGroup: Equatable {
     var id: String { "kind:\(kind)" }
     var cents: Int64 { accounts.reduce(0) { $0 + $1.balanceCents } }
 
-    /// The order of the sections of the "Kontoart" sidebar view (`group_for` in the core, #1620).
-    static let sectionOrder: [AccountKind] = [.checking, .savings, .timeDeposit, .cash, .paymentService, .creditCard, .brokerage, .loan]
-
-    /// A heading for several accounts, as the "Kontoart" sidebar view names its sections (#1620):
-    /// "Girokonten", "Zahlungsdienste". `AccountKind.label` stays singular: it names one account's kind.
-    var title: String {
-        switch kind {
-        case .checking: String(localized: "Girokonten")
-        case .paymentService: String(localized: "Zahlungsdienste")
-        default: kind.label
-        }
-    }
+    /// The kind's section of the "Kontoart" sidebar view, name and place from the core
+    /// (`account_kind_section`), so both views name and order the kinds alike.
+    var section: AccountKindSection { accountKindSection(kind: kind) }
+    /// A heading for several accounts ("Girokonten"); `AccountKind.label` names one account's kind.
+    var title: String { section.name }
 }
 
 /// One security summed over all depots.
@@ -216,6 +206,7 @@ struct WealthSlice: Identifiable, Equatable {
     let label: String
     let cents: Int64
     let color: Color
+    var personal = false
 
     /// Charts returns a value on the cumulative positive-value scale, not a sector index.
     static func id(at value: Double, in slices: [Self]) -> String? {
@@ -1211,7 +1202,7 @@ struct WealthView: View {
                 Group {
                     if cashChartStyle == .pie {
                         HeaderPieChart(slices: HeaderPieSlices.fold(
-                            s.cash.map { HeaderPieSlices.Part(id: $0.id.description, label: $0.name, cents: $0.balanceCents) }.filter { $0.cents > 0 },
+                            s.cash.map { HeaderPieSlices.Part(id: $0.id.description, label: $0.name, cents: $0.balanceCents, personal: true) }.filter { $0.cents > 0 },
                             limit: HeaderPieSlices.limit), emptyText: "Keine Daten")
                     } else if history.count < 2 {
                         Text("Keine Daten").foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, alignment: .leading)

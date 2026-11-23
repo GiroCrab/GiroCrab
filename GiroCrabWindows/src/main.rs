@@ -964,8 +964,18 @@ fn run_sync(vault: Arc<Vault>, demo: bool, ui: &DialogBridge) -> Result<String, 
                 let _ = vault.log_sync(
                     Some(c.id),
                     SyncLogSource::Manual,
-                    SyncLogOutcome::Ok,
-                    String::new(),
+                    // what the bank would not give is no success (#1627)
+                    if s.warnings.is_empty() {
+                        SyncLogOutcome::Ok
+                    } else {
+                        SyncLogOutcome::Partial
+                    },
+                    s.warnings
+                        .iter()
+                        .chain(&s.hints)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" / "),
                     s.transactions_imported,
                 );
             }

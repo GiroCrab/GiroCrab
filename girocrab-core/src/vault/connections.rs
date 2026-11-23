@@ -1379,8 +1379,7 @@ mod tests {
 
     #[test]
     fn deduplicate_leaves_soft_deleted_twin_alone() {
-        let p =
-            std::env::temp_dir().join(format!("girocrab-dedup-del-{}.db", uuid::Uuid::new_v4()));
+        let p = crate::test_support::thread_temp_path("dedup-del.db");
         let v = Vault::open(p.to_string_lossy().to_string(), vec![4u8; 32]).unwrap();
         {
             let db = v.db().unwrap();

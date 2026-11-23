@@ -144,7 +144,7 @@ struct BudgetProgressCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ViewLayout.cardSpacing) {
+        VStack(alignment: .leading, spacing: ViewLayout.sectionSpacing) {
             HStack {
                 CardChevron(collapsed: $collapsed)
                 Text("Monatsbudgets").appFont(.subheadline, weight: .semibold)
@@ -205,7 +205,7 @@ struct BudgetProgressCard: View {
                 }
             } }
         }
-        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))
+        .flatSection(vertical: collapsed ? 4 : ViewLayout.sectionPadding)
         .task(id: token) {
             let now = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: Date())
             if let loaded = await model.budgetProgress(year: now.year ?? 2025, month: now.month ?? 1) { items = loaded }
@@ -343,9 +343,8 @@ struct CashflowCard: View {
         .padding(.horizontal, 8).padding(.vertical, 6)
         .frame(minWidth: 150, alignment: .leading)
         .fixedSize()
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+        // Transient hover readout: a flat plate, no tile or drop shadow.
+        .background(Theme.systemSurface)
     }
 
     var body: some View {
@@ -356,7 +355,7 @@ struct CashflowCard: View {
             [Bar(period: label(r.key), kind: income, euros: Double(r.incomeCents) / 100),
              Bar(period: label(r.key), kind: expense, euros: Double(r.expenseCents) / 100)]
         }
-        VStack(alignment: .leading, spacing: ViewLayout.cardSpacing) {
+        VStack(alignment: .leading, spacing: ViewLayout.sectionSpacing) {
             HStack {
                 CardChevron(collapsed: $collapsed)
                 Text("Cashflow").appFont(.subheadline, weight: .semibold)
@@ -433,7 +432,7 @@ struct CashflowCard: View {
                     AxisValueLabel { Text(verbatim: v.as(String.self) ?? "").appFont(.caption2).fixedSize() }
                 }
             }
-            .frame(height: 160)
+            .frame(height: 124)
             .accessibilityLabel("Cashflow")
             .accessibilityChartDescriptor(BarChartDescriptor(
                 title: String(localized: "Cashflow"),
@@ -459,7 +458,7 @@ struct CashflowCard: View {
                 hoverCard(row, income: income, expense: expense)
             }
         }
-        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))
+        .flatSection(vertical: collapsed ? 4 : ViewLayout.sectionPadding)
         // Follows the sidebar: overview = all accounts, account/group = its accounts (#731).
         // The calculation context is part of the key: switching between a single
         // account and a group of only that account keeps ids and booking count,

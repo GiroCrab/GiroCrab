@@ -505,13 +505,13 @@ extension AppModel {
         #endif
     }
 
-    func saveRule(_ rule: Rule) async throws -> (id: Int64, application: Result<UInt32, Error>)? {
+    func saveRule(_ rule: Rule, onlyUncategorized: Bool) async throws -> (id: Int64, application: Result<UInt32, Error>)? {
         guard let pin = pinVault() else { throw CoreError.Database(message: "vault locked") }
         let result: (id: Int64, application: Result<UInt32, Error>)
         do {
             result = try await pin.run { vault in
                 let id = try vault.saveRule(rule: rule)
-                return (id, Result { try vault.applyRules(onlyUncategorized: false) })
+                return (id, Result { try vault.applyRule(ruleId: id, onlyUncategorized: onlyUncategorized) })
             }
         } catch {
             guard isCurrent(pin) else { return nil }

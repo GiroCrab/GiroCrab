@@ -172,7 +172,7 @@ pub(crate) fn forget(db: &Connection, connection_id: i64) -> CoreResult<()> {
         "DELETE FROM settings WHERE key IN (?1, ?2)",
         params![id, pem],
     )?;
-    Ok(())
+    login_sync::forget(db, connection_id)
 }
 
 /// Duplicate login `from` is merged into `keep`: `keep` takes over `from`'s
@@ -300,6 +300,9 @@ impl Vault {
         Ok(changed)
     }
 }
+
+mod login_sync;
+pub use login_sync::EnableBankingLoginApp;
 
 #[cfg(test)]
 mod tests;

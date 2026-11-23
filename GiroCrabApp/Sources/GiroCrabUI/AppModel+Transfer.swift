@@ -8,22 +8,22 @@ extension AppModel {
     /// Checking accounts that are connected via FinTS (HKCCS-capable banks).
     var transferAccounts: [Account] { sendableAccounts(of: .checking) }
 
-    /// What the TAN sheet asks the user to compare (#949): only for the TAN of a single transfer that
-    /// was sent, never for its login SCA or a sync's challenge, and always the values sent to the bank.
+    /// What the TAN sheet asks the user to compare (#949): only for the TAN of a single transfer or of a
+    /// standing order that was sent (#1475), never for its login SCA or a sync's challenge, and always the
+    /// values sent to the bank.
     var tanComparison: TanComparison? {
         Self.visibleTanComparison(
             snapshot: activeTransferComparison,
             orderApproval: activeChallenge?.orderApproval == true,
             isBatch: activeTransferIsBatch,
-            isStanding: activeTransferIsStanding,
             isDebit: activeTransferIsDebit
         )
     }
 
     static func visibleTanComparison(
-        snapshot: TanComparison?, orderApproval: Bool, isBatch: Bool, isStanding: Bool, isDebit: Bool
+        snapshot: TanComparison?, orderApproval: Bool, isBatch: Bool, isDebit: Bool
     ) -> TanComparison? {
-        guard orderApproval, !isBatch, !isStanding, !isDebit else { return nil }
+        guard orderApproval, !isBatch, !isDebit else { return nil }
         return snapshot
     }
 

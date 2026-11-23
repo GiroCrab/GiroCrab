@@ -202,7 +202,10 @@ struct AssetHeaderCard<Subtitle: View, ValueNote: View, Accessory: View, Actions
     }
 
     private var titleBlock: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: compactHeader ? .center : .top, spacing: 8) {
+            // Minimise the header: more room for the content (GitHub #358); the chart goes away with it.
+            // Left of the title, like in the cash views' header, so the button stays in one place (#1536).
+            CardChevron(collapsed: $compactHeader, customTitle: compactTitle)
             VStack(alignment: .leading, spacing: 3) {
                 if compactHeader, !stacked, !compactLine.isEmpty {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -234,19 +237,6 @@ struct AssetHeaderCard<Subtitle: View, ValueNote: View, Accessory: View, Actions
                 }
             }
             .contextMenu { AccountCopyMenu(account: account) }
-            // Minimise the header: more room for the content (GitHub #358); the chart goes away with it.
-            Button {
-                withAnimation(Motion.animation(.easeInOut(duration: 0.25))) { compactHeader.toggle() }
-            } label: {
-                Image(systemName: compactHeader ? "chevron.down" : "chevron.up")
-                    .appFont(.caption, weight: .semibold)
-                    .foregroundStyle(Theme.secondary)
-                    .padding(4)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(compactTitle)
-            .accessibilityLabel(compactTitle)
             #if os(iOS)
             // long-press is invisible on iPhone/iPad: show an explicit entry too
             Menu { AccountCopyMenu(account: account) } label: {

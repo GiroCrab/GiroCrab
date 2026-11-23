@@ -49,6 +49,7 @@ ColumnLayout {
 
     readonly property var kindChoices: [
         { id: "Checking", text: qsTr("Girokonto") }, { id: "Savings", text: qsTr("Tagesgeld / Sparen") }, { id: "TimeDeposit", text: qsTr("Festgeld") },
+        { id: "BuildingSavings", text: qsTr("Bausparen") },
         { id: "CreditCard", text: qsTr("Kreditkarte") }, { id: "PaymentService", text: qsTr("Zahlungsdienst") },
         { id: "Brokerage", text: qsTr("Depot") }, { id: "Cash", text: qsTr("Bargeld") }, { id: "Loan", text: qsTr("Darlehen") }
     ]
@@ -211,11 +212,42 @@ ColumnLayout {
     /// The bank's connection options (the core's catalogue; the live Enable
     /// Banking list of the Mac app is not loaded here).
     function connectionOptions(b) { return b.connection_options }
+    /// The accounts the import links to login `b`, the core's rule (#1437): chosen for import and
+    /// going into a new account or one an earlier import owns. One merged into a bank-synced
+    /// account still brings its bookings, but no connection for its login. "Neues Konto" goes
+    /// where the core sends it: an earlier import or the bank account that one was folded into.
+    function linkedAccounts(b) {
+        if (!preview) return []
+        const owned = preview.owned_account_ids || []
+        const connected = preview.connected_account_ids || []
+        // One already under a login is moved only by its own MoneyMoney account.
+        const planned = []
+        for (const a of preview.accounts) {
+            const c = choice(a)
+            const t = c.target === null || c.target === undefined ? a.reused_account_id : c.target
+            const isNew = t === null || t === undefined
+            if (!c.selected || a.mm_bank_id === null || a.mm_bank_id === undefined || !(isNew || owned.includes(t))) continue
+            planned.push({ a: a, t: isNew ? null : t, moves: isNew || !connected.includes(t) || t === a.reused_account_id })
+        }
+        // an account several sources go into links the login of the first one that may move
+        // it (import order); the other sources of that login count too, moving it or not
+        const loginOf = new Map()
+        for (const p of planned) {
+            if (p.moves && p.t !== null && !loginOf.has(p.t)) loginOf.set(p.t, p.a.mm_bank_id)
+        }
+        return planned.filter(p => p.a.mm_bank_id === b.mm_id && (p.t === null || loginOf.get(p.t) === b.mm_id))
+                      .map(p => p.a)
+    }
+    /// Every account linked to the login is closed in MoneyMoney (#1437).
+    function allClosed(b) { const a = linkedAccounts(b); return a.length > 0 && a.every(x => x.closed) }
+    /// Preselected: the best connection, none for a login whose linked
+    /// accounts are all closed; none at all without a linked account (#1437).
     function chosenKey(b) {
+        if (linkedAccounts(b).length === 0) return ""
         const k = bankChoice[b.mm_id]
         if (k !== undefined) return k
         const o = connectionOptions(b)
-        return o.length ? o[0].key : ""
+        return o.length && !allClosed(b) ? o[0].key : ""
     }
     function chosenOption(b) { const k = chosenKey(b); return connectionOptions(b).find(o => o.key === k) || null }
     function setBankChoice(b, key) { const c = Object.assign({}, bankChoice); c[b.mm_id] = key; bankChoice = c }
@@ -236,12 +268,12 @@ ColumnLayout {
     }
     readonly property bool needsEnableBankingSetup: createConnections && chosenEnableBanking && !enableBankingReady
     readonly property string ebBankNames: preview ? andList(preview.banks.filter(b => { const o = chosenOption(b); return o !== null && o.via === "EnableBanking" }).map(b => b.name)) : ""
-    /// The Enable Banking banks of this import with their selected accounts.
+    /// The Enable Banking banks of this import with their linked accounts.
     readonly property var plannedPsd2Links: {
         if (!preview) return []
         return preview.banks.filter(b => { const o = chosenOption(b); return o !== null && o.via === "EnableBanking" }).map(b => ({
             connection_id: -b.mm_id, bank_name: b.name, created: true,
-            accounts: preview.accounts.filter(a => a.mm_bank_id === b.mm_id && choice(a).selected)
+            accounts: linkedAccounts(b)
                 .map(a => ({ name: a.name, iban: a.iban, account_number: a.account_number }))
         }))
     }
@@ -593,7 +625,10 @@ ColumnLayout {
                 FormSection {
                     visible: v.preview !== null
                     enabled: v.createConnections
-                    footers: [v.createConnections && v.chosenEnableBanking && !v.enableBankingReady ? qsTr("Enable Banking richten Sie im nächsten Schritt ein.") : ""]
+                    footers: [
+                        v.preview && v.preview.banks.some(b => v.allClosed(b)) ? qsTr("Bei Zugängen, deren Konten alle aufgelöst sind, ist „Nicht verbinden“ vorgewählt.") : "",
+                        v.createConnections && v.chosenEnableBanking && !v.enableBankingReady ? qsTr("Enable Banking richten Sie im nächsten Schritt ein.") : ""
+                    ]
                     Repeater {
                         model: v.preview ? v.preview.banks : []
                         FormRow {
@@ -602,18 +637,15 @@ ColumnLayout {
                             readonly property var options: v.connectionOptions(modelData)
                             label: modelData.name !== "" ? modelData.name : v.connectorName(modelData.connector)
                             detail: v.bankDetail(modelData)
+                            // "Nicht verbinden" for every login (#1437)
                             AppComboBox {
-                                visible: bankRow.options.length > 1
+                                visible: bankRow.options.length > 0
+                                enabled: v.linkedAccounts(bankRow.modelData).length > 0
                                 Layout.preferredWidth: 240
                                 textRole: "text"
-                                model: bankRow.options.map(o => ({ key: o.key, text: v.optionLabel(o) })).concat([{ key: "", text: qsTr("Nicht verbinden") }])
+                                model: bankRow.options.map((o, i) => ({ key: o.key, text: v.optionLabel(o) + (i === 0 && bankRow.modelData.existing_connection_id !== null ? " · " + qsTr("vorhanden") : "") })).concat([{ key: "", text: qsTr("Nicht verbinden") }])
                                 currentIndex: Math.max(0, model.findIndex(o => o.key === v.chosenKey(bankRow.modelData)))
                                 onActivated: i => v.setBankChoice(bankRow.modelData, model[i].key)
-                            }
-                            Text {
-                                visible: bankRow.options.length === 1
-                                text: bankRow.options.length ? v.optionLabel(bankRow.options[0]) + (bankRow.modelData.existing_connection_id !== null ? " · " + qsTr("vorhanden") : "") : ""
-                                color: Theme.secondary; font.pixelSize: Theme.body
                             }
                             Text { visible: bankRow.options.length === 0; text: qsTr("Nicht verfügbar"); color: Theme.tertiary; font.pixelSize: Theme.body }
                         }

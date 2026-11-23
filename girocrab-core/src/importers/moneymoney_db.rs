@@ -121,6 +121,12 @@ pub struct MoneyMoneyDbAccount {
     pub computed_balance_cents: i64,
     /// Where the starting value of the balance came from (German, for the UI).
     pub balance_source: String,
+    /// Closed in MoneyMoney: imported archived. A login whose imported
+    /// accounts are all closed gets no connection unless chosen (#1437).
+    pub closed: bool,
+    /// Where a target of `None` ("new account") goes: the account an earlier import created,
+    /// or the bank-synced one it was folded into; `None` = a new account (#1437).
+    pub reused_account_id: Option<i64>,
 }
 
 /// One bank login in MoneyMoney. Secrets are never part of this record.
@@ -227,6 +233,14 @@ pub struct MoneyMoneyDbPreview {
     /// Transfer templates GiroCrab can take over (recipient and valid IBAN,
     /// euro).
     pub transfer_template_count: u32,
+    /// GiroCrab accounts an earlier import created and still owns. An account imported
+    /// into a new one or one of these links its login; one merged into a bank-synced
+    /// account brings its bookings only, and its login gets no connection for it (#1437).
+    pub owned_account_ids: Vec<i64>,
+    /// Those of [`Self::owned_account_ids`] already under a bank login: only their own
+    /// MoneyMoney account (`reused_account_id`) links them again, another one merged
+    /// into them leaves them where they are.
+    pub connected_account_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -2349,6 +2363,9 @@ fn find_connection(
 /// imported accounts of that kind linked to this bank login, else only when
 /// exactly one of them is. `fetched_cards`: the numbers of every card in this
 /// fetch, so the fallback never takes a card another fetched card matches.
+/// Without an IBAN the imported accounts of a never-synced login of the same
+/// institution count too (#834: PayPal imported as a direct login, then set up
+/// through Enable Banking), and a different currency never matches.
 pub(crate) fn adopt_account(
     conn: &Connection,
     connection_id: i64,
@@ -2384,11 +2401,21 @@ pub(crate) fn adopt_account(
              FROM accounts WHERE connection_id = ?1 AND external_ref LIKE 'moneymoney-db:%'
                AND kind = ?2 AND archived_unix IS NULL",
         )?;
-        let rows: Vec<(i64, String, bool, String)> = st
-            .query_map(params![connection_id, kind.as_str()], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-            })?
-            .collect::<Result<_, _>>()?;
+        let mut rows: Vec<(i64, String, bool, String)> = Vec::new();
+        let mut own_ids: Vec<i64> = Vec::new();
+        for login in
+            std::iter::once(connection_id).chain(unsynced_twin_logins(conn, connection_id)?)
+        {
+            let found = st
+                .query_map(params![login, kind.as_str()], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            if login == connection_id {
+                own_ids.extend(found.iter().map(|r| r.0));
+            }
+            rows.extend(found);
+        }
         // Connectors that omit the IBAN (e.g. Amazon Visa web login, Trade
         // Republic clearing account) may still adopt a single imported account
         // of the same kind and currency on this login (#1114); an account with
@@ -2400,6 +2427,14 @@ pub(crate) fn adopt_account(
             .filter(|(_, _, has_iban, _)| widen || !has_iban)
             .collect();
         let currency = currency.trim().to_uppercase();
+        // one account per currency (PayPal EUR/USD): another currency is never the same account
+        let mut rows: Vec<_> = rows
+            .into_iter()
+            .filter(|(_, _, _, cur)| currency.is_empty() || cur.is_empty() || *cur == currency)
+            .collect();
+        if rows.iter().any(|r| own_ids.contains(&r.0)) {
+            rows.retain(|r| own_ids.contains(&r.0));
+        }
         let card = kind == AccountKind::CreditCard;
         // the other way reports a marked account under another reference
         // (FinTS `<number>-Depot`, REST its depot id): the only live one of
@@ -2520,6 +2555,45 @@ pub(crate) fn adopt_account(
         )?;
     }
     Ok(id)
+}
+
+/// Other logins of the same institution that never synced, e.g. the direct
+/// PayPal login the import created next to a PayPal login through Enable
+/// Banking (#834). Their imported accounts are not in use yet, so the first
+/// fetch of the other way may take them over.
+fn unsynced_twin_logins(conn: &Connection, connection_id: i64) -> CoreResult<Vec<i64>> {
+    let own: Option<String> = conn
+        .query_row(
+            "SELECT connector FROM bank_connections WHERE id = ?1",
+            [connection_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(own) = own.as_deref().and_then(institution) else {
+        return Ok(Vec::new());
+    };
+    let mut st = conn.prepare(
+        "SELECT id, connector FROM bank_connections
+          WHERE id <> ?1 AND deleted_ms IS NULL AND last_sync_unix IS NULL ORDER BY id",
+    )?;
+    let others: Vec<(i64, String)> = st
+        .query_map([connection_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(others
+        .into_iter()
+        .filter(|(_, key)| institution(key).as_deref() == Some(own.as_str()))
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// The institution behind a connector key, for logins that reach the same
+/// bank by different ways: Enable Banking keys by their bank name, PayPal's
+/// own API as "paypal". `None` for keys without such a twin.
+fn institution(key: &str) -> Option<String> {
+    if let Some((_, name)) = ConnectorKind::enable_banking_target(key) {
+        return Some(name.trim().to_lowercase());
+    }
+    (key == ConnectorKind::PayPal.as_str()).then(|| "paypal".to_string())
 }
 
 /// Whether a stored card number hides digits (`5232 •••• •••• 1234`).
@@ -2704,6 +2778,8 @@ fn preview(
             last_date: l,
             computed_balance_cents: r.balance_cents,
             balance_source: r.balance_source,
+            closed: a.closed,
+            reused_account_id: reused_account(conn, a)?,
         });
     }
     let mut banks = Vec::new();
@@ -2767,6 +2843,18 @@ fn preview(
         date_range_end: last,
         replaces_starter_categories: replaces_starter_categories(conn, src)?,
         transfer_template_count: templates::usable_count(&src.templates),
+        // the rule of `import_account`; soft-deleted ones too, the import revives them
+        owned_account_ids: conn
+            .prepare("SELECT id FROM accounts WHERE external_ref LIKE 'moneymoney-db:%'")?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?,
+        connected_account_ids: conn
+            .prepare(
+                "SELECT id FROM accounts
+                  WHERE external_ref LIKE 'moneymoney-db:%' AND connection_id IS NOT NULL",
+            )?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?,
     })
 }
 
@@ -3032,9 +3120,9 @@ struct ImportCtx<'a> {
     files: Option<StatementFiles>,
     cat_cache: HashMap<String, i64>,
     res: MoneyMoneyDbImportResult,
-    /// (account id, MoneyMoney bank rowid) of the importer's own accounts,
-    /// linked to the bank's login once the connections exist
-    to_link: Vec<(i64, i64)>,
+    /// (account id, MoneyMoney bank rowid, closed there, may move it to that login) of
+    /// the importer's own accounts, linked to the bank's login once the connections exist
+    to_link: Vec<(i64, i64, bool, bool)>,
     /// (MoneyMoney group rowid, uuid) of the groups this import creates
     created_groups: Vec<(i64, String)>,
 }
@@ -3077,10 +3165,14 @@ impl ImportCtx<'_> {
         let (account_id, currency) = self.target_account(choice, a)?;
         // Accounts owned by the importer (not synced with a bank) follow MoneyMoney:
         // chosen kind and MoneyMoney's balance. Bank-synced accounts keep theirs.
-        let owned: bool = conn.query_row(
-            "SELECT external_ref LIKE 'moneymoney-db:%' FROM accounts WHERE id = ?1",
-            [account_id],
-            |r| r.get(0),
+        // One already under a login keeps it when another MoneyMoney account's bookings
+        // go into it (a fetch of the wrong login could take it over); only its own
+        // MoneyMoney account moves it to the way chosen now.
+        let (owned, linkable): (bool, bool) = conn.query_row(
+            "SELECT external_ref LIKE 'moneymoney-db:%', connection_id IS NULL OR external_ref = ?2
+               FROM accounts WHERE id = ?1",
+            params![account_id, ext_ref(a)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         let mut st = Stats {
             total: r.rows.len() as u32,
@@ -3137,7 +3229,7 @@ impl ImportCtx<'_> {
             !owned,
         )?);
         if let (true, Some(bank)) = (owned, a.bank_key) {
-            self.to_link.push((account_id, bank));
+            self.to_link.push((account_id, bank, a.closed, linkable));
         }
         Ok(())
     }
@@ -3329,12 +3421,30 @@ impl ImportCtx<'_> {
     /// Finds or creates the bank logins the user chose, then links the
     /// imported accounts and lists the Enable Banking connections.
     fn connect_banks(&mut self) -> CoreResult<()> {
+        // an account several sources went into links the login of the first one that may
+        // move it, or another login would get a connection that stays empty; the other
+        // sources of that login all count, moving it or not (one of them open: the login
+        // is not all closed)
+        let mut login_of = HashMap::new();
+        for (account, bank, _, moves) in &self.to_link {
+            if *moves {
+                login_of.entry(*account).or_insert(*bank);
+            }
+        }
+        self.to_link
+            .retain(|(account, bank, _, _)| login_of.get(account) == Some(bank));
         let (conn, src, options) = (self.conn, self.src, self.options);
         // MoneyMoney bank rowid -> connection id
         let mut bank_connection: HashMap<i64, i64> = HashMap::new();
         // Enable Banking connections set up here: (connection id, bank name, created)
         let mut psd2 = Vec::new();
-        for b in &src.banks {
+        // Only logins this import links an account to, or they would stay empty;
+        // `true`: all of those accounts are closed in MoneyMoney (#1437)
+        let mut logins: HashMap<i64, bool> = HashMap::new();
+        for (_, bank, closed, _) in &self.to_link {
+            *logins.entry(*bank).or_insert(true) &= *closed;
+        }
+        for b in src.banks.iter().filter(|b| logins.contains_key(&b.id)) {
             let default = src
                 .connector_key(b)
                 .map(|(kind, key)| MoneyMoneyDbConnectionOption::direct(kind, key));
@@ -3348,6 +3458,8 @@ impl ImportCtx<'_> {
             }
             let chosen = match options.bank_choices.iter().find(|c| c.mm_bank_id == b.id) {
                 Some(c) => c.connection.clone(),
+                // every account closed: nothing left to fetch (#1437)
+                None if logins[&b.id] => None,
                 None => default,
             };
             let Some(chosen) = chosen else { continue };
@@ -3434,10 +3546,14 @@ impl ImportCtx<'_> {
     /// Shows imported accounts under their bank login right away; the first
     /// sync then takes them over (adopt_account) instead of adding new ones.
     fn link_accounts(&self, bank_connection: &HashMap<i64, i64>) -> CoreResult<()> {
-        for (account_id, bank) in &self.to_link {
-            if let Some(cid) = bank_connection.get(bank) {
+        for (account_id, bank, _, moves) in &self.to_link {
+            if let (true, Some(cid)) = (*moves, bank_connection.get(bank)) {
+                // an account still under the import's reference was never taken over by a
+                // fetch: it follows the way chosen now (a re-import may switch it), so a
+                // connection set up here never stays empty
                 self.conn.execute(
-                    "UPDATE accounts SET connection_id = ?1 WHERE id = ?2 AND connection_id IS NULL",
+                    "UPDATE accounts SET connection_id = ?1
+                      WHERE id = ?2 AND (connection_id IS NULL OR external_ref LIKE 'moneymoney-db:%')",
                     params![cid, account_id],
                 )?;
             }
