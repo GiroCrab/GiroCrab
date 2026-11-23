@@ -77,6 +77,7 @@ struct GeneralSettings: View {
     @AppStorage(PrivacyMode.scopeKey) private var privacyScope = PrivacyMode.defaultScope
     @AppStorage(AppAppearance.defaultsKey) private var appearance: AppAppearance = .system
     @AppStorage(BookingDensity.defaultsKey) private var bookingDensity: BookingDensity = .standard
+    @AppStorage(SidebarDensity.defaultsKey) private var sidebarDensity: SidebarDensity = .defaultValue
 
     /// Core setting `sync.days_back`: how far the first fetch of a new account reaches back.
     private var firstFetchDays: Binding<Int> {
@@ -110,6 +111,11 @@ struct GeneralSettings: View {
                     ForEach(BookingDensity.allCases) { Text($0.title).appFont(.body).tag($0) }
                 }
                 Text("Kompakt öffnet die aktive Buchung mit allen Details. Standard zeigt einen kurzen Verwendungszweck. Großzügig zeigt alle Buchungen ausführlich.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+                Picker("Seitenleiste", selection: $sidebarDensity) {
+                    ForEach(SidebarDensity.allCases) { Text($0.title).appFont(.body).tag($0) }
+                }
+                Text("Großzügig zeigt Kontoname, Inhaber, neue Buchungen und Saldo in einer Zeile. Kompakt braucht weniger Breite und zeigt den Saldo unter dem Namen.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 #if os(macOS)
                 // iOS: the system's Dynamic Type setting (Einstellungen › Anzeige & Helligkeit).
@@ -168,7 +174,6 @@ struct GeneralSettings: View {
             TransferSettingsSection()
             BalanceChartSettingsSection()
             #if os(macOS)
-            AutoSyncSettingsSection()
             DockAndMenuBarSettingsSection()
             #endif
             #if os(iOS)
@@ -420,7 +425,7 @@ struct DocumentFolderSettings: View {
                 if let path = model.documentMirrorPath {
                     LabeledContent("Ordner") {
                         HStack {
-                            Text(displayPath(path))
+                            Text(ICloudFolderMigration.readablePath(path))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .sensitive() // the path names the user
@@ -452,15 +457,6 @@ struct DocumentFolderSettings: View {
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.setDocumentMirror(url) }
         }
-    }
-
-    /// "~/Library/Mobile Documents/com~apple~CloudDocs/GiroCrab" -> "iCloud Drive/GiroCrab".
-    private func displayPath(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let cloud = home + "/Library/Mobile Documents/com~apple~CloudDocs"
-        if path.hasPrefix(cloud) { return "iCloud Drive" + path.dropFirst(cloud.count) }
-        if path.hasPrefix(home) { return "~" + path.dropFirst(home.count) }
-        return path
     }
 }
 #endif
@@ -797,14 +793,16 @@ struct ICloudSyncSection: View {
         } message: {
             Text("Der gewählte Ordner enthält einen Unterordner „\(wrongFolderHint ?? "GiroCrab")“ mit Ihrem Tresor. Wählen Sie bitte genau diesen Unterordner aus, damit kein neuer Tresor angelegt wird.")
         }
-        .alert("Neuen Tresor in diesem Ordner anlegen?", isPresented: Binding(get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } })) {
+        // the alert holds the folder itself, so the text never shows empty quotes while it closes
+        .alert("Neuen Tresor in diesem Ordner anlegen?", isPresented: Binding(get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } }), presenting: pendingFolder) { url in
             Button("Neuen Tresor anlegen") {
-                if let url = pendingFolder { do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { } }
+                do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { }
                 pendingFolder = nil
             }
             Button("Abbrechen", role: .cancel) { pendingFolder = nil }
-        } message: {
-            Text("Der gewählte Ordner enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen.")
+        } message: { url in
+            // say where (#909): when the picker jumps back, the user can't tell where the vault would land
+            Text("Der gewählte Ordner „\(ICloudFolderMigration.readablePath(url.path))“ enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen.")
         }
         #if os(macOS)
         .fileDialogDefaultDirectory(Self.syncFolderOrCloudDocs)
@@ -889,7 +887,7 @@ struct KeyPasteSheet: View {
                     .disabled(!valid)
             }
             HStack {
-                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Abbrechen", role: .cancel) { model.cancelKeyAdoption(); dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
                 Button("Übernehmen") { model.adoptSyncKey(text) }

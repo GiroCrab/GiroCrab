@@ -38,7 +38,7 @@ mod transfer_pairs;
 
 pub(crate) use bookings::{LIVE_BOOKINGS_SQL, PENDING_SQL, enrich, sql_int_list};
 pub use connections::ConnectionStatus;
-pub use enable_banking_apps::ConnectionEnableBankingApp;
+pub use enable_banking_apps::{ConnectionEnableBankingApp, EnableBankingLoginApp};
 pub use merge::MergeStats;
 pub use settings::KNOWN_SETTINGS;
 

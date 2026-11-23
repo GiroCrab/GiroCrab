@@ -467,6 +467,7 @@ pub fn setting_lines(list: &[SettingEntry]) -> Vec<Line> {
 pub fn outcome_name(o: SyncLogOutcome) -> &'static str {
     match o {
         SyncLogOutcome::Ok => "Erfolgreich",
+        SyncLogOutcome::Partial => "Teilweise",
         SyncLogOutcome::Error => "Fehler",
         SyncLogOutcome::Cancelled => "Abgebrochen",
     }
@@ -501,7 +502,7 @@ pub fn log_lines(list: &[SyncLogEntry]) -> Vec<Line> {
                 outcome_name(e.outcome),
                 source_name(e.source)
             );
-            if e.outcome == SyncLogOutcome::Ok {
+            if matches!(e.outcome, SyncLogOutcome::Ok | SyncLogOutcome::Partial) {
                 detail.push_str(&format!(" · {} neu", e.imported));
             }
             if !e.message.is_empty() {

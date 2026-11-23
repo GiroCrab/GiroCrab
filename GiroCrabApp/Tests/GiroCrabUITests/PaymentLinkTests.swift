@@ -163,4 +163,26 @@ final class PaymentLinkTests: XCTestCase {
         XCTAssertFalse(model.showTransferSheet)
         XCTAssertNotNil(model.errorMessage)
     }
+
+    func testSwitchToBatchTransferKeepsPendingLinkClosedDuringHandover() async throws {
+        let model = demoModel()
+        try XCTSkipUnless(model.canTransfer, "demo vault without transfer accounts")
+        model.openTransfer()
+        model.openLink(link)
+        XCTAssertNotNil(model.pendingPaymentLink)
+        model.switchToBatchTransfer()
+        for _ in 0..<20 where !model.showBatchSheet { await Task.yield() }
+        XCTAssertTrue(model.showBatchSheet)
+        XCTAssertFalse(model.showTransferSheet)
+        XCTAssertNotNil(model.pendingPaymentLink)
+    }
+
+    func testShowDemoResetsAndReloadsAccountReadiness() throws {
+        let model = demoModel()
+        model.demoActive = false
+        XCTAssertTrue(model.accountsLoaded)
+        model.showDemo()
+        XCTAssertTrue(model.demoActive)
+        XCTAssertTrue(model.accountsLoaded)
+    }
 }

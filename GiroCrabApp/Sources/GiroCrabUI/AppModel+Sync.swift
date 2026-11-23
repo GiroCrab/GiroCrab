@@ -112,9 +112,11 @@ extension AppModel {
     }
 
     func requestSyncAll() {
-        // portal connections need an interactive login – not part of "sync all"
-        // logins whose accounts are all archived are not asked at all
-        requestSyncBatch { [self] in connections.filter { !usesPortal($0) && !usesFileImport($0) && !$0.allAccountsArchived } }
+        requestSyncBatch { [self] in
+            connections.filter {
+                !$0.allAccountsArchived && supportsSyncSchedule($0) && syncSchedule($0.id) != AutoSync.never
+            }
+        }
     }
 
     /// "Konten abrufen" in a group's menu: the logins behind the group's
@@ -477,8 +479,10 @@ extension AppModel {
         case .finished(let s):
             // a scheduled sync of another login leaves a pending "<Konto> abrufen" alone
             if account(syncAccountID, of: connection) != nil { syncAccountID = nil }
-            logSync(connectionID: connection.id, source: syncLogSource(for: connection.id), outcome: .ok,
-                    message: s.warnings.joined(separator: " / "), imported: Int(s.transactionsImported))
+            // what the bank would not give is no success (#1627)
+            logSync(connectionID: connection.id, source: syncLogSource(for: connection.id),
+                    outcome: s.warnings.isEmpty ? .ok : .partial,
+                    message: (s.warnings + s.hints).joined(separator: " / "), imported: Int(s.transactionsImported))
             activeChallenge = nil
             syncingConnectionID = nil
             activeSession = nil

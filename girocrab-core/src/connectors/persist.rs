@@ -426,17 +426,20 @@ pub(crate) fn store_fetch(
                     // first stored as checking (e.g. C24 PocketZINS, typed by product).
                     // Loan: a Schwäbisch Hall Bausparvertrag moving on to its loan phase
                     // (same contract id), which must not stay a savings account.
-                    // A stored Festgeld stays one when the bank reports Savings (#1002).
+                    // BuildingSavings: Bausparverträge stored as savings before #1630.
+                    // A stored Festgeld or Bausparvertrag stays one when the bank reports
+                    // Savings (#1002, #1630): the user may have set it by hand.
                     if acc.kind == AccountKind::Brokerage
                         || acc.kind == AccountKind::Savings
                         || acc.kind == AccountKind::TimeDeposit
+                        || acc.kind == AccountKind::BuildingSavings
                         || (acc.kind == AccountKind::Loan && kind == ConnectorKind::SchwaebischHall)
                     {
                         let (group, sym, order) = group_for(acc.kind);
                         let gid = Vault::ensure_group(&tx, group, sym, order)?;
                         let changed = tx.execute(
                             // a symbol the user picked (symbol_ms > 0) stays
-                            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3 WHERE id = ?4 AND kind <> ?1 AND NOT (?1 = 'savings' AND kind = 'time_deposit')",
+                            "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END, group_id = ?3 WHERE id = ?4 AND kind <> ?1 AND NOT (?1 = 'savings' AND kind IN ('time_deposit', 'building_savings'))",
                             params![acc.kind.as_str(), acc.kind.sf_symbol(), gid, id],
                         )?;
                         if changed > 0 {
@@ -1061,6 +1064,7 @@ pub(crate) fn store_fetch(
         }
         // Accounts by the name they carry here instead of their bank reference (an IBAN).
         let mut warnings = std::mem::take(&mut data.warnings);
+        let hints = std::mem::take(&mut data.hints);
         if !warnings.is_empty() {
             for acc in data.accounts.iter().filter(|a| !a.external_ref.is_empty()) {
                 let name: Option<String> = tx
@@ -1112,12 +1116,16 @@ pub(crate) fn store_fetch(
             revoked_accounts,
             postbox_documents,
             warnings,
+            hints,
         })
     }
 }
 
 /// Sidebar sections of the "by kind" view (fixed order): one per account kind (#1003).
 /// Step 37 of `schema.rs` moves old vaults to these; its sections must match.
+/// A vault stores a section's place when it creates the section, so a new kind takes the next
+/// free place instead of renumbering the others: "Bausparen" (#1630) comes after the loans, the
+/// phase a Bausparvertrag moves on to.
 pub(crate) fn group_for(kind: AccountKind) -> (&'static str, &'static str, i32) {
     match kind {
         AccountKind::Checking => ("Girokonten", "building.columns", 1),
@@ -1128,6 +1136,25 @@ pub(crate) fn group_for(kind: AccountKind) -> (&'static str, &'static str, i32) 
         AccountKind::CreditCard => ("Kreditkarten", "creditcard", 6),
         AccountKind::Brokerage => ("Depots & ETFs", "chart.pie", 7),
         AccountKind::Loan => ("Darlehen & Kredite", "house", 8),
+        AccountKind::BuildingSavings => ("Bausparen", "house.circle", 9),
+    }
+}
+
+/// The section of an account kind in the "Kontoart" sidebar view (`group_for`): its name in the
+/// current language and its place. Views that group accounts by kind elsewhere (Vermögen › Cash
+/// nach Kontoart, #1631) take both from here, so they cannot drift apart from the sidebar.
+pub fn account_kind_section(kind: AccountKind) -> crate::models::AccountKindSection {
+    account_kind_section_in(crate::i18n::current(), kind)
+}
+
+pub(crate) fn account_kind_section_in(
+    lang: crate::i18n::Lang,
+    kind: AccountKind,
+) -> crate::models::AccountKindSection {
+    let (name, _, sort_order) = group_for(kind);
+    crate::models::AccountKindSection {
+        name: crate::i18n::display_name_in(lang, name),
+        sort_order,
     }
 }
 
@@ -2585,8 +2612,10 @@ fn adopt_past_deleted_twin(
 
 /// Links an unconnected stored account to `connection_id` when it matches the
 /// remote one by account number / IBAN (ignoring spaces and leading zeros) or is
-/// the single unlinked depot of the same bank. Sets `connection_id`, `external_ref`, `kind`
-/// (a stored Festgeld stays one when the bank reports Savings, #1002).
+/// the single unlinked depot of the same bank. Sets `connection_id`, `external_ref` and `kind`;
+/// a stored Festgeld or Bausparvertrag stays one when the bank reports Savings (#1002, #1630).
+/// A new kind brings its symbol (unless the user picked one) and its section along, as in
+/// `store_fetch`: that later update sees the kind already set and would skip both.
 fn adopt_unlinked(
     tx: &rusqlite::Connection,
     connection_id: i64,
@@ -2644,13 +2673,28 @@ fn adopt_unlinked(
             return Ok(found);
         }
         tx.execute(
-            // a stored Festgeld stays one when the bank reports Savings (#1002),
-            // like in the update of linked accounts in `store_fetch`
-            "UPDATE accounts SET connection_id = ?1, external_ref = ?2,
-                    kind = CASE WHEN ?3 = 'savings' AND kind = 'time_deposit' THEN kind ELSE ?3 END
-             WHERE id = ?4",
-            params![connection_id, acc.external_ref, acc.kind.as_str(), id],
+            "UPDATE accounts SET connection_id = ?1, external_ref = ?2 WHERE id = ?3",
+            params![connection_id, acc.external_ref, id],
         )?;
+        let stored: String =
+            tx.query_row("SELECT kind FROM accounts WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })?;
+        // like in the update of linked accounts in `store_fetch`
+        let kept = acc.kind == AccountKind::Savings
+            && matches!(stored.as_str(), "time_deposit" | "building_savings");
+        if !kept && stored != acc.kind.as_str() {
+            let (group, sym, order) = group_for(acc.kind);
+            let gid = Vault::ensure_group(tx, group, sym, order)?;
+            tx.execute(
+                // a symbol the user picked (symbol_ms > 0) stays
+                "UPDATE accounts SET kind = ?1, sf_symbol = CASE WHEN symbol_ms > 0 THEN sf_symbol ELSE ?2 END,
+                        group_id = ?3 WHERE id = ?4",
+                params![acc.kind.as_str(), acc.kind.sf_symbol(), gid, id],
+            )?;
+            // a history imported while it was another kind counts now (#578)
+            crate::depot_values::rebuild(tx, id, None)?;
+        }
     }
     Ok(found)
 }

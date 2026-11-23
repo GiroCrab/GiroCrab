@@ -41,6 +41,14 @@ struct CompositionLegend: View {
     var hovered: Binding<String?>?
     var spot: Binding<HoverCardSpot?>?
 
+    static func entryOpacity(id: String, selected: String?, hovered: String?) -> Double {
+        if let selected {
+            if selected == id { return 1 }
+            return hovered == id ? 0.75 : 0.35
+        }
+        return hovered == nil || hovered == id ? 1 : 0.5
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(slices) { s in
@@ -58,7 +66,7 @@ struct CompositionLegend: View {
                 .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .opacity(selected == nil || selected == s.id ? 1 : 0.35)
+                .opacity(Self.entryOpacity(id: s.id, selected: selected, hovered: hovered?.wrappedValue))
                 .modifier(LegendSliceHover(id: s.id, help: detailText(s, total: total, currency: currency), hovered: hovered, spot: spot))
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(selected == s.id ? [.isButton, .isSelected] : .isButton)
@@ -116,14 +124,14 @@ struct CompositionRing: View {
             // a long legend (all positions unfolded) starts at the top; the ring is not centred beside it
             HStack(alignment: slices.count > 9 ? .top : .center, spacing: 28) {
                 ring
-                CompositionLegend(slices: slices, total: total, currency: currency, selected: active, select: select,
+                CompositionLegend(slices: slices, total: total, currency: currency, selected: selected, select: select,
                                   hovered: $hovered, spot: $spot)
                     .frame(maxWidth: 560 * textScale, alignment: .leading)
                 Spacer(minLength: 0)
             }
             VStack(alignment: .leading, spacing: 14) {
                 ring.frame(maxWidth: .infinity)
-                CompositionLegend(slices: slices, total: total, currency: currency, selected: active, select: select,
+                CompositionLegend(slices: slices, total: total, currency: currency, selected: selected, select: select,
                                   hovered: $hovered, spot: $spot)
             }
         }

@@ -2515,6 +2515,26 @@ fn newer_manual_category_beats_older_and_rule() {
 }
 
 #[test]
+fn explicit_rule_refresh_beats_an_older_manual_edit_in_either_direction() {
+    each_order(
+        "bk-explicit-rule-refresh",
+        |a, b| {
+            let mut rule = plain_rule(cat(a, "Food"), "Shop");
+            rule.id = a.save_rule(rule.clone()).unwrap();
+            assert_eq!(a.apply_rule(rule.id, false).unwrap(), 1);
+            exec(a, "UPDATE transactions SET category_ms = 200 WHERE id = 1");
+            b.set_transaction_category(1, Some(cat(b, "Food"))).unwrap();
+            exec(b, "UPDATE transactions SET category_ms = 250 WHERE id = 1");
+
+            rule.category_id = cat(a, "Fun");
+            let id = a.save_rule(rule).unwrap();
+            assert_eq!(a.apply_rule(id, false).unwrap(), 1);
+        },
+        |v| assert_eq!(bk_cat(v, 1), "Fun/rule"),
+    );
+}
+
+#[test]
 fn rule_category_never_overwrites_manual_in_either_direction() {
     each_order(
         "bk-rule",

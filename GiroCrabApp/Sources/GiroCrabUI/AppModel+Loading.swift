@@ -107,6 +107,11 @@ extension AppModel {
         if case .bank(let key) = sidebarSelection, bankGroup(for: key) == nil {
             sidebarSelection = .allAccounts
         }
+        // a section whose last account left (another kind, #1630): no account ids would filter
+        // as "all accounts" while the sidebar still names the section
+        if case .group(let id) = sidebarSelection, groups.first(where: { $0.id == id })?.accounts.isEmpty ?? true {
+            sidebarSelection = .allAccounts
+        }
         rebuildAccountIndex()
         accountsLoaded = true
         // After unlocking or a sync: a transfer link that came meanwhile.

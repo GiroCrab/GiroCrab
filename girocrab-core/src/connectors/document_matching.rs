@@ -648,10 +648,12 @@ pub(crate) fn link_unlinked_by_content(
             && (changed_document || new_booking_ids.contains(&booking))
         {
             // An occupied best match blocks a link instead of sending the document to a nearby
-            // booking. Check at write time because an earlier PDF in this pass may have linked it.
+            // booking. Check at write time because an earlier PDF in this pass may have linked it,
+            // and keep documents unlinked that the user detached manually.
             linked += conn.execute(
                 "UPDATE booking_documents SET booking_id = ?1
                   WHERE id = ?2 AND booking_id IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'doc.unlinked.' || ?2)
                     AND NOT EXISTS (SELECT 1 FROM booking_documents WHERE booking_id = ?1)",
                 params![booking, id],
             )? as u32;
