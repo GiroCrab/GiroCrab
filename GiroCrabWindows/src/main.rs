@@ -1256,6 +1256,18 @@ fn render_header(
     Ok(sel)
 }
 
+/// Like `show` after an edit (e.g. a new offline account), but keeps private mode on: `show`
+/// switches it off for the first paint after unlock. Restored and re-rendered in the same
+/// event-loop callback, so no frame shows unmasked values.
+fn refresh(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
+    let private = win.get_privacy();
+    show(win, vault, selected);
+    if private {
+        win.set_privacy(true);
+        win.invoke_privacy_changed();
+    }
+}
+
 /// Header plus the view of the selected target (bookings reload, or the depot / list view).
 fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     // A worker that finished after the lock must not bring the vault back.
@@ -2010,6 +2022,7 @@ fn main() -> Result<(), slint::PlatformError> {
             render_bookings(&win);
             views_ui::rerender(&win);
             apply_transfer_rule(&win, win.get_tr_account_index());
+            offline_ui::sync_mask(&win);
         });
     }
     {

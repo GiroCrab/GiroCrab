@@ -1998,6 +1998,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     alignment: end;
                     spacing: 8px;
+                    Button { text: "Offline-Konto …"; clicked => { root.add-open = false; root.offline-new(); } }
                     Button { text: "Abbrechen"; clicked => { root.add-open = false; } }
                     Button {
                         text: root.add-busy ? "Bitte warten …" : "Hinzufügen";

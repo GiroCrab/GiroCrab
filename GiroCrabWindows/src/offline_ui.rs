@@ -1,12 +1,13 @@
 //! Slint wiring for "Offline-Konto anlegen" (#679). Validation lives in `offline.rs`; the core
 //! write runs on a worker thread and is published only while the same vault is still unlocked.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use girocrab_core::{AccountKind, Vault};
 use slint::{ComponentHandle, SharedString};
 
-use crate::{MainWindow, daily, offline, privacy_on, show};
+use crate::{MainWindow, daily, offline, privacy_on, refresh};
 
 type VaultSlot = Arc<Mutex<Option<Arc<Vault>>>>;
 
@@ -14,8 +15,38 @@ fn vault_of(slot: &VaultSlot) -> Option<Arc<Vault>> {
     slot.lock().ok().and_then(|v| v.clone())
 }
 
+/// Dialog generation, bumped by every `reset` (open, lock, success): a save that finishes after
+/// the dialog was reopened must not close or clear the new draft.
+struct DialogGeneration(AtomicU64);
+
+impl DialogGeneration {
+    const fn new() -> Self {
+        Self(AtomicU64::new(0))
+    }
+
+    fn bump(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn current(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.current() == generation
+    }
+}
+
+static DIALOG: DialogGeneration = DialogGeneration::new();
+
+/// Masks the inputs while private mode is on; called on open and from `privacy_changed`.
+pub fn sync_mask(win: &MainWindow) {
+    win.set_offline_mask(privacy_on(win));
+}
+
 /// Clears every dialog property; also called when the vault is locked.
 pub fn reset(win: &MainWindow) {
+    DIALOG.bump();
     win.set_offline_open(false);
     win.set_offline_busy(false);
     win.set_offline_name(SharedString::new());
@@ -32,7 +63,7 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
             return;
         }
         reset(&win);
-        win.set_offline_mask(privacy_on(&win));
+        sync_mask(&win);
         win.set_offline_open(true);
     });
 
@@ -53,6 +84,7 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
         };
         win.set_offline_busy(true);
         win.set_offline_status(SharedString::new());
+        let generation = DIALOG.current();
         let (weak, slot) = (win.as_weak(), slot.clone());
         std::thread::spawn(move || {
             let result = v
@@ -71,16 +103,27 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
                 if !Arc::ptr_eq(&current, &v) {
                     return;
                 }
-                win.set_offline_busy(false);
+                // Reopened meanwhile: the dialog now holds a new draft, leave it alone.
+                let ours = DIALOG.is_current(generation);
                 match result {
                     Ok(id) => {
                         let label = daily::mask(&form.name, privacy_on(&win));
-                        reset(&win);
-                        show(&win, &current, Some(id));
+                        if ours {
+                            reset(&win);
+                        }
+                        // The account exists either way: refresh the lists, keep private mode.
+                        refresh(&win, &current, Some(id));
                         win.set_sync_status(format!("Offline-Konto „{label}“ angelegt.").into());
-                        win.invoke_refocus();
+                        if ours {
+                            win.invoke_refocus();
+                        }
                     }
-                    Err(e) => win.set_offline_status(e.into()),
+                    Err(e) => {
+                        if ours {
+                            win.set_offline_busy(false);
+                            win.set_offline_status(e.into());
+                        }
+                    }
                 }
             });
         });
@@ -90,6 +133,17 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reopened_dialog_outdates_running_save() {
+        let dialog = DialogGeneration::new();
+        let started = dialog.current();
+        assert!(dialog.is_current(started));
+        // Reopening (or locking) resets the dialog and bumps the generation.
+        dialog.bump();
+        assert!(!dialog.is_current(started));
+        assert!(dialog.is_current(dialog.current()));
+    }
 
     #[test]
     fn created_account_is_listed_as_offline() {
