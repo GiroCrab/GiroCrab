@@ -6,6 +6,9 @@ mod analytics;
 mod announcements;
 mod assets_loans;
 mod assets_loans_ui;
+// Only the text builder so far; the „Problem melden“ dialog wires it in #384 part 2.
+#[allow(dead_code)]
+mod bug_report;
 mod cockpit;
 mod daily;
 mod girocode;
