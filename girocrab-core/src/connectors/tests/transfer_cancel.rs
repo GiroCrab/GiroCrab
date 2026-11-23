@@ -62,11 +62,7 @@ impl BankConnector for Scripted {
 }
 
 fn session(outcomes: Vec<CancelOutcome>, bank: Bank) -> (TransferSession, Arc<AtomicUsize>) {
-    let dir = std::env::temp_dir().join(format!(
-        "gc-cancel-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple()
-    ));
+    let dir = crate::test_support::thread_temp_path("gc-cancel");
     std::fs::create_dir_all(&dir).unwrap();
     let vault = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![6u8; 32]).unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

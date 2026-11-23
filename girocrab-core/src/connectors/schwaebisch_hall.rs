@@ -281,7 +281,8 @@ fn account_kind(contract: &Value, details: &Value) -> AccountKind {
     if words.contains("darlehen") || words.contains("kredit") {
         AccountKind::Loan
     } else {
-        AccountKind::Savings
+        // a Bausparvertrag in its savings phase (#1630)
+        AccountKind::BuildingSavings
     }
 }
 
@@ -704,7 +705,7 @@ mod tests {
         assert_eq!(a.external_ref, "bsh:0012345600101");
         assert_eq!(a.name, "Bausparvertrag 123456 A 01");
         assert_eq!(a.account_number, "123456 A 01");
-        assert_eq!(a.kind, AccountKind::Savings);
+        assert_eq!(a.kind, AccountKind::BuildingSavings);
         assert_eq!((a.balance_cents, a.balance_date.as_str()), (109_050, TODAY));
         let mut got: Vec<_> = r
             .transactions
@@ -756,7 +757,7 @@ mod tests {
         );
         c["details"] = portal_sample_details();
         let r = parse(json!([c])).unwrap();
-        assert_eq!(r.accounts[0].kind, AccountKind::Savings);
+        assert_eq!(r.accounts[0].kind, AccountKind::BuildingSavings);
         let got: Vec<_> = r
             .transactions
             .iter()

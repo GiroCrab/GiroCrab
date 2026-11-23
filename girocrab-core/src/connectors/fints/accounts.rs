@@ -18,7 +18,8 @@ pub(super) fn kind_from_code(code: u32) -> AccountKind {
     // 30-39 Depot, 40-49 Darlehen, 50-59 Kreditkarte, 60-69 Fonds-Depot,
     // 70-79 Bausparvertrag, 80-89 Versicherung, 90-99 Sonstige
     match code {
-        10..=29 | 70..=79 => AccountKind::Savings,
+        10..=29 => AccountKind::Savings,
+        70..=79 => AccountKind::BuildingSavings,
         30..=39 | 60..=69 => AccountKind::Brokerage,
         40..=49 => AccountKind::Loan,
         50..=59 => AccountKind::CreditCard,
@@ -88,6 +89,7 @@ pub(super) fn merge_upd_with_sepa(
             } else {
                 u.blz.clone()
             },
+            full_kti: false,
         };
         out.push((acc, Some(u.clone())));
     }
@@ -152,6 +154,7 @@ impl FinTsConnector {
                                     account_number: t(3),
                                     sub_account: t(4),
                                     blz: t(6),
+                                    full_kti: false,
                                 });
                             }
                         }
@@ -160,7 +163,15 @@ impl FinTsConnector {
                 Err(e) => error = Some(trf("Kontenliste (HKSPA) – {0}", &[&e])),
             }
         }
-        (merge_upd_with_sepa(&self.upd, sepa, &self.blz), error)
+        let mut accounts = merge_upd_with_sepa(&self.upd, sepa, &self.blz);
+        // Postbank also serves accounts of other banks of the group (BIC DEUT…) behind
+        // the one login, so the login's server decides, not the account's BIC.
+        if is_postbank_server(&self.url) {
+            for (acc, _) in &mut accounts {
+                acc.full_kti = true;
+            }
+        }
+        (accounts, error)
     }
 
     /// The order's source account from the bank's account list. `None` when the
@@ -312,14 +323,14 @@ impl FinTsConnector {
     /// Segmentaufbau") and wants all of IBAN:BIC:Konto:Unterkonto:280:BLZ.
     pub(super) fn kti(acc: &SepaAccount) -> String {
         if acc.blz == CONSORSBANK_BLZ && !acc.iban.is_empty() && !acc.account_number.is_empty() {
-            return format!(
-                "{}:{}:{}:{}:{COUNTRY}:{}",
-                escape(&acc.iban),
-                escape(&acc.bic),
-                escape(&acc.account_number),
-                escape(&acc.sub_account),
-                acc.blz
-            );
+            return Self::kti_full(acc, &acc.account_number);
+        }
+        // Postbank answers HKCAZ/HKCDB with 9210 "nationale Kontoverbindung erforderlich"
+        // for IBAN:BIC alone (#1702) and "Keine gültige Kontoverbindung" for the 10-digit
+        // number from the IBAN combined with its 3-digit sub-account. It accepts the
+        // account exactly as its HIUPD lists it (as HKKAZ already does through KTV).
+        if acc.full_kti && !acc.iban.is_empty() && !acc.account_number.is_empty() {
+            return Self::kti_full(acc, &acc.account_number);
         }
         if acc.iban.is_empty() {
             format!(
@@ -333,6 +344,18 @@ impl FinTsConnector {
         }
     }
 
+    /// IBAN:BIC:Konto:Unterkonto:280:BLZ.
+    fn kti_full(acc: &SepaAccount, number: &str) -> String {
+        format!(
+            "{}:{}:{}:{}:{COUNTRY}:{}",
+            escape(&acc.iban),
+            escape(&acc.bic),
+            escape(number),
+            escape(&acc.sub_account),
+            acc.blz
+        )
+    }
+
     pub(super) fn ktv(acc: &SepaAccount) -> String {
         format!(
             "{}:{}:{COUNTRY}:{}",
@@ -340,5 +363,30 @@ impl FinTsConnector {
             escape(&acc.sub_account),
             acc.blz
         )
+    }
+}
+
+fn is_postbank_server(url: &str) -> bool {
+    url.to_ascii_lowercase().contains("hbci.postbank.de")
+}
+
+#[cfg(test)]
+mod postbank_kti_tests {
+    use super::*;
+
+    #[test]
+    fn postbank_kti_carries_the_upd_account_with_sub_account() {
+        let acc = SepaAccount {
+            iban: "DE89100100100123456789".into(),
+            bic: "PBNKDEFFXXX".into(),
+            account_number: "123456789".into(),
+            sub_account: "000".into(),
+            blz: "10010010".into(),
+            full_kti: true,
+        };
+        assert_eq!(
+            FinTsConnector::kti(&acc),
+            "DE89100100100123456789:PBNKDEFFXXX:123456789:000:280:10010010"
+        );
     }
 }

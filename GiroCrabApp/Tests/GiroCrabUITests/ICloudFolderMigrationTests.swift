@@ -260,4 +260,25 @@ extension ICloudFolderMigrationTests {
         let notFound = await ICloudFolderMigration.waitForVault(in: empty, wait: 0.6)
         XCTAssertFalse(notFound)
     }
+
+    /// The new-vault question names where the folder is, not just its name (#909).
+    func testReadablePathOfAFolder() {
+        let home = "/Users/x"
+        let docs = home + "/Library/Mobile Documents/com~apple~CloudDocs"
+        XCTAssertEqual(ICloudFolderMigration.readablePath(docs, home: home), "iCloud Drive")
+        XCTAssertEqual(ICloudFolderMigration.readablePath(docs + "/GiroCrab", home: home), "iCloud Drive/GiroCrab")
+        XCTAssertEqual(ICloudFolderMigration.readablePath(docs + "/Backup/GiroCrab", home: home), "iCloud Drive/Backup/GiroCrab")
+        XCTAssertEqual(ICloudFolderMigration.readablePath("/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/GiroCrab", home: ""), "iCloud Drive/GiroCrab")
+        XCTAssertEqual(ICloudFolderMigration.readablePath("/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/GiroCrab", home: ""), "iCloud Drive/GiroCrab")
+        XCTAssertEqual(ICloudFolderMigration.readablePath(docs + "/Backup/../GiroCrab/", home: home), "iCloud Drive/GiroCrab")
+        XCTAssertFalse(ICloudFolderMigration.readablePath(docs + "X/GiroCrab", home: home).hasPrefix("iCloud Drive"))
+        // a copy with the same directory name on another disk is not iCloud Drive
+        XCTAssertFalse(ICloudFolderMigration.readablePath("/Volumes/Backup/Library/Mobile Documents/com~apple~CloudDocs/GiroCrab", home: home).hasPrefix("iCloud Drive"))
+        #if os(macOS)
+        XCTAssertEqual(ICloudFolderMigration.readablePath(home + "/Documents/GiroCrab", home: home), "~/Documents/GiroCrab")
+        XCTAssertEqual(ICloudFolderMigration.readablePath("/Volumes/USB/Documents/GiroCrab", home: home), "/Volumes/USB/Documents/GiroCrab")
+        XCTAssertEqual(ICloudFolderMigration.readablePath("/Users/xy/GiroCrab", home: home), "/Users/xy/GiroCrab")
+        XCTAssertEqual(ICloudFolderMigration.readablePath("/", home: home), "/")
+        #endif
+    }
 }

@@ -580,12 +580,13 @@ extension AppModel {
             ?? String(localized: "Nicht in der Gesamtsumme")
     }
 
+    /// The kind decides what "Verfügbar" and its history count (Bausparen does not, #1630):
+    /// reload them like any other change to the totals.
     func setAccountKind(_ accountId: Int64, to kind: AccountKind) {
         guard let vault else { return }
         do {
             try vault.setAccountKind(accountId: accountId, kind: kind)
-            reloadAccounts()
-            dashboardStale = true
+            afterGroupChange()
         } catch {
             errorMessage = describe(error)
         }
@@ -612,8 +613,8 @@ extension AppModel {
         } catch {
             errorMessage = describe(error)
         }
-        reloadAccounts()
-        if kindChanged { dashboardStale = true }
+        // a new kind can change "Verfügbar" and its history (see `setAccountKind`)
+        if kindChanged { afterGroupChange() } else { reloadAccounts() }
     }
 
     func renameAccount(_ accountId: Int64, to name: String) {
