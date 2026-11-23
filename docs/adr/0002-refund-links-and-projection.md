@@ -64,6 +64,26 @@ upgrade converges by deterministic `(amount, vector)` value, not by edit recency
 This can select an older amount. Bumping the stamp at upgrade would only replace
 that deterministic choice with whichever device upgraded last.
 
+### Schema cutover and recovery
+
+Opening an older vault runs steps 38 and 39 in the migration transaction. A build
+supporting only schema 37 cannot open the migrated vault or merge its snapshots;
+the version guard refuses them before writing. Reinstalling the older executable
+does not undo the migration. There is no schema downgrade path.
+
+Before upgrading, pause sync on every device and keep a pre-upgrade vault backup
+outside the active sync location. Upgrade every syncing device to a compatible
+build before resuming sync. During a staggered upgrade, older peers must remain
+out of sync with the upgraded vault.
+
+Recovery should use a compatible build with the upgraded vault to retain edits
+made after migration. If an older build is unavoidable, stop sync on all devices,
+preserve a separate copy of the upgraded vault, and restore the pre-upgrade backup
+in an isolated location. That backup lacks edits made since it was taken; neither
+reinstalling the app nor restoring the backup transfers those edits back. Do not
+merge newer snapshots into the restored vault. Resume shared sync only after all
+devices use compatible builds and the same chosen vault history.
+
 ### One pure resolver, never widening
 
 The [resolver](../../girocrab-core/src/refunds.rs) uses current booking/split state
