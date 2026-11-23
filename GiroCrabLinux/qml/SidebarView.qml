@@ -72,6 +72,8 @@ Rectangle {
         }
         // caption style like „Konten“, „Zahlungen“ and „Dokumente“ (#676); „+“ lives in the bottom bar
         out.push({ type: "caption", key: "categories", title: qsTr("Kategorien"), open: !m.categoriesCollapsed })
+        // SidebarView.swift › categorySumNote: the sums follow the active filters (#621)
+        if (!m.categoriesCollapsed && m.categorySumNote !== "") out.push({ type: "sumNote", text: m.categorySumNote })
         if (!m.categoriesCollapsed) {
             out.push({ type: "nav", key: "uncategorized", symbol: "questionmark.folder", title: sm.uncategorizedLabel,
                        badge: m.uncategorizedCount, tint: Theme.warning, regular: true, labels: true })
@@ -376,6 +378,20 @@ Rectangle {
                                elide: Text.ElideRight; Layout.fillWidth: true; Accessible.role: Accessible.Heading }
                     }
                 } }
+                // SidebarView.swift › categorySumNote (#621): caption, secondary, at most two lines,
+                // on the heading's text axis; not selectable
+                DelegateChoice { roleValue: "sumNote"; delegate: Item {
+                    id: sumNoteRow
+                    required property var modelData
+                    width: ListView.view.width; height: sumNoteText.implicitHeight + 4
+                    Text {
+                        id: sumNoteText
+                        x: 8 + SidebarModel.rowLeading + SidebarModel.iconInset; y: 2; width: parent.width - x - 14
+                        text: sumNoteRow.modelData.text
+                        font.pixelSize: Theme.caption; color: Theme.secondary
+                        wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+                    }
+                } }
                 // SidebarView.swift › categoryRows: one icon axis per level – a leaf reserves the chevron column
                 DelegateChoice { roleValue: "category"; delegate: SidebarRow {
                     id: catRow
@@ -385,6 +401,21 @@ Rectangle {
                     TapHandler { acceptedButtons: Qt.RightButton; onTapped: sidebar.openCategoryMenu(catRow.c, catRow) }
                     // WP3 (#366): bookings dragged from the list onto a category (leaves only)
                     BookingDropTarget { categoryID: catRow.c.id; enabled: !catRow.modelData.hasChildren }
+                    // categoryDropSlot (#977): a dragged category goes above this row (upper half),
+                    // below it or – on a main category or a row with sub-categories – into it as
+                    // its last sub-category (lower half)
+                    DropSlot {
+                        key: "c:" + catRow.c.id
+                        inset: SidebarModel.rowLeading + catRow.modelData.depth * SidebarModel.iconInset
+                        freeLeading: catRow.modelData.hasChildren ? 12 : 0
+                        payload: ({ type: "category", id: catRow.c.id, label: catRow.c.name })
+                        accepts: ["category"]
+                        edgeFor: (half, p) => {
+                            if (!SidebarModel.canDropCategory(p.id, catRow.c.id)) return null
+                            return half === "below" && SidebarModel.categoryTakesDropInto(catRow.c.id) ? "into" : half
+                        }
+                        onPerform: (p, edge) => SidebarModel.placeCategory(p.id, catRow.c.id, edge === "into" ? "into" : edge === "below" ? "after" : "before")
+                    }
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: SidebarModel.rowLeading + modelData.depth * SidebarModel.iconInset; anchors.rightMargin: SidebarModel.rowTrailing
                         spacing: SidebarModel.gap
@@ -509,9 +540,13 @@ Rectangle {
     // look, place – then what only categories have – then delete
     property var menuCategory: null
     property var moveTargets: []
+    property bool menuCanShiftUp: false
+    property bool menuCanShiftDown: false
     function openCategoryMenu(c, row) {
         menuCategory = c
         moveTargets = AppModel.categoryMoveTargets(c.id)
+        menuCanShiftUp = SidebarModel.canShiftCategory(c.id, -1)
+        menuCanShiftDown = SidebarModel.canShiftCategory(c.id, 1)
         iconPopover.y = Math.max(8, Math.min(sidebar.height - 520, row.mapToItem(sidebar, 0, 0).y))
         categoryMenu.popup()
     }
@@ -543,6 +578,13 @@ Rectangle {
                 onObjectRemoved: (index, object) => moveMenu.removeItem(object)
             }
         }
+        // „Nach oben“ / „Nach unten“ (#977): the menu twin of the drag, also for the keyboard
+        AppMenuItem { text: qsTr("Nach oben"); icon.name: "go-up" // arrow.up
+                      enabled: sidebar.menuCategory !== null && sidebar.menuCanShiftUp
+                      onTriggered: SidebarModel.shiftCategory(sidebar.menuCategory.id, -1) }
+        AppMenuItem { text: qsTr("Nach unten"); icon.name: "go-down" // arrow.down (SF maps it to the income icon)
+                      enabled: sidebar.menuCategory !== null && sidebar.menuCanShiftDown
+                      onTriggered: SidebarModel.shiftCategory(sidebar.menuCategory.id, 1) }
         AppMenuItem { text: qsTr("Duplizieren"); icon.name: SF.icon("plus.square.on.square"); onTriggered: SidebarModel.duplicateCategory(sidebar.menuCategory.id) }
         AppMenuSeparator {}
         AppMenuItem { text: qsTr("Neue Unterkategorie …"); icon.name: SF.icon("plus"); onTriggered: AppModel.newCategoryRequest = { parent: sidebar.menuCategory.id } }
@@ -586,47 +628,18 @@ Rectangle {
         AppMenuItem { text: qsTr("Bankzugang entfernen …"); icon.name: SF.icon("trash")
                    onTriggered: AppModel.sidebarDialog = { kind: "removeConnection", id: sidebar.menuConnection.id } }
     }
-    // same order as a group's menu: rename, look, place – then what only
-    // accounts have – then archive / delete
+    // SidebarView.swift › accountMenu (#981): name, symbol & colour, Kontoart, Kontoinhaber,
+    // Startsaldo and the rest of the account's data live in the settings sheet; the menu
+    // keeps the actions
     AppMenu {
         id: accountMenu
         readonly property var a: sidebar.menuAccount
         readonly property bool archived: a !== null && a.archived_unix !== null
         /// takes manual bookings (#679): not archived, no bank connection
         readonly property bool offline: a !== null && !archived && OfflineAccounts.isOffline(a.id)
-        // an offline account is always cash (#679): its entry of „Kontoart ändern …“ is left out
-        onAboutToShow: {
-            const cash = a !== null && OfflineAccounts.isOffline(a.id)
-            for (let i = 0; i < count; ++i) {
-                const it = itemAt(i)
-                if (it && it.subMenu === kindMenu) { it.visible = !cash; it.height = cash ? 0 : it.implicitHeight }
-            }
-        }
-        // „Konto bearbeiten …“ (#639): name, owner, kind and note in one sheet
-        AppMenuItem { text: qsTr("Konto bearbeiten …"); icon.name: SF.icon("square.and.pencil"); onTriggered: accountEditSheet.edit(accountMenu.a.id) }
-        AppMenuItem { text: qsTr("Umbenennen …"); icon.name: SF.icon("pencil"); onTriggered: AppModel.groupDialog = { kind: "renameAccount", account: accountMenu.a } }
-        AppMenuItem { text: qsTr("Symbol && Farbe …"); icon.name: SF.icon("paintpalette"); onTriggered: AppModel.iconColorTarget = { type: "account", id: accountMenu.a.id } }
+        AppMenuItem { text: qsTr("Einstellungen …"); icon.name: SF.icon("gearshape"); onTriggered: accountSettingsView.edit(accountMenu.a.id) }
         // WP3: CategoryChipToggle (#336, #604) – the tick follows the stored value
         CategoryChipToggle { account: accountMenu.a }
-        // an offline account is always cash (#679): no „Kontoart ändern …“
-        AppMenu {
-            id: kindMenu
-            title: qsTr("Kontoart ändern …")
-            icon.name: SF.icon("list.bullet.rectangle")
-            Instantiator {
-                model: AppModel.accountKindChoices
-                delegate: AppMenuItem {
-                    required property var modelData
-                    // the current kind as "✓ Girokonto", like the Mac menu
-                    text: accountMenu.a !== null && accountMenu.a.kind === modelData.id ? "✓ " + modelData.text : modelData.text
-                    onTriggered: AppModel.setAccountKind(accountMenu.a.id, modelData.id)
-                }
-                onObjectAdded: (index, object) => kindMenu.insertItem(index, object)
-                onObjectRemoved: (index, object) => kindMenu.removeItem(object)
-            }
-        }
-        AppMenuItem { text: qsTr("Kontoinhaber …"); icon.name: SF.icon("person.crop.circle")
-                   onTriggered: AppModel.groupDialog = { kind: "editOwner", account: accountMenu.a } }
         // AccountGroupMenu: named like the group menu's entry, so both menus read the same
         AppMenu {
             id: accountMoveMenu
@@ -654,7 +667,7 @@ Rectangle {
         }
         AppMenuSeparator {}
         AppMenuItem { text: qsTr("Alle Buchungen als gelesen markieren"); icon.name: SF.icon("checkmark.circle"); onTriggered: AppModel.markAllChecked([accountMenu.a.id]) }
-        // ManualLoanAccountMenu + OpeningBalanceMenuItem (ManualLoansUI.swift, OpeningBalanceUI.swift)
+        // ManualLoanAccountMenu (ManualLoansUI.swift)
         AppMenuItem { readonly property bool shown: AppModel.isEditableManualLoan(accountMenu.a)
                    visible: shown; height: shown ? implicitHeight : 0
                    text: qsTr("Darlehen bearbeiten …"); icon.name: SF.icon("pencil")
@@ -664,10 +677,6 @@ Rectangle {
                    text: qsTr("Stand neu setzen …"); icon.name: SF.icon("calendar.badge.clock")
                    onTriggered: AppModel.openLoanEditor("anchor", accountMenu.a.id) }
         AppMenuSeparator { visible: AppModel.isEditableManualLoan(accountMenu.a); height: visible ? implicitHeight : 0 }
-        AppMenuItem { readonly property bool shown: AppModel.canSetOpeningBalance(accountMenu.a)
-                   visible: shown; height: shown ? implicitHeight : 0
-                   text: qsTr("Startsaldo …"); icon.name: SF.icon("clock.arrow.circlepath")
-                   onTriggered: AppModel.openOpeningBalance(accountMenu.a) }
         // OfflineAccountMenuItems (OfflineAccountsUI.swift, #679)
         AppMenuItem { readonly property bool shown: accountMenu.offline
                    visible: shown; height: shown ? implicitHeight : 0
@@ -765,7 +774,7 @@ Rectangle {
                  && AppModel.groupSyncConnections(group).some(c => AppModel.bankingGate(c) === null)
         onTriggered: AppModel.requestSyncGroup(group)
     }
-    AccountEditSheet { id: accountEditSheet }
+    AccountSettingsView { id: accountSettingsView }
     // the "Symbol & Farbe" popover, anchored next to the category row
     IconColorPopover {
         id: iconPopover

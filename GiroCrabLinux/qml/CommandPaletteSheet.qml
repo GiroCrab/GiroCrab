@@ -24,6 +24,11 @@ Sheet {
         const add = (title, subtitle, symbol, fn, hides, subtitleHides, extra) => out.push(Object.assign({
             title: title, subtitle: subtitle, symbol: symbol, action: fn, hides: hides || 0, subtitleHides: subtitleHides || 0 }, extra || {}))
         for (const s of m.scopes) add(s.title, view, "rectangle.split.3x1", () => m.scope = s.id)
+        // the list's scopes only over the booking list: the depot tabs while a securities depot
+        // is shown (#564)
+        if (DepotState.presentation !== "bookings") out.length = 0
+        if (DepotState.presentation === "securities")
+            for (const t of DepotState.depotTabs) add(t.title, view, "rectangle.split.3x1", () => DepotState.depotTab = t.id)
         if (m.canTransfer) add(qsTr("Überweisung senden"), action + " · " + Fmt.keys("Strg+N"), "paperplane", () => m.openTransfer())
         if (!m.bankingBlocksAll) add(qsTr("Alle Konten abrufen"), action + " · " + Fmt.keys("Strg+R"), "arrow.triangle.2.circlepath", () => m.requestSyncAll())
         add(qsTr("Regeln bearbeiten"), action, "wand.and.stars", () => m.openRuleEditor(null))
