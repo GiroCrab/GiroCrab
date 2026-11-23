@@ -47,10 +47,64 @@ fn period_is_capped_per_connector() {
     );
     // PSD2: an explicit start date beyond 90 days needs a fresh consent
     assert_eq!(HistoryRange::Maximum.days(ConnectorKind::EnableBanking), 90);
+    // the start date never reaches the bank, or a refusal is tried again
+    assert_eq!(
+        HistoryRange::Maximum.days(ConnectorKind::TradeRepublic),
+        3650
+    );
+    assert_eq!(HistoryRange::Maximum.days(ConnectorKind::Comdirect), 3650);
+    // three years of transaction search
+    assert_eq!(HistoryRange::Maximum.days(ConnectorKind::PayPal), 1090);
     let long = HistoryRange::Days { days: 5000 };
-    assert_eq!(long.days(ConnectorKind::Comdirect), 730);
+    assert_eq!(long.days(ConnectorKind::OpelDirektbank), 730);
     let short = HistoryRange::Days { days: 30 };
     assert_eq!(short.days(ConnectorKind::FinTsGeneric), 30);
+}
+
+#[test]
+fn a_refused_start_date_is_tried_again_with_90_days() {
+    let back = |n: i64| iso(today() - days(n));
+    let bank = |code: &str| CoreError::Bank {
+        code: code.into(),
+        message: "Zeitraum ungültig".into(),
+    };
+    assert_eq!(
+        history::retry_since(&back(3650), bank("400")).unwrap(),
+        back(90)
+    );
+    // the bank's own code, or a GraphQL error with HTTP 200
+    assert_eq!(
+        history::retry_since(&back(365), bank("Error")).unwrap(),
+        back(90)
+    );
+    assert_eq!(
+        history::retry_since(&back(365), bank("200")).unwrap(),
+        back(90)
+    );
+    // within 90 days a shorter period would not help
+    assert!(matches!(
+        history::retry_since(&back(30), bank("400")),
+        Err(CoreError::Bank { .. })
+    ));
+    // not a refused request: the error stands
+    for err in [
+        bank("429"),
+        bank("401"),
+        bank("503"),
+        CoreError::Protocol {
+            message: "list incomplete".into(),
+        },
+        CoreError::Authentication {
+            message: "abgelaufen".into(),
+        },
+        CoreError::Network {
+            message: "offline".into(),
+        },
+    ] {
+        assert!(history::retry_since(&back(3650), err).is_err());
+    }
+    let w = history::refused_warning("DE00ACC");
+    assert!(w.starts_with("DE00ACC: ") && w.contains("90"), "{w}");
 }
 
 #[test]

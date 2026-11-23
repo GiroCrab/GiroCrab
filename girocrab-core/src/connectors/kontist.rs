@@ -180,6 +180,43 @@ impl KontistConnector {
         }
         Ok(v)
     }
+
+    /// All booked transactions of the main account from `since` on; an
+    /// incomplete list is an error.
+    async fn transactions(
+        &self,
+        account_ref: &str,
+        since: &str,
+    ) -> CoreResult<Vec<RemoteTransaction>> {
+        let filter = json!({ "bookingDate_gte": format!("{since}T00:00:00.000Z") });
+        let mut out = Vec::new();
+        let mut after: Option<String> = None;
+        for _ in 0..MAX_PAGES {
+            let page = self
+                .graphql(
+                    TRANSACTIONS_QUERY,
+                    json!({ "first": PAGE_SIZE, "after": after, "filter": filter }),
+                )
+                .await?;
+            let conn = &page["data"]["viewer"]["mainAccount"]["transactions"];
+            for edge in conn["edges"].as_array().into_iter().flatten() {
+                if let Some(t) = parse_transaction(&edge["node"], account_ref) {
+                    out.push(t);
+                }
+            }
+            if conn["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+                return Ok(out);
+            }
+            let next = conn["pageInfo"]["endCursor"].as_str().map(str::to_string);
+            if next.is_none() || next == after {
+                break;
+            }
+            after = next;
+        }
+        Err(CoreError::Protocol {
+            message: tr("Kontist: Die Umsatzliste wurde nicht vollständig geliefert. Bitte den Abruf erneut starten.").into(),
+        })
+    }
 }
 
 impl Default for KontistConnector {
@@ -421,40 +458,19 @@ impl BankConnector for KontistConnector {
         let today = super::today();
         let v = self.graphql(ACCOUNT_QUERY, json!({})).await?;
         let account = parse_account(&v["data"]["viewer"], &today)?;
-        let since = ctx.since_for(&account.external_ref).to_string();
-        let filter = json!({ "bookingDate_gte": format!("{since}T00:00:00.000Z") });
-
+        let since = ctx.since_for(&account.external_ref);
         let mut out = FetchResult::default();
-        let mut after: Option<String> = None;
-        let mut complete = false;
-        for _ in 0..MAX_PAGES {
-            let page = self
-                .graphql(
-                    TRANSACTIONS_QUERY,
-                    json!({ "first": PAGE_SIZE, "after": after, "filter": filter }),
-                )
-                .await?;
-            let conn = &page["data"]["viewer"]["mainAccount"]["transactions"];
-            for edge in conn["edges"].as_array().into_iter().flatten() {
-                if let Some(t) = parse_transaction(&edge["node"], &account.external_ref) {
-                    out.transactions.push(t);
-                }
+        out.transactions = match self.transactions(&account.external_ref, since).await {
+            Ok(transactions) => transactions,
+            // the bank refused the start date (#1043): once more with 90 days
+            Err(e) => {
+                let since = super::history::retry_since(since, e)?;
+                let transactions = self.transactions(&account.external_ref, &since).await?;
+                out.warnings
+                    .push(super::history::refused_warning(&account.external_ref));
+                transactions
             }
-            if conn["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
-                complete = true;
-                break;
-            }
-            let next = conn["pageInfo"]["endCursor"].as_str().map(str::to_string);
-            if next.is_none() || next == after {
-                break;
-            }
-            after = next;
-        }
-        if !complete {
-            return Err(CoreError::Protocol {
-                message: tr("Kontist: Die Umsatzliste wurde nicht vollständig geliefert. Bitte den Abruf erneut starten.").into(),
-            });
-        }
+        };
         out.balances_reported.push(account.external_ref.clone());
         out.accounts.push(account);
         if !self.refresh_token.expose().is_empty() {
