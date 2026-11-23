@@ -36,11 +36,12 @@ mit gleichem Betrag übernimmt sie nicht.
 
 ## Verknüpfung und Rückgängig
 
-Unter macOS zeigt die Inspector-Karte „Erstattungen“ beide Rollen und alle aktiven
-Verknüpfungen der ausgewählten Buchung. Das Kreuz entfernt die einzelne
-Verknüpfung. „Bearbeiten …“ öffnet das Blatt. Verknüpfte Zeilen verwenden nur
-die Bezeichnungen, zugeordneten Beträge und offenen Beträge der Verknüpfung;
-Gegenbuchungen werden nicht zusätzlich geladen.
+Die Detailansicht zeigt auf allen drei Plattformen alle aktiven Verknüpfungen
+der ausgewählten Buchung in beiden Richtungen: Gegenpartei, Datum, Konto,
+gegebenenfalls Teilbezeichnung und zugeordneten Betrag in der Buchungswährung.
+Eine Zeile öffnet die Gegenbuchung. Unter macOS und Linux entfernt das Kreuz
+die einzelne Verknüpfung mit der bestehenden Rückgängig-Funktion.
+Die Schaltfläche zum Bearbeiten der Zuordnung bleibt erhalten.
 
 Die Zuordnung verändert weder Bankbuchungen noch Splits oder Kontostände.
 Der zugeordnete Anteil wird in den Auswertungen am Datum der Erstattung in der
