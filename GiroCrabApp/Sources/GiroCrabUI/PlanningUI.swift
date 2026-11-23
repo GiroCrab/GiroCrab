@@ -753,15 +753,18 @@ struct SplitSheet: View {
                 }
                 Spacer()
                 Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                // enabled exactly when there is something to save: `valid` alone misses a part of
+                // Int64.min that cannot take the booking's sign (absurd input)
+                let toSave = draft.amountsToSave(sign: sign)
                 Button("Speichern") {
-                    guard let amounts = draft.amountsToSave(sign: sign) else { return }
-                    let inputs = zip(parts, amounts).map { part, cents in
+                    guard let toSave else { return }
+                    let inputs = zip(parts, toSave).map { part, cents in
                         TransactionSplitInput(categoryId: part.categoryID, amountCents: cents, note: part.note)
                     }
                     error = model.saveSplits(inputs, for: booking)
                     if error == nil { dismiss() }
                 }
-                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!draft.valid)
+                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(toSave == nil)
             }
         }
         .padding(22)

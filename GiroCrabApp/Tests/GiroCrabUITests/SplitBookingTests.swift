@@ -143,5 +143,10 @@ final class SplitBookingTests: XCTestCase {
 
         // absurd input never traps
         XCTAssertFalse(SplitDraft(total: 1, splitOffTexts: ["92233720368547758", "92233720368547758"]).valid)
+        // adds up, but Int64.min cannot take an expense's sign: nothing to save (PR #1761 review)
+        let extreme = SplitDraft(total: 1, splitOffTexts: ["92233720368547758,07", "-92233720368547758,08"])
+        XCTAssertTrue(extreme.valid)
+        XCTAssertNil(extreme.amountsToSave(sign: -1))
+        XCTAssertEqual(extreme.amountsToSave(sign: 1), [2, Int64.max, Int64.min])
     }
 }
