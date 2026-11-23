@@ -40,6 +40,8 @@ pub enum ConnectorKind {
     Ibkr,
     /// quirion portal API, authenticated inside the embedded browser.
     Quirion,
+    /// Sharinbox (Société Générale employee share plans), authenticated inside the embedded browser.
+    Sharinbox,
     /// easybank (formerly Barclays Deutschland) credit cards and statements, see #209.
     Easybank,
     /// Alte Leipziger (Bauspar) via the fin4u customer portal API
@@ -98,6 +100,7 @@ impl ConnectorKind {
             ConnectorKind::Fnz => "fnz",
             ConnectorKind::Ibkr => "ibkr",
             ConnectorKind::Quirion => "quirion",
+            ConnectorKind::Sharinbox => "sharinbox",
             ConnectorKind::Easybank => "easybank",
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
@@ -163,6 +166,7 @@ impl ConnectorKind {
             ConnectorKind::Fnz,
             ConnectorKind::Ibkr,
             ConnectorKind::Quirion,
+            ConnectorKind::Sharinbox,
             ConnectorKind::Easybank,
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,
@@ -190,6 +194,9 @@ pub enum AccountKind {
     Savings,
     /// Fixed-term deposit (Festgeld, #1002): money is tied up until maturity.
     TimeDeposit,
+    /// Building savings contract (Bausparvertrag, #1630) in its savings phase: a credit, but
+    /// bound by contract, so it is no money at hand. Its loan phase is a `Loan`.
+    BuildingSavings,
     CreditCard,
     PaymentService,
     Brokerage,
@@ -204,6 +211,7 @@ impl AccountKind {
             AccountKind::Checking => "checking",
             AccountKind::Savings => "savings",
             AccountKind::TimeDeposit => "time_deposit",
+            AccountKind::BuildingSavings => "building_savings",
             AccountKind::CreditCard => "credit_card",
             AccountKind::PaymentService => "payment_service",
             AccountKind::Brokerage => "brokerage",
@@ -215,6 +223,7 @@ impl AccountKind {
         match s {
             "savings" => AccountKind::Savings,
             "time_deposit" => AccountKind::TimeDeposit,
+            "building_savings" => AccountKind::BuildingSavings,
             "credit_card" => AccountKind::CreditCard,
             "payment_service" => AccountKind::PaymentService,
             "brokerage" => AccountKind::Brokerage,
@@ -229,6 +238,7 @@ impl AccountKind {
             AccountKind::Checking => "building.columns",
             AccountKind::Savings => "banknote",
             AccountKind::TimeDeposit => "lock.circle",
+            AccountKind::BuildingSavings => "house.circle",
             AccountKind::CreditCard => "creditcard",
             AccountKind::PaymentService => "envelope.circle",
             AccountKind::Brokerage => "chart.line.uptrend.xyaxis",
@@ -236,6 +246,16 @@ impl AccountKind {
             AccountKind::Loan => "house",
         }
     }
+}
+
+/// The section an account kind has in the "Kontoart" sidebar view (`connectors::account_kind_section`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AccountKindSection {
+    /// The section's name in the current language ("Girokonten", "Checking accounts").
+    pub name: String,
+    /// Its place among the sections, smallest first.
+    pub sort_order: i32,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]

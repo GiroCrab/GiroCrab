@@ -26,6 +26,12 @@ enum ViewLayout {
     static let lastFetchKey = "showLastFetch"
     /// Header chart folded to its title row; balance, KPIs and filters stay (#634).
     static let headerChartCollapsedKey = "headerChartCollapsed"
+    /// Flat sections of the main columns: tighter than the old cards, but with
+    /// enough air for labels and controls. The card constants stay for the
+    /// unrelated screens that still use `.card()`.
+    static let sectionInset: CGFloat = 12
+    static let sectionPadding: CGFloat = 8
+    static let sectionSpacing: CGFloat = 4
     /// Shared card spacing so the three cards above the list line up (GitHub #603).
     static let cardPadding: CGFloat = 12
     static let cardSpacing: CGFloat = 8

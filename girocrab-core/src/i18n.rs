@@ -183,6 +183,7 @@ fn default_name_en(de: &str) -> Option<&'static str> {
         "Kreditkarten" => "Credit cards",
         "Depots & ETFs" => "Portfolios & ETFs",
         "Darlehen & Kredite" => "Loans",
+        "Bausparen" => "Building savings",
         "Importierte Konten" => "Imported accounts",
         // Starter categories.
         "Einnahmen" => "Income",
@@ -419,6 +420,22 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Bitte bei Schwäbisch Hall im Browserfenster anmelden und die Daten abrufen." => {
             "Please sign in to Schwäbisch Hall in the browser window and fetch your data."
+        }
+        "Sharinbox: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "Sharinbox: Incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte bei Sharinbox im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to Sharinbox in the browser window and fetch your data."
+        }
+        "Bitte bei Sharinbox im Browserfenster abrufen." => {
+            "Please fetch your data in the Sharinbox browser window."
+        }
+        "Sharinbox: Dokument {0} abgelehnt, Feld {1} ungültig." => {
+            "Sharinbox: document {0} rejected, field {1} invalid."
+        }
+        "Mitarbeiteraktien" => "Employee shares",
+        "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
+            "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }
         "Schwäbisch Hall Dokument" => "Schwäbisch Hall document",
         "Bausparkasse Schwäbisch Hall: Bausparverträge mit Saldo und Umsätzen, optional die PDF-Dokumente aus dem Postfach. Anmeldung im Browserfenster von „Mein Konto“. Interne Portal-API; Änderungen sind möglich." => {
@@ -757,8 +774,11 @@ fn english(de: &str) -> Option<&'static str> {
         "PIN ist leer" => "PIN is empty",
         "TAN-Verfahren {0}" => "TAN method {0}",
         "{0}: Freigabe ohne Auftragsreferenz" => "{0}: approval without task reference",
-        "Die Bank verlangt für {0} eine TAN-Eingabe. Bitte ein Push-/App-Verfahren (z. B. SecureGo plus) verwenden oder „Tage beim ersten Abruf“ auf höchstens 90 setzen." => {
-            "The bank requires a TAN for {0}. Use a push/app method (e.g. SecureGo plus) or set “Days on first sync” to 90 or less."
+        "Die Bank verlangt für {0} eine TAN-Eingabe, die während des Abrufs nicht möglich ist. Bitte ein App-Verfahren der Bank (Freigabe in der Banking-App) verwenden." => {
+            "The bank requires a TAN for {0}, which can’t be entered during a sync. Please use one of the bank’s app methods (approval in the banking app)."
+        }
+        "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen." => {
+            "Banks usually hand out the last 90 days of bookings without a TAN. For a new account, the period of the first fetch can be set to 90 days in Settings."
         }
         "Kontenliste (HKSPA) – {0}" => "Account list (HKSPA) – {0}",
         "Kontoauszug {0}" => "Statement {0}",
@@ -2076,6 +2096,36 @@ mod tests {
     #[test]
     fn unknown_text_falls_back_to_german() {
         assert_eq!(tr_in(Lang::En, "Gibt es nicht"), "Gibt es nicht");
+    }
+
+    /// Every kind's sidebar section (#1003) has an English name and a place of its own, in the
+    /// order the "Kontoart" view lists them; other views take both from here (#1631).
+    #[test]
+    fn every_account_kind_section_has_an_english_name_and_its_own_place() {
+        use crate::connectors::account_kind_section_in as section;
+        use crate::models::AccountKind::*;
+        let kinds = [
+            Checking,
+            Savings,
+            TimeDeposit,
+            Cash,
+            PaymentService,
+            CreditCard,
+            Brokerage,
+            Loan,
+            BuildingSavings,
+        ];
+        let orders: Vec<i32> = kinds
+            .iter()
+            .map(|&k| section(Lang::En, k).sort_order)
+            .collect();
+        assert!(orders.windows(2).all(|w| w[0] < w[1]), "{orders:?}");
+        for kind in kinds {
+            let (de, en) = (section(Lang::De, kind).name, section(Lang::En, kind).name);
+            assert_ne!(de, en, "{kind:?} has no English section name");
+        }
+        assert_eq!(section(Lang::De, Checking).name, "Girokonten");
+        assert_eq!(section(Lang::En, PaymentService).name, "Payment services");
     }
 
     #[test]

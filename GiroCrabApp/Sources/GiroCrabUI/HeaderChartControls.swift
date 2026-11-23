@@ -103,6 +103,8 @@ enum HeaderPieSlices {
         let label: String
         /// Positive share (expenses as magnitude).
         let cents: Int64
+        /// Account names in the cash pie are personal; category names and „Sonstige“ are labels.
+        var personal = false
     }
 
     /// Shares of a category's direct subcategories (incl. their own children) plus the bookings
@@ -128,7 +130,7 @@ enum HeaderPieSlices {
         let sorted = parts.sorted { $0.cents != $1.cents ? $0.cents > $1.cents : $0.label < $1.label }
         let head = sorted.count > limit ? Array(sorted.prefix(max(limit - 1, 0))) : sorted
         var out = head.enumerated().map { i, p in
-            WealthSlice(id: p.id, label: p.label, cents: p.cents, color: WealthPalette.color(i))
+            WealthSlice(id: p.id, label: p.label, cents: p.cents, color: WealthPalette.color(i), personal: p.personal)
         }
         let rest = sorted.dropFirst(head.count).reduce(Int64(0)) { $0 + $1.cents }
         if rest > 0 { out.append(WealthSlice(id: "rest", label: String(localized: "Sonstige"), cents: rest, color: WealthPalette.rest)) }
@@ -184,7 +186,7 @@ struct HeaderPieChart: View {
             }
             .hoverCardHost(spot) { id in
                 if let s = slices.first(where: { $0.id == id }) {
-                    PieDetailCard(label: s.label, cents: s.cents, total: total)
+                    PieDetailCard(label: s.label, cents: s.cents, total: total, personal: s.personal)
                 }
             }
             .accessibilityElement(children: .contain)
@@ -209,7 +211,7 @@ struct HeaderPieChart: View {
         let row = HStack(spacing: 5) {
             Circle().fill(s.color).frame(width: 7, height: 7)
             Text(s.label)
-                .sensitive(.labels)
+                .sensitive(s.personal ? .personal : .labels)
                 .lineLimit(1)
                 .foregroundStyle(Theme.text)
             Group {
@@ -218,7 +220,7 @@ struct HeaderPieChart: View {
                 case .amount: Text(Money.format(s.cents))
                 }
             }
-            .sensitive(mode == .amount ? .amounts : .personal)
+            .sensitive(.amounts)
             .monospacedDigit()
             .foregroundStyle(Theme.secondary)
             .fixedSize()

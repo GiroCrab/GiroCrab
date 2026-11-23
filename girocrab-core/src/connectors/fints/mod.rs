@@ -69,7 +69,10 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use self::accounts::{account_label, kind_from_code};
-use self::dialog::{approval_pending, has_so_prefix, is_comdirect, tan_demanded};
+use self::dialog::{
+    approval_pending, has_so_prefix, is_comdirect, period_hint, tan_beyond_free_period,
+    tan_demanded,
+};
 use self::syntax::{Segment, SegmentBuilder};
 use super::{
     BankConnector, BatchTransferJob, Challenge, ChallengeResponse, ConnectContext, DebitJob,
@@ -183,6 +186,8 @@ struct SepaAccount {
     account_number: String,
     sub_account: String,
     blz: String,
+    /// The bank wants the account in KTI as IBAN:BIC:Konto:Unterkonto:280:BLZ (Postbank, #1702).
+    full_kti: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -519,6 +524,8 @@ impl BankConnector for FinTsConnector {
             .collect();
         let mut result = FetchResult::default();
         let mut ok_any = false;
+        // a TAN was demanded for more statements than banks serve without one (#1627)
+        let mut period_too_long = false;
         // not yet booked entries ("vorgemerkt"), see `camt::HOLD_PREFIX`
         let (mut holds_listed, mut holds_complete) = (false, true);
         // Explicit statements fetch (Vault::fetch_account_statements): HKEKA of one account only.
@@ -717,6 +724,7 @@ impl BankConnector for FinTsConnector {
                             holds_complete = false;
                             // MT940 would only send another TAN to the app (#1083)
                             done = tan_demanded(&e);
+                            period_too_long |= tan_beyond_free_period(ctx, &e);
                             errors.push(trf("{0}: Umsätze (HKCAZ/camt.052) – {1}", &[&label, &e]))
                         }
                     }
@@ -739,6 +747,7 @@ impl BankConnector for FinTsConnector {
                             }
                         }
                         Err(e) => {
+                            period_too_long |= tan_beyond_free_period(ctx, &e);
                             errors.push(trf("{0}: Umsätze (HKKAZ/MT940) – {1}", &[&label, &e]))
                         }
                     }
@@ -801,6 +810,7 @@ impl BankConnector for FinTsConnector {
                     AccountKind::Loan => "Darlehen".into(),
                     AccountKind::Savings => "Sparkonto".into(),
                     AccountKind::TimeDeposit => "Festgeld".into(),
+                    AccountKind::BuildingSavings => "Bausparvertrag".into(),
                     AccountKind::CreditCard => "Kreditkarte".into(),
                     AccountKind::Brokerage => "Depot".into(),
                     _ => "Girokonto".into(),
@@ -817,7 +827,13 @@ impl BankConnector for FinTsConnector {
                 balance_date,
             });
         }
+        // said once for the sync, not after every account
+        let hints: Vec<String> = period_too_long
+            .then(|| period_hint().into())
+            .into_iter()
+            .collect();
         if !ok_any && !errors.is_empty() {
+            errors.extend(hints);
             return Err(CoreError::Bank {
                 code: "FinTS".into(),
                 message: errors.join(" / "),
@@ -825,6 +841,7 @@ impl BankConnector for FinTsConnector {
         }
         // Something worked: the sync is done, and says what did not (#1083).
         result.warnings = errors;
+        result.hints = hints;
         // Claim the hold list as complete only when every camt request worked.
         if holds_listed && holds_complete {
             result.hold_prefix = Some(camt::HOLD_PREFIX.into());

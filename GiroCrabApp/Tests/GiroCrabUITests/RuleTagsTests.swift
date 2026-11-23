@@ -42,7 +42,7 @@ final class RuleTagsTests: XCTestCase {
         rule.tagIds = [steuern.id]
         rule.minAmountCents = nil
         rule.maxAmountCents = nil
-        let result = try await model.saveRule(rule)
+        let result = try await model.saveRule(rule, onlyUncategorized: false)
         XCTAssertGreaterThan(try XCTUnwrap(result).application.get(), 0)
         XCTAssertNil(model.errorMessage)
         let after = try XCTUnwrap(model.bookings.first { $0.id == rewe.id })
@@ -56,20 +56,51 @@ final class RuleTagsTests: XCTestCase {
         var rule = model.newRuleDraft(from: booking)
         // A pasted purpose does not match while the booking draft still searches the payee.
         rule.pattern = booking.purpose
-        let creation = try await model.saveRule(rule)
+        let creation = try await model.saveRule(rule, onlyUncategorized: false)
         let saved = try XCTUnwrap(creation)
         XCTAssertEqual(try saved.application.get(), 0)
         XCTAssertEqual(model.rules.first { $0.id == saved.id }?.pattern, booking.purpose)
 
         rule.id = saved.id
         rule.field = .purpose
-        let edit = try await model.saveRule(rule)
+        let edit = try await model.saveRule(rule, onlyUncategorized: false)
         let updated = try XCTUnwrap(edit)
         XCTAssertEqual(updated.id, saved.id)
         XCTAssertEqual(try updated.application.get(), 1)
         model.reloadRules()
         XCTAssertEqual(model.rules.first { $0.id == saved.id }?.field, .purpose)
         XCTAssertEqual(model.bookings.first { $0.id == booking.id }?.categoryId, rule.categoryId)
+    }
+
+    func testSaveScopeProtectsExistingCategoriesUntilAllBookingsIsSelected() async throws {
+        let booking = try XCTUnwrap(model.bookings.first { $0.purpose == "Konzertticket" })
+        let oldCategory = try XCTUnwrap(model.categories.first?.id)
+        let newCategory = try XCTUnwrap(model.categories.first { $0.id != oldCategory }?.id)
+        model.setCategory(oldCategory, for: booking)
+        var rule = model.newRuleDraft(from: booking)
+        rule.field = .purpose
+        rule.pattern = booking.purpose
+        rule.categoryId = newCategory
+
+        let restricted = try await model.saveRule(rule, onlyUncategorized: true)
+        rule.id = try XCTUnwrap(restricted).id
+        XCTAssertEqual(model.bookings.first { $0.id == booking.id }?.categoryId, oldCategory)
+        XCTAssertEqual(model.bookings.first { $0.id == booking.id }?.categorySource, .manual)
+
+        let unrestricted = try await model.saveRule(rule, onlyUncategorized: false)
+        XCTAssertEqual(unrestricted?.id, rule.id)
+        XCTAssertEqual(model.bookings.first { $0.id == booking.id }?.categoryId, newCategory)
+        XCTAssertEqual(model.bookings.first { $0.id == booking.id }?.categorySource, .rule)
+
+        rule.categoryId = oldCategory
+        let restrictedEdit = try await model.saveRule(rule, onlyUncategorized: true)
+        XCTAssertEqual(restrictedEdit?.id, rule.id)
+        XCTAssertEqual(model.bookings.first { $0.id == booking.id }?.categoryId, newCategory)
+
+        model.setCategory(nil, for: booking)
+        let restrictedAfterClearing = try await model.saveRule(rule, onlyUncategorized: true)
+        XCTAssertEqual(restrictedAfterClearing?.id, rule.id)
+        XCTAssertEqual(model.bookings.first { $0.id == booking.id }?.categoryId, oldCategory)
     }
 
     func testRuleListCountsTheMatchingBookingsWithTheRuleTags() async throws {
@@ -96,7 +127,7 @@ final class RuleTagsTests: XCTestCase {
         rule.categoryId = 0
         rule.tagIds = []
         do {
-            _ = try await model.saveRule(rule)
+            _ = try await model.saveRule(rule, onlyUncategorized: false)
             XCTFail("Expected saving a rule without a category or tags to fail")
         } catch let error as CoreError {
             guard case .InvalidInput = error else { throw error }

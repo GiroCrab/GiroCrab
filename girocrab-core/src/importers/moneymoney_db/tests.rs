@@ -99,6 +99,11 @@ pub(crate) fn fake_db() -> String {
     fake_db_with(false, "")
 }
 
+/// An account under the Volksbank login, which has none in `DATA`: the import
+/// sets up a login only for a bank with an imported account (#1437).
+const VOLKSBANK_ACCOUNT: &str = "INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred) VALUES
+  (5, 2, '4712', '52090000', 0, '', 'EUR', 'Volksbank-Konto', 'Max Mustermann', 0, 0, 5, 0, 1, 'GEHEIM');";
+
 fn vault() -> Arc<Vault> {
     Vault::open(
         temp("vault.db").to_string_lossy().to_string(),
@@ -175,6 +180,14 @@ fn account_by_name(v: &Vault, name: &str) -> crate::models::Account {
         .unwrap()
         .into_iter()
         .find(|a| a.name == name)
+        .unwrap()
+}
+
+fn account_by_id(v: &Vault, id: i64) -> crate::models::Account {
+    v.list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.id == id)
         .unwrap()
 }
 
@@ -493,7 +506,7 @@ fn import_categories_splits_pending_notes_and_balance() {
 #[test]
 fn reimport_is_idempotent() {
     let v = vault();
-    let path = fake_db();
+    let path = fake_db_with(false, VOLKSBANK_ACCOUNT);
     let p = v
         .preview_moneymoney_database(path.clone(), PW.into(), None)
         .unwrap();
@@ -530,7 +543,7 @@ fn reimport_is_idempotent() {
         .import_moneymoney_database(path, PW.into(), options_from(&p, true))
         .unwrap();
     for r in [&second, &third] {
-        assert_eq!((r.accounts_created, r.accounts_merged), (0, 4));
+        assert_eq!((r.accounts_created, r.accounts_merged), (0, 5));
         assert_eq!(
             (r.bookings_new, r.bookings_duplicates),
             (0, first.bookings_new)
@@ -898,7 +911,9 @@ fn iban_match_merges_into_existing_synced_account() {
         (r.bookings_new, r.bookings_duplicates, r.bookings_enriched),
         (3, 1, 1)
     );
-    assert_eq!((r.connections_created, r.connections_existing), (1, 1));
+    // the Girokonto went into the synced account, which has its login: the
+    // import links nothing to a comdirect login, so it sets none up (#1437)
+    assert_eq!((r.connections_created, r.connections_existing), (0, 0));
     let acc = v
         .list_accounts()
         .unwrap()
@@ -1220,7 +1235,9 @@ fn fints_server_url_is_imported_from_moneymoney() {
     const MM_URL: &str = "https://banking-by2.s-fints-pt-by.de/fints30";
     let extra = format!(
         "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, server, systemid, local_storage) \
-         VALUES (4, 'DE', '71150000', 'max.m', 'max.m', 'GEHEIM-4', 'Sparkasse Rosenheim', '{MM_URL}', 'SYS', 'LS');"
+         VALUES (4, 'DE', '71150000', 'max.m', 'max.m', 'GEHEIM-4', 'Sparkasse Rosenheim', '{MM_URL}', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred) \
+         VALUES (5, 4, '4713', '71150000', 0, '', 'EUR', 'Sparkassen-Konto', 'Max Mustermann', 0, 0, 5, 0, 1, 'GEHEIM');"
     );
     let path = fake_db_with(false, &extra);
     let v = vault();
@@ -1263,7 +1280,7 @@ fn fints_server_url_is_rejected_when_not_https() {
 #[test]
 fn connections_for_supported_banks_only_and_never_a_pin() {
     let v = vault();
-    let path = fake_db();
+    let path = fake_db_with(false, VOLKSBANK_ACCOUNT);
     let p = v
         .preview_moneymoney_database(path.clone(), PW.into(), None)
         .unwrap();
@@ -1300,6 +1317,315 @@ fn connections_for_supported_banks_only_and_never_a_pin() {
         )
         .unwrap();
     assert_eq!(n, 0);
+}
+
+#[test]
+fn preview_names_the_accounts_the_import_owns() {
+    // #1437: only an account imported into one of these (or a new one) links its login,
+    // so the assistant plans the logins with them; a bank-synced account is not one
+    let v = vault();
+    let synced = {
+        let db = v.db().unwrap();
+        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name, iban, currency, kind, balance_cents)
+             VALUES (?1, 'abc-123', 'Mein Giro', 'DE89370400440532013000', 'EUR', 'checking', 0)",
+            [gid],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert!(p.owned_account_ids.is_empty());
+    v.import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false))
+        .unwrap();
+    let p = v
+        .preview_moneymoney_database(path, PW.into(), None)
+        .unwrap();
+    let giro = p.accounts.iter().find(|a| a.name == "Girokonto").unwrap();
+    assert_eq!(giro.existing_account_id, Some(synced));
+    assert!(!p.owned_account_ids.contains(&synced));
+    // matched by IBAN only: "new account" would really be a new one
+    assert_eq!(giro.reused_account_id, None);
+    // imported before: "new account" reuses it, and it is the import's own
+    let visa = account_by_name(&v, "Visa-Karte").id;
+    let card = p.accounts.iter().find(|a| a.name == "Visa-Karte").unwrap();
+    assert_eq!(card.reused_account_id, Some(visa));
+    assert!(p.owned_account_ids.contains(&visa));
+}
+
+#[test]
+fn no_login_for_a_bank_whose_accounts_are_all_closed() {
+    // #1437: the Volksbank account is closed in MoneyMoney; comdirect has open ones
+    let v = vault();
+    let path = fake_db_with(
+        false,
+        &format!("{VOLKSBANK_ACCOUNT}\nUPDATE accounts SET refresh = 19 WHERE rowid IN (2, 5);"),
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let closed = |id: i64| p.accounts.iter().find(|a| a.mm_id == id).unwrap().closed;
+    assert!(closed(2) && closed(5) && !closed(1));
+    let r = import_with(&v, &path, |o| o.create_connections = true);
+    assert_eq!(r.connections_created, 1);
+    let account = account_by_name(&v, "Volksbank-Konto");
+    assert!(account.archived_unix.is_some());
+    assert_eq!(account.connection_id, None);
+    // chosen in the UI anyway (e.g. for statements): set up
+    let option = p
+        .banks
+        .iter()
+        .find(|b| b.mm_id == 2)
+        .unwrap()
+        .connection_options[0]
+        .clone();
+    let r = import_with(&v, &path, |o| {
+        o.create_connections = true;
+        o.bank_choices = vec![MoneyMoneyDbBankChoice {
+            mm_bank_id: 2,
+            connection: Some(option),
+        }];
+    });
+    assert_eq!(r.connections_created, 1);
+}
+
+#[test]
+fn no_login_for_a_bank_without_imported_accounts() {
+    // #1437: the Volksbank account is left out
+    let v = vault();
+    let r = import_with(&v, &fake_db_with(false, VOLKSBANK_ACCOUNT), |o| {
+        o.create_connections = true;
+        o.accounts.retain(|c| c.mm_id != 5);
+    });
+    assert_eq!(r.connections_created, 1);
+    assert!(
+        v.list_bank_connections()
+            .unwrap()
+            .iter()
+            .all(|c| c.connector != ConnectorKind::VolksbankKasselGoettingen)
+    );
+}
+
+#[test]
+fn no_login_when_only_closed_accounts_of_a_bank_are_imported() {
+    // #1437: comdirect's open accounts are left out, only its closed card comes
+    let v = vault();
+    let r = import_with(&v, &fake_db_with(false, CARD_CLOSED), |o| {
+        o.create_connections = true;
+        o.accounts.retain(|c| c.mm_id == 2);
+    });
+    assert_eq!(r.connections_created, 0);
+    assert_eq!(account_by_name(&v, "Visa-Karte").connection_id, None);
+}
+
+#[test]
+fn an_account_two_logins_went_into_links_only_the_first() {
+    // the Girokonto (comdirect) and an account of another login both go into one account of an
+    // earlier import: the first one links it, the other login gets no connection that stays empty
+    let v = vault();
+    let shared = {
+        let db = v.db().unwrap();
+        let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+        db.execute(
+            "INSERT INTO accounts(group_id, external_ref, name, currency, kind, balance_cents)
+             VALUES (?1, 'moneymoney-db:999:ffff', 'Gemeinsam', 'EUR', 'checking', 0)",
+            [gid],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let path = fake_db_with(
+        false,
+        "INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (5, 2, '7777', '52090000', 0, '', 'EUR', 'Volksbank Giro', 'Max Mustermann', 0, 0, 5, 0, 1, 'GEHEIM');",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert!(
+        p.banks
+            .iter()
+            .any(|b| b.mm_id == 2 && !b.connection_options.is_empty())
+    );
+    let mut o = options_from(&p, true);
+    for c in o.accounts.iter_mut() {
+        c.import = c.mm_id == 1 || c.mm_id == 5;
+        if c.import {
+            c.target_account_id = Some(shared);
+        }
+    }
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert_eq!(r.connections_created, 1);
+    let connections = v.list_bank_connections().unwrap();
+    assert_eq!(connections.len(), 1);
+    // the Girokonto's comdirect login, not the Volksbank one
+    assert_eq!(connections[0].login_name, "1234567");
+    assert_eq!(
+        v.list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == shared)
+            .unwrap()
+            .connection_id,
+        Some(connections[0].id)
+    );
+}
+
+/// An account of an earlier import, not under any login (`connected`: under a new one).
+fn earlier_import(v: &Vault, connected: bool) -> i64 {
+    let db = v.db().unwrap();
+    let gid = Vault::ensure_group(&db, "Giro & Tagesgeld", "building.columns", 1).unwrap();
+    let login = connected.then(|| {
+        db.execute(
+            "INSERT INTO bank_connections(connector, display_name, login_name) VALUES ('fints', 'Alte Bank', 'alt')",
+            [],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    });
+    db.execute(
+        "INSERT INTO accounts(connection_id, group_id, external_ref, name, currency, kind, balance_cents)
+         VALUES (?1, ?2, 'moneymoney-db:999:ffff', 'Gemeinsam', 'EUR', 'checking', 0)",
+        params![login, gid],
+    )
+    .unwrap();
+    db.last_insert_rowid()
+}
+
+#[test]
+fn an_open_source_keeps_its_login_next_to_a_closed_one_into_the_same_account() {
+    // the closed Girokonto and the open Visa-Karte of the comdirect login both go into one
+    // account: the login is not all closed, so it gets its connection
+    let v = vault();
+    let shared = earlier_import(&v, false);
+    import_with(
+        &v,
+        &fake_db_with(false, "UPDATE accounts SET refresh = 16 WHERE rowid = 1;"),
+        |o| {
+            o.create_connections = true;
+            for c in o.accounts.iter_mut() {
+                c.import = c.mm_id == 1 || c.mm_id == 2;
+                c.target_account_id = Some(shared);
+            }
+        },
+    );
+    let connections = v.list_bank_connections().unwrap();
+    assert_eq!(connections.len(), 1);
+    assert_eq!(
+        account_by_id(&v, shared).connection_id,
+        Some(connections[0].id)
+    );
+}
+
+#[test]
+fn bookings_merged_into_an_account_under_another_login_leave_it_there() {
+    // the Volksbank account's bookings go into an account of an earlier import that is under
+    // another login: it stays there (a Volksbank fetch must not take it over), and the
+    // Volksbank login gets no connection that stays empty
+    let v = vault();
+    let shared = earlier_import(&v, true);
+    let login = account_by_id(&v, shared).connection_id;
+    let path = fake_db_with(false, VOLKSBANK_ACCOUNT);
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert_eq!(p.connected_account_ids, vec![shared]);
+    let mut o = options_from(&p, true);
+    for c in o.accounts.iter_mut() {
+        c.import = c.mm_id == 5;
+        c.target_account_id = Some(shared);
+    }
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert_eq!(r.connections_created, 0);
+    assert_eq!(v.list_bank_connections().unwrap().len(), 1);
+    assert_eq!(account_by_id(&v, shared).connection_id, login);
+}
+
+#[test]
+fn an_open_source_of_the_same_login_counts_for_an_account_under_another_login() {
+    // the Girokonto, now under another login, comes back with its own MoneyMoney account
+    // (closed there) and the open Visa-Karte of the same comdirect login: only its own
+    // source moves it, but the Visa-Karte counts too, so the login is not all closed and
+    // the account follows the direct default
+    let v = vault();
+    import_with(&v, &fake_db(), |_| {});
+    let giro = account_by_name(&v, "Girokonto").id;
+    let other = {
+        let db = v.db().unwrap();
+        db.execute(
+            "INSERT INTO bank_connections(connector, display_name, login_name) VALUES ('fints', 'Andere', 'anders')",
+            [],
+        )
+        .unwrap();
+        let id = db.last_insert_rowid();
+        db.execute(
+            "UPDATE accounts SET connection_id = ?1 WHERE id = ?2",
+            params![id, giro],
+        )
+        .unwrap();
+        id
+    };
+    import_with(
+        &v,
+        &fake_db_with(false, "UPDATE accounts SET refresh = 19 WHERE rowid = 1;"),
+        |o| {
+            o.create_connections = true;
+            o.accounts.retain(|c| c.mm_id == 1 || c.mm_id == 2);
+            for c in o.accounts.iter_mut() {
+                c.target_account_id = Some(giro);
+            }
+        },
+    );
+    let now = account_by_id(&v, giro).connection_id;
+    assert_ne!(now, Some(other));
+    let login = v
+        .list_bank_connections()
+        .unwrap()
+        .into_iter()
+        .find(|c| Some(c.id) == now)
+        .unwrap();
+    assert_eq!(login.login_name, "1234567");
+}
+
+#[test]
+fn reimport_moves_accounts_to_the_connection_chosen_now() {
+    // imported with the bank's own connection, imported again with Enable Banking before
+    // the first fetch: the accounts follow, the new connection is not left empty
+    let v = vault();
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    v.import_moneymoney_database(path.clone(), PW.into(), options_from(&p, true))
+        .unwrap();
+    let direct = account_by_name(&v, "Girokonto").connection_id.unwrap();
+    let c24 = psd2_catalog()
+        .into_iter()
+        .find(|b| b.aspsp == "C24")
+        .unwrap();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, true);
+    o.bank_choices = vec![MoneyMoneyDbBankChoice {
+        mm_bank_id: 1,
+        connection: Some(MoneyMoneyDbConnectionOption {
+            via: MoneyMoneyDbConnectionVia::EnableBanking,
+            connector: ConnectorKind::EnableBanking,
+            key: format!("enablebanking:{}:{}", c24.country, c24.aspsp),
+            psd2_bank: Some(c24),
+        }),
+    }];
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert_eq!(r.psd2_connections.len(), 1);
+    let eb = r.psd2_connections[0].connection_id;
+    assert_ne!(eb, direct);
+    assert!(!r.psd2_connections[0].accounts.is_empty());
+    assert_eq!(account_by_name(&v, "Girokonto").connection_id, Some(eb));
 }
 
 /// Replaces the secret columns of `banks`, `accounts` and `pins.pin` by views
@@ -3693,6 +4019,9 @@ fn import_goes_to_the_bank_account_a_twin_was_folded_into() {
         .preview_moneymoney_database(path, String::new(), None)
         .unwrap();
     assert_eq!(p.accounts[0].existing_account_id, Some(ids[0]));
+    // "new account" goes there too: a bank-synced account, so it links no login (#1437)
+    assert_eq!(p.accounts[0].reused_account_id, Some(ids[0]));
+    assert!(!p.owned_account_ids.contains(&ids[0]));
 }
 
 // ------------------------------------------------------- transfer templates (#579)

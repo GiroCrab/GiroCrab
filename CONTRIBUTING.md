@@ -129,6 +129,8 @@ Erstelle einen neuen Branch, committe die Änderungen mit den AI-Attribution-Tra
 
 New issue authors get this hint once as a comment (`.github/workflows/issue-ai-invite.yml`).
 
+**Kein KI-Abo nötig / No AI subscription required:** Die automatischen Mitbau-Links setzen ein Claude-Abo (Pro/Max) oder API-Zugang für Claude Code voraus (in der kostenlosen Claude-Desktop-App ist der lokale Projektzugriff deaktiviert). Du kannst aber jederzeit auch ohne KI-Abo über normale GitHub-Issues, Screenshots/Skizzen oder klassische Fork-PRs beitragen.
+
 ### 🌟 Community Success Story: Vom anonymisierten Browser-Mitschnitt (HAR) zum eigenen Bank-Connector (#42)
 
 `@zcarsten` hat ohne Rust-Vorkenntnisse einen Connector für seine Bank gebaut – mit einem Browser-Mitschnitt und einer KI:
@@ -163,6 +165,7 @@ To avoid two people building the same thing (it has happened, e.g. account group
    and merged on its own.
 4. **Link your PR** with `Closes #123` (or `Refs #123` if it is only part of it).
 5. **Let go if plans change.** If you can't continue, comment `/unassign` (or tell us on the issue) so it can be reassigned.
+6. **Close resolved issues.** If you opened an issue and your question is answered or the problem is fixed, please close it yourself via **Close issue** with a brief closing comment. For issues opened by someone else, leave a short note (e.g. *"Solved via #123, can be closed"*) so the author or a maintainer can close it.
 
 ## Pull requests
 

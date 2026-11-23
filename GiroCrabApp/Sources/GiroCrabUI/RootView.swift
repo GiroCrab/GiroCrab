@@ -546,7 +546,7 @@ struct MainSplitView: View {
     private var inspectorSplitter: some View {
         ZStack {
             Color.clear.frame(width: 10)
-            Color(nsColor: .separatorColor).frame(width: 1).frame(maxHeight: .infinity)
+            Theme.systemSeparator.frame(width: 1).frame(maxHeight: .infinity)
         }
         .contentShape(Rectangle())
         .frame(width: 10)
@@ -721,6 +721,7 @@ struct MainSplitView: View {
                 else if c.connector == .fnz { FnzWebSheet(connection: c) }
                 else if c.connector == .equatePlus { EquatePlusWebSheet(connection: c) }
                 else if c.connector == .quirion { QuirionWebSheet(connection: c) }
+                else if c.connector == .sharinbox { SharinboxWebSheet(connection: c) }
                 else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
             }
@@ -785,6 +786,19 @@ struct MainSplitView: View {
                        isPresented: Binding(get: { model.enableBankingAdoptNotice != nil },
                                             set: { if !$0 { model.enableBankingAdoptNotice = nil } }),
                        presenting: model.enableBankingAdoptNotice) { _ in
+                    Button("OK") {}
+                } message: { notice in
+                    Text(notice.message)
+                }
+                .dialogSuppressionToggle(isSuppressed: $enableBankingNoticeSuppressed)
+        }
+        .background {
+            Color.clear
+                .alert("Enable-Banking-Anwendung synchronisiert",
+                       // after the default application's notice, never on top of it
+                       isPresented: Binding(get: { model.enableBankingLoginNotice != nil && model.enableBankingAdoptNotice == nil },
+                                            set: { if !$0 { model.enableBankingLoginNotice = nil } }),
+                       presenting: model.enableBankingLoginNotice) { _ in
                     Button("OK") {}
                 } message: { notice in
                     Text(notice.message)

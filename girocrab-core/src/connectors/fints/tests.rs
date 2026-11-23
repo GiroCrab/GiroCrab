@@ -658,6 +658,7 @@ fn sepa_acc(iban: &str, number: &str) -> SepaAccount {
         account_number: number.into(),
         sub_account: String::new(),
         blz: "20041155".into(),
+        full_kti: false,
     }
 }
 
@@ -726,6 +727,16 @@ fn own_iban_wins_over_account_number_match() {
     assert!(out[1].1.is_none());
 }
 
+/// FinTS Kontoart 70-79 is a Bausparvertrag (#1630), not a savings account.
+#[test]
+fn kind_codes_tell_building_savings_from_savings() {
+    assert_eq!(kind_from_code(10), AccountKind::Savings);
+    assert_eq!(kind_from_code(29), AccountKind::Savings);
+    assert_eq!(kind_from_code(70), AccountKind::BuildingSavings);
+    assert_eq!(kind_from_code(79), AccountKind::BuildingSavings);
+    assert_eq!(kind_from_code(80), AccountKind::Checking);
+}
+
 #[test]
 fn parses_upd_with_allowed_transactions_and_loans() {
     let r = reply(b"HIUPD:5:6:3+0012345601::280:52090000+DE44520900000012345601+KUNDE+1+EUR+Muster+Alex+Girokonto++HKSAL:1+HKCAZ:1+HKKAZ:1'HIUPD:6:6:3+0098765400::280:52090000++KUNDE+40+EUR+Muster+Alex+Baudarlehen++HKSAL:1'");
@@ -744,6 +755,7 @@ fn parses_upd_with_allowed_transactions_and_loans() {
         account_number: "0098765400".into(),
         sub_account: String::new(),
         blz: "52090000".into(),
+        full_kti: false,
     });
     assert_eq!(kti, "::0098765400::280:52090000");
     // IBAN known: IBAN:BIC – except Consorsbank, which wants the full form.
@@ -753,6 +765,7 @@ fn parses_upd_with_allowed_transactions_and_loans() {
         account_number: "0123456789".into(),
         sub_account: String::new(),
         blz: blz.into(),
+        full_kti: false,
     };
     assert_eq!(FinTsConnector::kti(&acc("52090000")), "DE00:BICXDEXX");
     assert_eq!(
@@ -1376,6 +1389,7 @@ fn builds_hkcaz_with_escaped_camt_urn() {
         account_number: String::new(),
         sub_account: String::new(),
         blz: "52090000".into(),
+        full_kti: false,
     };
     let seg = c.hkcaz(
         &acc,
@@ -1401,6 +1415,7 @@ fn builds_hkwpd_for_depot_with_touchdown() {
         account_number: "1234567".into(),
         sub_account: String::new(),
         blz: "12030000".into(),
+        full_kti: false,
     };
     assert_eq!(
         FinTsConnector::hkwpd(6, &acc, None),
@@ -1428,6 +1443,7 @@ fn loan_sub_accounts_get_distinct_labels() {
         account_number: "0098765400".into(),
         sub_account: sub.into(),
         blz: "52090000".into(),
+        full_kti: false,
     };
     assert_ne!(account_label(&mk("01")), account_label(&mk("02")));
     assert_eq!(account_label(&mk("")), "0098765400");
@@ -1606,13 +1622,18 @@ fn own_account_transfer_from_savings_uses_hkcum() {
     assert!(!c.is_upd_internal_transfer(IBAN_A, IBAN_B));
 }
 
-#[tokio::test]
-async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
-    // #1083 (flatex): the camt request gets 0030, a TAN the running fetch cannot
-    // ask for. MT940 would only send the next TAN to the app; the other
-    // account's balance is stored and the failure reported with the sync.
-    const TAN: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:4+0030::Auftrag empfangen - TAN erforderlich.'HITAN:4:6:4+4++TASK1+TAN eingeben'";
-    let (url, seen) = mock_bank(vec![BALANCE, TAN]);
+/// The bank wants a TAN for the request it just got (0030, #1083).
+const TAN_DEMANDED: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:4+0030::Auftrag empfangen - TAN erforderlich.'HITAN:4:6:4+4++TASK1+TAN eingeben'";
+
+/// A login of two accounts, the second one's camt request answered with 0030 and
+/// a TAN task (#1083), fetched from `since`; with the segments each request held.
+async fn fetch_when_camt_wants_a_tan(
+    since: &str,
+) -> (
+    FetchResult,
+    std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+) {
+    let (url, seen) = mock_bank(vec![BALANCE, TAN_DEMANDED]);
     let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKCAZ": [1], "HKKAZ": [7]}, "tan_required": {"HKCAZ": true, "HKKAZ": true}, "camt_formats": ["urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"]});
     let mut c = two_step_connector(&url, state);
     c.upd = vec![
@@ -1625,16 +1646,34 @@ async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
             &["HKCAZ", "HKKAZ"],
         ),
     ];
-    let r = c.fetch(&test_ctx()).await.unwrap();
+    let ctx = ConnectContext {
+        since: since.into(),
+        ..test_ctx()
+    };
+    (c.fetch(&ctx).await.unwrap(), seen)
+}
+
+fn days_ago(n: i64) -> String {
+    crate::dates::iso(crate::dates::today() - crate::dates::days(n))
+}
+
+#[tokio::test]
+async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
+    // #1083 (flatex): the camt request gets 0030, a TAN the running fetch cannot
+    // ask for. MT940 would only send the next TAN to the app; the other
+    // account's balance is stored and the failure reported with the sync.
+    let (r, seen) = fetch_when_camt_wants_a_tan(&days_ago(30)).await;
     {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert!(seen[1].iter().any(|i| i == "HKCAZ"), "{seen:?}");
         assert!(!seen.iter().flatten().any(|i| i == "HKKAZ"), "{seen:?}");
     }
+    // within the 90 days banks serve without a TAN, a shorter period would not help (#1627)
     assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
     assert!(r.warnings[0].starts_with(IBAN_B), "{:?}", r.warnings);
     assert!(r.warnings[0].contains("HKCAZ"), "{:?}", r.warnings);
+    assert!(r.hints.is_empty(), "{:?}", r.hints);
     // B's balance was not read: the stored one stays; A's was
     assert_eq!(r.balances_unknown, vec![IBAN_B.to_string()]);
     let a = r
@@ -1643,6 +1682,69 @@ async fn bookings_that_need_a_tan_are_reported_and_not_requested_twice() {
         .find(|a| a.external_ref == IBAN_A)
         .unwrap();
     assert_eq!(a.balance_cents, 123_456);
+}
+
+#[tokio::test]
+async fn a_tan_for_a_long_period_is_reported_with_one_hint_for_the_sync() {
+    // #1627 (comdirect): two years back on a first fetch; every account that
+    // fails says why, the way out is said once
+    let (r, _) = fetch_when_camt_wants_a_tan(&days_ago(730)).await;
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+    assert!(r.warnings[0].starts_with(IBAN_B), "{:?}", r.warnings);
+    assert_eq!(r.hints, vec![dialog::period_hint().to_string()]);
+}
+
+#[tokio::test]
+async fn a_sync_that_read_nothing_puts_the_period_hint_into_its_error() {
+    // #1627: no account worked, so there is no sync result to carry the hint
+    let (url, _) = mock_bank(vec![TAN_DEMANDED]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKCAZ": [1]}, "tan_required": {"HKCAZ": true}, "camt_formats": ["urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"]});
+    let mut c = two_step_connector(&url, state);
+    c.upd = vec![upd_acc(
+        "0000202051",
+        "",
+        IBAN_B,
+        "Verrechnungskonto",
+        &["HKCAZ"],
+    )];
+    let ctx = ConnectContext {
+        since: days_ago(730),
+        ..test_ctx()
+    };
+    let e = c.fetch(&ctx).await.unwrap_err().to_string();
+    assert!(e.contains("HKCAZ"), "{e}");
+    assert!(e.contains(dialog::period_hint()), "{e}");
+}
+
+#[test]
+fn only_a_tan_demand_for_a_period_beyond_90_days_calls_for_the_period_hint() {
+    let bank = |code: &str| CoreError::Bank {
+        code: code.into(),
+        message: "x".into(),
+    };
+    let ctx = |days: i64| ConnectContext {
+        since: days_ago(days),
+        ..test_ctx()
+    };
+    assert!(dialog::tan_beyond_free_period(&ctx(91), &bank("0030")));
+    // what banks serve without a TAN: a shorter period would not help
+    assert!(!dialog::tan_beyond_free_period(&ctx(90), &bank("0030")));
+    // the request is sent with the login's start, not with one account's
+    let mut mixed = ctx(30);
+    mixed.since_by_account.insert(IBAN_A.into(), days_ago(730));
+    assert!(!dialog::tan_beyond_free_period(&mixed, &bank("0030")));
+    // other answers are no TAN demand for a period
+    assert!(!dialog::tan_beyond_free_period(&ctx(730), &bank("9050")));
+    assert!(!dialog::tan_beyond_free_period(&ctx(730), &bank("3956")));
+}
+
+#[test]
+fn the_period_hint_survives_the_log_scrubber_in_every_language() {
+    // "TAN:" would be taken for a TAN value and blanked in the log row
+    for lang in [crate::i18n::Lang::De, crate::i18n::Lang::En] {
+        let hint = crate::i18n::with_language(lang, dialog::period_hint);
+        assert_eq!(crate::sync_log::scrub(hint, ""), hint, "{lang:?}");
+    }
 }
 
 #[test]

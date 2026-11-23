@@ -40,7 +40,8 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `GiroCrabApp/Sources/GiroCrabUI/BookingListView.swift` – booking list
 - `GiroCrabApp/Sources/GiroCrabUI/ConnectionsUI.swift` – bank connections UI
 
-Other UI files live in the same `GiroCrabUI/` dir. A view with its own design page (`docs/*_UI.md`) names it in a comment on its type; a new view gets one. Ignore `cashcrab-core/` and `CashCrabApp/` (legacy).
+Other UI files live in the same `GiroCrabUI/` dir. A view with its own design page (`docs/*_UI.md`) names it in a comment on its type; a new view gets one.
+Design context for reviews: `PRODUCT.md` (product, users, platforms), `DESIGN.md` (tokens and rules as they are today); UI audits follow `docs/ui-audit.md`, reports in `docs/ui-audits/`. Ignore `cashcrab-core/` and `CashCrabApp/` (legacy).
 
 ## Builds
 - **Swift-only change** (only `GiroCrabApp/**/*.swift`): NEVER rebuild `girocrab-core` or run `./build-xcframework.sh`. Run only `swift build -q` (in `GiroCrabApp/`) or `xcodebuild -quiet`.

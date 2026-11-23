@@ -38,8 +38,9 @@ den eigenen Zugangsdaten an. Unten stehen nur Pfade, Feldnamen und Regeln, keine
 * **Nur Verträge der Alte Leipziger:** Konten, die in fin4u über Dritte verknüpft sind
   (andere Banken), werden übersprungen; sie kämen sonst doppelt neben GiroCrabs eigenen
   Verbindungen vor.
-* **Kontoarten:** Bausparvertrag, Tagesgeld, Spar- und Festgeld → Sparkonto; Kreditkonto →
-  Darlehen; Kartenkonten → Kreditkarte; alles andere → Girokonto.
+* **Kontoarten:** Bausparvertrag → Bausparen (#1630); Tagesgeld und Sparkonto → Sparkonto;
+  Festgeld → Festgeld; Kreditkonto → Darlehen; Kartenkonten → Kreditkarte; alles andere →
+  Girokonto.
 * **Buchungs-IDs:** fin4us eigene Buchungs-ID wechselt, sobald fin4u das Konto neu lädt.
   Buchungen bekommen deshalb Inhalts-IDs aus den Rohfeldern (Datum, Betrag, Verwendungszweck,
   Gegenpartei); zwei gleiche Buchungen am selben Tag bleiben zwei.

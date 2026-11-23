@@ -20,7 +20,7 @@ Rectangle {
         { title: qsTr("Finanzen"), items: [
             i("banknote", qsTr("Geld")), i("creditcard", qsTr("Kreditkarte")), i("eurosign.circle", qsTr("Bargeld")),
             i("dollarsign.circle", qsTr("Dollar")), i("building.columns", qsTr("Bank")), i("envelope.circle", qsTr("Bezahldienst")), i("wallet.bifold", qsTr("Geldbörse")),
-            i("chart.pie", qsTr("Vermögen")), i("chart.line.uptrend.xyaxis", qsTr("Depot")), i("percent", qsTr("Zinsen")),
+            i("chart.pie", qsTr("Vermögen")), i("chart.line.uptrend.xyaxis", qsTr("Depot")), i("percent", qsTr("Zinsen")), i("list.clipboard", qsTr("Steuern")), i("chair.lounge", qsTr("Rente")),
             i("bitcoinsign.circle", qsTr("Krypto")), i("giftcard", qsTr("Gutschein")), i("arrow.left.arrow.right", qsTr("Umbuchung")),
             i("lock.shield", qsTr("Sicherheit")), i("doc.text", qsTr("Vertrag")), i("building.2", qsTr("Firma")) ] },
         { title: qsTr("Haushalt"), items: [
@@ -28,28 +28,31 @@ Rectangle {
             i("fork.knife", qsTr("Essen")), i("cup.and.saucer", qsTr("Café")), i("lightbulb", qsTr("Strom")), i("flame", qsTr("Heizung")),
             i("drop", qsTr("Wasser")), i("wifi", qsTr("Internet")), i("phone", qsTr("Telefon")), i("tv", qsTr("Fernsehen")),
             i("sofa", qsTr("Möbel")), i("washer", qsTr("Waschmaschine")), i("wrench.and.screwdriver", qsTr("Reparatur")),
-            i("leaf", qsTr("Garten")), i("trash", qsTr("Müll")) ] },
+            i("leaf", qsTr("Garten")), i("trash", qsTr("Müll")), i("divide.circle", qsTr("Umlagen")) ] },
         { title: qsTr("Mobilität"), items: [
             i("car", qsTr("Auto")), i("fuelpump", qsTr("Tanken")), i("bolt.car", qsTr("Elektroauto")), i("bus", qsTr("Bus")),
             i("tram", qsTr("Straßenbahn")), i("train.side.front.car", qsTr("Zug")), i("bicycle", qsTr("Fahrrad")),
-            i("scooter", qsTr("Roller")), i("airplane", qsTr("Reisen")), i("ferry", qsTr("Fähre")),
+            i("scooter", qsTr("Roller")), i("motorcycle", qsTr("Motorrad")), i("airplane", qsTr("Reisen")), i("ferry", qsTr("Fähre")),
             i("parkingsign.circle", qsTr("Parken")), i("figure.walk", qsTr("Zu Fuß")) ] },
         { title: qsTr("Freizeit"), items: [
             i("gamecontroller", qsTr("Spiele")), i("film", qsTr("Kino")), i("music.note", qsTr("Musik")), i("book", qsTr("Bücher")),
             i("theatermasks", qsTr("Theater")), i("sportscourt", qsTr("Sport")), i("figure.run", qsTr("Laufen")),
             i("dumbbell", qsTr("Fitness")), i("tent", qsTr("Camping")), i("beach.umbrella", qsTr("Urlaub")),
             i("camera", qsTr("Fotografie")), i("paintpalette", qsTr("Kunst")), i("ticket", qsTr("Tickets")),
-            i("party.popper", qsTr("Feier")) ] },
+            i("party.popper", qsTr("Feier")), i("pianokeys", qsTr("Musikunterricht")), i("guitars", qsTr("Instrument")),
+            i("play.tv", qsTr("Streaming")) ] },
         { title: qsTr("Familie"), items: [
             i("person", qsTr("Person")), i("person.2", qsTr("Paar")), i("person.3", qsTr("Gruppe")),
             i("figure.and.child.holdinghands", qsTr("Familie")), i("figure.2.and.child.holdinghands", qsTr("Kinder")),
             i("stroller", qsTr("Baby")), i("heart", qsTr("Herz")), i("gift", qsTr("Geschenk")), i("birthday.cake", qsTr("Geburtstag")),
             i("teddybear", qsTr("Spielzeug")), i("graduationcap", qsTr("Ausbildung")), i("backpack", qsTr("Schule")),
-            i("pawprint", qsTr("Haustier")) ] },
+            i("pawprint", qsTr("Haustier")), i("dog", qsTr("Hund")), i("cat", qsTr("Katze")), i("fish", qsTr("Aquarium")) ] },
         { title: qsTr("Beruf"), items: [
             i("briefcase", qsTr("Beruf")), i("laptopcomputer", qsTr("Computer")), i("printer", qsTr("Drucker")),
             i("folder", qsTr("Ordner")), i("tray.full", qsTr("Ablage")), i("envelope", qsTr("Post")), i("calendar", qsTr("Kalender")),
-            i("hammer", qsTr("Werkzeug")), i("signature", qsTr("Unterschrift")), i("chart.bar", qsTr("Statistik")) ] },
+            i("hammer", qsTr("Werkzeug")), i("signature", qsTr("Unterschrift")), i("chart.bar", qsTr("Statistik")),
+            i("chevron.left.forwardslash.chevron.right", qsTr("Software")), i("checkmark.seal", qsTr("Lizenz")),
+            i("shippingbox", qsTr("Versand")), i("suitcase.rolling", qsTr("Dienstreise")) ] },
         { title: qsTr("Gesundheit"), items: [
             i("cross.case", qsTr("Apotheke")), i("pills", qsTr("Medikamente")), i("stethoscope", qsTr("Arzt")),
             i("heart.text.square", qsTr("Gesundheit")), i("bandage", qsTr("Pflaster")), i("eyeglasses", qsTr("Brille")),
@@ -58,7 +61,7 @@ Rectangle {
         { title: qsTr("Sonstiges"), items: [
             i("tshirt", qsTr("Kleidung")), i("bag", qsTr("Einkaufstasche")), i("tag", qsTr("Etikett")), i("star", qsTr("Favorit")),
             i("flag", qsTr("Flagge")), i("globe", qsTr("Welt")), i("cloud", qsTr("Cloud")), i("sparkles", qsTr("Besonderes")),
-            i("hand.raised", qsTr("Spende")), i("ellipsis.circle", qsTr("Andere")), i("questionmark.circle", qsTr("Unbekannt")) ] }
+            i("hand.raised", qsTr("Spende")), i("heart.circle", qsTr("Spenden")), i("ellipsis.circle", qsTr("Andere")), i("questionmark.circle", qsTr("Unbekannt")) ] }
     ]
 
     /// Opens at the section of the current symbol (SymbolPicker.swift › onAppear).

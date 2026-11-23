@@ -46,6 +46,7 @@ extension SyncLogOutcome {
     var title: String {
         switch self {
         case .ok: String(localized: "Erfolgreich")
+        case .partial: String(localized: "Teilweise")
         case .error: String(localized: "Fehler")
         case .cancelled: String(localized: "Abgebrochen")
         }
@@ -55,6 +56,7 @@ extension SyncLogOutcome {
     var symbol: String {
         switch self {
         case .ok: "checkmark.circle.fill"
+        case .partial: "exclamationmark.circle.fill"
         case .error: "exclamationmark.triangle.fill"
         case .cancelled: "minus.circle.fill"
         }
@@ -63,6 +65,7 @@ extension SyncLogOutcome {
     var tint: Color {
         switch self {
         case .ok: .green
+        case .partial: .orange
         case .error: .red
         case .cancelled: .secondary
         }
@@ -149,8 +152,8 @@ struct SyncLogView: View {
                 .pickerStyle(.menu)
             }
             ToolbarItem {
-                Toggle(isOn: $onlyErrors) { Label("Nur Fehler", systemImage: "exclamationmark.triangle") }
-                    .help("Nur fehlgeschlagene Abrufe zeigen")
+                Toggle(isOn: $onlyErrors) { Label("Nur Fehler und Teilweise", systemImage: "exclamationmark.triangle") }
+                    .help("Nur fehlgeschlagene und unvollständige Abrufe zeigen")
             }
             ToolbarItem {
                 Button { startExport() } label: { Label("Exportieren …", systemImage: "square.and.arrow.up") }

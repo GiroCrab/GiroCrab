@@ -287,7 +287,7 @@ struct TagsCard: View {
             }, owner: booking.id)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .flatSection()
         .onAppear(perform: claimFocus)
         // Reused for the next selected booking (no `.id`: rebuilding the text field on every
         // selection was a large part of the inspector's update): leave the field, as a new card
