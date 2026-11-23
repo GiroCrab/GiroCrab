@@ -17,6 +17,26 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("split-booking editor focuses an enabled field", () => {
+    const text=readFileSync(new URL("../qml/ManualBookingSheet.qml",import.meta.url),"utf8");
+    const expression=text.match(/Qt.callLater\(\(\) => (.+)\)/)[1];
+    for(const hasSplits of [false,true]) {
+        let focus="";
+        const s={hasSplits,amountField:{forceActiveFocus(){focus="amount"}},counterpartyField:{forceActiveFocus(){focus="counterparty"}}};
+        vm.createContext(s);vm.runInContext(expression,s);
+        assert.equal(focus,hasSplits?"counterparty":"amount");
+    }
+});
+test("unknown booking currency never enters the EUR selection total", () => {
+    const text=readFileSync(new URL("../qml/SelectionSummaryBar.qml",import.meta.url),"utf8");
+    const s={shown:true,AppModel:{selectedBookings:[{account_id:1,currency:"",amount_cents:100},{account_id:2,currency:"EUR",amount_cents:200}],accountsByID:{}}};
+    vm.createContext(s);
+    const result=()=>JSON.parse(JSON.stringify(vm.runInContext(`(function(){${bodyAfter("readonly property var totals:",text)}})()`,s)));
+    assert.deepEqual(result(),[{currency:"EUR",cents:200}]);
+    s.AppModel.accountsByID[1]={currency:"USD"};
+    assert.deepEqual(result(),[{currency:"EUR",cents:200},{currency:"USD",cents:100}]);
+    s.AppModel.selectedBookings=[];assert.deepEqual(result(),[]);
+});
 test("opening balance cannot commit while a refund inverse is pending", () => {
     let commits=0, registrations=0;
     const s={refundEditing:true, accountsByID:{1:{opening_balance_cents:0,opening_balance_date:""}}, qsTr:s=>s,

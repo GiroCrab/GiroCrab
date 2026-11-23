@@ -50,7 +50,7 @@ Sheet {
             categoryId = b.category_id
             noteField.text = b.note
         }
-        Qt.callLater(() => amountField.forceActiveFocus())
+        Qt.callLater(() => hasSplits ? counterpartyField.forceActiveFocus() : amountField.forceActiveFocus())
     }
 
     function save() {
