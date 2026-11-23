@@ -804,6 +804,9 @@ pub(crate) fn store_fetch(
         // (same account, amount and recipient IBAN; a batch: amount only) or after 14 days.
         // Connectors that report their complete open-hold list (`hold_prefix`) manage
         // those holds below (#1111) so same-amount payments or >14d holds are not dropped early.
+        // FinTS holds also when this fetch's list is incomplete (a failed or cut camt
+        // request, #1043): only a complete list removes them.
+        let fints_hold_like = format!("{}%", super::fints::camt::HOLD_PREFIX);
         let managed_hold_like = data
             .hold_prefix
             .as_deref()
@@ -815,6 +818,7 @@ pub(crate) fn store_fetch(
               WHERE external_id LIKE 'pending-%' AND deleted_ms IS NULL
                 -- web-portal holds (#629) are settled or discarded explicitly
                 AND external_id NOT LIKE 'pending-hold-portal-%'
+                AND external_id NOT LIKE ?3
                 AND (?2 = '' OR external_id NOT LIKE ?2 ESCAPE '\\') AND (
                 imported_unix < strftime('%s','now') - 14*86400 OR EXISTS (
                     SELECT 1 FROM transactions r WHERE r.account_id = transactions.account_id
@@ -830,7 +834,7 @@ pub(crate) fn store_fetch(
                                AND (r.booking_text LIKE '%Sammel%' OR r.purpose LIKE '%Sammel%')
                                AND r.booking_date <= date(transactions.booking_date, '+7 days')))
                       AND r.booking_date >= transactions.booking_date))",
-            params![crate::dates::now_ms(), managed_hold_like],
+            params![crate::dates::now_ms(), managed_hold_like, fints_hold_like],
         )?;
         // Entries the connector recognised as no real movement (stored by an older version).
         for (account_ref, external_id) in &data.withdrawn {
