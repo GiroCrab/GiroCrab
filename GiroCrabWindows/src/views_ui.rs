@@ -295,6 +295,11 @@ pub fn sync_target(selected: Option<i64>) {
 /// A click on a sidebar row or on an account elsewhere.
 pub fn select_target(win: &MainWindow, vault: &Arc<Vault>, target: Target) {
     crate::refunds_ui::cancel_reveal();
+    with_state(|st| st.reveal_limit = 0);
+    select_reveal_target(win, vault, target);
+}
+
+pub fn select_reveal_target(win: &MainWindow, vault: &Arc<Vault>, target: Target) {
     with_state(|st| st.target = target);
     win.set_side_selected(target.key().into());
     win.set_selected(match target {

@@ -34,7 +34,7 @@ impl From<&RefundLink> for Pair {
 enum Edit {
     Link(Pair),
     Unlink(Pair),
-    Restore(Pair, i64),
+    Restore(Pair, String),
 }
 
 struct Part {
@@ -54,7 +54,7 @@ struct Loaded {
     candidates: Vec<RefundCandidate>,
 }
 
-type EditResult = Result<(bool, Option<(Pair, i64)>), String>;
+type EditResult = Result<(bool, Option<(Pair, String)>), String>;
 
 #[derive(Default)]
 struct Ui {
@@ -68,7 +68,7 @@ struct Ui {
     pending: bool,
     loaded: Option<Loaded>,
     actions: Vec<Option<Edit>>,
-    undo: Option<(Pair, i64)>,
+    undo: Option<(Pair, String)>,
     edit_error: String,
 }
 
@@ -81,9 +81,11 @@ impl Ui {
         self.loaded = None;
         self.actions.clear();
     }
-    fn edit_failed(&mut self, error: String) {
+    fn edit_failed(&mut self, error: String, restoring: bool) {
         self.invalidate();
-        self.undo = None;
+        if restoring {
+            self.undo = None;
+        }
         self.edit_error = error;
     }
 }
@@ -224,13 +226,38 @@ fn other(l: &RefundLink, id: i64) -> (i64, &str) {
 
 fn load(v: &Vault, id: i64, own: &str, query: &str) -> Result<Loaded, String> {
     // Presentation data only; financial totals are never derived from these rows.
-    let bookings = v
-        .list_transactions(BookingFilter {
-            limit: 0,
-            ..Default::default()
-        })
+    let links_all = v.refund_links(id).map_err(|e| e.to_string())?;
+    let ids: std::collections::HashSet<_> = std::iter::once(id)
+        .chain(
+            links_all
+                .iter()
+                .filter(|l| !l.inactive)
+                .flat_map(|l| [l.refund_id, l.original_id]),
+        )
+        .collect();
+    let dates = ids
+        .iter()
+        .map(|id| v.booking_date(*id))
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?
-        .transactions;
+        .into_iter()
+        .flatten()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut bookings = Vec::new();
+    for date in dates {
+        bookings.extend(
+            v.list_transactions(BookingFilter {
+                date_from: Some(date.clone()),
+                date_to: Some(date),
+                limit: 0,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())?
+            .transactions
+            .into_iter()
+            .filter(|b| ids.contains(&b.id)),
+        );
+    }
     let booking = bookings.iter().find(|b| b.id == id).ok_or_else(|| {
         text(
             "Die Buchung ist nicht mehr vorhanden.",
@@ -272,9 +299,7 @@ fn load(v: &Vault, id: i64, own: &str, query: &str) -> Result<Loaded, String> {
     let amount = selected.map_or(booking.amount_cents, |p| p.amount);
     let own = selected.map_or("", |p| p.uuid.as_str()).to_string();
     let from_refund = amount > 0;
-    let links = v
-        .refund_links(id)
-        .map_err(|e| e.to_string())?
+    let links = links_all
         .into_iter()
         .filter(|l| {
             !l.inactive
@@ -640,7 +665,7 @@ fn edit(v: &Vault, action: &Edit) -> EditResult {
                 .map_err(|e| e.to_string())
         }
         Edit::Restore(_, token) => v
-            .restore_refund(args.0, args.1, args.2, args.3, *token)
+            .restore_refund(args.0, args.1, args.2, args.3, token.clone())
             .map(|_| (true, None))
             .map_err(|e| e.to_string()),
     }
@@ -689,7 +714,7 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
                         refresh(&win, v);
                         return;
                     }
-                    with_ui(|u| u.edit_failed(e));
+                    with_ui(|u| u.edit_failed(e, matches!(action, Edit::Restore(..))));
                     refresh(&win, v);
                 }
             }
@@ -740,7 +765,11 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
                         win.set_range_index(0);
                         win.set_tag_index(0);
                         win.set_documents_only(false);
-                        crate::views_ui::select_target(&win, &v, crate::nav::Target::AllAccounts);
+                        crate::views_ui::select_reveal_target(
+                            &win,
+                            &v,
+                            crate::nav::Target::AllAccounts,
+                        );
                     }
                     Ok(None) => {}
                     Err(e) => win.set_sync_status(e.into()),
@@ -982,11 +1011,13 @@ mod tests {
                     original: 2,
                     original_part: String::new(),
                 },
-                10,
+                "unlink-operation".into(),
             )),
             ..Default::default()
         };
-        ui.edit_failed("stale token".into());
+        ui.edit_failed("unrelated failure".into(), false);
+        assert!(ui.undo.is_some());
+        ui.edit_failed("stale token".into(), true);
         ui.invalidate();
         assert_eq!(ui.edit_error, "stale token");
         assert!(ui.undo.is_none());
@@ -1001,6 +1032,45 @@ mod tests {
         assert_eq!(REVEAL_REQUEST.with(|r| r.get()), request);
         cancel_reveal();
         assert_ne!(REVEAL_REQUEST.with(|r| r.get()), request);
+    }
+
+    #[test]
+    fn list_reload_does_not_cancel_reveal_or_stale_analytics() {
+        let main = include_str!("main.rs");
+        let filter = main
+            .split("fn apply_filter(")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!filter.contains("cancel_reveal"));
+        let analytics = main
+            .split("fn render_analytics(")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!analytics.contains("st.generation"));
+        assert!(analytics.contains("st.analytics_generation != token"));
+        let views = include_str!("views_ui.rs");
+        let normal = views
+            .split("pub fn select_target(")
+            .nth(1)
+            .unwrap()
+            .split("pub fn select_reveal_target(")
+            .next()
+            .unwrap();
+        assert!(normal.contains("st.reveal_limit = 0"));
+        let reveal = views
+            .split("pub fn select_reveal_target(")
+            .nth(1)
+            .unwrap()
+            .split("\npub fn ")
+            .next()
+            .unwrap();
+        assert!(!reveal.contains("reveal_limit = 0"));
     }
 
     struct Temp(PathBuf);
@@ -1321,7 +1391,7 @@ mod tests {
             load(&v, f.refund, &f.part, "").unwrap().links[0].allocated_cents,
             4000
         );
-        edit(&v, &Edit::Restore(p.clone(), token)).unwrap();
+        edit(&v, &Edit::Restore(p.clone(), token.clone())).unwrap();
         let d = load(&v, f.refund, &f.part, "").unwrap();
         assert_eq!(d.links[0].original_id, first);
         assert_eq!(d.linked_bookings[&first].counterparty, "Versandhaus");

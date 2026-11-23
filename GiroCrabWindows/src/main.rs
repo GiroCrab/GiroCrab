@@ -422,12 +422,11 @@ fn render_analytics(win: &MainWindow) {
                 v,
                 nav::booking_filter(st.target),
                 st.filter.clone(),
-                st.generation,
                 st.analytics_generation,
             )
         })
     });
-    let Some((vault, filter, ui, generation, token)) = request else {
+    let Some((vault, filter, ui, token)) = request else {
         return;
     };
     win.set_analytics_expense_cats(ModelRc::default());
@@ -438,9 +437,7 @@ fn render_analytics(win: &MainWindow) {
     std::thread::spawn(move || {
         let report = analytics::load(&vault, filter, &ui);
         let _ = weak.upgrade_in_event_loop(move |win| {
-            if !is_current(&vault)
-                || with_state(|st| st.generation != generation || st.analytics_generation != token)
-            {
+            if !is_current(&vault) || with_state(|st| st.analytics_generation != token) {
                 return;
             }
             let privacy = privacy_on(&win);
@@ -786,7 +783,6 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
 
 /// Re-applies the filter bar to the cached rows (no vault access) and redraws.
 fn apply_filter(win: &MainWindow) {
-    refunds_ui::cancel_reveal();
     with_state(|st| {
         st.filter = Filter {
             search: win.get_search_text().to_string(),
@@ -1929,6 +1925,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = win.as_weak();
         win.on_search_changed(move || {
             if let Some(win) = weak.upgrade() {
+                refunds_ui::cancel_reveal();
+                with_state(|st| st.reveal_limit = 0);
                 apply_filter(&win);
             }
         });
