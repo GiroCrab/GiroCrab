@@ -11727,19 +11727,19 @@
         }
       }
     },
-    "Die Verknüpfung dient nur der Zuordnung: Beträge, Kategorien und Kontostände ändern sich nicht." : {
+    "Die Verknüpfung lässt Buchungen und Kontostände unverändert. Auswertungen berücksichtigen die Erstattung." : {
       "extractionState" : "manual",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Verknüpfung dient nur der Zuordnung: Beträge, Kategorien und Kontostände ändern sich nicht."
+            "value" : "Die Verknüpfung lässt Buchungen und Kontostände unverändert. Auswertungen berücksichtigen die Erstattung."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The link only assigns bookings: amounts, categories and account balances remain unchanged."
+            "value" : "The link leaves transactions and account balances unchanged. Reports take the refund into account."
           }
         }
       }

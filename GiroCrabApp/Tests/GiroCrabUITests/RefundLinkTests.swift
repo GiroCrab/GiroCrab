@@ -69,6 +69,10 @@ final class RefundLinkTests: XCTestCase {
     }
 
     func testPositiveLinkAndMarkerAndInvalidation() async throws {
+        let history = try await model.requireVaultOffMain { vault in
+            try vault.merchantHistory(merchantKey: "refund-test", accountId: 0)
+        }
+        model.merchantStatsCache["cached-before-link"] = history.all
         let totals = model.totalsVersion
         let charts = model.financialReportRevision
         let revision = model.refundRevision
@@ -84,6 +88,7 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertGreaterThan(model.totalsVersion, totals)
         XCTAssertGreaterThan(model.financialReportRevision, charts)
         XCTAssertGreaterThan(model.refundRevision, revision)
+        XCTAssertTrue(model.merchantStatsCache.isEmpty)
         XCTAssertTrue(model.dashboardStale || model.dashboardTask != nil)
         let rows = try await candidates(data)
         XCTAssertFalse(rows.contains { $0.transactionId == original })
@@ -155,6 +160,7 @@ final class RefundLinkTests: XCTestCase {
     func testInspectorJumpRevealsCounterpartOutsideTheCurrentFilters() async throws {
         await model.linkRefund(pair())
         model.period = .days(30)
+        model.scope = .investments
         model.directionFilter = .income
         model.amountFilter = AmountFilter(minCents: 1_000_000, maxCents: nil)
         model.searchText = "no matching refund test booking"
@@ -167,6 +173,7 @@ final class RefundLinkTests: XCTestCase {
         }
         XCTAssertEqual(model.selectedBooking?.id, original)
         XCTAssertEqual(model.directionFilter, .all)
+        XCTAssertEqual(model.scope, .all)
         XCTAssertEqual(model.period, .all)
         XCTAssertTrue(model.searchText.isEmpty)
         XCTAssertFalse(model.amountFilter.isActive)

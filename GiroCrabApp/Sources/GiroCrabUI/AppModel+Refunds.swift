@@ -131,6 +131,7 @@ extension AppModel {
         invalidateTotals()
         financialReportRevision &+= 1
         reloadDashboard()
+        refreshSelectedBookingHistory()
         startSelectionLoad(keepingShown: true)
     }
 

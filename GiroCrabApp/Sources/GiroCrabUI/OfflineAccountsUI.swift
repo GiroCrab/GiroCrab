@@ -275,8 +275,10 @@ struct ManualBookingSheet: View {
                     Text("Einnahme").tag(Flow.in)
                 }
                 .pickerStyle(.segmented)
+                .disabled((request.booking?.splitCount ?? 0) > 0)
                 TextField("Betrag", text: $amountText)
                     .multilineTextAlignment(.trailing)
+                    .disabled((request.booking?.splitCount ?? 0) > 0)
                     .sensitive(.amounts)
                 TextField("Name oder Empfänger", text: $counterparty).sensitive()
                 TextField("Verwendungszweck", text: $purpose).sensitive()

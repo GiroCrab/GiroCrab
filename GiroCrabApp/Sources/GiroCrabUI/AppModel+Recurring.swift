@@ -62,6 +62,7 @@ extension AppModel {
         if booking(withID: id) == nil {
             sidebarSelection = .allAccounts
             period = .all
+            scope = .all
             resetListFilters(inBackground: true)
         }
         let generation = listGeneration
