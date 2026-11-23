@@ -946,7 +946,7 @@ struct RecipientIBANLine: View {
     }
 }
 
-private extension View {
+extension View {
     /// A text field of the transfer form. macOS: bezeled, so an empty field
     /// reads as a field (#881); iOS keeps the inline trailing style.
     func transferField(alignment: TextAlignment = .leading) -> some View {
