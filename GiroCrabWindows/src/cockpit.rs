@@ -124,30 +124,31 @@ pub fn month_title(iso: &str) -> String {
 pub struct DayBucket {
     pub date: String,
     pub indices: Vec<usize>,
-    pub sum_cents: i64,
-    pub currency: String,
+    pub totals: std::collections::BTreeMap<String, i64>,
 }
 
 /// Proof-view bank net per day and currency (the list is sorted by date).
 pub fn group_by_day(rows: &[&Row]) -> Vec<DayBucket> {
     let mut out: Vec<DayBucket> = Vec::new();
-    let mut positions = std::collections::HashMap::<(String, String), usize>::new();
+    let mut positions = std::collections::HashMap::<String, usize>::new();
     for (i, r) in rows.iter().enumerate() {
         let date = r.booking_date.get(..10).unwrap_or(&r.booking_date);
-        let key = (date.to_string(), r.currency.clone());
+        let key = date.to_string();
         match positions.get(&key).copied() {
             Some(index) => {
                 let day = &mut out[index];
                 day.indices.push(i);
-                day.sum_cents += r.amount_cents;
+                *day.totals.entry(r.currency.clone()).or_default() += r.amount_cents;
             }
             None => {
                 positions.insert(key, out.len());
                 out.push(DayBucket {
                     date: date.to_string(),
                     indices: vec![i],
-                    sum_cents: r.amount_cents,
-                    currency: r.currency.clone(),
+                    totals: std::collections::BTreeMap::from([(
+                        r.currency.clone(),
+                        r.amount_cents,
+                    )]),
                 });
             }
         }
@@ -400,8 +401,8 @@ pub(crate) mod tests {
         let days = group_by_day(&refs);
         assert_eq!(days.len(), 2);
         assert_eq!(days[0].indices, vec![0, 1]);
-        assert_eq!(days[0].sum_cents, -4782);
-        assert_eq!(days[1].sum_cents, 96414);
+        assert_eq!(days[0].totals["EUR"], -4782);
+        assert_eq!(days[1].totals["EUR"], 96414);
         let money = |c: i64, _: &str| format!("{c}");
         assert_eq!(day_sum_text(96414, &money, "EUR"), "+96414");
         assert_eq!(day_sum_text(-4782, &money, "EUR"), "-4782");
@@ -414,9 +415,24 @@ pub(crate) mod tests {
         b.currency = "USD".into();
         let c = row("2026-11-13", -300, "C");
         let days = group_by_day(&[&a, &b, &c]);
-        assert_eq!(days.len(), 2);
-        assert_eq!((days[0].sum_cents, days[1].sum_cents), (-400, -200));
-        assert_eq!(days[1].currency, "USD");
+        assert_eq!(days.len(), 1);
+        assert_eq!((days[0].totals["EUR"], days[0].totals["USD"]), (-400, -200));
+    }
+
+    #[test]
+    fn round8_day_rows_keep_core_order_across_currencies() {
+        let a = row("2026-11-13", -100, "A");
+        let mut b = row("2026-11-13", -200, "B");
+        b.currency = "USD".into();
+        let c = row("2026-11-13", -300, "C");
+        let days = group_by_day(&[&a, &b, &c]);
+        assert_eq!(
+            days.iter()
+                .flat_map(|d| d.indices.iter().copied())
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(days.len(), 1);
     }
 
     #[test]

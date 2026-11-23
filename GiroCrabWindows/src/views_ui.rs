@@ -314,6 +314,9 @@ pub fn select_reveal_target(win: &MainWindow, vault: &Arc<Vault>, target: Target
 /// Shows the view of the current target: bookings reload, the other views load their data.
 pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     let target = with_state(|st| st.target);
+    if with_state(|st| st.analytics_target != Some(target)) {
+        crate::render_analytics(win);
+    }
     let mode = wants_view(target);
     win.set_view_mode(mode);
     win.set_side_selected(target.key().into());

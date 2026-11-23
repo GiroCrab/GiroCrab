@@ -141,12 +141,6 @@ pub fn build_splits(
         if cents == 0 {
             return Err(format!("Teilbetrag {} darf nicht 0 sein.", n + 1));
         }
-        if (cents < 0) != (booking_cents < 0) {
-            return Err(format!(
-                "Teilbetrag {} braucht dasselbe Vorzeichen wie die Buchung.",
-                n + 1
-            ));
-        }
         let category_id = match usize::try_from(d.category_index) {
             Ok(0) | Err(_) => None,
             Ok(i) => Some(
@@ -454,13 +448,22 @@ mod tests {
         );
         assert!(build_splits(&[draft(0, "-10")], &cats, -1000).is_err());
         assert!(build_splits(&[draft(0, "-4"), draft(0, "-5")], &cats, -1000).is_err());
-        assert!(build_splits(&[draft(0, "4"), draft(0, "-14")], &cats, -1000).is_err());
+        assert!(build_splits(&[draft(0, "4"), draft(0, "-14")], &cats, -1000).is_ok());
         assert!(build_splits(&[draft(0, "0"), draft(0, "-10")], &cats, -1000).is_err());
         assert!(build_splits(&[draft(0, "-4"), draft(3, "-6")], &cats, -1000).is_err());
         let ok = build_splits(&[draft(0, "-4"), draft(0, "-6")], &cats, -1000).unwrap();
         assert_eq!(ok.len(), 2);
         assert_eq!(ok[0].amount_cents, -400);
         assert_eq!(ok[0].category_id, None);
+    }
+
+    #[test]
+    fn round8_mixed_sign_splits_can_be_edited() {
+        let parts = build_splits(&[draft(0, "4"), draft(0, "-14")], &[], -1000).unwrap();
+        assert_eq!(
+            parts.iter().map(|p| p.amount_cents).collect::<Vec<_>>(),
+            [400, -1400]
+        );
     }
 
     #[test]

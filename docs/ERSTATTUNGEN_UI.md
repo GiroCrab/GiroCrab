@@ -41,6 +41,9 @@ der ausgewählten Buchung in beiden Richtungen: Gegenpartei, Datum, Konto,
 gegebenenfalls Teilbezeichnung und zugeordneten Betrag in der Buchungswährung.
 Eine Zeile öffnet die Gegenbuchung. Unter macOS und Linux entfernt das Kreuz
 die einzelne Verknüpfung mit der bestehenden Rückgängig-Funktion.
+Unter Windows öffnet die Zeile ebenfalls die Gegenbuchung; „Aufheben“ entfernt
+die Verknüpfung und „Aufheben rückgängig“ stellt sie wieder her, solange das
+Zuordnungsfenster geöffnet ist.
 Die Schaltfläche zum Bearbeiten der Zuordnung bleibt erhalten.
 
 Die Zuordnung verändert weder Bankbuchungen noch Splits oder Kontostände.
@@ -48,7 +51,7 @@ Der zugeordnete Anteil wird in den Auswertungen am Datum der Erstattung in der
 Kategorie des ursprünglichen Teils berücksichtigt. Zuteilung und Kapazitäten
 berechnet ausschließlich der Kern.
 
-Das Kreuz entfernt genau eine Verknüpfung. „Rückgängig“ im Blatt und der
+Das Kreuz unter macOS und Linux entfernt genau eine Verknüpfung. „Rückgängig“ im Blatt und der
 Widerrufen-Befehl verwenden das vom Kern gelieferte Lösch-Token. Eine neuere
 Änderung kann damit nicht überschrieben werden; die ursprüngliche Position
 der Verknüpfung bleibt erhalten. Widerrufen gilt nur im selben Tresor.

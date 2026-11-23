@@ -451,8 +451,8 @@ fn render(win: &MainWindow) {
         if !d.own.is_empty() && !d.parts.iter().any(|p| p.uuid == d.own) {
             win.set_rf_status(
                 text(
-                    "Die gewählte Teilbuchung existiert nicht mehr. Bitte wählen Sie einen Teil.",
-                    "The selected split no longer exists. Please select a part.",
+                    if d.parts.is_empty() { "Die Aufteilung existiert nicht mehr. Schließen Sie die Zuordnung und öffnen Sie sie erneut, um die ganze Buchung zu wählen." } else { "Die gewählte Teilbuchung existiert nicht mehr. Bitte wählen Sie einen Teil." },
+                    if d.parts.is_empty() { "The split no longer exists. Close and reopen the picker to select the whole booking." } else { "The selected split no longer exists. Please select a part." },
                 )
                 .into(),
             );
@@ -832,7 +832,16 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
                             crate::nav::Target::AllAccounts,
                         );
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        win.set_sync_status(
+                            text(
+                                "Die verknüpfte Buchung ist nicht mehr verfügbar.",
+                                "The linked transaction is no longer available.",
+                            )
+                            .into(),
+                        );
+                        refresh_card(&win);
+                    }
                     Err(e) => win.set_sync_status(e.into()),
                 }
             });
@@ -1291,13 +1300,17 @@ mod tests {
         let rows =
             crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, count, Some(f.original))
                 .unwrap();
-        assert!(rows.iter().any(|r| r.id == f.original));
+        assert!(rows.0.iter().any(|r| r.id == f.original));
+        assert!(!rows.1);
         assert!(
-            crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, count, Some(-1)).is_err()
+            crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, count, Some(-1))
+                .unwrap()
+                .1
         );
         assert!(
             !crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, 0, None)
                 .unwrap()
+                .0
                 .is_empty()
         );
     }
@@ -1309,6 +1322,12 @@ mod tests {
         let query = &initial.suggestions[0].candidate.counterparty;
         let loaded = load(&v, f.refund, &f.part, query).unwrap();
         assert!(!search_empty(&loaded, query));
+    }
+
+    #[test]
+    fn round8_missing_reveal_is_not_a_read_failure() {
+        let (_dir, v, _) = fixture();
+        assert!(crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, 1, Some(-1)).is_ok());
     }
 
     #[test]

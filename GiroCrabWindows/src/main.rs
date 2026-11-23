@@ -273,17 +273,19 @@ fn load_reveal_rows(
     target: Target,
     limit: u32,
     reveal: Option<i64>,
-) -> Result<Vec<Row>, String> {
+) -> Result<(Vec<Row>, bool), String> {
     let rows = load_rows(vault, target, limit)?;
-    let Some(id) = reveal else { return Ok(rows) };
+    let Some(id) = reveal else {
+        return Ok((rows, false));
+    };
     if rows.iter().any(|r| r.id == id) {
-        return Ok(rows);
+        return Ok((rows, false));
     }
-    let rows = load_rows(vault, target, 0)?;
-    if !rows.iter().any(|r| r.id == id) {
-        return Err("Die Buchung ist nicht mehr vorhanden.".into());
+    let expanded = load_rows(vault, target, 0)?;
+    if !expanded.iter().any(|r| r.id == id) {
+        return Ok((rows, true));
     }
-    Ok(rows)
+    Ok((expanded, false))
 }
 
 /// UI-thread state behind the booking list, filter bar and inspector.
@@ -300,6 +302,7 @@ struct State {
     /// Drops the result of a superseded background load.
     generation: u64,
     analytics_generation: u64,
+    analytics_target: Option<Target>,
     dashboard_generation: u64,
     vault: std::sync::Weak<Vault>,
     monthly: Option<Vec<girocrab_core::projection::PeriodCurrencyFlow>>,
@@ -453,6 +456,7 @@ fn tag_names(rows: &[Row]) -> Vec<String> {
 fn render_analytics(win: &MainWindow) {
     let request = with_state(|st| {
         st.analytics_generation += 1;
+        st.analytics_target = Some(st.target);
         st.monthly = None;
         st.vault.upgrade().map(|v| {
             (
@@ -460,10 +464,11 @@ fn render_analytics(win: &MainWindow) {
                 nav::booking_filter(st.target),
                 st.filter.clone(),
                 st.analytics_generation,
+                st.target,
             )
         })
     });
-    let Some((vault, filter, ui, token)) = request else {
+    let Some((vault, filter, ui, token, target)) = request else {
         return;
     };
     win.set_analytics_expense_cats(ModelRc::default());
@@ -474,7 +479,9 @@ fn render_analytics(win: &MainWindow) {
     std::thread::spawn(move || {
         let report = analytics::load(&vault, filter, &ui);
         let _ = weak.upgrade_in_event_loop(move |win| {
-            if !is_current(&vault) || with_state(|st| st.analytics_generation != token) {
+            if !is_current(&vault)
+                || with_state(|st| st.analytics_generation != token || st.target != target)
+            {
                 return;
             }
             let privacy = privacy_on(&win);
@@ -539,6 +546,7 @@ fn render_analytics(win: &MainWindow) {
 }
 
 fn render_bookings(win: &MainWindow) {
+    refunds_ui::refresh_card(win);
     if let Some(v) = with_state(|st| st.vault.upgrade()) {
         refunds_ui::refresh(win, v);
     }
@@ -547,7 +555,6 @@ fn render_bookings(win: &MainWindow) {
 }
 
 fn render_booking_rows(win: &MainWindow) {
-    refunds_ui::refresh_card(win);
     win.set_rf_can_open(with_state(|st| {
         st.rows
             .iter()
@@ -599,11 +606,15 @@ fn render_booking_rows(win: &MainWindow) {
                 month_expense: daily::mask(&exp, privacy).into(),
                 title: cockpit::day_title(&d.date).into(),
                 sum: daily::mask(
-                    &cockpit::day_sum_text(d.sum_cents, &money, &d.currency),
+                    &d.totals
+                        .iter()
+                        .map(|(currency, cents)| cockpit::day_sum_text(*cents, &money, currency))
+                        .collect::<Vec<_>>()
+                        .join(" · "),
                     privacy,
                 )
                 .into(),
-                negative: d.sum_cents < 0 || privacy,
+                negative: d.totals.values().all(|cents| *cents < 0) || privacy,
                 rows: ModelRc::new(VecModel::from(
                     d.indices
                         .iter()
@@ -767,11 +778,10 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
         let expenses = if let Some((year, month)) = month {
             vault
                 .list_category_expenses(BookingFilter {
-                    account_ids: ids,
                     date_from: Some(format!("{year:04}-{month:02}-01")),
                     date_to: Some(format!("{year:04}-{month:02}-31")),
                     respect_in_total: !proof,
-                    ..Default::default()
+                    ..nav::booking_filter(target)
                 })
                 .unwrap_or_default()
         } else {
@@ -891,17 +901,29 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
         st.generation += 1;
         st.generation
     });
+    if with_state(|st| st.analytics_target != Some(target)) {
+        render_analytics(win);
+    }
     let weak = win.as_weak();
     std::thread::spawn(move || {
         let rows = load_reveal_rows(&vault, target, limit, reveal);
         let cats = vault.list_categories(None, None).map_err(|e| e.to_string());
         let _ = weak.upgrade_in_event_loop(move |win| {
             let vault = vault.clone();
-            if !is_current(&vault) || with_state(|st| st.generation) != generation {
+            if !is_current(&vault)
+                || with_state(|st| st.generation != generation || st.target != target)
+            {
                 return;
             }
             match (rows, cats) {
-                (Ok(rows), result) => {
+                (Ok((rows, missing)), result) => {
+                    if missing && with_state(|st| st.selected_booking == reveal) {
+                        refunds_ui::cancel_reveal();
+                        with_state(|st| {
+                            st.reveal_limit = 0;
+                            st.selected_booking = None;
+                        });
+                    }
                     let cats = match result {
                         Ok(cats) => cats,
                         Err(e) => {
@@ -1384,8 +1406,17 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                         .then_some(st.selected_booking)
                         .flatten()
                 });
-                if let Ok(rows) = load_reveal_rows(vault, target, limit, reveal) {
-                    with_state(|st| st.rows = rows);
+                if let Ok((rows, missing)) = load_reveal_rows(vault, target, limit, reveal) {
+                    with_state(|st| {
+                        st.rows = rows;
+                        if missing {
+                            st.reveal_limit = 0;
+                            st.selected_booking = None;
+                        }
+                    });
+                    if missing {
+                        refunds_ui::cancel_reveal();
+                    }
                     apply_filter(win);
                 }
                 views_ui::apply_view(win, vault);
@@ -2109,6 +2140,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(win) = weak.upgrade() else { return };
             refunds_ui::cancel_reveal();
             with_state(|st| st.selected_booking = Some(id as i64));
+            refunds_ui::refresh_card(&win);
             render_booking_rows(&win);
         });
     }
@@ -2962,6 +2994,56 @@ mod tests {
             show.find("refresh_dashboard(win, vault.clone())").unwrap()
                 < show.find("match render_header").unwrap()
         );
+    }
+
+    #[test]
+    fn round8_analytics_rejects_previous_target_and_starts_before_reads() {
+        let source = include_str!("main.rs");
+        let render = source
+            .split("fn render_analytics(")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(render.contains("st.target != target"));
+        let reload = source
+            .split("fn reload(win:")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(
+            reload.find("render_analytics(win)").unwrap()
+                < reload.find("load_reveal_rows(").unwrap()
+        );
+    }
+
+    #[test]
+    fn round8_row_only_redraw_preserves_refund_card() {
+        let source = include_str!("main.rs");
+        let redraw = source
+            .split("fn render_booking_rows(")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!redraw.contains("refunds_ui::refresh_card(win)"));
+    }
+
+    #[test]
+    fn round8_dashboard_fallback_preserves_view_predicates() {
+        let source = include_str!("main.rs");
+        let fallback = source
+            .split("let expenses = if let Some((year, month)) = month")
+            .nth(1)
+            .unwrap()
+            .split("let fallback")
+            .next()
+            .unwrap();
+        assert!(fallback.contains("..nav::booking_filter(target)"));
     }
 
     #[test]
