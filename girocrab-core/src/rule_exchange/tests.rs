@@ -648,3 +648,34 @@ fn an_iban_shared_by_several_accounts_is_narrowed_by_number_and_name() {
         "{report:?}"
     );
 }
+
+#[test]
+fn a_renamed_tag_found_by_uuid_still_makes_a_duplicate() {
+    let dir = TempDir::new("rx-dupe-renamed");
+    let a = open(&dir, "a.db");
+    let urlaub = a.create_tag("Urlaub".into(), String::new()).unwrap();
+    a.save_rule(rule("hotel", 0, vec![], vec![urlaub.id]))
+        .unwrap();
+    let json = a.export_rules(vec![]).unwrap();
+
+    let b = open(&dir, "b.db");
+    let first = b.import_rules_and_tags(json.clone()).unwrap();
+    assert_eq!(first.rules_imported, 1, "{first:?}");
+    // renamed here; the file still says „Urlaub“, the uuid is the same
+    let tag = b.list_tags().unwrap()[0].clone();
+    b.rename_tag(tag.id, "Reisen".into()).unwrap();
+
+    let preview = b.preview_rules_and_tags(json.clone()).unwrap();
+    assert!(preview.rules[0].problem.is_some(), "{preview:?}");
+    let again = b.import_rules_and_tags(json).unwrap();
+    assert_eq!(
+        (
+            again.rules_imported,
+            again.rules_skipped,
+            again.tags_created
+        ),
+        (0, 1, 0),
+        "{again:?}"
+    );
+    assert_eq!(b.list_rules().unwrap().len(), 1);
+}

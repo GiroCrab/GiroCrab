@@ -441,35 +441,56 @@ enum Plan {
     Skip(String),
 }
 
-/// Folded names of live tags by id, for comparing a file rule's tags (by name:
-/// tags to be created have no id yet) with those of the rules here.
-fn tag_name_map(live: &[(i64, String, String, String)]) -> HashMap<i64, String> {
-    live.iter()
-        .map(|(id, _, name, _)| (*id, fold(name)))
+/// The live tag each tag of the file stands for ([`find_tag`]: uuid, then
+/// name), by folded file name. A tag missing here has no entry (yet).
+fn resolve_tags(
+    file: &ExchangeFile,
+    live: &[(i64, String, String, String)],
+) -> HashMap<String, i64> {
+    wanted_tags(file)
+        .iter()
+        .filter_map(|t| find_tag(live, t).map(|(id, _)| (fold(&t.name), id)))
         .collect()
 }
 
-/// A rule's tags as sorted folded names; names that cannot become a tag are
-/// left out (the rule is imported without them).
-fn tag_set<'a>(names: impl Iterator<Item = &'a String>) -> Vec<String> {
-    let mut set: Vec<String> = names
-        .filter(|n| tag_problem(n).is_none())
-        .map(|n| fold(n))
-        .collect();
-    set.sort_unstable();
-    set.dedup();
-    set
+/// A tag of a rule for the duplicate check: a live tag, or one still to be
+/// created (no rule here can have it yet).
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum TagKey {
+    Live(i64),
+    New(String),
+}
+
+fn sorted_keys(mut keys: Vec<TagKey>) -> Vec<TagKey> {
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
+/// A file rule's tags as this vault will see them: a tag found here (by uuid
+/// or name, see [`resolve_tags`]) by its id, so a renamed tag still matches.
+/// Names that cannot become a tag are left out (the rule comes without them).
+fn file_tag_keys(names: &[String], resolved: &HashMap<String, i64>) -> Vec<TagKey> {
+    sorted_keys(
+        names
+            .iter()
+            .filter_map(|n| match resolved.get(&fold(n)) {
+                Some(id) => Some(TagKey::Live(*id)),
+                None => tag_problem(n).is_none().then(|| TagKey::New(fold(n))),
+            })
+            .collect(),
+    )
 }
 
 /// Resolves a rule's category and accounts in this vault. A rule is skipped
 /// rather than widened: no category found, or none of its accounts.
-/// `names` = [`tag_name_map`] of the tags `existing` rules use.
+/// `tags` = [`resolve_tags`] of the file.
 fn plan_rule(
     e: &RuleEntry,
     cats: &[CategoryRow],
     accs: &[AccountRow],
     existing: &[Rule],
-    names: &HashMap<i64, String>,
+    tags: &HashMap<String, i64>,
 ) -> Plan {
     let Some(match_kind) = match_kind_from(&e.match_kind) else {
         return Plan::Skip(tr("unbekannte Suchart").into());
@@ -546,7 +567,7 @@ fn plan_rule(
         ids
     };
     let accounts = sorted(&account_ids);
-    let tags = tag_set(e.tags.iter());
+    let tags = file_tag_keys(&e.tags, tags);
     if existing.iter().any(|r| {
         r.name == name
             && r.pattern == e.pattern
@@ -557,7 +578,7 @@ fn plan_rule(
             && r.min_amount_cents == e.min_amount_cents
             && r.max_amount_cents == e.max_amount_cents
             && sorted(&r.account_ids) == accounts
-            && tag_set(r.tag_ids.iter().filter_map(|id| names.get(id))) == tags
+            && sorted_keys(r.tag_ids.iter().map(|id| TagKey::Live(*id)).collect()) == tags
     }) {
         return Plan::Skip(tr("bereits vorhanden").into());
     }
@@ -685,7 +706,7 @@ impl Vault {
         let file = parse(&json)?;
         let db = self.db()?;
         let live = tags(&db)?;
-        let names = tag_name_map(&live);
+        let resolved = resolve_tags(&file, &live);
         let existing = Vault::load_rules(&db)?;
         let (cats, accs) = (categories(&db)?, accounts(&db)?);
         Ok(RuleExchangePreview {
@@ -694,7 +715,7 @@ impl Vault {
                 .iter()
                 .enumerate()
                 .map(|(i, e)| {
-                    let (problem, note) = match plan_rule(e, &cats, &accs, &existing, &names) {
+                    let (problem, note) = match plan_rule(e, &cats, &accs, &existing, &resolved) {
                         Plan::Ready { missing, .. } if !missing.is_empty() => (
                             None,
                             Some(trf(
@@ -783,12 +804,12 @@ impl Vault {
             .map(|(_, e)| e)
             .collect();
 
-        let (cats, accs, mut existing, mut priority, mut names) = {
+        let (cats, accs, mut existing, mut priority, resolved) = {
             let db = self.db()?;
             let existing = Vault::load_rules(&db)?;
             let top = existing.iter().map(|r| r.priority).max().unwrap_or(0);
-            let names = tag_name_map(&tags(&db)?);
-            (categories(&db)?, accounts(&db)?, existing, top, names)
+            let resolved = resolve_tags(file, &tags(&db)?);
+            (categories(&db)?, accounts(&db)?, existing, top, resolved)
         };
 
         // Tags: the chosen ones plus every tag a chosen rule adds that will be
@@ -797,7 +818,7 @@ impl Vault {
             .iter()
             .filter(|e| {
                 matches!(
-                    plan_rule(e, &cats, &accs, &existing, &names),
+                    plan_rule(e, &cats, &accs, &existing, &resolved),
                     Plan::Ready { .. }
                 )
             })
@@ -831,7 +852,6 @@ impl Vault {
                         .or_else(|_| self.create_tag(t.name.clone(), String::new()));
                     match created {
                         Ok(tag) => {
-                            names.insert(tag.id, fold(&tag.name));
                             report.tags_created += 1;
                             report.tags_created_names.push(tag.name.clone());
                             tag.id
@@ -852,7 +872,8 @@ impl Vault {
         for e in chosen {
             let name = rule_name(e);
             let (category_id, field, match_kind, account_ids, missing) =
-                match plan_rule(e, &cats, &accs, &existing, &names) {
+                // tags now all exist: `tag_ids` holds the ones this import uses
+                match plan_rule(e, &cats, &accs, &existing, &tag_ids) {
                     Plan::Skip(reason) => {
                         report.rules_skipped += 1;
                         report
