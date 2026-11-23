@@ -110,8 +110,8 @@ Sheet {
                                         tintColor: sheet.account ? AppModel.accountColor(sheet.account.id) : Theme.secondary }
                         SFIcon { symbol: "chevron.down"; size: 8; color: Theme.secondary }
                     }
-                    
-                        
+                    TapHandler {
+                        onTapped: {
                             const p = symbolButton.mapToItem(null, 0, symbolButton.height + 6)
                             iconPopover.x = Math.max(8, Math.min(p.x, (Overlay.overlay ? Overlay.overlay.width : 1000) - iconPopover.width - 8))
                             iconPopover.y = Math.max(8, Math.min(p.y, (Overlay.overlay ? Overlay.overlay.height : 800) - 560))
