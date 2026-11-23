@@ -2258,7 +2258,6 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// Händler-Historie (#299): the merchant's stats over all accounts and in one account.
     /// `reorder_categories` (#977) with the JSON the sidebar sends: new order among the
     /// siblings, a move under another category, and the refusal to go below itself.
     #[test]

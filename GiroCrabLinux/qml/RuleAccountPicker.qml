@@ -60,7 +60,7 @@ ColumnLayout {
                     anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: 8; anchors.rightMargin: 8
                     spacing: 4
-                    Text { text: chip.account ? chip.account.bank_name + " – " + chip.account.name : "?"; font.pixelSize: Theme.caption; color: Theme.text
+                    Text { text: chip.account ? picker.label(chip.account) : "?"; font.pixelSize: Theme.caption; color: Theme.text
                            elide: Text.ElideRight; Layout.fillWidth: true; Layout.maximumWidth: Math.ceil(implicitWidth)
                            Sensitive {} }
                     IconButton {

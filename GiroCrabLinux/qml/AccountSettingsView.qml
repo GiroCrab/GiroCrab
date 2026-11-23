@@ -47,10 +47,10 @@ Sheet {
         const owner = ownerField.text.trim()
         const kind = AppModel.accountKindChoices[kindBox.currentIndex].id
         const note = noteField.text.trim()
-        if (newName !== a.name) AppModel.renameAccount(a.id, newName)
-        if (owner !== (a.owner || "")) AppModel.setAccountOwner(a.id, owner)
-        if (kind !== a.kind && !offline) AppModel.setAccountKind(a.id, kind)
-        if (note !== (a.note || "")) AppModel.setAccountNote(a.id, note)
+        if (newName !== a.name && !AppModel.renameAccount(a.id, newName)) return
+        if (owner !== (a.owner || "") && !AppModel.setAccountOwner(a.id, owner)) return
+        if (kind !== a.kind && !offline && !AppModel.setAccountKind(a.id, kind)) return
+        if (note !== (a.note || "") && !AppModel.setAccountNote(a.id, note)) return
         if (showsOpeningBalance) {
             const text = openingField.text.trim()
             const stored = a.opening_balance_cents === undefined ? null : a.opening_balance_cents
@@ -110,8 +110,8 @@ Sheet {
                                         tintColor: sheet.account ? AppModel.accountColor(sheet.account.id) : Theme.secondary }
                         SFIcon { symbol: "chevron.down"; size: 8; color: Theme.secondary }
                     }
-                    TapHandler {
-                        onTapped: {
+                    
+                        
                             const p = symbolButton.mapToItem(null, 0, symbolButton.height + 6)
                             iconPopover.x = Math.max(8, Math.min(p.x, (Overlay.overlay ? Overlay.overlay.width : 1000) - iconPopover.width - 8))
                             iconPopover.y = Math.max(8, Math.min(p.y, (Overlay.overlay ? Overlay.overlay.height : 800) - 560))
@@ -144,13 +144,17 @@ Sheet {
                 Text { text: sheet.account ? sheet.account.currency : ""; font.pixelSize: Theme.body; color: Theme.secondary }
             }
             Item { visible: sheet.showsOpeningBalance; implicitWidth: 1; implicitHeight: 1 }
-            Text {
+            Button {
                 visible: sheet.showsOpeningBalance
-                text: qsTr("Stichtag und Kalibrierung …"); font.pixelSize: Theme.body; color: Theme.accent
-                HoverHandler { id: calibrationHover; cursorShape: Qt.PointingHandCursor }
-                ToolTip.visible: calibrationHover.hovered; ToolTip.delay: 600
+                text: qsTr("Stichtag und Kalibrierung …")
+                font.pixelSize: Theme.body
+                contentItem: Text { text: parent.text; font: parent.font; color: Theme.accent }
+                background: Item {}
+                ToolTip.visible: hovered; ToolTip.delay: 600
                 ToolTip.text: qsTr("Startsaldo ab einem Stichtag oder passend zu einem Kontostand eintragen")
-                TapHandler { onTapped: sheet.openCalibration() }
+                onClicked: sheet.openCalibration()
+                Accessible.role: Accessible.Button
+                cursorShape: Qt.PointingHandCursor
             }
             // Kontonummer, IBAN, Bank: only shown with a value; they come from the bank or the import
             FieldLabel { visible: numberValue.text !== ""; text: qsTr("Kontonummer") }

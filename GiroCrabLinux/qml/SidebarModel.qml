@@ -178,7 +178,14 @@ QtObject {
         return i >= 0 && i + step >= 0 && i + step < ids.length
     }
     function reorderCategories(parent, ids) {
-        AppModel.run(() => AppModel.core("reorder_categories", { parent_id: parent, ids: ids }))
+        if (!AppModel.run(() => { AppModel.core("reorder_categories", { parent_id: parent, ids: ids }); return true })) return
+        const moved = []
+        for (let i = 0; i < ids.length; i++) {
+            const c = AppModel.categoryByID(ids[i])
+            if (c) moved.push(Object.assign({}, c, { parent_id: parent, sort_order: ids.length - i }))
+        }
+        for (let m of moved) AppModel.categories[AppModel.categories.findIndex(x => x.id === m.id)] = m
+        AppModel.categoriesChanged()
         AppModel.reloadCategories()
         AppModel.reloadBookings() // the booking list shows a category's path
     }

@@ -2839,22 +2839,19 @@ QtObject {
         toast = qsTr("Gruppe „%1“ gelöscht").arg(g.name)
     }
     function renameAccount(id, name) {
-        if (run(() => { core("rename_account", { account_id: id, name: name }); return true })) { reloadAccounts(); reloadBookings() }
+        if (run(() => { core("rename_account", { account_id: id, name: name }); return true })) { reloadAccounts(); reloadBookings(); return true } else return false
     }
     /// AccountGroupsModel.swift › setAccountOwner: empty clears it.
     function setAccountOwner(id, owner) {
-        if (run(() => { core("set_account_owner", { account_id: id, owner: owner }); return true })) reloadAccounts()
+        if (run(() => { core("set_account_owner", { account_id: id, owner: owner }); return true })) { reloadAccounts(); return true } else return false
     }
     /// AppModel.swift › setAccountNote: empty clears it; synced like the name (#980).
     function setAccountNote(id, note) {
-        if (run(() => { core("set_account_note", { account_id: id, note: note }); return true })) reloadAccounts()
+        if (run(() => { core("set_account_note", { account_id: id, note: note }); return true })) { reloadAccounts(); return true } else return false
     }
     /// AccountGroupsModel.swift › setAccountKind (Kontoeinstellungen).
     function setAccountKind(id, kind) {
-        // the kind decides what "Verfügbar" and its history count (Bausparen does not, #1630) and
-        // moves the account to another section: once the accounts with the new kind are published,
-        // the history and the selection (list and sums of a section) reload
-        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(() => { reloadHistory(); reloadSelection(false) }); reloadDashboard() }
+        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(() => { reloadHistory(); reloadSelection(false) }); reloadDashboard(); return true } else return false
     }
     /// AccountKind.importChoices with their labels.
     readonly property var accountKindChoices: [
