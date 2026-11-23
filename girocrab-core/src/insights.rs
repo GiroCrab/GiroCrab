@@ -146,7 +146,13 @@ impl Vault {
         // the cashflow card. The booking list itself is never narrowed by this.
         // One guard for both reads, so a merge committing in between cannot mix
         // old amounts with new eligibility.
-        let (all, merchants, projected_months, perk_totals): (Vec<Booking>, _, _, _) = {
+        let (all, merchants, projected_months, perk_totals, investments): (
+            Vec<Booking>,
+            _,
+            _,
+            _,
+            _,
+        ) = {
             let db = self.db()?;
             let allowed = crate::user_groups::total_account_ids(&db)?;
             let projection = self.financial_projection(&db)?;
@@ -180,6 +186,10 @@ impl Vault {
                 crate::projection::CurrencyMode::Primary,
             )?;
             let (mut saveback, mut roundup, mut current) = (0i128, 0i128, 0i128);
+            let mut investments: HashMap<i64, i128> = HashMap::new();
+            for row in perks.rows.iter().filter(|r| r.flow == FlowKind::Investment) {
+                *investments.entry(row.attribution_id).or_default() -= row.amount_cents;
+            }
             let by_id: HashMap<_, _> = all.iter().map(|b| (b.id, b)).collect();
             for row in perks.rows.iter().filter(|r| r.flow == FlowKind::Perk) {
                 let Some(b) = by_id.get(&row.attribution_id) else {
@@ -203,7 +213,7 @@ impl Vault {
                 crate::projection::cents(roundup)?,
                 crate::projection::cents(current)?,
             );
-            (all, self.merchant_rules(&db)?, monthly, totals)
+            (all, self.merchant_rules(&db)?, monthly, totals, investments)
         };
 
         // Monthly flows
@@ -276,7 +286,7 @@ impl Vault {
                     *per_month.entry(month_key(&b.booking_date)).or_default() += -b.amount_cents;
                 }
                 let last = Date::strptime("%Y-%m-%d", &latest.booking_date).ok();
-                SavingsPlan {
+                Ok(SavingsPlan {
                     merchant: m,
                     monthly_cents: -latest.amount_cents,
                     day_of_month: last.map_or(1, |d| d.day() as u32),
@@ -284,7 +294,11 @@ impl Vault {
                     active: last
                         .map(|d| crate::dates::days_between(d, today) <= 40)
                         .unwrap_or(false),
-                    total_invested_cents: v.iter().map(|b| -b.amount_cents).sum(),
+                    total_invested_cents: crate::projection::cents(
+                        v.iter()
+                            .map(|b| investments.get(&b.id).copied().unwrap_or_default())
+                            .sum(),
+                    )?,
                     executions: months_list
                         .iter()
                         .map(|mk| PlanExecution {
@@ -293,9 +307,9 @@ impl Vault {
                         })
                         .collect(),
                     run_days: vec![last.map_or(1, |d| d.day() as u32)],
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_, CoreError>>()?;
         out_plans.sort_by(|a, b| {
             b.monthly_cents
                 .cmp(&a.monthly_cents)

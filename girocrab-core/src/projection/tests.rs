@@ -5,6 +5,29 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 #[test]
+fn round7b_realized_plan_total_uses_refund_projection_not_execution_amount() {
+    let f = Fixture::new();
+    let buy = f.add(-10000, Some(f.cost));
+    let refund = f.add(3000, Some(f.income));
+    f.v.db().unwrap().execute_batch(&format!("UPDATE categories SET builtin_role='Investitionen' WHERE id={}; UPDATE transactions SET purpose='Sparplan execution' WHERE id={buy}",f.cost)).unwrap();
+    assert_eq!(
+        f.v.investment_dashboard(1).unwrap().plans[0].total_invested_cents,
+        10000
+    );
+    f.link(refund, "", buy, "");
+    let d = f.v.investment_dashboard(1).unwrap();
+    let plan = &d.plans[0];
+    assert_eq!(plan.total_invested_cents, 7000);
+    assert_eq!(plan.monthly_cents, 10000);
+    assert_eq!(plan.executions[0].amount_cents, 10000);
+    let remaining = f.add(7000, Some(f.income));
+    f.link(remaining, "", buy, "");
+    assert_eq!(
+        f.v.investment_dashboard(1).unwrap().plans[0].total_invested_cents,
+        0
+    );
+}
+#[test]
 fn round7b_linked_positive_split_keeps_its_unallocated_income() {
     let f = Fixture::new();
     let o = f.add(-300, Some(f.cost));

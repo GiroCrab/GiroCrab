@@ -2,6 +2,42 @@ mod round7 {
     use super::*;
 
     #[test]
+    fn every_suggestion_reason_uses_the_inclusive_62_day_window() {
+        for (amount, merchant, reference) in [
+            (-100, false, false),
+            (-200, true, false),
+            (-200, false, true),
+        ] {
+            let f = Fixture::new();
+            let r = f.add("refund", 100);
+            let o = f.add("original", amount);
+            raw(
+                &f.v,
+                &format!(
+                    "UPDATE transactions SET booking_date='2024-01-01',purpose='{}',counterparty=CASE WHEN id={r} THEN 'Refund Vendor' ELSE '{}' END WHERE id IN ({r},{o}); UPDATE transactions SET booking_date='2024-03-04' WHERE id={r}",
+                    if reference { "INV123456" } else { "" },
+                    if merchant {
+                        "Refund Vendor"
+                    } else {
+                        "Other Vendor"
+                    }
+                ),
+            );
+            assert!(f.v.refund_suggestions(r, String::new()).unwrap().is_empty());
+            assert!(
+                f.v.refund_candidates(r, String::new(), String::new(), 200)
+                    .unwrap()
+                    .iter()
+                    .any(|c| c.transaction_id == o)
+            );
+            raw(
+                &f.v,
+                &format!("UPDATE transactions SET booking_date='2024-03-03' WHERE id={r}"),
+            );
+            assert_eq!(f.v.refund_suggestions(r, String::new()).unwrap().len(), 1);
+        }
+    }
+    #[test]
     fn concurrent_unique_replacements_on_both_endpoints_keep_the_link() {
         for reverse in [false, true] {
             let a = Fixture::new();

@@ -133,14 +133,16 @@ fn candidates(
                 continue;
             }
             if let Some(reason) = reason {
+                if !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
+                    continue;
+                }
                 let matches = match reason {
                     RefundMatch::SameAmount => other_amount.checked_abs() == amount.checked_abs(),
                     RefundMatch::SameMerchant => {
-                        (!book.counterparty.trim().is_empty()
+                        !book.counterparty.trim().is_empty()
                             && book.counterparty.trim().to_lowercase()
                                 == b.counterparty.trim().to_lowercase()
-                            || !merchant.is_empty() && merchant == &index.merchants[&own.0])
-                            && days_between(&book.date, &b.date).is_some_and(|d| d <= 62)
+                            || !merchant.is_empty() && merchant == &index.merchants[&own.0]
                     }
                     RefundMatch::SameReference => {
                         !reference_tokens(&format!("{} {}", book.purpose, book.reference))
