@@ -440,6 +440,17 @@
         }
       }
     },
+    "%@ – Sharinbox" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ – Sharinbox"
+          }
+        }
+      }
+    },
     "%@ – quirion" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -543,6 +554,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$@: %2$u new transactions, %3$u categorised"
+          }
+        }
+      }
+    },
+    "%@: Anwendung %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@: application %2$@"
+          }
+        }
+      }
+    },
+    "%@: Standard-Anwendung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: default application"
           }
         }
       }
@@ -4863,6 +4896,17 @@
         }
       }
     },
+    "Angemeldet – der Bestand kann abgerufen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signed in – the holdings can be fetched."
+          }
+        }
+      }
+    },
     "Angemeldet – verfügbare und gesperrte Bestände können abgerufen werden." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5547,6 +5591,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Switch to the bank's own interface …"
+          }
+        }
+      }
+    },
+    "Auf diesem und einem anderen Gerät wurde eine andere Anwendung gewählt. Hier bleibt die bisherige, bis Sie sie im Bankzugang erneut speichern: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A different application was chosen on this and on another device. This device keeps its own until you save it again in the bank login: %@"
           }
         }
       }
@@ -7576,6 +7631,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Special"
+          }
+        }
+      }
+    },
+    "Bestand abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch holdings"
+          }
+        }
+      }
+    },
+    "Bestand abrufen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetching holdings …"
           }
         }
       }
@@ -10834,13 +10911,13 @@
         }
       }
     },
-    "Der gewählte Ordner enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen." : {
+    "Der gewählte Ordner „%@“ enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The selected folder does not contain a GiroCrab vault yet. A new vault will be created there. If you expect your data in another folder, cancel and choose that one."
+            "value" : "The selected folder “%@” does not contain a GiroCrab vault yet. A new vault will be created there. If you expect your data in another folder, cancel and choose that one."
           }
         }
       }
@@ -13097,6 +13174,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "An update is being prepared."
+          }
+        }
+      }
+    },
+    "Ein anderes Gerät hat Bankzugängen eine eigene Enable-Banking-Anwendung gegeben. Beim nächsten Abruf ist auf diesem Gerät eine neue Zustimmung nötig." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another device gave bank logins an Enable Banking application of their own. The next fetch on this device needs a new consent."
           }
         }
       }
@@ -16698,6 +16786,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Spacious"
+          }
+        }
+      }
+    },
+    "Großzügig zeigt Kontoname, Inhaber, neue Buchungen und Saldo in einer Zeile. Kompakt braucht weniger Breite und zeigt den Saldo unter dem Namen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spacious shows account name, owner, new transactions and balance in one line. Compact needs less width and shows the balance below the name."
           }
         }
       }
@@ -22325,6 +22424,17 @@
         }
       }
     },
+    "Melden Sie sich bei Sharinbox an (E-Mail, Passwort und Authenticator-App)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in to Sharinbox (e-mail, password and authenticator app)."
+          }
+        }
+      }
+    },
     "Melden Sie sich bei quirion an und bestätigen Sie gegebenenfalls die Anmeldung." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25741,6 +25851,17 @@
         }
       }
     },
+    "PDF-Postbox abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch PDF mailbox"
+          }
+        }
+      }
+    },
     "PDF-Postbox inkl. Archiv" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26425,6 +26546,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Postbox"
+          }
+        }
+      }
+    },
+    "Postbox auflisten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listing the mailbox …"
           }
         }
       }
@@ -27274,6 +27406,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Returns"
+          }
+        }
+      }
+    },
+    "Rente" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pension"
           }
         }
       }
@@ -28345,6 +28488,17 @@
         }
       }
     },
+    "Seitenleiste" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sidebar"
+          }
+        }
+      }
+    },
     "Selbst hinzugefügte Rechnungen, Kassenbons und Fotos. PDF oder Foto hierher ziehen: GiroCrab sucht den passenden Umsatz." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28363,6 +28517,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sets the sequence type FNAL; the mandate is deactivated afterwards."
+          }
+        }
+      }
+    },
+    "Sharinbox: %u Depot aktualisiert, %lld neue PDFs." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sharinbox: %u depot updated, %lld new PDFs."
+          }
+        }
+      }
+    },
+    "Sharinbox: Die Portalantwort konnte nicht gelesen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sharinbox: The portal response could not be read."
           }
         }
       }
@@ -31031,6 +31207,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scope"
+          }
+        }
+      }
+    },
+    "Umlagen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Service charges"
           }
         }
       }
