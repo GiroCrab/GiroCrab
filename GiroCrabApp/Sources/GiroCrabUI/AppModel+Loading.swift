@@ -296,10 +296,11 @@ extension AppModel {
     /// False: nothing to fetch.
     @discardableResult
     func appendBookings(limit: UInt32, then done: (@MainActor (Error?) -> Void)? = nil) -> Bool {
-        guard let vault, hasMoreBookings, selectionLoadTask == nil else { return false }
+        guard let vault, hasMoreBookings, selectionLoadTask == nil, let shown = shownListFilter else { return false }
         // a page still on its way would only fetch part of the rest again
         loadMoreTask?.cancel()
-        var next = listFilter
+        // the offset counts the list on screen: page on with its filter, never with a newer one
+        var next = shown
         next.offset = UInt32(loadedMatchingCount)
         next.limit = limit
         let filter = next
@@ -596,7 +597,7 @@ extension AppModel {
         runCore {
             let filter = listFilter
             let p = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
-            Perf.interval("publishBookings") { publish(p) }
+            Perf.interval("publishBookings") { publish(p, filter: filter) }
         }
         reloadSelectionKPIs()
         reloadCategoryHistory()
@@ -626,7 +627,8 @@ extension AppModel {
     /// Shows a freshly loaded list page. A selected booking the page no longer
     /// contains falls back to the first row, unless it is sticky (kept in the
     /// inspector after an edit moved it out of the filter).
-    func publish(_ p: BookingPage) {
+    func publish(_ p: BookingPage, filter: BookingFilter) {
+        shownListFilter = filter
         // taken first: the fallback selection below would otherwise cancel it
         let selectAll = selectAllAfterReload
         selectAllAfterReload = false
@@ -747,7 +749,7 @@ extension AppModel {
                 // a page requested while this scope was loading belongs to no list
                 self.dropPendingPage()
                 self.scopeLoadTask = nil // done: a ⌘A taken over by `publish` may load the rest
-                self.publish(p)
+                self.publish(p, filter: filter)
                 // selectionFlow always uses scope .all and is unchanged here.
             } catch {
                 guard !Task.isCancelled, let self else { return }

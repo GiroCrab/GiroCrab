@@ -321,7 +321,7 @@ extension AppModel {
                 self.showSelection()
                 if self.streamTopPending { self.scrollStreamTop() }
                 let publish = Perf.signposter.beginInterval("publishSelection")
-                self.publish(loaded.page)
+                self.publish(loaded.page, filter: filter)
                 self.selectionFlow = (loaded.flow.consumptionCents, loaded.flow.investedCents, loaded.flow.incomeCents)
                 self.recurring = loaded.recurring.series
                 self.recurringHidden = loaded.recurring.ignored

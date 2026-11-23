@@ -135,7 +135,7 @@ extension AppModel {
                 self.categoryRefreshTask = nil // done (a newer edit cancels this one first)
                 if generation == self.listGeneration {
                     self.dropPendingPage()
-                    self.publish(r.page)
+                    self.publish(r.page, filter: filter)
                 }
                 let (nowFrom, nowTo) = self.periodRange
                 let nowSums = self.categorySumFilter

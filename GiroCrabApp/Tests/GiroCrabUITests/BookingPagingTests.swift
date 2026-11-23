@@ -172,6 +172,23 @@ final class BookingPagingTests: XCTestCase {
         XCTAssertEqual(model.selectedBookingIDs, Set(matching.map(\.id)), "the new list's bookings")
     }
 
+    /// The filter changed but its list has not arrived (or failed to load): further pages
+    /// continue the list on screen instead of appending the new filter's rows to it.
+    func testFurtherPagesContinueTheListOnScreen() async throws {
+        let all = try allMatching()
+        loadFirstPage(of: 20)
+        let before = model.bookings.count
+        model.suspendsFilterReloads = true // the new list is never loaded
+        model.statusFilter = .new
+        model.suspendsFilterReloads = false
+        XCTAssertEqual(model.listFilter.checked, false)
+        model.selectAllBookings()
+        try await awaitSelectAll()
+        XCTAssertGreaterThan(model.bookings.count, before)
+        XCTAssertEqual(model.bookings.map(\.id), all.map(\.id), "one list, not two mixed")
+        XCTAssertEqual(model.selectedBookingIDs, Set(all.map(\.id)))
+    }
+
     /// A checked row kept in place in „Neu“ does not match the filter: the next page starts
     /// at the right booking and ⌘A selects exactly the matching ones.
     func testSelectAllSkipsTheLingeringRowAndNoMatchingBooking() async throws {

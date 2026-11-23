@@ -912,6 +912,9 @@ public final class AppModel {
     /// ⌘A came while a new list was on its way (edit, search, scope): it runs on that list
     /// once it is published, not on the rows of the previous one (#1696).
     var selectAllAfterReload = false
+    /// The filter the list on screen was loaded with: further pages continue that list,
+    /// even when `listFilter` already describes the next one (#1696).
+    @ObservationIgnored var shownListFilter: BookingFilter?
     @ObservationIgnored var loadMoreTask: Task<Void, Never>?
     /// Bumped by every full reload of the list; a page requested before is dropped.
     @ObservationIgnored var listGeneration = 0
