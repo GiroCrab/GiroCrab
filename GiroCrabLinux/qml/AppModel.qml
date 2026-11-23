@@ -4084,6 +4084,8 @@ QtObject {
             scope = "All"
             MerchantFocus.sidebarChanged()
             searchTimer.stop()
+        } else if (["documents", "wealth", "planned", "directDebits"].includes(sidebarSelection)) {
+            sidebarSelection = "all"
         }
         revealTimer.bookingID = id
         revealTimer.vault = vaultGeneration

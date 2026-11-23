@@ -779,6 +779,7 @@ fn call(method: &str, a: &Value) -> R {
             ok(())
         }
         "restore_backup" => {
+            let mut refund_target = REFUND_TARGET.lock().unwrap();
             let Some(own) = OWN.lock().unwrap().clone() else {
                 return Err(crate::i18n::tr(
                     "Bitte zuerst Ihren eigenen Tresor öffnen, dann die Sicherung wiederherstellen.",
@@ -786,6 +787,7 @@ fn call(method: &str, a: &Value) -> R {
             };
             own.restore_backup(local_path(arg(a, "backup_path")?), arg(a, "password")?)
                 .map_err(|e| e.to_string())?;
+            *refund_target = None;
             remove_quicklook_files();
             ok(())
         }
@@ -1504,9 +1506,8 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         "refund_card" => Some(crate::refunds::card(v, a)),
         "seed_refund_demo" | "edit_refund" => Some((|| {
             let identity: String = arg(a, "vault_identity")?;
-            let target = REFUND_TARGET
-                .lock()
-                .unwrap()
+            let refund_target = REFUND_TARGET.lock().unwrap();
+            let target = refund_target
                 .as_ref()
                 .and_then(|(token, vault)| (token == &identity).then(|| vault.upgrade()).flatten());
             if target
@@ -3524,6 +3525,8 @@ mod tests {
         *VAULT.lock().unwrap() = Some(v.clone());
         *OWN.lock().unwrap() = Some(v.clone());
         let backup = dir.join("sicherung.girocrab");
+        let refund_fixture = crate::refunds::seed(&v, &json!({})).unwrap();
+        let refund_pin = pin_refund_target(&v);
         call_ok(
             "write_backup",
             json!({ "dest_path": format!("file://{}", backup.display()), "password": "geheim1234" }),
@@ -3540,10 +3543,17 @@ mod tests {
         ))
         .unwrap();
         assert!(wrong.get("err").is_some(), "wrong password must be refused");
+        assert_eq!(pin_refund_target(&v), refund_pin);
         call_ok(
             "restore_backup",
             json!({ "backup_path": backup.display().to_string(), "password": "geheim1234" }),
         );
+        let mut args = json!({"action":"link", "vault_identity":refund_pin,
+            "refund_id":refund_fixture["refund"], "refund_part":refund_fixture["part"],
+            "original_id":refund_fixture["original"], "original_part":""});
+        assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_err());
+        args["vault_identity"] = json!(pin_refund_target(&v));
+        assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_ok());
         let tags = call_ok("list_tags", json!({}));
         assert!(
             !tags

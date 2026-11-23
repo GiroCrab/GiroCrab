@@ -140,6 +140,31 @@ test("loaded booking selects without a read; missing booking does not select", (
     assert.equal(missing.pending.length, 1); assert.deepEqual(missing.selected, []);
 });
 
+test("loaded counterpart leaves non-booking pages without resetting list filters", () => {
+    for (const page of ["documents", "wealth", "planned", "directDebits", "account:42"]) {
+        const f = fixture();
+        f.s.bookings = [{ id: 42 }]; f.s.sidebarSelection = page;
+        f.jump(42); f.fire();
+        assert.equal(f.s.sidebarSelection, page === "account:42" ? page : "all");
+        assert.equal(f.s.period, "month");
+        assert.equal(f.s.searchText, "hidden");
+        assert.deepEqual(f.selected, [42]);
+    }
+});
+
+test("a missing selected split retains the picker until explicit replacement", () => {
+    const sheet = readFileSync(new URL("../qml/RefundSheet.qml", import.meta.url), "utf8");
+    let failed;
+    const s = { AppModel: { refundBooking: {id: 42}, loadOffMain(channel, req, apply, error) { failed = error; } },
+        searchTimer: {stop() {}}, ownPart: "deleted", search: "", ownParts: [{part: "remaining"}], booking: {id: 42} };
+    vm.createContext(s);
+    vm.runInContext(`(function() {${bodyAfter("function reload()", sheet)}})()`, s);
+    failed("missing part");
+    assert.equal(s.ownPart, "deleted");
+    assert.equal(s.ownParts[0].part, "remaining");
+    assert.equal(s.error, "missing part");
+});
+
 test("jump waits for the filter-reset list load before looking up its day", () => {
     const f = fixture(); f.jump(42); f.s.selectionLoadRunning = true; f.fire();
     assert.ok(f.s.waiting); assert.equal(f.pending.length, 0);

@@ -40,7 +40,7 @@ Sheet {
             ownPart = data.own_part; fromRefund = data.from_refund; ownOpen = data.own_open
             linked = data.linked; top = data.suggestions.slice(0, 3); candidates = data.candidates
             loading = false
-        }, message => { booking = null; ownParts = []; ownOpen = null; error = message; loading = false }, true)
+        }, message => { ownOpen = null; error = message; loading = false }, true)
     }
     function toggle(row) {
         if (pending || error !== "" || (!row.link && (ownOpen === 0 || row.open_cents === 0))) return
