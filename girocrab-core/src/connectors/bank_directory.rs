@@ -222,6 +222,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "quirion quirin privatbank depot",
         ),
         (
+            ConnectorKind::Sharinbox,
+            "Sharinbox (Société Générale)",
+            "sharinbox societe generale société générale sgmarkets mitarbeiteraktien employee shares aktien arbeitgeber",
+        ),
+        (
             ConnectorKind::SchwaebischHall,
             "Schwäbisch Hall",
             "schwaebisch bsh bausparvertrag bauspar",
