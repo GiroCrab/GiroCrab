@@ -1575,3 +1575,90 @@ fn comdirect_links_only_the_settled_amount_when_a_pre_tax_amount_also_appears() 
 }
 
 mod resort;
+
+#[test]
+fn later_fetches_do_not_reparse_unmatchable_or_distant_open_pdfs() {
+    let subject = "Dividenden ETF";
+    let (_dir, v) = open_vault("girocrab-pdf-match-cache");
+    let kind = ConnectorKind::TradeRepublic;
+    let conn = v
+        .add_bank_connection(kind, String::new(), "login".into())
+        .unwrap();
+    let amb = crate::documents::simple_pdf(&[
+        "WERTPAPIERABRECHNUNG".into(),
+        "Dividenden".into(),
+        "ETF".into(),
+        "KAUF".into(),
+        "Kurs 10,00 EUR".into(),
+        "Gesamt 25,00 EUR".into(),
+        "04.12.2025".into(),
+    ]);
+    let val = crate::documents::simple_pdf(&[
+        "WERTPAPIERABRECHNUNG".into(),
+        "Dividenden".into(),
+        "ETF".into(),
+        "KAUF".into(),
+        "25,00 EUR".into(),
+        "04.12.2025".into(),
+    ]);
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        FetchResult {
+            accounts: vec![tr_cash_account()],
+            documents: vec![
+                tr_document("amb", subject, amb, "2025-12-04"),
+                tr_document("val", subject, val.clone(), "2025-12-04"),
+            ],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    v.db()
+        .unwrap()
+        .execute_batch("UPDATE booking_documents SET pdf_bytes = zeroblob(length(pdf_bytes));")
+        .unwrap();
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        FetchResult {
+            accounts: vec![tr_cash_account()],
+            transactions: vec![tr_booking("far", "2025-12-20", -25_00, subject)],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE booking_documents SET pdf_bytes = ?1 WHERE file_name = 'val.pdf'",
+            [val],
+        )
+        .unwrap();
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        FetchResult {
+            accounts: vec![tr_cash_account()],
+            transactions: vec![
+                tr_booking("cr", "2025-12-04", 25_00, subject),
+                tr_booking("buy", "2025-12-04", -25_00, subject),
+            ],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let linked: Option<i64> = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT booking_id FROM booking_documents WHERE file_name = 'val.pdf'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(linked, Some(booking_id_of(&v, "buy")));
+}
