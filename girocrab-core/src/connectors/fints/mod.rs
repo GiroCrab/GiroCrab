@@ -736,6 +736,8 @@ impl BankConnector for FinTsConnector {
                             done = !empty_loan;
                             ok_any = true;
                             if std::mem::take(&mut self.truncated_statements) {
+                                // unread pages may list holds: the stored ones stay
+                                holds_complete = false;
                                 errors.push(statements::truncated_warning(label));
                             }
                         }
