@@ -95,10 +95,15 @@ final class AutoReviewTests: XCTestCase {
         let other = try XCTUnwrap(model.visibleBookings.first { $0.accountId != a.accountId })
         model.setChecked(false, for: a)
         model.selectedBookingID = a.id
+        // edited while selected: kept in the inspector although the list may no longer show it
+        model.stickyBooking = a
+        model.lingeringBookingID = a.id
         model.autoReviewDelay = .immediately
-        // not in the list: no first row (it would be marked as checked)
+        // not in the list: no first row (it would be marked as checked), no kept row
         model.sidebarSelection = .account(other.accountId)
         XCTAssertNil(model.selectedBookingID)
+        XCTAssertNil(model.selectedBooking)
+        XCTAssertFalse(model.bookings.contains { $0.id == a.id })
         await model.autoReviewTask?.value
         model.selectedBookingID = a.id
         model.sidebarSelection = .allAccounts

@@ -591,6 +591,13 @@ extension AppModel {
     /// inspector after an edit moved it out of the filter).
     func publish(_ p: BookingPage) {
         page = p
+        if viewSwitchPending {
+            // a booking kept in the inspector after an edit belongs to the list it left: the other
+            // view neither shows nor selects it (#1808)
+            let shown = Set(p.transactions.map(\.id))
+            if let id = lingeringBookingID, !shown.contains(id) { lingeringBookingID = nil }
+            if let sticky = stickyBooking, !shown.contains(sticky.id) { stickyBooking = nil }
+        }
         var balances = ListBalances(currency: balanceCurrency)
         balances.merge(p)
         listBalances = balances
