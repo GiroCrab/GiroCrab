@@ -32197,6 +32197,12 @@
     "Verknüpfte Buchung anzeigen" : {
       "extractionState" : "manual",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfte Buchung anzeigen"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",

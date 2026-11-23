@@ -38,10 +38,10 @@ struct RefundLinksCard: View {
                             Button { model.revealBooking(id) } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(counterpart.merchantName.isEmpty ? counterpart.counterparty : counterpart.merchantName)
-                                        .appFont(.body).sensitive(.personal)
-                                    Text(counterpart.bookingDate).appFont(.caption)
+                                        .appFont(.body).lineLimit(2).sensitive(.personal)
+                                    Text(DateText.medium(counterpart.bookingDate)).appFont(.caption)
                                     Text(counterpart.accountName)
-                                        .appFont(.caption).sensitive(.personal)
+                                        .appFont(.caption).lineLimit(2).sensitive(.personal)
                                     let part = link.refundId == booking.id ? link.originalPart : link.refundPart
                                     if !part.isEmpty {
                                         Text(link.refundId == booking.id ? link.originalLabel : link.refundLabel)

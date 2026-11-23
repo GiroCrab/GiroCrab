@@ -51,12 +51,15 @@ extension AppModel {
 
     func refundCard(for key: RefundLoadKey) async throws -> RefundCardSnapshot? {
         let generation = listGeneration
+        guard key.vaultRevision == vaultRevision, key.revision == refundRevision else { return nil }
         let result = try await vaultOffMain { vault in
             let links = try vault.refundLinks(transactionId: key.bookingID).filter { !$0.inactive }
             guard !links.isEmpty else { return RefundCardSnapshot(links: [], counterparts: [:]) }
             let ids = Set(links.map { $0.refundId == key.bookingID ? $0.originalId : $0.refundId })
+            let dates = try ids.compactMap { try vault.bookingDate(bookingId: $0) }
+            guard let from = dates.min(), let to = dates.max() else { return RefundCardSnapshot(links: links, counterparts: [:]) }
             let filter = BookingFilter(accountIds: [], categoryId: nil, includeSubcategories: true,
-                uncategorizedOnly: false, search: nil, dateFrom: nil, dateTo: nil,
+                uncategorizedOnly: false, search: nil, dateFrom: from, dateTo: to,
                 limit: 0, offset: 0, scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
             let bookings = try vault.listTransactions(filter: filter).transactions.filter { ids.contains($0.id) }
             return RefundCardSnapshot(links: links,

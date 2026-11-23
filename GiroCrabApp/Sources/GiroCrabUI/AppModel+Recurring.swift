@@ -58,22 +58,39 @@ extension AppModel {
 
     /// Selects a booking in the list, widening the period if it is outside of it.
     func revealBooking(_ id: Int64) {
+        guard let pin = pinVault() else { return }
         if booking(withID: id) == nil {
             sidebarSelection = .allAccounts
             period = .all
-            directionFilter = .all
-            statusFilter = .all
-            tagFilter = BookingTagFilter()
-            searchText = ""
+            resetListFilters(inBackground: true)
         }
+        let generation = listGeneration
         // After a closing sheet / list reload, so the list can scroll to the row.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 350_000_000)
-            guard let self else { return }
+            guard let self, !Task.isCancelled, isCurrent(pin), generation == listGeneration else { return }
             // an older booking is not on the first page: load back to its day
-            if booking(withID: id) == nil, let day = try? vault?.bookingDate(bookingId: id) {
-                loadBookings(through: day)
+            if booking(withID: id) == nil {
+                let filter = currentFilter
+                do {
+                    let count = try await pin.run { vault -> UInt32? in
+                        guard let day = try vault.bookingDate(bookingId: id) else { return nil }
+                        var narrowed = filter
+                        if narrowed.dateFrom.map({ $0 < day }) ?? true { narrowed.dateFrom = day }
+                        return try vault.countTransactions(filter: narrowed)
+                    }
+                    guard !Task.isCancelled, isCurrent(pin), generation == listGeneration, let count else { return }
+                    listLimit = max(listLimit, count)
+                    startSelectionLoad()
+                    let loadGeneration = listGeneration
+                    await selectionLoadTask?.value
+                    guard !Task.isCancelled, isCurrent(pin), loadGeneration == listGeneration else { return }
+                } catch {
+                    if isCurrent(pin), generation == listGeneration { errorMessage = describe(error) }
+                    return
+                }
             }
+            guard booking(withID: id) != nil else { return }
             if selectedBookingID == id { selectedBookingID = nil }
             selectedBookingID = id
         }

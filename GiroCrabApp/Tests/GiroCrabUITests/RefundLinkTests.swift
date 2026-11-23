@@ -114,6 +114,37 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(empty?.links.count, 0)
     }
 
+    func testInspectorJumpRevealsCounterpartOutsideTheCurrentFilters() async throws {
+        await model.linkRefund(pair())
+        model.period = .days(30)
+        model.directionFilter = .income
+        model.amountFilter = AmountFilter(minCents: 1_000_000, maxCents: nil)
+        model.searchText = "no matching refund test booking"
+        model.startSelectionLoad()
+        try await settle()
+        XCTAssertNil(model.booking(withID: original))
+        model.revealBooking(original)
+        for _ in 0..<300 where model.selectedBookingID != original {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.selectedBooking?.id, original)
+        XCTAssertEqual(model.directionFilter, .all)
+        XCTAssertEqual(model.period, .all)
+        XCTAssertTrue(model.searchText.isEmpty)
+        XCTAssertFalse(model.amountFilter.isActive)
+    }
+
+    func testInspectorJumpDoesNotSelectInAReplacementVault() async throws {
+        model.revealBooking(original)
+        let other = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.useVault(try XCTUnwrap(other.vault), demo: true)
+        let selected = model.selectedBookingID
+        try await Task.sleep(for: .milliseconds(500))
+        try await settle()
+        XCTAssertEqual(model.selectedBookingID, selected)
+        XCTAssertNil(model.errorMessage)
+    }
+
     func testNegativeReverseAssignment() async throws {
         let reverse = RefundEndpointPair(bookingID: original, ownPart: "", paysBack: false,
             candidate: candidate(refund, cents: 10000, open: 10000))
