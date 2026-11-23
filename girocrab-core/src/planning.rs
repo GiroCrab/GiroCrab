@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS transfer_templates (
 /// "Zusätzlich" queries return at once for the many vaults that have none.
 pub(crate) fn has_other_currencies(conn: &rusqlite::Connection) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM transactions WHERE deleted_ms IS NULL AND upper(currency) NOT IN ('', 'EUR'))",
+        "SELECT EXISTS(SELECT 1 FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.deleted_ms IS NULL AND upper(COALESCE(NULLIF(t.currency,''),NULLIF(a.currency,''),'EUR')) != 'EUR')",
         [],
         |r| r.get(0),
     )
@@ -454,17 +454,14 @@ pub(crate) fn store_splits(
     }
     let referenced = conn
         .prepare_cached(
-            "SELECT DISTINCT s.uuid,s.amount_cents FROM transaction_splits s JOIN refund_links l
-         ON (l.refund_id=s.transaction_id AND l.refund_part=s.uuid)
-         OR (l.original_id=s.transaction_id AND l.original_part=s.uuid)
-         WHERE s.transaction_id=?1 AND l.deleted_ms IS NULL",
+            "SELECT s.uuid,s.amount_cents,EXISTS(SELECT 1 FROM refund_links l WHERE l.deleted_ms IS NULL AND ((l.refund_id=s.transaction_id AND l.refund_part=s.uuid) OR (l.original_id=s.transaction_id AND l.original_part=s.uuid))) FROM transaction_splits s WHERE s.transaction_id=?1",
         )?
-        .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, bool>(2)?)))?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut removed = std::collections::HashMap::<i64, Vec<String>>::new();
-    for (uuid, amount) in referenced {
+    let mut removed = std::collections::HashMap::<i64, Vec<(String, bool)>>::new();
+    for (uuid, amount, referenced) in referenced {
         if !kept.contains(&uuid) {
-            removed.entry(amount).or_default().push(uuid);
+            removed.entry(amount).or_default().push((uuid, referenced));
         }
     }
     let mut added = std::collections::HashMap::<i64, Vec<usize>>::new();
@@ -472,7 +469,7 @@ pub(crate) fn store_splits(
         added.entry(line.amount_cents).or_default().push(position);
     }
     for (amount, old) in removed {
-        if let ([uuid], Some(new)) = (old.as_slice(), added.get(&amount))
+        if let ([(uuid, true)], Some(new)) = (old.as_slice(), added.get(&amount))
             && let [position] = new.as_slice()
         {
             uuids[*position] = uuid.clone();

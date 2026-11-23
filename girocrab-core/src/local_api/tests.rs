@@ -441,6 +441,16 @@ fn search_cannot_probe_hidden_fields() {
 }
 
 #[test]
+fn summary_without_shared_accounts_is_empty() {
+    let (_d, v) = demo();
+    share(&v, &[], |_| {});
+    let (from, to) = summary_range();
+    let summary = ok(&v, "summary", json!({"date_from":from,"date_to":to}));
+    assert!(summary["totals"].as_array().unwrap().is_empty());
+    assert!(summary["by_category"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn summary_matches_the_app_tiles() {
     let (_d, v) = demo();
     let giro = account_id(&v, "Musterbank Girokonto");

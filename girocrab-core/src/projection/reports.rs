@@ -91,6 +91,8 @@ impl Vault {
             .prepare("SELECT id,name,color_hex FROM tags WHERE deleted_ms IS NULL")?
             .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
             .collect::<Result<_, _>>()?;
+        let rows = selection.rows.clone();
+        selection.rows.retain(|r| r.flow != FlowKind::Transfer);
         let tags = crate::tags::totals_of(&db, selection.shares()?)?
             .into_iter()
             .filter_map(|t| {
@@ -105,6 +107,7 @@ impl Vault {
                 })
             })
             .collect();
+        selection.rows = rows;
         let category_expenses = selection.category_flows(&db, Side::Expense)?;
         let expense_cents = cents(category_expenses.iter().map(|c| i128::from(c.cents)).sum())?;
         Ok(AnalyticsReport {

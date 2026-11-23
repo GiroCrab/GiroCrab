@@ -7,6 +7,9 @@ fn has_raw_aggregate(source: &str) -> bool {
         Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)").unwrap();
     let sql = Regex::new(r"(?is)\bSUM\s*\([^)]*(?:\bamount_cents|\.amount_cents)").unwrap();
     let rust = Regex::new(r"(?:\+=|saturating_add\s*\()\s*-?\s*\w+\.amount_cents|\.map\s*\(\s*\|\w+\|\s*-?\s*\w+\.amount_cents\s*\)\s*\.sum").unwrap();
+    let fold =
+        Regex::new(r"\.fold\s*\([^;]*\|\s*(\w+)\s*,\s*\w+\s*\|\s*\w+\s*\+\s*\w+\.amount_cents")
+            .unwrap();
     let bank_balance = Regex::new(
         r"\b\w+\.balance_cents\s*=\s*\w+\.balance_cents\.saturating_add\([^;]*amount_cents[^;]*\);",
     )
@@ -45,7 +48,9 @@ fn has_raw_aggregate(source: &str) -> bool {
             || name.contains("cashflow");
         let report = bank_balance.replace_all(body, "");
         category
-            && (sql.is_match(&report) || report.contains("amount_cents") && rust.is_match(&report))
+            && (sql.is_match(&report)
+                || report.contains("amount_cents")
+                    && (rust.is_match(&report) || fold.is_match(&report)))
     })
 }
 
@@ -96,6 +101,9 @@ fn category_and_split_sums_only_use_the_shared_projection() {
 
 #[test]
 fn lint_detects_sql_and_row_aggregates_but_not_display_or_validation() {
+    assert!(has_raw_aggregate(
+        "fn category_totals(parts: &[Part]) { parts.iter().fold(0_i64, |sum, part| sum + part.amount_cents); }"
+    ));
     assert!(!has_raw_aggregate(
         "fn import_categories(rows:&[Row]) { let category_id=0; for r in rows { st.balance_cents = st.balance_cents.saturating_add(r.amount_cents); } }"
     ));

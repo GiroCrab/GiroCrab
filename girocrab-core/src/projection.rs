@@ -155,7 +155,7 @@ impl Projection {
         };
         let finisher = v.booking_finisher(db)?;
         let live_categories = Vault::category_paths(db)?;
-        v.visit_bookings(db, &BookingFilter::default(), |_, b| {
+        v.visit_bookings(db, &BookingFilter::default(), |b| {
             out.info.insert(
                 b.id,
                 Info {
@@ -285,6 +285,7 @@ impl Projection {
             *remaining.entry(refund.clone()).or_default() -= i128::from(a.cents);
             shifted.insert(refund.clone());
             let (source_flow, source_side) = scoped(refund.0, source_flow, source_side);
+            let (target_flow, target_side) = scoped(original.0, target_flow, target_side);
             rows.push(Row {
                 booking_id: refund.0,
                 category_id: source_category,
@@ -297,11 +298,7 @@ impl Projection {
                 category_id: target_category,
                 amount_cents: i128::from(a.cents),
                 flow: target_flow,
-                side: if target_flow == FlowKind::Loan {
-                    KpiSide::Neutral
-                } else {
-                    target_side
-                },
+                side: target_side,
             });
         }
         let mut combined: HashMap<(i64, Option<i64>, FlowKind, u8), (Row, i128)> = HashMap::new();

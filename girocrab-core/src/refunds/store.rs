@@ -123,6 +123,7 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
         Some(key)
     };
     let mut rows = Vec::new();
+    let mut remapped = HashSet::new();
     for mut row in load_rows(conn, "other")? {
         let source = row.key.clone();
         let Some(mapped) = remap(row.key.clone()) else {
@@ -143,12 +144,21 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                 }
             }
             if previous != row.key {
+                remapped.insert(row.key.clone());
                 rows.push(retire_part_key(conn, &mut row, previous)?);
             }
         }
         rows.push(row);
     }
     if folded {
+        let occupied: HashSet<_> = load_rows(conn, "main")?
+            .into_iter()
+            .filter(|r| r.deleted_ms.is_none())
+            .map(|r| r.key)
+            .collect();
+        rows.retain(|r| {
+            !(r.deleted_ms.is_none() && remapped.contains(&r.key) && occupied.contains(&r.key))
+        });
         inactivate_collisions(&mut rows);
     }
     merge_rows(conn, rows)
@@ -260,6 +270,7 @@ pub(crate) fn fold_booking(
     from: i64,
     to: i64,
     keep_live: bool,
+    source_had_splits: bool,
 ) -> CoreResult<()> {
     let remap = |key: &mut Key| {
         if key.refund.0 == from {
@@ -286,6 +297,7 @@ pub(crate) fn fold_booking(
                 (&row.key.original, &mut target.key.original),
             ] {
                 if old.0 == from
+                    && !(source_had_splits && old.1.is_empty())
                     && let Some(part) = survivor_part(conn, "main", old, to, keep_live)?
                 {
                     *endpoint = Endpoint(to, part);

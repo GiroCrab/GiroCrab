@@ -1,6 +1,71 @@
 mod survivor_matching {
     use super::*;
 
+    #[test]
+    fn unlinked_removed_parts_also_make_replacement_ambiguous() {
+        let f = Fixture::new();
+        let r = f.add("refund", 40);
+        let o = f.add("original", -100);
+        let old = f.split(o, &[-40, -40, -20]);
+        f.link(r, "", o, &old[0]);
+        f.v.set_transaction_splits(o, vec![part(Some(old[2].clone()), -60), part(None, -40)])
+            .unwrap();
+        let parts = f.v.list_transaction_splits(o).unwrap();
+        assert!(parts.iter().all(|p| p.uuid != old[0] && p.uuid != old[1]));
+        assert!(f.v.refund_links(r).unwrap()[0].inactive);
+    }
+
+    #[test]
+    fn direct_bank_link_wins_over_a_colliding_part_remap() {
+        for occupied in [false, true] {
+            let f = Fixture::new();
+            let r = f.add("refund", 200);
+            let bank = f.add("bank", -100);
+            let twin = f.add("twin", -100);
+            let u = f.split(bank, &[-60, -40])[0].clone();
+            let v = f.split(twin, &[-60, -40])[0].clone();
+            if occupied {
+                f.link(r, "", bank, &u);
+            }
+            f.link(r, "", twin, &v);
+            let db = f.v.db().unwrap();
+            db.execute_batch(
+                "ATTACH DATABASE ':memory:' AS other;
+                CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+                CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+                CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;",
+            )
+            .unwrap();
+            db.execute(
+                "DELETE FROM other.refund_links WHERE original_id=?1",
+                [bank],
+            )
+            .unwrap();
+            db.execute("DELETE FROM main.refund_links WHERE original_id=?1", [twin])
+                .unwrap();
+            let before = State::load(&db).unwrap().rows;
+            store::merge_folded(&db, &HashMap::from([(r, r), (twin, bank)])).unwrap();
+            let state = State::load(&db).unwrap();
+            let target = state
+                .rows
+                .iter()
+                .find(|row| row.key.original == Endpoint(bank, u.clone()))
+                .unwrap();
+            if occupied {
+                assert_eq!(target, &before[0]);
+            }
+            drop(db);
+            assert_eq!(
+                f.v.refund_links(r)
+                    .unwrap()
+                    .iter()
+                    .map(|l| l.allocated_cents)
+                    .sum::<i64>(),
+                60
+            );
+        }
+    }
+
     fn merge(into: &Vault, from: &Vault) {
         into.merge_other_vault(from.file_path(), vec![7; 32])
             .unwrap();
@@ -836,8 +901,12 @@ mod review_round3 {
                 &b,
                 &format!("UPDATE transactions SET splits_ms={stamp} WHERE id={bo}"),
             );
+            let expected = parts(&b, bo);
             sync(&a, &b, a_first);
             let (aa, bb) = (live(&a, r), live(&b, br));
+            assert_eq!(parts(&a, o), expected);
+            assert_eq!(parts(&b, bo), expected);
+            assert!(aa.is_empty() && bb.is_empty());
             println!("R1b a_first={a_first}: A={aa:?}; B={bb:?}");
             assert_eq!(parts(&a, o), parts(&b, bo), "split unit must converge");
             assert_eq!(aa, bb, "allocation must converge");
@@ -929,9 +998,12 @@ mod review_round3 {
             let o2 = a.save_manual_booking(account, None, setup(-5000)).unwrap();
             a.link_refund(r, String::new(), o, String::new()).unwrap();
             crate::importers::portal_import::hand_over(&a.db().unwrap(), o, o2).unwrap();
-            let token = number(
+            let token = "move-token";
+            sql(
                 &a,
-                &format!("SELECT changed_ms FROM refund_links WHERE original_id={o} AND moved=1"),
+                &format!(
+                    "UPDATE refund_links SET unlink_id='{token}' WHERE original_id={o} AND moved=1"
+                ),
             );
             assert_eq!(
                 number(
@@ -1338,7 +1410,7 @@ mod review_round2 {
             };
             v.set_transaction_splits(o, amounts.into_iter().map(|a| part(None, a)).collect())
                 .unwrap();
-            let inherited = !two_references && !two_new;
+            let inherited = false;
             assert_eq!(splits(&v, o).iter().any(|p| p.0 == old[0].0), inherited);
             assert_eq!(!live(&v, r).is_empty(), inherited);
             assert_eq!(canonical(&v), before);
@@ -1385,7 +1457,8 @@ mod review_round2 {
                         r.deleted_ms,
                         r.moved,
                         r.moved_from.as_ref().map(key),
-                        &r.moved_from_key
+                        &r.moved_from_key,
+                        &r.unlink_id
                     )
                 )
             })
@@ -2295,6 +2368,7 @@ mod review_regressions {
                 Some(vec![part(Some(old[0].0.clone()), -3000), part(None, -3000)]),
             )
             .unwrap();
+            let expected = splits(&a, o);
             if a_first {
                 merge(&a, &b);
                 merge(&b, &a);
@@ -2312,6 +2386,9 @@ mod review_regressions {
                 &b,
                 &format!("SELECT amount_cents FROM transactions WHERE id={bo}"),
             );
+            assert_eq!((aa, ba), (-6000, -6000));
+            assert_eq!(ap, expected);
+            assert_eq!(bp, expected);
             assert!(
                 ap == bp
                     && ap.iter().map(|p| p.1).sum::<i64>() == aa
@@ -2611,7 +2688,7 @@ fn review_moves_preserve_destination_unlinks_and_reject_collisions() {
         }
         let db = f.v.db().unwrap();
         if fold {
-            fold_booking(&db, old, new, false).unwrap();
+            fold_booking(&db, old, new, false, true).unwrap();
         } else {
             move_booking(&db, old, new).unwrap();
         }
@@ -2928,6 +3005,33 @@ fn mixed_sign_amount_edit_keeps_valid_part_links_and_rejects_bad_replacements_at
     );
     assert_eq!(f.v.refund_links(m).unwrap().len(), 2);
     assert!(f.v.refund_links(m).unwrap().iter().all(|l| !l.inactive));
+    let booking_state = || {
+        let db = f.v.db().unwrap();
+        let amount: i64 = db
+            .query_row(
+                "SELECT amount_cents FROM transactions WHERE id=?1",
+                [m],
+                |r| r.get(0),
+            )
+            .unwrap();
+        drop(db);
+        let splits = f.v.list_transaction_splits(m);
+        (
+            amount,
+            splits
+                .unwrap()
+                .into_iter()
+                .map(|p| (p.uuid, p.amount_cents))
+                .collect::<Vec<_>>(),
+            f.v.list_accounts()
+                .unwrap()
+                .into_iter()
+                .find(|a| a.id == f.account)
+                .unwrap()
+                .balance_cents,
+        )
+    };
+    let stored_before = booking_state();
     let before =
         f.v.refund_links(m)
             .unwrap()
@@ -2949,6 +3053,7 @@ fn mixed_sign_amount_edit_keeps_valid_part_links_and_rejects_bad_replacements_at
         )
         .is_err()
     );
+    assert_eq!(booking_state(), stored_before);
     assert_eq!(
         f.v.refund_links(m)
             .unwrap()
@@ -3251,36 +3356,38 @@ fn fingerprint(v: &Vault) -> Vec<(String, String, String, String, i64)> {
     rows
 }
 
-type StoredLink = (
-    String,
-    String,
-    String,
-    String,
-    i64,
-    i64,
-    Option<i64>,
-    i64,
-    i64,
-);
 type Undo = (i64, String, i64, String, String);
 
-fn raw_fingerprint(v: &Vault) -> Vec<StoredLink> {
+fn raw_fingerprint(v: &Vault) -> Vec<String> {
     let db = v.db().unwrap();
     let state = State::load(&db).unwrap();
     let mut rows: Vec<_> = state
         .rows
         .iter()
         .map(|r| {
-            (
-                state.books[&r.key.refund.0].identity.clone(),
-                r.key.refund.1.clone(),
-                state.books[&r.key.original.0].identity.clone(),
-                r.key.original.1.clone(),
-                r.created_ms,
-                r.changed_ms,
-                r.deleted_ms,
-                r.refund_cents,
-                r.original_cents,
+            let provenance = r.moved_from.as_ref().map(|key| {
+                (
+                    state.books[&key.refund.0].identity.clone(),
+                    key.refund.1.clone(),
+                    state.books[&key.original.0].identity.clone(),
+                    key.original.1.clone(),
+                )
+            });
+            format!(
+                "{:?}",
+                (
+                    state.books[&r.key.refund.0].identity.clone(),
+                    r.key.refund.1.clone(),
+                    state.books[&r.key.original.0].identity.clone(),
+                    r.key.original.1.clone(),
+                    r.created_ms,
+                    r.changed_ms,
+                    r.deleted_ms,
+                    r.refund_cents,
+                    r.original_cents,
+                    r.moved,
+                    (provenance, &r.moved_from_key, &r.unlink_id),
+                )
             )
         })
         .collect();

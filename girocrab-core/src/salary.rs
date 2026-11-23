@@ -178,7 +178,7 @@ impl Vault {
             ..Default::default()
         };
         let mut salaries = Vec::new();
-        self.visit_bookings(&*self.db()?, &filter, |_, b| {
+        self.visit_bookings(&*self.db()?, &filter, |b| {
             if b.is_salary {
                 salaries.push(b);
             }

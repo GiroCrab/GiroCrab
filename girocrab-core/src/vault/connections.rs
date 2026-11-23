@@ -198,13 +198,18 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
             [k],
             |r| r.get(0),
         )?;
+        let source_had_splits: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
+            [o],
+            |r| r.get(0),
+        )?;
         if same_amount && !keep_has_splits {
             conn.execute(
                 "UPDATE transaction_splits SET transaction_id = ?1 WHERE transaction_id = ?2",
                 params![k, o],
             )?;
         }
-        crate::refunds::fold_booking(conn, o, k, same_amount)?;
+        crate::refunds::fold_booking(conn, o, k, same_amount, source_had_splits)?;
         // a loan link of `keep` wins (transaction_id is the key)
         conn.execute(
             "UPDATE OR IGNORE loan_links SET transaction_id = ?1 WHERE transaction_id = ?2",
@@ -835,7 +840,7 @@ mod tests {
 
     #[test]
     fn duplicate_account_fold_preserves_refund_parts_only_for_matching_amounts() {
-        for same_amount in [true, false] {
+        for (same_amount, whole) in [(true, false), (false, false), (true, true), (false, true)] {
             let dir = crate::test_support::TempDir::new("refund-duplicate-account");
             let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![6; 32]).unwrap();
             let keep = v
@@ -880,21 +885,30 @@ mod tests {
                 )
                 .unwrap();
             }
+            if whole {
+                v.link_refund(r, String::new(), o, String::new()).unwrap();
+            }
             v.set_transaction_splits(
                 o,
-                [-60, -40]
-                    .into_iter()
-                    .map(|amount| crate::models::TransactionSplitInput {
-                        uuid: None,
-                        category_id: None,
-                        amount_cents: amount,
-                        note: String::new(),
-                    })
-                    .collect(),
+                (if whole {
+                    vec![-100, 20, -20]
+                } else {
+                    vec![-60, -40]
+                })
+                .into_iter()
+                .map(|amount| crate::models::TransactionSplitInput {
+                    uuid: None,
+                    category_id: None,
+                    amount_cents: amount,
+                    note: String::new(),
+                })
+                .collect(),
             )
             .unwrap();
             let uuid = v.list_transaction_splits(o).unwrap()[0].uuid.clone();
-            v.link_refund(r, String::new(), o, uuid.clone()).unwrap();
+            if !whole {
+                v.link_refund(r, String::new(), o, uuid.clone()).unwrap();
+            }
             {
                 let db = v.db().unwrap();
                 let tx = db.unchecked_transaction().unwrap();
@@ -906,8 +920,11 @@ mod tests {
             let links = v.refund_links(r).unwrap();
             if same_amount {
                 assert_eq!(links[0].original_id, k);
-                assert_eq!(links[0].original_part, uuid);
-                assert_eq!(links[0].allocated_cents, 60);
+                assert_eq!(
+                    links[0].original_part,
+                    if whole { String::new() } else { uuid }
+                );
+                assert_eq!(links[0].allocated_cents, if whole { 0 } else { 60 });
             } else {
                 assert!(links.is_empty());
             }

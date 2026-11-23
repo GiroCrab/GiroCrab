@@ -158,6 +158,7 @@ impl Vault {
                     &db,
                     &BookingFilter {
                         date_from: Some(format!("{first_month}-01")),
+                        date_to: last_day_of_month(&this_month).map(|d| d.to_string()),
                         respect_in_total: true,
                         ..Default::default()
                     },

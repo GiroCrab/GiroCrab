@@ -626,6 +626,14 @@ impl Vault {
         let accounts = requested_accounts(&shared, &p.account_ids)?;
         // Totals: the enriched bookings (flow decides the KPI side), like the
         // app's tiles and `cashflow_by_period`.
+        if accounts.is_empty() {
+            return Ok(ApiSummary {
+                date_from: from,
+                date_to: to,
+                totals: Vec::new(),
+                by_category: Vec::new(),
+            });
+        }
         let filter = BookingFilter {
             date_from: Some(from.clone()),
             date_to: Some(to.clone()),

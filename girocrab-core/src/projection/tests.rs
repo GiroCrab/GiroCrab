@@ -5,6 +5,90 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 #[test]
+fn scoped_loan_refund_offsets_only_a_shared_repayment() {
+    let f = Fixture::new();
+    let original = f.add(-500, Some(f.cost));
+    let refund = f.add(200, None);
+    let loan =
+        f.v.create_manual_loan(crate::loans::LoanSetup {
+            name: "Loan".into(),
+            original_cents: None,
+            anchor_date: f.date.clone(),
+            anchor_balance_cents: 10000,
+            interest_rate_ppm: None,
+            match_expr: String::new(),
+        })
+        .unwrap();
+    f.v.set_booking_loan(original, Some(loan)).unwrap();
+    f.link(refund, "", original, "");
+    let db = f.v.db().unwrap();
+    for (accounts, expected) in [(vec![f.account], 0), (vec![f.account, loan], -300)] {
+        let selection =
+            f.v.projected_selection(
+                &db,
+                &BookingFilter::default(),
+                Some(&accounts),
+                CurrencyMode::Primary,
+            )
+            .unwrap();
+        assert_eq!(selection.totals().unwrap().expense_cents, expected);
+        assert!(
+            selection
+                .category_flows(&db, Side::Expense)
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn tag_analytics_skip_transfers_but_keep_projected_refund_credits() {
+    let f = Fixture::new();
+    let transfer = f.transfer_category();
+    let original = f.add(-1000, Some(f.cost));
+    let refund = f.add(400, Some(transfer));
+    let own_transfer = f.add(-50000, Some(transfer));
+    let tag = f.v.create_tag("Trip".into(), "#ff0000".into()).unwrap();
+    for id in [original, refund, own_transfer] {
+        f.v.set_booking_tags(id, vec![tag.id]).unwrap();
+    }
+    f.link(refund, "", original, "");
+    let report =
+        f.v.analytics_report(BookingFilter::default(), false)
+            .unwrap();
+    assert_eq!(report.tags[0].cents, -600);
+    assert_eq!(report.tags[0].booking_count, 2);
+}
+
+#[test]
+fn supplementary_guard_inherits_account_currency() {
+    let f = Fixture::new();
+    let usd =
+        f.v.create_offline_account("USD".into(), AccountKind::Cash, "USD".into(), 0)
+            .unwrap();
+    f.add_on(usd, -300, Some(f.cost), "", &f.date);
+    let totals = f.v.flow_other_currencies(BookingFilter::default()).unwrap();
+    assert_eq!(totals.len(), 1);
+    assert_eq!(totals[0].currency, "USD");
+    assert_eq!(totals[0].consumption_cents, 300);
+}
+
+#[test]
+fn investment_dashboard_does_not_total_future_months() {
+    let f = Fixture::new();
+    let future = f.add_on(f.account, -100, Some(f.cost), "EUR", "9999-01-01");
+    f.split(
+        future,
+        &[
+            (-i64::MAX, Some(f.cost)),
+            (i64::MAX, Some(f.income)),
+            (-100, Some(f.cost)),
+        ],
+    );
+    assert!(f.v.investment_dashboard(1).is_ok());
+}
+
+#[test]
 fn category_match_cache_separates_date_ranges_and_revisions() {
     let f = Fixture::new();
     let first = f.add_on(f.account, -1000, Some(f.cost), "EUR", "2020-01-01");

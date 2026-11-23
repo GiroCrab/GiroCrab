@@ -92,77 +92,73 @@ const BOOKING_FROM_SQL: &str = "FROM transactions t JOIN accounts a ON a.id = t.
      LEFT JOIN categories cat ON cat.id = t.category_id AND cat.deleted_ms IS NULL
      LEFT JOIN rules r ON r.id = t.rule_id AND r.deleted_ms IS NULL";
 
-/// SELECT list read by `booking_from_row`; `share_sql` is the KPI share (column 21).
-fn booking_columns(share_sql: &str) -> String {
-    format!(
+/// SELECT list read by `booking_from_row`.
+fn booking_columns(_share_sql: &str) -> String {
+    String::from(
         "t.id, t.account_id, a.name, t.booking_date, t.value_date, t.amount_cents, t.currency, t.counterparty,
          t.counterparty_iban, t.purpose, t.booking_text, cat.id, t.category_source, r.id, t.checked, a.kind,
          (SELECT count(*) FROM booking_documents d WHERE d.booking_id = t.id), t.note,
-         t.purpose_code, t.gvc, t.salary_flag, {share_sql},
+         t.purpose_code, t.gvc, t.salary_flag,
          ((t.external_id LIKE 'pending-%' OR t.external_id LIKE 'advanzia-hold-%')), t.item_refs, t.end_to_end_id, t.mandate_id, t.creditor_id, t.external_id"
     )
 }
 
-/// (KPI share, raw booking) of one `booking_columns` row; `BookingFinisher` fills the rest.
-fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Booking)> {
+/// Raw booking of one `booking_columns` row; `BookingFinisher` fills the rest.
+fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Booking> {
     let cat: Option<i64> = r.get(11)?;
     let src: String = r.get(12)?;
-    let share: i64 = r.get(21)?;
-    Ok((
-        share,
-        Booking {
-            id: r.get(0)?,
-            account_id: r.get(1)?,
-            account_name: r.get(2)?,
-            booking_date: r.get(3)?,
-            value_date: r.get(4)?,
-            amount_cents: r.get(5)?,
-            currency: r.get(6)?,
-            counterparty: r.get(7)?,
-            counterparty_iban: r.get(8)?,
-            purpose: r.get(9)?,
-            booking_text: r.get(10)?,
-            category_id: cat,
-            category_name: String::new(),
-            category_path: String::new(),
-            category_color_hex: String::new(),
-            category_symbol: String::new(),
-            category_source: match src.as_str() {
-                "rule" => CategorySource::Rule,
-                "manual" => CategorySource::Manual,
-                _ => CategorySource::None,
-            },
-            rule_id: r.get(13)?,
-            checked: r.get::<_, i64>(14)? != 0,
-            merchant: MerchantResolver::placeholder(),
-            merchant_name: String::new(),
-            merchant_domain: None,
-            merchant_svg_path: None,
-            merchant_hex_color: String::new(),
-            payment_method: String::new(),
-            flow: FlowKind::Consumption,
-            clean_purpose: String::new(),
-            account_kind: AccountKind::from_str(&r.get::<_, String>(15)?),
-            document_count: r.get::<_, i64>(16)? as u32,
-            note: r.get(17)?,
-            purpose_code: r.get(18)?,
-            gvc: r.get(19)?,
-            salary_flag: r.get::<_, Option<i64>>(20)?.map(|f| f != 0),
-            is_salary: false,
-            recurrence_key: String::new(),
-            is_pending: r.get::<_, i64>(22)? != 0,
-            item_refs: r.get(23)?,
-            end_to_end_id: r.get(24)?,
-            mandate_id: r.get(25)?,
-            creditor_id: r.get(26)?,
-            external_id: r.get(27)?,
-            tags: Vec::new(),
-            refund_marker: "none".into(),
-            refund_cents: 0,
-            refunded_cents: 0,
-            split_count: 0,
+    Ok(Booking {
+        id: r.get(0)?,
+        account_id: r.get(1)?,
+        account_name: r.get(2)?,
+        booking_date: r.get(3)?,
+        value_date: r.get(4)?,
+        amount_cents: r.get(5)?,
+        currency: r.get(6)?,
+        counterparty: r.get(7)?,
+        counterparty_iban: r.get(8)?,
+        purpose: r.get(9)?,
+        booking_text: r.get(10)?,
+        category_id: cat,
+        category_name: String::new(),
+        category_path: String::new(),
+        category_color_hex: String::new(),
+        category_symbol: String::new(),
+        category_source: match src.as_str() {
+            "rule" => CategorySource::Rule,
+            "manual" => CategorySource::Manual,
+            _ => CategorySource::None,
         },
-    ))
+        rule_id: r.get(13)?,
+        checked: r.get::<_, i64>(14)? != 0,
+        merchant: MerchantResolver::placeholder(),
+        merchant_name: String::new(),
+        merchant_domain: None,
+        merchant_svg_path: None,
+        merchant_hex_color: String::new(),
+        payment_method: String::new(),
+        flow: FlowKind::Consumption,
+        clean_purpose: String::new(),
+        account_kind: AccountKind::from_str(&r.get::<_, String>(15)?),
+        document_count: r.get::<_, i64>(16)? as u32,
+        note: r.get(17)?,
+        purpose_code: r.get(18)?,
+        gvc: r.get(19)?,
+        salary_flag: r.get::<_, Option<i64>>(20)?.map(|f| f != 0),
+        is_salary: false,
+        recurrence_key: String::new(),
+        is_pending: r.get::<_, i64>(21)? != 0,
+        item_refs: r.get(22)?,
+        end_to_end_id: r.get(23)?,
+        mandate_id: r.get(24)?,
+        creditor_id: r.get(25)?,
+        external_id: r.get(26)?,
+        tags: Vec::new(),
+        refund_marker: "none".into(),
+        refund_cents: 0,
+        refunded_cents: 0,
+        split_count: 0,
+    })
 }
 
 /// Fills the tags of `bookings` with one query per 500 rows (never per row).
@@ -718,9 +714,8 @@ impl Vault {
         self.bookings_where(db, &format!("t.id IN ({})", sql_int_list(ids)), [])
     }
 
-    /// Finishes every booking of `filter` newest first and hands it to `visit`
-    /// with its KPI share (the full amount, or with a category filter only the
-    /// split parts of that category). Applies what SQL can't (`keeps`); when the
+    /// Finishes every booking of `filter` newest first and hands it to `visit`.
+    /// Applies what SQL can't (`keeps`); when the
     /// class cache is filled, the rows it drops are never finished. Collects
     /// nothing and loads no tags, so callers that count or sum skip both.
     /// `limit`, `offset` and `whole_days` are ignored.
@@ -728,7 +723,7 @@ impl Vault {
         &self,
         db: &rusqlite::Connection,
         filter: &BookingFilter,
-        mut visit: impl FnMut(i64, Booking),
+        mut visit: impl FnMut(Booking),
     ) -> Result<(), CoreError> {
         let (cte, where_sql, args, share_sql) = self.filter_clauses(db, filter)?;
         let sql = booking_select(&cte, &where_sql, &share_sql);
@@ -750,14 +745,14 @@ impl Vault {
             }) {
                 continue;
             }
-            let (share, mut t) = booking_from_row(row)?;
+            let mut t = booking_from_row(row)?;
             finisher.finish(&mut t, None);
             if filter
                 .merchant_key
                 .as_deref()
                 .is_none_or(|m| m == t.merchant.key)
             {
-                visit(share, t);
+                visit(t);
             }
         }
         Ok(())
@@ -770,7 +765,7 @@ impl Vault {
         filter: &BookingFilter,
     ) -> Result<Vec<Booking>, CoreError> {
         let mut out = Vec::new();
-        self.visit_bookings(db, filter, |_, b| out.push(b))?;
+        self.visit_bookings(db, filter, |b| out.push(b))?;
         Ok(out)
     }
 
@@ -787,7 +782,7 @@ impl Vault {
         let mut out = stmt
             .query_map(params, booking_from_row)?
             .map(|row| {
-                let (_, mut t) = row?;
+                let mut t = row?;
                 finisher.finish(&mut t, visible);
                 Ok(t)
             })
@@ -853,7 +848,7 @@ impl Vault {
         // `visit_bookings`, so the update touches exactly what the list shows.
         if filters_by_class(&filter) {
             let mut ids = Vec::new();
-            self.visit_bookings(&*self.db()?, &filter, |_, b| {
+            self.visit_bookings(&*self.db()?, &filter, |b| {
                 if b.checked != checked {
                     ids.push(b.id);
                 }
@@ -1118,7 +1113,7 @@ impl Vault {
         };
         let mut classes = HashMap::new();
         for row in rows {
-            let (_, mut t) = row?;
+            let mut t = row?;
             finisher.finish(&mut t, None);
             let name = intern(t.merchant.name.to_lowercase());
             let merchant = intern(t.merchant.key);
@@ -1315,7 +1310,7 @@ impl Vault {
         } = self.projected_totals(db, filter, None, crate::projection::CurrencyMode::Primary)?;
         let mut txs: Vec<Booking> = Vec::new();
         let mut total = 0usize;
-        self.visit_bookings(db, filter, |_, t| {
+        self.visit_bookings(db, filter, |t| {
             // Only the page is kept. `whole_days` adds the rest of its last day:
             // sorted by day, it follows directly.
             let in_page = (start..end).contains(&total)
