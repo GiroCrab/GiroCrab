@@ -100,6 +100,10 @@ impl SyncSession {
                     data.keep_only(only);
                 }
                 let summary = store_fetch(&self.vault, self.kind, st.ctx.connection_id, data)?;
+                // Done once stored, also with warnings (an account that failed, a list cut
+                // at its page limit): kept, every sync would ask for the whole period again,
+                // and for a TAN, without ever finishing. The warnings say what is missing;
+                // `request_full_history` asks for the period again.
                 if let Some(history) = &self.history {
                     let db = self.vault.db()?;
                     super::history::finish(&db, st.ctx.connection_id, history)?;

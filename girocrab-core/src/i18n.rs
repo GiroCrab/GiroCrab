@@ -1857,8 +1857,8 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Händler-Logos" => "Merchant logos",
         "Zeitraum beim ersten Abruf" => "Period of the first fetch",
-        "max = so weit die Bank zurückliefert, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze." => {
-            "max = as far back as the bank delivers, otherwise a number of days. Applies to new logins and to accounts without transactions."
+        "max = so weit Bank und Anbindung es zulassen, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze." => {
+            "max = as far back as the bank and the connection allow, otherwise a number of days. Applies to new logins and to accounts without transactions."
         }
         "Allgemein" => "General",
         // ------------------------------------------------------------ vault.rs settings (same in both languages)

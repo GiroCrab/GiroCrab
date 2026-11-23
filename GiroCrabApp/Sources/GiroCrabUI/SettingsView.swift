@@ -170,7 +170,7 @@ struct GeneralSettings: View {
                         Text("\(Int(firstFetchPeriod.wrappedValue) ?? 90) Tage").tag(firstFetchPeriod.wrappedValue)
                     }
                 }
-                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ holt alles, was die Bank liefert. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.")
+                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Buchungen").appSectionHeader() }
             TransferSettingsSection()

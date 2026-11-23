@@ -112,9 +112,10 @@ in the live test: every booking group returned was parsed (63 of 63 and 162 of 1
 
 ## Known limitations
 
-- History: at most what the bank keeps (775 days). GiroCrab only goes back further than
-  the default 90 days on the **first** fetch of an account, according to the setting
-  "Zeitraum beim ersten Abruf".
+- History: at most what the bank keeps (775 days; the card request is cut to that period).
+  A new login fetches the period of the setting "Zeitraum beim ersten Abruf" once (default
+  "Maximum", beyond 90 days with an approval in the app), also for accounts that already
+  have bookings; later fetches go on from each account's newest booking.
 - Statement PDFs and the mailbox are not available over FinTS for this bank code. They
   would need a separate web-portal connector; its feasibility has not been looked at.
 - The booking reference of `HIKKU` is not used as de-duplication key yet; bookings are
