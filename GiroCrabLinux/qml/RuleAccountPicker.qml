@@ -13,7 +13,7 @@ ColumnLayout {
     /// RuleAccountSelection.adding / removing: added once, kept in the order they were added.
     function adding(id) { return accountIds.indexOf(id) >= 0 ? accountIds : accountIds.concat([id]) }
     function removing(id) { return accountIds.filter(x => x !== id) }
-    function label(a) { return a.bank_name + " – " + a.name }
+    function label(a) { return a.bank_name + " – " + AppModel.accountLabel(a) }
     /// the add menu: section titles (disabled) and the accounts not chosen yet, like the sidebar (#412)
     readonly property var menuEntries: {
         const out = []

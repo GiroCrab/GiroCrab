@@ -5,7 +5,8 @@ import QtQuick.Layouts
 // above the browser). Subtypes: TrWebLoginFlow (ConnectionsUI.swift › WebLoginSheet),
 // PortalWebLoginFlow (PortalUI.swift), AmazonWebLoginFlow (AmazonUI.swift),
 // FnzWebLoginFlow (FnzUI.swift), QuirionWebLoginFlow (QuirionUI.swift),
-// SchwaebischHallWebLoginFlow (SchwaebischHallUI.swift), EquatePlusWebLoginFlow (EquatePlusUI.swift).
+// SchwaebischHallWebLoginFlow (SchwaebischHallUI.swift), EquatePlusWebLoginFlow (EquatePlusUI.swift),
+// AdvanziaWebLoginFlow (AdvanziaWorkflow.swift, AdvanziaUI.swift).
 RowLayout {
     /// The sheet (browser API: load, evaluate, runAsync, currentURL, onPortal, …).
     property var browser
@@ -35,6 +36,9 @@ RowLayout {
     /// AccountSelectionPanel over the browser (FNZ, #346); `endAccountChoice` when done.
     property bool choosingAccounts: false
     function endAccountChoice() { choosingAccounts = false }
+    /// Shown over the browser while `covering` (Amex card switch, Advanzia account choice).
+    property Component cover: null
+    property bool covering: false
 
     /// Esc / window close.
     function cancel() { AppModel.closeWebLogin() }

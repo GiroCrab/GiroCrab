@@ -1986,6 +1986,50 @@ fn hispas_advertises_pain_001_09_for_hkccs() {
     assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V09));
 }
 
+#[test]
+fn hispas_advertises_pain_001_09_for_standing_order_query() {
+    // #1647: a bank that lists its SEPA schemas only in HISPAS (no HICDBS) must get
+    // pain.001.001.09 for HKCDB too, not the .03 fallback ("SEPA-Deskriptor laut BPD nicht zugelassen").
+    let mut c = FinTsConnector::new("50010517");
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V03));
+    c.learn_bpd(&reply(
+        b"HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.008.001.08'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+}
+
+#[test]
+fn a_new_bpd_version_drops_a_withdrawn_pain_format() {
+    // The bank withdraws .001.09 from HISPAS with a new BPD version: HKCDB and HKCCS
+    // must fall back to .03 instead of keeping the stored .09.
+    let mut c = FinTsConnector::new("50010517");
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+6+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+7+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.03.xsd'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V03));
+    assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V03));
+}
+
+#[test]
+fn partial_replies_and_the_same_bpd_version_keep_learned_pain_formats() {
+    let mut c = FinTsConnector::new("50010517");
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+6+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd'",
+    ));
+    // a reply without HIBPA/HISPAS (e.g. the TAN media list) removes nothing
+    c.learn_bpd(&reply(b"HITAB:4:4:3+0'"));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+    // a second message of the same BPD version (other dialog) is merged, not replaced
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+6+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.03.xsd'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+}
+
 #[tokio::test]
 async fn a_rejected_account_list_is_no_warning_when_the_upd_lists_the_accounts() {
     // #1083 (flatex): HKSPA is answered with 9380 on every sync; the UPD lists

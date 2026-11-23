@@ -372,7 +372,7 @@ struct WealthView: View {
                     // after the classes where cash and property are listed too
                     if sharedHoldingsScope { figureTiles(d) }
                     HStack {
-                        Text(LocalizedStringKey(grouping == .instrument ? "Instrumente · Vermögenswerte (brutto)" : "Anlageklassen · Vermögenswerte (brutto)"))
+                        Text(classHeading)
                             .appFont(.subheadline, weight: .semibold)
                         Spacer()
                         Text(Money.format(d.classRows.reduce(0) { $0 + $1.cents })).sensitive(.amounts).monospacedDigit()
@@ -416,9 +416,7 @@ struct WealthView: View {
                 let debtAccounts = classMode ? s.liabilities.filter { $0.balanceCents < 0 } : s.liabilities
                 if scope == .all && !debtAccounts.isEmpty {
                     if classMode {
-                        Text(includeLiabilities
-                             ? String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben.")
-                             : String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen."))
+                        Text(grossNote)
                             .appFont(.caption).foregroundStyle(Theme.secondary)
                     }
                     listCard(Text("Verbindlichkeiten"), total: debtAccounts.reduce(0) { $0 + $1.balanceCents }, accounts: debtAccounts, tint: Theme.negative)
@@ -913,7 +911,7 @@ struct WealthView: View {
         Binding(
             get: {
                 switch grouping {
-                case .account, .accountKind: .position
+                case .account, .accountKind, .liquidity: .position
                 case .assetClass: .assetClass
                 case .instrument: .instrument
                 }
@@ -1056,6 +1054,23 @@ struct WealthView: View {
     static func gainText(cents: Int64, percent: Double) -> String {
         let sign = cents > 0 ? "+" : ""
         return "\(sign)\(Money.format(cents)) (\(sign)\(percent.formatted(.number.precision(.fractionLength(2)))) %)"
+    }
+
+    private var classHeading: LocalizedStringKey {
+        switch grouping {
+        case .instrument: "Instrumente · Vermögenswerte (brutto)"
+        case .liquidity: "Liquiditätsgrade · Vermögenswerte (brutto)"
+        case .account, .assetClass, .accountKind: "Anlageklassen · Vermögenswerte (brutto)"
+        }
+    }
+    /// Under the grouped cards: they add up the assets, the debts follow in their own card.
+    private var grossNote: String {
+        switch (grouping == .liquidity, includeLiabilities) {
+        case (true, true): String(localized: "Die Liquiditätsgrade zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben.")
+        case (true, false): String(localized: "Die Liquiditätsgrade zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen.")
+        case (false, true): String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben.")
+        case (false, false): String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen.")
+        }
     }
 
     private func classCards(_ d: Derived) -> some View {
