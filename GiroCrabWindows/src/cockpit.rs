@@ -78,13 +78,19 @@ pub fn today_plus_days(n: i64) -> String {
     fmt_date(y, m, d)
 }
 
-/// Year and month of today (UTC; a few hours' offset around midnight does not matter here).
-pub fn current_year_month() -> (i32, u32) {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    let (y, m, _) = civil_from_days(secs.div_euclid(86_400));
-    (y, m)
+pub fn period_month(key: &str) -> Option<(i32, u32)> {
+    let (year, month) = key.split_once('-')?;
+    let (year, month) = (year.parse().ok()?, month.parse().ok()?);
+    (key.len() == 7 && (1..=12).contains(&month)).then_some((year, month))
+}
+
+pub fn current_year_month(vault: &girocrab_core::Vault) -> Result<(i32, u32), String> {
+    vault
+        .cashflow_by_period(girocrab_core::PeriodGranularity::Month, 1, None, false)
+        .map_err(|e| e.to_string())?
+        .last()
+        .and_then(|p| period_month(&p.key))
+        .ok_or_else(|| "Der Berichtsmonat konnte nicht ermittelt werden.".into())
 }
 
 /// `2026-11-13` -> "Freitag, 13. November"; unparsable input is returned unchanged.
@@ -308,6 +314,14 @@ pub fn top_spending(totals: &[CategoryFlowTotal], n: usize, currency: &str) -> V
 pub(crate) mod tests {
     use super::*;
 
+    #[test]
+    fn reporting_month_uses_the_local_period_and_rejects_missing_periods() {
+        assert_eq!(super::period_month("2026-02"), Some((2026, 2)));
+        assert_eq!(super::period_month("2025-12"), Some((2025, 12)));
+        for key in ["", "2026-00", "2026-13", "2026-02-01", "not-a-period"] {
+            assert_eq!(super::period_month(key), None);
+        }
+    }
     pub(crate) fn row(date: &str, cents: i64, cat: &str) -> Row {
         Row {
             id: 1,

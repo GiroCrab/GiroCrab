@@ -639,15 +639,16 @@ fn render_budgets(
 }
 
 fn load_budgets(win: &MainWindow, v: &Arc<Vault>, status: String) {
-    let (year, month) = crate::cockpit::current_year_month();
     let (weak, v) = (win.as_weak(), v.clone());
     std::thread::spawn(move || {
         let cats = v.list_categories(None, None).map_err(|e| e.to_string());
-        let progress = v
-            .list_category_budget_progress(year, month)
-            .map_err(|e| e.to_string());
+        let progress = crate::cockpit::current_year_month(&v).and_then(|(year, month)| {
+            v.list_category_budget_progress(year, month)
+                .map(|progress| (progress, year, month))
+                .map_err(|e| e.to_string())
+        });
         let _ = weak.upgrade_in_event_loop(move |win| match (cats, progress) {
-            (Ok(cats), Ok(progress)) => {
+            (Ok(cats), Ok((progress, year, month))) => {
                 render_budgets(&win, cats, progress, year, month);
                 win.set_bg_status(status.into());
             }

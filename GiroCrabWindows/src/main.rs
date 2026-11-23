@@ -709,7 +709,6 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
         2 => PeriodGranularity::Year,
         _ => PeriodGranularity::Month,
     };
-    let (year, month) = cockpit::current_year_month();
     let period = win.get_cashflow_period();
     let (target, token) = with_state(|st| {
         st.dashboard_generation += 1;
@@ -742,18 +741,42 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
                 !proof,
             )
             .unwrap_or_default();
-        let status = vault
-            .list_category_budget_progress(year, month)
-            .unwrap_or_default();
-        let expenses = vault
-            .list_category_expenses(BookingFilter {
-                account_ids: ids,
-                date_from: Some(format!("{year:04}-{month:02}-01")),
-                date_to: Some(format!("{year:04}-{month:02}-31")),
-                respect_in_total: !proof,
-                ..Default::default()
+        let reference_flow = if matches!(gran, PeriodGranularity::Month) {
+            None
+        } else {
+            Some(
+                vault
+                    .cashflow_by_period(
+                        PeriodGranularity::Month,
+                        1,
+                        if proof { Some(ids.clone()) } else { None },
+                        !proof,
+                    )
+                    .unwrap_or_default(),
+            )
+        };
+        let reference = reference_flow.as_ref().unwrap_or(&flow).last();
+        let month = reference.and_then(|reference| cockpit::period_month(&reference.key));
+        let status = month
+            .map(|(year, month)| {
+                vault
+                    .list_category_budget_progress(year, month)
+                    .unwrap_or_default()
             })
             .unwrap_or_default();
+        let expenses = if let Some((year, month)) = month {
+            vault
+                .list_category_expenses(BookingFilter {
+                    account_ids: ids,
+                    date_from: Some(format!("{year:04}-{month:02}-01")),
+                    date_to: Some(format!("{year:04}-{month:02}-31")),
+                    respect_in_total: !proof,
+                    ..Default::default()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let fallback = currency
             .as_deref()
             .map(|currency| cockpit::top_spending(&expenses, 4, currency))
@@ -2853,6 +2876,19 @@ fn strip_csv_columns(csv: &str, keep_iban: bool, keep_tags: bool) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn dashboard_month_comes_from_the_cores_local_cashflow_period() {
+        let source = include_str!("main.rs");
+        let dashboard = source
+            .split("fn refresh_dashboard(")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!dashboard.contains("cockpit::current_year_month()"));
+        assert!(dashboard.contains("reference.key"));
+    }
     #[test]
     fn round6_analytics_labels_follow_privacy() {
         let render = include_str!("main.rs")

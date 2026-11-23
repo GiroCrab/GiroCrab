@@ -168,7 +168,7 @@ fn render(win: &MainWindow, l: Loaded, sel: &Option<Selected>) {
 /// Gathers the dialog data (worker thread).
 fn gather(v: &Vault, sel: &Option<Selected>, horizon: i32) -> Result<Loaded, String> {
     let e = |e: girocrab_core::CoreError| e.to_string();
-    let (year, month) = crate::cockpit::current_year_month();
+    let (year, month) = crate::cockpit::current_year_month(v)?;
     let snapshot = v.recurring_snapshot(Vec::new(), year, month).map_err(e)?;
     let to = view::horizon_days(horizon).map(crate::cockpit::today_plus_days);
     let planned = v
