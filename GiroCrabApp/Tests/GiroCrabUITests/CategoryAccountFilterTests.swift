@@ -1,3 +1,4 @@
+// test: serial-defaults (the group tests switch the sidebar view, a stored choice)
 import XCTest
 import GiroCrabCore
 @testable import GiroCrabUI
@@ -13,7 +14,10 @@ final class CategoryAccountFilterTests: XCTestCase {
         model.period = .all
     }
 
-    override func tearDown() async throws { model = nil }
+    override func tearDown() async throws {
+        AppDefaults.store.removeObject(forKey: "sidebar.accountView")
+        model = nil
+    }
 
     /// A category and an account that has bookings in it, next to bookings of other accounts.
     private func mixedCategory() throws -> (category: Int64, account: Int64) {
@@ -69,5 +73,83 @@ final class CategoryAccountFilterTests: XCTestCase {
         // an account that no longer exists (deleted, other vault)
         model.categoryAccountFilter = [-42]
         XCTAssertEqual(model.currentFilter.accountIds, [])
+    }
+
+    /// #357: a whole group of the sidebar's view is chosen at once, and chosen again removed.
+    func testAWholeGroupIsChosenAtOnce() throws {
+        model.sidebarSelection = .uncategorized
+        model.accountView = .byKind
+        let groups = model.accountFilterGroups
+        guard groups.count > 1, let group = groups.first(where: { $0.accounts.count > 1 }) else {
+            throw XCTSkip("The demo vault has no account type with several accounts")
+        }
+        // every offered account is in exactly one group, in sidebar order
+        XCTAssertEqual(Set(groups.flatMap(\.accountIDs)), Set(model.accountFilterCandidates.map(\.id)))
+        XCTAssertEqual(groups.flatMap(\.accountIDs).count, model.accountFilterCandidates.count)
+
+        XCTAssertFalse(model.isCategoryGroupChosen(group), "„Alle Konten“ chooses no group on its own")
+        model.toggleCategoryGroup(group)
+        XCTAssertEqual(Set(model.categoryAccountIDs), Set(group.accountIDs))
+        XCTAssertTrue(model.isCategoryGroupChosen(group))
+        XCTAssertEqual(Set(model.currentFilter.accountIds), Set(group.accountIDs))
+        XCTAssertEqual(model.categoryAccountFilterTitle,
+                       String(localized: "Konten: \(group.accounts.count) von \(model.accountFilterCandidates.count)"))
+
+        // one account off: the group is no longer fully chosen; its entry adds the account back
+        model.toggleCategoryAccount(group.accountIDs[0])
+        XCTAssertFalse(model.isCategoryGroupChosen(group))
+        model.toggleCategoryGroup(group)
+        XCTAssertTrue(model.isCategoryGroupChosen(group))
+
+        // chosen again: removed, nothing left = no filter
+        model.toggleCategoryGroup(group)
+        XCTAssertTrue(model.categoryAccountFilter.isEmpty)
+
+        // all groups chosen one by one = all accounts = no filter
+        for g in groups { model.toggleCategoryGroup(g) }
+        XCTAssertTrue(model.categoryAccountFilter.isEmpty)
+        XCTAssertEqual(model.categoryAccountFilterTitle, String(localized: "Konten: Alle"))
+    }
+
+    /// The menu follows the sidebar's view: by bank the groups are the banks.
+    func testTheGroupsFollowTheSidebarView() throws {
+        model.sidebarSelection = .allAccounts
+        model.accountView = .byBank
+        XCTAssertEqual(model.accountFilterGroups.map(\.name), model.bankGroups
+            .filter { !$0.accounts.isEmpty }.map(\.name))
+        model.accountView = .byKind
+        XCTAssertEqual(model.accountFilterGroups.map(\.name), model.groups
+            .filter { !$0.accounts.isEmpty }.map(\.name))
+    }
+
+    /// A sidebar group, bank or user group already limits the accounts: the menu stays flat.
+    func testASelectedSidebarGroupKeepsTheMenuFlat() throws {
+        model.accountView = .byBank
+        guard let kind = model.groups.first(where: { !$0.accounts.isEmpty }),
+              let bank = model.bankGroups.first(where: { !$0.accounts.isEmpty }) else {
+            throw XCTSkip("The demo vault has no accounts")
+        }
+        model.sidebarSelection = .group(kind.id)
+        XCTAssertTrue(model.accountFilterGroups.isEmpty)
+        model.sidebarSelection = .bank(bank.id)
+        XCTAssertTrue(model.accountFilterGroups.isEmpty)
+        model.sidebarSelection = .allAccounts
+        XCTAssertFalse(model.accountFilterGroups.isEmpty)
+    }
+
+    /// A group from a menu built before a reload may name accounts the filter no longer
+    /// offers; they must not count, or "every account chosen" would clear the filter.
+    func testStaleGroupAccountsDoNotClearTheFilter() throws {
+        model.sidebarSelection = .uncategorized
+        let candidates = model.accountFilterCandidates
+        guard candidates.count > 2 else { throw XCTSkip("The demo vault has too few accounts") }
+        for a in candidates.dropFirst() { model.toggleCategoryAccount(a.id) }
+        let chosen = Set(model.categoryAccountIDs)
+        XCTAssertEqual(chosen.count, candidates.count - 1)
+
+        var ghost = candidates[0]
+        ghost.id = -4242
+        model.toggleCategoryGroup(AccountFilterGroup(id: "stale", name: "Alt", symbol: "folder", accounts: [ghost]))
+        XCTAssertEqual(Set(model.categoryAccountIDs), chosen, "the stale id neither clears nor changes the filter")
     }
 }
