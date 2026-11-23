@@ -66,11 +66,13 @@ Sheet {
                 return
             }
             hasSplits = existing.length > 0
-            parts = existing.length === 0
-                // the share picked in the row menu (#1663) goes into the second part
-                ? [part(b.category_id, "", ""), part(null, presetAmount(), "")]
-                : existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note))
-            if (!hasSplits) focusUid = parts[1].uid
+            // the share picked in the row menu (#1663) goes into the second part
+            const loaded = hasSplits
+                ? existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note))
+                : [part(b.category_id, "", ""), part(null, presetAmount(), "")]
+            // before `parts`: the Repeater builds the rows (and reads focusUid) on assignment
+            if (!hasSplits) focusUid = loaded[1].uid
+            parts = loaded
         })
     }
     function save() {
