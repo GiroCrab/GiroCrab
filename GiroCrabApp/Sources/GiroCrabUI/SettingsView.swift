@@ -887,7 +887,7 @@ struct KeyPasteSheet: View {
                     .disabled(!valid)
             }
             HStack {
-                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Abbrechen", role: .cancel) { model.cancelKeyAdoption(); dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
                 Button("Übernehmen") { model.adoptSyncKey(text) }
