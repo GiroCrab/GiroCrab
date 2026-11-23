@@ -201,6 +201,11 @@ pub(crate) fn store_fetch(
         if !documents_fetch_on(&db, connection_id)? {
             data.documents.clear();
         }
+        if let Some(rules) =
+            super::document_matching::rules_for_connection(&db, connection_id, kind)?
+        {
+            super::document_matching::warm_open_pdf_cache(&db, connection_id, &rules)?;
+        }
         let tx = db.unchecked_transaction()?;
         if kind == ConnectorKind::Advanzia {
             super::advanzia::prepare_import(&tx, connection_id, &mut data)?;
