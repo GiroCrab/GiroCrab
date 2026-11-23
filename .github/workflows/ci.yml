@@ -93,8 +93,8 @@ jobs:
             flag windows_core "core_touched || touched '^Cargo\.(toml|lock)$|$ci'"
             # Windows front end (also builds the core)
             flag windows_app "core_touched || touched '^(GiroCrabWindows/|Cargo\.(toml|lock))|$ci'"
-            # Windows release build + installer (2-10 min): only for the front end or its packaging
-            flag windows_pkg "touched '^(GiroCrabWindows/|scripts/package-windows\.ps1$)|$ci'"
+            # Windows release build + installer (2-10 min): on main/manual runs or when packaging scripts change
+            flag windows_pkg "([ \"$EVENT\" != \"pull_request\" ] && touched '^GiroCrabWindows/') || touched '^scripts/package-windows\.ps1$|$ci'"
             # Linux port (Qt, Debian): its sources, the core and the shared string catalog
             flag linux "core_touched || touched '^GiroCrabLinux/|Localizable\.xcstrings$|$ci'"
             # Flatpak: packaging and dependencies; core sources are built by the Debian job
@@ -258,7 +258,7 @@ jobs:
 
   swift:
     needs: changes
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' && needs.changes.outputs.swift == 'true'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
