@@ -41,16 +41,18 @@ Sheet {
     }
 
     function save() {
-        const a = original
-        if (!a || !account || !canSave) return
+        if (!original || !account || !canSave) return
+        // a copy: each successful write moves its field's baseline, so after a failed later write
+        // a retry still compares against what is stored (untouched fields keep the opening value)
+        const a = Object.assign({}, original)
         const newName = nameField.text.trim()
         const owner = ownerField.text.trim()
         const kind = AppModel.accountKindChoices[kindBox.currentIndex].id
         const note = noteField.text.trim()
-        if (newName !== a.name && !AppModel.renameAccount(a.id, newName)) return
-        if (owner !== (a.owner || "") && !AppModel.setAccountOwner(a.id, owner)) return
-        if (kind !== a.kind && !offline && !AppModel.setAccountKind(a.id, kind)) return
-        if (note !== (a.note || "") && !AppModel.setAccountNote(a.id, note)) return
+        if (newName !== a.name) { if (!AppModel.renameAccount(a.id, newName)) return; a.name = newName; original = Object.assign({}, a) }
+        if (owner !== (a.owner || "")) { if (!AppModel.setAccountOwner(a.id, owner)) return; a.owner = owner; original = Object.assign({}, a) }
+        if (kind !== a.kind && !offline) { if (!AppModel.setAccountKind(a.id, kind)) return; a.kind = kind; original = Object.assign({}, a) }
+        if (note !== (a.note || "")) { if (!AppModel.setAccountNote(a.id, note)) return; a.note = note; original = Object.assign({}, a) }
         if (showsOpeningBalance) {
             const text = openingField.text.trim()
             const stored = a.opening_balance_cents === undefined ? null : a.opening_balance_cents
@@ -154,7 +156,7 @@ Sheet {
                 ToolTip.text: qsTr("Startsaldo ab einem Stichtag oder passend zu einem Kontostand eintragen")
                 onClicked: sheet.openCalibration()
                 Accessible.role: Accessible.Button
-                cursorShape: Qt.PointingHandCursor
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
             }
             // Kontonummer, IBAN, Bank: only shown with a value; they come from the bank or the import
             FieldLabel { visible: numberValue.text !== ""; text: qsTr("Kontonummer") }
