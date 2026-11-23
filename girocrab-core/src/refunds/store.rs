@@ -132,7 +132,7 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
         };
         row.key = mapped;
         row.moved_from = row.moved_from.and_then(remap);
-        if folded && row.deleted_ms.is_none() {
+        if folded {
             let previous = row.key.clone();
             for (old, target) in [
                 (&source.refund, &mut row.key.refund),
@@ -145,7 +145,8 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                     *target = old.clone();
                     continue;
                 }
-                if old.0 != target.0
+                if row.deleted_ms.is_none()
+                    && old.0 != target.0
                     && let Some(part) = survivor_part(conn, "other", old, target.0, true)?
                 {
                     target.1 = part;
@@ -315,7 +316,7 @@ pub(crate) fn fold_booking(
         if keep_live || target.deleted_ms.is_some() {
             remap(&mut target.key);
         }
-        if target.deleted_ms.is_none() && source_had_splits && !is_split(conn, "main", to)? {
+        if source_had_splits && !is_split(conn, "main", to)? {
             if row.key.refund.0 == from && row.key.refund.1.is_empty() {
                 target.key.refund = row.key.refund.clone();
             }

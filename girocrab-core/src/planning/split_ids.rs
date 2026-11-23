@@ -60,12 +60,28 @@ fn backfill(conn: &Connection) -> CoreResult<()> {
          );",
     )?;
     let mut identities = HashMap::new();
+    for (_, booking, ..) in &rows {
+        if let std::collections::hash_map::Entry::Vacant(entry) = identities.entry(*booking) {
+            entry.insert(crate::sync_merge::booking_key(conn, *booking)?);
+        }
+    }
+    let mut counts = HashMap::new();
+    for key in identities.values() {
+        *counts.entry(key.clone()).or_insert(0usize) += 1;
+    }
+    for (&booking, key) in &mut identities {
+        if counts[key.as_str()] > 1 {
+            let discriminator: (String, String, String, String) = conn.query_row(
+                "SELECT a.external_ref,IFNULL(c.connector,''),IFNULL(c.login_name,''),IFNULL(c.bank_code,'') FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN bank_connections c ON c.id=a.connection_id WHERE t.id=?1",
+                [booking], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+            )?;
+            *key = serde_json::to_string(&(key.as_str(), discriminator))
+                .expect("split booking identity");
+        }
+    }
     let mut occurrences = HashMap::new();
     let mut positions = HashMap::new();
     for (id, booking, category, amount, note, category_uuid) in rows {
-        if let std::collections::hash_map::Entry::Vacant(entry) = identities.entry(booking) {
-            entry.insert(crate::sync_merge::booking_key(conn, booking)?);
-        }
         let key = (
             identities[&booking].clone(),
             category_uuid,
@@ -173,6 +189,22 @@ mod tests {
             .unwrap(),
             "credit"
         );
+    }
+
+    #[test]
+    fn round8_backfill_distinguishes_switch_and_plain_bookings() {
+        let snapshots = [false, true].map(|reverse| {
+            let conn = legacy(false);
+            conn.execute_batch("INSERT INTO accounts VALUES (2,NULL,'moneymoney-db:switch:account'); INSERT INTO transactions VALUES (2,2,'external');").unwrap();
+            if reverse {
+                conn.execute_batch("UPDATE transaction_splits SET id=id+100; INSERT INTO transaction_splits SELECT id-100,2,category_id,amount_cents,note FROM transaction_splits;").unwrap();
+            } else {
+                conn.execute_batch("INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,note) SELECT 2,category_id,amount_cents,note FROM transaction_splits;").unwrap();
+            }
+            migrate(&conn).unwrap();
+            conn.prepare("SELECT a.external_ref,s.amount_cents,s.note,s.uuid FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id JOIN accounts a ON a.id=t.account_id ORDER BY a.external_ref,s.amount_cents,s.note,s.uuid").unwrap().query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap()
+        });
+        assert_eq!(snapshots[0], snapshots[1]);
     }
 
     #[test]

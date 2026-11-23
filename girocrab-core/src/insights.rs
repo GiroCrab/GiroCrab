@@ -156,7 +156,12 @@ impl Vault {
             let db = self.db()?;
             let allowed = crate::user_groups::total_account_ids(&db)?;
             let projection = self.financial_projection(&db)?;
-            let all: Vec<Booking> = all_bookings(self, &db, BookingScope::All)?
+            let bookings = all_bookings(self, &db, BookingScope::All)?;
+            let by_id: HashMap<_, _> = bookings
+                .iter()
+                .map(|b| (b.id, lower_contains(b, &["saveback"])))
+                .collect();
+            let all: Vec<Booking> = bookings
                 .into_iter()
                 .filter(|b| {
                     allowed.contains(&b.account_id)
@@ -187,18 +192,21 @@ impl Vault {
             )?;
             let (mut saveback, mut roundup, mut current) = (0i128, 0i128, 0i128);
             let mut investments: HashMap<i64, i128> = HashMap::new();
-            for row in perks.rows.iter().filter(|r| r.flow == FlowKind::Investment) {
+            for row in perks
+                .rows
+                .iter()
+                .filter(|r| r.flow == FlowKind::Investment && r.side == KpiSide::Expense)
+            {
                 *investments.entry(row.attribution_id).or_default() -= row.amount_cents;
             }
-            let by_id: HashMap<_, _> = all.iter().map(|b| (b.id, b)).collect();
             for row in perks.rows.iter().filter(|r| r.flow == FlowKind::Perk) {
-                let Some(b) = by_id.get(&row.attribution_id) else {
+                let Some(&is_saveback) = by_id.get(&row.attribution_id) else {
                     continue;
                 };
-                let amount = if lower_contains(b, &["saveback"]) && row.direction > 0 {
+                let amount = if is_saveback && row.direction > 0 {
                     saveback += row.amount_cents;
                     row.amount_cents
-                } else if !lower_contains(b, &["saveback"]) && row.direction < 0 {
+                } else if !is_saveback && row.direction < 0 {
                     roundup -= row.amount_cents;
                     -row.amount_cents
                 } else {

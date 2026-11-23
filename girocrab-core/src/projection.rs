@@ -28,7 +28,7 @@ pub(crate) struct Row {
     pub category_id: Option<i64>,
     pub amount_cents: i128,
     pub flow: FlowKind,
-    side: KpiSide,
+    pub side: KpiSide,
     pub direction: i8,
 }
 
@@ -47,6 +47,7 @@ type MatchingIds = HashMap<
         Option<i64>,
         bool,
         bool,
+        u8,
         u8,
         Option<String>,
         Option<String>,
@@ -329,6 +330,7 @@ impl Projection {
             combined
                 .entry((
                     r.booking_id,
+                    r.attribution_id,
                     r.category_id,
                     r.flow,
                     r.side as u8,
@@ -453,6 +455,7 @@ impl Vault {
             filter.include_subcategories,
             filter.uncategorized_only,
             filter.scope as u8,
+            filter.direction as u8,
             filter.merchant_key.clone(),
             filter.date_from.clone(),
             filter.date_to.clone(),
@@ -461,7 +464,10 @@ impl Vault {
             return Ok(ids.clone());
         }
         let mut categories = HashSet::new();
-        if let Some(id) = filter.category_id {
+        if let Some(id) = filter
+            .category_id
+            .filter(|id| projection.parents.contains_key(id))
+        {
             categories.insert(id);
             if filter.include_subcategories {
                 for &child in projection.parents.keys() {
@@ -487,6 +493,11 @@ impl Vault {
                 (filter.category_id.is_none()
                     || r.category_id.is_some_and(|c| categories.contains(&c)))
                     && (!filter.uncategorized_only || r.category_id.is_none())
+                    && match filter.direction {
+                        BookingDirection::All => true,
+                        BookingDirection::Income => r.direction > 0,
+                        BookingDirection::Expense => r.direction < 0,
+                    }
                     && filter
                         .date_from
                         .as_ref()
@@ -543,7 +554,7 @@ impl Vault {
         };
         let categories: Option<HashSet<i64>> = if let Some(id) = filter.category_id {
             if filter.include_subcategories {
-                Some(db.prepare("WITH RECURSIVE sub(id) AS (SELECT ?1 UNION SELECT c.id FROM categories c JOIN sub ON c.parent_id=sub.id WHERE c.deleted_ms IS NULL) SELECT id FROM sub")?.query_map([id],|r|r.get(0))?.collect::<Result<_,_>>()?)
+                Some(db.prepare("WITH RECURSIVE sub(id) AS (SELECT id FROM categories WHERE id=?1 AND deleted_ms IS NULL UNION SELECT c.id FROM categories c JOIN sub ON c.parent_id=sub.id WHERE c.deleted_ms IS NULL) SELECT id FROM sub")?.query_map([id],|r|r.get(0))?.collect::<Result<_,_>>()?)
             } else {
                 Some(HashSet::from([id]))
             }

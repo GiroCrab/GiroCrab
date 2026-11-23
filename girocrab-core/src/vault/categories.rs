@@ -254,9 +254,11 @@ impl Vault {
         .history(key_length as usize)
     }
 
-    /// What a category (with subcategories) holds in currencies other than EUR, one sum per currency
-    /// (alphabetical), for the "Zusätzlich" line next to its total (#1049). Empty for a single
-    /// account: its total is already in its own currency. Splits count with their split amounts.
+    /// What a category (with subcategories) holds outside the selected primary currency, one sum
+    /// per currency (alphabetical), for the "Zusätzlich" line next to its total (#1049).
+    /// The primary currency is the single selected account's currency, otherwise EUR.
+    /// A single account can therefore have supplements for expenses in another currency.
+    /// Splits count with their split amounts.
     pub fn category_other_currencies(
         &self,
         category_id: i64,
@@ -294,8 +296,10 @@ impl Vault {
     }
 
     /// "Zusätzlich" next to the sidebar totals (#1049): per category (with its subcategories) and
-    /// currency other than EUR, what `list_categories_filtered_amount` leaves out. Takes the same
-    /// filters; empty for a single account, and without a query when no booking has another currency.
+    /// currency outside the selected primary currency, what `list_categories_filtered_amount`
+    /// leaves out. The primary currency is the single selected account's currency, otherwise EUR.
+    /// A single account can therefore have supplements for expenses in another currency.
+    /// Takes the same filters and avoids a query when no booking has another currency.
     #[allow(clippy::too_many_arguments)]
     pub fn category_other_currency_totals(
         &self,

@@ -5,6 +5,120 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 #[test]
+fn round8_refund_rows_keep_each_original_attribution() {
+    let f = Fixture::new();
+    let a = f.add(-2500, Some(f.cost));
+    let b = f.add(-2500, Some(f.cost));
+    let r = f.add(5000, Some(f.income));
+    f.link(r, "", a, "");
+    f.link(r, "", b, "");
+    let db = f.v.db().unwrap();
+    let selection =
+        f.v.projected_selection(&db, &BookingFilter::default(), None, CurrencyMode::All)
+            .unwrap();
+    let mut rows: Vec<_> = selection
+        .rows
+        .iter()
+        .filter(|row| row.booking_id == r)
+        .map(|row| (row.attribution_id, row.amount_cents))
+        .collect();
+    rows.sort();
+    assert_eq!(rows, vec![(a, 2500), (b, 2500)]);
+}
+
+#[test]
+fn round8_perk_refund_uses_metadata_outside_total_accounts() {
+    let f = Fixture::new();
+    let eligible =
+        f.v.create_offline_account("Eligible".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+    let perk =
+        f.v.create_category("Round up".into(), None, "star".into(), "#ff0000".into())
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET builtin_role='Perks' WHERE id=?1",
+            [perk],
+        )
+        .unwrap();
+    let original = f.add(-1000, Some(perk));
+    let refund = f.add_on(eligible, 400, Some(f.income), "EUR", &f.date);
+    f.v.db().unwrap().execute_batch(&format!("UPDATE accounts SET include_in_total=0 WHERE id={}; UPDATE transactions SET purpose='Round up' WHERE id={original}", f.account)).unwrap();
+    f.link(refund, "", original, "");
+    let dashboard = f.v.investment_dashboard(1).unwrap();
+    assert_eq!(dashboard.roundup_count, 0);
+    assert_eq!(dashboard.roundup_invested_cents, -400);
+}
+
+#[test]
+fn round8_category_and_direction_match_one_contribution() {
+    let f = Fixture::new();
+    let original = f.add(-1000, Some(f.cost));
+    let id = f.add(1000, None);
+    let parts = f.split(id, &[(2000, Some(f.income)), (-1000, Some(f.cost))]);
+    f.link(id, &parts[0], original, "");
+    let filter = BookingFilter {
+        category_id: Some(f.income),
+        direction: BookingDirection::Expense,
+        ..Default::default()
+    };
+    let page = f.v.list_transactions(filter.clone()).unwrap();
+    assert!(page.transactions.is_empty());
+    assert_eq!(f.v.count_transactions(filter).unwrap(), 0);
+}
+
+#[test]
+fn round8_deleted_category_cannot_be_a_traversal_root() {
+    let f = Fixture::new();
+    f.add(-100, Some(f.cost));
+    f.v.db()
+        .unwrap()
+        .execute("UPDATE categories SET deleted_ms=1 WHERE id=?1", [f.root])
+        .unwrap();
+    let filter = BookingFilter {
+        category_id: Some(f.root),
+        include_subcategories: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        f.v.analytics_report(filter.clone(), false)
+            .unwrap()
+            .expense_cents,
+        0
+    );
+    assert_eq!(f.v.count_transactions(filter).unwrap(), 0);
+}
+
+#[test]
+fn round8_plan_total_excludes_neutral_positive_investment_parts() {
+    let f = Fixture::new();
+    let invest =
+        f.v.create_category("Investment".into(), None, "star".into(), "#ff0000".into())
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET builtin_role='Investitionen' WHERE id=?1",
+            [invest],
+        )
+        .unwrap();
+    let buy = f.add(-1000, Some(invest));
+    f.split(buy, &[(-2000, Some(invest)), (1000, Some(invest))]);
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET purpose='Sparplan execution' WHERE id=?1",
+            [buy],
+        )
+        .unwrap();
+    assert_eq!(
+        f.v.investment_dashboard(1).unwrap().plans[0].total_invested_cents,
+        2000
+    );
+}
+
+#[test]
 fn round7b_realized_plan_total_uses_refund_projection_not_execution_amount() {
     let f = Fixture::new();
     let buy = f.add(-10000, Some(f.cost));
@@ -105,7 +219,7 @@ fn round7_negative_saveback_is_not_roundup() {
 }
 
 #[test]
-fn round7_tag_counts_follow_income_proof_not_refund_contributions() {
+fn tag_counts_follow_projected_income_membership() {
     let f = Fixture::new();
     let o = f.add(-1000, Some(f.cost));
     let r = f.add(1000, Some(f.income));
@@ -118,8 +232,7 @@ fn round7_tag_counts_follow_income_proof_not_refund_contributions() {
             ..Default::default()
         })
         .unwrap();
-    let got = totals.iter().find(|t| t.tag_id == Some(tag.id)).unwrap();
-    assert_eq!((got.booking_count, got.sum_cents), (1, 0));
+    assert!(totals.iter().all(|t| t.tag_id != Some(tag.id)));
 }
 
 #[test]

@@ -469,6 +469,7 @@ impl Vault {
         if filter.uncategorized_only
             || filter.category_id.is_some()
             || filter.scope != BookingScope::All
+            || filter.direction != BookingDirection::All
         {
             args.push(Box::new(match visible {
                 Some(accounts) => self.projected_booking_ids_visible(db, filter, Some(accounts))?,
@@ -511,27 +512,6 @@ impl Vault {
             None => {}
             Some(true) => wh.push("t.checked != 0".into()),
             Some(false) => wh.push("t.checked = 0".into()),
-        }
-        if !matches!(filter.direction, BookingDirection::All) {
-            let selection = self.projected_booking_selection(
-                db,
-                &BookingFilter {
-                    direction: filter.direction,
-                    ..Default::default()
-                },
-                None,
-                crate::projection::CurrencyMode::All,
-            )?;
-            let ids: HashSet<_> = selection.rows.iter().map(|r| r.booking_id).collect();
-            let sign = if matches!(filter.direction, BookingDirection::Income) {
-                ">"
-            } else {
-                "<"
-            };
-            wh.push(format!(
-                "(t.amount_cents {sign} 0 OR t.id IN ({}))",
-                sql_int_list(&ids.into_iter().collect::<Vec<_>>())
-            ));
         }
         // amount range (#357): by the absolute amount, the direction has its own filter
         if let Some(min) = filter.amount_min_cents {

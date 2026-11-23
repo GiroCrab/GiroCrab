@@ -276,6 +276,20 @@ mod round7 {
     }
 
     #[test]
+    fn round8_inactive_whole_unlink_does_not_delete_keeper_link() {
+        let f = Fixture::new();
+        let r = f.add("r", 200);
+        let old = f.add("old", -100);
+        let keeper = f.add("keeper", -100);
+        f.link(r, "", old, "");
+        f.link(r, "", keeper, "");
+        f.split(old, &[-60, -40]);
+        f.unlink(r, "", old, "");
+        store::fold_booking(&f.v.db().unwrap(), old, keeper, true, true).unwrap();
+        assert_eq!(shares(&f.v, r), [100]);
+    }
+
+    #[test]
     fn unequal_fold_does_not_retarget_matching_parts() {
         let f = Fixture::new();
         let r = f.add("r", 100);
