@@ -93,6 +93,14 @@ struct FinTsState {
     sec_func: String,
     tan_method_name: String,
     tan_medium: String,
+    /// Two-step functions the bank allows this user (3920) with their names, in the bank's
+    /// order: what the login falls back to when it refuses our HKTAN (9110, #1641).
+    #[serde(default)]
+    tan_functions: Vec<(String, String)>,
+    /// The bank refuses HKTAN in the dialog init (9110) but takes the init without it under
+    /// the two-step signature; orders still carry HKTAN (#1641).
+    #[serde(default)]
+    init_without_hktan: bool,
     /// Supported versions per business transaction (from BPD "...S" segments).
     versions: HashMap<String, Vec<u32>>,
     /// HKxxx -> TAN required (HIPINS).
@@ -186,6 +194,8 @@ struct SepaAccount {
     account_number: String,
     sub_account: String,
     blz: String,
+    /// The bank wants the account in KTI as IBAN:BIC:Konto:Unterkonto:280:BLZ (Postbank, #1702).
+    full_kti: bool,
 }
 
 #[derive(Debug, Clone)]

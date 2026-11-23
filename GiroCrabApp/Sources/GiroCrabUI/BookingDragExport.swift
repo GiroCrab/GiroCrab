@@ -1,4 +1,3 @@
-import CoreTransferable
 import Foundation
 import UniformTypeIdentifiers
 import GiroCrabCore
@@ -96,10 +95,9 @@ struct BookingDragExport: Codable, Equatable {
 
 #if os(macOS)
 /// What a dragged booking row carries (macOS): the bookings as JSON for other apps and the
-/// `BookingDrag` string for the sidebar's categories (#366). A row makes one on every render,
-/// so it only keeps the bookings: the JSON is built when another app asks for it, and the
+/// `BookingDrag` string for the sidebar's categories (#366). The JSON is built when another app asks for it, and the
 /// documents are read then, never for the sidebar.
-struct BookingDragItem: Transferable, @unchecked Sendable {
+struct BookingDragItem: @unchecked Sendable {
     typealias DocumentReader = @MainActor ([Int64]) async -> [Int64: [BookingDragExport.Document]]
 
     let bookings: [Booking]
@@ -118,14 +116,33 @@ struct BookingDragItem: Transferable, @unchecked Sendable {
     /// The JSON model, without documents.
     var export: BookingDragExport { BookingDragExport(bookings: bookings, accounts: accounts) }
 
-    static var transferRepresentation: some TransferRepresentation {
-        DataRepresentation(exportedContentType: .girocrabTransactions) { item in
-            var export = item.export
-            let withDocuments = item.bookings.filter { $0.documentCount > 0 }.map(\.id)
-            if let load = item.documents, !withDocuments.isEmpty { export.attach(await load(withDocuments)) }
-            return try export.json()
+    func itemProvider() -> NSItemProvider {
+        // The sidebar reads the drag pasteboard for hover and loads NSString on drop.
+        // Register the text directly so both work when the item also offers JSON.
+        let text = BookingDrag.payload(ids)
+        let provider = NSItemProvider(object: text as NSString)
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+                                            visibility: .all) { completion in
+            completion(Data(text.utf8), nil)
+            return nil
         }
-        ProxyRepresentation(exporting: { (item: BookingDragItem) in BookingDrag.payload(item.ids) })
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.girocrabTransactions.identifier,
+                                            visibility: .all) { completion in
+            let task = Task {
+                do {
+                    var export = self.export
+                    let withDocuments = bookings.filter { $0.documentCount > 0 }.map(\.id)
+                    if let documents, !withDocuments.isEmpty { export.attach(await documents(withDocuments)) }
+                    completion(try export.json(), nil)
+                } catch {
+                    completion(nil, error)
+                }
+            }
+            let progress = Progress(totalUnitCount: 1)
+            progress.cancellationHandler = { task.cancel() }
+            return progress
+        }
+        return provider
     }
 }
 #endif

@@ -70,4 +70,20 @@ final class KeyAdoptionFolderTests: XCTestCase {
         XCTAssertEqual(cloud.folderName, nameBefore)
         XCTAssertTrue(model.demoActive)
     }
+
+    func test_cancel_during_folder_check_changes_nothing() async throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let cloud = CloudSyncManager.shared
+        let chosenBefore = cloud.folderChosen
+        let nameBefore = cloud.folderName
+        model.adoptSyncKey(String(repeating: "ab", count: 32), folder: try dir("GiroCrab", snapshot: true), wait: 0)
+        model.cancelKeyAdoption() // „Abbrechen“ before the check is back
+        XCTAssertEqual(model.keyAdoption, .idle)
+        for _ in 0..<100 where model.keyAdoption == .working { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.keyAdoption, .idle)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.keyAdoption, .idle)
+        XCTAssertEqual(cloud.folderChosen, chosenBefore, "a cancelled check never sets the sync folder")
+        XCTAssertEqual(cloud.folderName, nameBefore)
+    }
 }

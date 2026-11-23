@@ -9,7 +9,7 @@ use crate::vault::{SCHEMA_VERSION, Vault};
 const PASSWORD: &str = "Krabbe am Strand 7";
 
 fn temp_path(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("girocrab-backup-{tag}-{}.db", uuid::Uuid::new_v4()))
+    crate::test_support::thread_temp_path(&format!("backup-{tag}.db"))
 }
 
 fn path(p: &Path) -> String {
