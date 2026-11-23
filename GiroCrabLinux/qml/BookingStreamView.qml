@@ -602,7 +602,11 @@ Rectangle {
                 // the Amazon drill-down chevron sits below this area
                 const c = row.chevron
                 if (c.visible && c.contains(c.mapFromItem(dc, m.x, m.y))) { stream.toggleAmazonExpanded(dc.booking.id); return }
-                const toggle = m.modifiers & Qt.ControlModifier, extend = m.modifiers & Qt.ShiftModifier
+                dc.primaryActivate(m.modifiers & Qt.ControlModifier, m.modifiers & Qt.ShiftModifier)
+            }
+            function primaryActivate(toggle = false, extend = false) {
+                if (!dc.booking) return
+                stream.forceActiveFocus()
                 // „Kompakt“: a click on the open row folds it, a click on another row opens that one
                 if (dc.compact && AppModel.selectedBookingID === dc.booking.id && !toggle && !extend)
                     stream.compactCollapsedID = stream.compactCollapsedID === dc.booking.id ? null : dc.booking.id
@@ -752,7 +756,12 @@ Rectangle {
         Accessible.role: Accessible.Button
         Accessible.name: booking ? AppModel.masking(booking.merchant.name || booking.booking_text) + ", "
             + AppModel.masking(Fmt.money(booking.amount_cents), AppModel.redactAmounts) + ", " + Fmt.medium(booking.booking_date) : ""
-        Accessible.selected: booking !== null && AppModel.selectedBookingID === booking.id
+        Accessible.selected: booking !== null && !!AppModel.selectedBookingIDs[booking.id]
+        Accessible.onPressAction: {
+            let p = parent
+            while (p && typeof p.primaryActivate !== "function") p = p.parent
+            if (p) p.primaryActivate()
+        }
 
         ColumnLayout {
             id: column

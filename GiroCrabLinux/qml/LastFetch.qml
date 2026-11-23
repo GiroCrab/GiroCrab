@@ -15,6 +15,14 @@ QtObject {
     readonly property bool shown: store.showLastFetch
     function setShown(on) { store.showLastFetch = on }
 
+    property int clockTick: 0
+    property Timer clockTimer: Timer {
+        interval: 30000
+        repeat: true
+        running: lf.shown && AppModel.isUnlocked
+        onTriggered: lf.clockTick++
+    }
+
     /// AppModel.isOffline: accounts that take manual bookings (#679) are never fetched. Re-read with
     /// the accounts (a small indexed query).
     readonly property var offlineIDs: {
@@ -31,6 +39,7 @@ QtObject {
         const d = new Date(c.last_sync_unix * 1000)
         // Date.formatted(date: .long, time: .shortened)
         const exact = d.toLocaleDateString(Fmt.locale, Fmt.pattern("d. MMMM yyyy")) + ", " + d.toLocaleTimeString(Fmt.locale, "HH:mm")
+        void clockTick
         return { text: qsTr("Abgerufen %1").arg(Fmt.relative(c.last_sync_unix)), help: exact }
     }
 }
