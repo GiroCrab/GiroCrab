@@ -19,7 +19,7 @@ Item {
     /// load of the same selection may stand in, another selection's never, also not after a
     /// failed load.
     property var loaded: null
-    readonly property string cover: isCategory ? "" : JSON.stringify([AppModel.vaultGeneration, AppModel.listGeneration, AppModel.historyRequest().ids, AppModel.periodRange()])
+    readonly property string cover: isCategory ? "" : JSON.stringify([AppModel.vaultGeneration, AppModel.historyRequest().ids, AppModel.periodRange()])
     readonly property bool expensesShown: loaded !== null && loaded.cover === cover
     readonly property var parts: isCategory ? subcategories(Number(AppModel.sidebarSelection.slice(9)), AppModel.categories)
         : expensesShown ? loaded.parts : []
@@ -62,14 +62,14 @@ Item {
 
     // AccountExpensePie: reloads when the accounts, the period or the category sums change.
     readonly property string loadKey: isCategory || !visible ? ""
-        : JSON.stringify([AppModel.vaultGeneration, AppModel.listGeneration, AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.categories.map(c => c.total_cents)])
+        : JSON.stringify([cover, AppModel.refundLinksRevision, AppModel.categories.map(c => c.total_cents)])
     onLoadKeyChanged: if (loadKey !== "") Qt.callLater(load)
     function load() {
         if (loadKey === "" || !AppModel.isUnlocked) return
         let cover = ""
         AppModel.loadOffMain("headerPie", () => {
             const r = AppModel.periodRange(), ids = AppModel.historyRequest().ids
-            cover = JSON.stringify([AppModel.vaultGeneration, AppModel.listGeneration, ids, r])
+            cover = JSON.stringify([AppModel.vaultGeneration, ids, r])
             return [["list_category_expenses", { filter: {
                 account_ids: ids, category_id: null, include_subcategories: false, uncategorized_only: false,
                 search: null, date_from: r[0], date_to: r[1], limit: 0, offset: 0,

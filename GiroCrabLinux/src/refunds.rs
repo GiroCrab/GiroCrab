@@ -139,19 +139,17 @@ pub fn card(v: &Vault, args: &Value) -> R {
 pub fn sheet(v: &Vault, args: &Value) -> R {
     let req: Request = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
     // Proof rows supply current booking/link presentation, never financial aggregates.
-    let page = v
-        .list_transactions(BookingFilter {
-            limit: 0,
-            ..Default::default()
-        })
-        .map_err(|e| e.to_string())?;
-    let books: HashMap<_, _> = page.transactions.iter().map(|b| (b.id, b)).collect();
-    let booking = books
-        .get(&req.transaction_id)
+    let booking = bookings_for(v, &[req.transaction_id])?
+        .remove(&req.transaction_id)
         .ok_or_else(|| crate::i18n::tr("Die Buchung ist nicht mehr vorhanden."))?;
     let parts = v
         .list_transaction_splits(booking.id)
         .map_err(|e| e.to_string())?;
+    if !req.own_part.is_empty() && !parts.iter().any(|p| p.uuid == req.own_part) {
+        return Err(crate::i18n::tr(
+            "Diese Erstattungszuordnung ist nicht möglich.",
+        ));
+    }
     let selected = parts
         .iter()
         .find(|p| p.uuid == req.own_part)
@@ -166,6 +164,25 @@ pub fn sheet(v: &Vault, args: &Value) -> R {
     });
     let from_refund = amount > 0;
     let links = v.refund_links(booking.id).map_err(|e| e.to_string())?;
+    let raw_candidates = if amount == 0 {
+        Vec::new()
+    } else {
+        v.refund_candidates(booking.id, own_part.clone(), req.query, 200)
+            .map_err(|e| e.to_string())?
+    };
+    let raw_suggestions = if amount == 0 {
+        Vec::new()
+    } else {
+        v.refund_suggestions(booking.id, own_part.clone())
+            .map_err(|e| e.to_string())?
+    };
+    let ids: Vec<_> = links
+        .iter()
+        .flat_map(|l| [l.refund_id, l.original_id])
+        .chain(raw_candidates.iter().map(|c| c.transaction_id))
+        .chain(raw_suggestions.iter().map(|s| s.candidate.transaction_id))
+        .collect();
+    let books = bookings_for(v, &ids)?;
     let accounts: HashMap<_, _> = v
         .list_account_groups()
         .map_err(|e| e.to_string())?
@@ -236,22 +253,45 @@ pub fn sheet(v: &Vault, args: &Value) -> R {
     let mut candidates = Vec::new();
     let mut suggestions = Vec::new();
     if amount != 0 && open > 0 {
-        for c in v
-            .refund_candidates(booking.id, own_part.clone(), req.query, 200)
-            .map_err(|e| e.to_string())?
-        {
+        for c in raw_candidates {
             candidates.push(decorate(json!(c)));
         }
-        for s in v
-            .refund_suggestions(booking.id, own_part.clone())
-            .map_err(|e| e.to_string())?
-        {
+        for s in raw_suggestions {
             suggestions.push(json!({"candidate":decorate(json!(s.candidate)),"reason":s.reason}));
         }
     }
     Ok(
         json!({"booking":booking,"parts":parts,"own_part":own_part,"from_refund":from_refund,"own_open":open,"linked":current,"suggestions":suggestions,"candidates":candidates}),
     )
+}
+
+fn bookings_for(v: &Vault, ids: &[i64]) -> Result<HashMap<i64, girocrab_core::Booking>, String> {
+    let dates = ids
+        .iter()
+        .map(|id| v.booking_date(*id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .flatten()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut books = HashMap::new();
+    for date in dates {
+        for b in v
+            .list_transactions(BookingFilter {
+                date_from: Some(date.clone()),
+                date_to: Some(date),
+                limit: 0,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())?
+            .transactions
+        {
+            if ids.contains(&b.id) {
+                books.insert(b.id, b);
+            }
+        }
+    }
+    Ok(books)
 }
 
 pub fn edit(v: &Vault, args: &Value) -> R {
@@ -262,7 +302,7 @@ pub fn edit(v: &Vault, args: &Value) -> R {
         refund_part: String,
         original_id: i64,
         original_part: String,
-        token: Option<i64>,
+        token: Option<String>,
     }
     let a: Edit = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
     let token = match a.action.as_str() {
@@ -408,6 +448,20 @@ mod tests {
         assert_eq!(reverse["from_refund"], false);
         assert!(sheet(&v, &json!({"transaction_id":-1})).is_err());
         assert!(sheet(&v, &json!({})).is_err());
+        assert!(
+            sheet(
+                &v,
+                &json!({"transaction_id":f["refund"],"own_part":"deleted-part"})
+            )
+            .is_err()
+        );
+        assert!(bookings_for(&v, &[]).unwrap().is_empty());
+        assert_eq!(
+            bookings_for(&v, &[f["refund"].as_i64().unwrap()])
+                .unwrap()
+                .len(),
+            1
+        );
     }
     #[test]
     fn link_unlink_token_restore_and_noop_roundtrip() {

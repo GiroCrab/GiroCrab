@@ -20,6 +20,13 @@ const reveal = bodyAfter("function revealBooking(id)");
 const timerSource = source.slice(source.indexOf("property Timer revealTimer:"));
 const timerBody = bodyAfter("onTriggered:", timerSource);
 
+test("expense pie coverage survives list-only reloads", () => {
+    const pie = readFileSync(new URL("../qml/HeaderPieChart.qml", import.meta.url), "utf8");
+    assert.ok(!pie.includes("AppModel.listGeneration"));
+    assert.ok(pie.includes("AppModel.refundLinksRevision"));
+    assert.ok(pie.includes("AppModel.vaultGeneration"));
+});
+
 test("asynchronous undo cannot restore an invalidated redo branch", () => {
     const undo = readFileSync(new URL("../qml/UndoManager.qml", import.meta.url), "utf8");
     const s = { phase: 0, branch: 0, undoStack: [], redoStack: [] };
