@@ -76,6 +76,49 @@ final class AutoReviewTests: XCTestCase {
         XCTAssertFalse(isChecked(b))
     }
 
+    // MARK: view switches (#1808)
+
+    func testViewWithoutBookingListDropsSelectionAndPendingReview() throws {
+        model.autoReviewDelay = .fiveSeconds
+        let (a, _) = try uncheckedBookings()
+        model.selectedBookingID = a.id
+        XCTAssertNotNil(model.autoReviewTask)
+        model.sidebarSelection = .wealth
+        XCTAssertNil(model.selectedBookingID)
+        XCTAssertTrue(model.selectedBookingIDs.isEmpty)
+        XCTAssertNil(model.autoReviewTask, "the review of a booking nobody sees must not run")
+    }
+
+    func testSwitchKeepsWhatTheNewListShowsAndSelectsNothingUnasked() async throws {
+        model.sidebarSelection = .allAccounts
+        let a = try XCTUnwrap(model.visibleBookings.first)
+        let other = try XCTUnwrap(model.visibleBookings.first { $0.accountId != a.accountId })
+        model.setChecked(false, for: a)
+        model.selectedBookingID = a.id
+        model.autoReviewDelay = .immediately
+        // not in the list: no first row (it would be marked as checked)
+        model.sidebarSelection = .account(other.accountId)
+        XCTAssertNil(model.selectedBookingID)
+        await model.autoReviewTask?.value
+        model.selectedBookingID = a.id
+        model.sidebarSelection = .allAccounts
+        XCTAssertFalse(isChecked(a))
+        // partly in the list: the visible one stays
+        model.autoReviewDelay = .manual
+        model.selectedBookingIDs = [a.id, other.id]
+        model.selectedBookingID = a.id
+        model.sidebarSelection = .account(a.accountId)
+        XCTAssertEqual(model.selectedBookingID, a.id)
+        XCTAssertEqual(model.selectedBookingIDs, [a.id])
+    }
+
+    func testRefreshInTheSameViewStillFallsBackToTheFirstRow() {
+        model.sidebarSelection = .allAccounts
+        model.selectedBookingID = Int64.max
+        model.reloadBookings()
+        XCTAssertEqual(model.selectedBookingID, model.bookings.first?.id)
+    }
+
     func testChoiceIsStoredPerDevice() {
         model.autoReviewDelay = .fiveSeconds
         XCTAssertEqual(AppDefaults.store.string(forKey: AutoReviewDelay.defaultsKey), "5s")

@@ -521,9 +521,9 @@ struct MainSplitView: View {
         } detail: {
             HStack(spacing: 0) {
                 bookingColumn
-                // Belege & Postbox has its own preview; the booking inspector would show whatever
-                // booking was selected last, whichever document is open.
-                if showInspector, model.mainColumn != .documents {
+                // Belege & Postbox has its own preview and Vermögen no booking list (#1808): the booking
+                // inspector has nothing to show there.
+                if showInspector, model.mainColumn.hasInspector {
                     inspectorSplitter
                     InspectorView()
                         .frame(width: inspectorWidth * textScale)
@@ -534,8 +534,8 @@ struct MainSplitView: View {
             // min widths: 240 (sidebar) + 560 + 280 (inspector) keep the minimum window size.
             // Must not depend on `inspectorWidth`: the split view re-lays out whenever these
             // change, which made the column jump while the splitter was dragged (#828).
-            .macColumnWidth(min: showInspector && model.mainColumn != .documents ? 560 + InspectorWidth.minimum * textScale : 560,
-                            ideal: showInspector && model.mainColumn != .documents ? 700 + InspectorWidth.standard * textScale : 700)
+            .macColumnWidth(min: showInspector && model.mainColumn.hasInspector ? 560 + InspectorWidth.minimum * textScale : 560,
+                            ideal: showInspector && model.mainColumn.hasInspector ? 700 + InspectorWidth.standard * textScale : 700)
         }
         .navigationSplitViewStyle(.balanced)
         .sidebarDividerToTop()
@@ -596,8 +596,8 @@ struct MainSplitView: View {
         } content: {
             bookingColumn
         } detail: {
-            if model.mainColumn == .documents {
-                // the documents view has its own preview
+            if !model.mainColumn.hasInspector {
+                // the documents view has its own preview, Vermögen no booking list (#1808)
                 Color.clear
             } else {
                 InspectorView()

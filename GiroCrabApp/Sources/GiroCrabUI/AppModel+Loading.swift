@@ -596,9 +596,16 @@ extension AppModel {
         listBalances = balances
         bookings = keepingLingeringRow(p.transactions)
         if let id = selectedBookingID, booking(withID: id) == nil, stickyBooking?.id != id {
-            // „Neue Umsätze“: no booking selected unasked, auto review would check it
-            selectedBookingID = sidebarSelection == .newBookings ? nil : p.transactions.first?.id
+            if viewSwitchPending {
+                // a switch keeps what the new list still shows and otherwise selects nothing: a booking
+                // chosen unasked would start the auto review (#1808)
+                selectedBookingID = bookings.first { selectedBookingIDs.contains($0.id) }?.id
+            } else {
+                // „Neue Umsätze“: no booking selected unasked, auto review would check it
+                selectedBookingID = sidebarSelection == .newBookings ? nil : p.transactions.first?.id
+            }
         }
+        viewSwitchPending = false
         pruneMultiSelection()
     }
 
