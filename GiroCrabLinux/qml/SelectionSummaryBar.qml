@@ -12,7 +12,8 @@ Rectangle {
         if (!shown) return []
         const sums = {}
         for (const b of AppModel.selectedBookings) {
-            const c = b.currency || "EUR"
+            const account = AppModel.accountsByID[b.account_id]
+            const c = b.currency || (account && account.currency) || "EUR"
             sums[c] = (sums[c] || 0) + b.amount_cents
         }
         return Object.keys(sums).sort().map(c => ({ currency: c, cents: sums[c] }))

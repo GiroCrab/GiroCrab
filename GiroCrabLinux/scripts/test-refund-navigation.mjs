@@ -17,6 +17,19 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("selection totals inherit account currencies without mixing them", () => {
+    const text = readFileSync(new URL("../qml/SelectionSummaryBar.qml", import.meta.url), "utf8");
+    const totals = bodyAfter("readonly property var totals:", text);
+    const s = { shown: true, AppModel: {
+        selectedBookings: [{account_id:1,currency:"",amount_cents:100}, {account_id:2,currency:"EUR",amount_cents:200}],
+        accountsByID: {1:{currency:"USD"},2:{currency:"EUR"}}
+    }};
+    vm.createContext(s);
+    assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext(`(function(){${totals}})()`, s))),
+        [{currency:"EUR",cents:200},{currency:"USD",cents:100}]);
+    s.shown = false;
+    assert.equal(vm.runInContext(`(function(){${totals}})()`, s).length, 0);
+});
 test("zero-total split bookings retain their amount for metadata saves", () => {
     const text=readFileSync(new URL("../qml/ManualBookingSheet.qml",import.meta.url),"utf8");
     const amount=bodyAfter("readonly property var amountCents:",text);
@@ -123,6 +136,9 @@ function fixture() {
         bookings: [], sidebarSelection: "account:42", period: "month",
         directionFilter: "Income", statusFilter: "checked", scope: "Investments", searchText: "hidden",
         TagFilter: { clear() { s.tagsCleared = true; } },
+        DepotState: { presentation: "bookings" },
+        categoryAccountFilter: { 9: true },
+        ListFilters: { amountMin: 10000, amountMax: 20000, clearAmount() { this.amountMin = null; this.amountMax = null; } },
         MerchantFocus: { sidebarChanged() { s.merchantCleared = true; } },
         UndoManager: {}, merchantStatsTimer: { stop() {} },
         searchTimer: { stop() {} },
@@ -189,6 +205,23 @@ test("loaded counterpart leaves non-booking pages without resetting list filters
         assert.equal(f.s.searchText, "hidden");
         assert.deepEqual(f.selected, [42]);
     }
+});
+
+test("loaded counterpart leaves the securities depot presentation", () => {
+    const f = fixture();
+    f.s.bookings = [{ id: 42 }];
+    f.s.DepotState.presentation = "securities";
+    f.jump(42); f.fire();
+    assert.equal(f.s.sidebarSelection, "all");
+    assert.deepEqual(f.selected, [42]);
+});
+
+test("missing counterpart clears the new account and amount filters", () => {
+    const f = fixture();
+    f.jump(42);
+    assert.deepEqual(Object.keys(f.s.categoryAccountFilter), []);
+    assert.equal(f.s.ListFilters.amountMin, null);
+    assert.equal(f.s.ListFilters.amountMax, null);
 });
 
 test("a missing selected split retains the picker until explicit replacement", () => {

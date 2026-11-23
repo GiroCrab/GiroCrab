@@ -4197,9 +4197,11 @@ QtObject {
         if (!bookings.some(b => b.id === id)) {
             sidebarSelection = "all"; period = "all"; directionFilter = "All"; statusFilter = "all"; TagFilter.clear(); searchText = ""
             scope = "All"
+            categoryAccountFilter = ({})
+            ListFilters.clearAmount()
             MerchantFocus.sidebarChanged()
             searchTimer.stop()
-        } else if (["documents", "wealth", "planned", "directDebits"].includes(sidebarSelection)) {
+        } else if (["documents", "wealth", "planned", "directDebits"].includes(sidebarSelection) || DepotState.presentation !== "bookings") {
             sidebarSelection = "all"
         }
         revealTimer.bookingID = id
