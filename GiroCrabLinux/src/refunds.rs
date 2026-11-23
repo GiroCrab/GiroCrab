@@ -71,21 +71,57 @@ struct Request {
     query: String,
 }
 
+fn card_filter(
+    v: &Vault,
+    id: i64,
+    links: &[girocrab_core::refunds::RefundLink],
+) -> Result<Option<BookingFilter>, String> {
+    let ids: std::collections::BTreeSet<_> = links
+        .iter()
+        .filter(|l| !l.inactive)
+        .map(|l| {
+            if l.refund_id == id {
+                l.original_id
+            } else {
+                l.refund_id
+            }
+        })
+        .collect();
+    let dates = ids
+        .into_iter()
+        .map(|id| v.booking_date(id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    Ok(dates
+        .iter()
+        .min()
+        .zip(dates.iter().max())
+        .map(|(from, to)| BookingFilter {
+            date_from: Some(from.clone()),
+            date_to: Some(to.clone()),
+            limit: 0,
+            ..Default::default()
+        }))
+}
+
 pub fn card(v: &Vault, args: &Value) -> R {
     let req: Request = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
     let links = v
         .refund_links(req.transaction_id)
         .map_err(|e| e.to_string())?;
-    if !links.iter().any(|l| !l.inactive) {
+    let Some(filter) = card_filter(v, req.transaction_id, &links)? else {
         return Ok(json!([]));
-    }
+    };
     let bookings = v
-        .list_transactions(BookingFilter {
-            limit: 0,
-            ..Default::default()
-        })
+        .list_transactions(filter)
         .map_err(|e| e.to_string())?
-        .transactions;
+        .transactions
+        .into_iter()
+        .map(|b| (b.id, b))
+        .collect::<HashMap<_, _>>();
     let mut rows = Vec::new();
     for link in links.into_iter().filter(|l| !l.inactive) {
         let (id, part, label) = if link.refund_id == req.transaction_id {
@@ -93,7 +129,7 @@ pub fn card(v: &Vault, args: &Value) -> R {
         } else {
             (link.refund_id, &link.refund_part, &link.refund_label)
         };
-        if let Some(b) = bookings.iter().find(|b| b.id == id) {
+        if let Some(b) = bookings.get(&id) {
             rows.push(json!({"booking":b,"part_label":if part.is_empty() { "" } else { label },"link":link}));
         }
     }
@@ -295,6 +331,57 @@ mod tests {
         let data = seed(&v, &json!({})).unwrap();
         (Temp(path), v, data)
     }
+    #[test]
+    fn inspector_lookup_is_bounded_to_live_counterpart_days() {
+        let (_dir, v, f) = fixture();
+        assert!(
+            card_filter(&v, f["refund"].as_i64().unwrap(), &[])
+                .unwrap()
+                .is_none()
+        );
+        edit(&v, &json!({"action":"link","refund_id":f["refund"],"refund_part":f["part"],"original_id":f["original"],"original_part":""})).unwrap();
+        let id = f["refund"].as_i64().unwrap();
+        let links = v.refund_links(id).unwrap();
+        let add = |date: &str| {
+            v.save_manual_booking(
+                f["account"].as_i64().unwrap(),
+                None,
+                girocrab_core::offline::ManualBookingSetup {
+                    booking_date: date.into(),
+                    amount_cents: -10000,
+                    counterparty: "Other day".into(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap()
+        };
+        let earlier = add("2020-01-01");
+        let later = add("2030-01-01");
+        let mut expanded = links.clone();
+        let mut second = links[0].clone();
+        second.original_id = earlier;
+        expanded.push(second);
+        let filter = card_filter(&v, id, &expanded).unwrap().unwrap();
+        assert_eq!(filter.date_from.as_deref(), Some("2020-01-01"));
+        assert_eq!(filter.date_to.as_deref(), Some("2026-01-01"));
+        assert!(
+            !v.list_transactions(filter)
+                .unwrap()
+                .transactions
+                .iter()
+                .any(|b| b.id == later)
+        );
+        let reverse = card_filter(&v, links[0].original_id, &links)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reverse.date_from, v.booking_date(id).unwrap());
+        expanded.iter_mut().for_each(|l| l.inactive = true);
+        assert!(card_filter(&v, id, &expanded).unwrap().is_none());
+        assert!(card(&v, &json!({})).is_err());
+    }
+
     #[test]
     fn split_sheet_roles_search_and_empty_error() {
         let (_dir, v, f) = fixture();

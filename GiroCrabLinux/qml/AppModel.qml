@@ -490,6 +490,9 @@ QtObject {
     /// A different vault is in front (or none): answers still on their way belong to the old one.
     function vaultSwitched() {
         vaultGeneration++
+        revealTimer.stop()
+        revealTimer.request++
+        cancelLoad("revealBooking")
         refundBooking = null
         refundEditing = false
         UndoManager.busy = false
@@ -4073,27 +4076,44 @@ QtObject {
     }
     /// Selects a booking in the list, widening the filters if it is not loaded.
     function revealBooking(id) {
+        if (!isUnlocked) return
+        cancelLoad("revealBooking")
         if (!bookings.some(b => b.id === id)) {
             sidebarSelection = "all"; period = "all"; directionFilter = "All"; statusFilter = "all"; TagFilter.clear(); searchText = ""
+            scope = "All"
+            MerchantFocus.sidebarChanged()
+            searchTimer.stop()
         }
         revealTimer.bookingID = id
+        revealTimer.vault = vaultGeneration
+        revealTimer.request++
         revealTimer.restart()
     }
     property Timer revealTimer: Timer {
         property var bookingID: null
+        property int vault: 0
+        property int request: 0
         interval: 350
         onTriggered: {
-            // an older booking is not on the first page: load back to its day
-            const id = bookingID
-            if (!model.bookings.some(b => b.id === id)) {
-                const day = model.run(() => model.core("booking_date", { booking_id: id }))
-                if (day && model.page) {
-                    model.listLimit = Math.max(model.listLimit, model.page.total_count)
-                    model.reloadBookings(() => model.selectBooking(id, false, false))
-                    return
-                }
+            const id = bookingID, token = request, vgen = vault
+            const current = () => model.isUnlocked && model.vaultGeneration === vgen && request === token
+            const select = () => {
+                if (current() && model.bookings.some(b => b.id === id)) model.selectBooking(id, false, false)
             }
-            model.selectBooking(id, false, false)
+            if (!current()) return
+            if (model.selectionLoadRunning || model.isLoadPending("bookings")) { restart(); return }
+            if (model.bookings.some(b => b.id === id)) { select(); return }
+            const generation = model.listGeneration
+            model.loadOffMain("revealBooking", () => [["booking_date", { booking_id: id }]], r => {
+                if (!current() || generation !== model.listGeneration || !r[0]) return
+                const f = model.currentFilter()
+                if (f.date_from === null || f.date_from < r[0]) f.date_from = r[0]
+                model.loadOffMain("revealBooking", () => [["count_transactions", { filter: f }]], counts => {
+                    if (!current() || generation !== model.listGeneration) return
+                    model.listLimit = Math.max(model.listLimit, counts[0])
+                    model.reloadBookings(select)
+                }, undefined, true)
+            }, undefined, true)
         }
     }
 

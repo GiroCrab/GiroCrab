@@ -258,10 +258,10 @@ fn account_rows(vault: &Vault, privacy: bool) -> Result<(Vec<AccountRow>, String
 const ROW_LIMIT: u32 = 2000;
 
 /// Bookings of a listing target (one account, all, unchecked, uncategorized or one category).
-fn load_rows(vault: &Vault, target: Target) -> Result<Vec<Row>, String> {
+fn load_rows(vault: &Vault, target: Target, limit: u32) -> Result<Vec<Row>, String> {
     let page = vault
         .list_transactions(BookingFilter {
-            limit: ROW_LIMIT,
+            limit,
             ..nav::booking_filter(target)
         })
         .map_err(|e| e.to_string())?;
@@ -276,6 +276,7 @@ struct State {
     categories: Vec<Category>,
     filter: Filter,
     selected_booking: Option<i64>,
+    reveal_limit: u32,
     /// Bookings ticked for a batch action.
     marked: std::collections::HashSet<i64>,
     /// Drops the result of a superseded background load.
@@ -818,6 +819,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
     }
     views_ui::refresh_sidebar(win, &vault);
     let target = with_state(|st| st.target);
+    let limit = with_state(|st| st.reveal_limit.max(ROW_LIMIT));
     let generation = with_state(|st| {
         st.vault = Arc::downgrade(&vault);
         st.generation += 1;
@@ -825,7 +827,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
     });
     let weak = win.as_weak();
     std::thread::spawn(move || {
-        let rows = load_rows(&vault, target);
+        let rows = load_rows(&vault, target, limit);
         let cats = vault.list_categories(None, None).map_err(|e| e.to_string());
         let _ = weak.upgrade_in_event_loop(move |win| {
             let vault = vault.clone();
@@ -1297,7 +1299,7 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 // First paint: load the scope's bookings synchronously (selects the first one);
                 // the background reload in `apply_view` then refreshes them.
                 let target = with_state(|st| st.target);
-                if let Ok(rows) = load_rows(vault, target) {
+                if let Ok(rows) = load_rows(vault, target, ROW_LIMIT) {
                     with_state(|st| st.rows = rows);
                     apply_filter(win);
                 }
@@ -2842,11 +2844,13 @@ mod tests {
         let (rows, _) = account_rows(&vault, false).unwrap();
         assert!(!rows.is_empty());
         let first = Target::Account(rows[0].id as i64);
-        assert!(!load_rows(&vault, first).unwrap().is_empty());
+        assert!(!load_rows(&vault, first, ROW_LIMIT).unwrap().is_empty());
         // All accounts (scope 0) holds at least as many rows as one account.
         assert!(
-            load_rows(&vault, Target::AllAccounts).unwrap().len()
-                >= load_rows(&vault, first).unwrap().len()
+            load_rows(&vault, Target::AllAccounts, ROW_LIMIT)
+                .unwrap()
+                .len()
+                >= load_rows(&vault, first, ROW_LIMIT).unwrap().len()
         );
         // Privacy hides balances and the IBAN tail.
         let (hidden, total) = account_rows(&vault, true).unwrap();

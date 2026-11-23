@@ -98,24 +98,50 @@ pub fn can_open(amount: i64, splits: u32) -> bool {
 
 thread_local! { static CARD_REQUEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 
-fn card_rows(v: &Vault, id: i64) -> Result<Vec<RefundRow>, String> {
-    let links = v.refund_links(id).map_err(|e| e.to_string())?;
-    if !links.iter().any(|l| !l.inactive) {
-        return Ok(Vec::new());
-    }
-    let books = v
-        .list_transactions(BookingFilter {
+fn card_filter(v: &Vault, id: i64, links: &[RefundLink]) -> Result<Option<BookingFilter>, String> {
+    let ids: std::collections::BTreeSet<_> = links
+        .iter()
+        .filter(|l| !l.inactive)
+        .map(|l| other(l, id).0)
+        .collect();
+    let dates = ids
+        .into_iter()
+        .map(|id| v.booking_date(id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    Ok(dates
+        .iter()
+        .min()
+        .zip(dates.iter().max())
+        .map(|(from, to)| BookingFilter {
+            date_from: Some(from.clone()),
+            date_to: Some(to.clone()),
             limit: 0,
             ..Default::default()
-        })
+        }))
+}
+
+fn card_rows(v: &Vault, id: i64) -> Result<Vec<RefundRow>, String> {
+    let links = v.refund_links(id).map_err(|e| e.to_string())?;
+    let Some(filter) = card_filter(v, id, &links)? else {
+        return Ok(Vec::new());
+    };
+    let books = v
+        .list_transactions(filter)
         .map_err(|e| e.to_string())?
-        .transactions;
+        .transactions
+        .into_iter()
+        .map(|b| (b.id, b))
+        .collect::<HashMap<_, _>>();
     Ok(links
         .iter()
         .filter(|l| !l.inactive)
         .filter_map(|l| {
             let (other_id, part) = other(l, id);
-            let b = books.iter().find(|b| b.id == other_id)?;
+            let b = books.get(&other_id)?;
             let label = if l.refund_id == id {
                 &l.original_label
             } else {
@@ -660,6 +686,18 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
     });
 }
 
+fn reveal_count(v: &Vault, id: i64) -> Result<Option<u32>, String> {
+    let Some(day) = v.booking_date(id).map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    v.count_transactions(BookingFilter {
+        date_from: Some(day),
+        ..Default::default()
+    })
+    .map(Some)
+    .map_err(|e| e.to_string())
+}
+
 pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
     let weak = win.as_weak();
     let vault = slot.clone();
@@ -667,17 +705,41 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
         let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
             return;
         };
-        with_state(|s| {
-            s.filter = daily::Filter::default();
-            s.selected_booking = Some(i64::from(id));
+        let generation = with_state(|s| s.generation);
+        let request = CARD_REQUEST.with(|r| {
+            r.set(r.get().wrapping_add(1));
+            r.get()
         });
-        win.set_search_text(SharedString::new());
-        win.set_uncategorized_only(false);
-        win.set_status_index(0);
-        win.set_range_index(0);
-        win.set_tag_index(0);
-        win.set_documents_only(false);
-        crate::views_ui::select_target(&win, &v, crate::nav::Target::AllAccounts);
+        let weak = win.as_weak();
+        std::thread::spawn(move || {
+            let result = reveal_count(&v, i64::from(id));
+            let _ = weak.upgrade_in_event_loop(move |win| {
+                if !is_current(&v)
+                    || CARD_REQUEST.with(|r| r.get()) != request
+                    || with_state(|s| s.generation) != generation
+                {
+                    return;
+                }
+                match result {
+                    Ok(Some(count)) => {
+                        with_state(|s| {
+                            s.filter = daily::Filter::default();
+                            s.selected_booking = Some(i64::from(id));
+                            s.reveal_limit = count;
+                        });
+                        win.set_search_text(SharedString::new());
+                        win.set_uncategorized_only(false);
+                        win.set_status_index(0);
+                        win.set_range_index(0);
+                        win.set_tag_index(0);
+                        win.set_documents_only(false);
+                        crate::views_ui::select_target(&win, &v, crate::nav::Target::AllAccounts);
+                    }
+                    Ok(None) => {}
+                    Err(e) => win.set_sync_status(e.into()),
+                }
+            });
+        });
     });
     let (weak, s) = (win.as_weak(), slot.clone());
     win.on_refunds_request(move || {
@@ -935,6 +997,75 @@ mod tests {
         assert!(can_open(0, 2));
         assert!(!can_open(0, 0));
         assert!(can_open(-1, 0));
+    }
+
+    #[test]
+    fn inspector_lookup_is_bounded_to_live_counterpart_days() {
+        let (_dir, v, f) = fixture();
+        assert!(card_filter(&v, f.refund, &[]).unwrap().is_none());
+        v.link_refund(f.refund, f.part, f.original, String::new())
+            .unwrap();
+        let mut links = v.refund_links(f.refund).unwrap();
+        let filter = card_filter(&v, f.refund, &links).unwrap().unwrap();
+        assert_eq!(filter.date_from.as_deref(), Some("2026-01-14"));
+        assert_eq!(filter.date_to, filter.date_from);
+        let mut second = links[0].clone();
+        second.original_id = v
+            .save_manual_booking(
+                f.account,
+                None,
+                girocrab_core::offline::ManualBookingSetup {
+                    booking_date: "2020-01-01".into(),
+                    amount_cents: -10000,
+                    counterparty: "Earlier".into(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap();
+        links.push(second);
+        let filter = card_filter(&v, f.refund, &links).unwrap().unwrap();
+        assert_eq!(filter.date_from.as_deref(), Some("2020-01-01"));
+        assert_eq!(filter.date_to.as_deref(), Some("2026-01-14"));
+        links.iter_mut().for_each(|l| l.inactive = true);
+        assert!(card_filter(&v, f.refund, &links).unwrap().is_none());
+        assert!(card_rows(&v, -1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn inspector_jump_reaches_beyond_the_default_page() {
+        let (_dir, v, f) = fixture();
+        assert_eq!(reveal_count(&v, -1).unwrap(), None);
+        for _ in 0..crate::ROW_LIMIT {
+            v.save_manual_booking(
+                f.account,
+                None,
+                girocrab_core::offline::ManualBookingSetup {
+                    booking_date: "2027-01-01".into(),
+                    amount_cents: -1,
+                    counterparty: "Later".into(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap();
+        }
+        let count = reveal_count(&v, f.original).unwrap().unwrap();
+        assert!(count > crate::ROW_LIMIT);
+        assert!(
+            !crate::load_rows(&v, crate::nav::Target::AllAccounts, crate::ROW_LIMIT)
+                .unwrap()
+                .iter()
+                .any(|r| r.id == f.original)
+        );
+        assert!(
+            crate::load_rows(&v, crate::nav::Target::AllAccounts, count)
+                .unwrap()
+                .iter()
+                .any(|r| r.id == f.original)
+        );
     }
 
     #[test]
