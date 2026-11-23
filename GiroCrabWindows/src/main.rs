@@ -472,7 +472,7 @@ fn render_analytics(win: &MainWindow) {
                                     privacy,
                                 )
                                 .into(),
-                                progress: s.share,
+                                progress: if privacy { 0.0 } else { s.share },
                                 over: false,
                                 color: tint(&s.color_hex),
                             }
@@ -660,7 +660,7 @@ fn request_logos(win: &MainWindow, vault: Arc<Vault>) {
                     st.logos.insert(key, slint::Image::from_rgba8(buf));
                 }
             });
-            render_bookings(&win);
+            render_booking_rows(&win);
         });
     });
 }

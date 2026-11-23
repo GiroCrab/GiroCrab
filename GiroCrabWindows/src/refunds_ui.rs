@@ -111,7 +111,7 @@ pub fn cancel_reveal() {
     REVEAL_REQUEST.with(|r| r.set(r.get().wrapping_add(1)));
 }
 
-fn card_filter(v: &Vault, id: i64, links: &[RefundLink]) -> Result<Option<BookingFilter>, String> {
+fn card_filters(v: &Vault, id: i64, links: &[RefundLink]) -> Result<Vec<BookingFilter>, String> {
     let ids: std::collections::BTreeSet<_> = links
         .iter()
         .filter(|l| !l.inactive)
@@ -124,31 +124,41 @@ fn card_filter(v: &Vault, id: i64, links: &[RefundLink]) -> Result<Option<Bookin
         .map_err(|e| e.to_string())?
         .into_iter()
         .flatten()
-        .collect::<Vec<_>>();
+        .collect::<std::collections::BTreeSet<_>>();
     Ok(dates
-        .iter()
-        .min()
-        .zip(dates.iter().max())
-        .map(|(from, to)| BookingFilter {
-            date_from: Some(from.clone()),
-            date_to: Some(to.clone()),
+        .into_iter()
+        .map(|date| BookingFilter {
+            date_from: Some(date.clone()),
+            date_to: Some(date),
             limit: 0,
             ..Default::default()
-        }))
+        })
+        .collect())
 }
 
 fn card_rows(v: &Vault, id: i64) -> Result<Vec<RefundRow>, String> {
     let links = v.refund_links(id).map_err(|e| e.to_string())?;
-    let Some(filter) = card_filter(v, id, &links)? else {
+    let filters = card_filters(v, id, &links)?;
+    if filters.is_empty() {
         return Ok(Vec::new());
-    };
-    let books = v
-        .list_transactions(filter)
-        .map_err(|e| e.to_string())?
-        .transactions
-        .into_iter()
-        .map(|b| (b.id, b))
-        .collect::<HashMap<_, _>>();
+    }
+    let ids: std::collections::BTreeSet<_> = links
+        .iter()
+        .filter(|l| !l.inactive)
+        .map(|l| other(l, id).0)
+        .collect();
+    let mut books = HashMap::new();
+    for filter in filters {
+        for b in v
+            .list_transactions(filter)
+            .map_err(|e| e.to_string())?
+            .transactions
+        {
+            if ids.contains(&b.id) {
+                books.insert(b.id, b);
+            }
+        }
+    }
     Ok(links
         .iter()
         .filter(|l| !l.inactive)
@@ -1119,11 +1129,13 @@ mod tests {
     #[test]
     fn inspector_lookup_is_bounded_to_live_counterpart_days() {
         let (_dir, v, f) = fixture();
-        assert!(card_filter(&v, f.refund, &[]).unwrap().is_none());
+        assert!(card_filters(&v, f.refund, &[]).unwrap().is_empty());
         v.link_refund(f.refund, f.part, f.original, String::new())
             .unwrap();
         let mut links = v.refund_links(f.refund).unwrap();
-        let filter = card_filter(&v, f.refund, &links).unwrap().unwrap();
+        let filters = card_filters(&v, f.refund, &links).unwrap();
+        assert_eq!(filters.len(), 1);
+        let filter = &filters[0];
         assert_eq!(filter.date_from.as_deref(), Some("2026-01-14"));
         assert_eq!(filter.date_to, filter.date_from);
         let mut second = links[0].clone();
@@ -1142,12 +1154,39 @@ mod tests {
             )
             .unwrap();
         links.push(second);
-        let filter = card_filter(&v, f.refund, &links).unwrap().unwrap();
-        assert_eq!(filter.date_from.as_deref(), Some("2020-01-01"));
-        assert_eq!(filter.date_to.as_deref(), Some("2026-01-14"));
+        let filters = card_filters(&v, f.refund, &links).unwrap();
+        assert_eq!(filters.len(), 2);
+        assert_eq!(filters[0].date_from.as_deref(), Some("2020-01-01"));
+        assert_eq!(filters[1].date_from.as_deref(), Some("2026-01-14"));
+        assert!(filters.iter().all(|f| f.date_from == f.date_to));
         links.iter_mut().for_each(|l| l.inactive = true);
-        assert!(card_filter(&v, f.refund, &links).unwrap().is_none());
+        assert!(card_filters(&v, f.refund, &links).unwrap().is_empty());
         assert!(card_rows(&v, -1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn refund_modal_escape_and_privacy_use_safe_presentation_paths() {
+        let panel = include_str!("../ui/refunds_dialog.slint");
+        let escape = panel
+            .split("if event.text ==")
+            .nth(1)
+            .unwrap()
+            .split('\n')
+            .next()
+            .unwrap();
+        assert!(escape.contains("root.shortcut("));
+        assert!(!escape.contains("root.close("));
+        let main = include_str!("main.rs");
+        assert!(main.contains("progress: if privacy { 0.0 } else { s.share }"));
+        let logos = main
+            .split("logos::load(vault, wanted,")
+            .nth(1)
+            .unwrap()
+            .split("/// Fills the cashflow")
+            .next()
+            .unwrap();
+        assert!(logos.contains("render_booking_rows(&win)"));
+        assert!(!logos.contains("render_bookings(&win)"));
     }
 
     #[test]

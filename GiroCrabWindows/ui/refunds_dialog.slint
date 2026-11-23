@@ -27,10 +27,11 @@ export component RefundsPanel inherits FocusScope {
     callback undo-unlink();
     callback close();
     callback privacy-toggle();
+    callback shortcut(string, bool) -> bool;
     forward-focus: search-edit;
     init => { self.focus(); }
     capture-key-pressed(event) => {
-        if event.text == "\u{1b}" { root.close(); return accept; }
+        if event.text == "\u{1b}" { root.shortcut(event.text, event.modifiers.control); return accept; }
         if event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p") { root.privacy-toggle(); return accept; }
         reject
     }

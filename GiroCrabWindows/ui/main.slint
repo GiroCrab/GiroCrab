@@ -2005,6 +2005,7 @@ export component MainWindow inherits Window {
             search(t) => { root.refund-search(t); }
             toggle(i) => { root.refund-toggle(i); }
             undo-unlink() => { root.refund-undo-unlink(); }
+            shortcut(t, control) => { root.shortcut(t, control) }
             close() => { root.refund-close(); }
             privacy-toggle() => { root.privacy = !root.privacy; root.privacy-changed(); }
         }
