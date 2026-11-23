@@ -542,6 +542,33 @@ fn oldest_booked(page: &[Value]) -> Option<String> {
         .min()
 }
 
+/// The bank's booking key (`ABSCHLUSS` for interest) as booking text,
+/// capitalised like a word when the bank sends it in capitals.
+fn booking_key(t: &Value) -> String {
+    let key = [
+        str_of(t, "creditDebitKeyPhraseCompatible"),
+        str_of(t, "creditDebitKey"),
+    ]
+    .into_iter()
+    .map(str::trim)
+    .find(|k| !k.is_empty())
+    .unwrap_or_default();
+    if key.chars().any(char::is_lowercase) {
+        return key.to_string();
+    }
+    let mut out = String::with_capacity(key.len());
+    let mut start = true;
+    for c in key.chars() {
+        if start {
+            out.push(c);
+        } else {
+            out.extend(c.to_lowercase());
+        }
+        start = !c.is_alphanumeric();
+    }
+    out
+}
+
 fn parse_bookings(
     raw: &[Value],
     account_ref: &str,
@@ -572,6 +599,15 @@ fn parse_bookings(
         } else {
             format!("{description} {city}")
         };
+        // Without a name or description (interest), the booking key is the
+        // only text; elsewhere it is a bare debit/credit marker ("D").
+        let booking_text = if !booked {
+            tr("Vorgemerkt").into()
+        } else if counterparty.is_empty() && purpose.is_empty() {
+            booking_key(t)
+        } else {
+            String::new()
+        };
         let mut rt = RemoteTransaction {
             account_ref: account_ref.to_string(),
             booking_date: date,
@@ -583,11 +619,7 @@ fn parse_bookings(
             purpose,
             mandate_id: str_of(t, "mandateReference").to_string(),
             creditor_id: str_of(t, "creditorID").to_string(),
-            booking_text: if booked {
-                String::new()
-            } else {
-                tr("Vorgemerkt").into()
-            },
+            booking_text,
             ..Default::default()
         };
         if !booked {
