@@ -57,6 +57,11 @@ Rectangle {
         if (trade !== null && DepotMetrics.has(p.holding.native_price_cents)) return Fmt.money(p.holding.native_price_cents, trade)
         return Fmt.money(p.holding.current_price_cents, currency)
     }
+    function valueText(p) {
+        const trade = DepotMetrics.nativeCurrency(p.holding, currency)
+        if (trade !== null && DepotMetrics.has(p.holding.native_value_cents)) return Fmt.money(p.holding.native_value_cents, trade)
+        return Fmt.money(p.holding.value_cents, currency)
+    }
     function shareText(p) { return p.share !== null ? DepotMetrics.percent(p.share * 100, false, 1) : "–" }
     function gainText(p) {
         return p.gain ? [DepotMetrics.signedMoney(p.gain.cents, currency), p.gain.percent !== null ? DepotMetrics.percent(p.gain.percent, true) : null].filter(x => x).join(" · ") : ""
@@ -93,7 +98,18 @@ Rectangle {
             spacing: 6
             Text { text: qsTr("Sortierung"); font.pixelSize: Theme.caption; color: Theme.secondary }
             Item {
+                id: sortButton
                 implicitWidth: sortRow.implicitWidth; implicitHeight: sortRow.implicitHeight
+                // a Menu on the Mac: Tab reaches it, Space / Return opens it
+                activeFocusOnTab: true
+                Keys.onSpacePressed: sortMenu.popup()
+                Keys.onReturnPressed: sortMenu.popup()
+                Keys.onEnterPressed: sortMenu.popup()
+                Rectangle { visible: sortButton.activeFocus; anchors.fill: parent; anchors.margins: -2
+                            radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
+                Accessible.role: Accessible.ButtonMenu
+                Accessible.name: qsTr("Sortieren nach")
+                Accessible.onPressAction: sortMenu.popup()
                 RowLayout { id: sortRow; spacing: 4
                     SFIcon { symbol: "chevron.down"; rotation: table.sort.ascending ? 180 : 0; size: 9; color: Theme.text }
                     Text { text: table.sort.key === "gain" ? qsTr("GuV") : table.sort.key === "name" ? qsTr("Name") : qsTr("Marktwert")
@@ -152,7 +168,7 @@ Rectangle {
                                text: table.priceText(rowBox.p); font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.text
                                Sensitive { amounts: true } }
                         Text { Layout.preferredWidth: table.valueW; horizontalAlignment: Text.AlignRight; elide: Text.ElideLeft
-                               text: Fmt.money(rowBox.p.holding.value_cents, table.currency); font.pixelSize: Theme.body; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text
+                               text: table.valueText(rowBox.p); font.pixelSize: Theme.body; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text
                                Sensitive { amounts: true } }
                         Text { Layout.preferredWidth: table.shareW; horizontalAlignment: Text.AlignRight
                                text: table.shareText(rowBox.p); font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.secondary
@@ -179,7 +195,7 @@ Rectangle {
                                        font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.secondary
                                        Sensitive { amounts: true } } }
                             ColumnLayout { spacing: 2
-                                Text { Layout.alignment: Qt.AlignRight; text: Fmt.money(rowBox.p.holding.value_cents, table.currency)
+                                Text { Layout.alignment: Qt.AlignRight; text: table.valueText(rowBox.p)
                                        font.pixelSize: Theme.body; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text; Sensitive { amounts: true } }
                                 Text { Layout.alignment: Qt.AlignRight; text: [table.gainText(rowBox.p), table.shareText(rowBox.p)].filter(x => x).join(" · ")
                                        font.pixelSize: Theme.caption; font.features: { "tnum": 1 }
@@ -286,7 +302,7 @@ Rectangle {
                       visible: !!rowMenu.position && !!rowMenu.position.asset.classification.security_key; height: visible ? implicitHeight : 0
                       onTriggered: table.classify(rowMenu.position) }
         AppMenuItem { text: qsTr("Position kopieren"); icon.name: SF.icon("doc.on.doc")
-                      onTriggered: AppModel.copyToClipboard(DepotMetrics.clipboardLine(rowMenu.position.holding)) }
+                      onTriggered: AppModel.copyToClipboard(DepotMetrics.clipboardLine(rowMenu.position.holding, table.currency)) }
         AppMenuItem { text: qsTr("Alle Positionen kopieren"); icon.name: SF.icon("doc.on.doc"); onTriggered: table.copyAll() }
     }
 
@@ -314,6 +330,14 @@ Rectangle {
         MouseArea { id: shArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key)) }
         ToolTip.visible: shArea.containsMouse; ToolTip.delay: 600; ToolTip.text: qsTr("Nach dieser Spalte sortieren")
+        // a Button on the Mac: Tab reaches it, Space / Return sorts
+        activeFocusOnTab: true
+        Keys.onSpacePressed: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
+        Keys.onReturnPressed: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
+        Keys.onEnterPressed: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
+        Rectangle { visible: sh.activeFocus; anchors.fill: shRow; anchors.margins: -2
+                    radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
+        Accessible.onPressAction: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
         Accessible.role: Accessible.ColumnHeader
         Accessible.name: title
         Accessible.description: active ? (table.sort.ascending ? qsTr("aufsteigend sortiert") : qsTr("absteigend sortiert")) : ""

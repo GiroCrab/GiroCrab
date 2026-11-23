@@ -85,6 +85,11 @@ Card {
                 // Minimise the header: more room for the content (GitHub #358); the chart goes away with it.
                 Item {
                     Layout.alignment: Qt.AlignTop
+                    activeFocusOnTab: true
+                    Keys.onSpacePressed: AppModel.compactHeader = !AppModel.compactHeader
+                    Keys.onReturnPressed: AppModel.compactHeader = !AppModel.compactHeader
+                    Keys.onEnterPressed: AppModel.compactHeader = !AppModel.compactHeader
+                    Accessible.onPressAction: AppModel.compactHeader = !AppModel.compactHeader
                     implicitWidth: compactIcon.width + 8; implicitHeight: compactIcon.height + 8
                     SFIcon { id: compactIcon; anchors.centerIn: parent; symbol: "chevron.down"; size: 10; color: Theme.secondary
                              rotation: hc.compact ? 0 : 180 }
