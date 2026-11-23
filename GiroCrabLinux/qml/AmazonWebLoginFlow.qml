@@ -12,7 +12,7 @@ WebLoginFlow {
     symbol: "shippingbox.fill"
     busy: running
     info: {
-        if (running) return progress
+        if (running) return progressCaption
         if (notice !== "") return notice
         if (browser.blockedHost !== "")
             return qsTr("Unsichere Seite blockiert (%1) – nur HTTPS-Seiten werden geöffnet.").arg(browser.blockedHost)
@@ -21,11 +21,69 @@ WebLoginFlow {
     }
 
     property bool running: false
-    property string progress: ""
     property string notice: ""
-    /// Order details read so far / to read (determinate progress bar).
-    property int done: 0
-    property int total: 0
+    // MARK: Progress (#1008), AmazonUI.swift › AmazonFetchProgress
+    /// Set while `running` (null before the first step): `{ lists: true, year, index, count,
+    /// found }` while reading the order list of `year`, the `index`-th (from 0) of `count`
+    /// years; `{ lists: false, index, total, year }` while reading the details of order
+    /// `index` (from 0) of `total`, placed in `year` (-1 = unknown).
+    property var progress: null
+    /// Short text for the header line (and Orca).
+    readonly property string progressCaption: !progress ? ""
+        : progress.lists ? qsTr("Bestellliste %1 …").arg(String(progress.year))
+        : qsTr("Bestellung %1 von %2 …").arg(progress.index + 1).arg(progress.total)
+    readonly property string progressTitle: !progress ? ""
+        : progress.lists ? qsTr("Jahr %1").arg(String(progress.year))
+        : qsTr("Bestellung %1 von %2").arg(progress.index + 1).arg(progress.total)
+    readonly property string progressDetail: {
+        if (!progress) return ""
+        if (!progress.lists)
+            return progress.year >= 0 ? qsTr("Bestelldetails aus %1").arg(String(progress.year)) : qsTr("Bestelldetails")
+        const step = qsTr("Bestellliste %1 von %2").arg(progress.index + 1).arg(progress.count)
+        if (progress.found === 0) return step
+        const orders = progress.found === 1 ? qsTr("1 Bestellung gefunden") : qsTr("%1 Bestellungen gefunden").arg(progress.found)
+        return step + " · " + orders
+    }
+    /// Share done, 0…1. For "Alles" the lists usually end early (two empty years in a row).
+    readonly property real progressFraction: {
+        if (!progress) return 0
+        const all = progress.lists ? progress.count : progress.total
+        return all > 0 ? Math.min(Math.max(progress.index / all, 0), 1) : 0
+    }
+    // AmazonUI.swift › AmazonFetchPanel: covers the (unchanging) page while the orders are
+    // read, so the fetch is clearly visible and the page cannot be navigated away under the scripts.
+    covering: running && progress !== null
+    cover: Component {
+        Rectangle {
+            color: Qt.rgba(0, 0, 0, 0.35)
+            // the page underneath takes no clicks or scrolling meanwhile
+            MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: wheel => wheel.accepted = true }
+            Rectangle {
+                anchors.centerIn: parent
+                width: panel.implicitWidth + 48
+                height: panel.implicitHeight + 48
+                radius: 14
+                color: Theme.card
+                border.color: Theme.border
+                ColumnLayout {
+                    id: panel
+                    anchors.centerIn: parent
+                    spacing: 12
+                    Text { text: qsTr("Bestellungen werden abgerufen"); font.pixelSize: Theme.title3; font.weight: Font.DemiBold
+                           color: Theme.secondary; Layout.alignment: Qt.AlignHCenter }
+                    Text { text: flow.progressTitle; font.pixelSize: Theme.title; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
+                           color: Theme.text; Layout.alignment: Qt.AlignHCenter }
+                    ProgressBar { from: 0; to: 1; value: flow.progressFraction; Layout.preferredWidth: 280
+                                  Layout.alignment: Qt.AlignHCenter; Accessible.name: flow.progressCaption }
+                    Text { text: flow.progressDetail; font.pixelSize: Theme.callout; font.features: { "tnum": 1 }
+                           color: Theme.secondary; Layout.alignment: Qt.AlignHCenter }
+                    // HIG: a long task can be stopped without closing the window.
+                    Button { text: qsTr("Abrufen stoppen"); Layout.topMargin: 4; Layout.alignment: Qt.AlignHCenter
+                             onClicked: flow.generation++ }
+                }
+            }
+        }
+    }
     /// Bumped by "Abrufen stoppen" / closing: a running scrape stops at its next step.
     property int generation: 0
     /// Signed in only when the page is an account/order page without any sign-in, 2FA
@@ -134,13 +192,16 @@ return JSON.stringify({code: code, date: date, items: items, rows: rows, cancell
         const thisYear = new Date().getFullYear()
         let codes = [], emptyYears = 0
         const orders = []
+        // Year of each order's list, for the panel.
+        const yearOf = {}
         const year = y => {
             if (gen !== generation) return Promise.reject(cancelled)
             if (y >= years || (years > 5 && emptyYears >= 2)) return Promise.resolve()
-            progress = qsTr("Bestellliste %1 …").arg(String(thisYear - y))
+            progress = { lists: true, year: thisYear - y, index: y, count: years, found: codes.length }
             return run(orderCodesScript, { filter: "year-" + (thisYear - y) }, gen).then(r => {
                 const found = (r.codes || []).filter(c => codes.indexOf(c) < 0)
                 codes = codes.concat(found)
+                for (const c of found) yearOf[c] = thisYear - y
                 emptyYears = found.length ? 0 : emptyYears + 1
                 return year(y + 1)
             })
@@ -148,31 +209,25 @@ return JSON.stringify({code: code, date: date, items: items, rows: rows, cancell
         const detail = i => {
             if (gen !== generation) return Promise.reject(cancelled)
             if (i >= codes.length) return Promise.resolve()
-            done = i
-            progress = qsTr("Bestellung %1 von %2 …").arg(i + 1).arg(codes.length)
+            progress = { lists: false, index: i, total: codes.length, year: yearOf[codes[i]] !== undefined ? yearOf[codes[i]] : -1 }
             return run(orderDetailsScript, { code: codes[i] }, gen).then(o => { orders.push(o); return detail(i + 1) })
         }
         return year(0).then(() => {
             if (!codes.length) throw noOrders
-            total = codes.length
             return detail(0)
-        }).then(() => {
-            done = codes.length
-            return JSON.stringify({ orders: orders })
-        })
+        }).then(() => JSON.stringify({ orders: orders }))
     }
 
     function start() {
         running = true
         notice = ""
-        done = 0
-        total = 0
+        progress = null
         const gen = ++generation
         scrape(gen).then(json => {
-            running = false; total = 0
+            running = false; progress = null
             if (AppModel.importAmazonOrders(connection, json)) close(true)
         }, e => {
-            running = false; total = 0
+            running = false; progress = null
             if (e === cancelled) {
                 if (gen === generation - 1 && AppModel.webLoginConnection === connection) notice = qsTr("Abruf gestoppt – es wurde nichts übernommen.")
             } else if (e === loggedOut) {
@@ -199,14 +254,7 @@ return JSON.stringify({code: code, date: date, items: items, rows: rows, cancell
         Accessible.name: qsTr("Zeitraum")
     }
     Item { Layout.fillWidth: true }
-    ProgressBar {
-        visible: flow.running && flow.total > 0
-        Layout.preferredWidth: 160
-        from: 0; to: Math.max(1, flow.total); value: flow.done
-        Accessible.name: flow.progress
-    }
-    // HIG: a long task can be stopped without closing the window.
-    Button { visible: flow.running; text: qsTr("Abrufen stoppen"); onClicked: flow.generation++ }
+    // progress and "Abrufen stoppen": in the panel over the page (#1008)
     Button {
         text: qsTr("Bestellungen abrufen")
         highlighted: true

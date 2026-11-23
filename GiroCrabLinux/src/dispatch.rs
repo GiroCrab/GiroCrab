@@ -1632,6 +1632,8 @@ vault_methods! {
     list_rules() save_rule(rule) delete_rule(rule_id) preview_rule(rule, limit)
     apply_rules(only_uncategorized)
     update_category(id, name, parent_id, sf_symbol, color_hex) delete_category(id)
+    // sidebar drag & drop of categories, „Nach oben“ / „Nach unten“ (#977)
+    reorder_categories(parent_id, ids)
     set_category_budget(category_id, budget_cents)
     list_transaction_splits(transaction_id) set_transaction_splits(transaction_id, splits)
     // --- import / export ---
@@ -2445,6 +2447,69 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// `reorder_categories` (#977) with the JSON the sidebar sends: new order among the
+    /// siblings, a move under another category, and the refusal to go below itself.
+    #[test]
+    fn reorder_categories_roundtrip() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-reorder-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![7; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let children = |parent: &Value| -> Vec<i64> {
+            call("list_categories", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| &c["parent_id"] == parent)
+                .map(|c| c["id"].as_i64().unwrap())
+                .collect()
+        };
+        let tops = children(&Value::Null);
+        let main = tops
+            .iter()
+            .copied()
+            .find(|&id| children(&json!(id)).len() >= 2)
+            .expect("a main category with sub-categories");
+        // reversed order among the siblings
+        let mut ids = children(&json!(main));
+        ids.reverse();
+        call(
+            "reorder_categories",
+            json!({ "parent_id": main, "ids": ids }),
+        );
+        assert_eq!(children(&json!(main)), ids);
+        // the last sub-category moves to the top level, first place
+        let moved = ids[ids.len() - 1];
+        let mut top_ids = vec![moved];
+        top_ids.extend(tops.iter().copied());
+        call(
+            "reorder_categories",
+            json!({ "parent_id": null, "ids": top_ids }),
+        );
+        assert_eq!(children(&Value::Null), top_ids);
+        assert!(!children(&json!(main)).contains(&moved));
+        // a main category never goes below one of its own sub-categories
+        let sub = children(&json!(main))[0];
+        assert!(
+            dispatch_vault(
+                &v,
+                "reorder_categories",
+                &json!({ "parent_id": sub, "ids": [main] })
+            )
+            .unwrap()
+            .is_err()
+        );
+        drop(v);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
     /// Händler-Historie (#299): the merchant's stats over all accounts and in one account.
     #[test]
     fn merchant_history() {
@@ -2895,6 +2960,97 @@ mod tests {
             assert!(t["direction"].is_string() && t["booking_date"].is_string());
             assert!(t["fees_cents"].is_i64() && t["taxes_cents"].is_i64());
         }
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Depot view (DepotDetailView.qml, DepotPositionsTable.qml, #564/#625): the fields
+    /// DepotMetrics.qml reads, round-tripped as JSON.
+    #[test]
+    fn depot_view_calls() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-depot-{}.girocrab", std::process::id()));
+        let v = Vault::open(path.display().to_string(), vec![6; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let tangible = call("list_tangible_account_ids", json!({}));
+        let accounts = call("list_accounts", json!({}));
+        let depots: Vec<_> = accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| {
+                a["kind"] == "Brokerage" && !tangible.as_array().unwrap().contains(&a["id"])
+            })
+            .map(|a| a["id"].clone())
+            .collect();
+        assert!(!depots.is_empty(), "demo has a securities depot");
+        let mut holdings = 0;
+        let mut linked = 0;
+        for depot in &depots {
+            for c in call("classified_assets", json!({ "account_id": depot }))
+                .as_array()
+                .unwrap()
+            {
+                let h = &c["holding"];
+                for key in ["isin", "wkn", "name", "custody_type", "currency"] {
+                    assert!(h[key].is_string(), "holding.{key}");
+                }
+                assert!(h["quantity"].is_f64() && h["value_cents"].is_i64());
+                assert!(h["current_price_cents"].is_i64() && h["purchase_price_cents"].is_i64());
+                // optional figures and the trading currency (#625) are present, null or a number
+                for key in [
+                    "prev_day_value_cents",
+                    "profit_loss_purchase_cents",
+                    "profit_loss_prev_day_cents",
+                    "native_price_cents",
+                    "native_value_cents",
+                ] {
+                    assert!(h[key].is_null() || h[key].is_i64(), "holding.{key}");
+                }
+                assert!(c["classification"]["asset_class"].is_string());
+                assert!(c["classification"]["instrument"].is_string());
+                assert!(c["asset_item_id"].is_null());
+                // what the QML sends back for a holding (e.g. a merged position) parses again
+                let back: girocrab_core::Holding =
+                    serde_json::from_value(h.clone()).expect("holding round trip");
+                assert_eq!(serde_json::to_value(&back).unwrap(), *h);
+                holdings += 1;
+            }
+            for t in call("list_security_transactions", json!({ "account_id": depot }))
+                .as_array()
+                .unwrap()
+            {
+                assert_eq!(&t["account_id"], depot);
+                for key in [
+                    "booking_date",
+                    "settlement_date",
+                    "isin",
+                    "wkn",
+                    "name",
+                    "currency",
+                    "booking_text",
+                ] {
+                    assert!(t[key].is_string(), "transaction.{key}");
+                }
+                for key in ["value_cents", "fees_cents", "taxes_cents"] {
+                    assert!(t[key].is_i64(), "transaction.{key}");
+                }
+                assert!(
+                    ["Buy", "Sell", "Dividend", "Fee", "Tax", "Other"]
+                        .contains(&t["direction"].as_str().unwrap())
+                );
+                assert!(t["cash_transaction_id"].is_null() || t["cash_transaction_id"].is_i64());
+                if t["cash_transaction_id"].is_i64() {
+                    linked += 1;
+                }
+            }
+        }
+        assert!(holdings > 0, "demo depots hold positions");
+        assert!(linked > 0, "demo activities link to clearing bookings");
         let _ = std::fs::remove_file(path);
     }
 

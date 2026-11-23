@@ -1573,7 +1573,7 @@ QtObject {
         if ((sel === "all" || sel.startsWith("group:") || sel.startsWith("bank:") || sel.startsWith("userGroup:"))
                 && categoryAccountIDs.length) return null
         if (sel === "all") return { label: qsTr("Verfügbar (Giro, Tagesgeld, Karten)"), cents: liquidBalance }
-        if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : qsTr("Kontostand"), cents: a.balance_cents } : null }
+        if (sel.startsWith("account:")) { const a = accountsByID[Number(sel.slice(8))]; return a ? { label: isTangible(a.id) ? qsTr("Wert heute") : DepotState.depotKind(a.id) === "securities" ? qsTr("Depotwert") : qsTr("Kontostand"), cents: a.balance_cents } : null }
         if (sel.startsWith("group:")) { const g = groups.find(g => "group:" + g.id === sel); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
         if (sel.startsWith("bank:")) { const g = bankGroup(sel.slice(5)); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
         if (sel.startsWith("userGroup:")) { const g = userGroups.find(g => "userGroup:" + g.uuid === sel); return g ? { label: qsTr("Summe"), cents: g.balance_cents } : null }
@@ -1711,7 +1711,8 @@ QtObject {
             stickyBooking = freshBooking(b)
             lingeringBookingID = on ? b.id : null
         }
-        reloadBookings(); reloadAccounts()
+        // refreshAfterEdit: the sidebar sums and „Ohne Kategorie“ follow the status filter
+        reloadBookings(); reloadAccounts(); reloadCategories()
     }
     /// The Buchung menu entry: nothing to do without new bookings, and not in
     /// Belege (there the list would silently mean every account).
@@ -1740,14 +1741,14 @@ QtObject {
             // the selected booking leaves a "Neu" list: keep it in the inspector (like setChecked)
             const b = selectedBooking
             if (statusFilter !== "all" && b && ids.indexOf(b.id) >= 0) stickyBooking = freshBooking(b)
-            reloadBookings(); reloadAccounts()
+            reloadBookings(); reloadAccounts(); reloadCategories()
         })
     }
     /// AppModel+Editing.swift setChecked(_:to:): undo / redo of markAllChecked for exactly the bookings it changed.
     function setCheckedIds(ids, checked) {
         if (!run(() => { core("set_checked_for_ids", { ids: ids, checked: checked }); return true })) return
         UndoManager.register(qsTr("Alle Buchungen als gelesen markieren"), () => setCheckedIds(ids, !checked))
-        reloadBookings(); reloadAccounts()
+        reloadBookings(); reloadAccounts(); reloadCategories()
     }
     function setCategory(b, categoryID) { setCategoryFor([b], categoryID) }
     function updateNote(b, note) {
@@ -2639,7 +2640,7 @@ QtObject {
     /// ManualLoanAccountMenu: "Darlehen bearbeiten …" / "Stand neu setzen …" apply.
     function isEditableManualLoan(a) { return !!a && a.kind === "Loan" && manualLoan(a.id) !== null && a.archived_unix === null }
 
-    /// OpeningBalanceMenuItem: "Startsaldo …" applies to computed balances only.
+    /// AccountSettingsView › showsOpeningBalance: the Startsaldo applies to computed balances only.
     function canSetOpeningBalance(a) { return !!a && a.balance_derived && a.archived_unix === null }
     function openOpeningBalance(a) { openingBalanceRequest = { accountId: a.id } }
     /// Sets (or clears with `null`) the Startsaldo; `date` "" = all bookings. Throws on failure.
@@ -3044,22 +3045,19 @@ QtObject {
         toast = qsTr("Gruppe „%1“ gelöscht").arg(g.name)
     }
     function renameAccount(id, name) {
-        if (run(() => { core("rename_account", { account_id: id, name: name }); return true })) { reloadAccounts(); reloadBookings() }
+        if (run(() => { core("rename_account", { account_id: id, name: name }); return true })) { reloadAccounts(); reloadBookings(); return true } else return false
     }
     /// AccountGroupsModel.swift › setAccountOwner: empty clears it.
     function setAccountOwner(id, owner) {
-        if (run(() => { core("set_account_owner", { account_id: id, owner: owner }); return true })) reloadAccounts()
+        if (run(() => { core("set_account_owner", { account_id: id, owner: owner }); return true })) { reloadAccounts(); return true } else return false
     }
     /// AppModel.swift › setAccountNote: empty clears it; synced like the name (#980).
     function setAccountNote(id, note) {
-        if (run(() => { core("set_account_note", { account_id: id, note: note }); return true })) reloadAccounts()
+        if (run(() => { core("set_account_note", { account_id: id, note: note }); return true })) { reloadAccounts(); return true } else return false
     }
-    /// AccountGroupsModel.swift › setAccountKind ("Kontoart ändern …").
+    /// AccountGroupsModel.swift › setAccountKind (Kontoeinstellungen).
     function setAccountKind(id, kind) {
-        // the kind decides what "Verfügbar" and its history count (Bausparen does not, #1630) and
-        // moves the account to another section: once the accounts with the new kind are published,
-        // the history and the selection (list and sums of a section) reload
-        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(() => { reloadHistory(); reloadSelection(false) }); reloadDashboard() }
+        if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(() => { reloadHistory(); reloadSelection(false) }); reloadDashboard(); return true } else return false
     }
     /// AccountKind.importChoices with their labels.
     readonly property var accountKindChoices: [
@@ -4571,6 +4569,8 @@ QtObject {
         case "Fnz": return "https://portal.fnz.de/"
         case "AmazonOrders": return "https://www.amazon.de/gp/css/order-history"
         case "TradeRepublic": return "https://app.traderepublic.com/login"
+        // AdvanziaBrowserSession: the portal; its sign-in runs on id.advanzia.com
+        case "Advanzia": return "https://mein.advanzia.com/"
         default: return ""
         }
     }
@@ -4587,6 +4587,8 @@ QtObject {
         case "SchwaebischHall": return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         case "EquatePlus": return ["www.equateplus.com", "www.emea.equateplus.com", "www.na.equateplus.com"]
         case "TradeRepublic": return ["traderepublic.com"]
+        // sign-in host included: its cookies are this login's session (kept in the vault)
+        case "Advanzia": return ["mein.advanzia.com", "id.advanzia.com"]
         default: return []
         }
     }
@@ -4615,7 +4617,7 @@ QtObject {
     /// under "Erweitert" *and* the credentials are set (PortalUI.swift › usesPortal).
     function usesPortalLogin(c) {
         if (isMagicDemoLogin(c.login_name)) return false
-        if (!isDemo && ["AmazonOrders", "Fnz", "Quirion", "SchwaebischHall", "EquatePlus"].indexOf(c.connector) >= 0) return true
+        if (!isDemo && ["Advanzia", "AmazonOrders", "Fnz", "Quirion", "SchwaebischHall", "EquatePlus"].indexOf(c.connector) >= 0) return true
         if (isDemo || (c.connector !== "AmericanExpress" && c.connector !== "AmazonVisa")) return false
         const optIn = settingEntry(enableBankingOptInKey(c.connector))
         // the card's own application (#824) or the default one
@@ -4684,14 +4686,18 @@ QtObject {
     function restoreWebCookies(c) { if (c && isUnlocked) { try { return core("web_restore_cookies", webCookieArgs(c)) } catch (e) { console.warn("web cookies not restored:", e.message) } } return 0 }
     function forgetWebCookies(id) { try { core("web_forget_cookies", { connection_id: id }) } catch (e) {} }
     /// Returns true when bookings were recognised (even if all were already known).
-    function importPortalCapture(c, bodies, rowsJSON) {
+    /// `cardKeys` parallel to `bodies`, `cards` = [PortalCard]: one account per card (#243).
+    function importPortalCapture(c, bodies, rowsJSON, cardKeys, cards) {
         try {
-            const s = core("import_portal_capture", { connection_id: c.id, json_bodies: bodies, dom_rows_json: rowsJSON })
+            const s = core("import_portal_capture_cards", { connection_id: c.id, json_bodies: bodies, card_keys: cardKeys || [],
+                                                            cards: cards || [], dom_rows_json: rowsJSON })
             let text = qsTr("%1: %2 neue Buchungen, %3 kategorisiert").arg(c.display_name).arg(s.transactions_imported).arg(s.transactions_categorized)
             if (s.transactions_skipped_archived) text += " · " + qsTr("%1 Buchungen archivierter Konten übersprungen").arg(s.transactions_skipped_archived)
             toast = text
             saveWebCookies(c)   // signed in: keep the session
             reloadAll()
+            // several cards behind one login (#243): new ones wait for the choice
+            checkPendingAccountSelection()
             return true
         } catch (e) {
             console.warn("portal import failed:", e.message)

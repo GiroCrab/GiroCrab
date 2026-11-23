@@ -6,7 +6,8 @@ import QtCore
 // the collapsible section headers (SidebarView.swift), the badge counts of „Geplant“ and
 // „Lastschriften“ (AppModel+Loading.swift › refreshSidebarCounts), the custom name of
 // „Ohne Kategorie“ (AppModel.swift › uncategorizedLabel, #597), the remembered expanded
-// categories (#633) and „Duplizieren“ of a category (AppModel+CategoryDuplicate.swift, #510).
+// categories (#633), „Duplizieren“ of a category (AppModel+CategoryDuplicate.swift, #510) and the order of the
+// categories (drag & drop, „Nach oben“ / „Nach unten“, #977).
 QtObject {
     id: sm
 
@@ -129,6 +130,69 @@ QtObject {
         AppModel.reloadCategories()
         if (root.parent_id !== null && root.parent_id !== undefined) expandCategoryPath(root.parent_id)
         return newRoot === undefined ? null : newRoot
+    }
+
+    // MARK: AppModel+Editing.swift › category drag & drop, „Nach oben“ / „Nach unten“ (#977)
+    /// The ids of the categories under `parent` (null = top level) in sidebar order;
+    /// `AppModel.categories` is in tree order, so a filter keeps the siblings' order.
+    function siblingIDs(parent) {
+        return AppModel.categories.filter(c => (c.parent_id ?? null) === parent).map(c => c.id)
+    }
+    /// canDropCategory(_:on:): never on itself or on one of its own sub-categories.
+    function canDropCategory(id, target) {
+        return AppModel.categoryMoveTargets(id).some(c => c.id === target)
+    }
+    /// categoryTakesDropInto(_:): a drop on the lower half goes into a main category or a
+    /// row with sub-categories instead of right below it.
+    function categoryTakesDropInto(target) {
+        const c = AppModel.categoryByID(target)
+        if (!c) return false
+        return (c.parent_id ?? null) === null || AppModel.categories.some(x => x.parent_id === target)
+    }
+    /// placeCategory(_:relativeTo:place:): category `id` before / after `target` among its
+    /// siblings, or last below it (`place` "into"), in one core call.
+    function placeCategory(id, target, place) {
+        const t = AppModel.categoryByID(target)
+        if (!t || !canDropCategory(id, target)) return
+        const parent = place === "into" ? target : (t.parent_id ?? null)
+        const ids = siblingIDs(parent).filter(x => x !== id)
+        const at = ids.indexOf(target)
+        if (place === "into") ids.push(id)
+        else if (place === "before") ids.splice(at < 0 ? ids.length : at, 0, id)
+        else ids.splice(at < 0 ? ids.length : at + 1, 0, id)
+        reorderCategories(parent, ids)
+        if (parent !== null) expandCategoryPath(parent) // keep it in view
+    }
+    /// shiftCategory(_:by:): one place up (-1) or down (+1) among its siblings.
+    function shiftCategory(id, step) {
+        const c = AppModel.categoryByID(id)
+        if (!c) return
+        const parent = c.parent_id ?? null
+        const ids = siblingIDs(parent)
+        const i = ids.indexOf(id)
+        if (i < 0 || i + step < 0 || i + step >= ids.length) return
+        ids[i] = ids[i + step]; ids[i + step] = id
+        reorderCategories(parent, ids)
+    }
+    /// canShiftCategory(_:by:): whether there is a sibling above (-1) or below (+1).
+    function canShiftCategory(id, step) {
+        const c = AppModel.categoryByID(id)
+        if (!c) return false
+        const ids = siblingIDs(c.parent_id ?? null)
+        const i = ids.indexOf(id)
+        return i >= 0 && i + step >= 0 && i + step < ids.length
+    }
+    function reorderCategories(parent, ids) {
+        if (!AppModel.run(() => { AppModel.core("reorder_categories", { parent_id: parent, ids: ids }); return true })) return
+        const moved = []
+        for (let i = 0; i < ids.length; i++) {
+            const c = AppModel.categoryByID(ids[i])
+            if (c) moved.push(Object.assign({}, c, { parent_id: parent, sort_order: ids.length - i }))
+        }
+        for (let m of moved) AppModel.categories[AppModel.categories.findIndex(x => x.id === m.id)] = m
+        AppModel.categoriesChanged()
+        AppModel.reloadCategories()
+        AppModel.reloadBookings() // the booking list shows a category's path
     }
 
     Component.onCompleted: { loadExpanded(); reloadVaultState() }

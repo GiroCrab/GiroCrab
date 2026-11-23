@@ -54,6 +54,8 @@ Sheet {
     function groupTitle(m) { return m === "FinTs" ? qsTr("Direkt (FinTS 3.0 / HBCI)") : m === "OwnApi" ? qsTr("Direkt (Eigene API)") : qsTr("PSD2 (via Enable Banking)") }
     function groupHint(m) { return m === "FinTs" ? qsTr("Keine Registrierung bei Dritten nötig") : m === "OwnApi" ? qsTr("Direkter Zugang über die API der Bank")
                                                  : qsTr("Benötigt eine kostenlose eigene Enable-Banking-Anwendung") }
+    /// AddBankSheet.displayName (#935)
+    function displayName(r) { return r.connector === "Advanzia" ? qsTr("Advanzia Bank (Zugang mein.advanzia.com)") : r.name }
     function symbolOf(r) {
         if (r.connector) { const d = AppModel.descriptor(r.connector); if (d) return d.sf_symbol }
         return r.mode === "Psd2" ? "building.columns.circle" : "building.columns"
@@ -106,7 +108,7 @@ Sheet {
             ColumnLayout { spacing: 3; Layout.fillWidth: true
                 Text { font.pixelSize: Theme.title3 + 2; font.weight: Font.DemiBold; color: Theme.text
                        text: sheet.step === "bank" ? qsTr("Bank hinzufügen") : sheet.step === "setup" ? qsTr("Einrichten")
-                           : (sheet.selected && sheet.selected.id === sheet.manualFinTs.id ? qsTr("Andere FinTS-Bank") : (sheet.selected ? sheet.selected.name : "")) }
+                           : (sheet.selected && sheet.selected.id === sheet.manualFinTs.id ? qsTr("Andere FinTS-Bank") : (sheet.selected ? sheet.displayName(sheet.selected) : "")) }
                 Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.callout + 1; color: Theme.secondary
                        text: sheet.step === "bank" ? qsTr("Suchen Sie Ihre Bank nach Name, Bankleitzahl oder IBAN.")
                            : sheet.step === "access" ? qsTr("Wie GiroCrab die Umsätze abruft. PIN und TAN fragt GiroCrab erst beim ersten Abruf ab.")
@@ -178,7 +180,7 @@ Sheet {
                                 anchors.fill: parent; anchors.leftMargin: 10; spacing: 10
                                 SFIcon { symbol: modelData.rah10 ? "key" : modelData.manual ? "square.and.pencil" : (modelData.bank ? sheet.symbolOf(modelData.bank) : ""); size: 18; Layout.preferredWidth: 22 }
                                 ColumnLayout { spacing: 1; Layout.fillWidth: true
-                                    Text { text: modelData.manual ? qsTr("Andere FinTS-Bank") : (modelData.bank ? modelData.bank.name : ""); font.pixelSize: Theme.body + 1; color: Theme.text
+                                    Text { text: modelData.manual ? qsTr("Andere FinTS-Bank") : (modelData.bank ? sheet.displayName(modelData.bank) : ""); font.pixelSize: Theme.body + 1; color: Theme.text
                                            Layout.fillWidth: true; elide: Text.ElideRight }
                                     Text { text: modelData.rah10 ? qsTr("Bestehende HBCI-Datei mit Profil 10 importieren")
                                                : modelData.manual ? qsTr("Bankleitzahl und FinTS-Adresse selbst eingeben") : (modelData.bank ? sheet.detailLine(modelData.bank) : "")
@@ -396,7 +398,7 @@ Sheet {
             spacing: 10
             readonly property string kind: sheet.selected.connector
             readonly property var d: AppModel.descriptor(kind)
-            readonly property bool loginRequired: ["Comdirect", "TradeRepublic", "VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(kind) >= 0
+            readonly property bool loginRequired: ["Comdirect", "TradeRepublic", "Advanzia", "VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(kind) >= 0
             readonly property bool canAdd: !loginRequired || login.text.trim() !== ""
             function commit() {
                 AppModel.addConnection(kind, kind === "TradeRepublic" ? AppModel.core("normalize_phone_number", { input: login.text }) : login.text)

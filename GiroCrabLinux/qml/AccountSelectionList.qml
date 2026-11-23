@@ -113,7 +113,8 @@ ColumnLayout {
                            horizontalAlignment: Text.AlignRight; Sensitive {} }
                 }
                 RowLayout {
-                    visible: row.modelData.pending
+                    // a new card of the same login (#243) is held back without another login
+                    visible: row.modelData.pending && row.modelData.existing_connection !== ""
                     Layout.fillWidth: true
                     spacing: 4
                     SFIcon { symbol: "exclamationmark.triangle"; size: 11; color: Theme.warning; Layout.alignment: Qt.AlignTop }
