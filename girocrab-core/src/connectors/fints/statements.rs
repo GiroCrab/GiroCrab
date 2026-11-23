@@ -154,6 +154,16 @@ pub(super) fn hex_decode(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Warning of a statements request that stopped at its page limit with pages
+/// left: kept as a warning, not an error, so a long first fetch still stores
+/// what it read.
+pub(super) fn truncated_warning(label: &str) -> String {
+    trf(
+        "{0}: Die Umsatzliste war länger als 50 Seiten und wurde nicht vollständig gelesen.",
+        &[&label],
+    )
+}
+
 /// Period of a statements request (HKCAZ/HKKAZ): from `since` (YYYY-MM-DD), open end.
 /// An explicit "bis" date of today cuts off entries a bank already dates on the
 /// next business day, e.g. weekend card holds and credits dated Monday (#1570);
@@ -248,6 +258,7 @@ impl FinTsConnector {
                 break;
             }
         }
+        self.truncated_statements |= touchdown.is_some();
         txs.extend(pending);
         Ok((txs, closing))
     }
@@ -397,6 +408,7 @@ impl FinTsConnector {
                 break;
             }
         }
+        self.truncated_statements |= touchdown.is_some();
         let (txs, stmt) = mt940::parse(&crate::text::decode_bank_bytes(&data), label, currency);
         Ok((txs, stmt.closing_balance_cents))
     }

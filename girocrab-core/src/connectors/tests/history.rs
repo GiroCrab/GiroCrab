@@ -27,8 +27,12 @@ fn full_fetch_starts_accounts_with_bookings_too() {
     let (since, per) = since_window(date("2026-11-12"), 730, &newest[2..], Some(90));
     assert_eq!(
         (since.as_str(), per["C"].as_str()),
-        ("2024-11-12", "2024-11-12")
+        ("2026-08-14", "2026-08-14")
     );
+    // a login not synced for longer than the period still closes its gap
+    let stale = [("A".to_string(), Some("2026-01-01".to_string()))];
+    let (since, _) = since_window(date("2026-11-12"), 730, &stale, Some(90));
+    assert_eq!(since, "2025-12-22");
 }
 
 #[test]
@@ -38,8 +42,9 @@ fn period_is_capped_per_connector() {
         HistoryRange::parse(" 365 "),
         HistoryRange::Days { days: 365 }
     );
-    // a value from an older version or a typo: the earlier default
+    // a value from an older version, a typo or no days at all: the earlier default
     assert_eq!(HistoryRange::parse("viel"), HistoryRange::Days { days: 90 });
+    assert_eq!(HistoryRange::parse("0"), HistoryRange::Days { days: 90 });
     // FinTS: the bank's storage period cuts "Maximum" further
     assert_eq!(
         HistoryRange::Maximum.days(ConnectorKind::FinTsGeneric),

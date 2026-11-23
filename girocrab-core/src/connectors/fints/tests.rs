@@ -856,6 +856,9 @@ fn negotiates_versions_from_bpd() {
     assert_eq!(c.version("HKKAZ"), 7);
     // storage periods: how far back a statement request may start (#1043)
     assert_eq!((c.st.caz_storage_days, c.st.kaz_storage_days), (450, 90));
+    // a reply with only another version keeps what the version in use said
+    c.learn_bpd(&reply(b"HIKAZS:3:5:3+1+1+0+30:N:N'"));
+    assert_eq!(c.st.kaz_storage_days, 90);
     assert!(!c.bank_supports("HKSPA"));
     assert_eq!(
         c.st.camt_formats[0],

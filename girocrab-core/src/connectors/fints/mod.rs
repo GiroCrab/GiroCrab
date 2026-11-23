@@ -289,6 +289,9 @@ pub struct FinTsConnector {
     /// The bank answered a statement request with 3997 ("nur teilweise
     /// ausgeführt"): it delivered less than the requested period.
     partial_statements: bool,
+    /// A statement request still had pages left after the last one GiroCrab
+    /// reads: the list is not complete (#1043).
+    truncated_statements: bool,
     /// The order was handed to the bank: from here on, an unclear reply or a
     /// lost connection means "result unknown", never "not executed".
     order_submitted: bool,
@@ -371,6 +374,7 @@ impl FinTsConnector {
             transferring: false,
             tan_medium_override: String::new(),
             partial_statements: false,
+            truncated_statements: false,
             order_submitted: false,
             result: TransferResult::default(),
             order: None,
@@ -731,6 +735,9 @@ impl BankConnector for FinTsConnector {
                             }
                             done = !empty_loan;
                             ok_any = true;
+                            if std::mem::take(&mut self.truncated_statements) {
+                                errors.push(statements::truncated_warning(label));
+                            }
                         }
                         Err(e) => {
                             // the stored holds of this login stay as they are
@@ -757,6 +764,9 @@ impl BankConnector for FinTsConnector {
                                     "{0}: Die Bank hat nur einen Teil des angeforderten Zeitraums geliefert (Rückmeldung 3997).",
                                     &[&label],
                                 ));
+                            }
+                            if std::mem::take(&mut self.truncated_statements) {
+                                errors.push(statements::truncated_warning(label));
                             }
                         }
                         Err(e) => {

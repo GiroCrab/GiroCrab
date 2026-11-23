@@ -33406,13 +33406,13 @@
         }
       }
     },
-    "Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ holt alles, was die Bank liefert. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bereits abgerufene Konten betrifft das nicht." : {
+    "Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ holt alles, was die Bank liefert. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "How far back GiroCrab goes on the first fetch of a new login. “Maximum” fetches everything the bank provides. Many banks require a TAN for more than 90 days. Accounts already fetched are not affected."
+            "value" : "How far back GiroCrab goes on the first fetch of a new connection. “Maximum” fetches everything the bank provides. Many banks require a TAN for more than 90 days. Existing connections keep fetching from their newest transaction."
           }
         }
       }
