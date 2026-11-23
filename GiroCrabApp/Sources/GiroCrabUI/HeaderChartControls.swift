@@ -294,7 +294,8 @@ struct AccountExpensePie: View {
                 return try vault.listCategoryExpenses(filter: filter).filter { $0.cents > 0 }
                     .map { HeaderPieSlices.Part(id: $0.categoryId.map { String($0) } ?? "uncategorized", label: $0.name, cents: $0.cents) }
             }
-            guard !Task.isCancelled, let parts else { return }
+            guard !Task.isCancelled else { return }
+            guard let parts else { loaded = nil; return }
             loaded = (key, parts)
         }
     }
