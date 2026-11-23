@@ -270,10 +270,25 @@ fn language() -> String {
         .unwrap_or_else(|| "de".to_string())
 }
 
+/// The terms of a read before and after the log was loaded, if nothing changed
+/// in between (same set, any order). Each vault call takes the lock on its own,
+/// so a rename between two calls would leave the old name in the log messages
+/// but only the new one in the terms.
+fn consistent_terms(before: Vec<String>, after: Vec<String>) -> Option<Vec<String>> {
+    let mut a = before.clone();
+    let mut b = after;
+    a.sort();
+    b.sort();
+    (a == b).then_some(before)
+}
+
 /// Header and sanitized log lines. Reads the vault (up to 5000 payee names):
-/// call it on the worker thread, never on the UI thread. Log entries and payee
-/// names load together, or the log is left out: without the names a log line
-/// could carry a payee into the issue. A locked vault (`None`) gives the header only.
+/// call it on the worker thread, never on the UI thread. The terms are read
+/// before and after the log; if they differ (a rename or import in between) the
+/// log is left out: without matching names a log line could carry a payee or an
+/// old account name into the issue. Names an account had before an earlier
+/// rename are not known to the vault and cannot be covered here.
+/// A locked vault (`None`) gives the header only.
 pub fn prepare(v: Option<&Vault>, view: Target, include_log: bool, demo: bool) -> Report {
     let catalog = girocrab_core::bank_catalog();
     let connections = v
@@ -307,9 +322,13 @@ pub fn prepare(v: Option<&Vault>, view: Target, include_log: bool, demo: bool) -
                 search: None,
                 limit: 50,
             };
-            let entries = v.list_sync_log(filter).map_err(|e| e.to_string())?;
             let names = v.counterparty_names(5000).map_err(|e| e.to_string())?;
-            let terms = known_terms(v, &names, &catalog)?;
+            let terms_before = known_terms(v, &names, &catalog)?;
+            let entries = v.list_sync_log(filter).map_err(|e| e.to_string())?;
+            let names_after = v.counterparty_names(5000).map_err(|e| e.to_string())?;
+            let terms_after = known_terms(v, &names_after, &catalog)?;
+            let terms = consistent_terms(terms_before, terms_after)
+                .ok_or_else(|| "terms changed while reading the log".to_string())?;
             Ok::<_, String>((entries, terms))
         })();
         match loaded {
@@ -425,5 +444,23 @@ mod tests {
         assert_eq!(utc_minute(0), "1970-01-01 00:00 UTC");
         assert_eq!(utc_minute(1_709_164_800_000), "2024-02-29 00:00 UTC");
         assert_eq!(utc_minute(1_709_251_199_000), "2024-02-29 23:59 UTC");
+    }
+
+    #[test]
+    fn terms_changed_during_the_log_read_are_rejected() {
+        let before = vec!["Alt GmbH".to_string(), "DE02120300000000202051".to_string()];
+        let same_other_order = vec!["DE02120300000000202051".to_string(), "Alt GmbH".to_string()];
+        assert_eq!(
+            consistent_terms(before.clone(), same_other_order),
+            Some(before.clone())
+        );
+        let renamed = vec!["Neu GmbH".to_string(), "DE02120300000000202051".to_string()];
+        assert_eq!(consistent_terms(before.clone(), renamed), None);
+        let extended = vec![
+            "Alt GmbH".to_string(),
+            "DE02120300000000202051".to_string(),
+            "Erika Muster".to_string(),
+        ];
+        assert_eq!(consistent_terms(before, extended), None);
     }
 }
