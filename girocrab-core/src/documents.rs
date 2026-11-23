@@ -975,8 +975,11 @@ impl Vault {
         let tx = db.transaction()?;
         tx.execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
         tx.execute(
-            "DELETE FROM settings WHERE key = ?1",
-            [format!("doc.unlinked.{doc_id}")],
+            "DELETE FROM settings WHERE key IN (?1, ?2)",
+            rusqlite::params![
+                format!("doc.unlinked.{doc_id}"),
+                format!("doc.match_days.{doc_id}")
+            ],
         )?;
         tx.commit()?;
         Ok(())
