@@ -3739,8 +3739,9 @@ fn loan_links_skip_deleted_bookings_and_match_by_key() {
 #[test]
 fn the_repair_mark_travels_with_the_archive_state() {
     use crate::importers::moneymoney_db::archive_unknown;
-    let dir = temp_dir("archive-note");
-    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let tmp = crate::test_support::TempDir::new("archive-note");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
     // what step 38 leaves on A: active, stamped just after the import's archive, marked;
     // B has never seen the account
     exec(
@@ -3775,8 +3776,9 @@ fn the_repair_mark_travels_with_the_archive_state() {
 #[test]
 fn repairs_of_one_account_agree_and_a_later_choice_wins() {
     use crate::importers::moneymoney_db::archive_unknown;
-    let dir = temp_dir("archive-repair");
-    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let tmp = crate::test_support::TempDir::new("archive-repair");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
     for v in [&a, &b] {
         // what step 38 leaves: active, stamped just after the import's archive, marked
         exec(
@@ -3808,8 +3810,9 @@ fn repairs_of_one_account_agree_and_a_later_choice_wins() {
 /// carry the stamp of an import's resolution) end alike in both directions: archived wins.
 #[test]
 fn equal_archive_stamps_end_alike_on_both_devices() {
-    let dir = temp_dir("archive-tie");
-    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let tmp = crate::test_support::TempDir::new("archive-tie");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
     for (v, unix) in [(&a, "NULL"), (&b, "1790001000")] {
         exec(
             v,
