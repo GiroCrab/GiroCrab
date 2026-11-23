@@ -164,10 +164,8 @@ pub(crate) fn move_endpoints(
 ) -> CoreResult<()> {
     let mut moved = Vec::new();
     let stamp = next_stamp(conn)?;
-    for mut row in load_rows(conn, "main")?
-        .into_iter()
-        .filter(|r| r.deleted_ms.is_none())
-    {
+    let rows = load_rows(conn, "main")?;
+    for row in &rows {
         let key = Key {
             refund: endpoints
                 .get(&row.key.refund)
@@ -178,9 +176,10 @@ pub(crate) fn move_endpoints(
                 .cloned()
                 .unwrap_or_else(|| row.key.original.clone()),
         };
-        if key == row.key {
+        if key == row.key || row.deleted_ms.is_some() || move_blocked(&rows, row) {
             continue;
         }
+        let mut row = row.clone();
         let mut target = row.clone();
         target.key = key;
         target.changed_ms = stamp;
@@ -214,7 +213,12 @@ fn merge_rows(conn: &Connection, rows: impl IntoIterator<Item = Row>) -> CoreRes
     for other in rows {
         let wins = match local.get(&other.key) {
             None => true,
-            Some(current) => other.rank() > current.rank(),
+            Some(current) => {
+                other.rank() > current.rank()
+                    || (other.rank() == current.rank()
+                        && current.moved_from.is_none()
+                        && other.moved_from.is_some())
+            }
         };
         if wins {
             write(conn, &other)?;

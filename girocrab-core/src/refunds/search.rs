@@ -114,6 +114,7 @@ fn candidates(
     let query = query.trim().to_lowercase();
     let index = index(v, db, p)?;
     let mut out = Vec::new();
+    let mut exhausted = Vec::new();
     let books = index
         .books
         .iter()
@@ -125,7 +126,7 @@ fn candidates(
         }
         let merchant = &index.merchants[&b.id];
         for (endpoint, other_amount) in b.endpoints() {
-            if other_amount == 0 || (other_amount > 0) == (amount > 0) || p.open(&endpoint) == 0 {
+            if other_amount == 0 || (other_amount > 0) == (amount > 0) {
                 continue;
             }
             let key = if amount > 0 {
@@ -159,7 +160,12 @@ fn candidates(
                 .find(|p| p.uuid == endpoint.1)
                 .map_or(b.category_id, |p| p.category_id);
             let open_cents = p.open(&endpoint);
-            out.push(RefundCandidate {
+            let rows = if open_cents == 0 {
+                &mut exhausted
+            } else {
+                &mut out
+            };
+            rows.push(RefundCandidate {
                 transaction_id: b.id,
                 part: endpoint.1,
                 part_label: label,
@@ -177,6 +183,7 @@ fn candidates(
             }
         }
     }
+    out.extend(exhausted.into_iter().take(limit - out.len()));
     Ok(out)
 }
 
@@ -210,7 +217,10 @@ impl Vault {
         let db = self.db()?;
         let p = self.refund_projection(&db)?;
         let own = Endpoint(transaction_id, own_part);
-        let pool = candidates(self, &db, &p, &own, "", usize::MAX)?;
+        let pool: Vec<_> = candidates(self, &db, &p, &own, "", usize::MAX)?
+            .into_iter()
+            .filter(|c| c.open_cents > 0)
+            .collect();
         if pool.is_empty() {
             return Ok(Vec::new());
         }

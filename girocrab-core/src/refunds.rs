@@ -90,7 +90,7 @@ struct Row {
 }
 
 impl Row {
-    fn rank(&self) -> (i64, bool, i64, i64, i64, Option<i64>, bool, bool, &str) {
+    fn rank(&self) -> (i64, bool, i64, i64, i64, Option<i64>, bool, &str) {
         (
             self.changed_ms,
             self.deleted_ms.is_some(),
@@ -99,7 +99,6 @@ impl Row {
             self.original_cents,
             self.deleted_ms,
             !self.moved,
-            self.moved_from.is_some(),
             &self.moved_from_key,
         )
     }
@@ -219,15 +218,22 @@ fn invalid() -> CoreError {
     CoreError::invalid(tr("Diese Erstattungszuordnung ist nicht möglich."))
 }
 
-fn move_blocked(state: &State, row: &Row) -> bool {
-    row.moved_from.as_ref().is_some_and(|key| {
-        state.rows.iter().any(|source| {
-            source.key == *key
-                && source.deleted_ms.is_some()
-                && !source.moved
-                && source.changed_ms > row.changed_ms
-        })
-    })
+fn move_blocked(rows: &[Row], row: &Row) -> bool {
+    let mut key = row.moved_from.as_ref();
+    let mut visited = std::collections::HashSet::new();
+    while let Some(current) = key {
+        if !visited.insert(current) {
+            break;
+        }
+        let Some(source) = rows.iter().find(|source| source.key == *current) else {
+            break;
+        };
+        if source.deleted_ms.is_some() && !source.moved && source.changed_ms > row.changed_ms {
+            return true;
+        }
+        key = source.moved_from.as_ref();
+    }
+    false
 }
 
 /// Only exact endpoints and immutable allocation keys enter this function.
@@ -273,7 +279,7 @@ fn resolve(state: &State) -> Vec<Allocation> {
                 .get(&row.key.refund.0)
                 .zip(state.books.get(&row.key.original.0))
                 .is_some_and(|(a, b)| a.currency == b.currency && a.id != b.id);
-            let pair = if compatible && !move_blocked(state, row) {
+            let pair = if compatible && !move_blocked(&state.rows, row) {
                 endpoint(&row.key.refund, true).zip(endpoint(&row.key.original, false))
             } else {
                 None

@@ -38,8 +38,13 @@ impl Vault {
         if state
             .rows
             .iter()
-            .any(|r| r.key == key && r.deleted_ms.is_none() && !move_blocked(&state, r))
+            .any(|r| r.key == key && r.deleted_ms.is_none() && !move_blocked(&state.rows, r))
         {
+            direct(&state, &key.refund, true)?;
+            direct(&state, &key.original, false)?;
+            if state.books[&refund_id].currency != state.books[&original_id].currency {
+                return Err(invalid());
+            }
             return Ok(());
         }
         if refund_id == original_id {

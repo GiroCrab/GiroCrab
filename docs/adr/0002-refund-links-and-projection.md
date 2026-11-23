@@ -117,7 +117,7 @@ preserve UUIDs; missing survivor UUIDs do not fall back by amount.
 
 A remap stamps the old key as a moved tombstone and writes the mapped row with
 `moved_from` pointing to that old key, preserving creation/order. At read time,
-the mapped row is inactive if that source key holds a user-unlink tombstone
+the mapped row is inactive if that source key or a move ancestor holds a user-unlink tombstone
 (not a moved tombstone) whose change stamp is later than the mapped row's stamp.
 Undo of that exact user unlink makes the source row live again, reactivating the
 mapped row; the deleted source booking keeps the old endpoint inactive. This
@@ -128,7 +128,10 @@ Physical cleanup clears provenance references without a surviving identity by FK
 
 For a natural-key collision, choose the maximum complete row under the total rank
 `(changed_ms, deleted_ms.is_some(), created_ms, refund_cents, original_cents,
-deleted_ms, user-tombstone priority, provenance presence, moved_from key snapshot)`.
+deleted_ms, user-tombstone priority, moved_from key snapshot)`.
+Mapping availability does not participate in the rank. Already suppressed rows are
+not moved again, so a new move stamp cannot override an earlier user unlink.
+Equal logical rows retain mapped provenance when either copy has it.
 The final key snapshot stores sync identities and parts at move time; merge does
 not recompute its order from mutable bookings or local integer ids. Migration 39
 adds these move fields without changing the schema written by version 38.

@@ -46,6 +46,175 @@ mod review_round3 {
         (v, account, o, r)
     }
 
+    #[test]
+    fn chained_moves_keep_later_unlinks_in_both_merge_orders() {
+        for unlink_first in [false, true] {
+            let (a, account, o, r) = seed();
+            let next = a.save_manual_booking(account, None, setup(-5000)).unwrap();
+            let last = a.save_manual_booking(account, None, setup(-5000)).unwrap();
+            a.link_refund(r, "".into(), o, "".into()).unwrap();
+            let b = vault();
+            merge(&b, &a);
+            let br = peer_id(&b, &a, r);
+            let bo = peer_id(&b, &a, o);
+            store::move_booking(&a.db().unwrap(), o, next).unwrap();
+            store::move_booking(&a.db().unwrap(), next, last).unwrap();
+            b.unlink_refund(br, "".into(), bo, "".into()).unwrap();
+            let later = store::next_stamp(&a.db().unwrap()).unwrap() + 1;
+            b.db()
+                .unwrap()
+                .execute(
+                    "UPDATE refund_links SET changed_ms=?1, deleted_ms=?1",
+                    [later],
+                )
+                .unwrap();
+            if unlink_first {
+                merge(&a, &b);
+                merge(&b, &a);
+            } else {
+                merge(&b, &a);
+                merge(&a, &b);
+            }
+            for (v, id) in [(&a, r), (&b, br)] {
+                assert!(
+                    v.refund_links(id)
+                        .unwrap()
+                        .iter()
+                        .all(|l| l.allocated_cents == 0)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blocked_move_cannot_create_a_new_live_successor() {
+        let (v, account, o, r) = seed();
+        let next = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        let last = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+        v.link_refund(r, "".into(), o, "".into()).unwrap();
+        let peer = vault();
+        merge(&peer, &v);
+        let peer_r = peer_id(&peer, &v, r);
+        let peer_o = peer_id(&peer, &v, o);
+        store::move_booking(&v.db().unwrap(), o, next).unwrap();
+        peer.unlink_refund(peer_r, "".into(), peer_o, "".into())
+            .unwrap();
+        let later = store::next_stamp(&v.db().unwrap()).unwrap() + 1;
+        peer.db()
+            .unwrap()
+            .execute(
+                "UPDATE refund_links SET changed_ms=?1, deleted_ms=?1",
+                [later],
+            )
+            .unwrap();
+        merge(&v, &peer);
+        store::move_booking(&v.db().unwrap(), next, last).unwrap();
+        assert_eq!(
+            number(
+                &v,
+                &format!("SELECT COUNT(*) FROM refund_links WHERE original_id={last}")
+            ),
+            0
+        );
+        assert!(
+            v.refund_links(r)
+                .unwrap()
+                .iter()
+                .all(|l| l.allocated_cents == 0)
+        );
+    }
+
+    #[test]
+    fn provenance_rank_uses_immutable_identity_not_mapping_presence() {
+        let (v, _, o, r) = seed();
+        v.link_refund(r, "".into(), o, "".into()).unwrap();
+        let mut lower = State::load(&v.db().unwrap()).unwrap().rows.remove(0);
+        lower.moved_from = Some(lower.key.clone());
+        lower.moved_from_key = "a".into();
+        let mut higher = lower.clone();
+        higher.moved_from_key = "z".into();
+        for lower_mapped in [false, true] {
+            for higher_mapped in [false, true] {
+                let mut a = lower.clone();
+                let mut b = higher.clone();
+                if !lower_mapped {
+                    a.moved_from = None;
+                }
+                if !higher_mapped {
+                    b.moved_from = None;
+                }
+                assert!(b.rank() > a.rank());
+            }
+        }
+    }
+
+    #[test]
+    fn provenance_collision_keeps_the_same_winner_with_partial_maps() {
+        for higher_first in [false, true] {
+            let (v, account, o, r) = seed();
+            let source = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+            let local_o = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+            let local_r = v.save_manual_booking(account, None, setup(2000)).unwrap();
+            v.link_refund(r, "".into(), o, "".into()).unwrap();
+            let db = v.db().unwrap();
+            db.execute_batch(
+                "ATTACH DATABASE ':memory:' AS other;
+                CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+                UPDATE other.refund_links SET moved_from_refund_id=refund_id,
+                    moved_from_refund_part='', moved_from_original_id=original_id,
+                    moved_from_original_part='', moved_from_key='a';
+                INSERT INTO other.refund_links SELECT * FROM other.refund_links;",
+            )
+            .unwrap();
+            db.execute("UPDATE other.refund_links SET moved_from_key='z', moved_from_original_id=?1 WHERE rowid=?2", rusqlite::params![source, if higher_first {1} else {2}]).unwrap();
+            for higher_mapped in [false, true] {
+                db.execute("DELETE FROM main.refund_links", []).unwrap();
+                let mut map = HashMap::from([(r, local_r), (o, local_o)]);
+                if higher_mapped {
+                    map.insert(source, source);
+                }
+                store::merge_attached(&db, &map).unwrap();
+                let row = State::load(&db).unwrap().rows.remove(0);
+                assert_eq!(row.moved_from_key, "z");
+                assert_eq!(row.moved_from.is_some(), higher_mapped);
+                map.insert(source, source);
+                store::merge_attached(&db, &map).unwrap();
+                assert!(State::load(&db).unwrap().rows[0].moved_from.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn linking_a_retained_missing_uuid_fails_but_exhausted_live_links_are_idempotent() {
+        let (v, _, o, r) = seed();
+        v.set_transaction_splits(r, vec![part(None, 1000), part(None, 1000)])
+            .unwrap();
+        let uuid = parts(&v, r)[0].0.clone();
+        v.link_refund(r, uuid.clone(), o, "".into()).unwrap();
+        v.link_refund(r, uuid.clone(), o, "".into()).unwrap();
+        v.set_transaction_splits(r, vec![]).unwrap();
+        assert!(v.link_refund(r, uuid, o, "".into()).is_err());
+    }
+
+    #[test]
+    fn exhausted_candidates_remain_visible_but_not_suggested() {
+        let (v, account, o, r) = seed();
+        let full = v.save_manual_booking(account, None, setup(5000)).unwrap();
+        v.link_refund(full, "".into(), o, "".into()).unwrap();
+        let candidates = v.refund_candidates(r, "".into(), "".into(), 200).unwrap();
+        assert!(
+            candidates
+                .iter()
+                .any(|c| c.transaction_id == o && c.open_cents == 0)
+        );
+        assert!(
+            v.refund_suggestions(r, "".into())
+                .unwrap()
+                .iter()
+                .all(|s| s.candidate.transaction_id != o)
+        );
+    }
+
     fn merge(into: &Vault, from: &Vault) {
         into.merge_other_vault(from.file_path(), vec![7; 32])
             .unwrap();
@@ -237,11 +406,16 @@ mod review_round3 {
                 1
             );
             sync(&a, &b, a_first);
-            for (ar, br) in [(r1, br1), (r2, br2)] {
+            let expected = parts(&a, bank);
+            for (index, (ar, br)) in [(r1, br1), (r2, br2)].into_iter().enumerate() {
                 let (aa, bb) = (live(&a, ar), live(&b, br));
                 println!("N2 sync a_first={a_first}: A={aa:?}; B={bb:?}");
                 assert_eq!(aa, bb);
                 assert_eq!(aa.iter().map(|x| x.2).sum::<i64>(), 2500);
+                assert!(
+                    aa.iter()
+                        .all(|row| row.0 == "id:REVIEW123456---bank" && row.1 == expected[index].0)
+                );
             }
         }
     }
@@ -1144,6 +1318,9 @@ mod review_round2 {
         );
         let a = live(&v, r1);
         let b = live(&v, r2);
+        let expected = splits(&v, bank);
+        assert_eq!(a, vec![(bank, expected[0].0.clone(), 2500)]);
+        assert_eq!(b, vec![(bank, expected[1].0.clone(), 2500)]);
         assert!(
             a.iter().map(|p| p.2).sum::<i64>() == 2500
                 && b.iter().map(|p| p.2).sum::<i64>() == 2500,
@@ -1307,6 +1484,13 @@ mod review_round2 {
                 })
                 .collect();
             println!("N6 stamps={stamps:?}; states={states:?}");
+            let winner = if stamps[0] == stamps[2] {
+                &peers[0]
+            } else {
+                &peers[2]
+            };
+            let id = peer_id(winner, &base, o);
+            assert_eq!(states[0], (amount(winner, id), splits(winner, id)));
             assert!(
                 states.windows(2).all(|p| p[0] == p[1])
                     && states
@@ -1725,7 +1909,12 @@ mod review_regressions {
             .unwrap();
         v.link_refund(r, "".into(), o, "".into()).unwrap();
         v.set_account_archived(account, true).unwrap();
+        let before = super::super::State::load(&v.db().unwrap()).unwrap().rows;
         v.delete_account(account).unwrap();
+        assert_eq!(
+            super::super::State::load(&v.db().unwrap()).unwrap().rows,
+            before
+        );
         assert!(
             v.refund_links(r)
                 .unwrap()
@@ -2714,6 +2903,7 @@ fn expired_pending_booking_cleanup_leaves_links_read_time_inactive() {
         &format!("UPDATE transactions SET imported_unix=0 WHERE id={o}"),
     );
     f.link(r, "", o, "");
+    let before = State::load(&f.v.db().unwrap()).unwrap().rows;
     let c =
         f.v.add_bank_connection(
             crate::models::ConnectorKind::Comdirect,
@@ -2728,6 +2918,7 @@ fn expired_pending_booking_cleanup_leaves_links_read_time_inactive() {
         crate::connectors::FetchResult::default(),
     )
     .unwrap();
+    assert_eq!(State::load(&f.v.db().unwrap()).unwrap().rows, before);
     assert!(
         f.v.refund_links(r)
             .unwrap()
