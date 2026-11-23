@@ -548,11 +548,12 @@ pub fn parse_json_bodies(bodies: &[String], kind: ConnectorKind) -> (Vec<Parsed>
 /// Edenred (`nutzer.edenred.de`): the portal's card list and card operations in
 /// the shape the generic reader understands. Operations become a `transactions`
 /// list (`operation_ref`, `date`, the merchant `outlet.name`, the sum of the
-/// wallet amounts: negative = payment); the card list becomes the card balance,
+/// wallet amounts: negative = payment; a top-up is named after the `employer`, as
+/// its `outlet.name` holds only the portal's greeting); the card list becomes the card balance,
 /// the sum of the wallets' `total_balance` (a credit, not a debt), written as a
 /// balance summary so that 0 counts too. Edenred gives amounts and balances in
 /// cents. Other bodies stay as they are.
-fn edenred_body(v: &Value) -> Option<Value> {
+fn edenred_body(v: &Value, employer: Option<&str>) -> Option<Value> {
     let data = v.get("data")?;
     let items = data
         .as_array()
@@ -576,11 +577,15 @@ fn edenred_body(v: &Value) -> Option<Value> {
                     .iter()
                     .filter_map(|w| edenred_cents(w.get("amount")?))
                     .sum();
+                let kind = text_of(i, "type").to_lowercase();
                 let outlet = text_of(i, "/outlet/name");
-                let text = if outlet.is_empty() {
-                    text_of(i, "type")
-                } else {
-                    outlet
+                let text = match employer {
+                    // a top-up: the outlet name is a greeting ("Viel Spaß beim Shoppen!")
+                    Some(e) if cents > 0 && EDENRED_TOP_UPS.contains(&kind.as_str()) => {
+                        e.to_string()
+                    }
+                    _ if outlet.is_empty() => text_of(i, "type"),
+                    _ => outlet,
                 };
                 Some(serde_json::json!({
                     "date": text_of(i, "date"),
@@ -612,6 +617,22 @@ fn edenred_body(v: &Value) -> Option<Value> {
     None
 }
 
+/// Operation types of an Edenred top-up by the employer.
+const EDENRED_TOP_UPS: [&str; 3] = ["topup", "top_up", "load"];
+
+/// The employer that loads the cards, from the portal's card list (`employer.name`).
+fn edenred_employer(v: &Value) -> Option<String> {
+    let data = v.get("data")?;
+    let items = data
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| vec![data.clone()]);
+    items
+        .iter()
+        .map(|i| text_of(i, "/employer/name"))
+        .find(|n| !n.trim().is_empty())
+}
+
 /// An Edenred amount: a number of cents (2406 = 24,06 €).
 fn edenred_cents(v: &Value) -> Option<i64> {
     v.as_f64()
@@ -632,12 +653,21 @@ fn text_of(v: &Value, key: &str) -> String {
 pub(crate) fn parse_capture(bodies: &[String], kind: ConnectorKind) -> Capture {
     let mut c = Capture::default();
     let mut cards = HashMap::new();
+    // Edenred: the card list names the employer that top-ups come from.
+    let employer = (kind == ConnectorKind::Edenred)
+        .then(|| {
+            bodies
+                .iter()
+                .filter_map(|b| serde_json::from_str::<Value>(b).ok())
+                .find_map(|v| edenred_employer(&v))
+        })
+        .flatten();
     for b in bodies {
         let Ok(v) = serde_json::from_str::<Value>(b) else {
             continue;
         };
         let v = match kind {
-            ConnectorKind::Edenred => match edenred_body(&v) {
+            ConnectorKind::Edenred => match edenred_body(&v, employer.as_deref()) {
                 Some(t) => {
                     c.bookings_listed |= t.get("transactions").is_some();
                     t
@@ -2217,6 +2247,32 @@ mod tests {
         let empty = r#"{"data":[{"card_ref":"C1","wallets":[{"total_balance":0}]}]}"#;
         let c = parse_capture(&[empty.to_string()], ConnectorKind::Edenred);
         assert_eq!(c.balance.map(|(_, b)| b), Some(0));
+    }
+
+    #[test]
+    fn an_edenred_top_up_is_named_after_the_employer() {
+        let cards = r#"{"data":[{"card_ref":"C1","status":"active","employer":{"name":"Beispiel GmbH"},"wallets":[{"currency":"EUR","total_balance":5000}]}]}"#;
+        let ops = r#"{"data":[
+            {"operation_ref":"OP1","date":"2026-10-24T08:00:00.000Z","status":"accepted","type":"topup","outlet":{"name":"Viel Spaß beim Shoppen!"},"transaction_details":{"wallets":[{"amount":5000}]}},
+            {"operation_ref":"OP2","date":"2026-10-28T10:00:00.000Z","status":"accepted","type":"payment","outlet":{"name":"Drogerie, Musterstadt"},"transaction_details":{"wallets":[{"amount":-1135}]}}
+        ]}"#;
+        let names = |bodies: &[&str]| -> Vec<String> {
+            let bodies: Vec<String> = bodies.iter().map(|b| b.to_string()).collect();
+            parse_capture(&bodies, ConnectorKind::Edenred)
+                .posted
+                .iter()
+                .map(|p| p.text.clone())
+                .collect()
+        };
+        // the card list may come before or after the operations
+        for order in [[cards, ops], [ops, cards]] {
+            assert_eq!(names(&order), ["Beispiel GmbH", "Drogerie, Musterstadt"]);
+        }
+        // without an employer in the card list the portal's text stays
+        assert_eq!(
+            names(&[ops]),
+            ["Viel Spaß beim Shoppen!", "Drogerie, Musterstadt"]
+        );
     }
 
     #[test]
