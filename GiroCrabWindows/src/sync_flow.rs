@@ -21,6 +21,9 @@ pub enum Auth {
     Secret,
     /// No secret up front (PSD2 aggregation): the bank page in the browser authorises.
     Browser,
+    /// API username, password and signature (classic PayPal NVP API, #945). They live in the
+    /// vault's settings, which the core reads itself; `ensure_api_signature` asks when one is missing.
+    ApiSignature,
     /// Needs an API key or similar that the Windows app cannot collect yet.
     Unsupported,
 }
@@ -35,6 +38,7 @@ pub fn auth_for(kind: ConnectorKind) -> Auth {
         ConnectorKind::AmericanExpress
         | ConnectorKind::AmazonVisa
         | ConnectorKind::EnableBanking => Auth::Browser,
+        ConnectorKind::PayPal => Auth::ApiSignature,
         _ => Auth::Unsupported,
     }
 }
@@ -47,6 +51,78 @@ pub trait Ui {
     /// Shows the push approval prompt and waits `interval`; `false` = cancelled.
     fn wait_push(&self, challenge: &Challenge, interval: Duration) -> bool;
     fn open_url(&self, url: &str) -> Result<(), String>;
+    /// The three PayPal API signature fields, entered masked. Only the PayPal sync asks; the
+    /// default (= cancelled) serves front ends that never do, e.g. the transfer flow.
+    fn ask_api_signature(&self, _bank: &str) -> Option<ApiSignature> {
+        None
+    }
+}
+
+/// Setting keys of the PayPal API signature, as the core catalog (`KNOWN_SETTINGS`) lists them.
+pub const API_SIGNATURE_KEYS: [&str; 3] = [
+    "paypal.api_username",
+    "paypal.api_password",
+    "paypal.api_signature",
+];
+const API_SIGNATURE_LABELS: [&str; 3] = ["API-Benutzername", "API-Passwort", "Signatur"];
+const PAYPAL_REST_KEYS: [&str; 2] = ["paypal.client_id", "paypal.client_secret"];
+
+/// PayPal API credentials. No `Debug`: the values must never reach a log or an error text.
+pub struct ApiSignature {
+    pub username: Zeroizing<String>,
+    pub password: Zeroizing<String>,
+    pub signature: Zeroizing<String>,
+}
+
+impl ApiSignature {
+    fn values(&self) -> [&Zeroizing<String>; 3] {
+        [&self.username, &self.password, &self.signature]
+    }
+
+    /// Rejects an empty field. The message names the field, never a value.
+    pub fn validate(&self) -> Result<(), String> {
+        for (value, label) in self.values().into_iter().zip(API_SIGNATURE_LABELS) {
+            if value.trim().is_empty() {
+                return Err(format!("PayPal: Bitte das Feld „{label}“ ausfüllen."));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Where the API signature is kept (production: the vault's encrypted settings).
+pub trait SignatureStore {
+    /// Keys of the settings that hold a value.
+    fn stored_keys(&self) -> Result<Vec<String>, String>;
+    fn store(&self, key: &str, value: &str) -> Result<(), String>;
+}
+
+/// Like the Mac app's `missingSettings`: once one signature field is set, all three are needed;
+/// with none set, a complete REST app (client ID + secret) syncs without a prompt.
+pub fn needs_api_signature(stored: &[String]) -> bool {
+    let has = |key: &str| stored.iter().any(|s| s == key);
+    let set = API_SIGNATURE_KEYS.into_iter().filter(|k| has(k)).count();
+    set < API_SIGNATURE_KEYS.len() && (set > 0 || !PAYPAL_REST_KEYS.into_iter().all(has))
+}
+
+/// Makes sure the API signature is stored before a PayPal sync: asks once when a field is
+/// missing, rejects empty fields (an empty value would delete the stored one), then saves all three.
+pub fn ensure_api_signature<U: Ui, T: SignatureStore + ?Sized>(
+    bank: &str,
+    ui: &U,
+    store: &T,
+) -> Result<(), String> {
+    if !needs_api_signature(&store.stored_keys()?) {
+        return Ok(());
+    }
+    let sig = ui
+        .ask_api_signature(bank)
+        .ok_or_else(|| CANCELLED.to_string())?;
+    sig.validate()?;
+    for (key, value) in API_SIGNATURE_KEYS.into_iter().zip(sig.values()) {
+        store.store(key, value.trim())?;
+    }
+    Ok(())
 }
 
 /// The running bank session (`SyncSession` in production, a fake in tests).
@@ -72,7 +148,8 @@ pub fn sync_connection<S: Stepper, U: Ui>(
             Some(_) => return Err("Bitte die PIN eingeben.".into()),
             None => return Err(CANCELLED.into()),
         },
-        Auth::Browser => Zeroizing::new(String::new()),
+        // PayPal's API signature is read by the core from the settings (`ensure_api_signature`).
+        Auth::Browser | Auth::ApiSignature => Zeroizing::new(String::new()),
         Auth::Unsupported => {
             return Err(format!(
                 "{bank}: Dieser Zugang wird von der Windows-App noch nicht unterstützt."
@@ -260,6 +337,8 @@ mod tests {
         push_ok: bool,
         opened: RefCell<Vec<String>>,
         asked_pin: RefCell<u32>,
+        signature: Option<[&'static str; 3]>,
+        asked_signature: RefCell<u32>,
     }
     impl Ui for FakeUi {
         fn ask_secret(&self, _bank: &str) -> Option<Zeroizing<String>> {
@@ -278,6 +357,33 @@ mod tests {
         }
         fn open_url(&self, url: &str) -> Result<(), String> {
             self.opened.borrow_mut().push(url.into());
+            Ok(())
+        }
+        fn ask_api_signature(&self, _bank: &str) -> Option<ApiSignature> {
+            *self.asked_signature.borrow_mut() += 1;
+            self.signature.map(|[u, p, s]| ApiSignature {
+                username: Zeroizing::new(u.into()),
+                password: Zeroizing::new(p.into()),
+                signature: Zeroizing::new(s.into()),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeStore {
+        values: RefCell<Vec<(String, String)>>,
+    }
+    impl SignatureStore for FakeStore {
+        fn stored_keys(&self) -> Result<Vec<String>, String> {
+            Ok(self
+                .values
+                .borrow()
+                .iter()
+                .map(|(k, _)| k.clone())
+                .collect())
+        }
+        fn store(&self, key: &str, value: &str) -> Result<(), String> {
+            self.values.borrow_mut().push((key.into(), value.into()));
             Ok(())
         }
     }
@@ -434,6 +540,67 @@ mod tests {
     fn connector_auth_modes() {
         assert_eq!(auth_for(ConnectorKind::FinTsGeneric), Auth::Secret);
         assert_eq!(auth_for(ConnectorKind::EnableBanking), Auth::Browser);
-        assert_eq!(auth_for(ConnectorKind::PayPal), Auth::Unsupported);
+        assert_eq!(auth_for(ConnectorKind::PayPal), Auth::ApiSignature);
+    }
+
+    #[test]
+    fn empty_api_signature_field_is_rejected_before_anything_is_stored() {
+        let ui = FakeUi {
+            signature: Some(["nutzer-123", "  ", "sig-geheim-456"]),
+            ..Default::default()
+        };
+        let store = FakeStore::default();
+        let err = ensure_api_signature("PayPal", &ui, &store).unwrap_err();
+        assert!(err.contains("API-Passwort"), "{err}");
+        assert!(!err.contains("nutzer-123") && !err.contains("sig-geheim-456"));
+        assert!(store.values.borrow().is_empty());
+    }
+
+    #[test]
+    fn cancelled_api_signature_stores_nothing() {
+        let ui = FakeUi::default();
+        let store = FakeStore::default();
+        assert_eq!(
+            ensure_api_signature("PayPal", &ui, &store).unwrap_err(),
+            CANCELLED
+        );
+        assert!(store.values.borrow().is_empty());
+    }
+
+    #[test]
+    fn api_signature_is_stored_once_then_paypal_syncs_without_a_secret() {
+        let ui = FakeUi {
+            signature: Some([" nutzer ", "pw", "sig"]),
+            ..Default::default()
+        };
+        let store = FakeStore::default();
+        ensure_api_signature("PayPal", &ui, &store).unwrap();
+        ensure_api_signature("PayPal", &ui, &store).unwrap();
+        assert_eq!(*ui.asked_signature.borrow(), 1);
+        let stored = store.values.borrow().clone();
+        assert_eq!(stored[0], ("paypal.api_username".into(), "nutzer".into()));
+        assert_eq!(stored.len(), 3);
+
+        let session = FakeSession::with(vec![done()]);
+        let out = sync_connection(ConnectorKind::PayPal, "PayPal", &ui, |secret| {
+            assert!(secret.is_empty(), "the core reads the signature itself");
+            Ok(session)
+        });
+        assert_eq!(out.unwrap().transactions_imported, 3);
+        assert_eq!(*ui.asked_pin.borrow(), 0);
+    }
+
+    #[test]
+    fn signature_prompt_follows_the_mac_rules() {
+        let keys = |k: &[&str]| k.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(needs_api_signature(&[]));
+        assert!(!needs_api_signature(&keys(&PAYPAL_REST_KEYS)));
+        assert!(!needs_api_signature(&keys(&API_SIGNATURE_KEYS)));
+        // One signature field set: signature mode, the other two are still missing.
+        assert!(needs_api_signature(&keys(&[
+            "paypal.client_id",
+            "paypal.client_secret",
+            "paypal.api_signature",
+        ])));
     }
 }

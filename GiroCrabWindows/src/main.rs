@@ -812,6 +812,20 @@ impl DialogBridge {
         while self.replies.lock().unwrap().try_recv().is_ok() {}
     }
 
+    /// One masked entry in the PIN dialog (`"pin"` = password field). Empty stays `Some("")`
+    /// so the flow can name the missing field.
+    fn ask_masked(&self, title: &str, message: String) -> Option<Zeroizing<String>> {
+        self.drain();
+        self.show("pin", title.into(), message, None);
+        self.replies
+            .lock()
+            .unwrap()
+            .recv()
+            .ok()
+            .flatten()
+            .map(Zeroizing::new)
+    }
+
     fn ask(&self, mode: &'static str, c: &Challenge) -> Option<Zeroizing<String>> {
         self.drain();
         let title = if c.title.is_empty() {
@@ -891,6 +905,36 @@ impl sync_flow::Ui for DialogBridge {
     fn open_url(&self, url: &str) -> Result<(), String> {
         sync_flow::open_in_browser(url)
     }
+
+    fn ask_api_signature(&self, bank: &str) -> Option<sync_flow::ApiSignature> {
+        let hint = format!(
+            "API-Zugangsdaten für {bank} (PayPal › Kontoeinstellungen › API-Zugriff), nicht das \
+             Login-Passwort. Sie werden verschlüsselt im Tresor gespeichert."
+        );
+        Some(sync_flow::ApiSignature {
+            username: self.ask_masked("PayPal API-Benutzername", hint.clone())?,
+            password: self.ask_masked("PayPal API-Passwort", hint.clone())?,
+            signature: self.ask_masked("PayPal API-Signatur", hint)?,
+        })
+    }
+}
+
+/// PayPal's API signature lives in the vault's encrypted settings (`paypal.api_*`).
+impl sync_flow::SignatureStore for Vault {
+    fn stored_keys(&self) -> Result<Vec<String>, String> {
+        let settings = self.list_settings().map_err(|e| e.to_string())?;
+        Ok(settings
+            .into_iter()
+            .filter(|s| s.has_value)
+            .map(|s| s.key)
+            .collect())
+    }
+
+    fn store(&self, key: &str, value: &str) -> Result<(), String> {
+        // No `e.to_string()`: nothing near the value goes into the error text.
+        self.set_setting(key.to_string(), value.to_string())
+            .map_err(|_| "Die PayPal-Zugangsdaten konnten nicht gespeichert werden.".to_string())
+    }
 }
 
 /// `SyncSession` driven synchronously (the worker thread owns a small tokio runtime).
@@ -943,6 +987,13 @@ fn run_sync(vault: Arc<Vault>, demo: bool, ui: &DialogBridge) -> Result<String, 
                 Err(e) => problems.push(format!("{}: {e}", c.display_name)),
             }
             continue;
+        }
+        if sync_flow::auth_for(c.connector) == sync_flow::Auth::ApiSignature {
+            // On this worker thread like the sync itself: the vault writes never block the UI.
+            if let Err(e) = sync_flow::ensure_api_signature(&c.display_name, ui, &*vault) {
+                problems.push(format!("{}: {e}", c.display_name));
+                continue;
+            }
         }
         let result = sync_flow::sync_connection(c.connector, &c.display_name, ui, |secret| {
             // `secret` moves into the core, which wipes it when the session ends.
