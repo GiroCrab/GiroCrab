@@ -128,6 +128,22 @@ ScrollView {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Wer keine Monatsbudgets nutzt, blendet die Budget-Karte und „Monatsbudget festlegen …“ ganz aus. Auch im Menü Ansicht umschaltbar.") }
+            // SettingsView.swift › ViewLayout.runningBalanceKey (#577)
+            CheckBox {
+                text: qsTr("Saldo in der Buchungsliste anzeigen")
+                checked: ListBalances.shown
+                onToggled: ListBalances.setShown(checked)
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Zeigt den Kontostand nach jeder Buchung und am Ende jedes Tages, zum Abgleich mit dem Kontoauszug. Bei mehreren Konten die Summe der Euro-Konten ohne Depots und Darlehen. Innerhalb eines Tages kann die Reihenfolge von der Bank abweichen, der Tagessaldo stimmt immer. Auch im Menü Ansicht umschaltbar.") }
+            // SettingsView.swift › ViewLayout.lastFetchKey (#815)
+            CheckBox {
+                text: qsTr("Letzten Abruf anzeigen")
+                checked: LastFetch.shown
+                onToggled: LastFetch.setShown(checked)
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Zeigt unter dem Kontostand, wann die Bankverbindung des Kontos zuletzt abgerufen wurde. Der Zeitpunkt gilt je Bankverbindung, Konten derselben Bank zeigen also denselben Wert. Nur in der Ansicht eines einzelnen Kontos und bei ausgeklapptem Kopfbereich. Auch im Menü Ansicht umschaltbar.") }
             // NegativeAmountStyle.swift (#218, #571)
             SettingsFormRow {
                 label: qsTr("Negative Beträge")

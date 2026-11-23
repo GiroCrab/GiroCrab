@@ -1,6 +1,7 @@
 //! Web logins (WebLoginSheet.qml): the browser profile's cookies and the core
 //! calls of the portal flows (PortalUI.swift, AmazonUI.swift, FnzUI.swift,
-//! QuirionUI.swift, SchwaebischHallUI.swift, EquatePlusUI.swift, ConnectionsUI.swift › WebLoginSheet).
+//! QuirionUI.swift, SchwaebischHallUI.swift, EquatePlusUI.swift, AdvanziaWorkflow.swift,
+//! ConnectionsUI.swift › WebLoginSheet).
 //!
 //! Cookies are read from the QtWebEngine cookie store (cpp/webcookies.cpp) and
 //! go straight into the vault; they never travel through QML / JavaScript and
@@ -45,6 +46,7 @@ pub fn handles(method: &str) -> bool {
             | "web_forget_cookies"
             | "apply_web_session"
             | "import_portal_capture"
+            | "import_portal_capture_cards"
             | "preview_portal_capture"
             | "import_statement_file"
             | "import_amazon_orders"
@@ -66,6 +68,8 @@ pub fn handles(method: &str) -> bool {
             | "import_equateplus_snapshot"
             | "pending_equateplus_documents"
             | "import_equateplus_document"
+            | "advanzia_profile"
+            | "import_advanzia_capture"
     )
 }
 
@@ -183,6 +187,17 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
         "import_portal_capture" => ok(vault()?
             .import_portal_capture(id()?, arg(a, "json_bodies")?, arg(a, "dom_rows_json")?)
             .map_err(err)?),
+        // PortalUI.swift › importPortalCapture (#243): one account per card of the login;
+        // `card_keys` runs parallel to `json_bodies` (hash of the card token, "" = unknown).
+        "import_portal_capture_cards" => ok(vault()?
+            .import_portal_capture_cards(
+                id()?,
+                arg(a, "json_bodies")?,
+                arg(a, "card_keys")?,
+                arg(a, "cards")?,
+                arg(a, "dom_rows_json")?,
+            )
+            .map_err(err)?),
         "preview_portal_capture" => ok(vault()?
             .preview_portal_capture(id()?, arg(a, "json_bodies")?, arg(a, "dom_rows_json")?)
             .map_err(err)?),
@@ -256,8 +271,34 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
         "import_equateplus_document" => ok(vault()?
             .import_equateplus_document(id()?, arg(a, "document_json")?, bytes(a)?)
             .map_err(err)?),
+        // AdvanziaWorkflow.swift (#935): the login's profile and the import of one capture.
+        // The release method (`set_advanzia_auth_method`) only steers the Mac's login
+        // automation, which Linux leaves out: the user confirms in the browser window.
+        "advanzia_profile" => ok(vault()?.advanzia_profile(id()?).map_err(err)?),
+        "import_advanzia_capture" => ok(vault()?
+            .import_advanzia_capture(
+                id()?,
+                arg(a, "bank_account_id")?,
+                arg(a, "profile_id")?,
+                arg(a, "json_bodies")?,
+                arg(a, "balance_json_number")?,
+                arg(a, "target_account_id")?,
+            )
+            .map_err(|e| invalid_input_json(&e))?),
         _ => Err(format!("unknown core method `{method}`")),
     }
+}
+
+/// AdvanziaWorkflow.importCapture shows the core's own text of an `InvalidInput`
+/// (`AppModel.parseCoreError` reads `kind` and `message`), any other error generically.
+fn invalid_input_json(e: &girocrab_core::CoreError) -> String {
+    let v = match e {
+        girocrab_core::CoreError::InvalidInput { message } => {
+            serde_json::json!({ "kind": "InvalidInput", "message": message })
+        }
+        other => serde_json::json!({ "kind": "Other", "message": other.to_string() }),
+    };
+    format!("\u{1}{v}")
 }
 
 /// One browser cookie, as cpp/webcookies.cpp reads and writes it.
@@ -529,6 +570,114 @@ mod tests {
         assert_eq!(stored, json!(true));
         let again = call_ok("pending_equateplus_documents", args);
         assert!(again.as_array().unwrap().is_empty(), "stored once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    static ADVANZIA_VAULT: std::sync::OnceLock<Arc<Vault>> = std::sync::OnceLock::new();
+    fn advanzia_vault() -> Result<Arc<Vault>, String> {
+        ADVANZIA_VAULT
+            .get()
+            .cloned()
+            .ok_or_else(|| "no vault".into())
+    }
+
+    /// AdvanziaWebLoginFlow.qml: profile and the import with the JSON the flow sends (synthetic body as in girocrab-core's advanzia
+    /// tests), plus the InvalidInput text the flow shows.
+    #[test]
+    fn advanzia_calls_round_trip() {
+        use serde_json::json;
+        let dir = std::env::temp_dir().join(format!("girocrab-advanzia-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let v = Vault::open(dir.join("t.girocrab").display().to_string(), vec![7; 32]).unwrap();
+        let id = v
+            .add_bank_connection(
+                girocrab_core::ConnectorKind::Advanzia,
+                "Testkarte".into(),
+                "fictional-login".into(),
+            )
+            .unwrap();
+        assert!(ADVANZIA_VAULT.set(v).is_ok());
+        let call_ok =
+            |m: &str, a: Value| call(m, &a, advanzia_vault).unwrap_or_else(|e| panic!("{m}: {e}"));
+        let conn = json!({ "connection_id": id });
+        let profile = call_ok("advanzia_profile", conn.clone());
+        assert_eq!(profile["auth_method"], json!("sms"));
+        assert_eq!(profile["has_account"], json!(false));
+        let profile_id = profile["profile_id"].as_str().unwrap().to_string();
+        // the same login keeps its profile (and so its browser session)
+        assert_eq!(
+            call_ok("advanzia_profile", conn.clone())["profile_id"],
+            json!(profile_id)
+        );
+        // import: posted booking + balance, new credit card account (target 0 = none chosen)
+        let body = r#"{"transactions":[{"amount":-12.34,"currency":"EUR","transactionDate":"2026-11-12T00:00:00","status":"APPROVED","reference":"r1","uniqueReference":"r1","merchantName":"TEST SHOP"}]}"#;
+        let bank = "00000000-0000-4000-8000-000000000001";
+        let args = |profile: &str| {
+            json!({ "connection_id": id, "bank_account_id": bank, "profile_id": profile,
+                    "json_bodies": [body], "balance_json_number": "-12.34", "target_account_id": null })
+        };
+        let s = call_ok("import_advanzia_capture", args(&profile_id));
+        assert_eq!(s["transactions_imported"], json!(1));
+        assert_eq!(
+            call_ok("advanzia_profile", conn)["bank_account_id"],
+            json!(bank)
+        );
+        // a stale profile id: the core's own text reaches the flow
+        let e = call("import_advanzia_capture", &args("other"), advanzia_vault).unwrap_err();
+        let e: Value = serde_json::from_str(e.strip_prefix('\u{1}').unwrap()).unwrap();
+        assert_eq!(e["kind"], json!("InvalidInput"));
+        assert!(e["message"].as_str().unwrap().starts_with("Advanzia: "));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    static AMEX_VAULT: std::sync::OnceLock<Arc<Vault>> = std::sync::OnceLock::new();
+    fn amex_vault() -> Result<Arc<Vault>, String> {
+        AMEX_VAULT.get().cloned().ok_or_else(|| "no vault".into())
+    }
+
+    /// PortalWebLoginFlow.qml (#243): two cards behind one Amex login, as in
+    /// girocrab-core's `second_card_gets_its_own_account_after_the_choice`.
+    #[test]
+    fn amex_cards_round_trip() {
+        use serde_json::json;
+        let dir = std::env::temp_dir().join(format!("girocrab-amex-cards-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let v = Vault::open(dir.join("t.girocrab").display().to_string(), vec![7; 32]).unwrap();
+        let id = v
+            .add_bank_connection(
+                girocrab_core::ConnectorKind::AmericanExpress,
+                String::new(),
+                "Amex".into(),
+            )
+            .unwrap();
+        assert!(AMEX_VAULT.set(v.clone()).is_ok());
+        let tx = |id: &str, text: &str| {
+            format!(
+                r#"{{"transactions":[{{"charge_date":"2026-11-03","amount":10,"description":"{text}","identifier":"{id}"}}]}}"#
+            )
+        };
+        let call_ok =
+            |m: &str, a: Value| call(m, &a, amex_vault).unwrap_or_else(|e| panic!("{m}: {e}"));
+        call_ok(
+            "import_portal_capture_cards",
+            json!({ "connection_id": id, "json_bodies": [tx("A1", "REWE")], "card_keys": [], "cards": [], "dom_rows_json": "[]" }),
+        );
+        let cards = json!([
+            { "key": "aaaa", "name": "American Express® Card", "number": "11111" },
+            { "key": "bbbb", "name": "Amazon Business American Express® Card", "number": "22222" }
+        ]);
+        let s = call_ok(
+            "import_portal_capture_cards",
+            json!({ "connection_id": id, "json_bodies": [tx("B1", "OFFICE"), tx("A1", "REWE"), tx("A2", "BAKERY")],
+                    "card_keys": ["bbbb", "aaaa", "aaaa"], "cards": cards, "dom_rows_json": "[]" }),
+        );
+        assert_eq!(s["transactions_imported"], json!(1));
+        // the new card waits for "Welche Karten sollen abgerufen werden?"
+        assert_eq!(v.pending_account_selection_connections().unwrap(), vec![id]);
+        let choices = v.connection_account_choices(id).unwrap();
+        let new_card = choices.iter().find(|c| c.pending).unwrap();
+        assert!(new_card.existing_connection.is_empty());
+        assert_eq!(new_card.number, "22222");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
