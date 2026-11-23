@@ -89,8 +89,8 @@ Mapping: `AccountKind::CreditCard`, `external_ref` = `Number`, Saldo = `CurrentB
   `Skip` = `PageIndex*50`, solange `HasMore`. Sortierung: neueste zuerst (trotz `Ascending`).
 * **TAN für lange Zeiträume:** Die Web-App verlangte bei „180 Tage“ eine SMS-TAN
   (`OTPRequired: true` → `SendOTP` → erneut mit `TwoFactorAuthentication.Password = <mTAN>`).
-  Zeitraum wie bei allen Banken: erster Abruf `sync.days_back` (Standard 90 Tage), danach ab der
-  neuesten Buchung − 10 Tage; Obergrenze 730 Tage (Portal). Bei `OTPRequired` fällt der Connector
+  Zeitraum wie bei allen Banken: erster Abruf `sync.days_back` (Standard „max“, hier 730 Tage,
+  `connectors/history.rs`), danach ab der neuesten Buchung − 10 Tage; Obergrenze 730 Tage (Portal). Bei `OTPRequired` fällt der Connector
   auf 89 Tage zurück.
 
 ### Felder je Buchung → `RemoteTransaction`

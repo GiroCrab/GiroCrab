@@ -97,6 +97,24 @@ pub(super) fn pain_formats(reply: &BankReply, seg_id: &str) -> Vec<String> {
     out
 }
 
+/// Storage period (days) of a statement parameter segment (HIKAZS / HICAZS):
+/// the first value of its parameters, from the segment of `version`. Another
+/// version's segment only while nothing is `known` yet (0): it must not
+/// replace what the version in use said. `None`: nothing to learn here.
+pub(super) fn storage_days(
+    reply: &BankReply,
+    seg_id: &str,
+    version: u32,
+    known: i64,
+) -> Option<i64> {
+    let days = |s: &Segment| s.get(4, 0).parse().unwrap_or(0);
+    match reply.all(seg_id).filter(|s| s.version() == version).last() {
+        Some(seg) => Some(days(seg)),
+        None if known == 0 => reply.all(seg_id).last().map(days),
+        None => None,
+    }
+}
+
 /// Picks the TAN function from the codes allowed by 3920: app/decoupled
 /// methods first (SecureGo plus, pushTAN …), then a fixed preference list,
 /// never 999 (one-step).
@@ -344,6 +362,15 @@ impl FinTsConnector {
             self.st.kku_no_date_range = p.get(4, 2) == "N";
             self.st.kku_no_account = p.get(4, 3) == "N";
         }
+        // HIKAZS / HICAZS: storage days : … of the version in use (#1043)
+        let kaz = self.st.kaz_storage_days;
+        if let Some(days) = storage_days(reply, "HIKAZS", self.version("HKKAZ"), kaz) {
+            self.st.kaz_storage_days = days;
+        }
+        let caz = self.st.caz_storage_days;
+        if let Some(days) = storage_days(reply, "HICAZS", self.version("HKCAZ"), caz) {
+            self.st.caz_storage_days = days;
+        }
         if crate::depot_debug::enabled() && reply.all("HIPINS").next().is_some() {
             let card: Vec<String> = ["HKKKU", "DKKKU"]
                 .iter()
@@ -363,6 +390,16 @@ impl FinTsConnector {
             // best (newest) format first: …camt.052.001.08 > …001.02
             self.st.camt_formats.sort_by(|a, b| b.cmp(a));
         }
+        // A full BPD comes with HIBPA. A new BPD version replaces the learned pain formats, so
+        // a schema the bank withdrew (e.g. .001.09 from HISPAS) stops being chosen. Replies
+        // without HIBPA (HKTAB, …) and further messages of the same version only add.
+        if let Some(bpa) = reply.first("HIBPA") {
+            let version = bpa.get(1, 0);
+            if !version.is_empty() && version != self.st.bpd_version {
+                self.st.pain_formats.clear();
+                self.st.bpd_version = version.to_string();
+            }
+        }
         for (seg, tx) in [
             ("HICCSS", "HKCCS"),
             ("HIIPZS", "HKIPZ"),
@@ -380,7 +417,8 @@ impl FinTsConnector {
             ("HIBSES", "HKBSE"),
             ("HIBMES", "HKBME"),
         ] {
-            // Merge across BPD messages (anonymous and authenticated dialog).
+            // Merge across BPD messages of the same BPD version (anonymous and
+            // authenticated dialog); a new version was cleared above.
             for f in pain_formats(reply, seg) {
                 let list = self.st.pain_formats.entry(tx.to_string()).or_default();
                 if !list.contains(&f) {
@@ -396,7 +434,7 @@ impl FinTsConnector {
                     let t = v.text();
                     let targets: &[&str] = if t.contains("pain.001.") {
                         &[
-                            "HKCCS", "HKCUM", "HKCSE", "HKCCM", "HKCDE", "HKCDN", "HKCDL",
+                            "HKCCS", "HKCUM", "HKCSE", "HKCCM", "HKCDE", "HKCDN", "HKCDL", "HKCDB",
                         ]
                     } else if t.contains("pain.008.") {
                         &["HKDSE", "HKDME", "HKDSC", "HKDMC", "HKBSE", "HKBME"]

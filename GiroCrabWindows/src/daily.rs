@@ -3,6 +3,7 @@
 //! unit-tested; `main.rs` only wires it to the window.
 
 use girocrab_core::{Booking, SepaTransferRequest};
+use std::collections::HashMap;
 
 /// Shown instead of amounts, balances, IBANs and other personal texts in privacy mode.
 pub const MASK: &str = "••••••";
@@ -248,6 +249,185 @@ pub fn keep_selection(rows: &[Row], shown: &[usize], selected: Option<i64>) -> O
     shown.iter().any(|&i| rows[i].id == id).then_some(id)
 }
 
+/// Income and expenses of the ticked bookings in one currency.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CurrencySum {
+    pub currency: String,
+    pub income: i64,
+    /// Zero or negative.
+    pub expense: i64,
+}
+
+impl CurrencySum {
+    pub fn balance(&self) -> i64 {
+        self.income + self.expense
+    }
+}
+
+/// Sums of the ticked bookings (#878). Currencies are never added up (#569): EUR is the main
+/// total, every other currency stays separate in `extra`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SelectionSummary {
+    pub count: usize,
+    pub main: CurrencySum,
+    /// Other currencies, sorted by code.
+    pub extra: Vec<CurrencySum>,
+}
+
+/// Sums the given (already loaded) rows; no vault access.
+pub fn selection_summary<'a>(rows: impl IntoIterator<Item = &'a Row>) -> SelectionSummary {
+    let mut s = SelectionSummary {
+        main: CurrencySum {
+            currency: "EUR".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for r in rows {
+        s.count += 1;
+        let code = if r.currency.is_empty() {
+            "EUR"
+        } else {
+            r.currency.as_str()
+        };
+        let slot = if code == "EUR" {
+            &mut s.main
+        } else if let Some(i) = s.extra.iter().position(|c| c.currency == code) {
+            &mut s.extra[i]
+        } else {
+            s.extra.push(CurrencySum {
+                currency: code.into(),
+                ..Default::default()
+            });
+            let last = s.extra.len() - 1;
+            &mut s.extra[last]
+        };
+        if r.amount_cents >= 0 {
+            slot.income += r.amount_cents;
+        } else {
+            slot.expense += r.amount_cents;
+        }
+    }
+    s.extra.sort_by(|a, b| a.currency.cmp(&b.currency));
+    s
+}
+
+/// What the selection bar shows; amounts masked in privacy mode, the count stays visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionTexts {
+    pub count: String,
+    pub income: String,
+    pub expense: String,
+    pub balance: String,
+    /// `Zusätzlich: …` with the balance per other currency, "" when there is none.
+    pub extra: String,
+}
+
+pub fn selection_texts(
+    s: &SelectionSummary,
+    privacy: bool,
+    money: impl Fn(i64, &str) -> String,
+) -> SelectionTexts {
+    let m = |cents: i64, cur: &str| mask(&money(cents, cur), privacy);
+    let extra = if s.extra.is_empty() {
+        String::new()
+    } else {
+        let parts: Vec<String> = s
+            .extra
+            .iter()
+            .map(|c| {
+                if privacy {
+                    format!("{} {MASK}", c.currency)
+                } else {
+                    money(c.balance(), &c.currency)
+                }
+            })
+            .collect();
+        format!("Zusätzlich: {}", parts.join(" · "))
+    };
+    SelectionTexts {
+        count: format!("{} Buchungen", s.count),
+        income: m(s.main.income, "EUR"),
+        expense: m(s.main.expense, "EUR"),
+        balance: m(s.main.balance(), "EUR"),
+        extra,
+    }
+}
+
+/// Running balance per booking and end-of-day balance of a one-account view (#577).
+/// Empty (`currency` == "") for several accounts, groups, categories or mixed currencies,
+/// so balances are never summed across currencies (#569).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Balances {
+    /// The one currency of all loaded rows; empty = no balance column.
+    pub currency: String,
+    /// Booking id → balance after that booking, in cents.
+    pub running: HashMap<i64, i64>,
+    /// ISO day (`YYYY-MM-DD`) → balance at the end of that day, in cents.
+    pub days: HashMap<String, i64>,
+}
+
+impl Balances {
+    /// Keeps the core balances only for one account whose rows all share one currency.
+    pub fn for_scope(
+        single_account: bool,
+        rows: &[Row],
+        running: HashMap<i64, i64>,
+        days: HashMap<String, i64>,
+    ) -> Self {
+        let mut currencies = rows.iter().map(|r| r.currency.as_str());
+        let first = currencies.next().unwrap_or_default();
+        if !single_account || first.is_empty() || currencies.any(|c| c != first) {
+            return Self::default();
+        }
+        Self {
+            currency: first.to_string(),
+            running,
+            days,
+        }
+    }
+
+    /// Search hits are a cut-out of the account: the column stays empty for them.
+    fn active(&self, filter: &Filter) -> bool {
+        !self.currency.is_empty() && filter.search.trim().is_empty()
+    }
+
+    fn text(
+        &self,
+        filter: &Filter,
+        cents: Option<&i64>,
+        privacy: bool,
+        money: impl Fn(i64, &str) -> String,
+    ) -> String {
+        match cents {
+            Some(&c) if self.active(filter) => mask(&money(c, &self.currency), privacy),
+            _ => String::new(),
+        }
+    }
+
+    /// Balance after booking `id`, masked in privacy mode; "" when the column stays empty.
+    pub fn row(
+        &self,
+        filter: &Filter,
+        id: i64,
+        privacy: bool,
+        money: impl Fn(i64, &str) -> String,
+    ) -> String {
+        self.text(filter, self.running.get(&id), privacy, money)
+    }
+
+    /// End-of-day balance for the day header, masked in privacy mode; "" when empty.
+    pub fn day(
+        &self,
+        filter: &Filter,
+        date: &str,
+        privacy: bool,
+        money: impl Fn(i64, &str) -> String,
+    ) -> String {
+        self.text(filter, self.days.get(date), privacy, money)
+    }
+}
+
 /// What the inspector shows for a booking, already masked.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inspector {
@@ -480,6 +660,75 @@ mod tests {
         }
     }
 
+    fn fmt(cents: i64, cur: &str) -> String {
+        format!("{cents} {cur}")
+    }
+
+    fn balance_maps() -> (HashMap<i64, i64>, HashMap<String, i64>) {
+        (
+            HashMap::from([(1, 10_000), (2, 7_650)]),
+            HashMap::from([("2026-11-01".to_string(), 7_650)]),
+        )
+    }
+
+    #[test]
+    fn balances_map_onto_rows_and_day_headers() {
+        let rows = vec![
+            row(1, "A", "", -2350, None, false),
+            row(2, "B", "", 100, None, false),
+        ];
+        let (running, days) = balance_maps();
+        let b = Balances::for_scope(true, &rows, running, days);
+        let f = Filter::default();
+        assert_eq!(b.currency, "EUR");
+        assert_eq!(b.row(&f, 1, false, fmt), "10000 EUR");
+        assert_eq!(b.row(&f, 2, false, fmt), "7650 EUR");
+        // A booking without a core balance (beyond the page) stays empty.
+        assert_eq!(b.row(&f, 99, false, fmt), "");
+        assert_eq!(b.day(&f, "2026-11-01", false, fmt), "7650 EUR");
+        assert_eq!(b.day(&f, "2026-10-31", false, fmt), "");
+    }
+
+    #[test]
+    fn balances_stay_empty_for_several_accounts_or_currencies() {
+        let f = Filter::default();
+        let rows = vec![
+            row(1, "A", "", -2350, None, false),
+            row(2, "B", "", 100, None, false),
+        ];
+        let (running, days) = balance_maps();
+        let several = Balances::for_scope(false, &rows, running.clone(), days.clone());
+        assert_eq!(several, Balances::default());
+        assert_eq!(several.row(&f, 1, false, fmt), "");
+
+        let mut mixed = rows;
+        mixed[1].currency = "CHF".into();
+        let mixed = Balances::for_scope(true, &mixed, running, days);
+        assert!(mixed.currency.is_empty());
+        assert_eq!(mixed.day(&f, "2026-11-01", false, fmt), "");
+    }
+
+    #[test]
+    fn balances_hidden_for_search_and_masked_in_privacy() {
+        let rows = vec![
+            row(1, "A", "", -2350, None, false),
+            row(2, "B", "", 100, None, false),
+        ];
+        let (running, days) = balance_maps();
+        let b = Balances::for_scope(true, &rows, running, days);
+        let search = Filter {
+            search: "rewe".into(),
+            ..Filter::default()
+        };
+        assert_eq!(b.row(&search, 1, false, fmt), "");
+        assert_eq!(b.day(&search, "2026-11-01", false, fmt), "");
+        let f = Filter::default();
+        assert_eq!(b.row(&f, 1, true, fmt), MASK);
+        assert_eq!(b.day(&f, "2026-11-01", true, fmt), MASK);
+        // An empty column stays empty in privacy mode (no stray mask).
+        assert_eq!(b.row(&f, 99, true, fmt), "");
+    }
+
     fn sample() -> Vec<Row> {
         vec![
             row(
@@ -500,6 +749,70 @@ mod tests {
             ),
             row(3, "Stadtwerke", "Strom Abschlag", -8900, None, false),
         ]
+    }
+
+    fn row_in(id: i64, cents: i64, currency: &str) -> Row {
+        Row {
+            currency: currency.into(),
+            ..row(id, "X", "", cents, None, false)
+        }
+    }
+
+    fn plain(cents: i64, cur: &str) -> String {
+        format!("{cents} {cur}")
+    }
+
+    #[test]
+    fn selection_summary_splits_income_and_expenses() {
+        let s = selection_summary(&sample());
+        assert_eq!(s.count, 3);
+        assert_eq!(s.main.currency, "EUR");
+        assert_eq!(s.main.income, 300000);
+        assert_eq!(s.main.expense, -11250);
+        assert_eq!(s.main.balance(), 288750);
+        assert!(s.extra.is_empty());
+    }
+
+    #[test]
+    fn selection_summary_never_adds_currencies() {
+        let rows = vec![
+            row_in(1, 1000, "EUR"),
+            row_in(2, 500, "USD"),
+            row_in(3, -200, "USD"),
+            row_in(4, -300, "CHF"),
+            row_in(5, 100, ""),
+        ];
+        let s = selection_summary(&rows);
+        assert_eq!(s.count, 5);
+        assert_eq!((s.main.income, s.main.expense), (1100, 0));
+        let codes: Vec<&str> = s.extra.iter().map(|c| c.currency.as_str()).collect();
+        assert_eq!(codes, ["CHF", "USD"]);
+        assert_eq!((s.extra[0].income, s.extra[0].expense), (0, -300));
+        assert_eq!((s.extra[1].income, s.extra[1].expense), (500, -200));
+        let t = selection_texts(&s, false, plain);
+        assert_eq!(t.balance, "1100 EUR");
+        assert_eq!(t.extra, "Zusätzlich: -300 CHF · 300 USD");
+    }
+
+    #[test]
+    fn selection_summary_of_nothing_is_zero() {
+        let s = selection_summary(&[] as &[Row]);
+        assert_eq!(s.count, 0);
+        assert_eq!(s.main.balance(), 0);
+        assert!(s.extra.is_empty());
+        let t = selection_texts(&s, false, plain);
+        assert_eq!((t.count.as_str(), t.extra.as_str()), ("0 Buchungen", ""));
+    }
+
+    #[test]
+    fn selection_texts_mask_amounts_in_privacy_mode() {
+        let rows = vec![row_in(1, -2350, "EUR"), row_in(2, 900, "USD")];
+        let t = selection_texts(&selection_summary(&rows), true, plain);
+        assert_eq!(t.count, "2 Buchungen");
+        assert_eq!(t.income, MASK);
+        assert_eq!(t.expense, MASK);
+        assert_eq!(t.balance, MASK);
+        assert_eq!(t.extra, format!("Zusätzlich: USD {MASK}"));
     }
 
     #[test]
