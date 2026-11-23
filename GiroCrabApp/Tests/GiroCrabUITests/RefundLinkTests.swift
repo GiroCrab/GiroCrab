@@ -86,6 +86,34 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertFalse(data.suggestions.contains { $0.candidate.transactionId == original })
     }
 
+    func testInspectorLoadsCounterpartsForTheSelectedBooking() async throws {
+        await model.linkRefund(pair())
+        await model.linkRefund(pair(second))
+        try await settle()
+        model.selectedBookingID = refund
+        try await settle()
+        let key = RefundLoadKey(vaultRevision: model.vaultRevision, bookingID: refund,
+            ownPart: "", revision: model.refundRevision)
+        let result = try await model.refundCard(for: key)
+        let data = try XCTUnwrap(result)
+        XCTAssertEqual(Set(data.counterparts.keys), [original, second])
+        XCTAssertEqual(data.links.count, 2)
+        XCTAssertEqual(data.counterparts[original]?.accountName, "Refund test")
+        XCTAssertEqual(data.counterparts[original]?.currency, "EUR")
+        let reverseKey = RefundLoadKey(vaultRevision: model.vaultRevision, bookingID: original,
+            ownPart: "", revision: model.refundRevision)
+        let reverse = try await model.refundCard(for: reverseKey)
+        XCTAssertEqual(reverse?.counterparts[refund]?.id, refund)
+        await model.unlinkRefund(pair())
+        try await settle()
+        let stale = try await model.refundCard(for: key)
+        XCTAssertNil(stale)
+        let emptyKey = RefundLoadKey(vaultRevision: model.vaultRevision, bookingID: original,
+            ownPart: "", revision: model.refundRevision)
+        let empty = try await model.refundCard(for: emptyKey)
+        XCTAssertEqual(empty?.links.count, 0)
+    }
+
     func testNegativeReverseAssignment() async throws {
         let reverse = RefundEndpointPair(bookingID: original, ownPart: "", paysBack: false,
             candidate: candidate(refund, cents: 10000, open: 10000))

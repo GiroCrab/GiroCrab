@@ -32194,6 +32194,17 @@
         }
       }
     },
+    "Verknüpfte Buchung anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show linked transaction"
+          }
+        }
+      }
+    },
     "Verknüpfte Buchungen" : {
       "localizations" : {
         "de" : {

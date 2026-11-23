@@ -33,7 +33,25 @@ struct RefundLinksCard: View {
             if let loaded, loaded.key == key {
                 ForEach(loaded.data.links, id: \.self) { link in
                     HStack(alignment: .top) {
-                        RefundLinkSummary(link: link, paysBack: link.refundId == booking.id, currency: booking.currency)
+                        let id = link.refundId == booking.id ? link.originalId : link.refundId
+                        if let counterpart = loaded.data.counterparts[id] {
+                            Button { model.revealBooking(id) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(counterpart.merchantName.isEmpty ? counterpart.counterparty : counterpart.merchantName)
+                                        .appFont(.body).sensitive(.personal)
+                                    Text(counterpart.bookingDate).appFont(.caption)
+                                    Text(counterpart.accountName)
+                                        .appFont(.caption).sensitive(.personal)
+                                    let part = link.refundId == booking.id ? link.originalPart : link.refundPart
+                                    if !part.isEmpty {
+                                        Text(link.refundId == booking.id ? link.originalLabel : link.refundLabel)
+                                            .appFont(.caption).sensitive([.personal, .labels, .amounts])
+                                    }
+                                    Text(Money.format(link.allocatedCents, currency: counterpart.currency))
+                                        .appFont(.caption, monospacedDigit: true).sensitive(.amounts)
+                                }
+                            }.buttonStyle(.plain).help("Verknüpfte Buchung anzeigen")
+                        }
                         Spacer()
                         Button("Verknüpfung aufheben", systemImage: "xmark") {
                             Task { await model.unlinkRefund(RefundEndpointPair(link)) }

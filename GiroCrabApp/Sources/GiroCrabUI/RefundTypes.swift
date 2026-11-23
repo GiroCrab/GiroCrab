@@ -78,4 +78,5 @@ struct RefundPickerState {
 
 struct RefundCardSnapshot {
     let links: [RefundLink]
+    let counterparts: [Int64: Booking]
 }
