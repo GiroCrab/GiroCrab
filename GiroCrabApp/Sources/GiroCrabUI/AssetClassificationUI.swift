@@ -152,7 +152,8 @@ enum LiquidityGrade: Int, CaseIterable {
     var group: WealthGroup { WealthGroup(key: "liquidity:\(rawValue)", title: title, order: rawValue, unclassified: false) }
 
     /// The grade of an account's money; nil where its positions decide (depot) or it is a debt (loan).
-    /// A Sparbuch with notice period cannot be told from Tagesgeld and counts as at hand.
+    /// A Sparbuch with notice period cannot be told from Tagesgeld and counts as at hand. A loan's
+    /// rare credit (overpaid) is shown like card credit: as cash, so at hand.
     static func of(_ kind: AccountKind) -> Self? {
         switch kind {
         case .checking, .savings, .paymentService, .creditCard, .cash: .immediate
@@ -163,9 +164,11 @@ enum LiquidityGrade: Int, CaseIterable {
         }
     }
     /// One position. Securities sell within days (with price risk), money-market funds are cash;
-    /// Sachwerte and directly held property take a long sale. Directly held crypto sells like a security.
+    /// Sachwerte and directly held property take a long sale. Crypto sells within days wherever it
+    /// is kept (depot, wallet, a Sachwert classified as crypto).
     static func of(_ c: AssetClassification, tangible: Bool) -> Self {
-        if tangible || c.isTangible || (c.instrument == .directHolding && c.assetClass != .crypto) { return .illiquid }
+        if c.assetClass == .crypto { return .shortTerm }
+        if tangible || c.isTangible || c.instrument == .directHolding { return .illiquid }
         return c.assetClass == .cash ? .immediate : .shortTerm
     }
 }

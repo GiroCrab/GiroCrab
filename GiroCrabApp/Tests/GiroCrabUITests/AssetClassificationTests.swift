@@ -196,6 +196,8 @@ import GiroCrabCore
         XCTAssertEqual(LiquidityGrade.of(c(.realEstate, .directHolding), tangible: false), .illiquid)
         XCTAssertEqual(LiquidityGrade.of(c(.crypto, .directHolding), tangible: false), .shortTerm)
         XCTAssertEqual(LiquidityGrade.of(c(.commodity, .directHolding, key: "asset:1"), tangible: false), .illiquid)
+        // crypto sells within days wherever it is kept, also as a Sachwert
+        XCTAssertEqual(LiquidityGrade.of(c(.crypto, .directHolding, key: "asset:2"), tangible: true), .shortTerm)
         // the remainder of a Sachwerte account has no position, its tab decides
         XCTAssertEqual(LiquidityGrade.of(c(.unclassified, .unclassified, key: ""), tangible: true), .illiquid)
     }
@@ -208,17 +210,19 @@ import GiroCrabCore
         }
         var checking = try account(.checking, 1000), fixed = try account(.timeDeposit, 2000), bauspar = try account(.buildingSavings, 4000)
         var card = try account(.creditCard, 50), depot = try account(.brokerage, 30000)
-        checking.id = 1; fixed.id = 2; bauspar.id = 3; card.id = 4; depot.id = 5
+        // an overpaid loan: credit like a card's, at hand
+        var loan = try account(.loan, 20)
+        checking.id = 1; fixed.id = 2; bauspar.id = 3; card.id = 4; depot.id = 5; loan.id = 6
         func holding(_ name: String, _ cents: Int64, _ asset: AssetClass) -> ClassifiedAsset {
             ClassifiedAsset(holding: Holding(isin: "DE\(name)", wkn: "", name: name, quantity: 1, currentPriceCents: cents, purchasePriceCents: cents, valueCents: cents),
                             classification: AssetClassification(securityKey: "isin:DE\(name)", assetClass: asset, assetClassSource: .rule, instrument: .etf, instrumentSource: .rule),
                             assetItemId: nil)
         }
-        let summary = WealthSummary(accounts: [checking, fixed, bauspar, card, depot])
+        let summary = WealthSummary(accounts: [checking, fixed, bauspar, card, depot, loan])
         let rows = WealthClassRow.make(summary, assets: [depot.id: [holding("Geldmarkt", 10000, .cash), holding("Welt", 20000, .equity)]])
         func total(_ grade: LiquidityGrade) -> Int64 { rows.filter { $0.group(by: .liquidity) == grade.group }.reduce(0) { $0 + $1.cents } }
         // the depot lands on two grades; the positive card balance is at hand
-        XCTAssertEqual(total(.immediate), 1000 + 50 + 10000)
+        XCTAssertEqual(total(.immediate), 1000 + 50 + 20 + 10000)
         XCTAssertEqual(total(.shortTerm), 2000 + 20000)
         XCTAssertEqual(total(.longTerm), 4000)
         XCTAssertEqual(total(.illiquid), 0)
