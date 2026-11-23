@@ -13,7 +13,7 @@ final class SymbolCatalogTests: XCTestCase {
         // All of these exist from macOS 14 / iOS 17 (the deployment target).
         for symbol in ["heart.circle", "pianokeys", "guitars", "play.tv", "dog", "cat", "fish",
                        "chevron.left.forwardslash.chevron.right", "checkmark.seal", "shippingbox",
-                       "suitcase.rolling"] {
+                       "suitcase.rolling", "list.clipboard", "chair.lounge", "divide.circle"] {
             XCTAssertTrue(SymbolCatalog.isListed(symbol), symbol)
         }
     }
