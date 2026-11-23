@@ -667,6 +667,22 @@ fn split_transactions(items: &[Value], account_ref: &str) -> Vec<RemoteTransacti
 }
 
 impl EnableBankingConnector {
+    /// Kind of a bank (non-card) account. PayPal is a payment service, as
+    /// with its own API and in imported data; reported as a current account it
+    /// would never take over the imported PayPal account (#834).
+    fn bank_account_kind(&self, acc: &EbAccount) -> AccountKind {
+        let bank = if self.st.aspsp_name.is_empty() {
+            &self.aspsp_default
+        } else {
+            &self.st.aspsp_name
+        };
+        if bank.trim().eq_ignore_ascii_case("PayPal") {
+            AccountKind::PaymentService
+        } else {
+            kind_of(acc)
+        }
+    }
+
     pub fn new(
         aspsp_setting: &'static str,
         aspsp_default: &'static str,
@@ -957,7 +973,7 @@ impl EnableBankingConnector {
             iban: acc.iban.clone(),
             account_number: acc.account_number.clone(),
             currency: acc.currency.clone(),
-            kind: kind_of(acc),
+            kind: self.bank_account_kind(acc),
             balance_cents,
             balance_date: ref_date.unwrap_or_else(super::today),
         });
@@ -2036,6 +2052,20 @@ mod tests {
             AccountKind::CreditCard
         );
         assert_eq!(kind_of(&acc("SVGS", "")), AccountKind::Savings);
+    }
+
+    #[test]
+    fn paypal_accounts_are_payment_services() {
+        // #834: as with PayPal's own API and in imported data, so the first
+        // fetch takes over the imported PayPal account
+        let a = EbAccount {
+            cash_account_type: "CACC".into(),
+            ..Default::default()
+        };
+        let paypal = EnableBankingConnector::for_aspsp("PayPal", "DE");
+        assert_eq!(paypal.bank_account_kind(&a), AccountKind::PaymentService);
+        let other = EnableBankingConnector::for_aspsp("C24", "DE");
+        assert_eq!(other.bank_account_kind(&a), AccountKind::Checking);
     }
 
     #[test]
