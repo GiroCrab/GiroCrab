@@ -1,7 +1,7 @@
 import QtQuick
 
 // SidebarView.swift › DropSlot + GroupDrag: a sidebar row that can be dragged
-// (account or user group) and that accepts drops above / below it or into a group.
+// (account, user group or category, #977) and that accepts drops above / below it or into it.
 // The drag state lives in AppModel (dragPayload, dragScenePos, dropLine).
 Item {
     id: slot
@@ -10,8 +10,12 @@ Item {
     property string intoKey: key
     property real inset: 0
     property real freeLeading: 0
-    /// What dragging this row carries: { type: "account", id } | { type: "group", uuid } | null.
+    /// What dragging this row carries: { type: "account", id } | { type: "group", uuid }
+    /// | { type: "category", id } (#977) | null.
     property var payload: null
+    /// Payload types this row marks and takes (DropSlot.acceptsDrag): account and group rows
+    /// take accounts and groups, category rows only categories.
+    property var accepts: ["account", "group"]
     /// (half, dragged payload) → "above" | "below" | "into" | null
     property var edgeFor: (half, p) => half
     signal perform(var payload, string edge)
@@ -34,7 +38,8 @@ Item {
         keys: ["girocrab-sidebar"]
         function update(y) {
             const half = y < height / 2 ? "above" : "below"
-            const edge = AppModel.dragPayload ? slot.edgeFor(half, AppModel.dragPayload) : null
+            const p = AppModel.dragPayload
+            const edge = p && slot.accepts.indexOf(p.type) >= 0 ? slot.edgeFor(half, p) : null
             AppModel.dropLine = edge ? { key: edge === "into" ? slot.intoKey : slot.key, edge: edge, zone: slot.key } : null
         }
         onEntered: d => update(d.y)
