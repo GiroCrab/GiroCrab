@@ -2565,6 +2565,21 @@ mod list_cache_tests {
     }
 
     #[test]
+    fn imported_moneymoney_security_purchases_are_investments_on_read() {
+        let (_dir, v, ids) = vault_with(&[
+            ("Unbekanntes Wertpapier", -250_00, "Kauf", Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage")),
+            ("Supermarkt", -40_00, "Einkauf", Some("Ausgaben/Lebensmittel")),
+            ("Tagesgeld", -75_00, "Sparen", Some("Ausgaben/Sparen & Anlegen/Tagesgeld")),
+        ]);
+        assert_eq!(flow_of(&v, ids[0]), FlowKind::Investment);
+        assert_eq!(flow_of(&v, ids[1]), FlowKind::Consumption);
+        assert_eq!(flow_of(&v, ids[2]), FlowKind::Consumption);
+        let page = v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!(page.investment_cents, -250_00);
+        assert_eq!(page.consumption_cents, -115_00);
+    }
+
+    #[test]
     fn moneymoney_security_purchase_category_is_specific() {
         assert!(super::is_imported_security_purchase_category(
             "Ausgaben › Sparen & Anlegen › Wertpapieranlage"
