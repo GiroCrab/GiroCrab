@@ -27,6 +27,7 @@ use crate::{
     KpiTile, MainWindow, RuleItem, ShareBar, SideRow, TableRow, german_date, hex_color, money,
     privacy_on, with_state,
 };
+pub(crate) mod doc_connections;
 
 type VaultSlot = Arc<Mutex<Option<Arc<Vault>>>>;
 
@@ -74,6 +75,8 @@ struct Ui {
     /// Unread document ids of the shown Belege list ("Alle als gelesen markieren").
     doc_unread: Vec<i64>,
     selected_doc: Option<i64>,
+    /// The bank connection filter was reset in this session (false again after lock).
+    doc_filter_set: bool,
     link_ids: Vec<i64>,
     rules: Vec<Rule>,
     rule_categories: Vec<Category>,
@@ -89,6 +92,7 @@ impl Ui {
     }
 
     fn reset_for_lock(&mut self) {
+        doc_connections::clear();
         let model = self.side_model.take();
         let generation = self.generation.wrapping_add(1);
         let lock_generation = self.lock_generation.wrapping_add(1);
@@ -411,10 +415,13 @@ fn load(
             .map(Loaded::Planned)
             .map_err(e),
         Target::Mandates => vault.list_mandates(None).map(Loaded::Mandates).map_err(e),
-        Target::Documents => vault
-            .list_all_documents(DocumentFilter::default())
-            .map(Loaded::Documents)
-            .map_err(e),
+        Target::Documents => {
+            let docs = vault
+                .list_all_documents(DocumentFilter::default())
+                .map_err(e)?;
+            doc_connections::refresh(vault)?;
+            Ok(Loaded::Documents(docs))
+        }
         _ => Err("Keine Ansicht für diese Auswahl.".into()),
     }
 }
@@ -570,9 +577,39 @@ pub fn render_view(win: &MainWindow) {
         }
         MODE_DOCUMENTS => {
             win.set_view_title("Belege & Postbox".into());
+            if !with_ui(|u| std::mem::replace(&mut u.doc_filter_set, true)) {
+                win.set_doc_connection_index(0);
+            }
+            let view = doc_connections::view(win.get_doc_connection_index().max(0) as usize);
+            let last = view.names.len().saturating_sub(1);
+            let conn_names: Vec<SharedString> = view
+                .names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    if i == 0 || i == last {
+                        SharedString::from(n.as_str())
+                    } else {
+                        SharedString::from(mask(n, privacy))
+                    }
+                })
+                .collect();
+            win.set_doc_connections(ModelRc::new(VecModel::from(conn_names)));
+            win.set_doc_connection_index(view.index as i32);
+            win.set_doc_fetch_shown(view.toggle.is_some());
+            win.set_doc_fetch_on(view.toggle.unwrap_or(false));
             let (rows, accounts) = with_ui(|u| {
+                let shown: HashSet<i64> = u
+                    .docs
+                    .iter()
+                    .filter(|d| view.keeps(d.id, d.account_id.is_some()))
+                    .map(|d| d.id)
+                    .collect();
                 (
-                    lists::document_rows(&u.docs, &date),
+                    lists::document_rows(&u.docs, &date)
+                        .into_iter()
+                        .filter(|r| shown.contains(&r.id))
+                        .collect::<Vec<_>>(),
                     u.accounts
                         .iter()
                         .filter(|a| a.archived_unix.is_none())

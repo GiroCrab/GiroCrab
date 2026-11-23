@@ -276,6 +276,29 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
 fn wire_open(win: &MainWindow) {
     let gs = win.global::<SettingsImportState>();
 
+    // Belege & Postbox: switches the document retrieval of the connection shown there (#954).
+    let weak = win.as_weak();
+    win.on_doc_fetch_toggled(move |on| {
+        let Some(win) = weak.upgrade() else {
+            return;
+        };
+        // Show the stored state until the vault confirmed the change.
+        win.set_doc_fetch_on(!on);
+        let target = crate::views_ui::doc_connections::toggle_target();
+        let (Some(id), Some(v)) = (target, vault_now()) else {
+            return;
+        };
+        spawn(
+            &win,
+            "Wird gespeichert …",
+            move || v.set_documents_fetch(id, on).map_err(|e| e.to_string()),
+            move |win, ()| {
+                crate::views_ui::doc_connections::set_enabled(id, on);
+                win.set_doc_fetch_on(on);
+            },
+        );
+    });
+
     let weak = win.as_weak();
     gs.on_request(move || {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_now()) else {

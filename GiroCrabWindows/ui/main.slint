@@ -804,6 +804,12 @@ export component MainWindow inherits Window {
     callback side-controls-changed();
     // 0 = bookings, 1 = depot / Sachwerte, 2 = Vermögen, 3 = Geplant, 4 = Lastschriften, 5 = Belege
     in property <int> view-mode: 0;
+    // Belege & Postbox: bank connection filter and document retrieval switch (#954, #1042)
+    in-out property <[string]> doc-connections;
+    in-out property <int> doc-connection-index;
+    in-out property <bool> doc-fetch-shown;
+    in-out property <bool> doc-fetch-on;
+    callback doc-fetch-toggled(bool);
     in property <string> view-title;
     in property <string> view-total;
     in property <string> view-note;
@@ -1631,6 +1637,25 @@ export component MainWindow inherits Window {
                     }
                 }
                 if root.view-note != "": Text { text: root.view-note; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                if root.view-mode == 5 && (root.doc-connections.length > 0 || root.doc-fetch-shown): HorizontalLayout {
+                    spacing: 8px;
+                    if root.doc-connections.length > 0: VerticalLayout {
+                        alignment: center;
+                        ComboBox {
+                            width: 190px;
+                            model: root.doc-connections;
+                            current-index <=> root.doc-connection-index;
+                            selected => { root.docs-filter-changed(); }
+                        }
+                    }
+                    if root.doc-fetch-shown: CheckBox {
+                        text: "Dokumente abrufen";
+                        enabled: !root.busy;
+                        checked <=> root.doc-fetch-on;
+                        toggled => { root.doc-fetch-toggled(self.checked); }
+                    }
+                    Rectangle { horizontal-stretch: 2; }
+                }
                 if root.view-mode == 2: HorizontalLayout {
                     spacing: 6px;
                     for label[i] in ["Alles", "Cash", "Wertpapiere", "Sachwerte"]: SegButton {
