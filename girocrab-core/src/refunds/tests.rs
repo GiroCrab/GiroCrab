@@ -1328,13 +1328,17 @@ mod review_round2 {
         for v in [&a, &b] {
             sql(
                 v,
-                "UPDATE refund_links SET created_ms=100,changed_ms=200,deleted_ms=CASE WHEN deleted_ms IS NULL THEN NULL ELSE 200 END",
+                "UPDATE refund_links SET created_ms=100,
+                 changed_ms=CASE WHEN deleted_ms IS NOT NULL AND moved=0 THEN 199 ELSE 200 END,
+                 deleted_ms=CASE WHEN deleted_ms IS NULL THEN NULL WHEN moved=0 THEN 199 ELSE 200 END",
             );
         }
         let source_key = |v: &Vault, target| {
             v.db().unwrap().query_row("SELECT moved_from_key FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",[target],|r|r.get::<_,String>(0)).unwrap()
         };
-        let expected = source_key(&a, at).max(source_key(&b, bt));
+        let (a_source, b_source) = (source_key(&a, at), source_key(&b, bt));
+        assert_ne!(a_source, b_source);
+        let expected = a_source.max(b_source);
         let left = vault();
         let right = vault();
         merge(&left, &a);
@@ -1342,14 +1346,16 @@ mod review_round2 {
         merge(&right, &b);
         merge(&right, &a);
         assert_eq!(canonical(&left), canonical(&right));
-        assert_eq!(source_key(&left, peer_id(&left, &base, target)), expected);
-        assert_eq!(
-            live(&left, peer_id(&left, &base, r))
-                .iter()
-                .map(|a| a.2)
-                .sum::<i64>(),
-            2000
-        );
+        for v in [&left, &right] {
+            assert_eq!(source_key(v, peer_id(v, &base, target)), expected);
+            assert_eq!(
+                live(v, peer_id(v, &base, r))
+                    .iter()
+                    .map(|a| a.2)
+                    .sum::<i64>(),
+                2000
+            );
+        }
         assert!(!a.refund_links(ar).unwrap()[0].inactive);
     }
 
