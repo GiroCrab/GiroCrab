@@ -1993,6 +1993,23 @@ export component MainWindow inherits Window {
         }
     }
 
+    if refunds-open: Dialog {
+        dialog-width: 680px;
+        RefundsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent;
+            english: root.rf-english; privacy: root.privacy; from-refund: root.rf-from-refund;
+            booking-title: root.rf-title; booking-amount: root.rf-amount; sums: root.rf-sums; status: root.rf-status;
+            loading: root.rf-loading; pending: root.rf-edit-pending; can-undo: root.rf-can-undo;
+            parts: root.rf-parts; part-index <=> root.rf-part-index; rows: root.rf-rows;
+            part-picked(i) => { root.refund-part-picked(i); }
+            search(t) => { root.refund-search(t); }
+            toggle(i) => { root.refund-toggle(i); }
+            undo-unlink() => { root.refund-undo-unlink(); }
+            close() => { root.refund-close(); }
+            privacy-toggle() => { root.privacy = !root.privacy; root.privacy-changed(); }
+        }
+    }
+
     // ---- SEPA transfer dialog (overlay)
     if transfer-open: Rectangle {
         background: #00000088;
@@ -2345,22 +2362,6 @@ export component MainWindow inherits Window {
             save() => { root.split-save(); }
             remove-split() => { root.split-clear(); }
             close() => { root.splits-open = false; root.refocus(); }
-        }
-    }
-    if refunds-open: Dialog {
-        dialog-width: 680px;
-        RefundsPanel {
-            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent;
-            english: root.rf-english; privacy: root.privacy; from-refund: root.rf-from-refund;
-            booking-title: root.rf-title; booking-amount: root.rf-amount; sums: root.rf-sums; status: root.rf-status;
-            loading: root.rf-loading; pending: root.rf-edit-pending; can-undo: root.rf-can-undo;
-            parts: root.rf-parts; part-index <=> root.rf-part-index; rows: root.rf-rows;
-            part-picked(i) => { root.refund-part-picked(i); }
-            search(t) => { root.refund-search(t); }
-            toggle(i) => { root.refund-toggle(i); }
-            undo-unlink() => { root.refund-undo-unlink(); }
-            close() => { root.refund-close(); }
-            privacy-toggle() => { root.privacy = !root.privacy; root.privacy-changed(); }
         }
     }
     if budgets-open: Dialog {

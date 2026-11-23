@@ -69,6 +69,7 @@ struct Ui {
     loaded: Option<Loaded>,
     actions: Vec<Option<Edit>>,
     undo: Option<(Pair, i64)>,
+    edit_error: String,
 }
 
 impl Ui {
@@ -79,6 +80,11 @@ impl Ui {
         self.request = self.request.wrapping_add(1);
         self.loaded = None;
         self.actions.clear();
+    }
+    fn edit_failed(&mut self, error: String) {
+        self.invalidate();
+        self.undo = None;
+        self.edit_error = error;
     }
 }
 
@@ -97,6 +103,11 @@ pub fn can_open(amount: i64, splits: u32) -> bool {
 }
 
 thread_local! { static CARD_REQUEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+thread_local! { static REVEAL_REQUEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+pub fn cancel_reveal() {
+    REVEAL_REQUEST.with(|r| r.set(r.get().wrapping_add(1)));
+}
 
 fn card_filter(v: &Vault, id: i64, links: &[RefundLink]) -> Result<Option<BookingFilter>, String> {
     let ids: std::collections::BTreeSet<_> = links
@@ -536,7 +547,7 @@ pub fn refresh(win: &MainWindow, v: Arc<Vault>) {
     };
     clear(win);
     win.set_rf_loading(true);
-    win.set_rf_status(SharedString::new());
+    win.set_rf_status(with_ui(|u| u.edit_error.clone()).into());
     let weak = win.as_weak();
     std::thread::spawn(move || {
         let result = load(&v, book, &own, &query);
@@ -573,6 +584,7 @@ fn open(win: &MainWindow, v: Arc<Vault>, book: i64) {
         u.part.clear();
         u.query.clear();
         u.undo = None;
+        u.edit_error.clear();
     });
     win.set_rf_english(english());
     win.set_refunds_open(true);
@@ -640,6 +652,7 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
             return None;
         }
         u.pending = true;
+        u.edit_error.clear();
         u.operation = u.operation.wrapping_add(1);
         u.invalidate();
         Some((u.operation, u.dialog, u.session))
@@ -676,10 +689,8 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
                         refresh(&win, v);
                         return;
                     }
-                    with_ui(|u| u.invalidate());
-                    win.set_rf_loading(false);
-                    clear(&win);
-                    win.set_rf_status(e.into());
+                    with_ui(|u| u.edit_failed(e));
+                    refresh(&win, v);
                 }
             }
         });
@@ -705,8 +716,7 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
         let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
             return;
         };
-        let generation = with_state(|s| s.generation);
-        let request = CARD_REQUEST.with(|r| {
+        let request = REVEAL_REQUEST.with(|r| {
             r.set(r.get().wrapping_add(1));
             r.get()
         });
@@ -714,10 +724,7 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
         std::thread::spawn(move || {
             let result = reveal_count(&v, i64::from(id));
             let _ = weak.upgrade_in_event_loop(move |win| {
-                if !is_current(&v)
-                    || CARD_REQUEST.with(|r| r.get()) != request
-                    || with_state(|s| s.generation) != generation
-                {
+                if !is_current(&v) || REVEAL_REQUEST.with(|r| r.get()) != request {
                     return;
                 }
                 match result {
@@ -955,6 +962,46 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn refund_overlay_stays_below_transfer_and_tan_prompts() {
+        let source = include_str!("../ui/main.slint");
+        let refund = source.find("if refunds-open: Dialog").unwrap();
+        let transfer = source.find("if transfer-open: Rectangle").unwrap();
+        let tan = source.find("if tan-open: Rectangle").unwrap();
+        assert!(refund < transfer && transfer < tan);
+    }
+
+    #[test]
+    fn failed_edits_keep_the_error_during_reload_and_discard_stale_undo() {
+        let mut ui = Ui {
+            undo: Some((
+                Pair {
+                    refund: 1,
+                    refund_part: String::new(),
+                    original: 2,
+                    original_part: String::new(),
+                },
+                10,
+            )),
+            ..Default::default()
+        };
+        ui.edit_failed("stale token".into());
+        ui.invalidate();
+        assert_eq!(ui.edit_error, "stale token");
+        assert!(ui.undo.is_none());
+        assert!(ui.loaded.is_none());
+    }
+
+    #[test]
+    fn reveal_intent_is_independent_of_sidebar_reload_requests() {
+        cancel_reveal();
+        let request = REVEAL_REQUEST.with(|r| r.get());
+        CARD_REQUEST.with(|r| r.set(r.get().wrapping_add(1)));
+        assert_eq!(REVEAL_REQUEST.with(|r| r.get()), request);
+        cancel_reveal();
+        assert_ne!(REVEAL_REQUEST.with(|r| r.get()), request);
+    }
 
     struct Temp(PathBuf);
     impl Drop for Temp {

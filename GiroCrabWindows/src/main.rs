@@ -786,6 +786,7 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
 
 /// Re-applies the filter bar to the cached rows (no vault access) and redraws.
 fn apply_filter(win: &MainWindow) {
+    refunds_ui::cancel_reveal();
     with_state(|st| {
         st.filter = Filter {
             search: win.get_search_text().to_string(),
@@ -1281,6 +1282,8 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     if with_state(|st| !std::ptr::eq(st.vault.as_ptr(), Arc::as_ptr(vault))) {
         with_state(|st| {
             st.vault = Arc::downgrade(vault);
+            st.reveal_limit = 0;
+            st.selected_booking = None;
             st.monthly = None;
             st.analytics_generation += 1;
             st.dashboard_generation += 1;
@@ -2020,6 +2023,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = win.as_weak();
         win.on_select_booking(move |id| {
             let Some(win) = weak.upgrade() else { return };
+            refunds_ui::cancel_reveal();
             with_state(|st| st.selected_booking = Some(id as i64));
             render_booking_rows(&win);
         });
