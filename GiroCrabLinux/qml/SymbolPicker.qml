@@ -20,7 +20,7 @@ Rectangle {
         { title: qsTr("Finanzen"), items: [
             i("banknote", qsTr("Geld")), i("creditcard", qsTr("Kreditkarte")), i("eurosign.circle", qsTr("Bargeld")),
             i("dollarsign.circle", qsTr("Dollar")), i("building.columns", qsTr("Bank")), i("envelope.circle", qsTr("Bezahldienst")), i("wallet.bifold", qsTr("Geldbörse")),
-            i("chart.pie", qsTr("Vermögen")), i("chart.line.uptrend.xyaxis", qsTr("Depot")), i("percent", qsTr("Zinsen")),
+            i("chart.pie", qsTr("Vermögen")), i("chart.line.uptrend.xyaxis", qsTr("Depot")), i("percent", qsTr("Zinsen")), i("list.clipboard", qsTr("Steuern")), i("chair.lounge", qsTr("Rente")),
             i("bitcoinsign.circle", qsTr("Krypto")), i("giftcard", qsTr("Gutschein")), i("arrow.left.arrow.right", qsTr("Umbuchung")),
             i("lock.shield", qsTr("Sicherheit")), i("doc.text", qsTr("Vertrag")), i("building.2", qsTr("Firma")) ] },
         { title: qsTr("Haushalt"), items: [
@@ -28,7 +28,7 @@ Rectangle {
             i("fork.knife", qsTr("Essen")), i("cup.and.saucer", qsTr("Café")), i("lightbulb", qsTr("Strom")), i("flame", qsTr("Heizung")),
             i("drop", qsTr("Wasser")), i("wifi", qsTr("Internet")), i("phone", qsTr("Telefon")), i("tv", qsTr("Fernsehen")),
             i("sofa", qsTr("Möbel")), i("washer", qsTr("Waschmaschine")), i("wrench.and.screwdriver", qsTr("Reparatur")),
-            i("leaf", qsTr("Garten")), i("trash", qsTr("Müll")) ] },
+            i("leaf", qsTr("Garten")), i("trash", qsTr("Müll")), i("divide.circle", qsTr("Umlagen")) ] },
         { title: qsTr("Mobilität"), items: [
             i("car", qsTr("Auto")), i("fuelpump", qsTr("Tanken")), i("bolt.car", qsTr("Elektroauto")), i("bus", qsTr("Bus")),
             i("tram", qsTr("Straßenbahn")), i("train.side.front.car", qsTr("Zug")), i("bicycle", qsTr("Fahrrad")),

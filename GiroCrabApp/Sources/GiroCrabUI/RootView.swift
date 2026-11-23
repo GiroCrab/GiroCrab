@@ -721,6 +721,7 @@ struct MainSplitView: View {
                 else if c.connector == .fnz { FnzWebSheet(connection: c) }
                 else if c.connector == .equatePlus { EquatePlusWebSheet(connection: c) }
                 else if c.connector == .quirion { QuirionWebSheet(connection: c) }
+                else if c.connector == .sharinbox { SharinboxWebSheet(connection: c) }
                 else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
             }

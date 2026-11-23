@@ -661,6 +661,7 @@ ios_pipeline() {
     scripts/fints-registrierung.sh check-app "$IOS_APP"
   fi
 
+  python3 scripts/gen-testflight-notes.py "${NEXT_BUILD}" "${IOS_MARKETING_VERSION}"
   if [ -d "GiroCrabApp/TestFlight" ]; then
     mkdir -p "$IOS_ARCHIVE/TestFlight"
     cp -f GiroCrabApp/TestFlight/WhatToTest.*.txt "$IOS_ARCHIVE/TestFlight/" 2>/dev/null || true
