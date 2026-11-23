@@ -434,6 +434,19 @@ fn english(de: &str) -> Option<&'static str> {
             "Sharinbox: document {0} rejected, field {1} invalid."
         }
         "Mitarbeiteraktien" => "Employee shares",
+        "Weindepot" => "Wine depot",
+        "Berghaus: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "Berghaus & Cie: Incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte bei Berghaus & Cie im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to Berghaus & Cie in the browser window and fetch your data."
+        }
+        "Bitte bei Berghaus & Cie im Browserfenster abrufen." => {
+            "Please fetch your data in the Berghaus & Cie browser window."
+        }
+        "Berghaus & Cie: Weindepot mit Flaschen, Einstandspreis und aktueller Bewertung als Depotpositionen. Anmeldung im Browserfenster mit E-Mail und Passwort. Interne Portal-Schnittstelle; Änderungen sind möglich." => {
+            "Berghaus & Cie: wine depot with bottles, purchase price and current valuation as depot positions. Sign in in the browser window with e-mail and password. Internal portal interface; subject to change."
+        }
         "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
             "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }

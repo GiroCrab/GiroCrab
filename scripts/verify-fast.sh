@@ -76,7 +76,7 @@ if touched '^(scripts|tools)/.*\.py$'; then
 fi
 if touched '^scripts/test-.*\.cjs$|portal'; then
   if command -v node >/dev/null; then
-    run "portal script tests" node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-sharinbox-portal.cjs scripts/test-schwaebisch-hall-portal.cjs scripts/test-advanzia-portal.cjs
+    run "portal script tests" node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-sharinbox-portal.cjs scripts/test-berghauscie-portal.cjs scripts/test-schwaebisch-hall-portal.cjs scripts/test-advanzia-portal.cjs
   else skip "portal script tests" "node missing"; fi
 fi
 if [ "$linux" = true ]; then

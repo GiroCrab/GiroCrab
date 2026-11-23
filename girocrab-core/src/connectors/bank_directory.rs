@@ -232,6 +232,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "sharinbox societe generale société générale sgmarkets mitarbeiteraktien employee shares aktien arbeitgeber",
         ),
         (
+            ConnectorKind::BerghausCie,
+            "Berghaus & Cie (Weindepot)",
+            "berghaus berghauscie cie wein weine weindepot weininvestment wine fine wine",
+        ),
+        (
             ConnectorKind::SchwaebischHall,
             "Schwäbisch Hall",
             "schwaebisch bsh bausparvertrag bauspar",
