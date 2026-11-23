@@ -24218,6 +24218,17 @@
         }
       }
     },
+    "Nicht alle Buchungen konnten ausgewählt werden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not all transactions could be selected"
+          }
+        }
+      }
+    },
     "Nicht alle Karten ließen sich öffnen – übernommen werden die bisher geladenen Karten." : {
       "extractionState" : "manual",
       "localizations" : {

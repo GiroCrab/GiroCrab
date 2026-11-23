@@ -266,11 +266,22 @@ extension AppModel {
     var hasMoreBookings: Bool {
         // the previous selection's page may still show during a selection load
         guard selectionLoadTask == nil, let total = page?.totalCount else { return false }
-        return UInt32(bookings.count) < total
+        return UInt32(loadedMatchingCount) < total
     }
 
     var remainingBookingCount: Int {
-        max(0, Int(page?.totalCount ?? 0) - bookings.count)
+        max(0, Int(page?.totalCount ?? 0) - loadedMatchingCount)
+    }
+
+    /// The lingering row, when it is on screen without matching the filter.
+    var lingeringRowOutsideFilterID: Booking.ID? {
+        guard lingeringRowOutsideFilter, let id = lingeringBookingID, booking(withID: id) != nil else { return nil }
+        return id
+    }
+
+    /// Loaded bookings that match the filter: the core's offset counts only those.
+    var loadedMatchingCount: Int {
+        bookings.count - (lingeringRowOutsideFilterID == nil ? 0 : 1)
     }
 
     /// Fetches the next page off the main thread and appends it. Nothing loaded
@@ -280,28 +291,34 @@ extension AppModel {
         appendBookings(limit: appendPageSize)
     }
 
-    /// Appends up to `limit` further bookings in the background, then runs `done`
-    /// (only when the page belongs to the list still on screen). False: nothing to fetch.
+    /// Appends up to `limit` further bookings in the background, then runs `done` with
+    /// the error, if any (only when the page belongs to the list still on screen).
+    /// False: nothing to fetch.
     @discardableResult
-    func appendBookings(limit: UInt32, then done: (@MainActor () -> Void)? = nil) -> Bool {
+    func appendBookings(limit: UInt32, then done: (@MainActor (Error?) -> Void)? = nil) -> Bool {
         guard let vault, hasMoreBookings, selectionLoadTask == nil else { return false }
         // a page still on its way would only fetch part of the rest again
         loadMoreTask?.cancel()
         var next = listFilter
-        next.offset = UInt32(bookings.count)
+        next.offset = UInt32(loadedMatchingCount)
         next.limit = limit
         let filter = next
         let generation = listGeneration
         isLoadingMoreBookings = true
         loadMoreTask = Task { [weak self] in
-            let next = try? await Self.offMain {
-                try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
+            let result: Result<BookingPage, Error>
+            do {
+                result = .success(try await Self.offMain {
+                    try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
+                })
+            } catch {
+                result = .failure(error)
             }
             // A full reload in the meantime has replaced the list this page belongs to.
             guard let self, !Task.isCancelled, generation == self.listGeneration else { return }
             self.loadMoreTask = nil
             self.isLoadingMoreBookings = false
-            if let next, !next.transactions.isEmpty {
+            if case .success(let next) = result, !next.transactions.isEmpty {
                 Perf.interval("publishBookings") {
                     self.listBalances.merge(next)
                     self.bookings.append(contentsOf: next.transactions)
@@ -309,7 +326,7 @@ extension AppModel {
                 // an edit reloads exactly what is on screen
                 self.listLimit = UInt32(self.bookings.count)
             }
-            done?()
+            if case .failure(let error) = result { done?(error) } else { done?(nil) }
         }
         return true
     }
@@ -663,9 +680,11 @@ extension AppModel {
     /// The lingering booking (checked while selected) at its old place in a
     /// new page that no longer contains it: before the row that followed it.
     private func keepingLingeringRow(_ rows: [Booking]) -> [Booking] {
+        lingeringRowOutsideFilter = false
         guard let id = lingeringBookingID, let kept = stickyBooking, kept.id == id,
               !rows.contains(where: { $0.id == id }),
               let old = bookings.firstIndex(where: { $0.id == id }) else { return rows }
+        lingeringRowOutsideFilter = true
         let ids = Set(rows.map(\.id))
         let next = bookings[(old + 1)...].first { ids.contains($0.id) }
         var out = rows

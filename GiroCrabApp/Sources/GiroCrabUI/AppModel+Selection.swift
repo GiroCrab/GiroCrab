@@ -91,22 +91,33 @@ extension AppModel {
     /// filter, not only the loaded pages (#1696). The rest loads in the background first,
     /// so count, sum and every action on the selection cover all of them.
     func selectAllBookings() {
+        // the previous list may still show while the new one loads: never select its rows
+        guard selectionLoadTask == nil else { return }
         if hasMoreBookings {
             guard !isSelectingAllBookings else { return }
             isSelectingAllBookings = true
-            let started = appendBookings(limit: UInt32(remainingBookingCount)) { [weak self] in
+            let started = appendBookings(limit: UInt32(remainingBookingCount)) { [weak self] error in
+                // superseded by a newer selection or a reload
                 guard let self, self.isSelectingAllBookings else { return }
                 self.isSelectingAllBookings = false
-                self.selectLoadedBookings()
+                // never a partial selection: the user would act on only some bookings
+                if let error {
+                    self.showError(String(localized: "Nicht alle Buchungen konnten ausgewählt werden"),
+                                   describe(error)) { [weak self] in self?.selectAllBookings() }
+                } else {
+                    self.selectLoadedBookings()
+                }
             }
-            if started { return }
-            isSelectingAllBookings = false
+            if !started { isSelectingAllBookings = false }
+            return
         }
         selectLoadedBookings()
     }
 
     private func selectLoadedBookings() {
-        let ids = visibleBookings.map(\.id)
+        // a checked row kept in place no longer matches the filter (#1696)
+        let outside = lingeringRowOutsideFilterID
+        let ids = visibleBookings.map(\.id).filter { $0 != outside }
         guard !ids.isEmpty else { return }
         selectedBookingIDs = Set(ids)
         if selectedBookingID.map({ !selectedBookingIDs.contains($0) }) ?? true { selectedBookingID = ids.first }

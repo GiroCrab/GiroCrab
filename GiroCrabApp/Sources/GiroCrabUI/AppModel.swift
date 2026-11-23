@@ -467,6 +467,8 @@ public final class AppModel {
     var selectedBookingID: Booking.ID? {
         didSet {
             if stickyBooking?.id != selectedBookingID { stickyBooking = nil }
+            // a newer selection (click, arrow keys) supersedes a pending ⌘A (#1696)
+            if selectedBookingID != oldValue { isSelectingAllBookings = false }
             if let id = lingeringBookingID, id != selectedBookingID {
                 lingeringBookingID = nil
                 bookings.removeAll { $0.id == id }
@@ -517,6 +519,9 @@ public final class AppModel {
     /// bookings: its row stays in place (shown as checked) until the user
     /// selects something else, instead of vanishing under the cursor.
     var lingeringBookingID: Booking.ID?
+    /// The lingering row was put back into a list whose filter it no longer matches:
+    /// it does not count towards the loaded pages (offset of the next page, ⌘A).
+    @ObservationIgnored var lingeringRowOutsideFilter = false
     /// iPhone: set by a tap on a booking row, presents the detail sheet.
     var showBookingSheet = false
     var collapsedGroups: Set<Int64> = Set(AppDefaults.store.array(forKey: "sidebar.collapsedKindGroups") as? [Int64] ?? []) {
