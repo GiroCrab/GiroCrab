@@ -3009,10 +3009,11 @@ QtObject {
 
     function changeRefundLink(pair, action, token) {
         if (refundEditing || !isUnlocked) return
-        const phase = UndoManager.phase, generation = vaultGeneration
+        const phase = UndoManager.phase, branch = UndoManager.branch, generation = vaultGeneration
         refundEditing = true
         UndoManager.busy = true
-        const args = Object.assign({}, pair, { action: action, token: token === undefined ? null : token })
+        const args = Object.assign({}, pair, { action: action, token: token === undefined ? null : token,
+            vault_identity: core("refund_vault_identity") })
         loadOffMain("refundMutation", () => [["edit_refund", args]], results => {
             refundEditing = false; UndoManager.busy = false
             if (!results[0].changed) return
@@ -3020,7 +3021,7 @@ QtObject {
             const undoToken = results[0].token
             UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
                 if (vaultGeneration === generation) changeRefundLink(pair, inverse, undoToken)
-            }, phase)
+            }, phase, branch)
             refundLinksRevision++
             reloadBookings(); reloadCategories(); reloadDashboard(); reloadPlanning()
         }, message => {

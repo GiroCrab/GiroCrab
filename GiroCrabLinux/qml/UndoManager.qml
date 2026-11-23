@@ -19,19 +19,21 @@ QtObject {
     /// 0 = normal action, 1 = undoing, 2 = redoing.
     property int phase: 0
     property bool busy: false
+    property int branch: 0
     readonly property string undoName: undoStack.length ? undoStack[undoStack.length - 1].name : ""
     readonly property string redoName: redoStack.length ? redoStack[redoStack.length - 1].name : ""
     readonly property bool canUndo: !busy && undoStack.length > 0
     readonly property bool canRedo: !busy && redoStack.length > 0
 
     /// Records `fn` (no arguments) as the undo of the action just done, shown as `name`.
-    function register(name, fn, recordedPhase) {
+    function register(name, fn, recordedPhase, recordedBranch) {
         const p = recordedPhase === undefined ? phase : recordedPhase
+        if (p !== 0 && recordedBranch !== undefined && recordedBranch !== branch) return
         const entry = { name: name, fn: fn }
         if (p === 1) redoStack = redoStack.concat([entry])
         else {
             undoStack = undoStack.concat([entry])
-            if (p === 0) redoStack = []
+            if (p === 0) { redoStack = []; branch++ }
         }
     }
     function undo() {
@@ -50,7 +52,7 @@ QtObject {
         phase = p
         try { e.fn() } catch (err) { AppModel.errorMessage = err.message } finally { phase = 0 }
     }
-    function clear() { undoStack = []; redoStack = [] }
+    function clear() { undoStack = []; redoStack = []; branch++ }
 
     /// Another vault (demo / own, lock, reset) or a restored backup: the recorded ids
     /// point at other data, nothing to undo.

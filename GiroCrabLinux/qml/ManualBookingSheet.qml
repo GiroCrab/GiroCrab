@@ -19,6 +19,7 @@ Sheet {
     /// Flow: "out" | "in"
     property string flow: "out"
     property string saveError: ""
+    readonly property bool hasSplits: (OfflineAccounts.bookingRequest?.booking?.split_count || 0) > 0
 
     readonly property var accountChoices: OfflineAccounts.offlineAccounts
     readonly property var categoryOptions: [{ id: null, title: qsTr("Ohne Kategorie") }]
@@ -93,13 +94,14 @@ Sheet {
             DateField { date: sheet.date; onPicked: d => sheet.date = d }
             Text { text: qsTr("Art"); font.pixelSize: Theme.body; color: Theme.text; Layout.alignment: Qt.AlignRight }
             Segmented {
+                enabled: !sheet.hasSplits
                 Layout.fillWidth: true
                 options: [{ id: "out", title: qsTr("Ausgabe") }, { id: "in", title: qsTr("Einnahme") }]
                 current: sheet.flow
                 onActivated: id => sheet.flow = id
             }
             Text { text: qsTr("Betrag"); font.pixelSize: Theme.body; color: Theme.text; Layout.alignment: Qt.AlignRight }
-            TextField { id: amountField; Layout.fillWidth: true; horizontalAlignment: TextInput.AlignRight; font.features: { "tnum": 1 }
+            TextField { id: amountField; enabled: !sheet.hasSplits; Layout.fillWidth: true; horizontalAlignment: TextInput.AlignRight; font.features: { "tnum": 1 }
                         onAccepted: sheet.save(); Sensitive { amounts: true } }
             Text { text: qsTr("Name oder Empfänger"); font.pixelSize: Theme.body; color: Theme.text; Layout.alignment: Qt.AlignRight }
             TextField { id: counterpartyField; Layout.fillWidth: true; onAccepted: sheet.save(); Sensitive {} }

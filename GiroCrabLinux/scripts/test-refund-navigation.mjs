@@ -20,6 +20,40 @@ const reveal = bodyAfter("function revealBooking(id)");
 const timerSource = source.slice(source.indexOf("property Timer revealTimer:"));
 const timerBody = bodyAfter("onTriggered:", timerSource);
 
+test("asynchronous undo cannot restore an invalidated redo branch", () => {
+    const undo = readFileSync(new URL("../qml/UndoManager.qml", import.meta.url), "utf8");
+    const s = { phase: 0, branch: 0, undoStack: [], redoStack: [] };
+    vm.createContext(s);
+    const register = (phase, branch) => {
+        s.recordedPhase = phase;
+        s.recordedBranch = branch;
+        vm.runInContext(`(function(name, fn, recordedPhase, recordedBranch) {${bodyAfter("function register(", undo)}})("refund", () => {}, recordedPhase, recordedBranch)`, s);
+    };
+    register(1, 0);
+    assert.equal(s.redoStack.length, 1);
+    register(0);
+    assert.equal(s.redoStack.length, 0);
+    register(1, 0);
+    assert.equal(s.redoStack.length, 0);
+    register(1, s.branch);
+    assert.equal(s.redoStack.length, 1);
+});
+
+test("refund edits capture a vault token before queuing the worker", () => {
+    let queued, applied;
+    const s = {
+        refundEditing: false, isUnlocked: true, vaultGeneration: 1,
+        UndoManager: { phase: 0, branch: 0 },
+        core(method) { assert.equal(method, "refund_vault_identity"); return "old-vault"; },
+        loadOffMain(channel, request, apply) { queued = request; applied = apply; },
+    };
+    vm.createContext(s);
+    vm.runInContext(`(function(pair, action, token) {${bodyAfter("function changeRefundLink(")}})({}, "link", null)`, s);
+    s.core = () => "new-vault";
+    assert.equal(queued()[0][1].vault_identity, "old-vault");
+    assert.equal(typeof applied, "function");
+});
+
 function fixture() {
     const pending = [], selected = [], cancelled = [];
     let publish;

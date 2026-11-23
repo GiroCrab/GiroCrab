@@ -41,6 +41,24 @@ unsafe extern "C" {
 static VAULT: Mutex<Option<Arc<Vault>>> = Mutex::new(None);
 /// The unlocked personal vault – `AppModel.ownVault` (stays open while the demo is shown).
 static OWN: Mutex<Option<Arc<Vault>>> = Mutex::new(None);
+static REFUND_TARGET: Mutex<Option<(String, std::sync::Weak<Vault>)>> = Mutex::new(None);
+
+fn pin_refund_target(v: &Arc<Vault>) -> String {
+    let mut target = REFUND_TARGET.lock().unwrap();
+    if let Some((token, current)) = &*target
+        && current
+            .upgrade()
+            .is_some_and(|current| Arc::ptr_eq(&current, v))
+    {
+        return token.clone();
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let token = NEXT
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .to_string();
+    *target = Some((token.clone(), Arc::downgrade(v)));
+    token
+}
 
 /// `AppModel.vaultURL`: ~/.local/share/GiroCrab/tresor.girocrab (XDG data dir);
 /// the keychain bypass uses a separate file, so the real vault is never opened
@@ -448,6 +466,7 @@ fn vault() -> Result<Arc<Vault>, String> {
 
 fn call(method: &str, a: &Value) -> R {
     match method {
+        "refund_vault_identity" => ok(pin_refund_target(&vault()?)),
         "core_version" => ok(girocrab_core::core_version()),
         // --- Settings › Allgemein › Sprache (LanguagePreference.swift) ---
         // HelpView.swift › HelpCatalog, read by build.rs: topics (de/en) and shortcut labels.
@@ -1484,7 +1503,21 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         "refund_sheet" => Some(crate::refunds::sheet(v, a)),
         "refund_card" => Some(crate::refunds::card(v, a)),
         "seed_refund_demo" => Some(crate::refunds::seed(v, a)),
-        "edit_refund" => Some(crate::refunds::edit(v, a)),
+        "edit_refund" => Some((|| {
+            let identity: String = arg(a, "vault_identity")?;
+            let target = REFUND_TARGET
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|(token, vault)| (token == &identity).then(|| vault.upgrade()).flatten());
+            if target
+                .as_ref()
+                .is_none_or(|target| !std::ptr::eq(target.as_ref(), v))
+            {
+                return Err(crate::i18n::tr("Tresor ist gesperrt"));
+            }
+            crate::refunds::edit(v, a)
+        })()),
         _ => dispatch_vault_methods(v, method, a),
     }
 }
@@ -1673,6 +1706,27 @@ mod tests {
 
     /// The tests share the process-wide vault slots.
     static SERIAL: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn refund_mutation_rejects_replaced_vault_and_superseded_pin() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let old = vault().unwrap();
+        let fixture = crate::refunds::seed(&old, &json!({})).unwrap();
+        let token = pin_refund_target(&old);
+        assert_eq!(pin_refund_target(&old), token);
+        let mut args = json!({"action":"link", "vault_identity":token,
+            "refund_id":fixture["refund"], "refund_part":fixture["part"],
+            "original_id":fixture["original"], "original_part":""});
+        call_ok("open_demo", json!({}));
+        let new = vault().unwrap();
+        assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
+        assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_ok());
+        args["vault_identity"] = json!(pin_refund_target(&new));
+        assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_err());
+        args.as_object_mut().unwrap().remove("vault_identity");
+        assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
+    }
 
     /// Sets (`Some`) or removes (`None`) an environment variable for a test that holds
     /// `SERIAL`.
