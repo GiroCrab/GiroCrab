@@ -540,10 +540,10 @@ enum SplitMath {
     static let shares: [Int64] = [7, 19, 50]
     /// A share as the UI writes it: „19 %“ (de), "19%" (en).
     static func label(_ percent: Int64) -> String { (Double(percent) / 100).formatted(.percent) }
-    static func remaining(total: Int64, parts: [Int64]) -> Int64 { total - parts.reduce(0, +) }
-    /// At least two parts, none 0, parts add up to `total`. Negative parts are allowed.
+    /// At least two parts, none 0, parts add up to `total`. Negative parts are allowed; parts
+    /// whose sum leaves `Int64` are invalid instead of trapping (#1663, absurd input).
     static func isValid(total: Int64, parts: [Int64]) -> Bool {
-        parts.count >= 2 && !parts.contains(0) && remaining(total: total, parts: parts) == 0
+        parts.count >= 2 && !parts.contains(0) && rest(total: total, splitOff: parts) == 0
     }
     /// What the first part keeps (#1663): `total` minus the parts split off; nil when one of
     /// them is unreadable (nil) or the difference leaves `Int64`.

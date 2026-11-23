@@ -22,10 +22,14 @@ final class SplitBookingTests: XCTestCase {
     /// #427: +59 EUR split into +200 EUR and a counter part of -141 EUR.
     func testMixedSignSplitIsValidAndRoundTrips() async throws {
         XCTAssertTrue(SplitMath.isValid(total: 5_900, parts: [20_000, -14_100]))
-        XCTAssertEqual(SplitMath.remaining(total: 5_900, parts: [20_000]), -14_100)
+        XCTAssertEqual(SplitMath.rest(total: 5_900, splitOff: [20_000]), -14_100)
         XCTAssertFalse(SplitMath.isValid(total: 5_900, parts: [20_000, -14_000]))
         XCTAssertFalse(SplitMath.isValid(total: 5_900, parts: [5_900, 0]))
         XCTAssertFalse(SplitMath.isValid(total: 5_900, parts: [5_900]))
+        // #1663: absurd parts never trap; a sum beyond Int64 is just invalid
+        XCTAssertFalse(SplitMath.isValid(total: 1, parts: [Int64.max, Int64.max]))
+        XCTAssertFalse(SplitMath.isValid(total: 1, parts: [Int64.min, Int64.min]))
+        XCTAssertTrue(SplitMath.isValid(total: 8_743, parts: [223_372_036_854_783_743, 9_000_000_000_000_000_000, -9_223_372_036_854_775_000]))
 
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
