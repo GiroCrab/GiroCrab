@@ -2130,15 +2130,17 @@ fn main() -> Result<(), slint::PlatformError> {
             move || {
                 let guard = vault.lock().ok()?;
                 let v = guard.as_ref()?; // gesperrt => None => Aktionen gesperrt
-                let known_terms = v
+                let accounts = v
                     .list_accounts()
                     .ok()?
                     .into_iter()
-                    .flat_map(|a| [a.name, a.iban])
-                    .filter(|t| !t.trim().is_empty())
-                    .collect();
+                    .map(|a| [a.name, a.owner, a.iban]);
+                // Fehler => None: lieber gesperrt als ohne Begriffe bereinigt.
+                let counterparties = v
+                    .counterparty_names(bug_report_ui::MAX_COUNTERPARTY_TERMS)
+                    .ok()?;
                 Some(bug_report_ui::ReportSource {
-                    known_terms,
+                    known_terms: bug_report_ui::known_terms(accounts, counterparties),
                     log_lines: Vec::new(),
                 })
             }

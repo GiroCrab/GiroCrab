@@ -12,6 +12,7 @@ pub enum Modal {
     Categories,
     Rules,
     Link,
+    Report,
     About,
 }
 
@@ -25,6 +26,7 @@ pub struct Modals {
     pub categories: bool,
     pub rules: bool,
     pub link: bool,
+    pub report: bool,
     pub about: bool,
 }
 
@@ -39,6 +41,7 @@ impl Modals {
             (self.link, Modal::Link),
             (self.rules, Modal::Rules),
             (self.categories, Modal::Categories),
+            (self.report, Modal::Report),
             (self.about, Modal::About),
         ]
         .into_iter()

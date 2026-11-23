@@ -14,8 +14,11 @@ use slint::ComponentHandle;
 use crate::MainWindow;
 
 const NEW_ISSUE: &str = "https://github.com/GiroCrab/GiroCrab/issues/new";
-/// Obergrenze der ganzen Issue-URL in UTF-8-Bytes (wie `maxURLLength` auf dem Mac).
-pub(crate) const MAX_URL_LENGTH: usize = 7500;
+/// Obergrenze der ganzen, bereits kodierten Issue-URL in Bytes. Muss zur Grenze von
+/// `sync_flow::safe_https_url` (4096) passen, sonst scheitert das Öffnen im Browser.
+pub(crate) const MAX_URL_LENGTH: usize = 4096;
+/// Höchstzahl der Gegenparteinamen als bekannte Begriffe (wie Mac und Linux).
+pub(crate) const MAX_COUNTERPARTY_TERMS: u32 = 5000;
 const PLACEHOLDER: &str = "<!-- Beschreibe kurz das Problem: Was hast du getan, was hast du \
 erwartet, was ist stattdessen passiert? Bitte keine echten IBANs, Namen oder Buchungsdaten. -->";
 const LOCKED: &str = "Der Tresor ist gesperrt; Kopieren und Öffnen sind nicht möglich.";
@@ -132,6 +135,20 @@ pub(crate) fn sanitized_parts(
     )
 }
 
+/// Bekannte Begriffe für den Sanitizer: je Konto `[Name, Inhaber, IBAN]` und die
+/// Gegenparteinamen des Tresors; leere Einträge fallen weg.
+pub(crate) fn known_terms(
+    accounts: impl IntoIterator<Item = [String; 3]>,
+    counterparties: Vec<String>,
+) -> Vec<String> {
+    accounts
+        .into_iter()
+        .flatten()
+        .chain(counterparties)
+        .filter(|t| !t.trim().is_empty())
+        .collect()
+}
+
 /// Rohtext der Diagnose (wird vor der Anzeige bereinigt).
 pub(crate) fn diagnostics_text(version: &str, log_lines: &[String]) -> String {
     let mut out = vec![
@@ -204,17 +221,25 @@ fn url_for(body: &str) -> String {
 /// zeilenweise von hinten, notfalls die Beschreibung, bis `MAX_URL_LENGTH` passt.
 /// Liefert auch, ob gekürzt wurde.
 pub(crate) fn issue_url(description: &str, diagnostics: &str) -> (String, bool) {
-    let mut lines: Vec<&str> = diagnostics.lines().collect();
-    let mut shortened = false;
-    loop {
-        let url = url_for(&issue_body(description, &lines.join("\n")));
-        if url.len() <= MAX_URL_LENGTH {
-            return (url, shortened);
+    let lines: Vec<&str> = diagnostics.lines().collect();
+    let with_lines = |n: usize| url_for(&issue_body(description, &lines[..n].join("\n")));
+    let full = with_lines(lines.len());
+    if full.len() <= MAX_URL_LENGTH {
+        return (full, false);
+    }
+    // Die Länge wächst monoton mit der Zeilenzahl (auch der Zaun): Binärsuche nach der
+    // größten passenden Zahl statt einer vollen Kodierung je entfernter Zeile.
+    if !lines.is_empty() && with_lines(0).len() <= MAX_URL_LENGTH {
+        let (mut fits, mut too_long) = (0, lines.len());
+        while too_long - fits > 1 {
+            let mid = fits + (too_long - fits) / 2;
+            if with_lines(mid).len() <= MAX_URL_LENGTH {
+                fits = mid;
+            } else {
+                too_long = mid;
+            }
         }
-        if lines.pop().is_none() {
-            break;
-        }
-        shortened = true;
+        return (with_lines(fits), true);
     }
     let mut chars: Vec<char> = description.trim().chars().collect();
     loop {
@@ -277,6 +302,69 @@ mod tests {
     #[test]
     fn query_encoding_escapes_plus_and_separators() {
         assert_eq!(encode_query("a+b & c/ü"), "a%2Bb%20%26%20c%2F%C3%BC");
+    }
+
+    #[test]
+    fn issue_urls_pass_the_browser_check() {
+        let (short, shortened) = issue_url("Kurz", "GiroCrab 1.0\nSystem: windows x86_64");
+        assert!(!shortened);
+        assert!(crate::sync_flow::safe_https_url(&short).is_ok());
+        let diag = "Fehler\n".repeat(500);
+        assert!(url_for(&issue_body("Kurz", &diag)).len() > 4096);
+        let (long, shortened) = issue_url("Kurz", &diag);
+        assert!(shortened && long.len() <= MAX_URL_LENGTH);
+        assert!(crate::sync_flow::safe_https_url(&long).is_ok());
+    }
+
+    #[test]
+    fn issue_url_keeps_longest_fitting_prefix() {
+        let diag: String = (0..600).map(|i| format!("Zeile {i}: Fehler\n")).collect();
+        let lines: Vec<&str> = diag.lines().collect();
+        let naive = |n: usize| url_for(&issue_body("Kurz", &lines[..n].join("\n")));
+        let kept = (0..=lines.len())
+            .rev()
+            .find(|&n| naive(n).len() <= MAX_URL_LENGTH)
+            .unwrap();
+        assert!(kept > 0 && kept < lines.len());
+        let (url, shortened) = issue_url("Kurz", &diag);
+        assert!(shortened);
+        assert_eq!(url, naive(kept));
+    }
+
+    #[test]
+    fn known_terms_cover_owner_and_counterparties() {
+        let terms = known_terms(
+            [[
+                "Girokonto".to_string(),
+                "Erika Mustermann".to_string(),
+                " ".to_string(),
+            ]],
+            vec!["Hans Beispiel".to_string(), String::new()],
+        );
+        assert_eq!(terms, ["Girokonto", "Erika Mustermann", "Hans Beispiel"]);
+        let (desc, _) = sanitized_parts(
+            "Konto von Erika Mustermann, Zahlung an Hans Beispiel",
+            "",
+            &terms,
+        );
+        assert!(!desc.contains("Mustermann"));
+        assert!(!desc.contains("Beispiel"));
+    }
+
+    #[test]
+    fn report_dialog_counts_as_modal() {
+        use crate::manage::{Modal, Modals};
+        let only = Modals {
+            report: true,
+            ..Modals::default()
+        };
+        assert_eq!(only.top(), Some(Modal::Report));
+        let under_tan = Modals {
+            tan: true,
+            report: true,
+            ..Modals::default()
+        };
+        assert_eq!(under_tan.top(), Some(Modal::Tan));
     }
 
     #[test]
