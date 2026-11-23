@@ -94,13 +94,15 @@ final class AutoReviewTests: XCTestCase {
         let a = try XCTUnwrap(model.visibleBookings.first)
         let other = try XCTUnwrap(model.visibleBookings.first { $0.accountId != a.accountId })
         model.setChecked(false, for: a)
+        model.autoReviewDelay = .immediately
         model.selectedBookingID = a.id
+        let pendingReview = try XCTUnwrap(model.autoReviewTask)
         // edited while selected: kept in the inspector although the list may no longer show it
         model.stickyBooking = a
         model.lingeringBookingID = a.id
-        model.autoReviewDelay = .immediately
         // not in the list: no first row (it would be marked as checked), no kept row
         model.sidebarSelection = .account(other.accountId)
+        await pendingReview.value
         XCTAssertNil(model.selectedBookingID)
         XCTAssertNil(model.selectedBooking)
         XCTAssertFalse(model.bookings.contains { $0.id == a.id })
@@ -109,9 +111,8 @@ final class AutoReviewTests: XCTestCase {
         model.setChecked(false, for: first)
         await model.autoReviewTask?.value
         XCTAssertFalse(model.bookings.first { $0.id == first.id }?.checked ?? true)
-        model.selectedBookingID = a.id
         model.sidebarSelection = .allAccounts
-        XCTAssertFalse(isChecked(a))
+        XCTAssertFalse(isChecked(a), "the review pending for the old selection did not mark it")
         // partly in the list: the visible one stays
         model.autoReviewDelay = .manual
         model.selectedBookingIDs = [a.id, other.id]
