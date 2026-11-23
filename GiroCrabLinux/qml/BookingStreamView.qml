@@ -522,6 +522,17 @@ Rectangle {
         readonly property bool compact: BookingPrefs.density === "compact"
         readonly property bool card: !compact
         height: row.implicitHeight
+        /// a plain click on the row, also BookingRow's Accessible.onPressAction
+        function primaryActivate(toggle = false, extend = false) {
+            if (!dc.booking) return
+            stream.forceActiveFocus()
+            // „Kompakt“: a click on the open row folds it, a click on another row opens that one
+            if (dc.compact && AppModel.selectedBookingID === dc.booking.id && !toggle && !extend)
+                stream.compactCollapsedID = stream.compactCollapsedID === dc.booking.id ? null : dc.booking.id
+            else
+                stream.compactCollapsedID = null
+            AppModel.selectBooking(dc.booking.id, toggle, extend, true)
+        }
 
         // background: rounded only at the bottom of the day's last row
         Rectangle {
@@ -603,16 +614,6 @@ Rectangle {
                 const c = row.chevron
                 if (c.visible && c.contains(c.mapFromItem(dc, m.x, m.y))) { stream.toggleAmazonExpanded(dc.booking.id); return }
                 dc.primaryActivate(m.modifiers & Qt.ControlModifier, m.modifiers & Qt.ShiftModifier)
-            }
-            function primaryActivate(toggle = false, extend = false) {
-                if (!dc.booking) return
-                stream.forceActiveFocus()
-                // „Kompakt“: a click on the open row folds it, a click on another row opens that one
-                if (dc.compact && AppModel.selectedBookingID === dc.booking.id && !toggle && !extend)
-                    stream.compactCollapsedID = stream.compactCollapsedID === dc.booking.id ? null : dc.booking.id
-                else
-                    stream.compactCollapsedID = null
-                AppModel.selectBooking(dc.booking.id, toggle, extend, true)
             }
             onDoubleClicked: m => { if (m.button === Qt.LeftButton) AppModel.editNote(dc.booking) }
             // .draggable(BookingDrag.payload(…)): onto a sidebar category (#366)
@@ -756,7 +757,7 @@ Rectangle {
         Accessible.role: Accessible.Button
         Accessible.name: booking ? AppModel.masking(booking.merchant.name || booking.booking_text) + ", "
             + AppModel.masking(Fmt.money(booking.amount_cents), AppModel.redactAmounts) + ", " + Fmt.medium(booking.booking_date) : ""
-        Accessible.selected: booking !== null && !!AppModel.selectedBookingIDs[booking.id]
+        Accessible.selected: booking !== null && (AppModel.selectedBookingID === booking.id || !!AppModel.selectedBookingIDs[booking.id])
         Accessible.onPressAction: {
             let p = parent
             while (p && typeof p.primaryActivate !== "function") p = p.parent

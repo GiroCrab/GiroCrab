@@ -1691,7 +1691,8 @@ QtObject {
             stickyBooking = freshBooking(b)
             lingeringBookingID = on ? b.id : null
         }
-        reloadBookings(); reloadAccounts()
+        // refreshAfterEdit: the sidebar sums and „Ohne Kategorie“ follow the status filter
+        reloadBookings(); reloadAccounts(); reloadCategories()
     }
     /// The Buchung menu entry: nothing to do without new bookings, and not in
     /// Belege (there the list would silently mean every account).
@@ -1720,14 +1721,14 @@ QtObject {
             // the selected booking leaves a "Neu" list: keep it in the inspector (like setChecked)
             const b = selectedBooking
             if (statusFilter !== "all" && b && ids.indexOf(b.id) >= 0) stickyBooking = freshBooking(b)
-            reloadBookings(); reloadAccounts()
+            reloadBookings(); reloadAccounts(); reloadCategories()
         })
     }
     /// AppModel+Editing.swift setChecked(_:to:): undo / redo of markAllChecked for exactly the bookings it changed.
     function setCheckedIds(ids, checked) {
         if (!run(() => { core("set_checked_for_ids", { ids: ids, checked: checked }); return true })) return
         UndoManager.register(qsTr("Alle Buchungen als gelesen markieren"), () => setCheckedIds(ids, !checked))
-        reloadBookings(); reloadAccounts()
+        reloadBookings(); reloadAccounts(); reloadCategories()
     }
     function setCategory(b, categoryID) { setCategoryFor([b], categoryID) }
     function updateNote(b, note) {
