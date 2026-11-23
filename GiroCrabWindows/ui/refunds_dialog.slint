@@ -18,6 +18,7 @@ export component RefundsPanel inherits FocusScope {
     in property <bool> can-undo;
     in property <bool> pending;
     in property <bool> loading;
+    in property <bool> search-empty;
     in property <[RefundRow]> rows;
     in property <[string]> parts;
     in-out property <int> part-index;
@@ -78,6 +79,7 @@ export component RefundsPanel inherits FocusScope {
             }
         }
     }
+    if root.search-empty && !root.loading && root.rows.length > 0: Text { text: root.english ? "No matching transactions" : "Keine passenden Buchungen"; color: root.muted; font-size: 12px; }
     Text { text: root.status; color: root.muted; font-size: 12px; wrap: word-wrap; }
     HorizontalLayout {
         if root.can-undo: Button { text: root.english ? "Undo unlink" : "Aufheben rückgängig"; enabled: !root.pending && !root.loading; clicked => { root.undo-unlink(); } }

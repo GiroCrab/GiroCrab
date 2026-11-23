@@ -919,6 +919,7 @@ export component MainWindow inherits Window {
     in property <bool> rf-english;
     in property <bool> rf-from-refund;
     in property <bool> rf-loading;
+    in property <bool> rf-search-empty;
     in property <bool> rf-edit-pending;
     in property <bool> rf-can-undo;
     in property <string> rf-title;
@@ -2000,7 +2001,7 @@ export component MainWindow inherits Window {
             english: root.rf-english; privacy: root.privacy; from-refund: root.rf-from-refund;
             booking-title: root.rf-title; booking-amount: root.rf-amount; sums: root.rf-sums; status: root.rf-status;
             loading: root.rf-loading; pending: root.rf-edit-pending; can-undo: root.rf-can-undo;
-            parts: root.rf-parts; part-index <=> root.rf-part-index; rows: root.rf-rows;
+            parts: root.rf-parts; part-index <=> root.rf-part-index; rows: root.rf-rows; search-empty: root.rf-search-empty;
             part-picked(i) => { root.refund-part-picked(i); }
             search(t) => { root.refund-search(t); }
             toggle(i) => { root.refund-toggle(i); }

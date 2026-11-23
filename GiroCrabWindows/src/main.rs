@@ -461,7 +461,7 @@ fn render_analytics(win: &MainWindow) {
                         .map(|s| {
                             let cents = s.cents;
                             BudgetLine {
-                                name: daily::mask(&s.name, false).into(),
+                                name: daily::mask(&s.name, privacy).into(),
                                 amount: daily::mask(
                                     &format!(
                                         "{} · {} Buch. · {:.0} %",
@@ -2805,6 +2805,18 @@ fn strip_csv_columns(csv: &str, keep_iban: bool, keep_tags: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round6_analytics_labels_follow_privacy() {
+        let render = include_str!("main.rs")
+            .split("fn render_analytics(")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(render.contains("name: daily::mask(&s.name, privacy).into()"));
+    }
 
     #[test]
     fn dashboard_reload_does_not_depend_on_booking_load_success() {

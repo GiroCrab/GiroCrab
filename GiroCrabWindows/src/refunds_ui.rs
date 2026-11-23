@@ -376,6 +376,7 @@ fn load(v: &Vault, id: i64, own: &str, query: &str) -> Result<Loaded, String> {
 }
 
 fn clear(win: &MainWindow) {
+    win.set_rf_search_empty(false);
     win.set_rf_title(SharedString::new());
     win.set_rf_amount(SharedString::new());
     win.set_rf_sums(SharedString::new());
@@ -408,6 +409,7 @@ fn render(win: &MainWindow) {
     let mask = |s: &str| daily::mask(s, privacy);
     with_ui(|u| {
         let Some(d) = &u.loaded else { return };
+        win.set_rf_search_empty(!u.query.trim().is_empty() && d.candidates.is_empty());
         win.set_rf_english(english());
         win.set_rf_from_refund(d.from_refund);
         win.set_rf_title(
@@ -1123,6 +1125,28 @@ mod tests {
         let v = Vault::open(dir.0.join("v.db").to_string_lossy().into(), vec![7; 32]).unwrap();
         let f = seed(&v).unwrap();
         (dir, v, f)
+    }
+
+    #[test]
+    fn round6_empty_search_preserves_suggestions_and_has_feedback() {
+        let (_dir, v, demo) = fixture();
+        let loaded = load(&v, demo.refund, "", "nothing-matches-xyz").unwrap();
+        assert!(!loaded.suggestions.is_empty());
+        assert!(loaded.candidates.is_empty());
+        let render = include_str!("refunds_ui.rs")
+            .split("fn render(win:")
+            .nth(1)
+            .unwrap()
+            .split("pub fn refresh(")
+            .next()
+            .unwrap();
+        assert!(render.contains(
+            "set_rf_search_empty(!u.query.trim().is_empty() && d.candidates.is_empty())"
+        ));
+        assert!(
+            include_str!("../ui/refunds_dialog.slint")
+                .contains("if root.search-empty && !root.loading && root.rows.length > 0")
+        );
     }
 
     #[test]
