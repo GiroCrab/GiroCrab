@@ -926,9 +926,11 @@ export component MainWindow inherits Window {
     in property <string> rf-sums;
     in property <string> rf-status;
     in property <[RefundRow]> rf-rows;
+    in property <[RefundRow]> rf-card-rows;
     in property <[string]> rf-parts;
     in-out property <int> rf-part-index;
     callback refunds-request();
+    callback refund-reveal(int);
     callback refund-close();
     callback refund-part-picked(int);
     callback refund-search(string);
@@ -1843,6 +1845,20 @@ export component MainWindow inherits Window {
                                 GhostButton { text: "Tags …"; enabled: !root.inspector.read-only; clicked => { root.tags-request(); } }
                                 GhostButton { text: "Aufteilen …"; enabled: !root.inspector.read-only; clicked => { root.splits-request(); } }
                                 Button { text: root.rf-english ? "Refund …" : "Erstattung …"; enabled: root.rf-can-open; clicked => { root.refunds-request(); } }
+                            }
+                        }
+                        if root.rf-card-rows.length > 0: Rectangle {
+                            background: Theme.surface;
+                            border-radius: 8px;
+                            height: refund-card.preferred-height + 24px;
+                            refund-card := VerticalLayout {
+                                padding: 12px;
+                                spacing: 6px;
+                                Text { text: root.rf-english ? "Refunds" : "Erstattungen"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                                for row in root.rf-card-rows: Button {
+                                    text: root.privacy ? "••••" : row.title + "\n" + row.detail + "\n" + row.amount;
+                                    clicked => { root.refund-reveal(row.index); }
+                                }
                             }
                         }
                         // details

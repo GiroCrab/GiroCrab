@@ -96,6 +96,84 @@ pub fn can_open(amount: i64, splits: u32) -> bool {
     amount != 0 || splits > 0
 }
 
+thread_local! { static CARD_REQUEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+fn card_rows(v: &Vault, id: i64) -> Result<Vec<RefundRow>, String> {
+    let links = v.refund_links(id).map_err(|e| e.to_string())?;
+    if !links.iter().any(|l| !l.inactive) {
+        return Ok(Vec::new());
+    }
+    let books = v
+        .list_transactions(BookingFilter {
+            limit: 0,
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?
+        .transactions;
+    Ok(links
+        .iter()
+        .filter(|l| !l.inactive)
+        .filter_map(|l| {
+            let (other_id, part) = other(l, id);
+            let b = books.iter().find(|b| b.id == other_id)?;
+            let label = if l.refund_id == id {
+                &l.original_label
+            } else {
+                &l.refund_label
+            };
+            Some(RefundRow {
+                index: other_id as i32,
+                title: if b.merchant_name.is_empty() {
+                    &b.counterparty
+                } else {
+                    &b.merchant_name
+                }
+                .into(),
+                detail: format!(
+                    "{} · {}{}",
+                    b.booking_date,
+                    b.account_name,
+                    if part.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {label}")
+                    }
+                )
+                .into(),
+                amount: money(l.allocated_cents, &b.currency).into(),
+                ..Default::default()
+            })
+        })
+        .collect())
+}
+
+pub fn refresh_card(win: &MainWindow) {
+    let request = CARD_REQUEST.with(|r| {
+        r.set(r.get().wrapping_add(1));
+        r.get()
+    });
+    win.set_rf_card_rows(ModelRc::new(VecModel::from(Vec::<RefundRow>::new())));
+    let Some((v, id)) = with_state(|s| Some((s.vault.upgrade()?, s.selected_booking?))) else {
+        return;
+    };
+    let weak = win.as_weak();
+    std::thread::spawn(move || {
+        let result = card_rows(&v, id);
+        let _ = weak.upgrade_in_event_loop(move |win| {
+            if !is_current(&v)
+                || CARD_REQUEST.with(|r| r.get()) != request
+                || with_state(|s| s.selected_booking) != Some(id)
+            {
+                return;
+            }
+            match result {
+                Ok(rows) => win.set_rf_card_rows(ModelRc::new(VecModel::from(rows))),
+                Err(e) => win.set_sync_status(e.into()),
+            }
+        });
+    });
+}
+
 fn other(l: &RefundLink, id: i64) -> (i64, &str) {
     if l.refund_id == id {
         (
@@ -237,6 +315,8 @@ fn clear(win: &MainWindow) {
 }
 
 pub fn reset(win: &MainWindow) {
+    CARD_REQUEST.with(|r| r.set(r.get().wrapping_add(1)));
+    win.set_rf_card_rows(ModelRc::new(VecModel::from(Vec::<RefundRow>::new())));
     with_ui(|u| *u = Ui::default());
     win.set_refunds_open(false);
     win.set_rf_edit_pending(false);
@@ -581,6 +661,24 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
 }
 
 pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
+    let weak = win.as_weak();
+    let vault = slot.clone();
+    win.on_refund_reveal(move |id| {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
+            return;
+        };
+        with_state(|s| {
+            s.filter = daily::Filter::default();
+            s.selected_booking = Some(i64::from(id));
+        });
+        win.set_search_text(SharedString::new());
+        win.set_uncategorized_only(false);
+        win.set_status_index(0);
+        win.set_range_index(0);
+        win.set_tag_index(0);
+        win.set_documents_only(false);
+        crate::views_ui::select_target(&win, &v, crate::nav::Target::AllAccounts);
+    });
     let (weak, s) = (win.as_weak(), slot.clone());
     win.on_refunds_request(move || {
         let (Some(win), Some(v)) = (weak.upgrade(), s.lock().unwrap().clone()) else {
@@ -837,6 +935,29 @@ mod tests {
         assert!(can_open(0, 2));
         assert!(!can_open(0, 0));
         assert!(can_open(-1, 0));
+    }
+
+    #[test]
+    fn inspector_links_include_every_part_and_both_directions() {
+        let (_dir, v, f) = fixture();
+        assert!(card_rows(&v, f.refund).unwrap().is_empty());
+        v.link_refund(f.refund, f.part.clone(), f.original, String::new())
+            .unwrap();
+        let rows = card_rows(&v, f.refund).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].index, f.original as i32);
+        assert!(rows[0].detail.contains("Erstattungen"));
+        assert!(!rows[0].amount.is_empty());
+        let reverse = card_rows(&v, f.original).unwrap();
+        assert_eq!(reverse[0].index, f.refund as i32);
+        assert!(reverse[0].detail.contains("Rückzahlung"));
+        let token = v
+            .unlink_refund(f.refund, f.part.clone(), f.original, String::new())
+            .unwrap();
+        assert!(card_rows(&v, f.original).unwrap().is_empty());
+        v.restore_refund(f.refund, f.part, f.original, String::new(), token)
+            .unwrap();
+        assert_eq!(card_rows(&v, f.original).unwrap().len(), 1);
     }
 
     #[test]

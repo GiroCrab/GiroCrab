@@ -512,6 +512,7 @@ fn render_bookings(win: &MainWindow) {
 }
 
 fn render_booking_rows(win: &MainWindow) {
+    refunds_ui::refresh_card(win);
     win.set_rf_can_open(with_state(|st| {
         st.rows
             .iter()
