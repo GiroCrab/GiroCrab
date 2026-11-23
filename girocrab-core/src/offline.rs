@@ -199,6 +199,7 @@ fn offline_symbol(kind: AccountKind) -> &'static str {
     match kind {
         AccountKind::Cash => "banknote",
         AccountKind::Savings => "percent",
+        AccountKind::TimeDeposit => "lock.circle",
         _ => "pencil.and.list.clipboard",
     }
 }

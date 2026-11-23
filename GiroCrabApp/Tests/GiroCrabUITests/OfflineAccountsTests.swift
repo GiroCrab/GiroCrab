@@ -117,10 +117,11 @@ final class OfflineAccountsTests: XCTestCase {
     }
 
     func testSheetOffersCashAndSavingsWithEuroFirst() {
-        XCTAssertEqual(OfflineAccountOptions.kinds, [.cash, .savings])
+        XCTAssertEqual(OfflineAccountOptions.kinds, [.cash, .savings, .timeDeposit])
         XCTAssertEqual(OfflineAccountOptions.currencies.first, "EUR")
         XCTAssertEqual(OfflineAccountOptions.defaultCurrency, "EUR")
         XCTAssertNotEqual(OfflineAccountOptions.title(.cash), OfflineAccountOptions.title(.savings))
+        XCTAssertNotEqual(OfflineAccountOptions.title(.timeDeposit), OfflineAccountOptions.title(.savings))
     }
 
     /// #1049: header, chart axis and bookings of a USD account show dollars, not euros.

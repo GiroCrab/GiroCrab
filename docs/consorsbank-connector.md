@@ -153,7 +153,7 @@ the typed-TAN-on-fetch case.
 FinTS has no statements at this bank (no HKEKA/HKEKP/HKKAU in the BPD). The PDFs
 (statements, trade confirmations, depot statements, tax documents) are only in the
 portal's Online-Archiv. `connectors/consorsbank_archive.rs` fetches them next to a
-FinTS login, through the same wrapper as the comdirect PostBox
+FinTS login, through the same wrapper as the comdirect Postbox
 (`comdirect_postbox::FintsWithPostbox`, #838): switch "Online-Archiv abrufen" in the
 connection, at most once a week during a manual sync, plus "Online-Archiv jetzt
 abrufen". It never creates accounts or bookings; a failure only skips the documents.

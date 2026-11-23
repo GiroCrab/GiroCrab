@@ -129,6 +129,7 @@ impl BankConnector for DemoConnector {
             | ConnectorKind::AmazonOrders
             | ConnectorKind::EquatePlus
             | ConnectorKind::Quirion
+            | ConnectorKind::Sharinbox
             | ConnectorKind::SchwaebischHall
             | ConnectorKind::Fnz
             | ConnectorKind::EnableBanking => Challenge {
@@ -141,7 +142,7 @@ impl BankConnector for DemoConnector {
                 expires_in_seconds: Some(900),
                 poll_interval_seconds: 0,
             },
-            ConnectorKind::PayPal | ConnectorKind::Bunq | ConnectorKind::Ibkr | ConnectorKind::AlteLeipziger | ConnectorKind::Uberspace | ConnectorKind::Ffb | ConnectorKind::Finpension => return Ok(Phase::Ready),
+            ConnectorKind::PayPal | ConnectorKind::Bunq | ConnectorKind::Ibkr | ConnectorKind::AlteLeipziger | ConnectorKind::Uberspace | ConnectorKind::BitcoinCore | ConnectorKind::Ffb | ConnectorKind::Finpension => return Ok(Phase::Ready),
         };
         self.challenge = Some(c.clone());
         Ok(Phase::Challenge(c))

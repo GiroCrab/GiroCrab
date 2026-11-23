@@ -32,16 +32,20 @@ extension AppModel {
     /// So the rows show the new category at once and everything derived from it
     /// (totals, counts, KPIs) follows from a background refresh.
     func setCategory(_ categoryID: Int64?, for bookings: [Booking]) {
-        guard let vault, !bookings.isEmpty else { return }
+        setCategory(categoryID, forBookingIDs: bookings.map(\.id))
+    }
+
+    private func setCategory(_ categoryID: Int64?, forBookingIDs bookingIDs: [Booking.ID]) {
+        guard let vault, !bookingIDs.isEmpty else { return }
         do {
-            for b in bookings { try vault.setTransactionCategory(transactionId: b.id, categoryId: categoryID) }
+            for id in bookingIDs { try vault.setTransactionCategory(transactionId: id, categoryId: categoryID) }
         } catch {
             // Partly written: show the database state as before (synchronous).
             errorMessage = describe(error)
             reloadAfterCategoryChange()
             return
         }
-        showCategory(categoryID, on: Set(bookings.map(\.id)))
+        showCategory(categoryID, on: Set(bookingIDs))
         // Merchant histories count categories: keep the shown one until the new one is in.
         refreshSelectedBookingHistory()
         // Rule counts and the investment dashboard: reload only when on screen,
@@ -121,8 +125,8 @@ extension AppModel {
                     return CategoryRefresh(
                         page: page,
                         flow: flow,
-                        categories: try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents),
-                        uncategorized: try uncategorizedQuery.map { Int(try vault.countTransactions(filter: $0)) },
+                        categories: try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false),
+                        uncategorized: Int(try vault.countTransactions(filter: uncategorizedQuery)),
                         groups: try vault.listAccountGroups(),
                         userGroups: try vault.listUserGroups()
                     )
@@ -309,10 +313,14 @@ extension AppModel {
         patchLoadedRows([booking.id]) { $0.note = note }
     }
 
-    func createCategory(name: String, parent: Int64?, symbol: String, color: String) {
+    func createCategory(name: String, parent: Int64?, symbol: String, color: String,
+                        assigning bookingIDs: [Booking.ID] = []) {
         guard let vault else { return }
-        runCore { _ = try vault.createCategory(name: name, parentId: parent, sfSymbol: symbol, colorHex: color) }
-        reloadCategories()
+        runCore {
+            let id = try vault.createCategory(name: name, parentId: parent, sfSymbol: symbol, colorHex: color)
+            reloadCategories()
+            setCategory(id, forBookingIDs: bookingIDs)
+        }
     }
 
     /// Changes one property of a category and keeps the others (#168) –
@@ -492,20 +500,26 @@ extension AppModel {
     func openRuleEditor(draft: Rule?) {
         ruleDraft = draft
         showRuleEditor = true
+        #if os(macOS)
+        ruleEditorRequest &+= 1
+        #endif
     }
 
-    @discardableResult
-    func saveRule(_ rule: Rule) -> Int64? {
-        guard let vault else { return nil }
+    func saveRule(_ rule: Rule, onlyUncategorized: Bool) async throws -> (id: Int64, application: Result<UInt32, Error>)? {
+        guard let pin = pinVault() else { throw CoreError.Database(message: "vault locked") }
+        let result: (id: Int64, application: Result<UInt32, Error>)
         do {
-            let id = try vault.saveRule(rule: rule)
-            _ = try vault.applyRules(onlyUncategorized: false)
-            reloadAll()
-            return id
+            result = try await pin.run { vault in
+                let id = try vault.saveRule(rule: rule)
+                return (id, Result { try vault.applyRule(ruleId: id, onlyUncategorized: onlyUncategorized) })
+            }
         } catch {
-            showError(String(localized: "Regel konnte nicht gespeichert werden"), describe(error))
-            return nil
+            guard isCurrent(pin) else { return nil }
+            throw error
         }
+        guard isCurrent(pin) else { return nil }
+        reloadAll()
+        return result
     }
 
     func deleteRule(_ id: Int64) {

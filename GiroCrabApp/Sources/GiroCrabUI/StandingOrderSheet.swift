@@ -68,10 +68,7 @@ struct StandingOrderSheet: View {
 
     // MARK: editor
 
-    private func intervalText(_ n: Int) -> String {
-        if draft.unit == "W" { return n == 1 ? String(localized: "1 Woche") : String(localized: "\(n) Wochen") }
-        return n == 1 ? String(localized: "1 Monat") : String(localized: "\(n) Monate")
-    }
+    private var rhythmChoices: [StandingRhythm] { draft.rhythmChoices(model.standingLimits) }
 
     private var editor: some View {
         @Bindable var model = model
@@ -104,6 +101,7 @@ struct StandingOrderSheet: View {
                                 .accessibilityLabel("IBAN ungültig")
                         }
                     }
+                    .withBankLine(draft.iban)
                 }
                 LabeledContent("Betrag") {
                     TextField("Betrag", text: $model.standingDraft.amountText, prompt: Text("0,00"))
@@ -120,23 +118,12 @@ struct StandingOrderSheet: View {
                 }
             }
             Section {
-                Picker("Rhythmus", selection: $model.standingDraft.unit) {
-                    Text("Monate").tag("M")
-                    Text("Wochen").tag("W")
-                }
-                let intervals = draft.allowedIntervals(model.standingLimits)
-                if intervals.isEmpty {
-                    Stepper(value: $model.standingDraft.interval, in: 1...99) {
-                        HStack {
-                            Text("Alle")
-                            Spacer()
-                            Text(intervalText(draft.interval)).appFont(.body, monospacedDigit: true).foregroundStyle(Theme.secondary)
-                        }
-                    }
-                } else {
-                    Picker("Alle", selection: $model.standingDraft.interval) {
-                        ForEach(intervals, id: \.self) { Text(intervalText($0)).tag($0) }
-                    }
+                // unit and interval in one list: weekly … yearly (what the bank does not offer is left out)
+                Picker("Rhythmus", selection: Binding(
+                    get: { draft.rhythm },
+                    set: { model.standingDraft.unit = $0.unit; model.standingDraft.interval = $0.interval }
+                )) {
+                    ForEach(rhythmChoices, id: \.self) { Text(draft.rhythmText(of: $0)).tag($0) }
                 }
                 let days = draft.allowedDays(model.standingLimits)
                 if draft.unit == "W" {
@@ -144,10 +131,11 @@ struct StandingOrderSheet: View {
                         ForEach(days.isEmpty ? Array(1...7) : days, id: \.self) { Text(StandingDraft.weekdayName($0)).tag($0) }
                     }
                 } else {
-                    Picker("Ausführungstag", selection: $model.standingDraft.execDay) {
-                        ForEach(days.isEmpty ? Array(1...30) : days.filter { $0 < 31 }, id: \.self) { Text("\($0).").tag($0) }
-                        if days.isEmpty || days.contains(31) { Text("Letzter Tag des Monats").tag(31) }
-                    }
+                    // 31 = the last day of the month
+                    let lastDay = String(localized: "Letzter Tag des Monats")
+                    NumberEntryRow(title: "Ausführungstag", value: $model.standingDraft.execDay, range: 1...31, allowed: days,
+                                   choices: (days.isEmpty ? Array(1...31) : days).map { ($0, $0 >= 31 ? lastDay : "\($0).") },
+                                   note: { $0 >= 31 ? lastDay : nil }, noteSamples: [lastDay], notePlacement: .before)
                 }
                 DatePicker("Erste Ausführung", selection: $model.standingDraft.firstDate,
                            in: draft.firstDateRange(model.standingLimits), displayedComponents: .date)
@@ -184,6 +172,7 @@ struct StandingOrderSheet: View {
                 line("Von Konto", account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "")
                 line("Empfänger", draft.name)
                 line("IBAN", draft.iban, mono: true)
+                if let bank = bankNameForIban(iban: draft.iban) { line("Bank", bank) }
                 if !draft.purpose.isEmpty { line("Verwendungszweck", draft.purpose) }
                 line("Erste Ausführung", DateText.medium(DateText.iso(draft.firstDate)), sensitive: false)
                 line("Letzte Ausführung",

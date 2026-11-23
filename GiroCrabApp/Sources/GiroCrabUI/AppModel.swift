@@ -23,6 +23,8 @@ public final class AppModel {
     private(set) var vault: Vault? {
         didSet {
             vaultRevision &+= 1
+            showRuleEditor = false
+            ruleDraft = nil
             advanziaWorkflow?.cancel()
             if vault != nil { refreshSidebarCounts() }
         }
@@ -39,7 +41,12 @@ public final class AppModel {
     @ObservationIgnored let offlineStore = OfflineStore()
     var vaultState: VaultState = .locked {
         // The external analysis serves only while the own vault is shown (#136).
-        didSet { if oldValue != vaultState { reconcileLocalApiServer() } }
+        didSet {
+            guard oldValue != vaultState else { return }
+            reconcileLocalApiServer()
+            // A link held on the lock screen or while unlocking (docs/payment-link.md).
+            if vaultState == .open { resumePaymentLink() }
+        }
     }
     /// The vault is open and the lock screen shows the crab's unlock hop for a moment.
     var unlockCelebrating = false
@@ -139,6 +146,14 @@ public final class AppModel {
     /// (legacy "1"/"true" from the old toggle count as "google").
     var logoProvider = "off"
     var onlineLogos: Bool { logoProvider != "off" }
+    /// Händlererkennung (#1373, Einstellungen › Händler). Off, bookings show their counterparty
+    /// without merchant name or logo: no logo domain to edit, no logo tip.
+    var merchantRecognitionEnabled = true
+    /// Bumped when the merchant settings may have changed (own change, iCloud merge, sync):
+    /// Einstellungen › Händler reads its list again.
+    var merchantSettingsRevision = 0
+    /// Merchant setting changes queued so far; only the newest reloads the views (`changeMerchants`).
+    @ObservationIgnored var merchantWriteCount = 0
     /// Not observed: signets read it in their body (`cachedLogo`), and filling it
     /// must not re-render every signet on screen.
     @ObservationIgnored var logoCache: [String: (image: Image, pixels: Int)] = [:]
@@ -286,6 +301,10 @@ public final class AppModel {
         get { directionFilter }
         set { loadingFilterInBackground { directionFilter = newValue } }
     }
+    var interactiveIncludeSubcategories: Bool {
+        get { includeSubcategories }
+        set { loadingFilterInBackground { includeSubcategories = newValue } }
+    }
     /// Amount range as set by the header popover (the list follows in the background, #357).
     var interactiveAmountFilter: AmountFilter {
         get { amountFilter }
@@ -335,10 +354,29 @@ public final class AppModel {
         }
     }
 
-    /// Any list filter of the header row (status, type, tags, accounts, amount, search) narrows the list.
+    /// Category scope for this session, shared across category selections.
+    var includeSubcategories = true {
+        didSet {
+            guard includeSubcategories != oldValue, !suspendsFilterReloads,
+                  case .category? = sidebarSelection else { return }
+            listLimit = Self.defaultListLimit
+            reloadAfterFilterChange()
+        }
+    }
+
+    var showsSubcategoryFilter: Bool {
+        if case .category? = shownSelection { return true }
+        return false
+    }
+
+    private var excludesSubcategories: Bool {
+        showsSubcategoryFilter && !includeSubcategories
+    }
+
+    /// Any list filter of the header row narrows the list.
     var hasActiveListFilters: Bool {
         statusFilter != .all || directionFilter != .all || tagFilter.isActive || amountFilter.isActive
-            || !searchText.isEmpty || !categoryAccountIDs.isEmpty
+            || !searchText.isEmpty || !categoryAccountIDs.isEmpty || excludesSubcategories
     }
 
     /// „Filter zurücksetzen“ (#840): clears every list filter with a single reload; the period stays.
@@ -348,6 +386,7 @@ public final class AppModel {
             defer { suspendsFilterReloads = false }
             statusFilter = .all
             directionFilter = .all
+            includeSubcategories = true
             clearTagFilter()
             amountFilter = AmountFilter()
             categoryAccountFilter = []
@@ -369,7 +408,7 @@ public final class AppModel {
 
     /// Filled icon while any filter is active.
     var filterSymbol: String {
-        statusFilter == .all && directionFilter == .all
+        statusFilter == .all && directionFilter == .all && !excludesSubcategories
             ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
     }
     /// Income / expenses only (GitHub #53); filtered in the core, so totals and CSV follow.
@@ -451,6 +490,9 @@ public final class AppModel {
             }
         }
     }
+    /// Bumped when a keyboard move keeps the selected row (Pos1 on the first row, Ende/Bild↓ on
+    /// the last): `selectedBookingID` does not change then, so `SelectionScroller` scrolls on this.
+    var keyboardScrollToken = 0
     var autoReviewDelay: AutoReviewDelay = .stored {
         didSet {
             AppDefaults.store.set(autoReviewDelay.rawValue, forKey: AutoReviewDelay.defaultsKey)
@@ -522,11 +564,11 @@ public final class AppModel {
     var iconColorTarget: IconColorTarget?
     /// The "new category" name prompt on screen (sidebar, menu bar, ⌘K).
     var newCategoryRequest: NewCategoryRequest?
-    /// "Belege & PostBox" filtered to one account (#172); nil = all accounts,
-    /// `documentsWithoutAccount` = documents without an account (e.g. PostBox, #838).
+    /// "Belege & Postbox" filtered to one account (#172); nil = all accounts,
+    /// `documentsWithoutAccount` = documents without an account (e.g. Postbox, #838).
     var documentsScope: DocumentsScope = .all
     var documentsAccountFilter: Int64?
-    /// "Belege & PostBox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
+    /// "Belege & Postbox" filtered to one bank connection (#1042); nil = all, `documentsWithoutAccount` =
     /// documents without an account (they have no bank connection). Set it with `selectDocumentsConnection`.
     var documentsConnectionFilter: Int64?
     static let documentsWithoutAccount: Int64 = -1
@@ -542,7 +584,7 @@ public final class AppModel {
     /// Sidebar badges: scheduled payments / active mandates over all accounts (SQL counts).
     var plannedCount = 0
     var mandateCount = 0
-    /// Unread documents (badge of „Belege & PostBox“), a partial-index COUNT.
+    /// Unread documents (badge of „Belege & Postbox“), a partial-index COUNT.
     var unseenDocumentCount = 0
     /// Counts the sidebar badge reads: an older read that finishes late must not overwrite a newer one.
     @ObservationIgnored var sidebarCountsGeneration = 0
@@ -583,6 +625,10 @@ public final class AppModel {
     @ObservationIgnored var rulesStale = false
     @ObservationIgnored var dashboardStale = false
     var ruleDraft: Rule?
+    #if os(macOS)
+    // Opening commands also raise an editor that is already open.
+    var ruleEditorRequest = 0
+    #endif
     var showSettings = false
     var showCommandPalette = false
     /// macOS: the "Problem melden" window is open. Greys out its menu item
@@ -653,6 +699,17 @@ public final class AppModel {
     @ObservationIgnored var enableBankingKeyStore: EnableBankingKeyStore = KeychainEnableBankingKeyStore()
     /// Taken over from another device; shown once unless the user turned it off.
     var enableBankingAdoptNotice: EnableBankingAdoptNotice?
+    /// Where the bank logins' own applications are shared between devices (#962).
+    @ObservationIgnored var enableBankingLoginStore: EnableBankingLoginStore = KeychainEnableBankingLoginStore()
+    /// Logins that took over an application from another device; shown once unless turned off.
+    var enableBankingLoginNotice: EnableBankingLoginNotice?
+    /// The running sync of the logins' applications; the next one waits for it (#962).
+    @ObservationIgnored var enableBankingLoginTask: Task<Void, Never>?
+    /// Logins whose application was changed here and on another device (#962).
+    /// Observed: the bank login sheet enables "Speichern" for them.
+    var enableBankingLoginConflicts: Set<Int64> = []
+    /// Closed on lock/reset so no running upload writes after it (#962).
+    @ObservationIgnored var enableBankingUploadGate = EnableBankingUploadGate()
     /// The personal vault while demo data is shown (nil if never unlocked).
     private(set) var ownVault: Vault? {
         didSet { if oldValue !== ownVault { reconcileLocalApiServer() } }
@@ -674,7 +731,11 @@ public final class AppModel {
     @ObservationIgnored var localApiJobs = 0
     var activeChallenge: ActiveChallenge?
     var payeeCheck: PendingPayeeCheck?
-    var syncingConnectionID: Int64?
+    var syncingConnectionID: Int64? { didSet { if syncingConnectionID == nil { resumePaymentLink() } } }
+    /// The one account the running sync of `syncingConnectionID` covers
+    /// ("<Konto> abrufen", statements), nil for the whole login. Set with it by
+    /// `startSync`; read only through `isSyncing(_:)` (#1572).
+    var syncingAccountID: Int64?
     var toast: String?
     /// Text of the error alert. Clearing it also clears title and retry.
     var errorMessage: String? {
@@ -719,14 +780,24 @@ public final class AppModel {
     }
 
     var activeSession: SyncSession?
-    var activeTransfer: TransferSession?
-    var showTransferSheet = false
+    var activeTransfer: TransferSession? {
+        // the frozen order data belongs to one session: a new one, the end, a cancel or the lock clears it
+        didSet {
+            if activeTransfer !== oldValue { activeTransferComparison = nil }
+            if activeTransfer == nil { resumePaymentLink() }
+        }
+    }
+    /// Recipient IBAN and amount of the single transfer as handed to the bank (#949), frozen when it
+    /// starts: the TAN card never follows later edits of `transferDraft`. Nil for batch, standing order, debit.
+    var activeTransferComparison: TanComparison?
+    // A transfer link waits while a form is open, also on its result step (`pendingPaymentLink`).
+    var showTransferSheet = false { didSet { if !showTransferSheet { resumePaymentLink() } } }
     /// Batch transfer (#240): sheet, the rows being edited, and whether the running session is one.
-    var showBatchSheet = false
+    var showBatchSheet = false { didSet { if !showBatchSheet { resumePaymentLink() } } }
     var batchDraft = BatchDraft()
     var activeTransferIsBatch = false
     /// Standing orders (#496): sheet, the order being edited, the bank's orders, and whether the running session is one.
-    var showStandingSheet = false
+    var showStandingSheet = false { didSet { if !showStandingSheet { resumePaymentLink() } } }
     var standingDraft = StandingDraft()
     var standingOrders: [StandingOrderInfo] = []
     /// What the bank of the order being edited allows (nil = unknown, the form offers everything).
@@ -748,6 +819,16 @@ public final class AppModel {
     /// Print dialog (GitHub #53).
     var showPrintSheet = false
     var transferDraft = TransferDraft()
+    /// A `girocrab://transfer` link that came while the form could not open (vault locked,
+    /// accounts still loading, a sync running): shown once that is over (`presentPendingPaymentLink`).
+    var pendingPaymentLink: ParsedPayment?
+    /// The open vault's accounts have been loaded once (`applyAccountGroups`): an empty list then
+    /// means no accounts, not "not loaded yet". Reset with the vault (`releaseVaultState`, `useVault`,
+    /// `adoptDemoVault`, `openDemoVault`).
+    @ObservationIgnored var accountsLoaded = false
+    /// A transfer form is being swapped for the batch form or back: closing the one must not let a
+    /// waiting link take the form before the other opens (`switchToBatchTransfer`, `switchToSingleTransfer`).
+    @ObservationIgnored var transferKindSwitching = false
     /// Opt-in clipboard check (#663): pasteboard `changeCount` last looked at, so the same
     /// content is offered once. Never the content itself; in memory only.
     var clipboardChangeCountHandled: Int?
@@ -777,6 +858,7 @@ public final class AppModel {
     var quietSyncConnectionID: Int64?
     /// What the last scheduled fetch did, for the menu bar popover (GitHub #546).
     var autoSyncStatus = AutoSyncStatus()
+    private(set) var scheduledBankSyncPaused = false
     var pollTask: Task<Void, Never>?
     var searchTask: Task<Void, Never>?
     var scopeLoadTask: Task<Void, Never>?
@@ -842,7 +924,7 @@ public final class AppModel {
     /// Account whose statements (HKEKA) are being fetched by the running session.
     var statementsAccountID: Int64?
     var statementsCountBefore = 0
-    /// comdirect FinTS login whose PostBox is fetched now ("PostBox jetzt abrufen", #838).
+    /// comdirect FinTS login whose Postbox is fetched now ("Postbox jetzt abrufen", #838).
     var postboxConnectionID: Int64?
     /// Account whose login syncs only it ("<Konto> abrufen", #1124). Set by
     /// `requestSyncAccount`, kept through prompts and retries, cleared by a
@@ -900,7 +982,7 @@ public final class AppModel {
         }
         if options.freshVault || options.demoSeed {
             // Developer switches only (screenshots): synchronous, not the normal start path.
-            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? Bundle.main.preferredLocalizations.first ?? "de")
+            GiroCrabCore.setLanguage(code: options.simulateSystemLanguage ?? AppLanguage.coreCode)
         }
         if options.freshVault {
             openFreshVault()
@@ -928,6 +1010,7 @@ public final class AppModel {
             case "sparplaene", "sparpläne", "investments": scope = .investments
             case "belege", "documents": sidebarSelection = .documents
             case "geplant", "planned": sidebarSelection = .planned
+            case "neu", "new": sidebarSelection = .newBookings
             case "lastschriften", "debits": sidebarSelection = .directDebits
             case "vermoegen", "vermögen", "wealth": sidebarSelection = .wealth
             case "vermoegen-cash": sidebarSelection = .wealth; wealthScope = .cash
@@ -1066,17 +1149,14 @@ public final class AppModel {
             ToolbarSearch.focus() // Bearbeiten › Suchen … (⌘F)
             #endif
         case "rules":
-            ruleDraft = nil
-            showRuleEditor = true
+            openRuleEditor()
         case "rule-edit":
             // a rule opened in the editor (#179 pattern field)
-            ruleDraft = rules.first
-            showRuleEditor = true
+            openRuleEditor(draft: rules.first)
         case "rule-tags":
             // a rule that only adds tags (#580)
             reloadRules()
-            ruleDraft = rules.first { $0.categoryId == 0 } ?? rules.first
-            showRuleEditor = true
+            openRuleEditor(draft: rules.first { $0.categoryId == 0 } ?? rules.first)
         case "palette":
             showCommandPalette = true
         case "categorizer":
@@ -1138,6 +1218,9 @@ public final class AppModel {
     var hasOwnVault: Bool { ownVault != nil }
     /// State of „Tresor-Schlüssel einfügen“ (key paste sheet).
     var keyAdoption: KeyAdoptionState = .idle
+    /// Bumped by „Abbrechen“ in the paste sheet: a folder check still running
+    /// for an earlier attempt sets nothing afterwards (#1503).
+    @ObservationIgnored private var keyAdoptionAttempt = 0
 
     // MARK: - Vault lifecycle
 
@@ -1152,7 +1235,7 @@ public final class AppModel {
         Task { @MainActor [weak self] in
             let mayHoldRealData = await Task.detached(priority: .userInitiated) { () -> Bool in
                 // Core texts follow the language the app bundle resolved (German without a bundle).
-                GiroCrabCore.setLanguage(code: Bundle.main.preferredLocalizations.first ?? "de")
+                GiroCrabCore.setLanguage(code: AppLanguage.coreCode)
                 // Decrypted QuickLook copies a crash or force quit may have left behind.
                 Self.removeQuickLookFiles()
                 return Self.vaultMayHoldRealData
@@ -1191,9 +1274,31 @@ public final class AppModel {
         unitTests: Bool = runningUnitTests,
         pid: Int32 = ProcessInfo.processInfo.processIdentifier
     ) -> URL {
-        FileManager.default.temporaryDirectory
+        if unitTests { _ = sweptStaleTestVaults }
+        return FileManager.default.temporaryDirectory
             .appendingPathComponent(unitTests ? "\(name)-\(pid).girocrab" : "\(name).girocrab")
     }
+
+    /// Test runs leave their `<name>-<pid>.girocrab` files behind (thousands
+    /// piled up in the temp folder). Once per process, the first call removes
+    /// the files of test processes that no longer run.
+    nonisolated private static let sweptStaleTestVaults: Void = {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
+        for file in names where file.hasPrefix("GiroCrab-Demo-") || file.hasPrefix("GiroCrab-Fresh-") {
+            // `<name>-<pid>.girocrab` plus its `-wal` / `-shm` sidecars.
+            guard let dash = file.firstIndex(of: "-"),
+                  let marker = file.range(of: ".girocrab"),
+                  ["", "-wal", "-shm"].contains(String(file[marker.upperBound...]))
+            else { continue }
+            let rest = file[file.index(after: dash)..<marker.lowerBound]
+            guard let pid = Int32(rest.split(separator: "-").last ?? "") else { continue }
+            // kill(pid, 0) == 0: alive; EPERM: alive, owned by someone else.
+            if kill(pid, 0) == 0 || errno == EPERM { continue }
+            try? fm.removeItem(at: dir.appendingPathComponent(file))
+        }
+    }()
 
     nonisolated private static func makeDemoVault() throws -> Vault {
         let url = Self.tempVaultURL("GiroCrab-Demo")
@@ -1209,6 +1314,7 @@ public final class AppModel {
 
     private func adoptDemoVault(_ v: Vault) {
         vault = v
+        accountsLoaded = false
         lockPreview = false
         demoActive = true
         vaultState = .open
@@ -1238,6 +1344,7 @@ public final class AppModel {
             let v = try Vault.open(path: prepared ?? url.path, key: key)
             if prepared == nil { _ = try v.seedDemoData() }
             vault = v
+            accountsLoaded = false
             lockPreview = false
             demoActive = true
             vaultState = .open
@@ -1451,15 +1558,20 @@ public final class AppModel {
             do {
                 let current = try await VaultKeyManager.shared.unlock()
                 let cloud = CloudSyncManager.shared
+                // A sync already running would make this one return at once and leave
+                // the previous run's result behind (#1503): wait for it first.
+                await cloud.waitUntilIdle()
                 await cloud.sync(vault: v, remoteKey: pasted, mergeOnly: true)
                 if let e = cloud.lastError { self.keyAdoption = .failed(e); self.toast = e; return }
+                // Also with the device's own key (#1503): nothing found and nothing here
+                // means the other device syncs elsewhere, not „done“.
+                let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
+                if !cloud.lastMergeFoundSnapshot && !hasData {
+                    // Name the place and offer another folder (#1503): the sheet stays open.
+                    self.keyAdoption = .notFound(KeyAdoptionState.notFoundMessage(location: cloud.location), searched: cloud.folderName)
+                    return
+                }
                 if pasted != current {
-                    let hasData = ((try? v.accountCount()) ?? 0) > 0 || connectionsExist(v)
-                    if !cloud.lastMergeFoundSnapshot && !hasData {
-                        let msg = String(localized: "Noch kein iCloud-Tresor gefunden. Aktivieren Sie iCloud Sync auf dem anderen Gerät, warten Sie auf den ersten Upload und versuchen Sie es erneut.")
-                        self.keyAdoption = .failed(msg); self.toast = msg
-                        return
-                    }
                     try v.rekey(newKey: pasted)
                     do {
                         // On failure importKey writes `current` back into the keychain.
@@ -1478,6 +1590,35 @@ public final class AppModel {
                 self.keyAdoption = .failed(describe(error)); self.toast = describe(error)
             }
         }
+    }
+
+    /// „Ordner wählen …“ in the paste sheet after no vault was found (#1503):
+    /// syncs via the picked folder from now on and adopts the pasted key there.
+    /// A folder without a vault is refused, so adopting never starts a new vault.
+    func adoptSyncKey(_ text: String, folder url: URL, wait: TimeInterval = 6) {
+        guard keyAdoption != .working else { return }
+        keyAdoption = .working
+        let attempt = keyAdoptionAttempt
+        Task {
+            let picked = await ICloudFolderMigration.inspectPicked(url, wait: wait)
+            // „Abbrechen“ while iCloud was still listing the folder: change nothing.
+            guard attempt == self.keyAdoptionAttempt else { return }
+            if let message = KeyAdoptionState.pickedFolderMessage(picked) {
+                // names the folder just picked, not the one still configured
+                self.keyAdoption = .notFound(message, searched: ICloudFolderMigration.displayName(for: url)); return
+            }
+            do { try CloudSyncManager.shared.setFolder(url, chosen: true) } catch {
+                self.keyAdoption = .failed(describe(error)); return
+            }
+            self.keyAdoption = .idle
+            self.adoptSyncKey(text)
+        }
+    }
+
+    /// „Abbrechen“ in the paste sheet: a running folder check is dropped (#1503).
+    func cancelKeyAdoption() {
+        keyAdoptionAttempt += 1
+        if keyAdoption == .working { keyAdoption = .idle }
     }
 
     /// After a pasted key opened the synced vault: switch from the demo to it and
@@ -1552,6 +1693,9 @@ public final class AppModel {
     func useVault(_ v: Vault, demo: Bool) {
         vault = v
         demoActive = demo
+        // The accounts loaded so far are the previous vault's (demo ↔ own): a waiting link
+        // waits for this vault's (`applyAccountGroups`).
+        accountsLoaded = false
         if !demo { AppDefaults.store.set(true, forKey: Self.realDataKey) }
         vaultState = .open
         selectedBookingID = nil
@@ -1630,13 +1774,23 @@ public final class AppModel {
         // an open tag sheet keeps what it changed
         if showTagManager { applyTagDraft() }
         demoDismissedLock = true
+        let hadSchedule = hasScheduledBankSync
         releaseVaultState()
+        scheduledBankSyncPaused = hadSchedule
         vaultState = .locked
     }
 
     /// Cancels every task, drops the vault and clears what it loaded (shared by `lock()` and the app reset).
     func releaseVaultState() {
+        newCategoryRequest = nil
+        scheduledBankSyncPaused = false
         reportPick = nil
+        // before the reset deletes the keychain items: no upload may recreate them (#962)
+        enableBankingLoginTask?.cancel()
+        enableBankingLoginTask = nil
+        enableBankingUploadGate.close()
+        enableBankingUploadGate = EnableBankingUploadGate()
+        enableBankingLoginConflicts = []
         scopeLoadTask?.cancel()
         categoryRefreshTask?.cancel()
         dashboardTask?.cancel()
@@ -1657,6 +1811,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
+        accountsLoaded = false
         groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; tagFilter = BookingTagFilter(); showTagFilter = false; showTagManager = false; tagDraft = TagDraft(); connections = []; settings = []
         page = nil; listBalances = ListBalances(); dashboard = nil; merchantStats = nil; merchantAccountStats = nil; categorySuggestion = nil; listSuggestions = [:]; logoCache = [:]
     }

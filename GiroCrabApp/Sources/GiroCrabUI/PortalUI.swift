@@ -13,7 +13,7 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .schwaebischHall, .equatePlus, .edenred].contains(c.connector) { return true }
+        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .sharinbox, .schwaebischHall, .equatePlus, .edenred].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         // the card's own application (#824) or the default one
         let app = connectionEnableBankingApp(c.id)
@@ -179,6 +179,7 @@ extension ConnectorKind {
         case .amazonVisa: return URL(string: "https://kunden.openbankpay.com/amazon/login")
         case .equatePlus: return URL(string: "https://www.equateplus.com/EquatePlusParticipant2/?login")
         case .quirion: return URL(string: "https://banking.quirion.de/login/")
+        case .sharinbox: return URL(string: "https://sharinbox.sgmarkets.com/home")
         case .schwaebischHall: return SchwaebischHallScripts.loginURL
         case .fnz: return URL(string: "https://portal.fnz.de/")
         case .edenred: return URL(string: "https://nutzer.edenred.de/")
@@ -207,6 +208,8 @@ extension ConnectorKind {
         case .edenred: return ["edenred.de", "edenred.io"]
         case .equatePlus: return ["www.equateplus.com", "www.emea.equateplus.com", "www.na.equateplus.com"]
         case .quirion: return ["banking.quirion.de"]
+        // sign-in runs on sso.sgmarkets.com (SG Connect); the data pages are served by sharinbox.*
+        case .sharinbox: return ["sharinbox.sgmarkets.com", "sso.sgmarkets.com"]
         case .schwaebischHall: return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         default: return []
         }
@@ -511,6 +514,12 @@ final class PortalBrowser {
     func fillLogin(user: String, password: String) async -> Bool {
         guard onPortal else { return false }
         let js = """
+        var host = location.hostname.toLowerCase().replace(/\\.$/, '');
+        var allowed = domains.some(function(d) {
+          d = String(d).toLowerCase().replace(/\\.$/, '');
+          return host === d || host.endsWith('.' + d);
+        });
+        if (location.protocol !== 'https:' || !allowed) return false;
         var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
         var pw = Array.prototype.find.call(document.querySelectorAll('input[type=password]'), vis);
         if (!pw) return false;
@@ -520,17 +529,18 @@ final class PortalBrowser {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
         var before = texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; });
         var u = named || before[before.length - 1];
-        if (!u) return false;
         var set = function(el, v) {
           if (el.value) return;
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
           el.dispatchEvent(new Event('input', {bubbles: true}));
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
-        set(u, user); set(pw, password);
+        if (u) set(u, user);
+        set(pw, password);
         return true;
         """
-        return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password],
+        return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password,
+                                                                               "domains": domains.domains],
                                                         contentWorld: .defaultClient) as? Bool) ?? false
     }
 
@@ -955,7 +965,7 @@ struct PortalWebSheet: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 guard !busy, !loadingStatements else { continue }
-                if connection.connector == .americanExpress, !loginFilled, browser.onLoginPage, browser.onPortal,
+                if AppModel.supportsStoredPortalLogin(connection.connector), !loginFilled, browser.onLoginPage, browser.onPortal,
                    !browser.loading {
                     loginFilled = await fillStoredLogin()
                 }
@@ -1123,10 +1133,15 @@ struct PortalWebSheet: View {
     /// done, or when nothing is stored; false while the form is not there yet.
     private func fillStoredLogin() async -> Bool {
         let id = connection.id
+        guard !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)) else { return true }
         let stored = try? await model.vaultOffMain {
             (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
         }
-        guard let (user, password) = stored, !user.isEmpty, !password.isEmpty else { return true }
+        guard let (storedUser, password) = stored, !password.isEmpty else { return true }
+        // Amazon Visa already stores the email as the connection login; copy it to
+        // the encrypted portal-login secret when the user opts into saving credentials.
+        let user = storedUser.isEmpty && connection.connector == .amazonVisa ? connection.loginName : storedUser
+        guard !user.isEmpty else { return true }
         let filled = await browser.fillLogin(user: user, password: password)
         if filled { AppModel.debugLog("portal: stored login filled in") }
         return filled

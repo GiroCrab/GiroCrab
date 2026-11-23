@@ -2,7 +2,7 @@ use super::*;
 use std::sync::Arc;
 
 fn temp_vault() -> (Arc<Vault>, std::path::PathBuf) {
-    let p = std::env::temp_dir().join(format!("girocrab-assets-{}.db", uuid::Uuid::new_v4()));
+    let p = crate::test_support::thread_temp_path("assets.db");
     let v = Vault::open(p.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
     (v, p)
 }

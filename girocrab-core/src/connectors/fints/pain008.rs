@@ -348,7 +348,7 @@ pub fn parse_pain008(xml: &str) -> CoreResult<Vec<ParsedDebitBlock>> {
             // an unreadable amount must not turn into 0: the file would be applied
             // with a silently wrong collection
             let cents = tag_text(tx, "InstdAmt", 0)
-                .and_then(|a| crate::money::parse_cents(&a).ok())
+                .and_then(|a| crate::money::decimal(&a, '.').and_then(crate::money::cents))
                 .ok_or_else(|| {
                     CoreError::invalid(tr("Die Datei enthält einen unlesbaren Betrag (pain.008)."))
                 })?;
@@ -369,8 +369,8 @@ pub fn parse_pain008(xml: &str) -> CoreResult<Vec<ParsedDebitBlock>> {
         // means a damaged or hand-edited file.
         let declared_count =
             tag_text(head, "NbOfTxs", 0).and_then(|c| c.trim().parse::<usize>().ok());
-        let declared_sum =
-            tag_text(head, "CtrlSum", 0).and_then(|c| crate::money::parse_cents(&c).ok());
+        let declared_sum = tag_text(head, "CtrlSum", 0)
+            .and_then(|c| crate::money::decimal(&c, '.').and_then(crate::money::cents));
         let actual_sum = collections
             .iter()
             .try_fold(0i64, |acc: i64, c: &Collection| {

@@ -11,12 +11,12 @@
 <p align="center">FinTS 3.0 · PSD2 · SEPA · Datenimport — 100&nbsp;% lokal verschlüsselt, kostenlos, Daten bleiben auf deinem Gerät.</p>
 
 <p align="center">
-  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.8.7 · Apple Silicon (.dmg)" width="260" height="56"></a>
+  <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg"><img src="docs/assets/download-macos.svg" alt="Für macOS laden – v0.8.8 · Apple Silicon (.dmg)" width="260" height="56"></a>
   &nbsp;
   <a href="https://testflight.apple.com/join/KBmvKVpT"><img src="docs/assets/download-ios.svg" alt="iOS &amp; iPadOS App – kostenlos via Apple TestFlight" width="260" height="56"></a>
 </p>
 
-<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.8.7</sub></p>
+<p align="center"><sub>✓ Offiziell von Apple notarisiert · ✓ Automatische Updates · ✓ Version v0.8.8</sub></p>
 <p align="center">
   <a href="https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe"><img src="docs/assets/download-windows-alpha.svg" alt="Für Windows laden (Alpha – Frühe Vorschau)" width="260" height="56"></a>
   &nbsp;
@@ -57,6 +57,13 @@ zu Ihren Banken per **FinTS 3.0 / HBCI** und **PSD2 (Enable Banking)** – ohne 
 ### Für wen ist GiroCrab?
 
 GiroCrab ist eine freie, quelloffene Banking-App (GPLv3) für macOS, Linux (Qt 6 / QML) und – derzeit als Beta über TestFlight – für iPhone und iPad. Alle Daten liegen verschlüsselt auf deinem Gerät. GiroCrab ist ein junges Community-Projekt: Die Bankenabdeckung wächst noch (siehe Bank-Tabelle), und PSD2-Zugänge laufen über einen eigenen, kostenlosen Enable-Banking-Zugang.
+
+### ✨ Neu in v0.8.8
+
+- 🔐 **Enable Banking & iCloud-Schlüsselbund (#962, #1590):** Eigene Enable-Banking-Anwendung pro Bankzugang über den iCloud-Schlüsselbund synchronisieren, Konflikte beim Speichern gezielt auflösen und zuverlässiges Zurücksetzen/Sperren ohne Datenverlust.
+- ₿ **Bitcoin Core & neue Kontoarten (#1592, #1630, #1454, #1620, #1631):** Eigene Bitcoin-Core-Wallet als Depot anbinden, neue Kontoarten **Bausparen** und **Festgeld**, nach Kontoart gruppierte Übersichten im Vermögens- und Kontobereich sowie Überweisungslinks (`girocrab://transfer`, #1575).
+- 🧾 **Belegabgleich, Händlererkennung & Regeln (#1511, #1373, #1505, #1604, #1671):** Bankbelege automatisch nach Inhalt mit Buchungen verknüpfen und neu einsortieren, manuell gelöste Verknüpfungen bewahren, eigene Händler & Regeln mit Anwendungsbereich/Tags pflegen sowie Regeleditor im eigenen Fenster.
+- 🏦 **FinTS, Überweisungen & plattformübergreifende Verbesserungen (#1513, #1563, #1570, #1607):** Tagesgeld-Umbuchungen (`HKCUM`), Banknamen zur IBAN in Zahlungsformularen, lückenlose Montagsbuchungen ohne Bis-Datum, individuelle Abrufintervalle je Zugang sowie erweiterter CSV-Export, Lesestatus für Belege unter Windows und Android-Keystore-Integration.
 
 ### ✨ Neu in v0.8.7
 
@@ -231,6 +238,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
@@ -238,6 +246,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
+| Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verifiziert |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
@@ -267,6 +276,12 @@ FNZ Bank / ebase / finvesto: Einrichtung, Konto- und Depotumsätze, Fondspositio
 Eine neue Bank anzubinden dauert meist unter 100 Zeilen: siehe
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) und [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### 🔗 Zusammenspiel mit anderen Apps
+
+- **Buchungen in andere Apps ziehen (macOS):** Eine oder mehrere Buchungen lassen sich aus der Liste in andere Programme ziehen; sie tragen alle Angaben der Buchung als JSON mit, dazu die Belege, die an ihr hängen (Format: [docs/booking-drag.md](docs/booking-drag.md)). Die Belegverwaltung [Receipts Space](https://receipts-app.com/) legt daraus Einträge an, mit Beleg oder als Platzhalter, dem nur noch der Beleg fehlt.
+- **Lesende lokale Schnittstelle (macOS):** Ausgewählte Konten, Buchungen, Kategorien und Summen für Programme auf demselben Mac, standardmäßig aus und nur mit Zugangsschlüssel, auch für KI-Assistenten per MCP ([docs/local-api.md](docs/local-api.md)).
+- **Rechnungen bezahlen:** ZUGFeRD / Factur-X, GiroCode / EPC-QR und PDF-Text aus der Zwischenablage füllen die Überweisung vor.
+
 ### Schnellstart
 
 Voraussetzungen: **macOS 14+ auf Apple Silicon (`arm64`)**, Xcode 15+, [rustup](https://rustup.rs). iOS-Geräte benötigen **iOS 17+**.
@@ -288,7 +303,7 @@ Die Demo enthält fiktive Konten und erfundene Buchungen – keine echten Daten.
 ### 📦 Download (macOS)
 
 Das fertige Disk-Image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) gibt es unter [GitHub Releases](../../releases) – ohne Rust oder Xcode.
-Aktuelle Version: **v0.8.7**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
+Aktuelle Version: **v0.8.8**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
 **iPhone / iPad:** [TestFlight-Beta beitreten](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel-Macs:** Die offiziellen Binaries sind nur für Apple Silicon (`arm64`). Auf Intel-Macs lässt sich GiroCrab mit Swift/Xcode selbst aus dem Quellcode bauen (siehe [Schnellstart](#schnellstart)).
@@ -323,6 +338,13 @@ recognition, savings-plan view, loan repayment progress and direct connections t
 ### Who is GiroCrab for?
 
 GiroCrab is a free, open-source banking app (GPLv3) for macOS, Linux (Qt 6 / QML) and – currently in beta via TestFlight – for iPhone and iPad. All data stays encrypted on your device. GiroCrab is a young community project: bank coverage is still growing (see the bank table), and PSD2 access works through your own free Enable Banking account.
+
+### ✨ What's new in v0.8.8
+
+- 🔐 **Enable Banking & iCloud Keychain (#962, #1590):** Sync per-connection Enable Banking applications via iCloud Keychain, resolve conflicts cleanly on save, and harden lock/reset handling.
+- ₿ **Bitcoin Core & New Account Types (#1592, #1630, #1454, #1620, #1631):** Track self-hosted **Bitcoin Core** wallets in Net Worth, add **Building Savings** (*Bausparen*) and **Fixed-Term Deposit** (*Festgeld*) account types, group accounts and cash by type, and support `girocrab://transfer` payment links (#1575).
+- 🧾 **Document Matching, Merchant Rules & Categorization (#1511, #1373, #1505, #1604, #1671):** Automatically match and re-sort bank documents by content while preserving manual unlinks, configure custom merchant patterns, scoped rules with tags, and a dedicated macOS Rule Editor window.
+- 🏦 **FinTS, Transfers & Cross-Platform Improvements (#1513, #1563, #1570, #1607):** Savings-to-reference transfers (`HKCUM`), IBAN bank-name hints, complete Monday statement fetches, per-connection polling intervals, expanded Windows CSV export and document read status, plus Android Keystore support.
 
 ### ✨ What's new in v0.8.7
 
@@ -485,6 +507,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verified |
@@ -492,6 +515,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
+| Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verified |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
@@ -517,10 +541,16 @@ Further German banks with FinTS 3.0 (PIN/TAN) can be connected via bank code and
 Adding a bank usually takes under 100 lines – start from
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) and read [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### 🔗 Working with other apps
+
+- **Drag bookings into other apps (macOS):** One or more bookings can be dragged from the list into other programs; they carry all of the booking's details as JSON, together with the receipts attached to it (format: [docs/booking-drag.md](docs/booking-drag.md)). The receipt manager [Receipts Space](https://receipts-app.com/) turns them into entries, with the receipt or as a placeholder that only lacks it.
+- **Read-only local interface (macOS):** Selected accounts, bookings, categories and totals for programs on the same Mac, off by default and only with an access key, also for AI assistants via MCP ([docs/local-api.md](docs/local-api.md)).
+- **Paying invoices:** ZUGFeRD / Factur-X, GiroCode / EPC QR and PDF text from the clipboard pre-fill the transfer.
+
 ### Download (macOS)
 
 The pre-built disk image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) is available under
-[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.7**.
+[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.8**.
 
 > 🧪 **Windows & Android (Early Alpha):** Experimental preview installers for [Windows (`x86_64-setup.exe`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe) and [Android (`.apk`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-Android-alpha.apk) are available for early testing (best tried in demo mode). Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
 **iPhone / iPad:** [join the TestFlight beta](https://testflight.apple.com/join/KBmvKVpT).

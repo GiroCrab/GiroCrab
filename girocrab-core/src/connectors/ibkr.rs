@@ -30,6 +30,7 @@ use super::{
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
 use crate::models::{AccountKind, Holding, SecurityDirection, SecurityTransaction};
+use crate::money;
 
 const SEND_URL: &str =
     "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest";
@@ -432,38 +433,9 @@ fn parse_status_response(xml: &str) -> Option<StatusResponse> {
 
 // ------------------------------------------------------------------ numbers and dates
 
-/// Decimal string → cents (half away from zero), no floats. Accepts
-/// `1234.5`, `-12.345`, `1,234.50` and `12,5`.
-fn parse_cents(s: &str) -> Option<i64> {
-    let mut t = s.trim().replace([' ', '\''], "");
-    if t.is_empty() {
-        return None;
-    }
-    if t.contains('.') {
-        t = t.replace(',', "");
-    } else {
-        t = t.replace(',', ".");
-    }
-    let (neg, t) = match t.strip_prefix('-') {
-        Some(r) => (true, r.to_string()),
-        None => (false, t.trim_start_matches('+').to_string()),
-    };
-    let (int, frac) = t.split_once('.').unwrap_or((&t, ""));
-    if int.is_empty() && frac.is_empty() {
-        return None;
-    }
-    if !int.bytes().all(|c| c.is_ascii_digit()) || !frac.bytes().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let mut cents: i64 = if int.is_empty() { 0 } else { int.parse().ok()? };
-    cents = cents.checked_mul(100)?;
-    let fb = frac.as_bytes();
-    let d = |i: usize| fb.get(i).map_or(0, |c| i64::from(c - b'0'));
-    cents = cents.checked_add(d(0) * 10 + d(1))?;
-    if d(2) >= 5 {
-        cents = cents.checked_add(1)?;
-    }
-    Some(if neg { -cents } else { cents })
+/// Flex decimal ("1234.5", "-12.345") → cents, half away from zero.
+fn flex_cents(s: &str) -> Option<i64> {
+    money::decimal(s, '.').and_then(money::cents_rounded)
 }
 
 fn attr<'a>(a: &'a HashMap<String, String>, key: &str) -> &'a str {
@@ -562,7 +534,7 @@ fn parse_statements(xml: &str) -> CoreResult<Vec<Statement>> {
                     "CashReportCurrency"
                         if attr(&t.attrs, "currency").eq_ignore_ascii_case("BASE_SUMMARY") =>
                     {
-                        s.cash_base = parse_cents(attr(&t.attrs, "endingCash"));
+                        s.cash_base = flex_cents(attr(&t.attrs, "endingCash"));
                     }
                     "AccountInformation" if !attr(&t.attrs, "currency").is_empty() => {
                         if s.base_currency.is_empty() {
@@ -574,8 +546,8 @@ fn parse_statements(xml: &str) -> CoreResult<Vec<Statement>> {
                         if s.equity.as_ref().is_none_or(|(d, _, _)| date >= *d) {
                             s.equity = Some((
                                 date,
-                                parse_cents(attr(&t.attrs, "cash")),
-                                parse_cents(attr(&t.attrs, "total")),
+                                flex_cents(attr(&t.attrs, "cash")),
+                                flex_cents(attr(&t.attrs, "total")),
                             ));
                         }
                     }
@@ -617,11 +589,11 @@ fn parse_holding(a: &Attrs, base: &str) -> Option<Holding> {
         (true, _) => symbol.to_string(),
     };
     // Figures in the position's own currency (`currency`), as the report gives them.
-    let native_price = parse_cents(attr(a, "markPrice"));
-    let native_value = parse_cents(attr(a, "positionValue"))
+    let native_price = flex_cents(attr(a, "markPrice"));
+    let native_value = flex_cents(attr(a, "positionValue"))
         .or_else(|| native_price.map(|p| (p as f64 * quantity).round() as i64));
-    let native_purchase = parse_cents(attr(a, "costBasisPrice")).or_else(|| {
-        parse_cents(attr(a, "costBasisMoney")).map(|c| (c as f64 / quantity).round() as i64)
+    let native_purchase = flex_cents(attr(a, "costBasisPrice")).or_else(|| {
+        flex_cents(attr(a, "costBasisMoney")).map(|c| (c as f64 / quantity).round() as i64)
     });
     let price = native_price.map(|c| to_base(c, a, base));
     let value = native_value.map(|c| to_base(c, a, base)).unwrap_or(0);
@@ -629,10 +601,10 @@ fn parse_holding(a: &Attrs, base: &str) -> Option<Holding> {
         .or_else(|| (quantity != 0.0).then(|| (value as f64 / quantity).round() as i64))
         .unwrap_or(0);
     // Per-unit cost basis in the base currency; the money total is converted first.
-    let purchase = parse_cents(attr(a, "costBasisPrice"))
+    let purchase = flex_cents(attr(a, "costBasisPrice"))
         .map(|c| to_base(c, a, base))
         .or_else(|| {
-            parse_cents(attr(a, "costBasisMoney"))
+            flex_cents(attr(a, "costBasisMoney"))
                 .map(|c| (to_base(c, a, base) as f64 / quantity).round() as i64)
         })
         .unwrap_or(0);
@@ -670,7 +642,7 @@ fn base_amount(a: &Attrs, cents: i64, base: &str) -> (i64, String) {
 }
 
 fn parse_cash_tx(a: &Attrs, st: &Statement, cash_ref: &str) -> Option<RemoteTransaction> {
-    let cents = parse_cents(attr(a, "amount"))?;
+    let cents = flex_cents(attr(a, "amount"))?;
     let (amount, orig) = base_amount(a, cents, &st.base_currency);
     if amount == 0 {
         return None;
@@ -712,11 +684,9 @@ fn parse_trade(a: &Attrs, st: &Statement, cash_ref: &str) -> Option<RemoteTransa
     if attr(a, "assetCategory").eq_ignore_ascii_case("CASH") {
         return None;
     }
-    let cents = match parse_cents(attr(a, "netCash")) {
+    let cents = match flex_cents(attr(a, "netCash")) {
         Some(c) => c,
-        None => {
-            parse_cents(attr(a, "proceeds"))? + parse_cents(attr(a, "ibCommission")).unwrap_or(0)
-        }
+        None => flex_cents(attr(a, "proceeds"))? + flex_cents(attr(a, "ibCommission")).unwrap_or(0),
     };
     let (amount, orig) = base_amount(a, cents, &st.base_currency);
     if amount == 0 {
@@ -794,7 +764,7 @@ fn parse_security_trade(
         "SELL" => SecurityDirection::Sell,
         _ => SecurityDirection::Other,
     };
-    let cents = |k: &str| parse_cents(attr(a, k)).map_or(0, i64::abs);
+    let cents = |k: &str| flex_cents(attr(a, k)).map_or(0, i64::abs);
     let id = [attr(a, "transactionID"), attr(a, "tradeID")]
         .into_iter()
         .find(|s| !s.is_empty());
@@ -834,7 +804,7 @@ fn parse_security_trade(
             },
             direction,
             quantity,
-            price_cents: parse_cents(attr(a, "tradePrice")).unwrap_or(0),
+            price_cents: flex_cents(attr(a, "tradePrice")).unwrap_or(0),
             currency: currency.to_string(),
             value_cents: cents("proceeds"),
             fees_cents: cents("ibCommission"),
@@ -860,7 +830,7 @@ fn parse_security_cash(
         "Broker Fees" | "Other Fees" | "Commission Adjustments" => SecurityDirection::Fee,
         _ => return None,
     };
-    let value = parse_cents(attr(a, "amount"))?.abs();
+    let value = flex_cents(attr(a, "amount"))?.abs();
     let id = attr(a, "transactionID");
     if value == 0 || id.is_empty() {
         return None;
@@ -1079,16 +1049,14 @@ mod tests {
 </FlexQueryResponse>"#;
 
     #[test]
-    fn parses_cents_without_floats() {
-        assert_eq!(parse_cents("1234.56"), Some(123_456));
-        assert_eq!(parse_cents("-0.09"), Some(-9));
-        assert_eq!(parse_cents("1,234.50"), Some(123_450));
-        assert_eq!(parse_cents("12,5"), Some(1_250));
-        assert_eq!(parse_cents("0.005"), Some(1));
-        assert_eq!(parse_cents("-0.005"), Some(-1));
-        assert_eq!(parse_cents("100"), Some(10_000));
-        assert_eq!(parse_cents(""), None);
-        assert_eq!(parse_cents("abc"), None);
+    fn flex_decimals_round_to_cents() {
+        assert_eq!(flex_cents("1234.56"), Some(123_456));
+        assert_eq!(flex_cents("-0.09"), Some(-9));
+        assert_eq!(flex_cents("0.005"), Some(1));
+        assert_eq!(flex_cents("-0.005"), Some(-1));
+        assert_eq!(flex_cents("100"), Some(10_000));
+        assert_eq!(flex_cents(""), None);
+        assert_eq!(flex_cents("abc"), None);
     }
 
     #[test]

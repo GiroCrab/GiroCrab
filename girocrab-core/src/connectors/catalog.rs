@@ -122,7 +122,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             login_label: tr("Zugangsbezeichnung").into(),
             secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
             required_settings: vec![],
-            note: tr("Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.").into(),
+            note: tr("Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & Postbox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet.").into(),
         },
         ConnectorKind::Quirion => BankDescriptor {
             kind,
@@ -134,6 +134,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
             required_settings: vec![],
             note: tr("quirion: Depotpositionen, Liquiditätskonto, Verrechnungskonto und gebuchte Umsätze. Anmeldung im Browserfenster. Interne Portal-API; Änderungen sind möglich.").into(),
+        },
+        ConnectorKind::Sharinbox => BankDescriptor {
+            kind,
+            name: "Sharinbox (Société Générale)".into(),
+            protocol: tr("Direkt-Login (Web-Session)").into(),
+            bank_code: String::new(),
+            sf_symbol: "chart.pie".into(),
+            login_label: tr("Zugangsbezeichnung").into(),
+            secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
+            required_settings: vec![],
+            note: tr("Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich.").into(),
         },
         ConnectorKind::Easybank => BankDescriptor {
             kind,
@@ -178,6 +189,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             secret_label: tr("Passwort").into(),
             required_settings: vec![],
             note: tr("Uberspace-Hosting: Guthaben und Buchungen aller Asteroids, die zur E-Mail-Adresse des Dashboards gehören. Inoffiziell: liest die Seiten des Dashboards, Änderungen sind möglich.").into(),
+        },
+        ConnectorKind::BitcoinCore => BankDescriptor {
+            kind,
+            name: "Bitcoin Core".into(),
+            protocol: tr("Eigener Knoten (lokale JSON-RPC-Schnittstelle)").into(),
+            bank_code: String::new(),
+            sf_symbol: "bitcoinsign.circle".into(),
+            login_label: tr("Wallet-Name (leer = einzige geladene Wallet)").into(),
+            secret_label: tr("(nicht nötig – nutzt die .cookie-Datei des Knotens)").into(),
+            required_settings: vec![],
+            note: tr("Bitcoin Core: der Bestand einer Wallet im eigenen Knoten als Depot mit der Position Bitcoin, bewertet zum aktuellen Euro-Kurs. Der Knoten muss beim Abruf laufen, mit eingeschaltetem RPC-Server (server=1); die Anmeldung erfolgt über seine .cookie-Datei. Über Adressen und Bestand verlässt nichts den Rechner, nur der Kurs wird öffentlich abgefragt.").into(),
         },
         ConnectorKind::Bhw => BankDescriptor {
             kind,
@@ -313,7 +335,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             login_label: tr("E-Mail (nur Anzeige)").into(),
             secret_label: tr("(nicht nötig – Anmeldung im Browser)").into(),
             required_settings: vec![],
-            note: tr("Vorher auf scalable.capital unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff.").into(),
+            note: tr("Vorher im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff.").into(),
         },
         ConnectorKind::Ibkr => BankDescriptor {
             kind,
@@ -697,6 +719,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Bitcoin Core",
+        kind: Some(ConnectorKind::BitcoinCore),
+        interface: Interface::RestApi,
+        official: Some(true),
+        capabilities: &[Capability::Balances, Capability::Securities],
+        status: Status::TestingWanted,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "Uberspace",
         kind: Some(ConnectorKind::Uberspace),
         interface: Interface::WebPortal,
@@ -820,6 +851,19 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Sharinbox (Société Générale)",
+        kind: Some(ConnectorKind::Sharinbox),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[
+            Capability::Balances,
+            Capability::Securities,
+            Capability::Documents,
+        ],
+        status: Status::TestingWanted,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "FNZ Bank",
         kind: Some(ConnectorKind::Fnz),
         interface: Interface::WebPortal,
@@ -893,6 +937,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::Edenred => Box::new(crate::importers::portal_import::PortalOnlyConnector),
         ConnectorKind::Ibkr => Box::new(ibkr::IbkrConnector::new()),
         ConnectorKind::Quirion => Box::new(quirion::WebOnlyConnector),
+        ConnectorKind::Sharinbox => Box::new(sharinbox::WebOnlyConnector),
         ConnectorKind::SchwaebischHall => Box::new(schwaebisch_hall::WebOnlyConnector),
         ConnectorKind::EquatePlus => Box::new(equateplus::WebOnlyConnector),
         ConnectorKind::Bunq => Box::new(bunq::BunqConnector::new()),
@@ -900,6 +945,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::AlteLeipziger => Box::new(fin4u::Fin4uConnector::new()),
         ConnectorKind::VolkswagenBank => Box::new(volkswagen_bank::VolkswagenBankConnector::new()),
         ConnectorKind::Uberspace => Box::new(uberspace::UberspaceConnector::new()),
+        ConnectorKind::BitcoinCore => Box::new(bitcoin_core::BitcoinCoreConnector::new()),
         ConnectorKind::Ffb => Box::new(ffb::FfbConnector::new()),
         ConnectorKind::FordMoney => Box::new(fordmoney::FordMoneyConnector::new()),
         ConnectorKind::OpelDirektbank => Box::new(opel::OpelDirektbankConnector::new()),
@@ -920,6 +966,32 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
 #[cfg(test)]
 mod matrix_tests {
     use super::*;
+
+    /// The other direction: a connector in the matrix that `ConnectorKind::all()`
+    /// misses has no descriptor in `bank_catalog()` (the add form stays empty)
+    /// and its stored connections are not recognised (`from_str`).
+    #[test]
+    fn every_matrix_connector_is_listed_in_all_kinds() {
+        for e in BANK_MATRIX {
+            let Some(kind) = e.kind else { continue };
+            assert!(
+                ConnectorKind::all().contains(&kind),
+                "{}: {kind:?} missing in ConnectorKind::all()",
+                e.name
+            );
+            assert_eq!(
+                ConnectorKind::from_str(kind.as_str()),
+                Some(kind),
+                "{}",
+                e.name
+            );
+            assert!(
+                bank_catalog().iter().any(|d| d.kind == kind),
+                "{}: no catalog entry",
+                e.name
+            );
+        }
+    }
 
     #[test]
     fn every_connector_kind_has_a_matrix_row() {
