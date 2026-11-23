@@ -86,6 +86,11 @@ impl Ui {
         self.invalidate();
         self.edit_error = error;
     }
+    fn edit_succeeded(&mut self, action: &Edit, undo: Option<(Pair, String)>) {
+        if !matches!(action, Edit::Link(_)) {
+            self.undo = undo;
+        }
+    }
 }
 
 thread_local! { static UI: RefCell<Ui> = RefCell::new(Ui::default()); }
@@ -194,6 +199,15 @@ fn card_rows(v: &Vault, id: i64) -> Result<Vec<RefundRow>, String> {
         .collect())
 }
 
+fn rendered_card_rows(mut rows: Vec<RefundRow>, privacy: bool) -> Vec<RefundRow> {
+    for row in &mut rows {
+        row.title = daily::mask(&row.title, privacy).into();
+        row.detail = daily::mask(&row.detail, privacy).into();
+        row.amount = daily::mask(&row.amount, privacy).into();
+    }
+    rows
+}
+
 pub fn refresh_card(win: &MainWindow) {
     let request = CARD_REQUEST.with(|r| {
         r.set(r.get().wrapping_add(1));
@@ -214,7 +228,10 @@ pub fn refresh_card(win: &MainWindow) {
                 return;
             }
             match result {
-                Ok(rows) => win.set_rf_card_rows(ModelRc::new(VecModel::from(rows))),
+                Ok(rows) => win.set_rf_card_rows(ModelRc::new(VecModel::from(rendered_card_rows(
+                    rows,
+                    crate::privacy_on(&win),
+                )))),
                 Err(e) => win.set_sync_status(e.into()),
             }
         });
@@ -295,17 +312,28 @@ fn load(v: &Vault, id: i64, own: &str, query: &str) -> Result<Loaded, String> {
             ),
         })
         .collect::<Vec<_>>();
-    let selected = parts
-        .iter()
-        .find(|p| p.uuid == own)
-        .or_else(|| {
+    let selected = parts.iter().find(|p| p.uuid == own).or_else(|| {
+        if own.is_empty() {
             parts
                 .iter()
                 .find(|p| (p.amount > 0) == (booking.amount_cents > 0))
-        })
-        .or(parts.first());
-    let amount = selected.map_or(booking.amount_cents, |p| p.amount);
-    let own = selected.map_or("", |p| p.uuid.as_str()).to_string();
+                .or(parts.first())
+        } else {
+            None
+        }
+    });
+    let invalid = !own.is_empty() && selected.is_none();
+    let amount = if invalid {
+        0
+    } else {
+        selected.map_or(booking.amount_cents, |p| p.amount)
+    };
+    let own = if invalid {
+        own
+    } else {
+        selected.map_or("", |p| p.uuid.as_str())
+    }
+    .to_string();
     let from_refund = amount > 0;
     let links = links_all
         .into_iter()
@@ -405,6 +433,7 @@ pub fn privacy_changed(win: &MainWindow, vault: Arc<Vault>) {
     with_ui(|u| u.invalidate());
     win.set_rf_loading(false);
     clear(win);
+    refresh_card(win);
     if win.get_refunds_open() {
         refresh(win, vault);
     }
@@ -419,6 +448,15 @@ fn render(win: &MainWindow) {
     let mask = |s: &str| daily::mask(s, privacy);
     with_ui(|u| {
         let Some(d) = &u.loaded else { return };
+        if !d.own.is_empty() && !d.parts.iter().any(|p| p.uuid == d.own) {
+            win.set_rf_status(
+                text(
+                    "Die gewählte Teilbuchung existiert nicht mehr. Bitte wählen Sie einen Teil.",
+                    "The selected split no longer exists. Please select a part.",
+                )
+                .into(),
+            );
+        }
         win.set_rf_search_empty(search_empty(d, &u.query));
         win.set_rf_english(english());
         win.set_rf_from_refund(d.from_refund);
@@ -448,7 +486,7 @@ fn render(win: &MainWindow) {
             d.parts
                 .iter()
                 .position(|p| p.uuid == d.own)
-                .map_or(0, |i| i as i32),
+                .map_or(-1, |i| i as i32),
         );
         let mut rows = Vec::new();
         let mut actions = Vec::new();
@@ -725,7 +763,7 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
                     if changed {
                         with_ui(|u| {
                             if u.dialog == dialog {
-                                u.undo = undo;
+                                u.edit_succeeded(&action, undo);
                             }
                         });
                         crate::reload(&win, v.clone());
@@ -1014,6 +1052,74 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn linking_another_pair_preserves_the_unlink_undo_token() {
+        let pair = Pair {
+            refund: 1,
+            refund_part: String::new(),
+            original: 2,
+            original_part: String::new(),
+        };
+        let mut ui = Ui {
+            undo: Some((pair.clone(), "token".into())),
+            ..Default::default()
+        };
+        ui.edit_succeeded(&Edit::Link(pair.clone()), None);
+        assert_eq!(ui.undo.as_ref().unwrap().1, "token");
+        ui.edit_succeeded(
+            &Edit::Unlink(pair.clone()),
+            Some((pair.clone(), "next".into())),
+        );
+        assert_eq!(ui.undo.as_ref().unwrap().1, "next");
+        ui.edit_succeeded(&Edit::Restore(pair, "next".into()), None);
+        assert!(ui.undo.is_none());
+    }
+
+    #[test]
+    fn stale_selected_uuid_never_selects_a_different_endpoint() {
+        let (_dir, v, f) = fixture();
+        let initial = load(&v, f.refund, "", "").unwrap();
+        assert!(!initial.own.is_empty());
+        let got = load(&v, f.refund, "removed-uuid", "").unwrap();
+        assert_eq!(got.own, "removed-uuid");
+        assert!(got.candidates.is_empty() && got.suggestions.is_empty() && got.links.is_empty());
+        assert!(!got.parts.is_empty());
+        v.set_transaction_splits(f.refund, Vec::new()).unwrap();
+        let unsplit = load(&v, f.refund, "removed-uuid", "").unwrap();
+        assert_eq!(unsplit.own, "removed-uuid");
+        assert!(
+            unsplit.parts.is_empty()
+                && unsplit.candidates.is_empty()
+                && unsplit.suggestions.is_empty()
+        );
+    }
+
+    #[test]
+    fn inspector_card_masks_names_details_and_amounts() {
+        let (_dir, v, f) = fixture();
+        v.link_refund(f.refund, f.part.clone(), f.original, String::new())
+            .unwrap();
+        let rows = rendered_card_rows(card_rows(&v, f.refund).unwrap(), true);
+        assert!(!rows.is_empty());
+        for row in rows {
+            assert_eq!(row.title.as_str(), daily::mask("private", true));
+            assert_eq!(row.detail.as_str(), daily::mask("private", true));
+            assert_eq!(row.amount.as_str(), daily::mask("private", true));
+        }
+        assert!(rendered_card_rows(Vec::new(), true).is_empty());
+        let visible = rendered_card_rows(card_rows(&v, f.refund).unwrap(), false);
+        assert_ne!(visible[0].title.as_str(), daily::mask("private", true));
+        let source = include_str!("refunds_ui.rs");
+        let changed = source
+            .split("pub fn privacy_changed(")
+            .nth(1)
+            .unwrap()
+            .split("fn search_empty")
+            .next()
+            .unwrap();
+        assert!(changed.contains("refresh_card(win)"));
+    }
 
     #[test]
     fn refund_overlay_stays_below_transfer_and_tan_prompts() {

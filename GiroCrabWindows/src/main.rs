@@ -729,7 +729,7 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
                     .ok()?
                     .into_iter()
                     .find(|a| a.id == *id)
-                    .map(|a| a.currency.trim().to_ascii_uppercase())
+                    .map(|a| cockpit::effective_account_currency(&a.currency))
             })
             .filter(|c| !c.is_empty())
             .or_else(|| (!proof).then(|| "EUR".into()));
@@ -901,7 +901,14 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                 return;
             }
             match (rows, cats) {
-                (Ok(rows), Ok(cats)) => {
+                (Ok(rows), result) => {
+                    let cats = match result {
+                        Ok(cats) => cats,
+                        Err(e) => {
+                            win.set_sync_status(e.into());
+                            with_state(|st| st.categories.clone())
+                        }
+                    };
                     let mut names = vec![SharedString::from("Ohne Kategorie")];
                     names.extend(cats.iter().map(|c| SharedString::from(c.path.as_str())));
                     win.set_category_names(ModelRc::new(VecModel::from(names)));
@@ -923,7 +930,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                     apply_filter(&win);
                     request_logos(&win, vault.clone());
                 }
-                (Err(e), _) | (_, Err(e)) => win.set_sync_status(e.into()),
+                (Err(e), _) => win.set_sync_status(e.into()),
             }
         });
     });
@@ -1362,7 +1369,11 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
             refresh_transfer_sources(win, vault);
             // Fill the sidebar and the account count now; the background refresh follows.
             views_ui::set_accounts_now(win, vault);
+            let previous_target = with_state(|st| st.target);
             views_ui::sync_target(sel);
+            if previous_target != with_state(|st| st.target) {
+                refresh_dashboard(win, vault.clone());
+            }
             if sel.is_some() {
                 // First paint: load the scope's bookings synchronously (selects the first one);
                 // the background reload in `apply_view` then refreshes them.
@@ -2875,6 +2886,28 @@ fn strip_csv_columns(csv: &str, keep_iban: bool, keep_tags: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_reload_and_target_changes_have_recovery_paths() {
+        let source = include_str!("main.rs");
+        let reload = source
+            .split("fn reload(")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!reload.contains("(Ok(rows), Ok(cats)) =>"));
+        let show = source
+            .split("fn show(win:")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        let after = show.split("views_ui::sync_target(sel);").nth(1).unwrap();
+        assert!(after.contains("refresh_dashboard(win, vault.clone())"));
+    }
 
     #[test]
     fn dashboard_month_comes_from_the_cores_local_cashflow_period() {

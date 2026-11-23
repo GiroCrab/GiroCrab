@@ -84,6 +84,15 @@ pub fn period_month(key: &str) -> Option<(i32, u32)> {
     (key.len() == 7 && (1..=12).contains(&month)).then_some((year, month))
 }
 
+pub fn effective_account_currency(currency: &str) -> String {
+    let currency = currency.trim().to_ascii_uppercase();
+    if currency.is_empty() {
+        "EUR".into()
+    } else {
+        currency
+    }
+}
+
 pub fn current_year_month(vault: &girocrab_core::Vault) -> Result<(i32, u32), String> {
     vault
         .cashflow_by_period(girocrab_core::PeriodGranularity::Month, 1, None, false)
@@ -313,6 +322,13 @@ pub fn top_spending(totals: &[CategoryFlowTotal], n: usize, currency: &str) -> V
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn blank_account_currency_matches_the_core_default() {
+        assert_eq!(effective_account_currency(""), "EUR");
+        assert_eq!(effective_account_currency("  "), "EUR");
+        assert_eq!(effective_account_currency(" usd "), "USD");
+    }
 
     #[test]
     fn reporting_month_uses_the_local_period_and_rejects_missing_periods() {
