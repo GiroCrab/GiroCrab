@@ -485,7 +485,10 @@ Sheet {
         padding: 12
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         background: Rectangle { radius: 9; color: Theme.card; border.color: Theme.border }
-        onClosed: sheet.overPopover = false
+        // ReportDialogs.swift › capturablePopover (#384): drawn into the bug report picture
+        onOpened: ReportDialogs.track(accountsPopover)
+        Component.onDestruction: ReportDialogs.untrack(accountsPopover)
+        onClosed: { sheet.overPopover = false; ReportDialogs.untrack(accountsPopover) }
         contentItem: ColumnLayout {
             spacing: 6
             HoverHandler { onHoveredChanged: { sheet.overPopover = hovered; sheet.hoverChanged() } }
@@ -578,6 +581,10 @@ Sheet {
     // MARK: - colour (TagColorPalette in a popover)
     Popup {
         id: colorPopover
+        // ReportDialogs.swift › capturablePopover (#384): drawn into the bug report picture
+        onOpened: ReportDialogs.track(colorPopover)
+        onClosed: ReportDialogs.untrack(colorPopover)
+        Component.onDestruction: ReportDialogs.untrack(colorPopover)
         property var tag: null
         function openFor(t, anchor) {
             tag = t

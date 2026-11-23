@@ -1,6 +1,6 @@
-GiroCrab iOS 0.7.5 (Build 24) – enthält den kompletten Funktionsumfang von GiroCrab v0.8.7:
+Neu in Build 25 (v0.7.5):
 
-• FinTS auf iPhone & iPad (#1449): Die offizielle FinTS-Produktregistrierung von GiroCrab ist jetzt auch im iOS/iPadOS-Build fest eingebettet und vor dem Upload verifiziert.
-• Drei neue Banken: Hanseatic Bank (inkl. Postbox-PDFs), BHW Bausparkasse (inkl. Postfach-PDFs) und Kontist-Geschäftskonto sowie aktualisierte FinTS-Adresse für 1822direkt.
-• Konten & Summen (#1100, #1445, #1446): Neuer Schalter „In Gesamtsummen zählen“ je Konto, direktes Konto-Löschen in den Kontoeinstellungen und korrekter 0,00-€-Saldo nach bezahlter Amex-Abrechnung.
-• Zahlungen & Liste: Bekannte Empfänger verwalten/ausblenden, direktes Notiz-Symbol an Buchungen, synchroner Kopfbereich beim Zeitraumwechsel (#1444) und FinTS-Überweisungskorrekturen.
+• 🔐 Enable Banking & iCloud-Schlüsselbund: Eigene Enable-Banking-Anwendung pro Bankzugang über den iCloud-Schlüsselbund synchronisieren, Konflikte beim Speichern gezielt auflösen und zuverlässiges Zurücksetzen/Sperren ohne Datenverlust.
+• ₿ Bitcoin Core & neue Kontoarten: Eigene Bitcoin-Core-Wallet als Depot anbinden, neue Kontoarten Bausparen und Festgeld, nach Kontoart gruppierte Übersichten im Vermögens- und Kontobereich sowie Überweisungslinks (`girocrab://transfer`).
+• 🧾 Belegabgleich, Händlererkennung & Regeln: Bankbelege automatisch nach Inhalt mit Buchungen verknüpfen und neu einsortieren, manuell gelöste Verknüpfungen bewahren, eigene Händler & Regeln mit Anwendungsbereich/Tags pflegen sowie Regeleditor im eigenen Fenster.
+• 🏦 FinTS, Überweisungen & plattformübergreifende Verbesserungen: Tagesgeld-Umbuchungen (`HKCUM`), Banknamen zur IBAN in Zahlungsformularen, lückenlose Montagsbuchungen ohne Bis-Datum, individuelle Abrufintervalle je Zugang sowie erweiterter CSV-Export, Lesestatus für Belege unter Windows und Android-Keystore-Integration.
