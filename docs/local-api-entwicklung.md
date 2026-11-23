@@ -25,7 +25,8 @@ LocalApiServer im Core (läuft im App-Prozess)  →  Vault::local_api_socket_req
 - **Socket-Server** (`girocrab-core/src/local_api/server.rs`): `LocalApiServer` mit Lock-Datei
   (`girocrab.sock.lock`), Peer-UID-Prüfung, Grenzen (4 Verbindungen, 64 KiB, 10 s je Anfrage, 60 s Leerlauf) und
   Takt. Hält den Tresor nur `Weak`; nach `stop()` geht keine Antwort mehr raus. Hat eine Anfrage Buchungen
-  geändert, meldet er das nach der Antwort an den `LocalApiListener` der App (beim Start übergeben, damit keine frühe Änderung verloren geht; `set_listener` tauscht ihn).
+  geändert, meldet er das nach der Bearbeitung an den `LocalApiListener` der App, auch wenn die Antwort nach einem
+  `stop()` zurückgehalten wird (übergeben beim Start, damit keine frühe Änderung verloren geht; `set_listener` tauscht ihn).
 - **App** (`GiroCrabApp/Sources/GiroCrabUI/AppModel+LocalApi.swift`): startet und stoppt den Server.
   `localApiTarget` legt fest, wann er laufen darf: eigener Tresor, entsperrt, angezeigt, nur macOS.
   Ausgelöst durch die `didSet` von `ownVault`, `demoActive` und `vaultState` (`reconcileLocalApiServer`).
