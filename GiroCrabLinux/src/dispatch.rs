@@ -1482,6 +1482,7 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         // `respect_in_total` from QML.
         "cashflow_by_period" => Some(cashflow_by_period_totals(v, a)),
         "refund_sheet" => Some(crate::refunds::sheet(v, a)),
+        "refund_card" => Some(crate::refunds::card(v, a)),
         "seed_refund_demo" => Some(crate::refunds::seed(v, a)),
         "edit_refund" => Some(crate::refunds::edit(v, a)),
         _ => dispatch_vault_methods(v, method, a),
@@ -1788,6 +1789,24 @@ mod tests {
         assert_eq!(total(range.clone()), 10000);
         let pair = json!({"refund_id":refund, "refund_part":parts[1]["uuid"], "original_id":original, "original_part":""});
         call("link_refund", pair.clone());
+        let card = |id: Value| call("refund_card", json!({"transaction_id":id}));
+        let linked = card(refund.clone());
+        assert_eq!(linked[0]["booking"]["id"], original);
+        assert_eq!(linked[0]["booking"]["account_name"], "Pie");
+        assert_eq!(linked[0]["booking"]["currency"], "EUR");
+        assert_eq!(linked[0]["link"]["allocated_cents"], 4000);
+        assert_eq!(card(original.clone())[0]["booking"]["id"], refund);
+        assert!(
+            !card(original.clone())[0]["part_label"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::dispatch::dispatch_vault(&v, "refund_card", &json!({}))
+                .unwrap()
+                .is_err()
+        );
         let sheet = |own: Value, query: &str| {
             call(
                 "refund_sheet",
@@ -1830,11 +1849,13 @@ mod tests {
                 .is_err()
         );
         let token = call("unlink_refund", pair.clone());
+        assert_eq!(card(refund.clone()), json!([]));
         assert_eq!(total(range.clone()), 10000);
         assert_eq!(sheet(parts[1]["uuid"].clone(), "")["linked"], json!([]));
         let mut restore = pair;
         restore["token"] = token;
         call("restore_refund", restore);
+        assert_eq!(card(refund)[0]["booking"]["id"], original);
         assert_eq!(total(range), 6000);
         drop(v);
         let _ = std::fs::remove_file(path);

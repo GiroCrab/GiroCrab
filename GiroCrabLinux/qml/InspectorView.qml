@@ -77,6 +77,12 @@ Rectangle {
             }
 
             // Keine Buchung ausgewählt
+            RefundLinksCard {
+                visible: inspector.showsBookingCards && rows.length > 0
+                booking: inspector.b
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+            }
+
             Card {
                 visible: inspector.bookingPage && !AppModel.isMultiSelection && inspector.b === null
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16

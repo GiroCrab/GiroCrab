@@ -71,6 +71,35 @@ struct Request {
     query: String,
 }
 
+pub fn card(v: &Vault, args: &Value) -> R {
+    let req: Request = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
+    let links = v
+        .refund_links(req.transaction_id)
+        .map_err(|e| e.to_string())?;
+    if !links.iter().any(|l| !l.inactive) {
+        return Ok(json!([]));
+    }
+    let bookings = v
+        .list_transactions(BookingFilter {
+            limit: 0,
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?
+        .transactions;
+    let mut rows = Vec::new();
+    for link in links.into_iter().filter(|l| !l.inactive) {
+        let (id, part, label) = if link.refund_id == req.transaction_id {
+            (link.original_id, &link.original_part, &link.original_label)
+        } else {
+            (link.refund_id, &link.refund_part, &link.refund_label)
+        };
+        if let Some(b) = bookings.iter().find(|b| b.id == id) {
+            rows.push(json!({"booking":b,"part_label":if part.is_empty() { "" } else { label },"link":link}));
+        }
+    }
+    Ok(json!(rows))
+}
+
 pub fn sheet(v: &Vault, args: &Value) -> R {
     let req: Request = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
     // Proof rows supply current booking/link presentation, never financial aggregates.
