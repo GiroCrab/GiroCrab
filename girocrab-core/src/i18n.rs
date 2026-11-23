@@ -1710,7 +1710,7 @@ fn english(de: &str) -> Option<&'static str> {
         "unbekanntes Feld" => "unknown field",
         "Kategorie „{0}“ nicht gefunden" => "category “{0}” not found",
         "Konten nicht gefunden ({0})" => "accounts not found ({0})",
-        "bereits vorhanden" => "already exists",
+        "bereits vorhanden" => "already present",
         "ohne die nicht gefundenen Konten ({0})" => "without the accounts not found ({0})",
         "„{0}“ – {1}" => "“{0}” – {1}",
         "„{0}“: {1}" => "“{0}”: {1}",
