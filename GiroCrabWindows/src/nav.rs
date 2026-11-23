@@ -645,6 +645,7 @@ pub(crate) mod testing {
             balance_derived: false,
             note: String::new(),
             bank_label: None,
+            last_fetch_unix: None,
         }
     }
 }
