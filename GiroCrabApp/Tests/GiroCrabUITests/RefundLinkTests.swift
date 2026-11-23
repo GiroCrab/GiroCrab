@@ -310,7 +310,9 @@ final class RefundLinkTests: XCTestCase {
         let grouped = manager.groupsByEvent
         manager.groupsByEvent = false
         defer { manager.removeAllActions(); manager.groupsByEvent = grouped }
+        manager.beginUndoGrouping()
         await model.linkRefund(pair())
+        manager.endUndoGrouping()
         manager.removeAllActions()
         manager.beginUndoGrouping()
         await model.unlinkRefund(pair())
@@ -322,7 +324,14 @@ final class RefundLinkTests: XCTestCase {
         manager.undo()
         await model.refundHistoryTask?.value
         XCTAssertNil(model.errorMessage)
-        XCTAssertFalse(manager.canUndo)
+        if #available(macOS 14.4, *) {
+            XCTAssertEqual(manager.undoCount, 0)
+        }
+        manager.undo()
+        await model.refundHistoryTask?.value
+        XCTAssertNil(model.errorMessage)
+        let unlinked = try await snapshot()
+        XCTAssertTrue(unlinked.links.isEmpty)
     }
 
     func testWindowRefundUndoRegistersRedoSynchronouslyAndRepeats() async throws {
