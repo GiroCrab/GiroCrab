@@ -19,7 +19,7 @@ Sheet {
     property bool hasSplits: false
     /// The part whose amount field takes the focus once its row exists.
     property int focusUid: -1
-    /// The part ½ ⅓ ¼ fill: the one typed in last, else the last part.
+    /// The part the share buttons fill: the one typed in last, else the last part.
     property int pickUid: -1
     visible: booking !== null
     sheetWidth: 600
@@ -77,13 +77,13 @@ Sheet {
         error = AppModel.saveSplits(inputs, booking)
         if (error === "") close()
     }
-    /// The quick picks (#1663): `1 / denominator` of the booking into the part typed in last
+    /// The share buttons (#1663): `percent` of the booking into the part typed in last
     /// (else the last part); the odd cent stays with the rest.
-    function pick(denominator) {
+    function pick(percent) {
         let index = parts.findIndex(p => p.uid === pickUid)
         if (index < 1) index = parts.length - 1
         if (index < 1) return
-        const share = AppModel.splitShareCents(total, 1, denominator)
+        const share = AppModel.splitShareCents(total, percent, 100)
         parts[index].amount = share === null ? "" : Fmt.plain(share)
         // rebuild the rows: the amount field shows the new text
         parts = parts.slice()
@@ -118,10 +118,17 @@ Sheet {
                 elide: Text.ElideRight
                 Sensitive { amounts: true }   // [.personal, .amounts]
             }
-            // one click to split off a half, third or quarter (#1663)
-            Button { text: "½"; implicitWidth: 34; font.pixelSize: Theme.body + 1; ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Die Hälfte abspalten"); onClicked: sheet.pick(2) }
-            Button { text: "⅓"; implicitWidth: 34; font.pixelSize: Theme.body + 1; ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Ein Drittel abspalten"); onClicked: sheet.pick(3) }
-            Button { text: "¼"; implicitWidth: 34; font.pixelSize: Theme.body + 1; ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Ein Viertel abspalten"); onClicked: sheet.pick(4) }
+            // one click to split off 7 %, 19 % or 50 % (#1663)
+            Repeater {
+                model: AppModel.splitShares
+                Button {
+                    required property int modelData
+                    text: qsTr("%1 %").arg(modelData)
+                    font.pixelSize: Theme.body
+                    ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("%1 abspalten").arg(text)
+                    onClicked: sheet.pick(modelData)
+                }
+            }
         }
         Repeater {
             model: sheet.parts

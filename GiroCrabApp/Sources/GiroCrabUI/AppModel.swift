@@ -842,7 +842,7 @@ public final class AppModel {
     var transferCancelNotice: UnconfirmedTransferCancel?
     /// The booking whose SplitSheet is open; closing it drops the preset share.
     var splitBooking: Booking? { didSet { if splitBooking == nil { splitPresetPercent = nil } } }
-    /// Share of the booking the sheet puts into the second part (#1663, row menu „50 %“ / „19 %“).
+    /// Share of the booking the sheet puts into the second part (#1663, row menu `SplitMath.shares`).
     var splitPresetPercent: Int64?
     var transferBusy = false
     var syncQueue: [BankConnection] = []

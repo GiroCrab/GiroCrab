@@ -535,8 +535,11 @@ struct CustomPeriodForm: View {
 
 /// Split arithmetic in the booking's direction (cents, positive = same sign as the booking).
 enum SplitMath {
-    /// The shares the row menu offers under „Umsatz aufteilen“ (#1663), in percent.
-    static let menuShares: [Int64] = [50, 19]
+    /// The shares offered in one click (#1663), in percent: the row menu under „Umsatz aufteilen“
+    /// and the buttons in the sheet. 7 % and 19 % are the German VAT rates.
+    static let shares: [Int64] = [7, 19, 50]
+    /// A share as the UI writes it: „19 %“ (de), "19%" (en).
+    static func label(_ percent: Int64) -> String { (Double(percent) / 100).formatted(.percent) }
     static func remaining(total: Int64, parts: [Int64]) -> Int64 { total - parts.reduce(0, +) }
     /// At least two parts, none 0, parts add up to `total`. Negative parts are allowed.
     static func isValid(total: Int64, parts: [Int64]) -> Bool {
@@ -582,7 +585,7 @@ struct SplitSheet: View {
     /// The booking is split already (loaded with the parts).
     @State private var hasSplits = false
     @FocusState private var focusedPart: UUID?
-    /// The part ½ ⅓ ¼ fill: the one typed in last, else the last part.
+    /// The part the share buttons fill: the one typed in last, else the last part.
     @State private var pickTarget: UUID?
 
     private var total: Int64 { abs(booking.amountCents) }
@@ -716,22 +719,21 @@ struct SplitSheet: View {
         parts[i].amount = Money.plain(cents)
     }
 
-    /// Next to the booking's amount: one click to split off a half, third or quarter (#1663) into
-    /// the part typed in last (else the last part); the odd cent stays with the rest.
+    /// Next to the booking's amount: one click to split off 7 %, 19 % or 50 % (#1663) into the
+    /// part typed in last (else the last part); the odd cent stays with the rest.
     @ViewBuilder
     private var quickPicks: some View {
-        let pick = { (denominator: Int64) in
+        let pick = { (percent: Int64) in
             let target = parts.dropFirst().last { $0.id == pickTarget } ?? parts.last
             guard let i = parts.firstIndex(where: { $0.id == target?.id }), i > 0 else { return }
-            parts[i].amount = SplitMath.share(of: total, 1, denominator).map(Money.plain) ?? ""
+            parts[i].amount = SplitMath.share(of: total, percent, 100).map(Money.plain) ?? ""
         }
         HStack(spacing: 4) {
-            Button { pick(2) } label: { Text(verbatim: "½").frame(minWidth: 18) }
-                .help("Die Hälfte abspalten").accessibilityLabel("Die Hälfte abspalten")
-            Button { pick(3) } label: { Text(verbatim: "⅓").frame(minWidth: 18) }
-                .help("Ein Drittel abspalten").accessibilityLabel("Ein Drittel abspalten")
-            Button { pick(4) } label: { Text(verbatim: "¼").frame(minWidth: 18) }
-                .help("Ein Viertel abspalten").accessibilityLabel("Ein Viertel abspalten")
+            ForEach(SplitMath.shares, id: \.self) { percent in
+                let label = SplitMath.label(percent)
+                Button { pick(percent) } label: { Text(verbatim: label) }
+                    .help("\(label) abspalten").accessibilityLabel("\(label) abspalten")
+            }
         }
         .buttonStyle(.bordered)
         .appFont(.body)

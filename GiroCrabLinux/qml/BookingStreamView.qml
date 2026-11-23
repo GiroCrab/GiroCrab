@@ -636,7 +636,7 @@ Rectangle {
             title: qsTr("Umsatz aufteilen (Splitbuchung)")
             icon.name: SF.icon("arrow.triangle.branch")
             Instantiator {
-                model: AppModel.splitMenuShares
+                model: AppModel.splitShares
                 delegate: AppMenuItem {
                     required property int modelData
                     text: qsTr("%1 %").arg(modelData)

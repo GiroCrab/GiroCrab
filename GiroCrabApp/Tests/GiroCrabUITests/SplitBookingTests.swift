@@ -66,6 +66,7 @@ final class SplitBookingTests: XCTestCase {
         XCTAssertNil(model.splitPresetPercent)
         model.openSplit(booking)
         XCTAssertNil(model.splitPresetPercent)
-        XCTAssertEqual(SplitMath.menuShares, [50, 19])
+        XCTAssertEqual(SplitMath.shares, [7, 19, 50])
+        XCTAssertEqual(SplitMath.share(of: 8_743, 7, 100), 612)
     }
 }

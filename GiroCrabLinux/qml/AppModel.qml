@@ -2997,10 +2997,11 @@ QtObject {
     /// The booking whose SplitSheet is open; closing it drops the preset share.
     property var splitBooking: null
     onSplitBookingChanged: if (splitBooking === null) splitPresetPercent = null
-    /// Share of the booking the sheet puts into the second part (#1663, row menu „50 %“ / „19 %“).
+    /// Share of the booking the sheet puts into the second part (#1663, row menu `splitShares`).
     property var splitPresetPercent: null
-    /// SplitMath.menuShares: the shares the row menu offers under „Umsatz aufteilen“, in percent.
-    readonly property var splitMenuShares: [50, 19]
+    /// SplitMath.shares: the shares offered in one click (row menu under „Umsatz aufteilen“ and the
+    /// buttons in the sheet), in percent. 7 % and 19 % are the German VAT rates.
+    readonly property var splitShares: [7, 19, 50]
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
     readonly property var colorNames: ({

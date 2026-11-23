@@ -623,8 +623,8 @@ struct DayCardRow: View {
         TagsMenu(model: model, booking: b)
         // #1663: a common share opens the sheet with that share already in the second part
         Menu("Umsatz aufteilen (Splitbuchung)", systemImage: "arrow.triangle.branch") {
-            ForEach(SplitMath.menuShares, id: \.self) { percent in
-                Button { model.openSplit(b, percent: percent) } label: { Text((Double(percent) / 100).formatted(.percent)) }
+            ForEach(SplitMath.shares, id: \.self) { percent in
+                Button { model.openSplit(b, percent: percent) } label: { Text(verbatim: SplitMath.label(percent)) }
             }
             Divider()
             Button("Andere Aufteilung …") { model.openSplit(b) }

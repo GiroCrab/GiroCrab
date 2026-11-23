@@ -157,6 +157,17 @@
         }
       }
     },
+    "%@ abspalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split off %@"
+          }
+        }
+      }
+    },
     "%@ beibehalten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11465,17 +11476,6 @@
         }
       }
     },
-    "Die Hälfte abspalten" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Split off half"
-          }
-        }
-      }
-    },
     "Die Händlerliste konnte nicht geladen werden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13123,17 +13123,6 @@
         }
       }
     },
-    "Ein Drittel abspalten" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Split off a third"
-          }
-        }
-      }
-    },
     "Ein Konto dieses Zugangs zeigt in der Seitenleiste einen eigenen Banknamen oder keinen (Kontoeinstellungen)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13207,17 +13196,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "An update is being prepared."
-          }
-        }
-      }
-    },
-    "Ein Viertel abspalten" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Split off a quarter"
           }
         }
       }
