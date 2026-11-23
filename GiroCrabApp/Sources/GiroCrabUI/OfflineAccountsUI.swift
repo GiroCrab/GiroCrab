@@ -335,7 +335,7 @@ struct ManualBookingSheet: View {
 
 /// What "Neues Offline-Konto …" offers (#1049): the kinds that can be kept by hand and the currencies.
 enum OfflineAccountOptions {
-    static let kinds: [AccountKind] = [.cash, .savings]
+    static let kinds: [AccountKind] = [.cash, .savings, .timeDeposit]
     static let defaultCurrency = "EUR"
     /// ISO 4217 codes offered when creating an account; the first is the default.
     static let currencies = ["EUR", "USD", "CHF", "GBP", "SEK", "DKK", "NOK", "PLN", "CZK"]
@@ -356,7 +356,11 @@ enum OfflineAccountOptions {
     }
 
     static func title(_ kind: AccountKind) -> String {
-        kind == .savings ? String(localized: "Sparkonto") : String(localized: "Bargeld")
+        switch kind {
+        case .savings: String(localized: "Sparkonto")
+        case .timeDeposit: String(localized: "Festgeld")
+        default: String(localized: "Bargeld")
+        }
     }
 
     /// "USD – US Dollar" in the app language.

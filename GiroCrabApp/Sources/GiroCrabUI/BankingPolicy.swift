@@ -174,6 +174,7 @@ public struct BankingGate: Equatable, Sendable {
         case "fin4u": base = "Alte Leipziger"
         case "volkswagenbank": base = "Volkswagen Bank"
         case "uberspace": base = "Uberspace"
+        case "bitcoincore": base = "Bitcoin Core"
         case "schwaebischhall": base = "Schwäbisch Hall"
         case "ffb": base = "FFB"
         case "fordmoney": base = "Ford Money"

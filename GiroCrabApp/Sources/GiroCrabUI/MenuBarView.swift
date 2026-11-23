@@ -123,17 +123,11 @@ public enum MenuBarActions {
     private static func settingsItems() -> [NSMenuItem] {
         let defaults = AppDefaults.store
         let display = MenuBarSummary.BarDisplay(rawValue: defaults.string(forKey: MenuBarSummary.barDisplayKey) ?? "") ?? .amount
-        let hours = (defaults.object(forKey: AutoSync.hoursKey) as? Int) ?? model?.autoSyncHours ?? 0
-        let intervals = AutoSync.hourOptions.map { h in
-            item(AutoSync.label(h), checked: h == hours) { defaults.set(h, forKey: AutoSync.hoursKey) }
-        }
         return [
             item(String(localized: "Betrag in der Menüleiste"), checked: display == .amount) {
                 defaults.set((display == .amount ? MenuBarSummary.BarDisplay.iconOnly : .amount).rawValue,
                              forKey: MenuBarSummary.barDisplayKey)
             },
-            submenu(String(localized: "Automatischer Abruf"), intervals),
-            .separator(),
             item(String(localized: "Alle Einstellungen …"), key: ",") { showSettings() },
         ]
     }
@@ -215,8 +209,6 @@ public struct MenuBarPopover: View {
     @AppStorage(MenuBarSummary.privateKey) private var privateMode = false
     @AppStorage(MenuBarSummary.accountsKey) private var accountsRaw = ""
     @AppStorage(MenuBarSummary.focusKey) private var focus = MenuBarSummary.totalFocus
-    /// -1 = never set (the former hidden setting may still apply); read here so the popover redraws on a change.
-    @AppStorage(AutoSync.hoursKey) private var storedHours = -1
     /// The list of all chosen accounts with their balances is unfolded.
     @State private var showList = false
 
@@ -225,7 +217,7 @@ public struct MenuBarPopover: View {
     public var body: some View {
         let visibility = MenuBarSummary.visibility(isUnlocked: model.isUnlocked, privateMode: privateMode)
         let selected = MenuBarSummary.selectedAccounts(model.allAccounts, raw: accountsRaw)
-        let notices = model.autoSyncStatus.notice(visibility, intervalOn: storedHours >= 0 ? storedHours > 0 : model.autoSyncHours > 0)
+        let notices = model.autoSyncStatus.notice(visibility, intervalOn: model.scheduledBankSyncPaused)
         let listing = showList && visibility == .visible && !selected.isEmpty
         // Either the overview or the list; the panel follows the height and
         // keeps its top edge under the menu bar.

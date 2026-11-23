@@ -202,6 +202,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "ffb fil fondsbank fidelity fondsdepot fonds vl sparplan",
         ),
         (
+            ConnectorKind::BitcoinCore,
+            "Bitcoin Core",
+            "bitcoin btc bitcoin core knoten node wallet krypto crypto",
+        ),
+        (
             ConnectorKind::Uberspace,
             "Uberspace",
             "uberspace hosting asteroid webhosting",

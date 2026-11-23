@@ -56,15 +56,25 @@ extension AssetClassification {
 /// its line in `WealthClassRow.group(by:)`; chart, legend filter and cards follow from that.
 enum WealthGrouping: String, CaseIterable, Identifiable {
     case account, assetClass, instrument
+    /// Cash only (#1631): Girokonto, Tagesgeld, Festgeld … each with its subtotal.
+    case accountKind
     var id: String { rawValue }
 
-    /// The wrapper (ETF, single security, fund) only tells securities apart.
+    /// The wrapper (ETF, single security, fund) only tells securities apart; the account kind only
+    /// tells cash apart (every cash account has the class "Liquidität & Geldmarkt").
     static func available(in scope: WealthScope) -> [Self] {
-        scope == .securities ? [.account, .assetClass, .instrument] : [.account, .assetClass]
+        switch scope {
+        case .securities: [.account, .assetClass, .instrument]
+        case .cash: [.account, .accountKind]
+        case .all, .tangibles: [.account, .assetClass]
+        }
     }
-    /// The stored choice, or the class view where the stored one is not offered.
+    /// The stored choice, or the class view where the stored one is not offered. The account kind
+    /// falls back to the account view: it is no classification, the class view would surprise.
     func effective(in scope: WealthScope) -> Self {
-        Self.available(in: scope).contains(self) ? self : .assetClass
+        let available = Self.available(in: scope)
+        if available.contains(self) { return self }
+        return self == .accountKind || !available.contains(.assetClass) ? .account : .assetClass
     }
     /// Inside one account type the "account" grouping lists the single positions, so it says so.
     func title(in scope: WealthScope) -> LocalizedStringKey {
@@ -72,6 +82,7 @@ enum WealthGrouping: String, CaseIterable, Identifiable {
         case .account: scope == .securities || scope == .tangibles ? "Nach Position" : "Nach Konto"
         case .assetClass: "Nach Anlageklasse"
         case .instrument: "Nach Instrument"
+        case .accountKind: "Nach Kontoart"
         }
     }
 }

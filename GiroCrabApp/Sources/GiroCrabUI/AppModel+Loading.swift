@@ -16,6 +16,7 @@ extension AppModel {
     func reloadAll() {
         invalidateTotals()
         assetClassificationVersion += 1
+        merchantSettingsRevision += 1
         let all = Perf.signposter.beginInterval("reloadAll")
         defer { Perf.signposter.endInterval("reloadAll", all) }
         reloadAccounts()
@@ -41,6 +42,7 @@ extension AppModel {
         // that still carry the pre-sync totals (#337), like `reloadAll` does
         invalidateTotals()
         assetClassificationVersion += 1
+        merchantSettingsRevision += 1
         reloadAccounts()
         refreshSidebarCounts()
         mirrorDocumentsIfEnabled()
@@ -51,6 +53,8 @@ extension AppModel {
         merchantStatsCache = [:]
         loadMerchantStats(keepShown: true)
         startSelectionLoad(keepingShown: true)
+        // merchant settings from another device may leave the merchant filter empty (#1373)
+        if merchantFocus != nil { Task { [weak self] in await self?.leaveStaleMerchantFocus() } }
     }
 
     func reloadAccounts() {
@@ -87,7 +91,7 @@ extension AppModel {
         let (from, to) = periodRange
         runCore {
             let sums = categorySumFilter
-            categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents)
+            categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
             categoryTree = Self.buildTree(categories)
             uncategorizedFilteredCount = Int(try vault.countTransactions(filter: uncategorizedCountFilter(sums)))
         }
@@ -103,7 +107,15 @@ extension AppModel {
         if case .bank(let key) = sidebarSelection, bankGroup(for: key) == nil {
             sidebarSelection = .allAccounts
         }
+        // a section whose last account left (another kind, #1630): no account ids would filter
+        // as "all accounts" while the sidebar still names the section
+        if case .group(let id) = sidebarSelection, groups.first(where: { $0.id == id })?.accounts.isEmpty ?? true {
+            sidebarSelection = .allAccounts
+        }
         rebuildAccountIndex()
+        accountsLoaded = true
+        // After unlocking or a sync: a transfer link that came meanwhile.
+        resumePaymentLink()
     }
 
     func reloadDashboard() {
@@ -424,7 +436,7 @@ extension AppModel {
         return BookingFilter(
             accountIds: accountIDs,
             categoryId: category,
-            includeSubcategories: true,
+            includeSubcategories: category == nil || includeSubcategories,
             uncategorizedOnly: uncategorized,
             search: coreSearchText.isEmpty ? nil : coreSearchText,
             dateFrom: from,
@@ -656,7 +668,7 @@ extension AppModel {
                     let flows = followsList && !filter.listHasFlow
                         ? try vault.flowOtherCurrencies(filter: filter)
                         : try vault.selectionFlowOtherCurrencies(accountIds: filter.accountIds, dateFrom: from, dateTo: to, respectInTotal: filter.respectInTotal)
-                    let totals = try vault.categoryOtherCurrencyTotals(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents)
+                    let totals = try vault.categoryOtherCurrencyTotals(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
                     return (flows, totals)
                 }
                 guard !Task.isCancelled, let loaded else { return }
@@ -792,6 +804,7 @@ extension AppModel {
         runCore {
             settings = try vault.listSettings()
             logoProvider = try vault.onlineLogoProvider()
+            merchantRecognitionEnabled = try vault.merchantRecognitionEnabled()
         }
         reloadProductIDState(vault)
     }
@@ -907,7 +920,7 @@ extension AppModel {
         case .account(let id): return allAccounts.first { $0.id == id }?.name ?? String(localized: "Konto")
         case .category(let id): return categories.first { $0.id == id }?.path ?? String(localized: "Kategorie")
         case .uncategorized: return uncategorizedLabel
-        case .documents: return String(localized: "Belege & PostBox")
+        case .documents: return String(localized: "Belege & Postbox")
         case .newBookings: return String(localized: "Neue Umsätze")
         case .planned: return String(localized: "Geplant")
         case .directDebits: return String(localized: "Lastschriften")

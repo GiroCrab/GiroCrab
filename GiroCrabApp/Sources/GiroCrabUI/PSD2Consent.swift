@@ -74,14 +74,40 @@ extension AppModel {
 
     // MARK: scheduled sync
 
-    /// Hours between automatic fetches (Einstellungen › Allgemein, `AutoSync.hoursKey`,
-    /// 0 = off). Falls back to the former hidden vault setting `sync.psd2_auto_hours`
-    /// until the picker has been used once.
-    var autoSyncHours: Int {
-        if let stored = AppDefaults.store.object(forKey: AutoSync.hoursKey) as? Int {
-            return AutoSync.hours(stored: stored)
+    /// Read only the legacy preference for connections without their own schedule.
+    private var inheritedAutoSyncHours: Int {
+        let stored = AppDefaults.store.object(forKey: AutoSync.hoursKey) as? Int
+        let oldVaultValue = settingEntry("sync.psd2_auto_hours")?.value.trimmingCharacters(in: .whitespaces)
+        return AutoSync.hours(stored: stored ?? oldVaultValue.flatMap { Int($0) })
+    }
+
+    func supportsSyncSchedule(_ connection: BankConnection) -> Bool {
+        !usesPortal(connection) && !usesFileImport(connection)
+    }
+
+    func syncSchedule(_ id: Int64) -> Int {
+        if let hours = Int(revealSetting(AutoSync.scheduleKey(id))), hours >= AutoSync.never {
+            return hours
         }
-        return Int(settingEntry("sync.psd2_auto_hours")?.value.trimmingCharacters(in: .whitespaces) ?? "") ?? 0
+        return inheritedAutoSyncHours
+    }
+
+    @discardableResult
+    func setSyncSchedule(_ id: Int64, _ hours: Int) -> Bool {
+        guard let vault, connections.contains(where: { $0.id == id && supportsSyncSchedule($0) }) else { return false }
+        do {
+            try vault.setSetting(key: AutoSync.scheduleKey(id), value: String(hours))
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
+    }
+
+    var hasScheduledBankSync: Bool {
+        !isDemo && connections.contains {
+            !$0.allAccountsArchived && supportsSyncSchedule($0) && syncSchedule($0.id) > 0
+        }
     }
 
     func startAutoSync() {
@@ -105,36 +131,41 @@ extension AppModel {
 
     /// Starts at most one quiet sync when nothing else is going on.
     func autoSyncTick(now: Date = Date()) {
-        // a transfer waiting for its TAN shows `activeChallenge` / `transferBusy`
-        guard vault != nil, !isDemo, syncingConnectionID == nil, activeChallenge == nil,
-              !transferBusy, pendingLogin == nil, webLoginConnection == nil,
-              setupRequest == nil, syncQueue.isEmpty else { return }
-        let hours = autoSyncHours
-        guard hours > 0 else { return }
-        // Sachwerte: missing gold prices (at most one request a day, none without gold items)
-        refreshAssetPrices()
-        let defaults = AppDefaults.store
-        guard let due = connections.first(where: { c in
-            // never a login prompt: PSD2 needs a valid consent, the others a stored PIN or session
-            guard !usesPortal(c), !c.allAccountsArchived, bankingGate(for: c) == nil else { return false }
-            if c.connector == .enableBanking {
-                guard let end = consentEnd(c), end > now else { return false }
-            } else {
-                guard let st = connectionStatus(c.id), st.hasPin || st.hasSession,
-                      missingSettings(for: c).isEmpty else { return false }
-            }
-            let attempt = defaults.double(forKey: AutoSync.attemptKey(c.id))
-            return AutoSync.decide(hours: hours, isUnlocked: vault != nil, lastSyncUnix: c.lastSyncUnix,
-                                   lastAttemptUnix: attempt > 0 ? Int64(attempt) : nil, now: now) == .run
-        }) else { return }
-        // Quiet as well: a blocked login is simply not synced (the banner explains why).
+        guard let initialVault = vault, canStartScheduledBankSync else { return }
+        // Preserve the legacy periodic refresh of gold prices.
+        if inheritedAutoSyncHours > 0 || hasScheduledBankSync { refreshAssetPrices() }
+        guard let due = connections.first(where: { isScheduledSyncDue($0, now: now) }) else { return }
         withFreshBankingPolicy { [self] in
-            guard bankingGate(for: due) == nil, syncingConnectionID == nil else { return }
-            quietSyncConnectionID = due.id
-            defaults.set(now.timeIntervalSince1970, forKey: AutoSync.attemptKey(due.id))
+            // The vault or the settings may have changed while the policy refreshed.
+            guard vault === initialVault, canStartScheduledBankSync,
+                  let current = connections.first(where: { $0.id == due.id }),
+                  isScheduledSyncDue(current, now: now) else { return }
+            quietSyncConnectionID = current.id
+            AppDefaults.store.set(now.timeIntervalSince1970, forKey: AutoSync.attemptKey(current.id))
             autoSyncStatus = AutoSyncStatus(lastRun: now, failureDetail: nil)
-            startSync(due, secret: "")
+            startSync(current, secret: "")
         }
+    }
+
+    private var canStartScheduledBankSync: Bool {
+        vault != nil && !isDemo && syncingConnectionID == nil && activeChallenge == nil
+            && !transferBusy && pendingLogin == nil && webLoginConnection == nil
+            && setupRequest == nil && syncQueue.isEmpty
+    }
+
+    private func isScheduledSyncDue(_ connection: BankConnection, now: Date) -> Bool {
+        guard !connection.allAccountsArchived, supportsSyncSchedule(connection),
+              bankingGate(for: connection) == nil else { return false }
+        let hours = syncSchedule(connection.id)
+        let attempt = AppDefaults.store.double(forKey: AutoSync.attemptKey(connection.id))
+        guard AutoSync.decide(hours: hours, isUnlocked: true, lastSyncUnix: connection.lastSyncUnix,
+                              lastAttemptUnix: attempt > 0 ? Int64(attempt) : nil, now: now) == .run else { return false }
+        // A scheduled fetch can only start with a current consent, PIN or session.
+        if connection.connector == .enableBanking {
+            return consentEnd(connection).map { $0 > now } ?? false
+        }
+        guard let status = connectionStatus(connection.id), status.hasPin || status.hasSession else { return false }
+        return missingSettings(for: connection).isEmpty
     }
 
     // MARK: expiry notification
@@ -175,7 +206,8 @@ extension AppModel {
     // MARK: sync notice
 
     /// Toast text after a sync: bookings plus accounts that appeared or lost access, and
-    /// a pointer to the log when parts failed (#1083; the texts name accounts, so not here).
+    /// a pointer to the log when parts failed (#1083; the texts name accounts, so not here)
+    /// and the core's advice for it, which names none (#1627).
     func syncNotice(_ connection: BankConnection, _ s: SyncSummary) -> String {
         var parts = [String(localized: "\(connection.displayName): \(s.transactionsImported) neue Buchungen, \(s.transactionsCategorized) kategorisiert")]
         if !s.newAccounts.isEmpty {
@@ -191,6 +223,7 @@ extension AppModel {
             parts.append(String(localized: "Nicht alles abgerufen"))
             #endif
         }
+        parts.append(contentsOf: s.hints)
         return parts.joined(separator: " · ")
     }
 }

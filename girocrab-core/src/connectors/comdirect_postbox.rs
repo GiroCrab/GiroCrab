@@ -14,8 +14,10 @@
 //! The REST API does not say which account a document belongs to. After the
 //! FinTS fetch, [`assign_account`] looks for the IBAN or account number of the
 //! fetched accounts in the PDF text and sends securities documents to the
-//! depot; everything else goes to the login's first Girokonto
-//! ([`default_account`]). The user can move a document to another account.
+//! depot. What matches no single account goes to the login's only Girokonto
+//! ([`default_account`]); with several Girokonten (or none) it stays without an
+//! account instead of landing on an arbitrary one. The user can move a document
+//! to another account.
 
 use std::time::{Duration, Instant};
 
@@ -45,27 +47,19 @@ pub(crate) trait PostboxSource: Send {
     /// downloaded: a stored copy still gets its account.
     fn stub(&self, entry: &Value) -> Option<RemoteDocument>;
     async fn finish(&mut self, ctx: &ConnectContext);
-    /// Name of the document source in the app's steps ("PostBox", "Online-Archiv").
+    /// Name of the document source in the app's steps ("Postbox", "Online-Archiv").
     fn label(&self) -> String {
-        tr("PostBox").into()
+        tr("Postbox").into()
     }
     /// The account a downloaded document belongs to; `None` leaves it without
     /// one. comdirect: the account whose IBAN or number is in the PDF text,
-    /// else the login's first Girokonto.
+    /// else the login's only Girokonto.
     fn assign<'a>(
         &self,
         doc: &RemoteDocument,
         accounts: &[&'a RemoteAccount],
     ) -> Option<&'a RemoteAccount> {
-        let text = crate::documents::extract_pdf_text(&doc.bytes);
-        let found = assign_account(&doc.title, &text, accounts);
-        crate::depot_debug::log(&format!(
-            "comdirect postbox: {} text={} chars -> {}",
-            doc.doc_type,
-            text.len(),
-            found.map_or("default account", |a| kind_name(a.kind))
-        ));
-        found.or_else(|| default_account(accounts))
+        document_account(doc, accounts)
     }
 }
 
@@ -285,20 +279,58 @@ impl BankConnector for FintsWithPostbox {
     }
 }
 
-/// Where a document goes that matches no single account: the login's first
-/// Girokonto (it carries the PostBox at comdirect), else its first account.
+/// comdirect's per-document assignment, shared by REST and the FinTS PostBox source.
+fn document_account<'a>(
+    doc: &RemoteDocument,
+    accounts: &[&'a RemoteAccount],
+) -> Option<&'a RemoteAccount> {
+    let text = crate::documents::extract_pdf_text(&doc.bytes);
+    let found = assign_account(&doc.title, &text, accounts);
+    crate::depot_debug::log(&format!(
+        "comdirect postbox: {} text={} chars -> {}",
+        doc.doc_type,
+        text.len(),
+        found.map_or("default account", |a| kind_name(a.kind))
+    ));
+    found.or_else(|| default_account(accounts))
+}
+
+/// Assigns comdirect REST documents once all accounts and depots of the login are known.
+pub(crate) fn assign_documents(docs: &mut [RemoteDocument], accounts: &[&RemoteAccount]) {
+    let mut matched = 0usize;
+    for d in docs.iter_mut() {
+        if let Some(a) = document_account(d, accounts) {
+            d.account_ref = a.external_ref.clone();
+            matched += 1;
+        }
+    }
+    crate::depot_debug::log(&format!(
+        "comdirect postbox: {matched} of {} documents got an account",
+        docs.len()
+    ));
+}
+
+/// Where a document goes that matches no single account: the login's only Girokonto (it carries the
+/// PostBox at comdirect), else its only account. Several candidates are no evidence for one of them:
+/// `None`, the document stays without an account.
 pub(crate) fn default_account<'a>(accounts: &[&'a RemoteAccount]) -> Option<&'a RemoteAccount> {
-    accounts
+    let mut girokonten = accounts
         .iter()
         .copied()
-        .find(|a| a.kind == AccountKind::Checking)
-        .or_else(|| accounts.first().copied())
+        .filter(|a| a.kind == AccountKind::Checking);
+    match (girokonten.next(), girokonten.next()) {
+        (Some(only), None) => Some(only),
+        (None, _) if accounts.len() == 1 => accounts.first().copied(),
+        _ => None,
+    }
 }
 
 fn kind_name(kind: AccountKind) -> &'static str {
     match kind {
         AccountKind::Checking => "checking",
         AccountKind::Savings => "savings",
+        AccountKind::TimeDeposit => "time deposit",
+        AccountKind::BuildingSavings => "building savings",
         AccountKind::CreditCard => "credit card",
         AccountKind::Brokerage => "depot",
         AccountKind::Loan => "loan",
@@ -320,6 +352,8 @@ const SECURITIES_WORDS: &[&str] = &[
     "vorabpauschale",
     "kapitalma",
     "steuermitteilung",
+    "basisinformationsblatt",
+    "hauptversammlung",
     "kosteninformation",
     "kostenausweis",
     "verlust",
@@ -476,6 +510,11 @@ mod tests {
         all.push(acc("999888700", "", "999888700", AccountKind::Brokerage));
         let refs: Vec<&RemoteAccount> = all.iter().collect();
         assert!(assign_account("Dividendengutschrift", "", &refs).is_none());
+        // a key information document of a security belongs to the depot too
+        assert_eq!(
+            assign("Basisinformationsblatt aktualisiert WKN A1JX52", "").as_deref(),
+            Some("123456700")
+        );
         // tax notices and cost information of trades belong to the depot as well
         assert_eq!(assign("Steuermitteilung", "").as_deref(), Some("123456700"));
         assert_eq!(
@@ -666,7 +705,7 @@ mod tests {
         let Phase::Challenge(ch) = w.begin(&c).await.unwrap() else {
             panic!("expected the PostBox approval")
         };
-        assert_eq!(ch.title, "PostBox: Freigeben");
+        assert_eq!(ch.title, "Postbox: Freigeben");
         assert!(matches!(
             w.respond(&c, ChallengeResponse::Poll).await.unwrap(),
             Phase::Pending(_)
@@ -703,8 +742,9 @@ mod tests {
             .iter()
             .map(|d| d.account_ref.as_str())
             .collect();
-        // the Finanzreport matches both accounts: the first Girokonto
-        assert_eq!(refs, [JOINT_IBAN, GIRO_IBAN]);
+        // the Finanzreport matches both accounts and the login has two Girokonten: no account
+        // is no evidence for one of them, the document stays without
+        assert_eq!(refs, [JOINT_IBAN, ""]);
         assert_eq!(
             out.accounts.len(),
             4,
@@ -750,7 +790,8 @@ mod tests {
         }
         let out = w.fetch(&c).await.unwrap();
         assert_eq!(out.documents.len(), 45);
-        assert!(out.documents.iter().all(|d| d.account_ref == GIRO_IBAN));
+        // nothing in the texts names an account and the login has two Girokonten: none is chosen
+        assert!(out.documents.iter().all(|d| d.account_ref.is_empty()));
     }
 
     #[tokio::test]
@@ -771,7 +812,10 @@ mod tests {
             out.documents[0].account_ref, "123456700",
             "title says depot"
         );
-        assert_eq!(out.documents[1].account_ref, GIRO_IBAN);
+        assert_eq!(
+            out.documents[1].account_ref, "",
+            "no hint and two Girokonten: no account"
+        );
     }
 
     #[tokio::test]
@@ -811,7 +855,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn documents_of_skipped_accounts_go_to_the_default_account() {
+    async fn a_document_of_a_skipped_account_goes_to_the_only_remaining_girokonto() {
+        // the joint account is skipped, the Girokonto and the depot remain: one Girokonto is evidence enough
         let docs = vec![doc("Kontoauszug", "IBAN DE75 2004 1155 0765 4321 00")];
         let (mut w, _) = wrapped(false, Some(docs));
         let c = ctx(&[JOINT_IBAN]);
@@ -826,11 +871,58 @@ mod tests {
     }
 
     #[test]
-    fn default_account_is_the_first_girokonto() {
+    fn the_rest_login_and_the_fints_wrapper_assign_documents_the_same_way() {
+        // what the REST connector hands over: documents without an account, assigned once every
+        // account and depot is known
         let all = accounts();
-        let mut refs: Vec<&RemoteAccount> = all.iter().collect();
-        refs.reverse(); // card, depot, joint, giro
-        assert_eq!(default_account(&refs).unwrap().external_ref, JOINT_IBAN);
+        let refs: Vec<&RemoteAccount> = all.iter().collect();
+        let mut docs = vec![
+            doc("Wertpapierabrechnung Kauf", "Depotnummer 123456700"),
+            doc("Kontoauszug", "IBAN DE75 2004 1155 0765 4321 00"),
+            doc("Information", "Neue Bedingungen"),
+        ];
+        assert!(docs.iter().all(|d| d.account_ref.is_empty()));
+        assign_documents(&mut docs, &refs);
+        let rest = ComdirectConnector::new();
+        for d in &docs {
+            assert_eq!(
+                PostboxSource::assign(&rest, d, &refs)
+                    .map(|a| a.external_ref.as_str())
+                    .unwrap_or(""),
+                d.account_ref
+            );
+        }
+        assert_eq!(
+            docs[0].account_ref, "123456700",
+            "the depot, not the first account"
+        );
+        assert_eq!(docs[1].account_ref, JOINT_IBAN);
+        assert_eq!(
+            docs[2].account_ref, "",
+            "two Girokonten and no hint: no account"
+        );
+        // one Girokonto: it carries what names no account
+        let one: Vec<&RemoteAccount> = all
+            .iter()
+            .filter(|a| a.external_ref != JOINT_IBAN)
+            .collect();
+        let mut again = vec![doc("Information", "Neue Bedingungen")];
+        assign_documents(&mut again, &one);
+        assert_eq!(again[0].account_ref, GIRO_IBAN);
+    }
+
+    #[test]
+    fn the_default_account_is_the_only_girokonto_never_the_first_of_several() {
+        let all = accounts(); // two Girokonten, a depot and a card
+        let refs: Vec<&RemoteAccount> = all.iter().collect();
+        assert!(default_account(&refs).is_none());
+        // one Girokonto among other accounts: it carries the PostBox
+        let one: Vec<&RemoteAccount> = all
+            .iter()
+            .filter(|a| a.external_ref != JOINT_IBAN)
+            .collect();
+        assert_eq!(default_account(&one).unwrap().external_ref, GIRO_IBAN);
+        // no Girokonto: only a single account is a default
         let cards: Vec<&RemoteAccount> = all
             .iter()
             .filter(|a| a.kind == AccountKind::CreditCard)
@@ -839,6 +931,11 @@ mod tests {
             default_account(&cards).unwrap().kind,
             AccountKind::CreditCard
         );
+        let depot_and_card: Vec<&RemoteAccount> = all
+            .iter()
+            .filter(|a| matches!(a.kind, AccountKind::Brokerage | AccountKind::CreditCard))
+            .collect();
+        assert!(default_account(&depot_and_card).is_none());
         assert!(default_account(&[]).is_none());
     }
 

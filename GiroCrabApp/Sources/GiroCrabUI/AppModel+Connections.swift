@@ -45,12 +45,14 @@ extension AppModel {
                     try vault.setSetting(key: key, value: value)
                     let entries = try vault.listSettings()
                     let provider = try vault.onlineLogoProvider()
-                    return SettingsSnapshot(entries: entries, logoProvider: provider)
+                    let recognition = try vault.merchantRecognitionEnabled()
+                    return SettingsSnapshot(entries: entries, logoProvider: provider, merchantRecognition: recognition)
                 }
                 // The vault may have been switched or locked meanwhile.
                 guard let self, self.vault === vault else { return }
                 self.settings = result.entries
                 self.logoProvider = result.logoProvider
+                self.merchantRecognitionEnabled = result.merchantRecognition
                 self.reloadProductIDState(vault)
                 self.enableBankingSettingSaved(key)
             } catch {
@@ -63,6 +65,7 @@ extension AppModel {
     private struct SettingsSnapshot: Sendable {
         let entries: [SettingEntry]
         let logoProvider: String
+        let merchantRecognition: Bool
     }
 
     /// Adds a bank login. While demo data is shown, the login goes into the
@@ -75,6 +78,58 @@ extension AppModel {
     }
 
     private func addConnectionChecked(_ kind: ConnectorKind, login: String) {
+        // also while demo data is shown: the login goes into the personal vault (only a magic
+        // demo login is a demo connection)
+        if kind == .bitcoinCore, !Self.isMagicDemoLogin(login) {
+            addBitcoinCore(login: login)
+            return
+        }
+        addConnectionStored(kind, login: login)
+    }
+
+    /// Bitcoin Core: stored only once the node answers (RPC server on, `.cookie` found, wallet
+    /// there); otherwise its error says what is missing and nothing is added. The data
+    /// directory Bitcoin-Qt uses is taken over when none is set. Runs in the personal vault, so
+    /// the check uses its settings and the detected directory is saved there, not in the demo.
+    private func addBitcoinCore(login: String) {
+        runInOwnVault { [self] in checkAndAddBitcoinCore(login: login) }
+    }
+
+    /// Adds only when, after the check, the same vault is open and the datadir and RPC URL are
+    /// still the checked ones; otherwise nothing is written and the user adds it again.
+    private func checkAndAddBitcoinCore(login: String) {
+        guard let pin = pinVault() else { return }
+        let storedDatadir = settingEntry(BitcoinCoreDatadir.key)?.value ?? ""
+        let rpcURL = settingEntry("bitcoin_core.rpc_url")?.value ?? ""
+        let detected = storedDatadir.isEmpty ? BitcoinCoreDatadir.detected() : nil
+        let datadir = storedDatadir.isEmpty ? detected ?? "" : storedDatadir
+        Task { @MainActor [weak self] in
+            let checkError: Error?
+            do {
+                _ = try await checkBitcoinCore(datadir: datadir, rpcUrl: rpcURL, wallet: login)
+                checkError = nil
+            } catch {
+                checkError = error
+            }
+            guard let self else { return }
+            // also before a node error: one about values no longer set would mislead
+            guard isCurrent(pin),
+                  (settingEntry(BitcoinCoreDatadir.key)?.value ?? "") == storedDatadir,
+                  (settingEntry("bitcoin_core.rpc_url")?.value ?? "") == rpcURL else {
+                showError(String(localized: "Bitcoin Core nicht hinzugefügt"),
+                          String(localized: "Tresor oder Einstellungen haben sich während der Prüfung geändert. Bitte füge Bitcoin Core noch einmal hinzu."))
+                return
+            }
+            if let checkError {
+                showError(String(localized: "Bitcoin Core nicht erreichbar"), describe(checkError))
+                return
+            }
+            if let detected { saveSetting(BitcoinCoreDatadir.key, detected) }
+            addConnectionStored(.bitcoinCore, login: login)
+        }
+    }
+
+    private func addConnectionStored(_ kind: ConnectorKind, login: String) {
         runInOwnVault(allowDemo: Self.isMagicDemoLogin(login)) { [self] in
             guard let vault else { return }
             var newID: Int64?
@@ -336,13 +391,27 @@ extension AppModel {
         reloadAll()
     }
 
-    /// Vault setting with the portal user name of a login (Amex); the password is
-    /// the login's PIN (`setConnectionPin`). `pin.` keys are stored as secrets.
-    static func portalLoginKey(_ id: Int64) -> String { "pin.conn.\(id).login" }
+    /// Whether a portal supports storing its username and password in the vault.
+    nonisolated static func supportsStoredPortalLogin(_ connector: ConnectorKind) -> Bool {
+        connector == .americanExpress || connector == .amazonVisa
+    }
 
-    func setConnectionPin(_ id: Int64, _ pin: String?) {
-        guard let vault else { return }
-        runCore { try vault.setConnectionPin(connectionId: id, pin: pin) }
+    /// Vault setting with the portal user name; the password is the login's PIN
+    /// (`setConnectionPin`). `pin.` keys are stored as secrets.
+    static func portalLoginKey(_ id: Int64) -> String { "pin.conn.\(id).login" }
+    static func portalLoginAutofillDisabledKey(_ id: Int64) -> String { "portal.login.autofill.disabled.\(id)" }
+
+    /// Stores or clears a connection PIN and reports whether the vault write succeeded.
+    @discardableResult
+    func setConnectionPin(_ id: Int64, _ pin: String?) -> Bool {
+        guard let vault else { return false }
+        do {
+            try vault.setConnectionPin(connectionId: id, pin: pin)
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
     func clearSession(_ id: Int64) {

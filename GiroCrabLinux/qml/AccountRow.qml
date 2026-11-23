@@ -17,9 +17,12 @@ SidebarRow {
     signal contextMenuRequested()
     readonly property var repaid: account.kind === "Loan" && account.initial_balance_cents > 0
         ? Math.max(0, Math.min(1, 1 - (-account.balance_cents) / account.initial_balance_cents)) : null
+    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
+    readonly property string baseSubtitle: [account.bank_name, (account.note || "").replace(/\n/g, " ")]
+        .filter(t => t !== "").join(" · ")
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
     readonly property string searchAwareSubtitle: {
-        if (!AppModel.isSidebarAccountSearching) return account.bank_name
+        if (!AppModel.isSidebarAccountSearching) return baseSubtitle
         const q = AppModel.sidebarAccountSearch.trim()
         const compact = q.replace(/\s/g, "").toLowerCase()
         const terms = q.split(/\s+/).filter(t => t)
@@ -27,7 +30,7 @@ SidebarRow {
             return account.owner
         if (compact.length >= 3 && AppModel.compactAccountIds(account).some(x => x.includes(compact)))
             return account.iban ? Fmt.iban(account.iban) : account.account_number
-        return account.bank_name
+        return baseSubtitle
     }
     readonly property bool ibanSubtitle: AppModel.isSidebarAccountSearching && account.iban !== "" && searchAwareSubtitle === Fmt.iban(account.iban)
     /// SidebarView.swift › dialogAccountID: the row a confirmation dialog is about stays marked (#668).
@@ -63,7 +66,7 @@ SidebarRow {
                     ToolTip.text: AppModel.masking(row.account.owner || "")
                     Sensitive {}
                 }
-                SFIcon { visible: row.account.access_revoked; symbol: "lock.slash"; size: 10; color: "orange"
+                SFIcon { visible: row.account.access_revoked; symbol: "lock.slash"; size: 10; color: Theme.warning
                          Accessible.name: qsTr("Zugriff entzogen")
                          HoverHandler { id: revokedHover }
                          ToolTip.visible: revokedHover.hovered; ToolTip.delay: 600
@@ -98,7 +101,7 @@ SidebarRow {
                 Text {
                     visible: row.repaid !== null
                     text: qsTr("%1 getilgt").arg(Fmt.percent(row.repaid || 0)); font.pixelSize: Theme.caption2; color: Theme.secondary
-                    elide: Text.ElideRight; Layout.fillWidth: true
+                    elide: Text.ElideRight; Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 2   // lineLimit(2) (#650)
                     Sensitive { amounts: true }
                 }
                 Text {

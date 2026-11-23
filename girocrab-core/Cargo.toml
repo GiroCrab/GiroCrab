@@ -59,6 +59,7 @@ qrcode = { version = "0.14", default-features = false }
 # (secp256k1 point arithmetic) and address hashing (RIPEMD-160).
 k256 = { version = "0.14", default-features = false, features = ["arithmetic"] }
 ripemd = "0.2"
+rust_decimal = { version = "1.43.0", default-features = false, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

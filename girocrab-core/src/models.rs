@@ -48,6 +48,8 @@ pub enum ConnectorKind {
     VolkswagenBank,
     /// Uberspace hosting accounts (balance and bookings per Asteroid) via the web dashboard.
     Uberspace,
+    /// A wallet in the user's own Bitcoin Core node, over its local JSON-RPC interface.
+    BitcoinCore,
     /// Advanzia credit card via an authenticated WebKit session.
     Advanzia,
     /// Bausparkasse Schwäbisch Hall (Bausparverträge, postbox PDFs) via the
@@ -100,6 +102,7 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
             ConnectorKind::Uberspace => "uberspace",
+            ConnectorKind::BitcoinCore => "bitcoincore",
             ConnectorKind::Advanzia => "advanzia",
             ConnectorKind::SchwaebischHall => "schwaebischhall",
             ConnectorKind::EquatePlus => "equateplus",
@@ -164,6 +167,7 @@ impl ConnectorKind {
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,
             ConnectorKind::Uberspace,
+            ConnectorKind::BitcoinCore,
             ConnectorKind::Advanzia,
             ConnectorKind::SchwaebischHall,
             ConnectorKind::EquatePlus,
@@ -184,6 +188,11 @@ impl ConnectorKind {
 pub enum AccountKind {
     Checking,
     Savings,
+    /// Fixed-term deposit (Festgeld, #1002): money is tied up until maturity.
+    TimeDeposit,
+    /// Building savings contract (Bausparvertrag, #1630) in its savings phase: a credit, but
+    /// bound by contract, so it is no money at hand. Its loan phase is a `Loan`.
+    BuildingSavings,
     CreditCard,
     PaymentService,
     Brokerage,
@@ -197,6 +206,8 @@ impl AccountKind {
         match self {
             AccountKind::Checking => "checking",
             AccountKind::Savings => "savings",
+            AccountKind::TimeDeposit => "time_deposit",
+            AccountKind::BuildingSavings => "building_savings",
             AccountKind::CreditCard => "credit_card",
             AccountKind::PaymentService => "payment_service",
             AccountKind::Brokerage => "brokerage",
@@ -207,6 +218,8 @@ impl AccountKind {
     pub fn from_str(s: &str) -> Self {
         match s {
             "savings" => AccountKind::Savings,
+            "time_deposit" => AccountKind::TimeDeposit,
+            "building_savings" => AccountKind::BuildingSavings,
             "credit_card" => AccountKind::CreditCard,
             "payment_service" => AccountKind::PaymentService,
             "brokerage" => AccountKind::Brokerage,
@@ -220,6 +233,8 @@ impl AccountKind {
         match self {
             AccountKind::Checking => "building.columns",
             AccountKind::Savings => "banknote",
+            AccountKind::TimeDeposit => "lock.circle",
+            AccountKind::BuildingSavings => "house.circle",
             AccountKind::CreditCard => "creditcard",
             AccountKind::PaymentService => "envelope.circle",
             AccountKind::Brokerage => "chart.line.uptrend.xyaxis",
@@ -227,6 +242,16 @@ impl AccountKind {
             AccountKind::Loan => "house",
         }
     }
+}
+
+/// The section an account kind has in the "Kontoart" sidebar view (`connectors::account_kind_section`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AccountKindSection {
+    /// The section's name in the current language ("Girokonten", "Checking accounts").
+    pub name: String,
+    /// Its place among the sections, smallest first.
+    pub sort_order: i32,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -407,6 +432,12 @@ pub struct Account {
     /// The user's note on the account (#512), `""` = none. Syncs like the
     /// name: the newer edit wins (#980).
     pub note: String,
+    /// What the sidebar shows in place of `bank_name` (#1467): `None` the
+    /// bank name, `Some("")` nothing, else the user's own text. Fetches
+    /// never change it; syncs like the note.
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub bank_label: Option<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
