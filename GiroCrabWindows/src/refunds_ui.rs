@@ -52,6 +52,7 @@ struct Loaded {
     linked_bookings: HashMap<i64, daily::Row>,
     suggestions: Vec<RefundSuggestion>,
     candidates: Vec<RefundCandidate>,
+    search_matches: bool,
 }
 
 type EditResult = Result<(bool, Option<(Pair, String)>), String>;
@@ -354,14 +355,18 @@ fn load(v: &Vault, id: i64, own: &str, query: &str) -> Result<Loaded, String> {
         v.refund_candidates(id, own.clone(), query.to_string(), 200)
             .map_err(|e| e.to_string())?
             .into_iter()
-            .filter(|c| {
-                !shown(c)
-                    && !suggestions.iter().any(|s| {
-                        s.candidate.transaction_id == c.transaction_id && s.candidate.part == c.part
-                    })
-            })
-            .collect()
+            .filter(|c| !shown(c))
+            .collect::<Vec<_>>()
     };
+    let search_matches = !candidates.is_empty();
+    let candidates = candidates
+        .into_iter()
+        .filter(|c| {
+            !suggestions.iter().any(|s| {
+                s.candidate.transaction_id == c.transaction_id && s.candidate.part == c.part
+            })
+        })
+        .collect();
     Ok(Loaded {
         booking: daily::Row::from(booking),
         parts,
@@ -372,6 +377,7 @@ fn load(v: &Vault, id: i64, own: &str, query: &str) -> Result<Loaded, String> {
         linked_bookings,
         suggestions,
         candidates,
+        search_matches,
     })
 }
 
@@ -404,12 +410,16 @@ pub fn privacy_changed(win: &MainWindow, vault: Arc<Vault>) {
     }
 }
 
+fn search_empty(d: &Loaded, query: &str) -> bool {
+    !query.trim().is_empty() && !d.search_matches
+}
+
 fn render(win: &MainWindow) {
     let privacy = crate::privacy_on(win);
     let mask = |s: &str| daily::mask(s, privacy);
     with_ui(|u| {
         let Some(d) = &u.loaded else { return };
-        win.set_rf_search_empty(!u.query.trim().is_empty() && d.candidates.is_empty());
+        win.set_rf_search_empty(search_empty(d, &u.query));
         win.set_rf_english(english());
         win.set_rf_from_refund(d.from_refund);
         win.set_rf_title(
@@ -1128,6 +1138,74 @@ mod tests {
     }
 
     #[test]
+    fn round7_daily_refund_amount_keeps_both_directions() {
+        let (_dir, v, f) = fixture();
+        let mut b = v
+            .list_transactions(BookingFilter {
+                limit: 0,
+                ..Default::default()
+            })
+            .unwrap()
+            .transactions
+            .into_iter()
+            .find(|b| b.id == f.refund)
+            .unwrap();
+        b.refund_cents = 400;
+        b.refunded_cents = 200;
+        let row = daily::Row::from(&b);
+        let label = crate::refund_amount(&row);
+        assert!(label.contains(&crate::money(400, &b.currency)));
+        assert!(label.contains(&crate::money(200, &b.currency)));
+        b.refund_cents = 0;
+        assert_eq!(
+            crate::refund_amount(&daily::Row::from(&b)),
+            crate::money(200, &b.currency)
+        );
+        b.refunded_cents = 0;
+        assert!(crate::refund_amount(&daily::Row::from(&b)).is_empty());
+    }
+
+    #[test]
+    fn round7_reveal_survives_newer_rows_between_count_and_load() {
+        let (_dir, v, f) = fixture();
+        let count = reveal_count(&v, f.original).unwrap().unwrap();
+        v.save_manual_booking(
+            f.account,
+            None,
+            girocrab_core::offline::ManualBookingSetup {
+                booking_date: "2030-01-01".into(),
+                amount_cents: -1,
+                counterparty: "Newer".into(),
+                purpose: String::new(),
+                category_id: None,
+                note: String::new(),
+            },
+        )
+        .unwrap();
+        let rows =
+            crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, count, Some(f.original))
+                .unwrap();
+        assert!(rows.iter().any(|r| r.id == f.original));
+        assert!(
+            crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, count, Some(-1)).is_err()
+        );
+        assert!(
+            !crate::load_reveal_rows(&v, crate::nav::Target::AllAccounts, 0, None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn round7_matching_suggestion_is_not_an_empty_search() {
+        let (_dir, v, f) = fixture();
+        let initial = load(&v, f.refund, &f.part, "").unwrap();
+        let query = &initial.suggestions[0].candidate.counterparty;
+        let loaded = load(&v, f.refund, &f.part, query).unwrap();
+        assert!(!search_empty(&loaded, query));
+    }
+
+    #[test]
     fn round6_empty_search_preserves_suggestions_and_has_feedback() {
         let (_dir, v, demo) = fixture();
         let loaded = load(&v, demo.refund, "", "nothing-matches-xyz").unwrap();
@@ -1140,9 +1218,7 @@ mod tests {
             .split("pub fn refresh(")
             .next()
             .unwrap();
-        assert!(render.contains(
-            "set_rf_search_empty(!u.query.trim().is_empty() && d.candidates.is_empty())"
-        ));
+        assert!(render.contains("set_rf_search_empty(search_empty(d, &u.query))"));
         assert!(
             include_str!("../ui/refunds_dialog.slint")
                 .contains("if root.search-empty && !root.loading && root.rows.length > 0")

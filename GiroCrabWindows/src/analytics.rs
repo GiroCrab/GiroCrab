@@ -32,6 +32,9 @@ pub fn load(
     ui: &Filter,
 ) -> Result<AnalyticsReport, CoreError> {
     filter.uncategorized_only |= ui.uncategorized_only;
+    if filter.uncategorized_only && filter.category_id.is_some() {
+        return Ok(empty());
+    }
     if !ui.search.is_empty() {
         filter.search = Some(ui.search.clone());
     }
@@ -123,6 +126,54 @@ pub fn tags(totals: &[TagFlowTotal], n: usize) -> Vec<Slice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round7_category_and_uncategorized_filters_intersect() {
+        let path = std::env::temp_dir().join(format!(
+            "r7-analytics-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let v = Vault::open(path.to_string_lossy().into(), vec![7; 32]).unwrap();
+        let account = v
+            .create_offline_account(
+                "Wallet".into(),
+                girocrab_core::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let category = v
+            .create_category("Food".into(), None, "cart".into(), "#ff0000".into())
+            .unwrap();
+        v.save_manual_booking(
+            account,
+            None,
+            girocrab_core::offline::ManualBookingSetup {
+                booking_date: "2026-01-01".into(),
+                amount_cents: -100,
+                counterparty: "Uncategorized".into(),
+                purpose: String::new(),
+                category_id: None,
+                note: String::new(),
+            },
+        )
+        .unwrap();
+        let filter = BookingFilter {
+            category_id: Some(category),
+            ..Default::default()
+        };
+        let ui = Filter {
+            uncategorized_only: true,
+            ..Default::default()
+        };
+        assert_eq!(load(&v, filter, &ui).unwrap().expense_cents, 0);
+        drop(v);
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn charts_present_core_totals_without_reclassifying_credits() {

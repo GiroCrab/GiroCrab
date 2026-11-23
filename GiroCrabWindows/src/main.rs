@@ -268,6 +268,24 @@ fn load_rows(vault: &Vault, target: Target, limit: u32) -> Result<Vec<Row>, Stri
     Ok(page.transactions.iter().map(Row::from).collect())
 }
 
+fn load_reveal_rows(
+    vault: &Vault,
+    target: Target,
+    limit: u32,
+    reveal: Option<i64>,
+) -> Result<Vec<Row>, String> {
+    let rows = load_rows(vault, target, limit)?;
+    let Some(id) = reveal else { return Ok(rows) };
+    if rows.iter().any(|r| r.id == id) {
+        return Ok(rows);
+    }
+    let rows = load_rows(vault, target, 0)?;
+    if !rows.iter().any(|r| r.id == id) {
+        return Err("Die Buchung ist nicht mehr vorhanden.".into());
+    }
+    Ok(rows)
+}
+
 /// UI-thread state behind the booking list, filter bar and inspector.
 #[derive(Default)]
 struct State {
@@ -343,6 +361,29 @@ fn expand_detail(b: &Row) -> String {
     parts.join(" · ")
 }
 
+fn refund_amount(b: &Row) -> String {
+    match (b.refund_cents > 0, b.refunded_cents > 0) {
+        (true, true) => {
+            if refunds_ui::english() {
+                format!(
+                    "Refund: {} · Refunded: {}",
+                    money(b.refund_cents, &b.currency),
+                    money(b.refunded_cents, &b.currency)
+                )
+            } else {
+                format!(
+                    "Erstattung: {} · Erstattet: {}",
+                    money(b.refund_cents, &b.currency),
+                    money(b.refunded_cents, &b.currency)
+                )
+            }
+        }
+        (true, false) => money(b.refund_cents, &b.currency),
+        (false, true) => money(b.refunded_cents, &b.currency),
+        _ => String::new(),
+    }
+}
+
 fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
     let logo = logo_of(st, b, privacy);
     let detail = if b.booking_text.is_empty() {
@@ -353,11 +394,7 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
     BookingRow {
         id: b.id as i32,
         refund_linked: b.refund_linked,
-        refund: if b.refund_cents > 0 {
-            daily::mask(&money(b.refund_cents, &b.currency), privacy).into()
-        } else {
-            SharedString::new()
-        },
+        refund: daily::mask(&refund_amount(b), privacy).into(),
         counterparty: daily::mask(&b.counterparty, privacy).into(),
         account: b.account_name.clone().into(),
         category: if b.category_name.is_empty() {
@@ -821,6 +858,11 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
     refresh_dashboard(win, vault.clone());
     let target = with_state(|st| st.target);
     let limit = with_state(|st| st.reveal_limit.max(ROW_LIMIT));
+    let reveal = with_state(|st| {
+        (st.reveal_limit > 0)
+            .then_some(st.selected_booking)
+            .flatten()
+    });
     let generation = with_state(|st| {
         st.vault = Arc::downgrade(&vault);
         st.generation += 1;
@@ -828,7 +870,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
     });
     let weak = win.as_weak();
     std::thread::spawn(move || {
-        let rows = load_rows(&vault, target, limit);
+        let rows = load_reveal_rows(&vault, target, limit, reveal);
         let cats = vault.list_categories(None, None).map_err(|e| e.to_string());
         let _ = weak.upgrade_in_event_loop(move |win| {
             let vault = vault.clone();
@@ -1303,7 +1345,12 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 // the background reload in `apply_view` then refreshes them.
                 let target = with_state(|st| st.target);
                 let limit = with_state(|st| st.reveal_limit.max(ROW_LIMIT));
-                if let Ok(rows) = load_rows(vault, target, limit) {
+                let reveal = with_state(|st| {
+                    (st.reveal_limit > 0)
+                        .then_some(st.selected_booking)
+                        .flatten()
+                });
+                if let Ok(rows) = load_reveal_rows(vault, target, limit, reveal) {
                     with_state(|st| st.rows = rows);
                     apply_filter(win);
                 }
@@ -2832,7 +2879,7 @@ mod tests {
             reload
                 .find("refresh_dashboard(win, vault.clone())")
                 .unwrap()
-                < reload.find("load_rows(").unwrap()
+                < reload.find("load_reveal_rows(").unwrap()
         );
         let show = source
             .split("fn show(win:")
