@@ -1070,6 +1070,11 @@ export component MainWindow inherits Window {
     in property <image> tan-image;
     in property <bool> tan-has-image: false;
     in-out property <string> tan-text;
+    // order comparison (#949): only for the TAN of a single transfer, frozen at submit
+    in property <bool> tan-cmp-visible: false;
+    in property <string> tan-cmp-amount;
+    in property <string> tan-cmp-prefix;
+    in property <string> tan-cmp-end;
 
     // Slint has no clipboard API of its own: a zero-size TextInput pastes it, the text is cleared again.
     function paste-transfer() {
@@ -2067,6 +2072,48 @@ export component MainWindow inherits Window {
                 Text { text: root.tan-title; font-size: 18px; font-weight: 700; color: Theme.text; wrap: word-wrap; }
                 Text { text: root.tan-message; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
                 if root.tan-has-image: Image { source: root.tan-image; height: 200px; image-fit: contain; }
+                if root.tan-cmp-visible && root.unlocked: Rectangle {
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Betrag"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
+                            Text {
+                                text: root.privacy ? "•••,•• €" : root.tan-cmp-amount;
+                                color: Theme.text; font-size: 18px; font-weight: 700;
+                                horizontal-alignment: right; horizontal-stretch: 1;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Empfänger-IBAN"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
+                            Text {
+                                text: root.privacy ? "•••• •••• ••••" : root.tan-cmp-prefix;
+                                color: Theme.muted; font-size: 12px; overflow: elide;
+                                horizontal-alignment: right; vertical-alignment: center; horizontal-stretch: 1;
+                            }
+                            Rectangle {
+                                background: Theme.border;
+                                border-radius: 6px;
+                                width: cmp-end.preferred-width + 12px;
+                                horizontal-stretch: 0;
+                                cmp-end := Text { text: root.tan-cmp-end; color: Theme.text; font-size: 20px; font-weight: 800; }
+                            }
+                        }
+                        Text {
+                            text: "Bitte gleichen Sie Betrag und die letzten 4 Zeichen der Empfänger-IBAN vor der Freigabe auf Ihrem TAN-Gerät / Smartphone ab.";
+                            color: Theme.text; font-size: 12px; wrap: word-wrap;
+                        }
+                        if root.privacy: Text {
+                            text: "Privatmodus: Betrag und IBAN-Anfang sind ausgeblendet (Strg+Umschalt+P blendet sie ein).";
+                            color: Theme.muted; font-size: 11px; wrap: word-wrap;
+                        }
+                    }
+                }
                 if root.tan-mode == "push": Text {
                     text: "Warte auf Freigabe in der Bank-App …";
                     color: Theme.text; font-size: 13px; horizontal-alignment: center;
