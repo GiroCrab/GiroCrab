@@ -17,8 +17,8 @@ extension AppModel {
             let rows = try vault.listTransactions(filter: filter).transactions
             guard let booking = rows.first(where: { $0.id == key.bookingID }) else { return nil }
             let parts = try vault.listTransactionSplits(transactionId: key.bookingID)
-            let ownPart = parts.isEmpty ? "" : (parts.first { $0.uuid == key.ownPart && $0.amountCents != 0 } ?? parts.first { $0.amountCents != 0 })?.uuid ?? ""
-            let amount = parts.isEmpty ? booking.amountCents : parts.first { $0.uuid == ownPart }?.amountCents ?? 0
+            let ownPart = key.ownPart.isEmpty ? parts.first { $0.amountCents != 0 }?.uuid ?? "" : key.ownPart
+            let amount = parts.isEmpty && ownPart.isEmpty ? booking.amountCents : parts.first { $0.uuid == ownPart }?.amountCents ?? 0
             let links = try vault.refundLinks(transactionId: key.bookingID).filter {
                 !$0.inactive && (amount > 0
                     ? $0.refundId == key.bookingID && $0.resolvedRefundPart == ownPart

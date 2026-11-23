@@ -62,7 +62,7 @@ struct RefundSnapshot {
     let suggestions: [RefundSuggestion]
     var counterparts: [Int64: Booking] = [:]
 
-    var amount: Int64 { parts.isEmpty ? booking.amountCents : parts.first { $0.uuid == selectedPart }?.amountCents ?? 0 }
+    var amount: Int64 { parts.isEmpty && selectedPart.isEmpty ? booking.amountCents : parts.first { $0.uuid == selectedPart }?.amountCents ?? 0 }
     var paysBack: Bool { amount > 0 }
     var ownOpen: Int64 {
         let used = links.reduce(Int64(0)) { $0 + $1.allocatedCents }

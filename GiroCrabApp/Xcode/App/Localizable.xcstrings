@@ -11887,6 +11887,23 @@
         }
       }
     },
+    "Die gewählte Teilbuchung ist nicht mehr verfügbar." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die gewählte Teilbuchung ist nicht mehr verfügbar."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected split is no longer available."
+          }
+        }
+      }
+    },
     "Die kleineren Positionen stehen vollständig in der Positionsliste." : {
       "extractionState" : "manual",
       "localizations" : {

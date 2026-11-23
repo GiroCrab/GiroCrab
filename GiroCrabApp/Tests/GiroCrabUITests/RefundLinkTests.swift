@@ -249,6 +249,59 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertEqual(reordered.links.first?.refundPart, parts[0].uuid)
     }
 
+    func testStaleExplicitSplitNeverFallsBackToAnotherEndpoint() async throws {
+        let id = refund
+        let parts = try await split(id, amounts: [14000, -4000])
+        let initial = try await snapshot()
+        XCTAssertEqual(initial.selectedPart, parts[0].uuid)
+        let negative = try await snapshot(part: parts[1].uuid)
+        XCTAssertEqual(negative.amount, -4000)
+
+        try await model.requireVaultOffMain { vault in
+            try vault.setTransactionSplits(transactionId: id, splits: [
+                TransactionSplitInput(uuid: parts[1].uuid, categoryId: nil, amountCents: -4000, note: ""),
+                TransactionSplitInput(uuid: nil, categoryId: nil, amountCents: 14000, note: "Replacement"),
+            ])
+        }
+        let stale = try await snapshot(part: parts[0].uuid)
+        XCTAssertEqual(stale.selectedPart, parts[0].uuid)
+        XCTAssertFalse(stale.parts.contains { $0.uuid == stale.selectedPart })
+        XCTAssertEqual(stale.amount, 0)
+        XCTAssertEqual(stale.ownOpen, 0)
+        XCTAssertTrue(stale.links.isEmpty)
+        XCTAssertTrue(stale.suggestions.isEmpty)
+        XCTAssertFalse(stale.canLink(candidate(original, cents: -6000)))
+        let staleCandidates = try await candidates(stale, query: "Test")
+        XCTAssertTrue(staleCandidates.isEmpty)
+
+        let replacement = try XCTUnwrap(stale.parts.first { $0.amountCents > 0 })
+        let selected = try await snapshot(part: replacement.uuid)
+        XCTAssertEqual(selected.selectedPart, replacement.uuid)
+        XCTAssertEqual(selected.amount, 14000)
+        XCTAssertTrue(selected.canLink(candidate(original, cents: -6000)))
+
+        var zeroPart = replacement
+        zeroPart.amountCents = 0
+        let zero = RefundSnapshot(booking: selected.booking, parts: [stale.parts[0], zeroPart],
+            selectedPart: zeroPart.uuid, links: [], suggestions: [])
+        XCTAssertEqual(zero.amount, 0)
+        XCTAssertFalse(zero.canLink(candidate(original, cents: -6000)))
+        let zeroCandidates = try await candidates(zero, query: "Test")
+        XCTAssertTrue(zeroCandidates.isEmpty)
+
+        try await model.requireVaultOffMain { try $0.setTransactionSplits(transactionId: id, splits: []) }
+        let unsplit = try await snapshot(part: replacement.uuid)
+        XCTAssertEqual(unsplit.selectedPart, replacement.uuid)
+        XCTAssertEqual(unsplit.amount, 0)
+        XCTAssertTrue(unsplit.suggestions.isEmpty)
+        XCTAssertFalse(unsplit.canLink(candidate(original, cents: -6000)))
+        let unsplitCandidates = try await candidates(unsplit, query: "Test")
+        XCTAssertTrue(unsplitCandidates.isEmpty)
+        let reopened = try await snapshot()
+        XCTAssertEqual(reopened.selectedPart, "")
+        XCTAssertEqual(reopened.amount, 10000)
+    }
+
     func testZeroTotalSplitOpensButUnsplitZeroDoesNot() async throws {
         var booking = try await snapshot().booking
         booking.amountCents = 0

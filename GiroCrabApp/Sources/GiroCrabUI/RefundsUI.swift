@@ -225,7 +225,8 @@ struct RefundPickerSheet: View {
     }
     private var snapshot: RefundSnapshot? { state.snapshot(for: key) }
     private var candidateKey: RefundCandidateKey? {
-        snapshot.map { _ in RefundCandidateKey(context: key, query: query) }
+        guard let snapshot, snapshot.amount != 0 else { return nil }
+        return RefundCandidateKey(context: key, query: query)
     }
     private var paysBack: Bool { parts.first { $0.uuid == ownPart }.map { $0.amountCents > 0 } ?? (booking.amountCents > 0) }
 
@@ -254,6 +255,7 @@ struct RefundPickerSheet: View {
                     .appFont(.caption).foregroundStyle(Theme.secondary)
                 if !parts.isEmpty {
                     Picker("Teil der Buchung", selection: $ownPart) {
+                        if snapshot?.amount == 0 { Text("Teil der Buchung").tag(ownPart) }
                         ForEach(parts.filter { $0.amountCents != 0 }, id: \.uuid) { part in
                             Text(partTitle(part)).tag(part.uuid)
                         }
@@ -262,6 +264,7 @@ struct RefundPickerSheet: View {
                 }
                 TextField("Name oder Verwendungszweck suchen", text: $query)
                     .textFieldStyle(.roundedBorder).sensitive()
+                    .disabled(snapshot?.amount == 0)
                 if let undo = model.refundUndo {
                     HStack {
                         Text("Verknüpfung aufgehoben").appFont(.caption)
@@ -270,10 +273,14 @@ struct RefundPickerSheet: View {
                     }
                 }
                 if let loadError { Text(loadError).appFont(.caption).foregroundStyle(Theme.warning) }
+                if snapshot?.amount == 0 {
+                    Text("Die gewählte Teilbuchung ist nicht mehr verfügbar.")
+                        .appFont(.caption).foregroundStyle(Theme.warning)
+                }
             }
             .padding(16)
             if let snapshot {
-                list(snapshot)
+                if snapshot.amount == 0 { Spacer(minLength: 0) } else { list(snapshot) }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
