@@ -416,10 +416,12 @@ fn load(
             .map_err(e),
         Target::Mandates => vault.list_mandates(None).map(Loaded::Mandates).map_err(e),
         Target::Documents => {
+            // Before any reading: a lock during the load must not let `refresh` store old data.
+            let epoch = doc_connections::epoch();
             let docs = vault
                 .list_all_documents(DocumentFilter::default())
                 .map_err(e)?;
-            doc_connections::refresh(vault)?;
+            doc_connections::refresh(vault, epoch)?;
             Ok(Loaded::Documents(docs))
         }
         _ => Err("Keine Ansicht für diese Auswahl.".into()),

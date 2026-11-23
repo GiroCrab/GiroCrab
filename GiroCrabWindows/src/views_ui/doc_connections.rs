@@ -106,9 +106,14 @@ fn build(conns: &[DocConnection], index: usize) -> (DocView, Option<i64>) {
     (view, target.map(|c| c.id))
 }
 
-/// Worker side: reads the connections, their switch state and document ids.
-pub(crate) fn refresh(vault: &Vault) -> Result<(), String> {
-    let epoch = lock().epoch;
+/// The current session epoch; bumped by [`clear`]. Take it before starting work that is stored later.
+pub(crate) fn epoch() -> u64 {
+    lock().epoch
+}
+
+/// Worker side: reads the connections, their switch state and document ids. `epoch` is the value
+/// of [`epoch`] from before the load started; after a lock the result is dropped.
+pub(crate) fn refresh(vault: &Vault, epoch: u64) -> Result<(), String> {
     let accounts = vault.list_accounts().map_err(|e| e.to_string())?;
     let mut conns = Vec::new();
     for c in vault.list_bank_connections().map_err(|e| e.to_string())? {
@@ -215,6 +220,29 @@ mod tests {
         assert_eq!((v.index, target), (0, None));
         let (v, _) = build(&[conn(1, true, true, &[]), conn(2, true, true, &[])], 0);
         assert_eq!(v.toggle, None);
+    }
+
+    #[test]
+    fn clear_changes_the_epoch() {
+        let before = epoch();
+        clear();
+        assert_ne!(epoch(), before);
+    }
+
+    #[test]
+    fn set_enabled_only_touches_the_given_connection() {
+        let epoch = epoch();
+        assert!(store(
+            epoch,
+            vec![conn(1, true, true, &[]), conn(2, true, true, &[])]
+        ));
+        set_enabled(1, false);
+        let s = lock();
+        // another test may have cleared in between: only check when our data is still there
+        if s.conns.len() == 2 {
+            assert!(!s.conns[0].enabled);
+            assert!(s.conns[1].enabled);
+        }
     }
 
     #[test]
