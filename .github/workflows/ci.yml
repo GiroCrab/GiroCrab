@@ -93,8 +93,8 @@ jobs:
             flag windows_core "core_touched || touched '^Cargo\.(toml|lock)$|$ci'"
             # Windows front end (also builds the core)
             flag windows_app "core_touched || touched '^(GiroCrabWindows/|Cargo\.(toml|lock))|$ci'"
-            # Windows release build + installer (2-10 min): only for the front end or its packaging
-            flag windows_pkg "touched '^(GiroCrabWindows/|scripts/package-windows\.ps1$)|$ci'"
+            # Windows release build + installer (2-10 min): on main/manual runs or when packaging scripts change
+            flag windows_pkg "([ \"$EVENT\" != \"pull_request\" ] && touched '^GiroCrabWindows/') || touched '^scripts/package-windows\.ps1$|$ci'"
             # Linux port (Qt, Debian): its sources, the core and the shared string catalog
             flag linux "core_touched || touched '^GiroCrabLinux/|Localizable\.xcstrings$|$ci'"
             # Flatpak: packaging and dependencies; core sources are built by the Debian job
@@ -174,7 +174,7 @@ jobs:
       - name: Test AI provenance classifier
         run: python3 -m unittest tools/test_export_ai_provenance.py
       - name: Test FNZ portal browser scripts
-        run: node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-sharinbox-portal.cjs scripts/test-schwaebisch-hall-portal.cjs scripts/test-advanzia-portal.cjs scripts/test-equateplus-linux.cjs
+        run: node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-sharinbox-portal.cjs scripts/test-schwaebisch-hall-portal.cjs scripts/test-advanzia-portal.cjs scripts/test-equateplus-linux.cjs scripts/test-advanzia-linux.cjs scripts/test-portal-cards-linux.cjs
       - name: FFI types carry the optional serde derive (front ends without UniFFI)
         run: scripts/lint-serde-feature.sh
       - name: Free functions are exported to UniFFI only from ffi.rs
@@ -258,7 +258,7 @@ jobs:
 
   swift:
     needs: changes
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' && needs.changes.outputs.swift == 'true'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:

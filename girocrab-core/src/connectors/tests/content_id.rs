@@ -276,6 +276,48 @@ fn refetch_names_a_stored_booking_without_counterparty() {
     assert_eq!(counterparty(), "Beispielladen GmbH");
 }
 
+#[test]
+fn refetch_fills_an_empty_booking_text() {
+    // Hanseatic interest bookings were stored without any text before their
+    // booking key was read
+    let (v, conn) = setup();
+    let text = || -> String {
+        v.db()
+            .unwrap()
+            .query_row("SELECT booking_text FROM transactions", [], |r| r.get(0))
+            .unwrap()
+    };
+    let mut first = tx("2026-10-30", 1_972, "");
+    first.external_id = "t1".into();
+    store_fetch(
+        &v,
+        ConnectorKind::HanseaticBank,
+        conn,
+        fetch(vec![first.clone()]),
+    )
+    .unwrap();
+    let keyed = RemoteTransaction {
+        booking_text: "Abschluss".into(),
+        ..first
+    };
+    let s = store_fetch(
+        &v,
+        ConnectorKind::HanseaticBank,
+        conn,
+        fetch(vec![keyed.clone()]),
+    )
+    .unwrap();
+    assert_eq!(s.transactions_imported, 0);
+    assert_eq!(text(), "Abschluss");
+    // a stored text is never replaced by another one
+    let other = RemoteTransaction {
+        booking_text: "Anderer Text".into(),
+        ..keyed
+    };
+    store_fetch(&v, ConnectorKind::HanseaticBank, conn, fetch(vec![other])).unwrap();
+    assert_eq!(text(), "Abschluss");
+}
+
 /// A booking imported from a MoneyMoney export into the fetched account.
 fn imported_row(v: &Vault, ext: &str, t: &RemoteTransaction, note: &str) {
     v.db()
