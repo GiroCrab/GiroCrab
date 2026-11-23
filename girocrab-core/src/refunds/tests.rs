@@ -511,7 +511,7 @@ mod review_round3 {
                 b.db()
                     .unwrap()
                     .execute(
-                        "UPDATE refund_links SET changed_ms=?1,deleted_ms=?1",
+                        "UPDATE refund_links SET changed_ms=?1,deleted_ms=?1,unlink_id=CAST(?1 AS TEXT)",
                         [token],
                     )
                     .unwrap();
@@ -533,12 +533,12 @@ mod review_round3 {
                 );
                 let before = State::load(&a.db().unwrap()).unwrap().rows;
                 assert!(
-                    a.restore_refund(r, String::new(), o, String::new(), token + 1)
+                    a.restore_refund(r, String::new(), o, String::new(), format!("{token}-stale"))
                         .is_err()
                 );
                 assert_eq!(State::load(&a.db().unwrap()).unwrap().rows, before);
                 assert_eq!(
-                    a.restore_refund(r, String::new(), o, String::new(), token)
+                    a.restore_refund(r, String::new(), o, String::new(), token.to_string())
                         .is_ok(),
                     live
                 );
@@ -882,7 +882,10 @@ mod review_round3 {
             let a = Vault::open(path.to_string_lossy().into(), vec![0x47; 32]).unwrap();
             let b = Vault::open(peer_path.to_string_lossy().into(), vec![0x47; 32]).unwrap();
             for v in [&a, &b] {
-                assert_eq!(number(v, "PRAGMA user_version"), 39);
+                assert_eq!(
+                    number(v, "PRAGMA user_version"),
+                    crate::schema::SCHEMA_VERSION
+                );
                 assert_eq!(legacy_rows(&v.db().unwrap()), before);
                 assert_eq!(
                     number(
@@ -945,7 +948,7 @@ mod review_round3 {
             let bo2 = peer_id(&b, &a, o2);
             b.unlink_refund(br, String::new(), bo2, String::new())
                 .unwrap();
-            let undo = a.restore_refund(r, String::new(), o, String::new(), token);
+            let undo = a.restore_refund(r, String::new(), o, String::new(), token.to_string());
             assert!(
                 undo.is_err(),
                 "a move tombstone is not an undoable user unlink"
@@ -1402,7 +1405,8 @@ mod review_round2 {
             merge(&b, &a);
             let (br, bo) = (peer_id(&b, &a, r), peer_id(&b, &a, o));
             crate::importers::portal_import::hand_over(&a.db().unwrap(), o, target).unwrap();
-            b.unlink_refund(br, String::new(), bo, String::new())
+            let undo = b
+                .unlink_refund(br, String::new(), bo, String::new())
                 .unwrap();
             let token = number(&a, "SELECT MAX(changed_ms)+1000 FROM refund_links");
             sql(
@@ -1428,7 +1432,7 @@ mod review_round2 {
                     .unwrap();
                 assert!(scoped.iter().all(|a| a.cents == 0));
             }
-            b.restore_refund(br, String::new(), bo, String::new(), token)
+            b.restore_refund(br, String::new(), bo, String::new(), undo.clone())
                 .unwrap();
             merge(&a, &b);
             merge(&b, &a);
@@ -1445,7 +1449,7 @@ mod review_round2 {
             b.unlink_refund(br, String::new(), bo, String::new())
                 .unwrap();
             assert!(
-                b.restore_refund(br, String::new(), bo, String::new(), token)
+                b.restore_refund(br, String::new(), bo, String::new(), undo)
                     .is_err()
             );
         }
@@ -1465,7 +1469,7 @@ mod review_round2 {
             for p in &peers {
                 merge(p, &base);
             }
-            let mut tokens: [Vec<(i64, String, String, i64)>; 2] = [Vec::new(), Vec::new()];
+            let mut tokens: [Vec<(i64, String, String, String)>; 2] = [Vec::new(), Vec::new()];
             let mut random = seed_value;
             for step in 0..32 {
                 random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -1508,7 +1512,7 @@ mod review_round2 {
                     }
                     2 => {
                         if let Some((oid, rp, op, t)) = tokens[i].last() {
-                            let _ = v.restore_refund(rid, rp.clone(), *oid, op.clone(), *t);
+                            let _ = v.restore_refund(rid, rp.clone(), *oid, op.clone(), t.clone());
                         }
                     }
                     _ => {
@@ -2483,6 +2487,161 @@ struct Fixture {
     account: i64,
 }
 
+fn review_peer_id(peer: &Vault, source: &Vault, id: i64) -> i64 {
+    let external: String = source
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT external_id FROM transactions WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    peer.db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE external_id=?1",
+            [external],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn review_unlink_ids_distinguish_equal_stamp_peer_operations() {
+    for reverse in [false, true] {
+        let a = Fixture::new();
+        let r = a.add("refund", 200);
+        let o = a.add("purchase", -100);
+        a.link(r, "", o, "");
+        let b = Fixture::new();
+        merge(&b.v, &a.v);
+        let br = review_peer_id(&b.v, &a.v, r);
+        let bo = review_peer_id(&b.v, &a.v, o);
+        let first = a.unlink(r, "", o, "");
+        b.unlink(br, "", bo, "");
+        b.link(br, "", bo, "");
+        let second = b.unlink(br, "", bo, "");
+        assert_ne!(first, second);
+        for v in [&a.v, &b.v] {
+            raw(v, "UPDATE refund_links SET changed_ms=100,deleted_ms=100");
+        }
+        if reverse {
+            merge(&b.v, &a.v);
+            merge(&a.v, &b.v);
+        } else {
+            merge(&a.v, &b.v);
+            merge(&b.v, &a.v);
+        }
+        assert!(
+            a.v.restore_refund(r, "".into(), o, "".into(), first)
+                .is_err()
+        );
+        a.v.restore_refund(r, "".into(), o, "".into(), second)
+            .unwrap();
+    }
+}
+
+#[test]
+fn review_equal_stamp_unlink_blocks_a_move_in_both_orders() {
+    for reverse in [false, true] {
+        let a = Fixture::new();
+        let r = a.add("refund", 200);
+        let o = a.add("purchase", -100);
+        let next = a.add("next", -100);
+        a.link(r, "", o, "");
+        let b = Fixture::new();
+        merge(&b.v, &a.v);
+        let br = review_peer_id(&b.v, &a.v, r);
+        let bo = review_peer_id(&b.v, &a.v, o);
+        move_booking(&a.v.db().unwrap(), o, next).unwrap();
+        assert_eq!(a.v.refund_links(r).unwrap()[0].allocated_cents, 100);
+        b.unlink(br, "", bo, "");
+        for v in [&a.v, &b.v] {
+            raw(
+                v,
+                "UPDATE refund_links SET changed_ms=100,deleted_ms=CASE WHEN deleted_ms IS NULL THEN NULL ELSE 100 END",
+            );
+        }
+        if reverse {
+            merge(&b.v, &a.v);
+            merge(&a.v, &b.v);
+        } else {
+            merge(&a.v, &b.v);
+            merge(&b.v, &a.v);
+        }
+        assert!(
+            a.v.refund_links(r)
+                .unwrap()
+                .iter()
+                .all(|l| l.allocated_cents == 0)
+        );
+        assert!(
+            b.v.refund_links(br)
+                .unwrap()
+                .iter()
+                .all(|l| l.allocated_cents == 0)
+        );
+    }
+}
+
+#[test]
+fn review_moves_preserve_destination_unlinks_and_reject_collisions() {
+    let f = Fixture::new();
+    let r = f.add("refund", 200);
+    let old = f.add("old", -100);
+    let new = f.add("new", -100);
+    f.link(r, "", old, "");
+    f.link(r, "", new, "");
+    let token = f.unlink(r, "", new, "");
+    move_booking(&f.v.db().unwrap(), old, new).unwrap();
+    assert!(f.v.refund_links(r).unwrap().is_empty());
+    f.v.restore_refund(r, "".into(), new, "".into(), token)
+        .unwrap();
+    assert_eq!(f.v.refund_links(r).unwrap()[0].allocated_cents, 100);
+    for fold in [false, true] {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let old = f.add("old", -200);
+        let new = f.add("new", -200);
+        let parts = f.split(old, &[-100, -100]);
+        f.split(new, &[-100, -200, 100]);
+        for p in &parts {
+            f.link(r, "", old, p);
+        }
+        let db = f.v.db().unwrap();
+        if fold {
+            fold_booking(&db, old, new, false).unwrap();
+        } else {
+            move_booking(&db, old, new).unwrap();
+        }
+        drop(db);
+        if fold {
+            let links = f.v.refund_links(r).unwrap();
+            assert_eq!(links.len(), 2);
+            assert!(
+                links
+                    .iter()
+                    .all(|l| l.inactive && parts.contains(&l.original_part))
+            );
+        }
+        assert!(
+            f.v.refund_links(r)
+                .unwrap()
+                .iter()
+                .all(|l| l.inactive || l.allocated_cents == 0)
+        );
+    }
+}
+
+#[test]
+fn review_unpadded_dates_are_not_reference_tokens() {
+    for date in ["1/2/2026", "2026-1-2", "01/02/2026", "2026-01-02"] {
+        assert!(search::reference_tokens(date).is_empty(), "{date}");
+    }
+    assert!(!search::reference_tokens("INV123456").is_empty());
+}
+
 impl Fixture {
     fn new() -> Self {
         let path =
@@ -2512,7 +2671,7 @@ impl Fixture {
     fn link(&self, r: i64, rp: &str, o: i64, op: &str) {
         self.v.link_refund(r, rp.into(), o, op.into()).unwrap();
     }
-    fn unlink(&self, r: i64, rp: &str, o: i64, op: &str) -> i64 {
+    fn unlink(&self, r: i64, rp: &str, o: i64, op: &str) -> String {
         self.v.unlink_refund(r, rp.into(), o, op.into()).unwrap()
     }
     fn change(&self, id: i64, amount: i64, parts: Option<Vec<TransactionSplitInput>>) {
@@ -2808,12 +2967,12 @@ fn undo_is_cas_preserves_order_and_relink_gets_a_new_position_even_after_merge()
     let first = f.v.refund_links(r).unwrap()[0].created_ms;
     let token = f.unlink(r, "", a, "");
     f.link(r, "", b, "");
-    f.v.restore_refund(r, "".into(), a, "".into(), token)
+    f.v.restore_refund(r, "".into(), a, "".into(), token.clone())
         .unwrap();
     assert_eq!(shares(&f.v, r), [100, 0]);
     assert_eq!(f.v.refund_links(r).unwrap()[0].created_ms, first);
     assert!(
-        f.v.restore_refund(r, "".into(), a, "".into(), token)
+        f.v.restore_refund(r, "".into(), a, "".into(), token.clone())
             .is_err()
     );
     f.unlink(r, "", a, "");
@@ -2827,12 +2986,12 @@ fn undo_is_cas_preserves_order_and_relink_gets_a_new_position_even_after_merge()
     let pr = number(&peer.v, "SELECT id FROM transactions WHERE external_id='r'");
     let pa = number(&peer.v, "SELECT id FROM transactions WHERE external_id='a'");
     peer.v
-        .restore_refund(pr, "".into(), pa, "".into(), local_token)
+        .restore_refund(pr, "".into(), pa, "".into(), local_token.clone())
         .unwrap();
     peer.v.unlink_refund(pr, "".into(), pa, "".into()).unwrap();
     merge(&f.v, &peer.v);
     assert!(
-        f.v.restore_refund(r, "".into(), a, "".into(), local_token)
+        f.v.restore_refund(r, "".into(), a, "".into(), local_token.clone())
             .is_err()
     );
     f.link(r, "", a, "");
@@ -2851,21 +3010,21 @@ fn restore_resolves_the_original_key_and_inactive_links_can_still_be_unlinked() 
     let token = f.unlink(r, "", o, "");
     f.split(o, &[-100, 20, -20]);
     assert!(
-        f.v.restore_refund(r, "".into(), o, "".into(), token)
+        f.v.restore_refund(r, "".into(), o, "".into(), token.clone())
             .is_err()
     );
     f.v.set_transaction_splits(o, vec![]).unwrap();
-    f.v.restore_refund(r, "".into(), o, "".into(), token)
+    f.v.restore_refund(r, "".into(), o, "".into(), token.clone())
         .unwrap();
     assert_eq!(shares(&f.v, r), [100]);
     f.split(o, &[-60, -40]);
     assert!(
-        f.v.restore_refund(r, "".into(), o, "".into(), token)
+        f.v.restore_refund(r, "".into(), o, "".into(), token.clone())
             .is_err()
     );
     let token = f.v.unlink_refund(r, "".into(), o, "".into()).unwrap();
     assert!(
-        f.v.restore_refund(r, "".into(), o, "".into(), token)
+        f.v.restore_refund(r, "".into(), o, "".into(), token.clone())
             .is_err()
     );
 }
@@ -2919,7 +3078,7 @@ fn stable_identity_ties_ignore_local_ids_and_mutable_stamps() {
     f.link(r, "", z, "");
     let token = f.unlink(r, "", z, "");
     f.link(r, "", a, "");
-    f.v.restore_refund(r, "".into(), z, "".into(), token)
+    f.v.restore_refund(r, "".into(), z, "".into(), token.clone())
         .unwrap();
     raw(
         &f.v,
@@ -2956,7 +3115,7 @@ fn allocation_ties_use_account_sync_identity_before_local_booking_ids() {
     f.link(z, "", o, "");
     let token = f.unlink(z, "", o, "");
     f.link(a, "", o, "");
-    f.v.restore_refund(z, String::new(), o, String::new(), token)
+    f.v.restore_refund(z, String::new(), o, String::new(), token.to_string())
         .unwrap();
     raw(&f.v, "UPDATE refund_links SET created_ms=10");
     let l = f.v.refund_links(o).unwrap();
@@ -3103,7 +3262,7 @@ type StoredLink = (
     i64,
     i64,
 );
-type Undo = (i64, String, i64, String, i64);
+type Undo = (i64, String, i64, String, String);
 
 fn raw_fingerprint(v: &Vault) -> Vec<StoredLink> {
     let db = v.db().unwrap();

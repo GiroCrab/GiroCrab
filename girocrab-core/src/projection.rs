@@ -25,7 +25,7 @@ mod tests;
 pub(crate) struct Row {
     pub booking_id: i64,
     pub category_id: Option<i64>,
-    pub amount_cents: i64,
+    pub amount_cents: i128,
     pub flow: FlowKind,
     side: KpiSide,
 }
@@ -71,7 +71,7 @@ pub(crate) enum CurrencyMode {
     All,
 }
 
-fn primary_currency(db: &Connection, filter: &BookingFilter) -> CoreResult<String> {
+pub(crate) fn primary_currency(db: &Connection, filter: &BookingFilter) -> CoreResult<String> {
     if let Some(account) = filter
         .account_ids
         .first()
@@ -162,11 +162,7 @@ impl Projection {
                     amount_cents: b.amount_cents,
                     account_id: b.account_id,
                     date: b.booking_date.clone(),
-                    currency: if b.currency.trim().is_empty() {
-                        "EUR".into()
-                    } else {
-                        b.currency.trim().to_ascii_uppercase()
-                    },
+                    currency: refunds.books()[&b.id].currency.clone(),
                     merchant: b.merchant.key.clone().into(),
                     loan_account: finisher.loan_account(b.id),
                 },
@@ -182,7 +178,7 @@ impl Projection {
                 out.base.push(Row {
                     booking_id: b.id,
                     category_id,
-                    amount_cents: b.amount_cents,
+                    amount_cents: i128::from(b.amount_cents),
                     flow: b.flow,
                     side,
                 });
@@ -201,7 +197,7 @@ impl Projection {
                     out.base.push(Row {
                         booking_id: b.id,
                         category_id,
-                        amount_cents: p.amount,
+                        amount_cents: i128::from(p.amount),
                         flow: part.flow,
                         side,
                     });
@@ -251,7 +247,30 @@ impl Projection {
                 r
             })
             .collect();
-        let mut shifted_sources = HashSet::new();
+        let scoped = |id, flow, side| {
+            if flow == FlowKind::Loan
+                && allowed.as_ref().is_some_and(|a| {
+                    self.info[&id]
+                        .loan_account
+                        .is_some_and(|loan| !a.contains(&loan))
+                })
+            {
+                (FlowKind::Transfer, KpiSide::Neutral)
+            } else {
+                (flow, side)
+            }
+        };
+        let mut remaining: HashMap<_, i128> = self
+            .parts
+            .keys()
+            .map(|e| {
+                (
+                    e.clone(),
+                    i128::from(self.refunds.books()[&e.0].amount_of(&e.1).unwrap_or(0)),
+                )
+            })
+            .collect();
+        let mut shifted = HashSet::new();
         for a in allocations.iter().filter(|a| a.cents > 0) {
             let (Some(refund), Some(original)) = (&a.refund, &a.original) else {
                 continue;
@@ -263,18 +282,20 @@ impl Projection {
             else {
                 continue;
             };
-            shifted_sources.insert((refund.0, source_category, source_flow, source_side as u8));
+            *remaining.entry(refund.clone()).or_default() -= i128::from(a.cents);
+            shifted.insert(refund.clone());
+            let (source_flow, source_side) = scoped(refund.0, source_flow, source_side);
             rows.push(Row {
                 booking_id: refund.0,
                 category_id: source_category,
-                amount_cents: -a.cents,
+                amount_cents: -i128::from(a.cents),
                 flow: source_flow,
                 side: source_side,
             });
             rows.push(Row {
                 booking_id: refund.0,
                 category_id: target_category,
-                amount_cents: a.cents,
+                amount_cents: i128::from(a.cents),
                 flow: target_flow,
                 side: if target_flow == FlowKind::Loan {
                     KpiSide::Neutral
@@ -288,14 +309,23 @@ impl Projection {
             combined
                 .entry((r.booking_id, r.category_id, r.flow, r.side as u8))
                 .or_insert((r, 0))
-                .1 += i128::from(r.amount_cents);
+                .1 += r.amount_cents;
         }
+        let membership: HashSet<_> = self
+            .parts
+            .iter()
+            .filter(|(e, _)| remaining[*e] != 0 || !shifted.contains(*e))
+            .map(|(e, &(category, flow, side))| {
+                let (flow, side) = scoped(e.0, flow, side);
+                (e.0, category, flow, side as u8)
+            })
+            .collect();
         let rows = Arc::new(
             combined
                 .into_values()
                 .filter(|(row, n)| {
                     *n != 0
-                        || !shifted_sources.contains(&(
+                        || membership.contains(&(
                             row.booking_id,
                             row.category_id,
                             row.flow,
@@ -303,10 +333,10 @@ impl Projection {
                         ))
                 })
                 .map(|(mut row, n)| {
-                    row.amount_cents = cents(n)?;
-                    Ok(row)
+                    row.amount_cents = n;
+                    row
                 })
-                .collect::<CoreResult<Vec<_>>>()?,
+                .collect::<Vec<_>>(),
         );
         self.rows.lock().unwrap().insert(key, rows.clone());
         Ok(rows)
@@ -370,6 +400,10 @@ impl Vault {
         filter.date_from = filter.date_from.filter(|date| !date.is_empty());
         filter.date_to = filter.date_to.filter(|date| !date.is_empty());
         let filter = &filter;
+        let mut class_filter = filter.clone();
+        if visible.is_some() {
+            class_filter.uncategorized_only = false;
+        }
         let scope = visible.map(|accounts| {
             let mut accounts = accounts.to_vec();
             accounts.sort_unstable();
@@ -424,7 +458,11 @@ impl Vault {
                         .date_to
                         .as_ref()
                         .is_none_or(|date| projection.info[&r.booking_id].date <= *date)
-                    && keeps(filter, r.flow, &projection.info[&r.booking_id].merchant)
+                    && keeps(
+                        &class_filter,
+                        r.flow,
+                        &projection.info[&r.booking_id].merchant,
+                    )
             })
             .map(|r| r.booking_id)
             .collect();
@@ -545,13 +583,13 @@ impl Vault {
                 continue;
             }
             let e = sums.entry(r.category_id).or_default();
-            e.0 += i128::from(r.amount_cents);
+            e.0 += r.amount_cents;
             e.1.insert(r.booking_id);
             let mut category = r.category_id;
             let mut visited = HashSet::new();
             while visited.insert(category) {
                 let e = subtree.entry(category).or_default();
-                e.0 += i128::from(r.amount_cents);
+                e.0 += r.amount_cents;
                 e.1.insert(r.booking_id);
                 match category.and_then(|id| parents.get(&id).copied()).flatten() {
                     Some(parent) => category = Some(parent),
@@ -604,7 +642,7 @@ impl Selection {
                 }
             }
             let e = sums.entry(category).or_default();
-            e.0 += i128::from(r.amount_cents);
+            e.0 += r.amount_cents;
             e.1.insert(r.booking_id);
         }
         let mut out = sums
@@ -698,8 +736,8 @@ impl Selection {
             let Some(key) = key else { continue };
             let e = sums.entry(key).or_default();
             match r.side {
-                KpiSide::Income => e.0 += i128::from(r.amount_cents),
-                KpiSide::Expense => e.1 -= i128::from(r.amount_cents),
+                KpiSide::Income => e.0 += r.amount_cents,
+                KpiSide::Expense => e.1 -= r.amount_cents,
                 KpiSide::Neutral => {}
             }
         }
@@ -749,8 +787,7 @@ impl Selection {
             let mut category = r.category_id;
             let mut visited = HashSet::new();
             while visited.insert(category) {
-                *sums.entry((category, currency.clone())).or_default() +=
-                    i128::from(r.amount_cents);
+                *sums.entry((category, currency.clone())).or_default() += r.amount_cents;
                 if !ancestors {
                     break;
                 }
@@ -773,7 +810,7 @@ impl Selection {
         for r in &self.rows {
             *sums
                 .entry(self.projection.info[&r.booking_id].currency.clone())
-                .or_default() += i128::from(r.amount_cents);
+                .or_default() += r.amount_cents;
         }
         sums.into_iter()
             .map(|(currency, n)| {
@@ -789,7 +826,7 @@ impl Selection {
         let (mut income, mut expense, mut consumption, mut investment, mut perk, mut invested) =
             (0i128, 0i128, 0i128, 0i128, 0i128, 0i128);
         for r in &self.rows {
-            let n = i128::from(r.amount_cents);
+            let n = r.amount_cents;
             match r.side {
                 KpiSide::Income => income += n,
                 KpiSide::Expense => expense += n,
@@ -827,7 +864,7 @@ impl Selection {
     pub fn shares(&self) -> CoreResult<Vec<(i64, i64)>> {
         let mut sums: HashMap<i64, i128> = HashMap::new();
         for r in &self.rows {
-            *sums.entry(r.booking_id).or_default() += i128::from(r.amount_cents);
+            *sums.entry(r.booking_id).or_default() += r.amount_cents;
         }
         sums.into_iter()
             .map(|(id, n)| Ok((id, cents(n)?)))
@@ -838,7 +875,7 @@ impl Selection {
         let mut sums: BTreeMap<String, i128> = BTreeMap::new();
         for r in &self.rows {
             if let Some(key) = self.projection.info[&r.booking_id].date.get(..key_length) {
-                *sums.entry(key.into()).or_default() += i128::from(r.amount_cents);
+                *sums.entry(key.into()).or_default() += r.amount_cents;
             }
         }
         sums.into_iter()

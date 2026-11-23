@@ -51,7 +51,7 @@ fn index<'a>(v: &Vault, db: &Connection, p: &'a Projection) -> CoreResult<&'a Se
     }))
 }
 
-fn reference_tokens(text: &str) -> HashSet<String> {
+pub(super) fn reference_tokens(text: &str) -> HashSet<String> {
     text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')' | '+'))
         .filter(|w| !w.chars().all(|c| c.is_ascii_digit() || c == '.') && !is_date(w))
         .map(|w| {
@@ -72,8 +72,9 @@ fn is_date(word: &str) -> bool {
     let digits = |f: &str, n| f.len() == n && f.bytes().all(|b| b.is_ascii_digit());
     match fields.as_slice() {
         [a, b, c] => {
-            digits(b, 2)
-                && (digits(a, 4) && digits(c, 2) || digits(a, 2) && (digits(c, 4) || digits(c, 2)))
+            (digits(b, 1) || digits(b, 2))
+                && (digits(a, 4) && (digits(c, 1) || digits(c, 2))
+                    || (digits(a, 1) || digits(a, 2)) && (digits(c, 4) || digits(c, 2)))
         }
         _ => false,
     }
@@ -97,6 +98,7 @@ fn candidates(
     query: &str,
     limit: usize,
     include_exhausted: bool,
+    reason: Option<RefundMatch>,
 ) -> CoreResult<Vec<RefundCandidate>> {
     let book = p
         .state
@@ -129,6 +131,28 @@ fn candidates(
         for (endpoint, other_amount) in b.endpoints() {
             if other_amount == 0 || (other_amount > 0) == (amount > 0) {
                 continue;
+            }
+            if let Some(reason) = reason {
+                let matches = match reason {
+                    RefundMatch::SameAmount => other_amount.checked_abs() == amount.checked_abs(),
+                    RefundMatch::SameMerchant => {
+                        (!book.counterparty.trim().is_empty()
+                            && book.counterparty.trim().to_lowercase()
+                                == b.counterparty.trim().to_lowercase()
+                            || !merchant.is_empty() && merchant == &index.merchants[&own.0])
+                            && days_between(&book.date, &b.date).is_some_and(|d| d <= 62)
+                    }
+                    RefundMatch::SameReference => {
+                        !reference_tokens(&format!("{} {}", book.purpose, book.reference))
+                            .is_disjoint(&reference_tokens(&format!(
+                                "{} {}",
+                                b.purpose, b.reference
+                            )))
+                    }
+                };
+                if !matches {
+                    continue;
+                }
             }
             let key = if amount > 0 {
                 Key {
@@ -211,6 +235,7 @@ impl Vault {
             &query,
             limit as usize,
             true,
+            None,
         )
     }
 
@@ -222,25 +247,13 @@ impl Vault {
         let db = self.db()?;
         let p = self.refund_projection(&db)?;
         let own = Endpoint(transaction_id, own_part);
-        let pool = candidates(self, &db, &p, &own, "", usize::MAX, false)?;
-        if pool.is_empty() {
-            return Ok(Vec::new());
-        }
-        let source = p.state.books.get(&transaction_id).ok_or_else(invalid)?;
-        let amount = source
-            .amount_of(&own.1)
-            .ok_or_else(invalid)?
-            .checked_abs()
-            .ok_or_else(invalid)?;
-        let refs = reference_tokens(&format!("{} {}", source.purpose, source.reference));
-        let merchant = &index(self, &db, &p)?.merchants[&transaction_id];
         let mut out: Vec<RefundSuggestion> = Vec::new();
         for reason in [
             RefundMatch::SameAmount,
             RefundMatch::SameMerchant,
             RefundMatch::SameReference,
         ] {
-            for c in &pool {
+            for c in candidates(self, &db, &p, &own, "", 3, false, Some(reason))? {
                 if out.len() == 3 {
                     return Ok(out);
                 }
@@ -249,27 +262,10 @@ impl Vault {
                 }) {
                     continue;
                 }
-                let other = &p.state.books[&c.transaction_id];
-                let matches = match reason {
-                    RefundMatch::SameAmount => c.amount_cents.checked_abs() == Some(amount),
-                    RefundMatch::SameMerchant => {
-                        (!source.counterparty.trim().is_empty()
-                            && source.counterparty.trim().to_lowercase()
-                                == c.counterparty.trim().to_lowercase()
-                            || !merchant.is_empty() && merchant == &c.merchant_name)
-                            && days_between(&source.date, &c.booking_date).is_some_and(|d| d <= 62)
-                    }
-                    RefundMatch::SameReference => !refs.is_disjoint(&reference_tokens(&format!(
-                        "{} {}",
-                        other.purpose, other.reference
-                    ))),
-                };
-                if matches {
-                    out.push(RefundSuggestion {
-                        candidate: c.clone(),
-                        reason,
-                    });
-                }
+                out.push(RefundSuggestion {
+                    candidate: c,
+                    reason,
+                });
             }
         }
         Ok(out)

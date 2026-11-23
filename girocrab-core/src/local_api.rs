@@ -633,12 +633,9 @@ impl Vault {
             ..Default::default()
         };
         let mut totals: BTreeMap<String, ApiCurrencyTotals> = BTreeMap::new();
+        let projection = self.financial_projection(&db)?;
         for t in self.booking_page_after(&db, &filter, &accounts, &shared, None, 0)? {
-            let currency = if t.currency.trim().is_empty() {
-                "EUR".to_string()
-            } else {
-                t.currency.trim().to_ascii_uppercase()
-            };
+            let currency = projection.info[&t.id].currency.clone();
             let e = totals
                 .entry(currency.clone())
                 .or_insert_with(|| ApiCurrencyTotals {

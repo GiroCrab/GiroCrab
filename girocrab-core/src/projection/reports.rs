@@ -60,10 +60,10 @@ impl Vault {
                 .entry((period.into(), info.currency.clone()))
                 .or_default();
             if Side::Income.keeps(r) {
-                n.0 += i128::from(r.amount_cents);
+                n.0 += r.amount_cents;
             }
             if Side::Expense.keeps(r) {
-                n.1 -= i128::from(r.amount_cents);
+                n.1 -= r.amount_cents;
             }
         }
         let monthly = monthly

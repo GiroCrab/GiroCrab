@@ -973,7 +973,7 @@ mod tests {
         {
             let db = v.db().unwrap();
             db.execute(
-                "UPDATE refund_links SET moved=0,changed_ms=?2,deleted_ms=?2 WHERE original_id=?1",
+                "UPDATE refund_links SET moved=0,changed_ms=?2,deleted_ms=?2,unlink_id='peer-unlink' WHERE original_id=?1",
                 params![source, token],
             )
             .unwrap();
@@ -991,8 +991,14 @@ mod tests {
         assert!(v.refund_links(refund).unwrap()[0].inactive);
         let mapped:i64=v.db().unwrap().query_row("SELECT moved_from_original_id FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",[target],|r|r.get(0)).unwrap();
         assert_eq!(mapped, canonical);
-        v.restore_refund(refund, String::new(), canonical, String::new(), token)
-            .unwrap();
+        v.restore_refund(
+            refund,
+            String::new(),
+            canonical,
+            String::new(),
+            "peer-unlink".into(),
+        )
+        .unwrap();
         assert_eq!(
             v.refund_links(refund)
                 .unwrap()

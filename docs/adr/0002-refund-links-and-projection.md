@@ -66,7 +66,7 @@ that deterministic choice with whichever device upgraded last.
 
 ### Schema cutover and recovery
 
-Opening an older vault runs steps 38 and 39 in the migration transaction. A build
+Opening an older vault runs the pending steps through 40 in the migration transaction. A build
 supporting only schema 37 cannot open the migrated vault or merge its snapshots;
 the version guard refuses them before writing. Reinstalling the older executable
 does not undo the migration. There is no schema downgrade path.
@@ -140,6 +140,8 @@ an unsplit survivor contributes one whole-booking endpoint. Two equal matches,
 no match, or an already missing source part leave the old part inactive. Link
 snapshots are not used to resurrect a missing source. Imported-part consolidation
 applies this rule to an existing whole-booking link on the bank booking too.
+If distinct source rows would remap to the same complete destination identity,
+the colliding remaps remain inactive. The fold proceeds without merging them.
 
 This exception runs only at the identity take-over boundary, not during reads,
 ordinary snapshot merges or later split edits. It never selects a larger part,
@@ -155,7 +157,7 @@ deleted former parent by a pre-fold peer snapshot.
 A remap stamps the old key as a moved tombstone and writes the mapped row with
 `moved_from` pointing to that old key, preserving creation/order. At read time,
 the mapped row is inactive if that source key or a move ancestor holds a user-unlink tombstone
-(not a moved tombstone) whose change stamp is later than the mapped row's stamp.
+(not a moved tombstone) whose change stamp is at least the mapped row's stamp.
 Undo of that exact user unlink makes the source row live again, reactivating the
 mapped row; the deleted source booking keeps the old endpoint inactive. This
 provenance is mapped through sync booking identities, not local integer order.
@@ -165,7 +167,7 @@ Physical cleanup clears provenance references without a surviving identity by FK
 
 For a natural-key collision, choose the maximum complete row under the total rank
 `(changed_ms, deleted_ms.is_some(), created_ms, refund_cents, original_cents,
-deleted_ms, user-tombstone priority, moved_from key snapshot)`.
+deleted_ms, user-tombstone priority, moved_from key snapshot, unlink_id)`.
 Mapping availability does not participate in the rank. Already suppressed rows are
 not moved again, so a new move stamp cannot override an earlier user unlink.
 Equal logical rows retain mapped provenance when either copy has it.
@@ -178,9 +180,10 @@ resolve endpoints, generate timestamps or rewrite payloads during link merge.
 
 ### Undo is compare-and-set
 
-[Unlink](../../girocrab-core/src/refunds/api.rs) returns the tombstone's change
-stamp as its undo token. Restore succeeds only if the row is still deleted and
-its current change stamp equals that token and it is not a moved marker. It retains the original creation
+[Unlink](../../girocrab-core/src/refunds/api.rs) persists and returns a fresh
+UUID-v4 operation identity as its undo token (schema step 40). Restore succeeds
+only if the row is still deleted, its nonempty operation identity equals that
+token and it is not a moved marker. It retains the original creation
 stamp and allocation priority; a newer peer tombstone cannot be revived by an
 older undo. Explicitly re-linking a tombstoned key instead gets a fresh creation
 stamp rather than reviving its old priority.

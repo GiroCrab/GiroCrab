@@ -4539,7 +4539,7 @@ fn twin_fold_remaps_provenance_even_when_current_link_endpoints_are_on_the_bank(
     exec(
         &v,
         &format!(
-            "UPDATE refund_links SET moved=0,changed_ms={token},deleted_ms={token} WHERE original_id={source}"
+            "UPDATE refund_links SET moved=0,changed_ms={token},deleted_ms={token},unlink_id='peer-unlink' WHERE original_id={source}"
         ),
     );
     assert!(v.refund_links(refund).unwrap()[0].inactive);
@@ -4554,8 +4554,14 @@ fn twin_fold_remaps_provenance_even_when_current_link_endpoints_are_on_the_bank(
         canonical
     );
     assert!(v.refund_links(refund).unwrap()[0].inactive);
-    v.restore_refund(refund, String::new(), canonical, String::new(), token)
-        .unwrap();
+    v.restore_refund(
+        refund,
+        String::new(),
+        canonical,
+        String::new(),
+        "peer-unlink".into(),
+    )
+    .unwrap();
     assert_eq!(
         v.refund_links(refund)
             .unwrap()

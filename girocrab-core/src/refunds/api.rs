@@ -98,6 +98,7 @@ impl Vault {
                 moved: false,
                 moved_from: None,
                 moved_from_key: String::new(),
+                unlink_id: String::new(),
             },
         )?;
         tx.commit()?;
@@ -111,7 +112,7 @@ impl Vault {
         refund_part: String,
         original_id: i64,
         original_part: String,
-    ) -> CoreResult<i64> {
+    ) -> CoreResult<String> {
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
         let key = key(refund_id, refund_part, original_id, original_part);
@@ -120,9 +121,11 @@ impl Vault {
             .into_iter()
             .find(|r| r.key == key && r.deleted_ms.is_none())
             .ok_or_else(invalid)?;
-        let token = next_stamp(&tx)?;
-        row.changed_ms = token;
-        row.deleted_ms = Some(token);
+        let stamp = next_stamp(&tx)?;
+        let token = uuid::Uuid::new_v4().to_string();
+        row.unlink_id = token.clone();
+        row.changed_ms = stamp;
+        row.deleted_ms = Some(stamp);
         row.moved = false;
         write(&tx, &row)?;
         tx.commit()?;
@@ -136,7 +139,7 @@ impl Vault {
         refund_part: String,
         original_id: i64,
         original_part: String,
-        token: i64,
+        token: String,
     ) -> CoreResult<()> {
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
@@ -145,7 +148,13 @@ impl Vault {
         let row = state
             .rows
             .iter_mut()
-            .find(|r| r.key == key && r.deleted_ms.is_some() && !r.moved && r.changed_ms == token)
+            .find(|r| {
+                r.key == key
+                    && r.deleted_ms.is_some()
+                    && !r.moved
+                    && !token.is_empty()
+                    && r.unlink_id == token
+            })
             .ok_or_else(invalid)?;
         row.changed_ms = next_stamp(&tx)?;
         row.deleted_ms = None;

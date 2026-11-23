@@ -113,6 +113,7 @@ const STEPS: &[Step] = &[
     Step::Hook(account_kind_groups),                           // 37 (#1003)
     Step::Hook(crate::planning::stable_split_ids),             // 38 (#714)
     Step::Hook(crate::refunds::migrate),                       // 39 (#714)
+    Step::Hook(crate::refunds::migrate_unlink_ids),            // 40 (#714)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -1142,7 +1143,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 39);
+        assert_eq!(SCHEMA_VERSION, 40);
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

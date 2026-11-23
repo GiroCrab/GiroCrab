@@ -14,12 +14,15 @@ fn has_raw_aggregate(source: &str) -> bool {
     let functions: Vec<_> = functions.captures_iter(source).collect();
     functions.iter().enumerate().any(|(index, capture)| {
         let start = capture.get(0).unwrap().start();
-        let prefix = source[..start].trim_end();
-        if prefix.ends_with("#[test]")
-            || prefix
-                .lines()
-                .last()
-                .is_some_and(|l| l.contains("#[tokio::test"))
+        let attributes: Vec<_> = source[..start]
+            .trim_end()
+            .lines()
+            .rev()
+            .take_while(|l| l.trim_start().starts_with("#["))
+            .collect();
+        if attributes
+            .iter()
+            .any(|l| l.trim() == "#[test]" || l.contains("#[tokio::test"))
         {
             return false;
         }
@@ -113,6 +116,9 @@ fn lint_detects_sql_and_row_aggregates_but_not_display_or_validation() {
     ));
     assert!(!has_raw_aggregate(
         "#[test]\nfn category_fixture() { query(\"SELECT category_id, SUM(amount_cents) FROM transactions\"); }"
+    ));
+    assert!(!has_raw_aggregate(
+        "#[test]\n#[ignore]\nfn category_fixture() { query(\"SELECT category_id, SUM(amount_cents) FROM transactions\"); }"
     ));
 }
 

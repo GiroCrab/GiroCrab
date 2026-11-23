@@ -14,6 +14,15 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+pub(crate) fn migrate_unlink_ids(conn: &Connection) -> CoreResult<()> {
+    if !crate::schema::has_column(conn, "main", "refund_links", "unlink_id")? {
+        conn.execute_batch(
+            "ALTER TABLE refund_links ADD COLUMN unlink_id TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    Ok(())
+}
+
 impl State {
     pub(super) fn load(conn: &Connection) -> CoreResult<Self> {
         let mut accounts = HashMap::new();
@@ -67,25 +76,25 @@ impl State {
 }
 
 fn load_rows(conn: &Connection, schema: &str) -> CoreResult<Vec<Row>> {
-    Ok(conn.prepare(&format!("SELECT refund_id,refund_part,original_id,original_part,refund_cents,original_cents,created_ms,changed_ms,deleted_ms,moved,moved_from_refund_id,moved_from_refund_part,moved_from_original_id,moved_from_original_part,moved_from_key FROM {schema}.refund_links"))?
+    Ok(conn.prepare(&format!("SELECT refund_id,refund_part,original_id,original_part,refund_cents,original_cents,created_ms,changed_ms,deleted_ms,moved,moved_from_refund_id,moved_from_refund_part,moved_from_original_id,moved_from_original_part,moved_from_key,unlink_id FROM {schema}.refund_links"))?
         .query_map([],|r| {
             let moved_from = match (r.get::<_,Option<i64>>(10)?,r.get::<_,Option<i64>>(12)?) {
                 (Some(refund),Some(original)) => Some(Key { refund:Endpoint(refund,r.get(11)?),original:Endpoint(original,r.get(13)?) }),
                 _ => None
             };
-            Ok(Row{key:Key{refund:Endpoint(r.get(0)?,r.get(1)?),original:Endpoint(r.get(2)?,r.get(3)?)},refund_cents:r.get(4)?,original_cents:r.get(5)?,created_ms:r.get(6)?,changed_ms:r.get(7)?,deleted_ms:r.get(8)?,moved:r.get(9)?,moved_from,moved_from_key:r.get(14)?})
+            Ok(Row{key:Key{refund:Endpoint(r.get(0)?,r.get(1)?),original:Endpoint(r.get(2)?,r.get(3)?)},refund_cents:r.get(4)?,original_cents:r.get(5)?,created_ms:r.get(6)?,changed_ms:r.get(7)?,deleted_ms:r.get(8)?,moved:r.get(9)?,moved_from,moved_from_key:r.get(14)?,unlink_id:r.get(15)?})
         })?.collect::<Result<_,_>>()?)
 }
 
 pub(super) fn write(conn: &Connection, row: &Row) -> CoreResult<()> {
     let source = row.moved_from.as_ref();
-    conn.execute("INSERT INTO refund_links(refund_id,refund_part,original_id,original_part,refund_cents,original_cents,created_ms,changed_ms,deleted_ms,moved,moved_from_refund_id,moved_from_refund_part,moved_from_original_id,moved_from_original_part,moved_from_key)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+    conn.execute("INSERT INTO refund_links(refund_id,refund_part,original_id,original_part,refund_cents,original_cents,created_ms,changed_ms,deleted_ms,moved,moved_from_refund_id,moved_from_refund_part,moved_from_original_id,moved_from_original_part,moved_from_key,unlink_id)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
          ON CONFLICT(refund_id,refund_part,original_id,original_part) DO UPDATE SET
          refund_cents=excluded.refund_cents,original_cents=excluded.original_cents,created_ms=excluded.created_ms,changed_ms=excluded.changed_ms,deleted_ms=excluded.deleted_ms,
-         moved=excluded.moved,moved_from_refund_id=excluded.moved_from_refund_id,moved_from_refund_part=excluded.moved_from_refund_part,moved_from_original_id=excluded.moved_from_original_id,moved_from_original_part=excluded.moved_from_original_part,moved_from_key=excluded.moved_from_key",
+         moved=excluded.moved,moved_from_refund_id=excluded.moved_from_refund_id,moved_from_refund_part=excluded.moved_from_refund_part,moved_from_original_id=excluded.moved_from_original_id,moved_from_original_part=excluded.moved_from_original_part,moved_from_key=excluded.moved_from_key,unlink_id=excluded.unlink_id",
          params![row.key.refund.0,row.key.refund.1,row.key.original.0,row.key.original.1,row.refund_cents,row.original_cents,row.created_ms,row.changed_ms,row.deleted_ms,row.moved,
-            source.map(|k|k.refund.0),source.map(|k|k.refund.1.as_str()),source.map(|k|k.original.0),source.map(|k|k.original.1.as_str()),row.moved_from_key])?;
+            source.map(|k|k.refund.0),source.map(|k|k.refund.1.as_str()),source.map(|k|k.original.0),source.map(|k|k.original.1.as_str()),row.moved_from_key,row.unlink_id])?;
     Ok(())
 }
 
@@ -139,7 +148,30 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
         }
         rows.push(row);
     }
+    if folded {
+        inactivate_collisions(&mut rows);
+    }
     merge_rows(conn, rows)
+}
+
+fn inactivate_collisions(rows: &mut Vec<Row>) {
+    let mut counts = HashMap::new();
+    for row in rows.iter().filter(|r| r.deleted_ms.is_none()) {
+        *counts.entry(row.key.clone()).or_insert(0usize) += 1;
+    }
+    let sources: HashSet<_> = rows
+        .iter()
+        .filter(|r| r.deleted_ms.is_none() && counts[&r.key] > 1)
+        .filter_map(|r| r.moved_from.clone())
+        .collect();
+    rows.retain(|r| !(r.deleted_ms.is_none() && counts[&r.key] > 1 && r.moved_from.is_some()));
+    for row in rows
+        .iter_mut()
+        .filter(|r| sources.contains(&r.key) && r.moved)
+    {
+        row.deleted_ms = None;
+        row.moved = false;
+    }
 }
 
 fn survivor_part(
@@ -203,6 +235,13 @@ fn retire_part_key(conn: &Connection, row: &mut Row, previous: Key) -> CoreResul
 }
 
 pub(crate) fn move_booking(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
+    let affected: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND (refund_id=?1 OR original_id=?1))",
+        [from], |r| r.get(0),
+    )?;
+    if !affected {
+        return Ok(());
+    }
     let mut endpoints = HashMap::new();
     for row in load_rows(conn, "main")? {
         for e in [row.key.refund, row.key.original] {
@@ -266,6 +305,7 @@ pub(crate) fn fold_booking(
             params![row.key.refund.0,row.key.refund.1,row.key.original.0,row.key.original.1])?;
         folded.push(target);
     }
+    inactivate_collisions(&mut folded);
     merge_rows(conn, folded)
 }
 
@@ -276,20 +316,30 @@ pub(crate) fn move_endpoints(
     let mut moved = Vec::new();
     let stamp = next_stamp(conn)?;
     let rows = load_rows(conn, "main")?;
-    for row in &rows {
-        let key = Key {
-            refund: endpoints
-                .get(&row.key.refund)
-                .cloned()
-                .unwrap_or_else(|| row.key.refund.clone()),
-            original: endpoints
-                .get(&row.key.original)
-                .cloned()
-                .unwrap_or_else(|| row.key.original.clone()),
-        };
-        if key == row.key || row.deleted_ms.is_some() || move_blocked(&rows, row) {
-            continue;
-        }
+    let targets: Vec<_> = rows
+        .iter()
+        .filter_map(|row| {
+            let key = Key {
+                refund: endpoints
+                    .get(&row.key.refund)
+                    .cloned()
+                    .unwrap_or_else(|| row.key.refund.clone()),
+                original: endpoints
+                    .get(&row.key.original)
+                    .cloned()
+                    .unwrap_or_else(|| row.key.original.clone()),
+            };
+            if key == row.key || row.deleted_ms.is_some() || move_blocked(&rows, row) {
+                return None;
+            }
+            Some((row, key))
+        })
+        .collect();
+    let mut counts = HashMap::new();
+    for (_, key) in &targets {
+        *counts.entry(key.clone()).or_insert(0usize) += 1;
+    }
+    for (row, key) in targets {
         let mut row = row.clone();
         let mut target = row.clone();
         target.key = key;
@@ -297,7 +347,14 @@ pub(crate) fn move_endpoints(
         target.moved = false;
         target.moved_from = Some(row.key.clone());
         target.moved_from_key = source_key(conn, &row.key)?;
-        moved.push(target);
+        let destination = rows.iter().find(|r| r.key == target.key);
+        if counts[&target.key] == 1
+            && destination.is_none_or(|d| {
+                d.deleted_ms.is_some() && (d.moved || d.changed_ms < row.changed_ms)
+            })
+        {
+            moved.push(target);
+        }
         row.changed_ms = stamp;
         row.deleted_ms = Some(stamp);
         row.moved = true;

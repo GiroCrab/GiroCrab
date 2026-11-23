@@ -16,7 +16,8 @@ mod store;
 mod tests;
 
 pub(crate) use store::{
-    fold_booking, merge_attached, merge_folded, migrate, move_booking, move_endpoints,
+    fold_booking, merge_attached, merge_folded, migrate, migrate_unlink_ids, move_booking,
+    move_endpoints,
 };
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -89,10 +90,11 @@ struct Row {
     moved: bool,
     moved_from: Option<Key>,
     moved_from_key: String,
+    unlink_id: String,
 }
 
 impl Row {
-    fn rank(&self) -> (i64, bool, i64, i64, i64, Option<i64>, bool, &str) {
+    fn rank(&self) -> (i64, bool, i64, i64, i64, Option<i64>, bool, &str, &str) {
         (
             self.changed_ms,
             self.deleted_ms.is_some(),
@@ -102,6 +104,7 @@ impl Row {
             self.deleted_ms,
             !self.moved,
             &self.moved_from_key,
+            &self.unlink_id,
         )
     }
 }
@@ -143,7 +146,7 @@ impl Book {
         }
     }
 
-    fn amount_of(&self, part: &str) -> Option<i64> {
+    pub(crate) fn amount_of(&self, part: &str) -> Option<i64> {
         if self.parts.is_empty() {
             part.is_empty().then_some(self.amount)
         } else {
@@ -230,7 +233,7 @@ fn move_blocked(rows: &[Row], row: &Row) -> bool {
         let Some(source) = rows.iter().find(|source| source.key == *current) else {
             break;
         };
-        if source.deleted_ms.is_some() && !source.moved && source.changed_ms > row.changed_ms {
+        if source.deleted_ms.is_some() && !source.moved && source.changed_ms >= row.changed_ms {
             return true;
         }
         key = source.moved_from.as_ref();

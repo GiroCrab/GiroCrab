@@ -948,11 +948,18 @@ impl Vault {
     ) -> Result<Vec<CurrencyFlow>, CoreError> {
         // one guard for both reads, so eligibility and bookings stay consistent
         let db = self.db()?;
-        if filter.account_ids.len() != 1 && !crate::planning::has_other_currencies(&db)? {
+        if crate::projection::primary_currency(&db, &filter)? == "EUR"
+            && !crate::planning::has_other_currencies(&db)?
+        {
             return Ok(Vec::new());
         }
         Ok(self
-            .projected_selection(&db, &filter, None, crate::projection::CurrencyMode::Other)?
+            .projected_booking_selection(
+                &db,
+                &filter,
+                None,
+                crate::projection::CurrencyMode::Other,
+            )?
             .currencies()?
             .into_iter()
             .filter(|f| f.consumption_cents != 0 || f.invested_cents != 0 || f.income_cents != 0)
@@ -979,9 +986,11 @@ impl Vault {
             .shares()?
             .into_iter()
             .collect();
+        let mut count_filter = filter.clone();
+        count_filter.respect_in_total = false;
         let all = self.projected_booking_selection(
             db,
-            filter,
+            &count_filter,
             None,
             crate::projection::CurrencyMode::All,
         )?;
