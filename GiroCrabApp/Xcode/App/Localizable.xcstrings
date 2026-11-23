@@ -11388,6 +11388,17 @@
         }
       }
     },
+    "Die Buchung ist schon aufgeteilt, deshalb wurde „%@“ nicht eingetragen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This booking is already split, so “%@” was not added."
+          }
+        }
+      }
+    },
     "Die Buchung wird aus dem Konto entfernt und der Saldo neu berechnet. Das lässt sich nicht widerrufen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11910,6 +11921,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Export the entire document collection, regardless of the filters"
+          }
+        }
+      }
+    },
+    "Die gespeicherten Teile ergeben nicht mehr den Betrag der Buchung. Die erste Zeile gleicht die Differenz aus; bitte vor dem Speichern prüfen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The saved parts no longer add up to the booking's amount. The first row makes up the difference; please check before saving."
           }
         }
       }

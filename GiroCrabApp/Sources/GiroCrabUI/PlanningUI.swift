@@ -584,6 +584,12 @@ struct SplitSheet: View {
     @State private var error: String?
     /// The booking is split already (loaded with the parts).
     @State private var hasSplits = false
+    /// The loaded parts no longer add up to the booking (its amount changed after saving): the
+    /// first part shows the rest instead of what was stored (#1663), so the sheet says so.
+    @State private var storedPartsDiffer = false
+    /// The share picked in the row menu, when the booking is split already and it was not
+    /// applied (#1663). Not seeing that a booking is split is #1662.
+    @State private var ignoredShare: String?
     @FocusState private var focusedPart: UUID?
     /// The part the share buttons fill: the one typed in last, else the last part.
     @State private var pickTarget: UUID?
@@ -670,6 +676,16 @@ struct SplitSheet: View {
                 Label("Teil hinzufügen", systemImage: "plus")
             }
             .buttonStyle(.borderless)
+            if let ignoredShare {
+                Text("Die Buchung ist schon aufgeteilt, deshalb wurde „\(ignoredShare)“ nicht eingetragen.")
+                    .appFont(.callout).foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if storedPartsDiffer {
+                Text("Die gespeicherten Teile ergeben nicht mehr den Betrag der Buchung. Die erste Zeile gleicht die Differenz aus; bitte vor dem Speichern prüfen.")
+                    .appFont(.callout).foregroundStyle(Theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let problem { Text(problem).appFont(.callout).foregroundStyle(Theme.secondary) }
             if restIsNegative, error == nil {
                 Text("Der Rest in der ersten Zeile ist negativ und bucht die anderen Teile gegen. Ist das nicht gewollt, bitte die Beträge prüfen.")
@@ -716,7 +732,10 @@ struct SplitSheet: View {
                 parts = [Part(categoryID: booking.categoryId), Part(amount: preset ?? "")]
                 focusedPart = parts.last?.id
             } else {
-                parts = existing.map { Part(categoryID: $0.categoryId, amount: Money.plain(sign * $0.amountCents), note: $0.note) }
+                let stored = existing.map { sign * $0.amountCents }
+                parts = zip(existing, stored).map { Part(categoryID: $0.categoryId, amount: Money.plain($1), note: $0.note) }
+                storedPartsDiffer = SplitMath.rest(total: total, splitOff: stored) != 0
+                ignoredShare = presetPercent.map(SplitMath.label)
             }
         }
     }

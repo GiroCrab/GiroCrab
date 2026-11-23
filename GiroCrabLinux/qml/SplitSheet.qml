@@ -17,6 +17,12 @@ Sheet {
     property string error: ""
     /// The booking is split already (loaded with the parts).
     property bool hasSplits: false
+    /// The loaded parts no longer add up to the booking (its amount changed after saving): the
+    /// first part shows the rest instead of what was stored (#1663), so the sheet says so.
+    property bool storedPartsDiffer: false
+    /// The share picked in the row menu, when the booking is split already and it was not
+    /// applied (#1663); "" otherwise. Not seeing that a booking is split is #1662.
+    property string ignoredShare: ""
     /// The part whose amount field takes the focus once its row exists.
     property int focusUid: -1
     /// The part the share buttons fill: the one typed in last, else the last part.
@@ -56,7 +62,7 @@ Sheet {
     function part(categoryID, amount, note) { return { uid: nextUid++, categoryID: categoryID, amount: amount, note: note } }
 
     onAboutToShow: {
-        error = ""; hasSplits = false; parts = []
+        error = ""; hasSplits = false; storedPartsDiffer = false; ignoredShare = ""; parts = []
         const b = booking
         AppModel.splits(b, existing => {
             if (sheet.booking !== b) return
@@ -73,6 +79,11 @@ Sheet {
             // before `parts`: the Repeater builds the rows (and reads focusUid) on assignment
             if (!hasSplits) focusUid = loaded[1].uid
             parts = loaded
+            if (hasSplits) {
+                storedPartsDiffer = existing.reduce((s, x) => s + sign * x.amount_cents, 0) !== total
+                const percent = AppModel.splitPresetPercent
+                ignoredShare = percent === null ? "" : qsTr("%1 %").arg(percent)
+            }
         })
     }
     function save() {
@@ -211,6 +222,16 @@ Sheet {
                 sheet.focusUid = p.uid
                 sheet.parts = sheet.parts.concat([p])
             }
+        }
+        Text {
+            visible: sheet.ignoredShare !== ""
+            text: qsTr("Die Buchung ist schon aufgeteilt, deshalb wurde „%1“ nicht eingetragen.").arg(sheet.ignoredShare)
+            font.pixelSize: Theme.callout + 1; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+        }
+        Text {
+            visible: sheet.storedPartsDiffer
+            text: qsTr("Die gespeicherten Teile ergeben nicht mehr den Betrag der Buchung. Die erste Zeile gleicht die Differenz aus; bitte vor dem Speichern prüfen.")
+            font.pixelSize: Theme.callout + 1; color: Theme.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true
         }
         Text {
             visible: sheet.problem !== ""
