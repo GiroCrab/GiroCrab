@@ -1,3 +1,4 @@
+// test: serial-defaults
 import XCTest
 import PDFKit
 @testable import GiroCrabUI
