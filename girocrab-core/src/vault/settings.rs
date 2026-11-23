@@ -244,7 +244,7 @@ pub const KNOWN_SETTINGS: &[(&str, &str, &str, &str, bool, &str)] = &[
     (
         "sync.days_back",
         "Zeitraum beim ersten Abruf",
-        "max = so weit die Bank zurückliefert, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze.",
+        "max = so weit Bank und Anbindung es zulassen, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze.",
         "Allgemein",
         false,
         "max",
