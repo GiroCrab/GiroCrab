@@ -316,10 +316,8 @@ pub(crate) const DOCUMENT_MATCH: crate::connectors::document_matching::DocumentM
 /// Infers direction from the document-type title and the start of the PDF text. The
 /// security name after the title separator does not influence direction.
 fn document_inflow(title: &str, text: &str) -> Option<bool> {
-    let event = title
-        .split_once(" \u{2013} ")
-        .map_or(title, |(event, _)| event);
-    crate::connectors::document_matching::inflow_in(event, text, 400)
+    let (event, security) = title.split_once(" \u{2013} ").unwrap_or((title, ""));
+    crate::connectors::document_matching::inflow_in_without(event, text, &[security], 400)
 }
 
 /// A stored title has no separate timeline event. Classify the document name and
