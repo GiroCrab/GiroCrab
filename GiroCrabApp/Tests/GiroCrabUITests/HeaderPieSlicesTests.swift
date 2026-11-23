@@ -31,12 +31,20 @@ final class HeaderPieSlicesTests: XCTestCase {
         XCTAssertEqual(HeaderPieSlices.expenses(cats), [HeaderPieSlices.Part(id: "1", label: "Wohnen", cents: 500)])
     }
 
-    func testFoldKeepsLargestAndSumsTheRest() {
+    func testFoldKeepsLargestAndSumsTheRest() throws {
         let parts = (1...6).map { HeaderPieSlices.Part(id: "\($0)", label: "K\($0)", cents: Int64($0 * 100)) }
-        let slices = HeaderPieSlices.fold(parts, limit: 4)
+        let slices = try XCTUnwrap(HeaderPieSlices.fold(parts, limit: 4))
         XCTAssertEqual(slices.map(\.id), ["6", "5", "4", "rest"])
         XCTAssertEqual(slices.last?.cents, 600)
-        XCTAssertEqual(HeaderPieSlices.fold(parts, limit: 6).count, 6)
+        XCTAssertEqual(HeaderPieSlices.fold(parts, limit: 6)?.count, 6)
         XCTAssertEqual(slices.reduce(0) { $0 + $1.cents }, 2100)
+    }
+
+    func testFoldRejectsOverflowAndAcceptsEmptyInput() {
+        XCTAssertEqual(HeaderPieSlices.fold([], limit: 4)?.count, 0)
+        let parts = [Int64.max, 1].enumerated().map { HeaderPieSlices.Part(id: "\($0.offset)", label: "Part", cents: $0.element) }
+        XCTAssertNil(HeaderPieSlices.fold(parts, limit: 1))
+        XCTAssertNil(HeaderPieSlices.fold(parts, limit: 9))
+        XCTAssertNil(HeaderPieSlices.total([Int64.max, 1]))
     }
 }

@@ -22,10 +22,24 @@ struct RefundEndpointPair: Sendable, Equatable {
     }
 }
 
-struct RefundUndo {
+struct RefundUndo: Sendable {
     let pair: RefundEndpointPair
-    let token: Int64
+    let token: String
     let pin: VaultPin
+}
+
+enum RefundHistoryAction: Sendable {
+    case unlink(RefundEndpointPair)
+    case restore(RefundUndo)
+}
+
+@MainActor
+final class RefundHistoryStep {
+    var task: Task<RefundHistoryAction?, Never>?
+
+    init(_ action: RefundHistoryAction? = nil) {
+        if let action { task = Task { action } }
+    }
 }
 
 struct RefundLoadKey: Hashable {

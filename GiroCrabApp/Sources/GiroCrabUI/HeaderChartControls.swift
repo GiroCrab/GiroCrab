@@ -125,14 +125,25 @@ enum HeaderPieSlices {
             .map { Part(id: "\($0.id)", label: $0.name, cents: -$0.totalCents) }
     }
 
+    static func total<S: Sequence>(_ cents: S) -> Int64? where S.Element == Int64 {
+        var total: Int64 = 0
+        for value in cents {
+            let (next, overflow) = total.addingReportingOverflow(value)
+            guard !overflow else { return nil }
+            total = next
+        }
+        return total
+    }
+
     /// Largest first; beyond `limit` slices the rest is folded into „Sonstige“.
-    static func fold(_ parts: [Part], limit: Int) -> [WealthSlice] {
+    static func fold(_ parts: [Part], limit: Int) -> [WealthSlice]? {
+        guard total(parts.map(\.cents)) != nil else { return nil }
         let sorted = parts.sorted { $0.cents != $1.cents ? $0.cents > $1.cents : $0.label < $1.label }
         let head = sorted.count > limit ? Array(sorted.prefix(max(limit - 1, 0))) : sorted
         var out = head.enumerated().map { i, p in
             WealthSlice(id: p.id, label: p.label, cents: p.cents, color: WealthPalette.color(i), personal: p.personal)
         }
-        let rest = sorted.dropFirst(head.count).reduce(Int64(0)) { $0 + $1.cents }
+        guard let rest = total(sorted.dropFirst(head.count).map(\.cents)) else { return nil }
         if rest > 0 { out.append(WealthSlice(id: "rest", label: String(localized: "Sonstige"), cents: rest, color: WealthPalette.rest)) }
         return out
     }
@@ -146,7 +157,7 @@ enum HeaderPieSlices {
 
 /// Donut with a legend next to it, sized for the header's chart row.
 struct HeaderPieChart: View {
-    let slices: [WealthSlice]
+    let slices: [WealthSlice]?
     let emptyText: LocalizedStringKey
     /// Click on a legend entry (category slices only).
     var onSelect: ((String) -> Void)? = nil
@@ -163,8 +174,13 @@ struct HeaderPieChart: View {
     #endif
 
     var body: some View {
-        let total = slices.reduce(Int64(0)) { $0 + $1.cents }
-        if total <= 0 {
+        let slices = slices ?? []
+        let checked = HeaderPieSlices.total(slices.map(\.cents))
+        let total = checked ?? 0
+        if self.slices == nil || checked == nil {
+            Text("Die Teilbeträge sind zu groß.")
+                .appFont(.caption).foregroundStyle(Theme.outflow)
+        } else if total <= 0 {
             Text(emptyText)
                 .appFont(.caption)
                 .foregroundStyle(Theme.secondary)
@@ -181,7 +197,7 @@ struct HeaderPieChart: View {
                 .pieHover(parts: slices.map { ($0.id, $0.cents) }, innerRatio: 0.55, hovered: $hovered, spot: $spot)
                 .aspectRatio(1, contentMode: .fit)
                 .accessibilityHidden(true)
-                legend(total: total)
+                legend(slices: slices, total: total)
                 Spacer(minLength: 0)
             }
             .hoverCardHost(spot) { id in
@@ -194,7 +210,7 @@ struct HeaderPieChart: View {
         }
     }
 
-    private func legend(total: Int64) -> some View {
+    private func legend(slices: [WealthSlice], total: Int64) -> some View {
         let columns = stride(from: 0, to: slices.count, by: rows).map { Array(slices[$0..<min($0 + rows, slices.count)]) }
         return HStack(alignment: .top, spacing: 16) {
             ForEach(columns.indices, id: \.self) { c in

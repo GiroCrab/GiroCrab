@@ -64,6 +64,10 @@ extension AppModel {
 
     nonisolated private static func refundCounterparts(in vault: Vault, links: [RefundLink], bookingID: Int64) throws -> [Int64: Booking] {
         let ids = Set(links.map { $0.refundId == bookingID ? $0.originalId : $0.refundId })
+        return try refundBookings(in: vault, ids: ids)
+    }
+
+    nonisolated private static func refundBookings(in vault: Vault, ids: Set<Int64>) throws -> [Int64: Booking] {
         let dates = try ids.compactMap { try vault.bookingDate(bookingId: $0) }
         guard let from = dates.min(), let to = dates.max() else { return [:] }
         let filter = BookingFilter(accountIds: [], categoryId: nil, includeSubcategories: true,
@@ -80,13 +84,10 @@ extension AppModel {
         do {
             try await pin.run { try $0.linkRefund(refundId: pair.refundID, refundPart: pair.refundPart, originalId: pair.originalID, originalPart: pair.originalPart) }
             guard isCurrent(pin) else { return }
-            windowUndoManager?.registerUndo(withTarget: self) { model in
-                guard model.isCurrent(pin) else { return }
-                Task { await model.unlinkRefund(pair) }
-            }
+            registerRefundHistory(RefundHistoryStep(.unlink(pair)), pin: pin)
             windowUndoManager?.setActionName(String(localized: "Erstattung zuordnen"))
             refundUndo = nil
-            refundLinksChanged()
+            await refundLinksChanged()
         } catch { if isCurrent(pin) { errorMessage = describe(error) } }
     }
 
@@ -99,12 +100,9 @@ extension AppModel {
             guard isCurrent(pin) else { return }
             let undo = RefundUndo(pair: pair, token: token, pin: pin)
             refundUndo = undo
-            windowUndoManager?.registerUndo(withTarget: self) { model in
-                guard model.isCurrent(pin) else { return }
-                Task { await model.restoreRefund(undo) }
-            }
+            registerRefundHistory(RefundHistoryStep(.restore(undo)), pin: pin)
             windowUndoManager?.setActionName(String(localized: "Verknüpfung aufheben"))
-            refundLinksChanged()
+            await refundLinksChanged()
         } catch { if isCurrent(pin) { errorMessage = describe(error) } }
     }
 
@@ -116,22 +114,80 @@ extension AppModel {
             let pair = undo.pair
             try await undo.pin.run { try $0.restoreRefund(refundId: pair.refundID, refundPart: pair.refundPart, originalId: pair.originalID, originalPart: pair.originalPart, token: undo.token) }
             guard isCurrent(undo.pin) else { return }
-            windowUndoManager?.registerUndo(withTarget: self) { model in
-                guard model.isCurrent(undo.pin) else { return }
-                Task { await model.unlinkRefund(pair) }
-            }
+            registerRefundHistory(RefundHistoryStep(.unlink(pair)), pin: undo.pin)
             windowUndoManager?.setActionName(String(localized: "Erstattung zuordnen"))
             refundUndo = nil
-            refundLinksChanged()
+            await refundLinksChanged()
         } catch { if isCurrent(undo.pin) { errorMessage = describe(error) } }
     }
 
-    private func refundLinksChanged() {
+    private func registerRefundHistory(_ step: RefundHistoryStep, pin: VaultPin, manager: UndoManager? = nil) {
+        guard let manager = manager ?? windowUndoManager else { return }
+        manager.registerUndo(withTarget: step) { [weak self, weak manager] step in
+            guard let self, self.isCurrent(pin) else { return }
+            let inverse = RefundHistoryStep()
+            self.registerRefundHistory(inverse, pin: pin, manager: manager)
+            let previous = self.refundHistoryTask
+            self.refundHistoryPending += 1
+            self.refundBusy = true
+            inverse.task = Task { @MainActor [weak self] in
+                await previous?.value
+                guard let self else { return nil }
+                defer {
+                    self.refundHistoryPending -= 1
+                    self.refundBusy = self.refundHistoryPending > 0
+                }
+                guard let action = await step.task?.value, self.isCurrent(pin) else {
+                    manager?.removeAllActions(withTarget: inverse)
+                    return nil
+                }
+                do {
+                    let next: RefundHistoryAction
+                    switch action {
+                    case .unlink(let pair):
+                        let token = try await pin.run {
+                            try $0.unlinkRefund(refundId: pair.refundID, refundPart: pair.refundPart,
+                                originalId: pair.originalID, originalPart: pair.originalPart)
+                        }
+                        guard self.isCurrent(pin) else { return nil }
+                        let undo = RefundUndo(pair: pair, token: token, pin: pin)
+                        self.refundUndo = undo
+                        next = .restore(undo)
+                    case .restore(let undo):
+                        try await pin.run {
+                            try $0.restoreRefund(refundId: undo.pair.refundID, refundPart: undo.pair.refundPart,
+                                originalId: undo.pair.originalID, originalPart: undo.pair.originalPart, token: undo.token)
+                        }
+                        guard self.isCurrent(pin) else { return nil }
+                        self.refundUndo = nil
+                        next = .unlink(undo.pair)
+                    }
+                    await self.refundLinksChanged()
+                    return next
+                } catch {
+                    manager?.removeAllActions(withTarget: inverse)
+                    if self.isCurrent(pin) { self.errorMessage = describe(error) }
+                    return nil
+                }
+            }
+            self.refundHistoryTask = Task { _ = await inverse.task?.value }
+        }
+    }
+
+    private func refundLinksChanged() async {
         refundRevision &+= 1
         invalidateTotals()
         financialReportRevision &+= 1
         reloadDashboard()
         refreshSelectedBookingHistory()
+        if let id = stickyBooking?.id, let pin = pinVault() {
+            let generation = listGeneration
+            let fresh = try? await pin.run { try Self.refundBookings(in: $0, ids: [id])[id] }
+            if isCurrent(pin), generation == listGeneration, stickyBooking?.id == id, let fresh {
+                stickyBooking = fresh
+                if let index = bookings.firstIndex(where: { $0.id == id }) { bookings[index] = fresh }
+            }
+        }
         startSelectionLoad(keepingShown: true)
     }
 

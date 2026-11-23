@@ -265,6 +265,58 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertTrue(data.links.isEmpty)
     }
 
+    func testRefundChangesRefreshStickyBookingMetadata() async throws {
+        model.selectedBookingID = refund
+        model.stickyBooking = try XCTUnwrap(bookings[refund])
+        await model.linkRefund(pair())
+        XCTAssertEqual(model.stickyBooking?.refundCents, 6000)
+        await model.unlinkRefund(pair())
+        XCTAssertEqual(model.stickyBooking?.refundCents, 0)
+    }
+
+    #if os(macOS)
+    func testWindowRefundUndoRegistersRedoSynchronouslyAndRepeats() async throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 100),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        let undo = try XCTUnwrap(model.windowUndoManager)
+        let groupedByEvent = undo.groupsByEvent
+        undo.groupsByEvent = false
+        defer { undo.removeAllActions(); undo.groupsByEvent = groupedByEvent }
+        undo.beginUndoGrouping()
+        await model.linkRefund(pair())
+        undo.endUndoGrouping()
+        for _ in 0..<2 {
+            undo.undo()
+            XCTAssertTrue(undo.canRedo)
+            await model.refundHistoryTask?.value
+            let unlinked = try await snapshot()
+            XCTAssertTrue(unlinked.links.isEmpty)
+            undo.redo()
+            XCTAssertTrue(undo.canUndo)
+            await model.refundHistoryTask?.value
+            let linked = try await snapshot()
+            XCTAssertEqual(linked.links.count, 1)
+        }
+        undo.undo()
+        await model.refundHistoryTask?.value
+        let endpoint = pair()
+        try await model.requireVaultOffMain {
+            try $0.linkRefund(refundId: endpoint.refundID, refundPart: endpoint.refundPart,
+                originalId: endpoint.originalID, originalPart: endpoint.originalPart)
+            _ = try $0.unlinkRefund(refundId: endpoint.refundID, refundPart: endpoint.refundPart,
+                originalId: endpoint.originalID, originalPart: endpoint.originalPart)
+        }
+        undo.redo()
+        await model.refundHistoryTask?.value
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertFalse(undo.canUndo)
+    }
+    #endif
+
     func testExhaustedCandidateAndOwnEndpointAreDisabled() async throws {
         let data = try await snapshot()
         XCTAssertFalse(data.canLink(candidate(second, cents: -7000, open: 0)))

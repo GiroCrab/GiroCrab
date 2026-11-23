@@ -847,6 +847,8 @@ public final class AppModel {
     var refundPickerBooking: Booking?
     var refundUndo: RefundUndo?
     var refundBusy = false
+    var refundHistoryTask: Task<Void, Never>?
+    var refundHistoryPending = 0
     var refundRevision = 0
     var transferBusy = false
     var syncQueue: [BankConnection] = []

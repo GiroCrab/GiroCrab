@@ -11694,6 +11694,17 @@
         }
       }
     },
+    "Die Teilbeträge sind zu groß." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The split amounts are too large."
+          }
+        }
+      }
+    },
     "Die Untergruppen bleiben erhalten und rücken auf die oberste Ebene." : {
       "extractionState" : "manual",
       "localizations" : {

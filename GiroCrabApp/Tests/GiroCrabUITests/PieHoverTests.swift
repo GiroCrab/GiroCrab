@@ -45,13 +45,13 @@ final class PieHoverTests: XCTestCase {
         XCTAssertEqual(PieValueMode(rawValue: "share"), .share)
     }
 
-    func testHeaderPieFoldPreservesPersonalFlagOnlyOnNamedAccountSlices() {
+    func testHeaderPieFoldPreservesPersonalFlagOnlyOnNamedAccountSlices() throws {
         let parts = [
             HeaderPieSlices.Part(id: "1", label: "Girokonto Max", cents: 600, personal: true),
             HeaderPieSlices.Part(id: "2", label: "Tagesgeld", cents: 300, personal: true),
             HeaderPieSlices.Part(id: "3", label: "Sparkonto", cents: 100, personal: true),
         ]
-        let folded = HeaderPieSlices.fold(parts, limit: 2)
+        let folded = try XCTUnwrap(HeaderPieSlices.fold(parts, limit: 2))
         XCTAssertEqual(folded.map(\.id), ["1", "rest"])
         XCTAssertTrue(folded[0].personal)
         XCTAssertFalse(folded[1].personal, "aggregated Sonstige label is not personal")
