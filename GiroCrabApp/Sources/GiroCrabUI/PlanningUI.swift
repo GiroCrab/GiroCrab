@@ -36,7 +36,6 @@ extension AppModel {
         return nil
     }
 
-
     /// `nil` = locked, cancelled or the vault changed meanwhile (keep what is shown).
     /// `accountIds` empty = all accounts. `respectInTotal`: the card as an
     /// overall money figure (#337) — only the effective total set contributes;
@@ -563,6 +562,72 @@ enum SplitMath {
     static func share(of total: Int64, _ numerator: Int64, _ denominator: Int64) -> Int64? {
         splitShareCents(totalCents: total, numerator: numerator, denominator: denominator)
     }
+
+    /// What the sheet opens with (#1663). `stored`: the saved parts' `amountCents` (signed like
+    /// bookings). Unsplit: the rest and the share picked in the row menu in the second part.
+    /// Split: the stored parts in the booking's direction, whether they still add up to `total`
+    /// (the booking's amount can change after saving) and a menu share that is not applied.
+    static func opening(total: Int64, sign: Int64, stored: [Int64], presetPercent: Int64?)
+        -> (amounts: [String], storedPartsDiffer: Bool, ignoredShare: String?) {
+        guard !stored.isEmpty else {
+            let preset = presetPercent.flatMap { share(of: total, $0, 100) }.map(Money.plain)
+            return (["", preset ?? ""], false, nil)
+        }
+        let own = stored.map { sign * $0 }
+        return (own.map(Money.plain), rest(total: total, splitOff: own) != 0, presetPercent.map(label))
+    }
+
+    /// The part a share button fills (#1663): `target` (the part typed in last) unless it is the
+    /// first part or gone, else the last part; nil while there is no part to fill.
+    static func pickIndex<ID: Equatable>(ids: [ID], target: ID?) -> Int? {
+        if let target, let i = ids.firstIndex(of: target), i > 0 { return i }
+        return ids.count > 1 ? ids.count - 1 : nil
+    }
+}
+
+/// The sheet's arithmetic for the parts as typed (#1663), computed once per change and kept out
+/// of the view so it can be tested. Amounts are in the booking's direction: a negative part
+/// counter-books the others (+59 = +200 and -141, #427). The first part takes what is left.
+struct SplitDraft: Equatable {
+    enum Problem: Equatable {
+        /// A part is neither an amount nor a share.
+        case unreadable
+        /// A part, or the rest, is 0.
+        case zeroPart
+    }
+    /// The parts split off (all but the first) as typed; nil = unreadable. An empty field counts
+    /// as 0, so the rest shows the whole amount until something is typed.
+    let splitOff: [Int64?]
+    /// What the first part keeps; nil while a part is unreadable or the sum leaves `Int64`.
+    let rest: Int64?
+    let valid: Bool
+    /// Why "Speichern" is greyed out (#383); nil while valid.
+    let problem: Problem?
+
+    init(total: Int64, splitOffTexts: [String]) {
+        let typed = splitOffTexts.map { $0.trimmingCharacters(in: .whitespaces) }
+        let parts = typed.map { $0.isEmpty ? 0 : SplitMath.parse($0, total: total) }
+        let rest = SplitMath.rest(total: total, splitOff: parts)
+        let valid = rest.map { SplitMath.isValid(total: total, parts: [$0] + parts.compactMap { $0 }) } ?? false
+        (splitOff, self.rest, self.valid) = (parts, rest, valid)
+        if valid {
+            problem = nil
+        } else {
+            problem = zip(typed, parts).contains { !$0.isEmpty && $1 == nil } ? .unreadable : .zeroPart
+        }
+    }
+
+    /// The rest is below 0 and counter-books the other parts. That stays allowed (#427), but the
+    /// rest is computed, so a typo gets there unnoticed: warn, never block.
+    var restIsNegative: Bool { (rest ?? 0) < 0 }
+
+    /// The amounts to save, first part first, signed like the booking (`sign` -1 for an expense);
+    /// nil unless valid.
+    func amountsToSave(sign: Int64) -> [Int64]? {
+        guard valid, let rest else { return nil }
+        let signed = ([rest] + splitOff.compactMap { $0 }).map { $0.multipliedReportingOverflow(by: sign) }
+        return signed.contains { $0.overflow } ? nil : signed.map(\.partialValue)
+    }
 }
 
 struct SplitSheet: View {
@@ -599,34 +664,9 @@ struct SplitSheet: View {
     private var sign: Int64 { booking.amountCents < 0 ? -1 : 1 }
     /// Amount fields hold up to "−1.234.567,89" at every text size (#343).
     private var amountWidth: CGFloat { 120 * textScale }
-    // Amounts are entered in the booking's direction: a negative part counter-books the others
-    // (+59 = +200 and -141, #427). The first part takes what is left; no part may be 0.
-    /// The parts split off as typed; nil = unreadable. An empty field counts as 0, so the rest
-    /// shows the whole amount until something is typed.
-    private var splitOff: [Int64?] {
-        parts.dropFirst().map {
-            $0.amount.trimmingCharacters(in: .whitespaces).isEmpty ? 0 : SplitMath.parse($0.amount, total: total)
-        }
-    }
-    private var rest: Int64? { SplitMath.rest(total: total, splitOff: splitOff) }
-    /// The rest is below 0 and counter-books the other parts. That stays allowed (#427), but the
-    /// rest is computed (#1663), so a typo gets there unnoticed: warn, never block.
-    private var restIsNegative: Bool { (rest ?? 0) < 0 }
-    /// The amounts to save, in the order of `parts`; nil while a part is unreadable.
-    private var amounts: [Int64]? { rest.map { [$0] + splitOff.compactMap { $0 } } }
-    private var valid: Bool { amounts.map { SplitMath.isValid(total: total, parts: $0) } ?? false }
-    /// Why "Speichern" is greyed out (#383): say so instead of leaving it silent.
-    private var problem: LocalizedStringKey? {
-        guard !valid, !parts.isEmpty, error == nil else { return nil }
-        let unreadable = parts.dropFirst().contains {
-            !$0.amount.trimmingCharacters(in: .whitespaces).isEmpty && SplitMath.parse($0.amount, total: total) == nil
-        }
-        return unreadable
-            ? "Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“."
-            : "Jeder Teil braucht einen Betrag ungleich 0."
-    }
 
     var body: some View {
+        let draft = SplitDraft(total: total, splitOffTexts: parts.dropFirst().map(\.amount))
         VStack(alignment: .leading, spacing: 14) {
             Text("Umsatz aufteilen").appFont(.title3, weight: .bold)
             HStack(spacing: 8) {
@@ -646,14 +686,13 @@ struct SplitSheet: View {
                         .sensitive(.labels)
                         if isRest {
                             // what the parts below leave, never typed (#1663)
-                            TextField(Money.plain(0), text: .constant(rest.map(Money.plain) ?? "–"))
+                            TextField(Money.plain(0), text: .constant(draft.rest.map(Money.plain) ?? "–"))
                                 .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
                                 .appFont(.body, monospacedDigit: true).frame(width: amountWidth)
-                                .foregroundStyle(restIsNegative ? Theme.warning : Theme.secondary)
+                                .foregroundStyle(draft.restIsNegative ? Theme.warning : Theme.secondary)
                                 .disabled(true)
                                 .help("Bekommt automatisch, was die anderen Teile übrig lassen")
                                 .accessibilityLabel("Rest")
-                                .sensitive(.amounts)
                                 .sensitive(.amounts)
                         } else {
                             TextField(Money.plain(0), text: $p.amount)
@@ -662,7 +701,6 @@ struct SplitSheet: View {
                                 .focused($focusedPart, equals: p.id)
                                 .onSubmit { settle(p.id) }
                                 .help("Betrag oder Anteil, z. B. „50 %“")
-                                .sensitive(.amounts)
                                 .sensitive(.amounts)
                         }
                         TextField("Notiz", text: $p.note).textFieldStyle(.roundedBorder)
@@ -693,8 +731,13 @@ struct SplitSheet: View {
                     .appFont(.callout).foregroundStyle(Theme.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let problem { Text(problem).appFont(.callout).foregroundStyle(Theme.secondary) }
-            if restIsNegative, error == nil {
+            if let problem = draft.problem, error == nil {
+                Text(problem == .unreadable
+                    ? "Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“."
+                    : "Jeder Teil braucht einen Betrag ungleich 0.")
+                    .appFont(.callout).foregroundStyle(Theme.secondary)
+            }
+            if draft.restIsNegative, error == nil {
                 Text("Der Rest in der ersten Zeile ist negativ und bucht die anderen Teile gegen. Ist das nicht gewollt, bitte die Beträge prüfen.")
                     .appFont(.callout).foregroundStyle(Theme.warning)
                     .fixedSize(horizontal: false, vertical: true)
@@ -710,14 +753,14 @@ struct SplitSheet: View {
                 Spacer()
                 Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Speichern") {
-                    guard let amounts else { return }
+                    guard let amounts = draft.amountsToSave(sign: sign) else { return }
                     let inputs = zip(parts, amounts).map { part, cents in
-                        TransactionSplitInput(categoryId: part.categoryID, amountCents: sign * cents, note: part.note)
+                        TransactionSplitInput(categoryId: part.categoryID, amountCents: cents, note: part.note)
                     }
                     error = model.saveSplits(inputs, for: booking)
                     if error == nil { dismiss() }
                 }
-                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!valid)
+                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!draft.valid)
             }
         }
         .padding(22)
@@ -734,15 +777,14 @@ struct SplitSheet: View {
                 return
             }
             hasSplits = !existing.isEmpty
+            let opening = SplitMath.opening(total: total, sign: sign, stored: existing.map(\.amountCents), presetPercent: presetPercent)
+            storedPartsDiffer = opening.storedPartsDiffer
+            ignoredShare = opening.ignoredShare
             if existing.isEmpty {
-                let preset = presetPercent.flatMap { SplitMath.share(of: total, $0, 100) }.map(Money.plain)
-                parts = [Part(categoryID: booking.categoryId), Part(amount: preset ?? "")]
+                parts = [Part(categoryID: booking.categoryId), Part(amount: opening.amounts[1])]
                 focusedPart = parts.last?.id
             } else {
-                let stored = existing.map { sign * $0.amountCents }
-                parts = zip(existing, stored).map { Part(categoryID: $0.categoryId, amount: Money.plain($1), note: $0.note) }
-                storedPartsDiffer = SplitMath.rest(total: total, splitOff: stored) != 0
-                ignoredShare = presetPercent.map(SplitMath.label)
+                parts = zip(existing, opening.amounts).map { Part(categoryID: $0.categoryId, amount: $1, note: $0.note) }
             }
         }
     }
@@ -759,8 +801,7 @@ struct SplitSheet: View {
     @ViewBuilder
     private var quickPicks: some View {
         let pick = { (percent: Int64) in
-            let target = parts.dropFirst().last { $0.id == pickTarget } ?? parts.last
-            guard let i = parts.firstIndex(where: { $0.id == target?.id }), i > 0 else { return }
+            guard let i = SplitMath.pickIndex(ids: parts.map(\.id), target: pickTarget) else { return }
             parts[i].amount = SplitMath.share(of: total, percent, 100).map(Money.plain) ?? ""
         }
         HStack(spacing: 4) {

@@ -491,4 +491,24 @@ mod tests {
         }
         assert_eq!(parse_split_part("50 %", -8_743).ok(), Some(-4_371));
     }
+
+    /// #1663: a share's lone separator is always decimal ("1.500 %" is 1,5 %), negative shares
+    /// and amounts (the sheet writes them with U+2212) truncate toward zero, and the limits hold.
+    #[test]
+    fn split_part_edges() {
+        let part = |s: &str| parse_split_part(s, 8_743).ok();
+        for (input, cents) in [
+            ("1.500 %", Some(131)),
+            ("1,500 %", Some(131)),
+            ("1.234,5 %", Some(107_932)),
+            ("−33,3 %", Some(-2_911)),
+            ("−43,71", Some(-4_371)),
+            ("-43,71", Some(-4_371)),
+        ] {
+            assert_eq!(part(input), cents, "{input:?}");
+        }
+        assert_eq!(parse_split_part("50 %", 0).ok(), Some(0));
+        assert_eq!(parse_split_part("100 %", i64::MAX).ok(), Some(i64::MAX));
+        assert!(parse_split_part("100,01 %", i64::MAX).is_err());
+    }
 }

@@ -2169,6 +2169,20 @@ mod tests {
             ),
             r#"{"ok":3333}"#
         );
+        // #1663: SplitSheet.qml reads an error as null (unreadable part) and relies on `None` → null
+        let unreadable: Value = serde_json::from_str(&call_json(
+            "parse_split_part_to_cents",
+            r#"{"text":"halb","total_cents":8743}"#,
+        ))
+        .unwrap();
+        assert!(unreadable.get("err").is_some(), "{unreadable}");
+        assert_eq!(
+            call_json(
+                "split_share_cents",
+                r#"{"total_cents":100,"numerator":1,"denominator":0}"#
+            ),
+            r#"{"ok":null}"#
+        );
         drop(v);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
