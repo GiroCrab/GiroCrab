@@ -104,9 +104,12 @@ extension AppModel {
         do {
             let token = try await pin.run { try $0.unlinkRefund(refundId: pair.refundID, refundPart: pair.refundPart, originalId: pair.originalID, originalPart: pair.originalPart) }
             guard isCurrent(pin) else { return }
+            let step = RefundHistoryStep()
             let undo = RefundUndo(pair: pair, token: token, pin: pin)
+            step.task = Task { .restore(undo) }
             refundUndo = undo
-            registerRefundHistory(RefundHistoryStep(.restore(undo)), pin: pin)
+            refundUndoHistoryStep = step
+            registerRefundHistory(step, pin: pin)
             windowUndoManager?.setActionName(String(localized: "Verknüpfung aufheben"))
             await refundLinksChanged()
         } catch { if isCurrent(pin) { errorMessage = describe(error) } }
@@ -121,6 +124,9 @@ extension AppModel {
             let pair = undo.pair
             try await undo.pin.run { try $0.restoreRefund(refundId: pair.refundID, refundPart: pair.refundPart, originalId: pair.originalID, originalPart: pair.originalPart, token: undo.token) }
             guard isCurrent(undo.pin) else { return }
+            if refundUndo?.token == undo.token, let step = refundUndoHistoryStep {
+                windowUndoManager?.removeAllActions(withTarget: step)
+            }
             registerRefundHistory(RefundHistoryStep(.unlink(pair)), pin: undo.pin)
             windowUndoManager?.setActionName(String(localized: "Erstattung zuordnen"))
             refundUndo = nil
@@ -159,6 +165,7 @@ extension AppModel {
                         guard self.isCurrent(pin) else { return nil }
                         let undo = RefundUndo(pair: pair, token: token, pin: pin)
                         self.refundUndo = undo
+                        self.refundUndoHistoryStep = inverse
                         next = .restore(undo)
                     case .restore(let undo):
                         try await pin.run {

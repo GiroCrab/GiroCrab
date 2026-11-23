@@ -299,6 +299,32 @@ final class RefundLinkTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testInlineRestoreRemovesTheConsumedHistoryEntry() async throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 100),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        let manager = try XCTUnwrap(model.windowUndoManager)
+        let grouped = manager.groupsByEvent
+        manager.groupsByEvent = false
+        defer { manager.removeAllActions(); manager.groupsByEvent = grouped }
+        await model.linkRefund(pair())
+        manager.removeAllActions()
+        manager.beginUndoGrouping()
+        await model.unlinkRefund(pair())
+        manager.endUndoGrouping()
+        let token = try XCTUnwrap(model.refundUndo)
+        manager.beginUndoGrouping()
+        await model.restoreRefund(token)
+        manager.endUndoGrouping()
+        manager.undo()
+        await model.refundHistoryTask?.value
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(manager.canUndo)
+    }
+
     func testWindowRefundUndoRegistersRedoSynchronouslyAndRepeats() async throws {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 100),

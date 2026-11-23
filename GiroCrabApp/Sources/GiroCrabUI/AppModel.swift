@@ -846,6 +846,7 @@ public final class AppModel {
     var splitBooking: Booking?
     var refundPickerBooking: Booking?
     var refundUndo: RefundUndo?
+    weak var refundUndoHistoryStep: RefundHistoryStep?
     var refundBusy = false
     var refundHistoryTask: Task<Void, Never>?
     var refundHistoryPending = 0
