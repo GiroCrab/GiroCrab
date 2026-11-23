@@ -32,13 +32,13 @@ protocol EnableBankingKeyStore {
 /// The iCloud Keychain (synchronizable item, end-to-end encrypted by Apple).
 /// Used only with the opt-in "Tresor-Schlüssel über iCloud-Schlüsselbund".
 struct KeychainEnableBankingKeyStore: EnableBankingKeyStore {
-    private let service = "de.girocrab.enablebanking"
+    static let service = "de.girocrab.enablebanking"
     private let account = "application"
 
     fileprivate var query: [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: true,
             kSecUseDataProtectionKeychain as String: true,
@@ -69,9 +69,12 @@ struct KeychainEnableBankingKeyStore: EnableBankingKeyStore {
         }
     }
 
-    /// „App zurücksetzen“ (#241): removes the stored application, here and in iCloud Keychain.
+    /// „App zurücksetzen“ (#241): removes the stored applications, here and in iCloud Keychain:
+    /// the default one and those of the bank logins (`KeychainEnableBankingLoginStore`, #962).
     static func deleteStoredApplication() {
-        SecItemDelete(KeychainEnableBankingKeyStore().query as CFDictionary)
+        var all = KeychainEnableBankingKeyStore().query
+        all.removeValue(forKey: kSecAttrAccount as String)
+        SecItemDelete(all as CFDictionary)
     }
 }
 
