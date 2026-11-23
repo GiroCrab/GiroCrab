@@ -80,7 +80,7 @@ impl Vault {
         } else {
             display_name.trim().to_string()
         };
-        let (id, _) = Self::add_bank_connection_keyed(
+        let (id, created) = Self::add_bank_connection_keyed(
             &tx,
             ConnectorKind::FinTsGeneric,
             &key,
@@ -88,6 +88,9 @@ impl Vault {
             name,
             login,
         )?;
+        if created {
+            crate::connectors::history::request_default(&tx, id)?;
+        }
         let encoded =
             Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(bytes.as_slice()));
         tx.execute(

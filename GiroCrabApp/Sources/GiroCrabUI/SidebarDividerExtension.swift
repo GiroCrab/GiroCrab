@@ -62,6 +62,22 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
                     layer.frame = frame
                     CATransaction.commit()
                 }
+                // The sidebar's line (shown once the list is scrolled): AppKit places it under the
+                // title bar as it was when the layer was made. Opened from the lock screen, whose
+                // title bar has no toolbar, that is 10 pt too high, and AppKit does not move it when
+                // the toolbar comes. Its bottom belongs on the title bar's bottom edge, like the
+                // toolbar line's.
+                if !container.isFlipped {
+                    for layer in containerLayer.sublayers ?? [] where (layer.delegate as? NSView)?.layer !== layer
+                        && layer.contents != nil && layer.frame.height <= 5 && layer.frame.minX < lineStart
+                        && layer.frame.maxY > 0.25 && layer.frame.maxY < container.bounds.height {
+                        watchLine(layer)
+                        CATransaction.begin()
+                        CATransaction.setDisableActions(true)
+                        layer.frame.origin.y = -layer.frame.height
+                        CATransaction.commit()
+                    }
+                }
             }
         }
 
@@ -88,6 +104,12 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
             if let splitView {
                 observers.append(center.addObserver(forName: NSSplitView.didResizeSubviewsNotification,
                                                     object: splitView, queue: .main, using: refresh))
+            }
+            // The sidebar's line appears with the first scroll: check again when the list scrolls.
+            if let sidebar = splitView?.arrangedSubviews.first, let clip = Self.firstScrollView(in: sidebar)?.contentView {
+                clip.postsBoundsChangedNotifications = true
+                observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification,
+                                                    object: clip, queue: .main, using: refresh))
             }
             if let background {
                 background.postsFrameChangedNotifications = true
@@ -120,6 +142,14 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
             }
             lineObservers[id] = [layer.observe(\.position, changeHandler: changed),
                                  layer.observe(\.bounds, changeHandler: resized)]
+        }
+
+        private static func firstScrollView(in view: NSView) -> NSScrollView? {
+            if let scroll = view as? NSScrollView { return scroll }
+            for sub in view.subviews {
+                if let found = firstScrollView(in: sub) { return found }
+            }
+            return nil
         }
 
         /// The `NavigationSplitView`'s split view: the one with a sidebar item.
