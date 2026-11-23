@@ -98,7 +98,18 @@ Rectangle {
             spacing: 6
             Text { text: qsTr("Sortierung"); font.pixelSize: Theme.caption; color: Theme.secondary }
             Item {
+                id: sortButton
                 implicitWidth: sortRow.implicitWidth; implicitHeight: sortRow.implicitHeight
+                // a Menu on the Mac: Tab reaches it, Space / Return opens it
+                activeFocusOnTab: true
+                Keys.onSpacePressed: sortMenu.popup()
+                Keys.onReturnPressed: sortMenu.popup()
+                Keys.onEnterPressed: sortMenu.popup()
+                Rectangle { visible: sortButton.activeFocus; anchors.fill: parent; anchors.margins: -2
+                            radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
+                Accessible.role: Accessible.ButtonMenu
+                Accessible.name: qsTr("Sortieren nach")
+                Accessible.onPressAction: sortMenu.popup()
                 RowLayout { id: sortRow; spacing: 4
                     SFIcon { symbol: "chevron.down"; rotation: table.sort.ascending ? 180 : 0; size: 9; color: Theme.text }
                     Text { text: table.sort.key === "gain" ? qsTr("GuV") : table.sort.key === "name" ? qsTr("Name") : qsTr("Marktwert")
@@ -319,6 +330,14 @@ Rectangle {
         MouseArea { id: shArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key)) }
         ToolTip.visible: shArea.containsMouse; ToolTip.delay: 600; ToolTip.text: qsTr("Nach dieser Spalte sortieren")
+        // a Button on the Mac: Tab reaches it, Space / Return sorts
+        activeFocusOnTab: true
+        Keys.onSpacePressed: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
+        Keys.onReturnPressed: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
+        Keys.onEnterPressed: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
+        Rectangle { visible: sh.activeFocus; anchors.fill: shRow; anchors.margins: -2
+                    radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
+        Accessible.onPressAction: table.sortRequested(DepotMetrics.toggledSort(table.sort, sh.key))
         Accessible.role: Accessible.ColumnHeader
         Accessible.name: title
         Accessible.description: active ? (table.sort.ascending ? qsTr("aufsteigend sortiert") : qsTr("absteigend sortiert")) : ""
