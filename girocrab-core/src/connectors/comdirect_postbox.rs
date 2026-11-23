@@ -330,6 +330,7 @@ fn kind_name(kind: AccountKind) -> &'static str {
         AccountKind::Checking => "checking",
         AccountKind::Savings => "savings",
         AccountKind::TimeDeposit => "time deposit",
+        AccountKind::BuildingSavings => "building savings",
         AccountKind::CreditCard => "credit card",
         AccountKind::Brokerage => "depot",
         AccountKind::Loan => "loan",

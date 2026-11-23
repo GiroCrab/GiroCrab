@@ -105,14 +105,49 @@ final class WealthSummaryTests: XCTestCase {
         // Bargeld before Zahlungsdienste; the depot is no cash
         XCTAssertEqual(groups.map(\.kind), [.timeDeposit, .checking, .savings, .cash, .paymentService])
         XCTAssertEqual(groups.map(\.cents), [5_000, 3_000, 3_000, 3_000, 3_000])
-        // headings for several accounts, as the sidebar sections name them (#1620)
-        XCTAssertEqual(groups.first { $0.kind == .checking }?.title, String(localized: "Girokonten"))
-        XCTAssertEqual(groups.first { $0.kind == .paymentService }?.title, String(localized: "Zahlungsdienste"))
-        XCTAssertEqual(groups.first { $0.kind == .savings }?.title, AccountKind.savings.label)
+        // each heading is the name of the kind's section in the "Kontoart" sidebar view (#1620):
+        // a demo cash account sits in exactly that section
+        let cashAccounts = model.allAccounts.filter { WealthBucket.bucket(for: $0) == .cash && $0.archivedUnix == nil }
+        XCTAssertFalse(cashAccounts.isEmpty)
+        for a in cashAccounts {
+            let section = try XCTUnwrap(model.groups.first { $0.id == a.groupId }, a.name)
+            XCTAssertEqual(CashKindGroup(kind: a.kind, accounts: [a]).title, section.name, a.name)
+        }
         XCTAssertEqual(groups.first { $0.kind == .checking }?.accounts.map(\.id).sorted(), [1, 3])
         XCTAssertEqual(groups.reduce(0) { $0 + $1.cents }, s.cashCents)
         XCTAssertEqual(Set(groups.map(\.id)).count, groups.count)
         XCTAssertTrue(WealthSummary(accounts: []).cashByKind.isEmpty)
+    }
+
+    /// #1630: a Bausparvertrag is cash in "Vermögen" (a credit, no debt) but not money at hand, so
+    /// "Verfügbar" leaves it out; "Kontoart ändern" puts it into its own section.
+    func testBuildingSavingsIsCashButNotAtHand() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let savings = try XCTUnwrap(model.allAccounts.first { $0.kind == .savings && $0.inTotal })
+        XCTAssertTrue(model.liquidAccounts.map(\.id).contains(savings.id))
+        XCTAssertTrue(AccountKind.importChoices.contains(.buildingSavings))
+
+        let totalsBefore = model.totalsVersion
+        model.setAccountKind(savings.id, to: .buildingSavings)
+        // "Verfügbar" and its history count other accounts now: the totals reload
+        XCTAssertGreaterThan(model.totalsVersion, totalsBefore)
+        let contract = try XCTUnwrap(model.allAccounts.first { $0.id == savings.id })
+        XCTAssertEqual(contract.kind, .buildingSavings)
+        XCTAssertEqual(WealthBucket.bucket(for: contract), .cash)
+        XCTAssertFalse(model.liquidAccounts.map(\.id).contains(contract.id), "„Verfügbar“ counts money at hand only")
+        XCTAssertTrue(WealthSummary(accounts: model.allAccounts).cashByKind.contains { $0.kind == .buildingSavings })
+        let section = try XCTUnwrap(model.groups.first { $0.id == contract.groupId })
+        XCTAssertEqual(section.name, accountKindSection(kind: .buildingSavings).name)
+    }
+
+    /// Review of #1650: when the last account of the selected section takes another kind, the
+    /// selection does not widen to all accounts under the old section's name.
+    func testAnEmptiedSectionIsNotLeftSelected() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let single = try XCTUnwrap(model.groups.first { $0.accounts.count == 1 && $0.accounts[0].kind != .buildingSavings })
+        model.sidebarSelection = .group(single.id)
+        model.setAccountKind(single.accounts[0].id, to: .buildingSavings)
+        XCTAssertEqual(model.sidebarSelection, .allAccounts)
     }
 
     func testPositiveCardBalanceStaysAnAssetWhenDebtsAreLeftOut() throws {

@@ -339,7 +339,7 @@ export component SettingsImportPanel inherits VerticalLayout {
         HorizontalLayout {
             spacing: 8px;
             LineEdit { horizontal-stretch: 1; text <=> SettingsImportState.log-search; placeholder-text: "Suchen (Verbindung, Meldung)"; accepted => { SettingsImportState.log-reload(); } }
-            CheckBox { text: "Nur Fehler"; checked <=> SettingsImportState.log-errors; toggled => { SettingsImportState.log-reload(); } }
+            CheckBox { text: "Nur Fehler und Teilweise"; checked <=> SettingsImportState.log-errors; toggled => { SettingsImportState.log-reload(); } }
             Button { text: "Suchen"; clicked => { SettingsImportState.log-reload(); } }
         }
         Info { text: SettingsImportState.log-summary; ink: root.muted; }

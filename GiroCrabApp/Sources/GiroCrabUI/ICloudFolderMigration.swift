@@ -176,4 +176,32 @@ enum ICloudFolderMigration {
     static func displayName(for url: URL) -> String {
         url.lastPathComponent
     }
+
+    /// Where a folder is, readable (#909): "iCloud Drive/Backup/GiroCrab" inside iCloud Drive,
+    /// on the Mac the path with "~" for the home folder. The bare name can't tell two folders
+    /// called "GiroCrab" apart. iOS paths outside iCloud Drive are app containers, so there
+    /// only the folder's name is shown.
+    static func readablePath(_ path: String, home: String = homePath) -> String {
+        let path = URL(fileURLWithPath: path).standardizedFileURL.path
+        if let r = path.range(of: "/Library/Mobile Documents/com~apple~CloudDocs") {
+            let owner = path[..<r.lowerBound], rest = path[r.upperBound...]
+            if rest.isEmpty || rest.hasPrefix("/"), [home, "/private/var/mobile", "/var/mobile"].contains(String(owner)) {
+                return "iCloud Drive" + rest
+            }
+        }
+        #if os(macOS)
+        if !home.isEmpty, path == home || path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
+        return path
+        #else
+        return URL(fileURLWithPath: path).lastPathComponent
+        #endif
+    }
+
+    private static var homePath: String {
+        #if os(macOS)
+        FileManager.default.homeDirectoryForCurrentUser.path
+        #else
+        ""
+        #endif
+    }
 }

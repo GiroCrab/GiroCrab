@@ -25,6 +25,7 @@ fn source() -> SepaAccount {
         account_number: "202051".into(),
         sub_account: String::new(),
         blz: "12030000".into(),
+        full_kti: false,
     }
 }
 

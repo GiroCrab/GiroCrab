@@ -182,7 +182,7 @@ struct DirectDebitsView: View {
             .padding(.vertical, 10)
             Rectangle().fill(Theme.border).frame(height: 1)
         }
-        .modifier(DayCardSegment(isTop: true, isBottom: false))
+        .modifier(DayCardSegment())
     }
 }
 
@@ -277,6 +277,6 @@ private struct MandateRow: View {
                 Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1).padding(.leading, 64)
             }
         }
-        .modifier(DayCardSegment(isTop: false, isBottom: isLast))
+        .modifier(DayCardSegment())
     }
 }

@@ -62,6 +62,8 @@ struct Ui {
     side_model: Option<Rc<VecModel<SideRow>>>,
     /// Drops the result of a superseded load.
     generation: u64,
+    /// Incremented on lock so in-flight worker callbacks do not repopulate a locked session.
+    lock_generation: u64,
     depot: Option<DepotData>,
     wealth: Option<WealthData>,
     series: Vec<RecurringSeries>,
@@ -84,6 +86,16 @@ impl Ui {
     /// the reload that follows "Als gelesen markieren".
     fn forget_shown_list(&mut self) {
         self.doc_unread.clear();
+    }
+
+    fn reset_for_lock(&mut self) {
+        let model = self.side_model.take();
+        let generation = self.generation.wrapping_add(1);
+        let lock_generation = self.lock_generation.wrapping_add(1);
+        *self = Self::default();
+        self.side_model = model;
+        self.generation = generation;
+        self.lock_generation = lock_generation;
     }
 }
 
@@ -689,13 +701,12 @@ pub fn rerender(win: &MainWindow) {
 pub fn on_lock(win: &MainWindow) {
     clear_opened_documents();
     with_ui(|u| {
-        let model = u.side_model.take();
-        *u = Ui::default();
-        u.side_model = model;
+        u.reset_for_lock();
         if let Some(m) = &u.side_model {
             sync_model(m, Vec::new());
         }
     });
+    win.set_busy(false);
     win.set_view_mode(MODE_BOOKINGS);
     win.set_side_selected("all".into());
     win.set_side_query(SharedString::new());
@@ -780,11 +791,15 @@ fn run_doc_job(
     vault: &Arc<Vault>,
     job: impl FnOnce(&Vault) -> Result<String, String> + Send + 'static,
 ) {
+    let lock_generation = with_ui(|u| u.lock_generation);
     win.set_busy(true);
     let (weak, v) = (win.as_weak(), vault.clone());
     std::thread::spawn(move || {
         let result = job(&v);
         let _ = weak.upgrade_in_event_loop(move |win| {
+            if with_ui(|u| u.lock_generation) != lock_generation {
+                return;
+            }
             win.set_busy(false);
             match result {
                 Ok(msg) => reload_docs(&win, &v, msg),
@@ -1511,5 +1526,23 @@ mod tests {
         vault.delete_rule(id).unwrap();
         assert!(vault.list_rules().unwrap().iter().all(|r| r.id != id));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reset_for_lock_advances_generations_and_clears_cached_documents() {
+        let mut u = Ui {
+            generation: 4,
+            lock_generation: 7,
+            doc_rows: vec![11, 12],
+            doc_unread: vec![12],
+            selected_doc: Some(11),
+            ..Ui::default()
+        };
+        u.reset_for_lock();
+        assert_eq!(u.generation, 5);
+        assert_eq!(u.lock_generation, 8);
+        assert!(u.doc_rows.is_empty());
+        assert!(u.doc_unread.is_empty());
+        assert_eq!(u.selected_doc, None);
     }
 }
