@@ -194,7 +194,7 @@ enum HelpCatalog {
 
                 **Search:** ⌘F focuses the search field; it understands the same expressions as rules.
                 """],
-            keywords: ["regel", "rule", "kategorie", "category", "vorschlag", "suggestion", "historie", "history", "split", "aufteilen", "anteil", "share", "prozent", "percent", "mehrwertsteuer", "vat", "umbuchung", "transfer", "suche", "search", "name:", "purpose:", "iban", "amount", "betrag", "regex"]),
+            keywords: ["regel", "rule", "kategorie", "category", "vorschlag", "suggestion", "historie", "history", "split", "aufteilen", "anteil", "share", "prozent", "percent", "umbuchung", "transfer", "suche", "search", "name:", "purpose:", "iban", "amount", "betrag", "regex"]),
         HelpTopic(
             id: "vault", icon: "lock.shield",
             title: ["de": "Tresor, Datenschutz & iCloud-Sync", "en": "Vault, privacy & iCloud sync"],

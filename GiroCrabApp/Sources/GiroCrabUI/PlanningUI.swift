@@ -534,8 +534,9 @@ struct CustomPeriodForm: View {
 
 /// Split arithmetic in the booking's direction (cents, positive = same sign as the booking).
 enum SplitMath {
-    /// The shares offered in one click (#1663), in percent: the row menu under „Umsatz aufteilen“
-    /// and the buttons in the sheet. 7 % and 19 % are the German VAT rates.
+    /// The shares offered in one click (#1663), in percent of the booking's amount: the row menu
+    /// under „Umsatz aufteilen“ and the buttons in the sheet. Plain shares: 19 % of 87,43 € is
+    /// 16,61 €, not the VAT contained in it.
     static let shares: [Int64] = [7, 19, 50]
     /// A share as the UI writes it: „19 %“ (de), "19%" (en).
     static func label(_ percent: Int64) -> String { (Double(percent) / 100).formatted(.percent) }

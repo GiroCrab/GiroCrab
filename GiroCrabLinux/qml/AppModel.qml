@@ -3000,7 +3000,7 @@ QtObject {
     /// Share of the booking the sheet puts into the second part (#1663, row menu `splitShares`).
     property var splitPresetPercent: null
     /// SplitMath.shares: the shares offered in one click (row menu under „Umsatz aufteilen“ and the
-    /// buttons in the sheet), in percent. 7 % and 19 % are the German VAT rates.
+    /// buttons in the sheet), in percent of the booking's amount: plain shares, not the VAT in it.
     readonly property var splitShares: [7, 19, 50]
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
