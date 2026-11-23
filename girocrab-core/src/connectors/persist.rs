@@ -1740,6 +1740,10 @@ impl Vault {
             )
         };
         let (since, since_by_account) = since;
+        let state = match history {
+            Some(_) => super::history::state_for_full_fetch(state)?,
+            None => state,
+        };
         let documents = match only_account {
             // see begin_account_sync
             Some(_) => Documents::Off,

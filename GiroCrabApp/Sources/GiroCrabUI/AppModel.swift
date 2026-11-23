@@ -672,6 +672,9 @@ public final class AppModel {
     /// (demo, `--demo-sheet add-bank[:search:<text> | :bank:<name>[:setup]]`)
     /// opens "Bank hinzufügen" on that step, for PR screenshots.
     var demoAddBank: String?
+    /// Period of the first fetch chosen in "Bank hinzufügen" (#1043), as `sync.days_back`
+    /// stores it; nil = the setting, which the core marks a new login with anyway.
+    var newLoginHistory: String?
     var pendingLogin: PendingLogin?
     var setupRequest: SetupRequest?
     /// Trade Republic in-app browser login (WKWebView).

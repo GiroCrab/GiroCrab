@@ -211,3 +211,44 @@ async fn only_a_full_user_sync_reaches_back_and_finishes_it() {
     assert!(next > back(400));
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn a_full_fetch_asks_enable_banking_for_the_longest_history_again() {
+    use crate::secret::SecretJson;
+    use serde_json::{Value, json};
+    let legacy = json!(["uid", "Giro", "DE00", "EUR"]);
+    let state = SecretJson::encode(&json!({"session_id": "s", "accounts": [
+        {"uid": "u1", "history_done": true},
+        {"uid": "u2", "history_done": false},
+        legacy,
+    ]}))
+    .unwrap();
+    let reset: Value = history::state_for_full_fetch(state)
+        .unwrap()
+        .decode()
+        .unwrap();
+    assert_eq!(reset["accounts"][0]["history_done"], false);
+    assert_eq!(reset["accounts"][1]["history_done"], false);
+    assert_eq!(
+        (&reset["session_id"], &reset["accounts"][2]),
+        (&json!("s"), &legacy)
+    );
+    // nothing to ask again: the state stays as it is, an empty one too
+    let other = json!({"system_id": "x", "accounts": [{"uid": "u", "history_done": false}]});
+    let out = history::state_for_full_fetch(SecretJson::encode(&other).unwrap()).unwrap();
+    assert_eq!(out.decode::<Value>().unwrap(), other);
+    let empty = history::state_for_full_fetch(SecretJson::default()).unwrap();
+    assert!(empty.is_empty());
+}
+
+#[test]
+fn a_pending_full_fetch_can_be_called_off() {
+    let (v, path) = demo_vault();
+    let id = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "one".into())
+        .unwrap();
+    assert!(v.pending_full_history(id).unwrap().is_some());
+    v.cancel_full_history(id).unwrap();
+    assert_eq!(v.pending_full_history(id).unwrap(), None);
+    let _ = std::fs::remove_file(path);
+}

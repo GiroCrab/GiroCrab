@@ -854,3 +854,22 @@ struct SelectionTotal: Equatable {
     let currency: String
     let cents: Int64
 }
+
+/// Period of a full fetch (#1043) as the setting `sync.days_back` stores it: `max` or days.
+extension HistoryRange {
+    init(setting: String) {
+        self = setting == "max" ? .maximum : .days(days: UInt32(setting) ?? 90)
+    }
+
+    var setting: String {
+        switch self {
+        case .maximum: return "max"
+        case .days(let days): return String(days)
+        }
+    }
+
+    /// The periods the pickers offer, shortest first.
+    static var pickerOptions: [(setting: String, title: LocalizedStringKey)] {
+        [("90", "90 Tage"), ("365", "1 Jahr"), ("730", "2 Jahre"), ("max", "Maximum")]
+    }
+}
