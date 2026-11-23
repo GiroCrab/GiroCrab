@@ -2,6 +2,126 @@ mod round7 {
     use super::*;
 
     #[test]
+    fn concurrent_twin_folds_keep_split_uuids_unique() {
+        for (stamp, reverse) in [(100, false), (100, true), (200, false), (200, true)] {
+            let a = Fixture::new();
+            let source = a.add("purchase", -100);
+            let parts = a.split(source, &[-40, -60]);
+            let first =
+                a.v.create_offline_account("First".into(), AccountKind::Checking, "EUR".into(), 0)
+                    .unwrap();
+            let second =
+                a.v.create_offline_account("Second".into(), AccountKind::Checking, "EUR".into(), 0)
+                    .unwrap();
+            raw(
+                &a.v,
+                &format!(
+                    "INSERT INTO bank_connections(connector,display_name,login_name) VALUES ('fints:52090000','Bank','concurrent'); UPDATE accounts SET connection_id=last_insert_rowid() WHERE id IN ({first},{second}); UPDATE accounts SET external_ref='moneymoney-db:concurrent',kind='checking',iban='' WHERE id={}; UPDATE accounts SET iban='DE11111111111111111111' WHERE id={first}; UPDATE accounts SET iban='DE22222222222222222222' WHERE id={second}",
+                    a.account
+                ),
+            );
+            raw(
+                &a.v,
+                &format!(
+                    "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,currency,counterparty) VALUES ({first},'purchase','2026-01-01',-100,'EUR','purchase'),({second},'purchase','2026-01-01',-100,'EUR','purchase')"
+                ),
+            );
+            raw(
+                &a.v,
+                &format!(
+                    "UPDATE transactions SET splits_ms=100 WHERE id={source}; INSERT INTO transactions(account_id,external_id,booking_date,amount_cents,currency,counterparty) VALUES ({first},'refund','2026-01-01',100,'EUR','refund')"
+                ),
+            );
+            let refund = number(
+                &a.v,
+                "SELECT id FROM transactions WHERE external_id='refund'",
+            );
+            a.link(refund, "", source, &parts[0]);
+            let b = Fixture::new();
+            merge(&b.v, &a.v);
+            raw(
+                &a.v,
+                &format!(
+                    "UPDATE accounts SET iban='DE11111111111111111111' WHERE id={}",
+                    a.account
+                ),
+            );
+            let peer_source: i64 =
+                b.v.db()
+                    .unwrap()
+                    .query_row(
+                        "SELECT id FROM accounts WHERE external_ref='moneymoney-db:concurrent'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+            raw(
+                &b.v,
+                &format!(
+                    "UPDATE accounts SET iban='DE22222222222222222222' WHERE id={peer_source}"
+                ),
+            );
+            assert_eq!(
+                crate::sync_merge::twins::fold_twins(&a.v.db().unwrap()).unwrap(),
+                1
+            );
+            assert_eq!(
+                crate::sync_merge::twins::fold_twins(&b.v.db().unwrap()).unwrap(),
+                1
+            );
+            raw(
+                &b.v,
+                &format!(
+                    "UPDATE transactions SET splits_ms={stamp} WHERE external_id='purchase' AND account_id IN (SELECT id FROM accounts WHERE name='Second')"
+                ),
+            );
+            if reverse {
+                merge(&b.v, &a.v);
+                merge(&a.v, &b.v);
+            } else {
+                merge(&a.v, &b.v);
+                merge(&b.v, &a.v);
+            }
+            merge(&a.v, &b.v);
+            let snapshot = |v: &Vault| -> Vec<(String, String, i64, String)> {
+                v.db().unwrap().prepare("SELECT a.external_ref,t.external_id,s.position,s.uuid FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id JOIN accounts a ON a.id=t.account_id WHERE t.deleted_ms IS NULL ORDER BY a.external_ref,t.external_id,s.position").unwrap()
+                .query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap().collect::<Result<_,_>>().unwrap()
+            };
+            assert_eq!(snapshot(&a.v), snapshot(&b.v));
+            for v in [&a.v, &b.v] {
+                assert_eq!(
+                    number(
+                        v,
+                        &format!(
+                            "SELECT count(*) FROM transaction_splits WHERE uuid='{}'",
+                            parts[0]
+                        )
+                    ),
+                    1
+                );
+                assert_eq!(
+                    number(
+                        v,
+                        "SELECT count(*) FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id WHERE t.deleted_ms IS NULL"
+                    ),
+                    4
+                );
+                let refund = number(
+                    v,
+                    "SELECT id FROM transactions WHERE external_id='refund' AND deleted_ms IS NULL",
+                );
+                let links = v.refund_links(refund).unwrap();
+                assert_eq!(links.iter().map(|l| l.allocated_cents).sum::<i64>(), 40);
+                assert_eq!(links.iter().filter(|l| l.inactive).count(), 1);
+                if stamp == 200 {
+                    let owner:String=v.db().unwrap().query_row("SELECT a.name FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id JOIN accounts a ON a.id=t.account_id WHERE s.uuid=?1",[&parts[0]],|r|r.get(0)).unwrap();
+                    assert_eq!(owner, "Second");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn split_never_becomes_whole_on_move() {
         let f = Fixture::new();
         let r = f.add("r", 100);

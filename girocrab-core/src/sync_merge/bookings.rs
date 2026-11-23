@@ -531,6 +531,41 @@ pub(crate) fn merge_bookings(
         }
     }
 
+    let live: HashSet<i64> = conn.prepare("SELECT t.id FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.deleted_ms IS NULL AND a.deleted_ms IS NULL")?
+        .query_map([],|r|r.get(0))?.collect::<Result<_,_>>()?;
+    let mut owners: HashMap<String, Vec<(i64, usize)>> = HashMap::new();
+    let mut keys = HashMap::new();
+    for (&id, fields) in local.iter().filter(|(id, _)| live.contains(id)) {
+        for (position, line) in fields.splits.iter().enumerate() {
+            owners
+                .entry(line.0.clone())
+                .or_default()
+                .push((id, position));
+        }
+    }
+    for entries in owners.values().filter(|entries| entries.len() > 1) {
+        for &(id, _) in entries {
+            keys.insert(id, super::booking_key(conn, id)?);
+        }
+        let &(winner, _) = entries
+            .iter()
+            .max_by_key(|&&(id, position)| {
+                let f = &local[&id];
+                let p = &f.splits[position];
+                (f.splits_ms, &p.1, p.2, &p.3, &keys[&id])
+            })
+            .unwrap();
+        for &(id, position) in entries.iter().filter(|(id, _)| *id != winner) {
+            let fields = local.get_mut(&id).unwrap();
+            fields.splits[position].0 = uuid::Uuid::new_v5(
+                &super::NAMESPACE,
+                format!("split-owner|{}|{position}", keys[&id]).as_bytes(),
+            )
+            .to_string();
+            pending_splits.insert(id, fields.splits.clone());
+        }
+    }
+
     let live_uuids: HashSet<_> = local
         .values()
         .filter(|f| f.deleted_ms.is_none())
