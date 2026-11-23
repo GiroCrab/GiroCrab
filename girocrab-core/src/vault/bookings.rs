@@ -62,6 +62,15 @@ fn category_match_sql(cat_match: &str) -> String {
     )
 }
 
+/// The specific MoneyMoney category used for security purchases. Match complete
+/// category components to avoid reclassifying unrelated purchases or savings.
+fn is_imported_security_purchase_category(path: &str) -> bool {
+    let parts: Vec<_> = path.split('›').map(|p| p.trim()).collect();
+    parts.len() >= 2
+        && parts.last().is_some_and(|p| p.eq_ignore_ascii_case("Wertpapieranlage"))
+        && parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Anlegen")
+}
+
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
 /// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
 /// PayPal account (see `BookingFinisher`).
@@ -319,6 +328,16 @@ impl BookingFinisher {
             self.paypal_accounts.contains(&t.account_id),
             top_role,
         );
+        // MoneyMoney imports can retain their category names without a built-in
+        // GiroCrab category role. Recognise the specific security-purchase category
+        // rather than treating every custom savings category as an investment.
+        // This runs on reads, so previously imported bookings are covered too.
+        if t.amount_cents < 0
+            && t.flow == FlowKind::Consumption
+            && is_imported_security_purchase_category(&t.category_path)
+        {
+            t.flow = FlowKind::Investment;
+        }
         t.is_salary = crate::salary::is_salary(t, &self.salary_ibans);
         // A salary stays income although its booking text names a transfer
         // (comdirect: "Übertrag / Überweisung"); a transfer category still wins.
