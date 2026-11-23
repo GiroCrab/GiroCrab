@@ -17,6 +17,19 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("empty direct search is visible even when suggestions remain", () => {
+    const source = readFileSync(new URL("../qml/RefundSheet.qml",import.meta.url),"utf8");
+    const end = source.indexOf('text: qsTr("Keine passenden Buchungen")');
+    const start = source.lastIndexOf("visible:",end)+"visible:".length;
+    const expression = source.slice(start,end).trim();
+    const s = {sheet:{pending:false,search:"no-match",error:"",linked:[],top:[{}],others:[],candidates:[]}};
+    vm.createContext(s);
+    assert.equal(vm.runInContext(expression,s),true);
+    s.sheet.candidates=[{}];
+    assert.equal(vm.runInContext(expression,s),false);
+    s.sheet.candidates=[];s.sheet.error="failed";
+    assert.equal(vm.runInContext(expression,s),false);
+});
 test("selection totals inherit account currencies without mixing them", () => {
     const text = readFileSync(new URL("../qml/SelectionSummaryBar.qml", import.meta.url), "utf8");
     const totals = bodyAfter("readonly property var totals:", text);
@@ -41,16 +54,18 @@ test("zero-total split bookings retain their amount for metadata saves", () => {
 });
 test("refund mutation resets busy on identity, queue and worker errors", () => {
     for (const failure of ["identity", "worker", "queue", "locked", "ok"]) {
+        let entered = false;
         const s = { refundEditing:false, isUnlocked:true, vaultLoaded:failure!=="locked", vaultGeneration:1,
             UndoManager:{busy:false,phase:"normal",branch:0,register(){}}, refundLinksRevision:0,
             core(){if(failure==="identity")throw Error("identity failed");return "identity";},
             run(fn){try{return fn();}catch(e){s.errorMessage=e.message;}},
-            loadOffMain(){}, coreAsync(method,args,apply,failed){if(failure==="queue")throw Error("queue failed");if(failure==="worker")failed("worker failed");else apply({changed:false});},
+            loadOffMain(){}, coreAsync(method,args,apply,failed){entered=true;assert.equal(s.refundEditing,true);assert.equal(s.UndoManager.busy,true);if(failure==="queue")throw Error("queue failed");if(failure==="worker")failed("worker failed");else apply({changed:false});},
             qsTr:s=>s };
         vm.createContext(s);
         vm.runInContext(`(function(pair,action,token){${bodyAfter("function changeRefundLink(pair, action, token)")}})({},"unlink")`,s);
         assert.equal(s.refundEditing,false,failure);
         assert.equal(s.UndoManager.busy,false,failure);
+        assert.equal(entered,["queue","worker","ok"].includes(failure));
     }
 });
 test("refund card retains rows on refresh and displays failures inline", () => {

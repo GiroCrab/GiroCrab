@@ -38,6 +38,8 @@ Sheet {
                 return { part: p.uuid, text: [qsTr("Teil %1").arg(i + 1), c ? c.path : "", p.note, Fmt.money(p.amount_cents, booking.currency)].filter(t => t !== "").join(" · ") }
             })
             ownPart = data.own_part; fromRefund = data.from_refund; ownOpen = data.own_open
+            if (data.selection_invalid && ownParts.length === 0) ownParts = [{part: "", text: qsTr("Buchung")}]
+            error = data.selection_invalid ? qsTr("Diese Erstattungszuordnung ist nicht möglich.") : ""
             linked = data.linked; top = data.suggestions.slice(0, 3); candidates = data.candidates
             loading = false
         }, message => { ownOpen = null; error = message; loading = false }, true)
@@ -122,7 +124,7 @@ Sheet {
             enabled: !sheet.pending
             Layout.fillWidth: true
             model: sheet.ownParts.map(p => p.text)
-            currentIndex: Math.max(0, sheet.ownParts.findIndex(p => p.part === sheet.ownPart))
+            currentIndex: sheet.ownParts.findIndex(p => p.part === sheet.ownPart)
             displayText: AppModel.masking(sheet.ownParts[currentIndex] ? sheet.ownParts[currentIndex].text : "", sheet.partMasks)
             contentItem: Text { text: partPicker.displayText; textFormat: Text.PlainText; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
             onActivated: index => { sheet.ownPart = sheet.ownParts[index].part; sheet.reload() }
@@ -156,7 +158,7 @@ Sheet {
                 Repeater { model: sheet.top; RefundRow { required property var modelData; row: modelData.candidate; reason: modelData.reason } }
                 Text { visible: sheet.others.length > 0; text: sheet.search.trim() !== "" ? qsTr("Suchergebnisse") : qsTr("Weitere Buchungen"); font.pixelSize: Theme.caption; font.weight: Font.DemiBold; color: Theme.secondary; Layout.topMargin: 8 }
                 Repeater { model: sheet.others; RefundRow { required property var modelData; row: modelData } }
-                Text { visible: !sheet.pending && sheet.linked.length === 0 && sheet.top.length === 0 && sheet.others.length === 0 && sheet.error === ""; text: qsTr("Keine passenden Buchungen"); font.pixelSize: Theme.callout; color: Theme.secondary }
+                Text { visible: !sheet.pending && sheet.error === "" && (sheet.search.trim() !== "" ? sheet.candidates.length === 0 : sheet.linked.length === 0 && sheet.top.length === 0 && sheet.others.length === 0); text: qsTr("Keine passenden Buchungen"); font.pixelSize: Theme.callout; color: Theme.secondary }
             }
         }
     }

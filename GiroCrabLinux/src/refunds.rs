@@ -146,9 +146,9 @@ pub fn sheet(v: &Vault, args: &Value) -> R {
         .list_transaction_splits(booking.id)
         .map_err(|e| e.to_string())?;
     if !req.own_part.is_empty() && !parts.iter().any(|p| p.uuid == req.own_part) {
-        return Err(crate::i18n::tr(
-            "Diese Erstattungszuordnung ist nicht möglich.",
-        ));
+        return Ok(
+            json!({"booking":booking,"parts":parts,"own_part":req.own_part,"selection_invalid":true,"from_refund":false,"own_open":null,"linked":[],"suggestions":[],"candidates":[]}),
+        );
     }
     let selected = parts
         .iter()
@@ -467,6 +467,45 @@ mod tests {
     }
 
     #[test]
+    fn round7_replaced_parts_return_current_choices_without_using_whole_amount() {
+        let (_dir, v, f) = fixture();
+        let id = f["refund"].as_i64().unwrap();
+        v.set_transaction_splits(
+            id,
+            vec![4000, 2000]
+                .into_iter()
+                .map(|amount_cents| girocrab_core::TransactionSplitInput {
+                    uuid: None,
+                    amount_cents,
+                    category_id: None,
+                    note: String::new(),
+                })
+                .collect(),
+        )
+        .unwrap();
+        let data = sheet(&v, &json!({"transaction_id":id,"own_part":f["part"]})).unwrap();
+        assert_eq!(data["selection_invalid"], true);
+        assert_eq!(data["parts"].as_array().unwrap().len(), 2);
+        assert_eq!(data["own_part"], f["part"]);
+        assert!(data["own_open"].is_null());
+        assert!(data["candidates"].as_array().unwrap().is_empty());
+        let recovered = sheet(
+            &v,
+            &json!({"transaction_id":id,"own_part":data["parts"][0]["uuid"]}),
+        )
+        .unwrap();
+        assert_eq!(recovered["own_open"], 4000);
+        v.set_transaction_splits(id, vec![]).unwrap();
+        let whole = sheet(&v, &json!({"transaction_id":id,"own_part":f["part"]})).unwrap();
+        assert_eq!(whole["selection_invalid"], true);
+        assert!(whole["parts"].as_array().unwrap().is_empty());
+        assert_eq!(
+            sheet(&v, &json!({"transaction_id":id})).unwrap()["own_open"],
+            6000
+        );
+    }
+
+    #[test]
     fn split_sheet_roles_search_and_empty_error() {
         let (_dir, v, f) = fixture();
         let args = json!({"transaction_id":f["refund"],"own_part":f["part"]});
@@ -492,12 +531,13 @@ mod tests {
         assert_eq!(reverse["from_refund"], false);
         assert!(sheet(&v, &json!({"transaction_id":-1})).is_err());
         assert!(sheet(&v, &json!({})).is_err());
-        assert!(
+        assert_eq!(
             sheet(
                 &v,
                 &json!({"transaction_id":f["refund"],"own_part":"deleted-part"})
             )
-            .is_err()
+            .unwrap()["selection_invalid"],
+            true
         );
         assert!(bookings_for(&v, &[]).unwrap().is_empty());
         assert_eq!(
