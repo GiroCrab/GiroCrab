@@ -28,7 +28,8 @@ extension AppModel {
             let linked = Set(links.map { "\(amount > 0 ? $0.originalId : $0.refundId)|\(amount > 0 ? $0.resolvedOriginalPart ?? "" : $0.resolvedRefundPart ?? "")" })
             let unlinked: (RefundCandidate) -> Bool = { !linked.contains("\($0.transactionId)|\($0.part)") }
             return RefundSnapshot(booking: booking, parts: parts, selectedPart: ownPart, links: links,
-                suggestions: Array(suggestions.filter { unlinked($0.candidate) }.prefix(3)))
+                suggestions: Array(suggestions.filter { unlinked($0.candidate) }.prefix(3)),
+                counterparts: try Self.refundCounterparts(in: vault, links: links, bookingID: key.bookingID))
         }
         guard !Task.isCancelled, generation == listGeneration, key.vaultRevision == vaultRevision, key.revision == refundRevision else { return nil }
         if let snapshot = snapshot ?? nil { return snapshot }
@@ -54,19 +55,22 @@ extension AppModel {
         guard key.vaultRevision == vaultRevision, key.revision == refundRevision else { return nil }
         let result = try await vaultOffMain { vault in
             let links = try vault.refundLinks(transactionId: key.bookingID).filter { !$0.inactive }
-            guard !links.isEmpty else { return RefundCardSnapshot(links: [], counterparts: [:]) }
-            let ids = Set(links.map { $0.refundId == key.bookingID ? $0.originalId : $0.refundId })
-            let dates = try ids.compactMap { try vault.bookingDate(bookingId: $0) }
-            guard let from = dates.min(), let to = dates.max() else { return RefundCardSnapshot(links: links, counterparts: [:]) }
-            let filter = BookingFilter(accountIds: [], categoryId: nil, includeSubcategories: true,
-                uncategorizedOnly: false, search: nil, dateFrom: from, dateTo: to,
-                limit: 0, offset: 0, scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
-            let bookings = try vault.listTransactions(filter: filter).transactions.filter { ids.contains($0.id) }
             return RefundCardSnapshot(links: links,
-                counterparts: Dictionary(uniqueKeysWithValues: bookings.map { ($0.id, $0) }))
+                counterparts: try Self.refundCounterparts(in: vault, links: links, bookingID: key.bookingID))
         }
         guard !Task.isCancelled, generation == listGeneration, key.vaultRevision == vaultRevision, key.revision == refundRevision else { return nil }
         return result
+    }
+
+    nonisolated private static func refundCounterparts(in vault: Vault, links: [RefundLink], bookingID: Int64) throws -> [Int64: Booking] {
+        let ids = Set(links.map { $0.refundId == bookingID ? $0.originalId : $0.refundId })
+        let dates = try ids.compactMap { try vault.bookingDate(bookingId: $0) }
+        guard let from = dates.min(), let to = dates.max() else { return [:] }
+        let filter = BookingFilter(accountIds: [], categoryId: nil, includeSubcategories: true,
+            uncategorizedOnly: false, search: nil, dateFrom: from, dateTo: to,
+            limit: 0, offset: 0, scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
+        let bookings = try vault.listTransactions(filter: filter).transactions.filter { ids.contains($0.id) }
+        return Dictionary(uniqueKeysWithValues: bookings.map { ($0.id, $0) })
     }
 
     func linkRefund(_ pair: RefundEndpointPair) async {

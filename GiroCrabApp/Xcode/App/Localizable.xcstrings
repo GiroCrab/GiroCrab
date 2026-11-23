@@ -11727,6 +11727,23 @@
         }
       }
     },
+    "Die Verknüpfung dient nur der Zuordnung: Beträge, Kategorien und Kontostände ändern sich nicht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Verknüpfung dient nur der Zuordnung: Beträge, Kategorien und Kontostände ändern sich nicht."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The link only assigns bookings: amounts, categories and account balances remain unchanged."
+          }
+        }
+      }
+    },
     "Die Vormerkung konnte nicht verworfen werden. Buchungen mit Belegen oder Aufteilungen bleiben geschützt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24910,6 +24927,23 @@
         }
       }
     },
+    "Noch offen: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch offen: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still open: %@"
+          }
+        }
+      }
+    },
     "Noch offen: %@ Ausgaben, %@ Einnahmen · bereits gebucht: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24917,6 +24951,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Still due: %@ expenses, %@ income · already booked: %@"
+          }
+        }
+      }
+    },
+    "Noch offen: %@. Sie können weitere Buchungen zuordnen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch offen: %@. Sie können weitere Buchungen zuordnen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still open: %@. You can link more bookings."
           }
         }
       }
@@ -25627,6 +25678,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Account"
+          }
+        }
+      }
+    },
+    "Ohne Namen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Namen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unnamed"
           }
         }
       }
@@ -27041,6 +27109,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Protocol error: %@"
+          }
+        }
+      }
+    },
+    "Prüfen Sie die Schreibweise oder versuchen Sie eine andere Suche." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfen Sie die Schreibweise oder versuchen Sie eine andere Suche."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check the spelling or try a different search."
           }
         }
       }
@@ -29989,6 +30074,23 @@
         }
       }
     },
+    "Suchergebnisse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suchergebnisse"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search results"
+          }
+        }
+      }
+    },
     "Suchregel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31880,6 +31982,23 @@
         }
       }
     },
+    "Ursprüngliche Buchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ursprüngliche Buchung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original booking"
+          }
+        }
+      }
+    },
     "Ursprüngliche Buchung offen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31909,6 +32028,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Link original booking"
+          }
+        }
+      }
+    },
+    "Ursprüngliche Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ursprüngliche Buchungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original bookings"
           }
         }
       }
@@ -32239,6 +32375,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Linked refund"
+          }
+        }
+      }
+    },
+    "Verknüpfte Erstattungen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfte Erstattungen (%lld)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked refunds (%lld)"
+          }
+        }
+      }
+    },
+    "Verknüpfte ursprüngliche Buchungen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfte ursprüngliche Buchungen (%lld)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked original bookings (%lld)"
           }
         }
       }
@@ -34697,6 +34867,57 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Allocated"
+          }
+        }
+      }
+    },
+    "Zugeordnet %@ von %@ · noch offen %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugeordnet %@ von %@ · noch offen %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocated %1$@ of %2$@ · still open %3$@"
+          }
+        }
+      }
+    },
+    "Zugeordnet: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugeordnet: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocated: %@"
+          }
+        }
+      }
+    },
+    "Zugeordnet: %@ von %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugeordnet: %@ von %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocated: %1$@ of %2$@"
           }
         }
       }

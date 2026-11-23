@@ -46,6 +46,7 @@ struct RefundSnapshot {
     let selectedPart: String
     let links: [RefundLink]
     let suggestions: [RefundSuggestion]
+    var counterparts: [Int64: Booking] = [:]
 
     var amount: Int64 { parts.isEmpty ? booking.amountCents : parts.first { $0.uuid == selectedPart }?.amountCents ?? 0 }
     var paysBack: Bool { amount > 0 }
@@ -79,4 +80,20 @@ struct RefundPickerState {
 struct RefundCardSnapshot {
     let links: [RefundLink]
     let counterparts: [Int64: Booking]
+}
+
+struct RefundAllocationSummary {
+    let assigned: Int64
+    let open: Int64
+    var total: Int64 { assigned + open }
+
+    init(links: [RefundLink], paysBack: Bool) {
+        assigned = links.reduce(0) { $0 + $1.allocatedCents }
+        var endpoints: [String: Int64] = [:]
+        for link in links {
+            let part = paysBack ? link.resolvedRefundPart : link.resolvedOriginalPart
+            endpoints[part ?? ""] = paysBack ? link.refundOpenCents : link.originalOpenCents
+        }
+        open = endpoints.values.reduce(0, +)
+    }
 }

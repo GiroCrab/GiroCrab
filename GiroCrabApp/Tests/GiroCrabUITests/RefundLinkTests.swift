@@ -75,6 +75,10 @@ final class RefundLinkTests: XCTestCase {
         await model.linkRefund(pair())
         let data = try await snapshot()
         XCTAssertEqual(data.links.count, 1)
+        XCTAssertEqual(data.counterparts[original]?.counterparty, "Test")
+        XCTAssertEqual(data.counterparts[original]?.purpose, "REF-TEST-714")
+        XCTAssertEqual(data.counterparts[original]?.accountName, "Refund test")
+        XCTAssertEqual(data.counterparts[original]?.amountCents, -6000)
         XCTAssertEqual(data.booking.refundMarker, "refund")
         XCTAssertEqual(data.booking.refundCents, 6000)
         XCTAssertGreaterThan(model.totalsVersion, totals)
@@ -112,6 +116,40 @@ final class RefundLinkTests: XCTestCase {
             ownPart: "", revision: model.refundRevision)
         let empty = try await model.refundCard(for: emptyKey)
         XCTAssertEqual(empty?.links.count, 0)
+    }
+
+    func testSheetEnrichmentAndProgressFollowAllocationOrderInBothDirections() async throws {
+        let empty = try await snapshot()
+        XCTAssertTrue(empty.counterparts.isEmpty)
+        let emptySummary = RefundAllocationSummary(links: [], paysBack: true)
+        XCTAssertEqual(emptySummary.total, 0)
+        await model.linkRefund(pair(second))
+        await model.linkRefund(pair())
+        let data = try await snapshot()
+        XCTAssertEqual(data.links.map(\.originalId), [second, original])
+        XCTAssertEqual(Set(data.counterparts.keys), [second, original])
+        let summary = RefundAllocationSummary(links: data.links, paysBack: true)
+        XCTAssertEqual(summary.assigned, 10000)
+        XCTAssertEqual(summary.open, 0)
+        XCTAssertEqual(summary.total, 10000)
+        let reverse = try await snapshot(original)
+        XCTAssertEqual(reverse.counterparts[refund]?.amountCents, 10000)
+        let reverseSummary = RefundAllocationSummary(links: reverse.links, paysBack: false)
+        XCTAssertEqual(reverseSummary.assigned, 3000)
+        XCTAssertEqual(reverseSummary.open, 3000)
+        XCTAssertEqual(reverseSummary.total, 6000)
+    }
+
+    func testProgressCountsAnEndpointCapacityOnlyOnce() async throws {
+        await model.linkRefund(pair())
+        await model.linkRefund(pair(second))
+        let data = try await snapshot()
+        let reverse = try await snapshot(second)
+        XCTAssertGreaterThan(reverse.ownOpen, 0)
+        let repeated = RefundAllocationSummary(links: reverse.links + reverse.links, paysBack: false)
+        XCTAssertEqual(repeated.open, reverse.ownOpen)
+        let progress = RefundAllocationSummary(links: data.links, paysBack: true)
+        XCTAssertEqual(progress.total, abs(data.amount))
     }
 
     func testInspectorJumpRevealsCounterpartOutsideTheCurrentFilters() async throws {

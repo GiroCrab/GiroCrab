@@ -28,39 +28,29 @@ struct RefundLinksCard: View {
             HStack {
                 Label("Erstattungen", systemImage: "arrow.uturn.backward").appFont(.subheadline, weight: .semibold)
                 Spacer()
-                Button("Bearbeiten …") { model.openRefundPicker(for: booking) }.appFont(.caption)
+                Button("Bearbeiten …") { model.openRefundPicker(for: booking) }
+                    .buttonStyle(.borderless).appFont(.caption)
             }
             if let loaded, loaded.key == key {
-                ForEach(loaded.data.links, id: \.self) { link in
-                    HStack(alignment: .top) {
-                        let id = link.refundId == booking.id ? link.originalId : link.refundId
-                        if let counterpart = loaded.data.counterparts[id] {
-                            Button { model.revealBooking(id) } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(counterpart.merchantName.isEmpty ? counterpart.counterparty : counterpart.merchantName)
-                                        .appFont(.body).lineLimit(2).sensitive(.personal)
-                                    Text(DateText.medium(counterpart.bookingDate)).appFont(.caption)
-                                    Text(counterpart.accountName)
-                                        .appFont(.caption).lineLimit(2).sensitive(.personal)
-                                    let part = link.refundId == booking.id ? link.originalPart : link.refundPart
-                                    if !part.isEmpty {
-                                        Text(link.refundId == booking.id ? link.originalLabel : link.refundLabel)
-                                            .appFont(.caption).sensitive([.personal, .labels, .amounts])
-                                    }
-                                    Text(Money.format(link.allocatedCents, currency: counterpart.currency))
-                                        .appFont(.caption, monospacedDigit: true).sensitive(.amounts)
-                                }
-                            }.buttonStyle(.plain).help("Verknüpfte Buchung anzeigen")
+                ForEach([true, false], id: \.self) { paysBack in
+                    let links = loaded.data.links.filter { ($0.refundId == booking.id) == paysBack }
+                    if !links.isEmpty {
+                        Text(paysBack
+                             ? (links.count == 1 ? String(localized: "Ursprüngliche Buchung") : String(localized: "Ursprüngliche Buchungen"))
+                             : (links.count == 1 ? String(localized: "Erstattung") : String(localized: "Erstattungen")))
+                            .appFont(.caption).foregroundStyle(Theme.secondary)
+                        ForEach(links, id: \.self) { link in
+                            inspectorRow(link, data: loaded.data, paysBack: paysBack)
                         }
-                        Spacer()
-                        Button("Verknüpfung aufheben", systemImage: "xmark") {
-                            Task { await model.unlinkRefund(RefundEndpointPair(link)) }
-                        }.labelStyle(.iconOnly).disabled(model.refundBusy)
+                        let summary = RefundAllocationSummary(links: links, paysBack: paysBack)
+                        Text("Zugeordnet \(Money.format(summary.assigned, currency: booking.currency)) von \(Money.format(summary.total, currency: booking.currency)) · noch offen \(Money.format(summary.open, currency: booking.currency))")
+                            .appFont(.caption).foregroundStyle(Theme.secondary)
+                            .fixedSize(horizontal: false, vertical: true).sensitive(.amounts)
                     }
                 }
             }
         }
-        .card()
+        .flatSection()
         .task(id: key) {
             let requested = key
             do {
@@ -73,28 +63,116 @@ struct RefundLinksCard: View {
             }
         }
     }
+
+    private func inspectorRow(_ link: RefundLink, data: RefundCardSnapshot, paysBack: Bool) -> some View {
+        let id = paysBack ? link.originalId : link.refundId
+        let counterpart = data.counterparts[id]
+        let part = paysBack ? link.resolvedOriginalPart : link.resolvedRefundPart
+        return HStack(alignment: .top, spacing: 6) {
+            Button { model.revealBooking(id) } label: {
+                HStack(spacing: 6) {
+                    RefundBookingLine(booking: counterpart, partLabel: part?.isEmpty == false ? (paysBack ? link.originalLabel : link.refundLabel) : "",
+                        allocated: link.allocatedCents, fallbackCurrency: booking.currency, inspector: true)
+                    Image(systemName: "chevron.right").appFont(.caption2, weight: .semibold)
+                        .foregroundStyle(Theme.tertiary)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain).help("Verknüpfte Buchung anzeigen").disabled(counterpart == nil)
+            Button("Verknüpfung aufheben", systemImage: "xmark.circle.fill") {
+                Task { await model.unlinkRefund(RefundEndpointPair(link)) }
+            }.labelStyle(.iconOnly).buttonStyle(.borderless).foregroundStyle(Theme.tertiary)
+                .disabled(model.refundBusy)
+        }
+    }
 }
 
-/// Link-only display: `docs/ERSTATTUNGEN_UI.md`.
-private struct RefundLinkSummary: View {
-    let link: RefundLink
-    let paysBack: Bool
+/// Booking identity and allocation hierarchy: `docs/ERSTATTUNGEN_UI.md`.
+private struct RefundBookingLine: View {
+    let name: String
+    let date: String
+    let account: String
+    var purpose = ""
+    var partLabel = ""
+    let cents: Int64?
     let currency: String
+    var allocated: Int64?
+    var open: Int64 = 0
+    var inspector = false
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(paysBack ? link.originalLabel : link.refundLabel)
-                .appFont(.body).lineLimit(2).sensitive([.personal, .labels])
-            LabeledContent("Zugeordnet") { amount(link.allocatedCents) }
-            LabeledContent("Erstattung offen") { amount(link.refundOpenCents) }
-            LabeledContent("Ursprüngliche Buchung offen") { amount(link.originalOpenCents) }
-        }
-        .appFont(.caption)
+    init(booking: Booking?, partLabel: String, allocated: Int64, open: Int64 = 0,
+         fallbackCurrency: String, inspector: Bool = false) {
+        name = booking.map { $0.merchantName.isEmpty ? $0.counterparty : $0.merchantName } ?? ""
+        date = booking?.bookingDate ?? ""
+        account = booking?.accountName ?? ""
+        purpose = booking?.purpose ?? ""
+        self.partLabel = partLabel
+        cents = booking?.amountCents
+        currency = booking?.currency ?? fallbackCurrency
+        self.allocated = allocated
+        self.open = open
+        self.inspector = inspector
     }
 
-    private func amount(_ cents: Int64) -> some View {
-        Text(Money.format(cents, currency: currency))
-            .appFont(.caption, monospacedDigit: true).fixedSize().sensitive(.amounts)
+    init(candidate: RefundCandidate, account: String) {
+        name = candidate.merchantName.isEmpty ? candidate.counterparty : candidate.merchantName
+        date = candidate.bookingDate
+        self.account = account
+        partLabel = candidate.part.isEmpty ? "" : candidate.partLabel
+        cents = candidate.amountCents
+        currency = candidate.currency
+    }
+
+    var body: some View {
+        if inspector {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    identity
+                    Spacer(minLength: 0)
+                    amount
+                }
+                context.fixedSize(horizontal: false, vertical: true)
+                allocation
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    identity
+                    context.lineLimit(1)
+                    if !purpose.isEmpty {
+                        Text(purpose).appFont(.caption).foregroundStyle(Theme.tertiary).lineLimit(1).sensitive()
+                    }
+                    if open > 0 {
+                        Text("Noch offen: \(Money.format(open, currency: currency))")
+                            .appFont(.caption).foregroundStyle(Theme.secondary).sensitive(.amounts)
+                    }
+                }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 2) {
+                    amount
+                    allocation
+                }
+            }
+        }
+    }
+
+    private var identity: some View {
+        Text((name.isEmpty ? String(localized: "Ohne Namen") : name) + (partLabel.isEmpty ? "" : " · " + partLabel))
+            .appDefaultFont().foregroundStyle(Theme.text).lineLimit(2).sensitive([.personal, .labels, .amounts])
+    }
+
+    private var context: some View {
+        Text([date.isEmpty ? "" : DateText.medium(date), account].filter { !$0.isEmpty }.joined(separator: " · "))
+            .appFont(.caption).foregroundStyle(Theme.secondary).sensitive()
+    }
+
+    @ViewBuilder private var amount: some View {
+        if let cents { AmountLabel(cents: cents, currency: currency).fixedSize().sensitive(.amounts) }
+    }
+
+    @ViewBuilder private var allocation: some View {
+        if let allocated {
+            Text("Zugeordnet: \(Money.format(allocated, currency: currency))")
+                .appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: true, vertical: false).sensitive(.amounts)
+        }
     }
 }
 
@@ -132,6 +210,7 @@ struct RefundLinkMarker: View {
 struct RefundPickerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     @State private var ownPart = ""
     @State private var query = ""
@@ -153,7 +232,7 @@ struct RefundPickerSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(paysBack ? "Ursprüngliche Buchung zuordnen" : "Erstattung zuordnen").appFont(.headline)
+                Text(paysBack ? String(localized: "Ursprüngliche Buchung zuordnen") : String(localized: "Erstattung zuordnen")).appFont(.headline)
                 Spacer()
                 Button("Fertig") { dismiss() }.keyboardShortcut(.defaultAction)
             }
@@ -166,9 +245,13 @@ struct RefundPickerSheet: View {
                     Spacer()
                     AmountLabel(cents: booking.amountCents, currency: booking.currency).fixedSize().sensitive(.amounts)
                 }
-                Text(paysBack ? "Wählen Sie die ursprünglichen Buchungen, auch mehrere Teilerstattungen."
-                     : "Wählen Sie die Erstattungen, die diese Buchung zurückzahlen.")
+                Text("\(DateText.medium(booking.bookingDate)) · \(model.account(for: booking.accountId)?.name ?? booking.accountName)")
+                    .appFont(.caption).foregroundStyle(Theme.secondary).sensitive()
+                Text(paysBack ? String(localized: "Wählen Sie die ursprünglichen Buchungen, auch mehrere Teilerstattungen.")
+                     : String(localized: "Wählen Sie die Erstattungen, die diese Buchung zurückzahlen."))
                     .appFont(.callout).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Die Verknüpfung dient nur der Zuordnung: Beträge, Kategorien und Kontostände ändern sich nicht.")
+                    .appFont(.caption).foregroundStyle(Theme.secondary)
                 if !parts.isEmpty {
                     Picker("Teil der Buchung", selection: $ownPart) {
                         ForEach(parts.filter { $0.amountCents != 0 }, id: \.uuid) { part in
@@ -195,7 +278,8 @@ struct RefundPickerSheet: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .macFrame(minWidth: 560, idealWidth: 620, minHeight: 680)
+        .frame(idealHeight: (snapshot.map { emptyResults($0) } == true ? 520 : 680) * textScale)
+        .macFrame(minWidth: 540, idealWidth: 580, minHeight: 520)
         .task(id: key) { await reload(key) }
         .task(id: candidateKey) {
             guard let candidateKey, let snapshot else { return }
@@ -217,18 +301,33 @@ struct RefundPickerSheet: View {
             if !data.links.isEmpty {
                 Section {
                     ForEach(data.links, id: \.self) { link in
-                        HStack(alignment: .top) {
-                            RefundLinkSummary(link: link, paysBack: data.paysBack, currency: data.booking.currency)
-                            Spacer()
-                            Button("Verknüpfung aufheben", systemImage: "xmark") {
+                        Button {
                                 Task { await model.unlinkRefund(RefundEndpointPair(link)) }
-                            }
-                            .labelStyle(.iconOnly)
-                            .disabled(model.refundBusy)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "checkmark.circle.fill").appFont(.title3).foregroundStyle(Theme.accent)
+                                RefundBookingLine(booking: data.counterparts[data.paysBack ? link.originalId : link.refundId],
+                                    partLabel: (data.paysBack ? link.resolvedOriginalPart : link.resolvedRefundPart)?.isEmpty == false
+                                        ? (data.paysBack ? link.originalLabel : link.refundLabel) : "",
+                                    allocated: link.allocatedCents,
+                                    open: data.paysBack ? link.originalOpenCents : link.refundOpenCents,
+                                    fallbackCurrency: data.booking.currency)
+                            }.contentShape(Rectangle()).padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
+                        .buttonStyle(.plain).disabled(model.refundBusy).help("Verknüpfung aufheben")
                     }
-                } header: { Text("Verknüpfte Buchungen") }
+                } header: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(data.paysBack ? String(localized: "Verknüpfte ursprüngliche Buchungen (\(data.links.count))") : String(localized: "Verknüpfte Erstattungen (\(data.links.count))"))
+                            .appFont(.caption, weight: .semibold)
+                        Text("Zugeordnet: \(Money.format(abs(data.amount) - data.ownOpen, currency: data.booking.currency)) von \(Money.format(abs(data.amount), currency: data.booking.currency))")
+                            .appFont(.caption).sensitive(.amounts)
+                        if data.ownOpen > 0 {
+                            Text("Noch offen: \(Money.format(data.ownOpen, currency: data.booking.currency)). Sie können weitere Buchungen zuordnen.")
+                                .appFont(.caption).sensitive(.amounts)
+                        }
+                    }.textCase(nil)
+                }
             }
             if data.ownOpen == 0 {
                 Text("Dieser Teil ist vollständig zugeordnet.").appFont(.callout).foregroundStyle(Theme.secondary)
@@ -247,15 +346,32 @@ struct RefundPickerSheet: View {
                     let suggested = Set(data.suggestions.map(\.candidate))
                     let others = rows.filter { !query.isEmpty || !suggested.contains($0) }
                     ForEach(others, id: \.self) { candidate($0, data: data) }
-                    if others.isEmpty && data.suggestions.isEmpty {
-                        Text("Keine passenden Buchungen").appFont(.callout).foregroundStyle(Theme.secondary)
+                    if others.isEmpty && data.suggestions.isEmpty && !data.links.isEmpty {
+                        emptySearch.padding(.vertical, 20)
                     }
                 } else {
                     ProgressView()
                 }
-            } header: { Text("Weitere Buchungen") }
+            } header: { Text(query.isEmpty ? String(localized: "Weitere Buchungen") : String(localized: "Suchergebnisse")) }
+        }
+        .overlay {
+            if emptyResults(data) && data.links.isEmpty { emptySearch }
         }
         .disabled(model.refundBusy)
+    }
+
+    private func emptyResults(_ data: RefundSnapshot) -> Bool {
+        guard candidateError == nil, let candidateKey, let rows = state.candidates(for: candidateKey) else { return false }
+        return rows.isEmpty && data.suggestions.isEmpty
+    }
+
+    private var emptySearch: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").appFont(.largeTitle).foregroundStyle(Theme.tertiary)
+            Text("Keine passenden Buchungen").appFont(.title2, weight: .semibold)
+            Text("Prüfen Sie die Schreibweise oder versuchen Sie eine andere Suche.")
+                .appFont(.callout).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func candidate(_ row: RefundCandidate, data: RefundSnapshot, reason: RefundMatch? = nil) -> some View {
@@ -263,19 +379,14 @@ struct RefundPickerSheet: View {
             let pair = RefundEndpointPair(bookingID: booking.id, ownPart: ownPart, paysBack: data.paysBack, candidate: row)
             Task { await model.linkRefund(pair) }
         } label: {
-            HStack(alignment: .firstTextBaseline) {
-                Image(systemName: "plus.circle").foregroundStyle(Theme.accent)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(row.merchantName.isEmpty ? row.counterparty : row.merchantName)
-                        .appFont(.body).foregroundStyle(Theme.text).lineLimit(2).sensitive()
-                    Text(DateText.medium(row.bookingDate)).appFont(.caption).foregroundStyle(Theme.secondary)
-                    if !row.part.isEmpty {
-                        Text(row.partLabel).appFont(.caption).lineLimit(2).sensitive([.personal, .labels])
-                    }
-                    if let reason { Text(Self.reason(reason)).appFont(.caption2).foregroundStyle(Theme.accent) }
+            HStack(spacing: 10) {
+                Image(systemName: "circle").appFont(.title3).foregroundStyle(Theme.tertiary)
+                RefundBookingLine(candidate: row, account: model.account(for: row.accountId)?.name ?? "")
+                if let reason {
+                    Text(Self.reason(reason)).appFont(.caption2).foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Theme.accent.opacity(0.08), in: Capsule())
                 }
-                Spacer(minLength: 8)
-                AmountLabel(cents: row.amountCents, currency: row.currency).fixedSize().sensitive(.amounts)
             }
             .padding(.vertical, 4).contentShape(Rectangle())
         }

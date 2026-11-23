@@ -57,7 +57,35 @@ der Verknüpfung bleibt erhalten. Widerrufen gilt nur im selben Tresor.
 
 ### macOS
 
+Das Blatt zeigt Name und Betrag sowie Datum und Konto der eigenen Buchung.
+Die kurze Anleitung ergänzt ein Hinweis, dass Bankbeträge, Kategorien und
+Kontostände unverändert bleiben. Gerichtete Überschriften mit Anzahl sowie
+zugeordneter und offener Summe erklären den Fortschritt des ausgewählten Teils.
+Verknüpfte Zeilen zeigen den Namen der Gegenbuchung, gegebenenfalls die
+Teilbezeichnung, Datum, Konto, Verwendungszweck und den vorzeichenbehafteten
+Buchungsbetrag mit zugeordnetem Anteil. Ein blauer Haken entfernt die Verknüpfung;
+die Rückgängig-Leiste bleibt erhalten. Offene Kapazität der Gegenstelle erscheint
+nur bei einem Restbetrag als kleine Zusatzzeile.
+
+Kandidaten verwenden dieselbe Zeilenhierarchie mit leerem Auswahlkreis und
+Kontonamen aus den bereits geladenen Konten. Ihre API liefert keinen
+Verwendungszweck; dafür werden keine zusätzlichen Buchungen geladen. Vorschläge
+tragen eine Grund-Kapsel. Bei Suchtext heißt die untere Liste „Suchergebnisse“;
+ohne Treffer erscheinen Lupe, Titel und Suchhinweis auf Deutsch oder Englisch.
+Das skalierbare, größenveränderliche Blatt hat eine Mindestbreite von 540 und
+Mindesthöhe von 520 Punkten, mit bevorzugter Höhe 680 (520 ohne Suchtreffer).
+
+Der flache Erstattungsabschnitt im Inspector folgt den benachbarten Abschnitten:
+gerichtete Unterüberschrift, Name und Buchungsbetrag, umbrechendes Datum/Konto,
+zugeordneter Anteil, Navigationspfeil und kleines Entfernen-Kreuz. Eine kompakte
+Summenzeile ersetzt den langen Erklärungstext. Die app-weiten flachen Listen und
+Inspector-Flächen bleiben unverändert; Tageskarten werden nicht wieder eingeführt.
+
 Alle neuen Kernabfragen und Schreibvorgänge laufen außerhalb des UI-Threads.
+Blatt und Inspector verwenden dieselbe gebündelte Anreicherung der Gegenbuchungen:
+günstige Datumsabfragen je eindeutiger Gegenstelle und eine einzige auf deren
+Datumsintervall begrenzte Buchungsabfrage, keine teure Abfrage je Zeile. Ein großes
+Datumsintervall kann weiterhin fremde Buchungen anreichern; ein ID-Batch-API fehlt.
 Die eigene Buchung wird auf ihr Konto und ihren Buchungstag eingegrenzt gelesen.
 Buchung, Teile, Verknüpfungen und Vorschläge werden nach Tresor, Buchung,
 Teil-UUID und Revision geladen. Nur die verzögerte Kandidatensuche hängt zusätzlich
