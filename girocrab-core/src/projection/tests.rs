@@ -5,6 +5,165 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 #[test]
+fn round7_negative_saveback_is_not_roundup() {
+    let f = Fixture::new();
+    let id = f.add(-100, None);
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET counterparty='Saveback',purpose='Saveback' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+    let d = f.v.investment_dashboard(1).unwrap();
+    assert_eq!(d.roundup_invested_cents, 0);
+}
+
+#[test]
+fn round7_tag_counts_follow_income_proof_not_refund_contributions() {
+    let f = Fixture::new();
+    let o = f.add(-1000, Some(f.cost));
+    let r = f.add(1000, Some(f.income));
+    f.link(r, "", o, "");
+    let tag = f.v.create_tag("Refund".into(), "#ff0000".into()).unwrap();
+    f.v.set_booking_tags(r, vec![tag.id]).unwrap();
+    let totals =
+        f.v.tag_totals(BookingFilter {
+            direction: BookingDirection::Income,
+            ..Default::default()
+        })
+        .unwrap();
+    let got = totals.iter().find(|t| t.tag_id == Some(tag.id)).unwrap();
+    assert_eq!((got.booking_count, got.sum_cents), (1, 0));
+}
+
+#[test]
+fn round7_loan_cashflow_keeps_linked_instalments() {
+    let f = Fixture::new();
+    let loan =
+        f.v.create_offline_account("Loan".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute("UPDATE accounts SET kind='loan' WHERE id=?1", [loan])
+        .unwrap();
+    let instalment = f.add(-10000, None);
+    f.v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO loan_links(transaction_id,loan_account_id,source) VALUES (?1,?2,'manual')",
+            params![instalment, loan],
+        )
+        .unwrap();
+    let flows =
+        f.v.cashflow_by_period(PeriodGranularity::Month, 1, Some(vec![loan]), false)
+            .unwrap();
+    assert_eq!(flows[0].expense_cents, 10000);
+}
+
+#[test]
+fn round7_untagged_split_does_not_overflow_unused_tag_share() {
+    let f = Fixture::new();
+    let b = f.add(1, None);
+    let invest =
+        f.v.create_category("Invest".into(), None, "chart.bar".into(), "#ff0000".into())
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET builtin_role='Investitionen' WHERE id=?1",
+            [invest],
+        )
+        .unwrap();
+    let transfer = f.transfer_category();
+    for (position, (amount, category)) in [(i64::MAX, f.income), (1, invest), (-i64::MAX, transfer)]
+        .into_iter()
+        .enumerate()
+    {
+        f.v.db().unwrap().execute("INSERT INTO transaction_splits(transaction_id,uuid,amount_cents,category_id,position) VALUES (?1,?2,?3,?4,?5)",params![b,uuid::Uuid::new_v4().to_string(),amount,category,position as i64]).unwrap();
+    }
+    assert!(
+        f.v.analytics_report(BookingFilter::default(), false)
+            .is_ok()
+    );
+}
+
+#[test]
+fn round7_blank_booking_currency_inherits_account() {
+    let f = Fixture::new();
+    let usd =
+        f.v.create_offline_account("USD".into(), AccountKind::Cash, "USD".into(), 0)
+            .unwrap();
+    let id = f.add_on(usd, -100, Some(f.cost), "", &f.date);
+    let page = f.v.list_transactions(BookingFilter::default()).unwrap();
+    assert_eq!(
+        page.transactions
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap()
+            .currency,
+        "USD"
+    );
+}
+
+#[test]
+fn round7_expense_proof_contains_cross_month_refund() {
+    let f = Fixture::new();
+    let o = f.add_on(f.account, -10000, Some(f.cost), "EUR", "2026-01-01");
+    let r = f.add_on(f.account, 4000, Some(f.income), "EUR", "2026-02-01");
+    f.link(r, "", o, "");
+    let filter = BookingFilter {
+        direction: BookingDirection::Expense,
+        date_from: Some("2026-02-01".into()),
+        ..Default::default()
+    };
+    let page = f.v.list_transactions(filter.clone()).unwrap();
+    assert_eq!(page.expense_cents, 4000);
+    assert_eq!(
+        page.transactions.iter().map(|b| b.id).collect::<Vec<_>>(),
+        vec![r]
+    );
+    assert_eq!(
+        f.v.list_transactions(BookingFilter {
+            limit: 6000,
+            ..filter
+        })
+        .unwrap()
+        .total_count,
+        1
+    );
+}
+
+#[test]
+fn round7_dashboard_roundup_is_refund_adjusted() {
+    let f = Fixture::new();
+    let perk =
+        f.v.create_category("Round up".into(), None, "star".into(), "#ff0000".into())
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET builtin_role='Perks' WHERE id=?1",
+            [perk],
+        )
+        .unwrap();
+    let o = f.add(-1000, Some(perk));
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET purpose='Round up' WHERE id=?1",
+            [o],
+        )
+        .unwrap();
+    let r = f.add(400, Some(f.income));
+    f.link(r, "", o, "");
+    let dashboard = f.v.investment_dashboard(1).unwrap();
+    assert_eq!(dashboard.roundup_count, 1);
+    assert_eq!(dashboard.roundup_invested_cents, 600);
+    assert_eq!(dashboard.perks_this_month_cents, 600);
+}
+
+#[test]
 fn round6_expense_direction_keeps_refund_adjustments() {
     let f = Fixture::new();
     let o = f.add(-10000, Some(f.cost));

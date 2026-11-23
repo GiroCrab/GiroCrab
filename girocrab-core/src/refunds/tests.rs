@@ -1,3 +1,47 @@
+mod round7 {
+    use super::*;
+
+    #[test]
+    fn split_never_becomes_whole_on_move() {
+        let f = Fixture::new();
+        let r = f.add("r", 100);
+        let old = f.add("old", -8600);
+        let new = f.add("new", -8600);
+        let p = f.split(old, &[-8600, 100, -100]);
+        f.link(r, "", old, &p[0]);
+        store::move_booking(&f.v.db().unwrap(), old, new).unwrap();
+        assert_eq!(f.v.refund_links(r).unwrap()[0].allocated_cents, 0);
+    }
+
+    #[test]
+    fn unequal_fold_preserves_direct_link_and_source_unlink() {
+        let f = Fixture::new();
+        let r = f.add("r", 200);
+        let old = f.add("old", -100);
+        let new = f.add("new", -200);
+        f.link(r, "", old, "");
+        f.link(r, "", new, "");
+        f.unlink(r, "", old, "");
+        let before = State::load(&f.v.db().unwrap()).unwrap().rows;
+        store::fold_booking(&f.v.db().unwrap(), old, new, false, false).unwrap();
+        assert_eq!(State::load(&f.v.db().unwrap()).unwrap().rows, before);
+    }
+
+    #[test]
+    fn unequal_fold_does_not_retarget_matching_parts() {
+        let f = Fixture::new();
+        let r = f.add("r", 100);
+        let old = f.add("old", -100);
+        let new = f.add("new", -200);
+        let p = f.split(old, &[-60, -40]);
+        f.split(new, &[-60, -140]);
+        f.link(r, "", old, &p[0]);
+        let before = State::load(&f.v.db().unwrap()).unwrap().rows;
+        store::fold_booking(&f.v.db().unwrap(), old, new, false, true).unwrap();
+        assert_eq!(State::load(&f.v.db().unwrap()).unwrap().rows, before);
+    }
+}
+
 mod round5 {
     use super::*;
 
@@ -2345,9 +2389,7 @@ mod review_regressions {
                     .into_iter()
                     .filter(|(_, n)| *n == -2000)
                     .collect();
-                let expected = if amounts.is_empty() {
-                    Some(String::new())
-                } else if matching.len() == 1 {
+                let expected = if matching.len() == 1 {
                     Some(matching[0].0.clone())
                 } else {
                     None
@@ -3026,7 +3068,7 @@ fn review_moves_preserve_destination_unlinks_and_reject_collisions() {
         }
         let db = f.v.db().unwrap();
         if fold {
-            fold_booking(&db, old, new, false, true).unwrap();
+            fold_booking(&db, old, new, true, true).unwrap();
         } else {
             move_booking(&db, old, new).unwrap();
         }

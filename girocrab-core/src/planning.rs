@@ -387,7 +387,7 @@ pub(crate) fn cashflow_for(
         ..Default::default()
     };
     let acc = v
-        .projected_selection(&db, &filter, None, crate::projection::CurrencyMode::Primary)?
+        .projected_booking_selection(&db, &filter, None, crate::projection::CurrencyMode::Primary)?
         .cashflow(granularity)?;
     Ok(keys
         .into_iter()

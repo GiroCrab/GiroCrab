@@ -304,6 +304,11 @@ impl BookingFinisher {
     /// With `visible` accounts (local interface, #136), a payment linked to a
     /// loan outside them reads as a transfer: the loan itself must not show.
     pub(crate) fn finish(&self, t: &mut Booking, visible: Option<&[i64]>) {
+        if t.currency.is_empty()
+            && let Some(book) = self.refunds.books().get(&t.id)
+        {
+            t.currency = book.currency.clone();
+        }
         if let Some(s) = self.refunds.summaries.get(&t.id) {
             t.refund_marker = s.marker().into();
             t.refund_cents = s.refund_cents;
@@ -507,10 +512,26 @@ impl Vault {
             Some(true) => wh.push("t.checked != 0".into()),
             Some(false) => wh.push("t.checked = 0".into()),
         }
-        match filter.direction {
-            BookingDirection::All => {}
-            BookingDirection::Income => wh.push("t.amount_cents > 0".into()),
-            BookingDirection::Expense => wh.push("t.amount_cents < 0".into()),
+        if !matches!(filter.direction, BookingDirection::All) {
+            let selection = self.projected_booking_selection(
+                db,
+                &BookingFilter {
+                    direction: filter.direction,
+                    ..Default::default()
+                },
+                None,
+                crate::projection::CurrencyMode::All,
+            )?;
+            let ids: HashSet<_> = selection.rows.iter().map(|r| r.booking_id).collect();
+            let sign = if matches!(filter.direction, BookingDirection::Income) {
+                ">"
+            } else {
+                "<"
+            };
+            wh.push(format!(
+                "(t.amount_cents {sign} 0 OR t.id IN ({}))",
+                sql_int_list(&ids.into_iter().collect::<Vec<_>>())
+            ));
         }
         // amount range (#357): by the absolute amount, the direction has its own filter
         if let Some(min) = filter.amount_min_cents {
@@ -983,18 +1004,22 @@ impl Vault {
             .collect();
         let mut count_filter = filter.clone();
         count_filter.respect_in_total = false;
-        let all = self.projected_booking_selection(
-            db,
-            &count_filter,
-            None,
-            crate::projection::CurrencyMode::All,
-        )?;
-        Ok(all
-            .rows
-            .iter()
-            .map(|row| row.booking_id)
-            .collect::<HashSet<_>>()
+        let (cte, wh, args, _) = self.filter_clauses(db, &count_filter)?;
+        let classes = self.booking_classes(db)?;
+        let ids = db
+            .prepare(&format!("{cte}SELECT t.id {BOOKING_FROM_SQL} WHERE {wh}"))?
+            .query_map(params_from_iter(args.iter().map(|a| a.as_ref())), |r| {
+                r.get::<_, i64>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids
             .into_iter()
+            .filter(|id| {
+                count_filter
+                    .merchant_key
+                    .as_ref()
+                    .is_none_or(|m| classes.get(id).is_some_and(|c| c.merchant.as_ref() == m))
+            })
             .map(|id| (id, primary.get(&id).copied().unwrap_or(0)))
             .collect())
     }

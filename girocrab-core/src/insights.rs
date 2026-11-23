@@ -146,11 +146,11 @@ impl Vault {
         // the cashflow card. The booking list itself is never narrowed by this.
         // One guard for both reads, so a merge committing in between cannot mix
         // old amounts with new eligibility.
-        let (all, merchants, projected_months): (Vec<Booking>, _, _) = {
+        let (all, merchants, projected_months, perk_totals): (Vec<Booking>, _, _, _) = {
             let db = self.db()?;
             let allowed = crate::user_groups::total_account_ids(&db)?;
             let projection = self.financial_projection(&db)?;
-            let all = all_bookings(self, &db, BookingScope::All)?
+            let all: Vec<Booking> = all_bookings(self, &db, BookingScope::All)?
                 .into_iter()
                 .filter(|b| {
                     allowed.contains(&b.account_id)
@@ -170,7 +170,40 @@ impl Vault {
                     crate::projection::CurrencyMode::Primary,
                 )?
                 .monthly_flows()?;
-            (all, self.merchant_rules(&db)?, monthly)
+            let perks = self.projected_selection(
+                &db,
+                &BookingFilter {
+                    respect_in_total: true,
+                    ..Default::default()
+                },
+                None,
+                crate::projection::CurrencyMode::Primary,
+            )?;
+            let (mut saveback, mut roundup, mut current) = (0i128, 0i128, 0i128);
+            let by_id: HashMap<_, _> = all.iter().map(|b| (b.id, b)).collect();
+            for row in perks.rows.iter().filter(|r| r.flow == FlowKind::Perk) {
+                let Some(b) = by_id.get(&row.attribution_id) else {
+                    continue;
+                };
+                let amount = if lower_contains(b, &["saveback"]) && row.direction > 0 {
+                    saveback += row.amount_cents;
+                    row.amount_cents
+                } else if !lower_contains(b, &["saveback"]) && row.direction < 0 {
+                    roundup -= row.amount_cents;
+                    -row.amount_cents
+                } else {
+                    continue;
+                };
+                if month_key(&perks.projection.info[&row.booking_id].date) == this_month {
+                    current += amount;
+                }
+            }
+            let totals = (
+                crate::projection::cents(saveback)?,
+                crate::projection::cents(roundup)?,
+                crate::projection::cents(current)?,
+            );
+            (all, self.merchant_rules(&db)?, monthly, totals)
         };
 
         // Monthly flows
@@ -197,24 +230,16 @@ impl Vault {
         // Savings plans: investment outflows that look like plan executions
         let mut plans: HashMap<String, (crate::merchants::MerchantInfo, Vec<&Booking>)> =
             HashMap::new();
-        let (mut sb_earned, mut sb_count, mut ru_inv, mut ru_count, mut perks_month) =
-            (0i64, 0u32, 0i64, 0u32, 0i64);
+        let (sb_earned, ru_inv, perks_month) = perk_totals;
+        let (mut sb_count, mut ru_count) = (0u32, 0u32);
         for b in &all {
             if b.flow == FlowKind::Perk {
                 if lower_contains(b, &["saveback"]) {
                     if b.amount_cents > 0 {
-                        sb_earned += b.amount_cents;
                         sb_count += 1;
-                        if month_key(&b.booking_date) == this_month {
-                            perks_month += b.amount_cents;
-                        }
                     }
                 } else if b.amount_cents < 0 {
-                    ru_inv += -b.amount_cents;
                     ru_count += 1;
-                    if month_key(&b.booking_date) == this_month {
-                        perks_month += -b.amount_cents;
-                    }
                 }
                 continue;
             }

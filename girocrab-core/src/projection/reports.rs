@@ -94,6 +94,7 @@ impl Vault {
         let rows = selection.rows.clone();
         selection.rows.retain(|r| r.flow != FlowKind::Transfer);
         let tagged: HashSet<i64> = db.prepare("SELECT DISTINCT x.transaction_id FROM transaction_tags x JOIN tags g ON g.id=x.tag_id WHERE g.deleted_ms IS NULL")?.query_map([],|r|r.get(0))?.collect::<Result<_,_>>()?;
+        selection.rows.retain(|r| tagged.contains(&r.booking_id));
         let tags = crate::tags::totals_of(
             &db,
             selection

@@ -24,11 +24,12 @@ mod tests;
 #[derive(Clone, Copy)]
 pub(crate) struct Row {
     pub booking_id: i64,
+    pub attribution_id: i64,
     pub category_id: Option<i64>,
     pub amount_cents: i128,
     pub flow: FlowKind,
     side: KpiSide,
-    direction: i8,
+    pub direction: i8,
 }
 
 pub(crate) struct Info {
@@ -178,6 +179,7 @@ impl Projection {
                 );
                 out.base.push(Row {
                     booking_id: b.id,
+                    attribution_id: b.id,
                     category_id,
                     amount_cents: i128::from(b.amount_cents),
                     flow: b.flow,
@@ -198,6 +200,7 @@ impl Projection {
                     );
                     out.base.push(Row {
                         booking_id: b.id,
+                        attribution_id: b.id,
                         category_id,
                         amount_cents: i128::from(p.amount),
                         flow: part.flow,
@@ -302,6 +305,7 @@ impl Projection {
             rows.push(Row {
                 booking_id: refund.0,
                 category_id: source_category,
+                attribution_id: refund.0,
                 amount_cents: -i128::from(a.cents),
                 flow: source_flow,
                 side: source_side,
@@ -310,6 +314,7 @@ impl Projection {
             rows.push(Row {
                 booking_id: refund.0,
                 category_id: target_category,
+                attribution_id: original.0,
                 amount_cents: i128::from(a.cents),
                 flow: target_flow,
                 side: target_side,

@@ -24,6 +24,7 @@ struct BookingFields {
     splits: Vec<SplitLine>,
     splits_ms: i64,
     manual_amount: Option<i64>,
+    manual_dates: Option<(String, Option<String>)>,
     /// tag uuids, sorted (#228)
     tags: crate::tags::merge::TagSet,
     tags_ms: i64,
@@ -75,8 +76,12 @@ impl BookingFields {
                 t.clone(),
             )
         });
-        let mut unit = (self.manual_amount, self.splits.clone());
-        let other_unit = (o.manual_amount, o.splits.clone());
+        let mut unit = (
+            self.manual_amount,
+            self.splits.clone(),
+            self.manual_dates.clone(),
+        );
+        let other_unit = (o.manual_amount, o.splits.clone(), o.manual_dates.clone());
         if self.manual_amount.is_some() && o.manual_amount.is_some() {
             take_ranked(
                 &mut unit,
@@ -85,7 +90,7 @@ impl BookingFields {
                 o.splits_ms,
                 Clone::clone,
             );
-            (self.manual_amount, self.splits) = unit;
+            (self.manual_amount, self.splits, self.manual_dates) = unit;
         } else {
             take_ranked(
                 &mut self.splits,
@@ -253,7 +258,7 @@ pub(crate) fn merge_bookings(
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan'))
+                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan')), value_date
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
@@ -288,6 +293,10 @@ pub(crate) fn merge_bookings(
                     splits: local_splits.remove(&id).unwrap_or_default(),
                     splits_ms: r.get(14)?,
                     manual_amount: r.get::<_, bool>(20)?.then(|| r.get(17)).transpose()?,
+                    manual_dates: r
+                        .get::<_, bool>(20)?
+                        .then(|| Ok::<_, rusqlite::Error>((r.get(16)?, r.get(21)?)))
+                        .transpose()?,
                     tags: local_tags.remove(&id).unwrap_or_default(),
                     tags_ms: r.get(19)?,
                     deleted_ms: r.get(15)?,
@@ -337,6 +346,10 @@ pub(crate) fn merge_bookings(
                     splits: Vec::new(),
                     splits_ms: r.get(25)?,
                     manual_amount: r.get::<_, bool>(32)?.then(|| r.get(6)).transpose()?,
+                    manual_dates: r
+                        .get::<_, bool>(32)?
+                        .then(|| Ok::<_, rusqlite::Error>((r.get(4)?, r.get(5)?)))
+                        .transpose()?,
                     tags: Vec::new(),
                     tags_ms: r.get(31)?,
                     deleted_ms: r.get(26)?,
@@ -436,6 +449,7 @@ pub(crate) fn merge_bookings(
                     m.splits = old.splits.clone();
                     m.splits_ms = old.splits_ms;
                     m.manual_amount = old.manual_amount;
+                    m.manual_dates = old.manual_dates.clone();
                 }
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
                 if m == old {
@@ -598,6 +612,14 @@ fn write_booking(
     tag_ids: &crate::tags::merge::TagIds,
     cleared: &mut HashSet<i64>,
 ) -> CoreResult<()> {
+    if m.manual_dates != old.manual_dates
+        && let Some((date, value_date)) = &m.manual_dates
+    {
+        conn.execute(
+            "UPDATE transactions SET booking_date=?2,value_date=?3 WHERE id=?1",
+            params![id, date, value_date],
+        )?;
+    }
     if m.manual_amount != old.manual_amount {
         conn.execute(
             "UPDATE transactions SET amount_cents=?2 WHERE id=?1",

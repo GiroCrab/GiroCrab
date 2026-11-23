@@ -236,7 +236,9 @@ fn survivor_part(
     let Some(amount) = amount.filter(|n| *n != 0) else {
         return Ok(None);
     };
-    let mut matches = parts.into_iter().filter(|(_, cents)| *cents == amount);
+    let mut matches = parts
+        .into_iter()
+        .filter(|(uuid, cents)| *cents == amount && (source.1.is_empty() || !uuid.is_empty()));
     let first = matches.next();
     Ok(first
         .filter(|_| matches.next().is_none())
@@ -294,6 +296,9 @@ pub(crate) fn fold_booking(
     keep_live: bool,
     source_had_splits: bool,
 ) -> CoreResult<()> {
+    if !keep_live {
+        return Ok(());
+    }
     let remap = |key: &mut Key| {
         if key.refund.0 == from {
             key.refund.0 = to;
