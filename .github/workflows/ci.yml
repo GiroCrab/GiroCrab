@@ -179,6 +179,8 @@ jobs:
         run: scripts/lint-serde-feature.sh
       - name: Free functions are exported to UniFFI only from ffi.rs
         run: scripts/lint-ffi-exports.sh
+      - name: Every schema step is described in schema.rs and docs/ARCHITECTURE.md
+        run: scripts/lint-schema-docs.sh
       - name: No unsafe outside sys.rs, no processes, hidden includes or encoded data in the payment path
         run: scripts/lint-no-obfuscation.sh
       - if: needs.changes.outputs.rust == 'true'
