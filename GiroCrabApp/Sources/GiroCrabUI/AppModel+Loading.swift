@@ -259,6 +259,7 @@ extension AppModel {
         loadMoreTask?.cancel()
         loadMoreTask = nil
         isLoadingMoreBookings = false
+        isSelectingAllBookings = false
     }
 
     /// More bookings match the current filter than are loaded (list limit reached).
@@ -275,10 +276,20 @@ extension AppModel {
     /// Fetches the next page off the main thread and appends it. Nothing loaded
     /// so far is fetched again, so scrolling stays smooth.
     func loadMoreBookings() {
-        guard let vault, hasMoreBookings, !isLoadingMoreBookings, selectionLoadTask == nil else { return }
+        guard !isLoadingMoreBookings else { return }
+        appendBookings(limit: appendPageSize)
+    }
+
+    /// Appends up to `limit` further bookings in the background, then runs `done`
+    /// (only when the page belongs to the list still on screen). False: nothing to fetch.
+    @discardableResult
+    func appendBookings(limit: UInt32, then done: (@MainActor () -> Void)? = nil) -> Bool {
+        guard let vault, hasMoreBookings, selectionLoadTask == nil else { return false }
+        // a page still on its way would only fetch part of the rest again
+        loadMoreTask?.cancel()
         var next = listFilter
         next.offset = UInt32(bookings.count)
-        next.limit = appendPageSize
+        next.limit = limit
         let filter = next
         let generation = listGeneration
         isLoadingMoreBookings = true
@@ -290,14 +301,17 @@ extension AppModel {
             guard let self, !Task.isCancelled, generation == self.listGeneration else { return }
             self.loadMoreTask = nil
             self.isLoadingMoreBookings = false
-            guard let next, !next.transactions.isEmpty else { return }
-            Perf.interval("publishBookings") {
-                self.listBalances.merge(next)
-                self.bookings.append(contentsOf: next.transactions)
+            if let next, !next.transactions.isEmpty {
+                Perf.interval("publishBookings") {
+                    self.listBalances.merge(next)
+                    self.bookings.append(contentsOf: next.transactions)
+                }
+                // an edit reloads exactly what is on screen
+                self.listLimit = UInt32(self.bookings.count)
             }
-            // an edit reloads exactly what is on screen
-            self.listLimit = UInt32(self.bookings.count)
+            done?()
         }
+        return true
     }
 
     /// Loads the list far enough back to contain `day` (plus some older context).

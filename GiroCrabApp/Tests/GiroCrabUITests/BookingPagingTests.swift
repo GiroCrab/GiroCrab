@@ -85,6 +85,43 @@ final class BookingPagingTests: XCTestCase {
         XCTAssertEqual(model.bookings.last?.checked, !booking.checked)
     }
 
+    /// ⌘A selects every booking matching the filter, not only the loaded pages (#1696).
+    func testSelectAllLoadsAndSelectsEveryBooking() async throws {
+        let all = try allMatching()
+        loadFirstPage(of: 20)
+        XCTAssertTrue(model.hasMoreBookings)
+        model.selectAllBookings()
+        XCTAssertTrue(model.isSelectingAllBookings)
+        XCTAssertFalse(model.isMultiSelection, "no partial selection while the rest loads")
+        for _ in 0..<300 where model.isSelectingAllBookings {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(model.isSelectingAllBookings)
+        XCTAssertFalse(model.hasMoreBookings)
+        XCTAssertEqual(model.bookings.map(\.id), all.map(\.id))
+        XCTAssertEqual(model.selectedBookingIDs, Set(all.map(\.id)))
+        XCTAssertEqual(model.selectedBookingIDs.count, model.bookingCountLabel)
+        // the sum and every action on the selection cover all bookings
+        let sums = Dictionary(grouping: all, by: \.currency).mapValues { $0.reduce(Int64(0)) { $0 + $1.amountCents } }
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: model.selectionTotals.map { ($0.currency, $0.cents) }), sums)
+        let first = try XCTUnwrap(model.bookings.first)
+        XCTAssertEqual(Set(model.categorizeTargets(for: first).map(\.id)), Set(all.map(\.id)))
+        // an edit keeps the whole list loaded
+        model.setChecked(!first.checked, for: first)
+        XCTAssertEqual(model.bookings.count, all.count)
+    }
+
+    func testAFullReloadCancelsSelectAll() async throws {
+        let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
+        loadFirstPage(of: 20)
+        model.selectAllBookings()
+        XCTAssertTrue(model.isSelectingAllBookings)
+        model.sidebarSelection = .account(account.id) // synchronous full reload
+        XCTAssertFalse(model.isSelectingAllBookings)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(model.isMultiSelection, "the old list's bookings are not selected")
+    }
+
     func testAFullReloadDropsAPageStillOnItsWay() async throws {
         let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
         loadFirstPage(of: 20)

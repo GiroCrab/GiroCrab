@@ -3702,6 +3702,17 @@
         }
       }
     },
+    "Alle %lld Buchungen werden ausgewählt …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selecting all %lld transactions …"
+          }
+        }
+      }
+    },
     "Alle %lld Konten stimmen mit den importierten Daten überein." : {
       "extractionState" : "manual",
       "localizations" : {

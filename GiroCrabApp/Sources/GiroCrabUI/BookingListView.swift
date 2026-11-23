@@ -1117,7 +1117,19 @@ private struct SelectionSummaryBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if model.isMultiSelection {
+        if model.isSelectingAllBookings {
+            // ⌘A loads the rest of the list first (#1696): no partial count or sum meanwhile
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Alle \(model.bookingCountLabel) Buchungen werden ausgewählt …")
+                    .appFont(.callout, weight: .medium, monospacedDigit: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+        } else if model.isMultiSelection {
             let totals = model.selectionTotals
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("\(model.selectedBookingIDs.count) Buchungen ausgewählt")

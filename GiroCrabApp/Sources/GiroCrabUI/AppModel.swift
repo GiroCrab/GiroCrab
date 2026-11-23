@@ -894,6 +894,8 @@ public final class AppModel {
     var appendPageSize: UInt32 = AppModel.defaultListLimit
     /// The next page is being fetched in the background.
     var isLoadingMoreBookings = false
+    /// ⌘A is loading the rest of the list before it selects everything (#1696).
+    var isSelectingAllBookings = false
     @ObservationIgnored var loadMoreTask: Task<Void, Never>?
     /// Bumped by every full reload of the list; a page requested before is dropped.
     @ObservationIgnored var listGeneration = 0

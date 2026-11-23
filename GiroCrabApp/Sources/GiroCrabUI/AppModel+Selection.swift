@@ -87,8 +87,25 @@ extension AppModel {
         #endif
     }
 
-    /// Bearbeiten › Alles auswählen (⌘A) in the booking list.
+    /// Bearbeiten › Alles auswählen (⌘A) in the booking list: every booking matching the
+    /// filter, not only the loaded pages (#1696). The rest loads in the background first,
+    /// so count, sum and every action on the selection cover all of them.
     func selectAllBookings() {
+        if hasMoreBookings {
+            guard !isSelectingAllBookings else { return }
+            isSelectingAllBookings = true
+            let started = appendBookings(limit: UInt32(remainingBookingCount)) { [weak self] in
+                guard let self, self.isSelectingAllBookings else { return }
+                self.isSelectingAllBookings = false
+                self.selectLoadedBookings()
+            }
+            if started { return }
+            isSelectingAllBookings = false
+        }
+        selectLoadedBookings()
+    }
+
+    private func selectLoadedBookings() {
         let ids = visibleBookings.map(\.id)
         guard !ids.isEmpty else { return }
         selectedBookingIDs = Set(ids)
