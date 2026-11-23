@@ -126,9 +126,13 @@ struct FinTsState {
     #[serde(default)]
     kku_storage_days: i64,
     /// pain.001 descriptors per transfer transaction (HKCCS/HKIPZ/HKCSE) from the BPD
-    /// parameter segments HICCSS / HIIPZS / HICSES.
+    /// parameter segments HICCSS / HIIPZS / HICSES and HISPAS. Valid for `bpd_version`:
+    /// a new BPD version replaces them (a withdrawn schema must stop being chosen).
     #[serde(default)]
     pain_formats: HashMap<String, Vec<String>>,
+    /// BPD version (HIBPA) the `pain_formats` were learned from, "" = unknown.
+    #[serde(default)]
+    bpd_version: String,
     /// Batch transfer parameters from HICCMS; `None` = not offered.
     #[serde(default)]
     batch_params: Option<transfer::BatchParams>,
