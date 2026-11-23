@@ -787,7 +787,13 @@ fn call(method: &str, a: &Value) -> R {
             };
             own.restore_backup(local_path(arg(a, "backup_path")?), arg(a, "password")?)
                 .map_err(|e| e.to_string())?;
-            *refund_target = None;
+            if refund_target
+                .as_ref()
+                .and_then(|(_, v)| v.upgrade())
+                .is_some_and(|v| Arc::ptr_eq(&v, &own))
+            {
+                *refund_target = None;
+            }
             remove_quicklook_files();
             ok(())
         }
@@ -3554,6 +3560,17 @@ mod tests {
         assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_err());
         args["vault_identity"] = json!(pin_refund_target(&v));
         assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_ok());
+        let demo = Vault::open(
+            dir.join("other.girocrab").display().to_string(),
+            vec![7; 32],
+        )
+        .unwrap();
+        let demo_pin = pin_refund_target(&demo);
+        call_ok(
+            "restore_backup",
+            json!({ "backup_path": backup.display().to_string(), "password": "geheim1234" }),
+        );
+        assert_eq!(pin_refund_target(&demo), demo_pin);
         let tags = call_ok("list_tags", json!({}));
         assert!(
             !tags

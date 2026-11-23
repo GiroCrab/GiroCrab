@@ -3008,27 +3008,32 @@ QtObject {
     property bool refundEditing: false
 
     function changeRefundLink(pair, action, token) {
-        if (refundEditing || !isUnlocked) return
+        if (refundEditing || !isUnlocked || !vaultLoaded) return
         const phase = UndoManager.phase, branch = UndoManager.branch, generation = vaultGeneration
+        const identity = run(() => core("refund_vault_identity"))
+        if (identity === undefined) return
+        const args = Object.assign({}, pair, { action: action, token: token === undefined ? null : token,
+            vault_identity: identity })
         refundEditing = true
         UndoManager.busy = true
-        const args = Object.assign({}, pair, { action: action, token: token === undefined ? null : token,
-            vault_identity: core("refund_vault_identity") })
-        loadOffMain("refundMutation", () => [["edit_refund", args]], results => {
+        const failed = message => {
+            if (generation !== vaultGeneration) return
             refundEditing = false; UndoManager.busy = false
-            if (!results[0].changed) return
+            errorMessage = message
+            refundLinksRevision++
+        }
+        try { coreAsync("edit_refund", args, result => {
+            if (generation !== vaultGeneration) return
+            refundEditing = false; UndoManager.busy = false
+            if (!result.changed) return
             const inverse = action === "unlink" ? "restore" : "unlink"
-            const undoToken = results[0].token
+            const undoToken = result.token
             UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
                 if (vaultGeneration === generation) changeRefundLink(pair, inverse, undoToken)
             }, phase, branch)
             refundLinksRevision++
             reloadBookings(); reloadCategories(); reloadDashboard(); reloadPlanning()
-        }, message => {
-            refundEditing = false; UndoManager.busy = false
-            errorMessage = message
-            refundLinksRevision++
-        }, true)
+        }, failed) } catch (e) { failed(e.message) }
     }
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names

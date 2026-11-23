@@ -235,15 +235,7 @@ pub fn sheet(v: &Vault, args: &Value) -> R {
             )
         };
         let Some(b) = books.get(&id) else { continue };
-        let cents = if part.is_empty() {
-            b.amount_cents
-        } else {
-            v.list_transaction_splits(id)
-                .map_err(|e| e.to_string())?
-                .iter()
-                .find(|p| p.uuid == part)
-                .map_or(b.amount_cents, |p| p.amount_cents)
-        };
+        let cents = counterpart_amount(v, id, part, b.amount_cents)?;
         current.push(decorate(json!({"transaction_id":id,"part":part,"part_label":label,"merchant_name":b.merchant_name,"account_id":b.account_id,"booking_date":b.booking_date,"amount_cents":cents,"currency":b.currency,"open_cents":open,"allocated_cents":link.allocated_cents,"link":link})));
     }
     let open: i64 = (i128::from(amount).abs() - allocated)
@@ -292,6 +284,18 @@ fn bookings_for(v: &Vault, ids: &[i64]) -> Result<HashMap<i64, girocrab_core::Bo
         }
     }
     Ok(books)
+}
+
+fn counterpart_amount(v: &Vault, id: i64, part: &str, whole: i64) -> Result<i64, String> {
+    if part.is_empty() {
+        return Ok(whole);
+    }
+    v.list_transaction_splits(id)
+        .map_err(|e| e.to_string())?
+        .iter()
+        .find(|p| p.uuid == part)
+        .map(|p| p.amount_cents)
+        .ok_or_else(|| crate::i18n::tr("Diese Erstattungszuordnung ist nicht möglich."))
 }
 
 pub fn edit(v: &Vault, args: &Value) -> R {
@@ -420,6 +424,46 @@ mod tests {
         expanded.iter_mut().for_each(|l| l.inactive = true);
         assert!(card_filter(&v, id, &expanded).unwrap().is_none());
         assert!(card(&v, &json!({})).is_err());
+    }
+
+    #[test]
+    fn missing_counterpart_part_never_displays_the_booking_amount() {
+        let (_dir, v, f) = fixture();
+        let original = f["original"].as_i64().unwrap();
+        let part = |uuid, amount_cents| girocrab_core::TransactionSplitInput {
+            uuid,
+            category_id: None,
+            amount_cents,
+            note: String::new(),
+        };
+        v.set_transaction_splits(original, vec![part(None, -4000), part(None, -6000)])
+            .unwrap();
+        let parts = v.list_transaction_splits(original).unwrap();
+        edit(&v,&json!({"action":"link","refund_id":f["refund"],"refund_part":f["part"],"original_id":original,"original_part":parts[0].uuid})).unwrap();
+        v.set_transaction_splits(
+            original,
+            vec![part(Some(parts[1].uuid.clone()), -9000), part(None, -1000)],
+        )
+        .unwrap();
+        assert!(counterpart_amount(&v, original, &parts[0].uuid, -10000).is_err());
+        assert_eq!(
+            counterpart_amount(&v, original, "", -10000).unwrap(),
+            -10000
+        );
+        assert_eq!(
+            counterpart_amount(&v, original, &parts[1].uuid, -10000).unwrap(),
+            -9000
+        );
+        assert!(
+            sheet(
+                &v,
+                &json!({"transaction_id":f["refund"],"own_part":f["part"]})
+            )
+            .unwrap()["linked"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -7,26 +7,29 @@ Card {
     id: card
     property var booking: null
     property var rows: []
-    function reload() {
-        rows = []
-        if (!booking || !AppModel.isUnlocked) { AppModel.cancelLoad("refundCard"); return }
+    property string error: ""
+    function reload(clear) {
+        if (clear) rows = []
+        error = ""
+        if (!booking || !AppModel.isUnlocked) { rows = []; AppModel.cancelLoad("refundCard"); return }
         const id = booking.id
         AppModel.loadOffMain("refundCard", () => [["refund_card", { transaction_id: id }]], r => {
             if (booking && booking.id === id) rows = r[0]
-        }, message => { rows = []; AppModel.errorMessage = message }, true)
+        }, message => { rows = []; error = message }, true)
     }
-    onBookingChanged: reload()
+    onBookingChanged: reload(true)
     Component.onDestruction: AppModel.cancelLoad("refundCard")
     Connections {
         target: AppModel
         function onRefundLinksRevisionChanged() { card.reload() }
         function onBookingsChanged() { card.reload() }
-        function onVaultGenerationChanged() { card.reload() }
+        function onVaultGenerationChanged() { card.reload(true) }
     }
     ColumnLayout {
         width: parent.width
         spacing: 8
         Text { text: qsTr("Erstattungen"); font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text }
+        Text { visible: card.error !== ""; text: card.error; textFormat: Text.PlainText; font.pixelSize: Theme.caption; color: Theme.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Sensitive {} }
         Repeater {
             model: card.rows
             delegate: RowLayout {

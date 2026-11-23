@@ -17,6 +17,35 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("refund mutation resets busy on identity, queue and worker errors", () => {
+    for (const failure of ["identity", "worker", "queue", "locked", "ok"]) {
+        const s = { refundEditing:false, isUnlocked:true, vaultLoaded:failure!=="locked", vaultGeneration:1,
+            UndoManager:{busy:false,phase:"normal",branch:0,register(){}}, refundLinksRevision:0,
+            core(){if(failure==="identity")throw Error("identity failed");return "identity";},
+            run(fn){try{return fn();}catch(e){s.errorMessage=e.message;}},
+            loadOffMain(){}, coreAsync(method,args,apply,failed){if(failure==="queue")throw Error("queue failed");if(failure==="worker")failed("worker failed");else apply({changed:false});},
+            qsTr:s=>s };
+        vm.createContext(s);
+        vm.runInContext(`(function(pair,action,token){${bodyAfter("function changeRefundLink(pair, action, token)")}})({},"unlink")`,s);
+        assert.equal(s.refundEditing,false,failure);
+        assert.equal(s.UndoManager.busy,false,failure);
+    }
+});
+test("refund card retains rows on refresh and displays failures inline", () => {
+    const card=readFileSync(new URL("../qml/RefundLinksCard.qml",import.meta.url),"utf8");
+    const reload=bodyAfter("function reload(clear)",card);
+    const s={rows:[{id:1}],error:"",booking:{id:1},AppModel:{isUnlocked:true,loadOffMain(channel,request,apply,failed){this.apply=apply;this.failed=failed;}}};
+    vm.createContext(s);
+    vm.runInContext(`function reload(clear){${reload}}; reload(false)`,s);
+    assert.equal(s.rows.length,1);
+    s.AppModel.failed("database unavailable");
+    assert.equal(s.error,"database unavailable");
+    assert.equal(s.AppModel.errorMessage,undefined);
+    assert.equal(s.rows.length,0);
+    s.rows=[{id:1}];
+    vm.runInContext("reload(true)",s);
+    assert.equal(s.rows.length,0);
+});
 const timerSource = source.slice(source.indexOf("property Timer revealTimer:"));
 const timerBody = bodyAfter("onTriggered:", timerSource);
 
@@ -49,15 +78,16 @@ test("asynchronous undo cannot restore an invalidated redo branch", () => {
 test("refund edits capture a vault token before queuing the worker", () => {
     let queued, applied;
     const s = {
-        refundEditing: false, isUnlocked: true, vaultGeneration: 1,
+        refundEditing: false, isUnlocked: true, vaultLoaded:true, vaultGeneration: 1,
         UndoManager: { phase: 0, branch: 0 },
         core(method) { assert.equal(method, "refund_vault_identity"); return "old-vault"; },
-        loadOffMain(channel, request, apply) { queued = request; applied = apply; },
+        run(fn) {return fn();},
+        coreAsync(method,args,apply) { assert.equal(method,"edit_refund"); queued = args; applied = apply; },
     };
     vm.createContext(s);
     vm.runInContext(`(function(pair, action, token) {${bodyAfter("function changeRefundLink(")}})({}, "link", null)`, s);
     s.core = () => "new-vault";
-    assert.equal(queued()[0][1].vault_identity, "old-vault");
+    assert.equal(queued.vault_identity, "old-vault");
     assert.equal(typeof applied, "function");
 });
 

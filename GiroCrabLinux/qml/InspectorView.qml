@@ -78,7 +78,7 @@ Rectangle {
 
             // Keine Buchung ausgewählt
             RefundLinksCard {
-                visible: inspector.showsBookingCards && rows.length > 0
+                visible: inspector.showsBookingCards && (rows.length > 0 || error !== "")
                 booking: inspector.b
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
             }
