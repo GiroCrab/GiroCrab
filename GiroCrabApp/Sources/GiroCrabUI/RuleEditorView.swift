@@ -231,6 +231,8 @@ struct RuleEditorView: View {
             }
         }
         .macFrame(minWidth: 860, minHeight: 600)
+        // the detail column's toolbar background must not poke into the rule list (as in the main window, #1531)
+        .sidebarDividerToTop()
         .disabled(isSaving)
         .overlay {
             if isSaving { ProgressView("Speichern & anwenden") }
