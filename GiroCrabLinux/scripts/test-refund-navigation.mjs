@@ -17,6 +17,16 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("empty refund section has a layout-editor placeholder", () => {
+    const view = readFileSync(new URL("../qml/InspectorView.qml", import.meta.url), "utf8");
+    const placeholder = bodyAfter('PlaceholderCard {\n                section: "refunds"', view);
+    const condition = placeholder.match(/visible: (.*)/)[1];
+    const visible = new Function("inspector", "refund", `return ${condition}`);
+    assert.equal(visible({editingLayout:true},{rows:[],error:""}), true);
+    assert.equal(visible({editingLayout:false},{rows:[],error:""}), false);
+    assert.equal(visible({editingLayout:true},{rows:[{}],error:""}), false);
+    assert.equal(visible({editingLayout:true},{rows:[],error:"failed"}), false);
+});
 test("refund inspector card participates in layout order and visibility", () => {
     const layout=readFileSync(new URL("../qml/InspectorLayout.qml",import.meta.url),"utf8");
     const view=readFileSync(new URL("../qml/InspectorView.qml",import.meta.url),"utf8");

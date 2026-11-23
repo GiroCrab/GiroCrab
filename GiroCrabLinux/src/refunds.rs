@@ -137,6 +137,10 @@ pub fn card(v: &Vault, args: &Value) -> R {
 }
 
 pub fn sheet(v: &Vault, args: &Value) -> R {
+    sheet_before_links(v, args, || {})
+}
+
+fn sheet_before_links(v: &Vault, args: &Value, before_links: impl FnOnce()) -> R {
     let req: Request = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
     // Proof rows supply current booking/link presentation, never financial aggregates.
     let booking = bookings_for(v, &[req.transaction_id])?
@@ -163,6 +167,7 @@ pub fn sheet(v: &Vault, args: &Value) -> R {
         (p.uuid.clone(), p.amount_cents)
     });
     let from_refund = amount > 0;
+    before_links();
     let links = v.refund_links(booking.id).map_err(|e| e.to_string())?;
     let raw_candidates = if amount == 0 {
         Vec::new()
@@ -237,6 +242,24 @@ pub fn sheet(v: &Vault, args: &Value) -> R {
         let Some(b) = books.get(&id) else { continue };
         let cents = counterpart_amount(v, id, part, b.amount_cents)?;
         current.push(decorate(json!({"transaction_id":id,"part":part,"part_label":label,"merchant_name":b.merchant_name,"account_id":b.account_id,"booking_date":b.booking_date,"amount_cents":cents,"currency":b.currency,"open_cents":open,"allocated_cents":link.allocated_cents,"link":link})));
+    }
+    let latest = v
+        .list_transaction_splits(booking.id)
+        .map_err(|e| e.to_string())?;
+    let latest_amount = if own_part.is_empty() && latest.is_empty() {
+        bookings_for(v, &[booking.id])?
+            .get(&booking.id)
+            .map(|b| b.amount_cents)
+    } else {
+        latest
+            .iter()
+            .find(|p| p.uuid == own_part)
+            .map(|p| p.amount_cents)
+    };
+    if latest_amount != Some(amount) {
+        return Err(crate::i18n::tr(
+            "Die Aufteilung hat sich geändert. Bitte erneut versuchen.",
+        ));
     }
     let open: i64 = (i128::from(amount).abs() - allocated)
         .max(0)
@@ -546,6 +569,33 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn round8_sheet_rejects_part_changes_between_amount_and_allocations() {
+        let (_dir, v, f) = fixture();
+        let id = f["refund"].as_i64().unwrap();
+        let parts = v.list_transaction_splits(id).unwrap();
+        let result = sheet_before_links(
+            &v,
+            &json!({"transaction_id":id,"own_part":f["part"]}),
+            || {
+                v.set_transaction_splits(
+                    id,
+                    parts
+                        .iter()
+                        .map(|p| girocrab_core::TransactionSplitInput {
+                            uuid: Some(p.uuid.clone()),
+                            category_id: p.category_id,
+                            amount_cents: 3000,
+                            note: p.note.clone(),
+                        })
+                        .collect(),
+                )
+                .unwrap();
+            },
+        );
+        assert!(result.is_err());
     }
     #[test]
     fn link_unlink_token_restore_and_noop_roundtrip() {

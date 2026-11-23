@@ -27,10 +27,20 @@ Rectangle {
     // (`placeholderWhenEmpty`) a card that would not show for this booking stands in as a placeholder.
     property Component receiptCard: Component { ReceiptCard { booking: inspector.cardBooking } }
     property Component refundCard: Component {
-        RefundLinksCard {
-            readonly property bool sectionVisible: inspector.showsBookingCards && (rows.length > 0 || error !== "")
+        ColumnLayout {
+            readonly property bool sectionVisible: inspector.showsBookingCards && (inspector.editingLayout || refund.rows.length > 0 || refund.error !== "")
             visible: sectionVisible
-            booking: inspector.b
+            RefundLinksCard {
+                id: refund
+                Layout.fillWidth: true
+                visible: rows.length > 0 || error !== ""
+                booking: inspector.b
+            }
+            PlaceholderCard {
+                section: "refunds"
+                hint: qsTr("Keine Erstattungen")
+                visible: inspector.editingLayout && refund.rows.length === 0 && refund.error === ""
+            }
         }
     }
     property Component noteCard: Component { NoteCard { booking: inspector.cardBooking } }
