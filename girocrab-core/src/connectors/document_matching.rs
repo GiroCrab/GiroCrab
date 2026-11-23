@@ -112,41 +112,6 @@ pub(crate) const COMDIRECT: DocumentMatchRules = DocumentMatchRules {
     },
 };
 
-#[cfg(test)]
-#[test]
-fn comdirect_sale_with_tax_offers_net_and_gross_amount() {
-    let sale = "Wertpapierabrechnung Verkauf\n\
-        Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
-        Steuerabzug   EUR   52,75\n\
-        Zu Ihren Gunsten nach Steuern:   EUR   4.947,25\n";
-    let amounts: Vec<i64> = settled_amounts(sale, COMDIRECT.amount_labels)
-        .into_iter()
-        .map(|(cents, _)| cents)
-        .collect();
-    assert!(
-        amounts.contains(&494_725),
-        "net amount missing: {amounts:?}"
-    );
-    assert!(
-        amounts.contains(&500_000),
-        "gross amount missing: {amounts:?}"
-    );
-    assert!(
-        !amounts.contains(&5_275),
-        "tax amount must not match: {amounts:?}"
-    );
-
-    let purchase = "Wertpapierabrechnung Kauf\n\
-        Zu Ihren Lasten vor Steuern   EUR   1.000,00\n\
-        Zu Ihren Lasten nach Steuern:   EUR   1.000,00\n";
-    let amounts: Vec<i64> = settled_amounts(purchase, COMDIRECT.amount_labels)
-        .into_iter()
-        .map(|(cents, _)| cents)
-        .collect();
-    assert!(amounts.iter().all(|&c| c == 100_000), "{amounts:?}");
-    assert!(!amounts.is_empty());
-}
-
 /// ISINs of the text (the first ones), then the WKN and the security's name in brackets from the title
 /// (`"… St. WKN 847101 (COMINVEST FONDAK P) vom …"`).
 fn comdirect_subjects(title: &str, text: &str) -> Vec<String> {
@@ -1037,6 +1002,40 @@ mod tests {
         let jpm = amounts_with_currency("JPM USD EM Bond 25,00 EUR");
         assert!(!currency_fits(&jpm, -25_00, "USD"));
         assert!(currency_fits(&jpm, -25_00, "EUR"));
+    }
+
+    #[test]
+    fn comdirect_sale_with_tax_offers_net_and_gross_amount() {
+        let sale = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
+            Steuerabzug   EUR   52,75\n\
+            Zu Ihren Gunsten nach Steuern:   EUR   4.947,25\n";
+        let amounts: Vec<i64> = settled_amounts(sale, COMDIRECT.amount_labels)
+            .into_iter()
+            .map(|(cents, _)| cents)
+            .collect();
+        assert!(
+            amounts.contains(&494_725),
+            "net amount missing: {amounts:?}"
+        );
+        assert!(
+            amounts.contains(&500_000),
+            "gross amount missing: {amounts:?}"
+        );
+        assert!(
+            !amounts.contains(&5_275),
+            "tax amount must not match: {amounts:?}"
+        );
+
+        let purchase = "Wertpapierabrechnung Kauf\n\
+            Zu Ihren Lasten vor Steuern   EUR   1.000,00\n\
+            Zu Ihren Lasten nach Steuern:   EUR   1.000,00\n";
+        let amounts: Vec<i64> = settled_amounts(purchase, COMDIRECT.amount_labels)
+            .into_iter()
+            .map(|(cents, _)| cents)
+            .collect();
+        assert!(amounts.iter().all(|&c| c == 100_000), "{amounts:?}");
+        assert!(!amounts.is_empty());
     }
 
     #[test]
