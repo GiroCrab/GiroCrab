@@ -266,7 +266,7 @@ impl Vault {
     ) -> Result<Vec<CurrencyAmount>, CoreError> {
         let db = self.db()?;
         // No booking in another currency (the usual vault): nothing to add, no category tree read.
-        if !crate::planning::has_other_currencies(&db)? {
+        if account_ids.len() != 1 && !crate::planning::has_other_currencies(&db)? {
             return Ok(Vec::new());
         }
         let selection = self.projected_selection(
@@ -302,7 +302,7 @@ impl Vault {
         untagged_only: bool,
     ) -> Result<Vec<CategoryCurrencyAmount>, CoreError> {
         let db = self.db()?;
-        if !crate::planning::has_other_currencies(&db)? {
+        if account_ids.len() != 1 && !crate::planning::has_other_currencies(&db)? {
             return Ok(Vec::new());
         }
         let own = self

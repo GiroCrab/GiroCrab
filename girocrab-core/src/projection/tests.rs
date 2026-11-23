@@ -29,12 +29,49 @@ fn category_match_cache_separates_date_ranges_and_revisions() {
         .collect::<HashSet<_>>()
     };
     assert_eq!(ids(None, None), HashSet::from([first, second]));
+    assert_eq!(ids(Some(""), Some("")), HashSet::from([first, second]));
     assert_eq!(ids(None, Some("2020-01-31")), HashSet::from([first]));
     assert_eq!(ids(Some("2020-02-01"), None), HashSet::from([second]));
     assert!(ids(Some("2021-01-01"), None).is_empty());
     assert_eq!(ids(None, None), HashSet::from([first, second]));
     let third = f.add_on(f.account, -3000, Some(f.cost), "EUR", "2020-01-15");
     assert_eq!(ids(None, Some("2020-01-31")), HashSet::from([first, third]));
+}
+
+#[test]
+fn category_rollups_reach_deep_roots_and_stop_at_cycles() {
+    let f = Fixture::new();
+    let mut leaf = f.root;
+    for depth in 0..40 {
+        leaf =
+            f.v.create_category(
+                format!("Depth {depth}"),
+                Some(leaf),
+                "cart".into(),
+                "#ff0000".into(),
+            )
+            .unwrap();
+    }
+    f.add_on(f.account, -1000, Some(leaf), "EUR", "2020-01-01");
+    let filter = BookingFilter::default();
+    let db = f.v.db().unwrap();
+    let totals = f.v.projected_categories(&db, &filter, Side::Net).unwrap();
+    assert_eq!(totals.subtree[&Some(f.root)], (-1000, 1));
+    let selection =
+        f.v.projected_selection(&db, &filter, None, CurrencyMode::All)
+            .unwrap();
+    assert!(selection.category_currency_subtrees().unwrap().contains(&(
+        Some(f.root),
+        "EUR".into(),
+        -1000
+    )));
+    db.execute(
+        "UPDATE categories SET parent_id=?1 WHERE id=?2",
+        params![leaf, f.root],
+    )
+    .unwrap();
+    let totals = f.v.projected_categories(&db, &filter, Side::Net).unwrap();
+    assert_eq!(totals.subtree[&Some(f.root)], (-1000, 1));
 }
 
 struct Fixture {
@@ -47,6 +84,161 @@ struct Fixture {
     year: i32,
     month: u32,
     date: String,
+}
+
+#[test]
+fn zero_and_cancelled_parts_keep_category_membership() {
+    let f = Fixture::new();
+    let zero = f.add(0, Some(f.cost));
+    let transfer = f.transfer_category();
+    let mixed = f.add(0, None);
+    f.split(mixed, &[(-500, Some(transfer)), (500, Some(transfer))]);
+    for (id, category) in [(zero, f.cost), (mixed, transfer)] {
+        let filter = BookingFilter {
+            category_id: Some(category),
+            ..Default::default()
+        };
+        assert_eq!(f.v.count_transactions(filter.clone()).unwrap(), 1);
+        assert_eq!(
+            f.v.list_transactions(filter).unwrap().transactions[0].id,
+            id
+        );
+    }
+}
+
+#[test]
+fn foreign_currency_tag_counts_do_not_add_foreign_amounts() {
+    let f = Fixture::new();
+    let id = f.add_on(f.account, -1200, Some(f.cost), "USD", &f.date);
+    let tag = f.v.create_tag("Foreign".into(), String::new()).unwrap().id;
+    f.v.set_booking_tags(id, vec![tag]).unwrap();
+    let totals = f.v.tag_totals(BookingFilter::default()).unwrap();
+    let row = totals.iter().find(|row| row.tag_id == Some(tag)).unwrap();
+    assert_eq!((row.booking_count, row.sum_cents), (1, 0));
+}
+
+#[test]
+fn uncategorized_takes_precedence_over_a_stale_category_filter() {
+    let f = Fixture::new();
+    let id = f.add(-1200, None);
+    f.add(-300, Some(f.cost));
+    let filter = BookingFilter {
+        category_id: Some(f.cost),
+        uncategorized_only: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        f.v.list_transactions(filter.clone()).unwrap().transactions[0].id,
+        id
+    );
+    assert_eq!(f.v.count_transactions(filter.clone()).unwrap(), 1);
+    let db = f.v.db().unwrap();
+    assert_eq!(
+        f.v.projected_totals(&db, &filter, None, CurrencyMode::Primary)
+            .unwrap()
+            .expense_cents,
+        -1200
+    );
+}
+
+#[test]
+fn projected_matching_cache_is_bounded() {
+    let f = Fixture::new();
+    f.add(-1200, Some(f.cost));
+    let db = f.v.db().unwrap();
+    for year in 1900..1980 {
+        f.v.projected_booking_ids(
+            &db,
+            &BookingFilter {
+                category_id: Some(f.cost),
+                date_from: Some(format!("{year}-01-01")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    assert!(
+        f.v.financial_projection(&db)
+            .unwrap()
+            .matching_ids
+            .lock()
+            .unwrap()
+            .len()
+            <= 64
+    );
+}
+
+#[test]
+fn euro_bookings_on_a_dollar_account_have_supplementary_totals() {
+    let f = Fixture::new();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET currency='USD' WHERE id=?1",
+            [f.account],
+        )
+        .unwrap();
+    f.add(-1200, Some(f.cost));
+    let filter = BookingFilter {
+        account_ids: vec![f.account],
+        ..Default::default()
+    };
+    let flow = f.v.flow_other_currencies(filter).unwrap();
+    assert_eq!(flow.len(), 1);
+    assert_eq!(flow[0].currency, "EUR");
+    let totals =
+        f.v.category_other_currency_totals(
+            None,
+            None,
+            vec![f.account],
+            None,
+            BookingDirection::All,
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .unwrap();
+    assert!(
+        totals
+            .iter()
+            .any(|row| row.currency == "EUR" && row.cents == -1200)
+    );
+}
+
+#[test]
+fn loan_proof_rows_do_not_expand_explicit_total_accounts() {
+    let f = Fixture::new();
+    let payment = f.add(-500, Some(f.cost));
+    let loan =
+        f.v.create_manual_loan(crate::loans::LoanSetup {
+            name: "Loan".into(),
+            original_cents: None,
+            anchor_date: f.date.clone(),
+            anchor_balance_cents: 10000,
+            interest_rate_ppm: None,
+            match_expr: String::new(),
+        })
+        .unwrap();
+    f.v.set_booking_loan(payment, Some(loan)).unwrap();
+    let db = f.v.db().unwrap();
+    db.execute(
+        "UPDATE accounts SET include_in_total=1 WHERE id IN (?1,?2)",
+        params![loan, f.account],
+    )
+    .unwrap();
+    drop(db);
+    let filter = BookingFilter {
+        account_ids: vec![loan],
+        respect_in_total: true,
+        ..Default::default()
+    };
+    assert_eq!(f.v.count_transactions(filter.clone()).unwrap(), 1);
+    let db = f.v.db().unwrap();
+    let totals =
+        f.v.projected_totals(&db, &filter, None, CurrencyMode::Primary)
+            .unwrap();
+    assert_eq!((totals.income_cents, totals.expense_cents), (0, 0));
 }
 
 impl Fixture {

@@ -251,6 +251,7 @@ impl Projection {
                 r
             })
             .collect();
+        let mut shifted_sources = HashSet::new();
         for a in allocations.iter().filter(|a| a.cents > 0) {
             let (Some(refund), Some(original)) = (&a.refund, &a.original) else {
                 continue;
@@ -262,6 +263,7 @@ impl Projection {
             else {
                 continue;
             };
+            shifted_sources.insert((refund.0, source_category, source_flow, source_side as u8));
             rows.push(Row {
                 booking_id: refund.0,
                 category_id: source_category,
@@ -291,7 +293,15 @@ impl Projection {
         let rows = Arc::new(
             combined
                 .into_values()
-                .filter(|(_, n)| *n != 0)
+                .filter(|(row, n)| {
+                    *n != 0
+                        || !shifted_sources.contains(&(
+                            row.booking_id,
+                            row.category_id,
+                            row.flow,
+                            row.side as u8,
+                        ))
+                })
                 .map(|(mut row, n)| {
                     row.amount_cents = cents(n)?;
                     Ok(row)
@@ -353,6 +363,13 @@ impl Vault {
         visible: Option<&[i64]>,
     ) -> CoreResult<String> {
         let projection = self.financial_projection(db)?;
+        let mut filter = filter.clone();
+        if filter.uncategorized_only {
+            filter.category_id = None;
+        }
+        filter.date_from = filter.date_from.filter(|date| !date.is_empty());
+        filter.date_to = filter.date_to.filter(|date| !date.is_empty());
+        let filter = &filter;
         let scope = visible.map(|accounts| {
             let mut accounts = accounts.to_vec();
             accounts.sort_unstable();
@@ -415,11 +432,11 @@ impl Vault {
             "[{}]",
             ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
         );
-        projection
-            .matching_ids
-            .lock()
-            .unwrap()
-            .insert(key, ids.clone());
+        let mut matching = projection.matching_ids.lock().unwrap();
+        if matching.len() >= 64 {
+            matching.clear();
+        }
+        matching.insert(key, ids.clone());
         Ok(ids)
     }
 
@@ -432,6 +449,11 @@ impl Vault {
         loan_view: bool,
     ) -> CoreResult<Selection> {
         let projection = self.financial_projection(db)?;
+        let mut filter = filter.clone();
+        if filter.uncategorized_only {
+            filter.category_id = None;
+        }
+        let filter = &filter;
         let mut plain = filter.clone();
         plain.category_id = None;
         plain.uncategorized_only = false;
@@ -454,7 +476,11 @@ impl Vault {
             None
         };
         let allowed = if filter.respect_in_total {
-            Some(crate::user_groups::total_account_ids(db)?)
+            let mut accounts = crate::user_groups::total_account_ids(db)?;
+            if !filter.account_ids.is_empty() {
+                accounts.retain(|id| filter.account_ids.contains(id));
+            }
+            Some(accounts)
         } else {
             None
         };
@@ -522,7 +548,8 @@ impl Vault {
             e.0 += i128::from(r.amount_cents);
             e.1.insert(r.booking_id);
             let mut category = r.category_id;
-            for _ in 0..32 {
+            let mut visited = HashSet::new();
+            while visited.insert(category) {
                 let e = subtree.entry(category).or_default();
                 e.0 += i128::from(r.amount_cents);
                 e.1.insert(r.booking_id);
@@ -569,7 +596,8 @@ impl Selection {
                 continue;
             }
             let mut category = r.category_id;
-            for _ in 0..32 {
+            let mut visited = HashSet::new();
+            while visited.insert(category) {
                 match category.and_then(|id| parents.get(&id).copied()).flatten() {
                     Some(parent) => category = Some(parent),
                     None => break,
@@ -719,7 +747,8 @@ impl Selection {
         for r in &self.rows {
             let currency = &self.projection.info[&r.booking_id].currency;
             let mut category = r.category_id;
-            for _ in 0..32 {
+            let mut visited = HashSet::new();
+            while visited.insert(category) {
                 *sums.entry((category, currency.clone())).or_default() +=
                     i128::from(r.amount_cents);
                 if !ancestors {

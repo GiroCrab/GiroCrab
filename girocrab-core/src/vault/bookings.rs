@@ -948,7 +948,7 @@ impl Vault {
     ) -> Result<Vec<CurrencyFlow>, CoreError> {
         // one guard for both reads, so eligibility and bookings stay consistent
         let db = self.db()?;
-        if !crate::planning::has_other_currencies(&db)? {
+        if filter.account_ids.len() != 1 && !crate::planning::has_other_currencies(&db)? {
             return Ok(Vec::new());
         }
         Ok(self
@@ -969,13 +969,30 @@ impl Vault {
         db: &rusqlite::Connection,
         filter: &BookingFilter,
     ) -> Result<Vec<(i64, i64)>, CoreError> {
-        self.projected_booking_selection(
+        let primary: HashMap<_, _> = self
+            .projected_booking_selection(
+                db,
+                filter,
+                None,
+                crate::projection::CurrencyMode::Primary,
+            )?
+            .shares()?
+            .into_iter()
+            .collect();
+        let all = self.projected_booking_selection(
             db,
             filter,
             None,
-            crate::projection::CurrencyMode::Primary,
-        )?
-        .shares()
+            crate::projection::CurrencyMode::All,
+        )?;
+        Ok(all
+            .rows
+            .iter()
+            .map(|row| row.booking_id)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|id| (id, primary.get(&id).copied().unwrap_or(0)))
+            .collect())
     }
 }
 
